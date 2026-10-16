@@ -589,6 +589,14 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_history": ("integrations",),
     "sync": ("integrations",),
     "declare_agent": ("own",),
+    "set_channel_ingest": ("own",),
+    # --- apps/slack/ingest_api.py (the permission itself is given in Slack, on the
+    # approval post: a channel member who holds integrations, or the channel's creator)
+    "create_channel_ingest": ("agent-login", "agent-admin"),
+    "list_channel_ingests": ("agent-login", "agent-admin", "integrations"),
+    "get_channel_ingest": ("agent-login", "agent-admin", "integrations"),
+    "get_channel_ingest_transcript": ("agent-login",),  # nobody else, not even the owner
+    "revoke_channel_ingest": ("agent-login", "agent-admin", "integrations", "self"),  # self = its approver
     # --- apps/beta_requests/api.py
     "submit_beta_request": ("anonymous",),  # the public site's request-access form; grants nothing
     "list_beta_requests": ("beta-reviewer",),
@@ -753,6 +761,7 @@ SETTINGS: frozenset[str] = frozenset({
     "connect_app", "update_connected_app", "tokens_connected_apps_disconnect_app",
     "set_push_config", "create_mailbox", "update_mailbox", "delete_mailbox",
     "set_config_token", "clear_config_token", "declare_agent", "set_history",
+    "set_channel_ingest", "revoke_channel_ingest",  # revoking withdraws an agent's access to a channel
     "hcp_registerClient", "hcp_updateClient",
     # sharing and visibility
     "set_narrative_visibility", "storyboards_rotate_token", "ensure_token",
@@ -793,6 +802,7 @@ NOT_SETTINGS: dict[str, str] = {
     "sync_skill_history": "content", "create_tasks": "content", "patch_task": "content",
     "create_idea": "content",  # an idea is a task with kind=idea
     "check_scaffold_repo": "action",  # POST only to keep a token out of the URL; writes nothing
+    "create_channel_ingest": "request",  # asks the channel; the approval click is the grant
     "scaffold_agent": "content",  # pushes code into the caller's own repo; registering is upsert_agent (a setting)
     "act_on_task": "content", "patch_contact": "content",
     "delete_narrative": "content", "move_narrative": "content", "delete_version": "content",

@@ -26,7 +26,7 @@ from apps.events import services as events_services
 from apps.events.models import Event
 from apps.workspaces.models import Workspace
 
-from . import client, relay, services
+from . import client, ingest, relay, services
 from .verify import SignatureError, verify_slack_signature
 
 logger = logging.getLogger(__name__)
@@ -332,6 +332,8 @@ def interactions(request: HttpRequest) -> HttpResponse:
         return HttpResponse(status=200)
     action = (payload.get("actions") or [{}])[0]
     action_id = str(action.get("action_id") or "")
+    if action_id in ingest.ACTIONS:
+        return _ingest_click(payload, action_id, action)
     if not (action_id.startswith(menus.PICK)
             or action_id in (menus.SUBMIT, menus.DISMISS, status.ROUTE_CLOUD)):
         return HttpResponse(status=200)
@@ -367,6 +369,38 @@ def interactions(request: HttpRequest) -> HttpResponse:
         _tell(installation, inbound, outcome.message)
     elif outcome.status in (services.STALE, services.MOVED):
         _tell(installation, inbound, outcome.message)
+    return HttpResponse(status=200)
+
+
+def _ingest_click(payload: dict, action_id: str, action: dict) -> HttpResponse:
+    """Approve / Decline / Revoke on a channel-ingest post (apps/slack/ingest.py).
+
+    The decision is only ever taken from the post canopy made for that ingest,
+    in that channel: the button's value names the ingest, and `ingest` checks it
+    against the channel and message the click came from."""
+    installation = services.installation_for(str((payload.get("team") or {}).get("id") or ""))
+    if installation is None:
+        return HttpResponse(status=200)
+    container = payload.get("container") or {}
+    inbound = services.Inbound(
+        team_id=installation.team_id,
+        channel_id=str((payload.get("channel") or {}).get("id") or container.get("channel_id") or ""),
+        slack_user_id=str((payload.get("user") or {}).get("id") or ""),
+        text="", ts=str(container.get("message_ts") or (payload.get("message") or {}).get("ts") or ""),
+    )
+    args = {"ingest_id": str(action.get("value") or ""), "slack_user_id": inbound.slack_user_id,
+            "channel_id": inbound.channel_id, "message_ts": inbound.ts}
+    try:
+        if action_id == ingest.REVOKE:
+            note = ingest.revoke_from_click(installation, **args)
+        else:
+            note = ingest.decide(installation, approve=action_id == ingest.APPROVE, **args)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("slack ingest click failed")
+        _record(installation, inbound, "failed", repr(e), level=Event.ERROR)
+        note = "Something went wrong recording that. It has been logged; nothing was read."
+    if note:
+        _tell(installation, inbound, note)
     return HttpResponse(status=200)
 
 

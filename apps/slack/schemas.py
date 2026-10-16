@@ -37,6 +37,16 @@ class SlackHistoryIn(StrictModel):
     max_minutes: int = Field(ge=1, le=HISTORY_MAX_MINUTES_LIMIT)
 
 
+class SlackChannelIngestSwitchOut(StrictModel):
+    # Whether this workspace's agents may ASK to read a whole channel (each
+    # read still needs an in-channel approval).
+    enabled: bool
+
+
+class SlackChannelIngestSwitchIn(StrictModel):
+    enabled: bool
+
+
 class SlackConfigOut(StrictModel):
     workspace: str
     connected: bool
@@ -47,6 +57,45 @@ class SlackConfigOut(StrictModel):
     commands: SlackCommandsOut
     agent: SlackAgentOut
     history: SlackHistoryOut
+    channel_ingest: SlackChannelIngestSwitchOut
+
+
+class ChannelIngestIn(StrictModel):
+    agent: str = Field(description="The agent's slug.")
+    channel: str = Field(description="The Slack channel id (C… or G…) — not its name.")
+    purpose: str = Field(min_length=1, max_length=2000,
+                         description="Why the agent wants the channel; shown to the people asked to approve.")
+    follow: bool = Field(default=False, description="Keep reading new messages until revoked.")
+
+
+class ChannelIngestOut(StrictModel):
+    id: str
+    agent: str
+    workspace: str
+    channel: str
+    channel_name: str
+    purpose: str
+    follow: bool
+    status: str = Field(description="pending | reading | ready | declined | revoked | failed")
+    requested_by_email: str
+    created_at: str
+    decided_by_email: str
+    decided_by_slack_id: str
+    decided_at: str
+    revoked_at: str
+    messages: int
+    backfilled_at: str
+    followed_at: str
+    error: str
+    # Where the transcript is read — by the agent's own login only.
+    transcript_url: str
+
+
+class ChannelIngestTranscriptOut(StrictModel):
+    id: str
+    status: str
+    messages: int
+    markdown: str
 
 
 class SlackConfigTokenIn(StrictModel):

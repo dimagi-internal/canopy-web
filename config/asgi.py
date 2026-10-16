@@ -81,15 +81,18 @@ class _McpWithoutSlash:
 import contextlib  # noqa: E402
 
 from apps.capabilities import scheduler as _capability_scheduler  # noqa: E402
+from apps.slack import ingest_scheduler as _slack_ingest_scheduler  # noqa: E402
 
 
 @contextlib.asynccontextmanager
 async def _lifespan(app):
-    """The MCP session manager, and the cloud-capability sweep's own clock
-    (apps/capabilities/scheduler.py), for the life of the process."""
+    """The MCP session manager, the cloud-capability sweep's own clock
+    (apps/capabilities/scheduler.py) and the Slack channel-ingest reader's
+    (apps/slack/ingest_scheduler.py), for the life of the process."""
     async with _mcp_app.lifespan(app):
         async with _capability_scheduler.running():
-            yield
+            async with _slack_ingest_scheduler.running():
+                yield
 
 
 application = Starlette(

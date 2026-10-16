@@ -936,6 +936,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/slack-config/{workspace}/channel-ingest": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Allow this workspace's agents to ask to read a whole channel (owner)
+         * @description The opt-in for permissioned whole-channel reads (`/api/slack-ingests/`).
+         *
+         *     On, an agent may ASK; every read still waits for an approval posted in the
+         *     channel itself. Off, new requests are refused and live reads stop.
+         */
+        readonly put: operations["set_channel_ingest"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/slack-config/{workspace}/sync": {
         readonly parameters: {
             readonly query?: never;
@@ -978,6 +1001,87 @@ export interface paths {
          *     carries the URL.
          */
         readonly post: operations["declare_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/slack-ingests/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Channel ingests you can see */
+        readonly get: operations["list_channel_ingests"];
+        readonly put?: never;
+        /**
+         * Ask to read a whole Slack channel for an agent
+         * @description Creates a PENDING ingest and posts ONE approval message in the channel.
+         *
+         *     Nothing is read until a member of the channel who administers the agent's
+         *     workspace (or created the channel) presses Approve there; a decline is final.
+         *     Poll `GET /api/slack-ingests/{id}` for `status`, then read the transcript.
+         */
+        readonly post: operations["create_channel_ingest"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/slack-ingests/{ingest_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One channel ingest: its status and progress */
+        readonly get: operations["get_channel_ingest"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/slack-ingests/{ingest_id}/transcript": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The channel as Markdown — the requesting agent's own login only
+         * @description Readable once approved (partial while `reading`, whole when `ready`).
+         *     Nobody but the agent itself reads it here — not its owner, not an admin:
+         *     the approval was for that agent.
+         */
+        readonly get: operations["get_channel_ingest_transcript"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/slack-ingests/{ingest_id}/revoke": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Stop reading and delete the transcript */
+        readonly post: operations["revoke_channel_ingest"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -10696,6 +10800,11 @@ export interface components {
             /** Declared At */
             readonly declared_at: string;
         };
+        /** SlackChannelIngestSwitchOut */
+        readonly SlackChannelIngestSwitchOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+        };
         /** SlackCommandsOut */
         readonly SlackCommandsOut: {
             /** Managed */
@@ -10726,6 +10835,7 @@ export interface components {
             readonly commands: components["schemas"]["SlackCommandsOut"];
             readonly agent: components["schemas"]["SlackAgentOut"];
             readonly history: components["schemas"]["SlackHistoryOut"];
+            readonly channel_ingest: components["schemas"]["SlackChannelIngestSwitchOut"];
         };
         /** SlackHistoryOut */
         readonly SlackHistoryOut: {
@@ -10791,6 +10901,11 @@ export interface components {
             /** Max Minutes */
             readonly max_minutes: number;
         };
+        /** SlackChannelIngestSwitchIn */
+        readonly SlackChannelIngestSwitchIn: {
+            /** Enabled */
+            readonly enabled: boolean;
+        };
         /** SlackDeclareAgentOut */
         readonly SlackDeclareAgentOut: {
             /** Status */
@@ -10815,6 +10930,85 @@ export interface components {
              * @default
              */
             readonly install_url: string;
+        };
+        /** ChannelIngestOut */
+        readonly ChannelIngestOut: {
+            /** Id */
+            readonly id: string;
+            /** Agent */
+            readonly agent: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Channel */
+            readonly channel: string;
+            /** Channel Name */
+            readonly channel_name: string;
+            /** Purpose */
+            readonly purpose: string;
+            /** Follow */
+            readonly follow: boolean;
+            /**
+             * Status
+             * @description pending | reading | ready | declined | revoked | failed
+             */
+            readonly status: string;
+            /** Requested By Email */
+            readonly requested_by_email: string;
+            /** Created At */
+            readonly created_at: string;
+            /** Decided By Email */
+            readonly decided_by_email: string;
+            /** Decided By Slack Id */
+            readonly decided_by_slack_id: string;
+            /** Decided At */
+            readonly decided_at: string;
+            /** Revoked At */
+            readonly revoked_at: string;
+            /** Messages */
+            readonly messages: number;
+            /** Backfilled At */
+            readonly backfilled_at: string;
+            /** Followed At */
+            readonly followed_at: string;
+            /** Error */
+            readonly error: string;
+            /** Transcript Url */
+            readonly transcript_url: string;
+        };
+        /** ChannelIngestIn */
+        readonly ChannelIngestIn: {
+            /**
+             * Agent
+             * @description The agent's slug.
+             */
+            readonly agent: string;
+            /**
+             * Channel
+             * @description The Slack channel id (C… or G…) — not its name.
+             */
+            readonly channel: string;
+            /**
+             * Purpose
+             * @description Why the agent wants the channel; shown to the people asked to approve.
+             */
+            readonly purpose: string;
+            /**
+             * Follow
+             * @description Keep reading new messages until revoked.
+             * @default false
+             */
+            readonly follow: boolean;
+        };
+        /** ChannelIngestTranscriptOut */
+        readonly ChannelIngestTranscriptOut: {
+            /** Id */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /** Messages */
+            readonly messages: number;
+            /** Markdown */
+            readonly markdown: string;
         };
         /** StoryboardListItemOut */
         readonly StoryboardListItemOut: {
@@ -25427,6 +25621,32 @@ export interface operations {
             };
         };
     };
+    readonly set_channel_ingest: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlackChannelIngestSwitchIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackConfigOut"];
+                };
+            };
+        };
+    };
     readonly sync: {
         readonly parameters: {
             readonly query?: never;
@@ -25467,6 +25687,119 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SlackDeclareAgentOut"];
+                };
+            };
+        };
+    };
+    readonly list_channel_ingests: {
+        readonly parameters: {
+            readonly query?: {
+                readonly agent?: string;
+                readonly status?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ChannelIngestOut"][];
+                };
+            };
+        };
+    };
+    readonly create_channel_ingest: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ChannelIngestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ChannelIngestOut"];
+                };
+            };
+        };
+    };
+    readonly get_channel_ingest: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly ingest_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ChannelIngestOut"];
+                };
+            };
+        };
+    };
+    readonly get_channel_ingest_transcript: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly ingest_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ChannelIngestTranscriptOut"];
+                };
+            };
+        };
+    };
+    readonly revoke_channel_ingest: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly ingest_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ChannelIngestOut"];
                 };
             };
         };
