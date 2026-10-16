@@ -31,7 +31,7 @@ from apps.canopy_sessions.access import readable_sessions
 from apps.canopy_sessions.models import Session
 from apps.workspaces import services as wsvc
 
-from . import client, relay, services
+from . import client, location, relay, services
 from .models import SlackInstallation, SlackUserLink
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,12 @@ BROADCAST, BIND = "broadcast", "bind"
 MODES = (BROADCAST, BIND)
 
 SHARED = "shared"
+#: `start_new_thread`: the conversation now lives in a new thread of the same channel.
+MOVED = "moved"
+#: The session holds no Slack thread to update or move.
+NOT_BOUND_THREAD = "not_bound"
+#: A direct message is one running conversation; it has no threads to move between.
+IS_DM = "is_dm"
 #: A bound session shared again: the summary went into its thread as a reply.
 UPDATED = "updated"
 NOT_INSTALLED, NOT_LINKED, NO_SESSION, AGENT_NOT_ON_SLACK, NOT_IN_CHANNEL, \
@@ -63,10 +69,14 @@ class ShareResult:
     channel_id: str = ""
     ts: str = ""
     permalink: str = ""
+    #: The channel's name when canopy knows it (`location.py`); "" otherwise.
+    channel_name: str = ""
+    #: `start_new_thread` only: the thread the conversation moved out of.
+    previous: dict | None = None
 
     @property
     def ok(self) -> bool:
-        return self.status in (SHARED, UPDATED)
+        return self.status in (SHARED, UPDATED, MOVED)
 
 
 def resolve_session(user, *, session_id: str = "", claude_session_id: str = "",
@@ -99,6 +109,40 @@ def resolve_session(user, *, session_id: str = "", claude_session_id: str = "",
     if len(found) > 1:
         raise Ambiguous("more than one session matches")
     return found[0] if found else None
+
+
+def resolve_turn_session(user, turn_id: str, *, visible=None) -> tuple[Session | None, bool]:
+    """The conversation of turn `turn_id`, and whether it was reached as the
+    caller's OWN live turn (`access.own_turn_session`) rather than by reading it.
+
+    An agent's own login reaches its turn's session only that way; anyone else
+    (the person who started it, a caller token running as them) reaches it by
+    the ordinary read rule, exactly as if they had named the session."""
+    from apps.canopy_sessions import access
+
+    own = access.own_turn_session(user, turn_id)
+    if own is not None:
+        return own, True
+    from apps.harness.models import Turn
+
+    try:
+        sid = Turn.objects.filter(pk=turn_id).values_list("chat_session_id", flat=True).first()
+    except Exception:  # noqa: BLE001 — a malformed id is just "no such turn"
+        return None, False
+    if not sid:
+        return None, False
+    return resolve_session(user, session_id=str(sid), visible=visible), False
+
+
+def conversation_channel(session: Session) -> str:
+    """The channel this conversation lives (or last lived) in — the only one an
+    agent may re-bind it to on its own say-so."""
+    meta = session.metadata or {}
+    channel = str(meta.get("slack_channel") or "")
+    if channel:
+        return channel
+    history = meta.get(DETACHED_KEY) or []
+    return str((history[-1] or {}).get("channel") or "") if history else ""
 
 
 def _installation(user, session: Session | None, workspace: str) -> tuple[SlackInstallation | None, str]:
@@ -233,7 +277,8 @@ def _record(installation, user, status: str, summary: str, payload: dict, *, ok:
 
 
 def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
-                  session: Session | None = None, workspace: str = "") -> ShareResult:
+                  session: Session | None = None, workspace: str = "",
+                  own_turn: bool = False) -> ShareResult:
     """Post `summary` into `channel`; in BIND mode, give the session that thread.
 
     `session` is re-checked against what the caller can see — a caller that got
@@ -245,8 +290,14 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
     reaches the thread on its own (the thread hears only what it asked), so
     sharing again is the way to keep the people watching it current. A session
     holds one thread, so there is no second post to make elsewhere.
+
+    `own_turn` says `session` was reached as the caller's own live turn
+    (`resolve_turn_session`) — an agent acting on the conversation it is having,
+    which it cannot read. Such a caller may update the thread, and may BIND only
+    back into the conversation's own channel: moving a person's conversation to
+    a channel they never chose is theirs to ask for, not the agent's to do.
     """
-    if session is not None and resolve_session(user, session_id=str(session.pk)) is None:
+    if session is not None and not own_turn and resolve_session(user, session_id=str(session.pk)) is None:
         session = None
         if mode == BROADCAST:
             return ShareResult(NO_SESSION, "You can't share a session you can't open.")
@@ -257,6 +308,20 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
         return ShareResult(BAD_REQUEST, "A summary is required.")
     if session is not None and relay.session_destination(session) is not None:
         return _post_update(user, session, summary)
+    if own_turn and session is not None:
+        if mode != BIND:
+            return ShareResult(BAD_REQUEST, (
+                "An agent shares its own conversation only into that conversation's channel: "
+                "post an update to its thread, bind it again, or start a new thread there."))
+        home = conversation_channel(session)
+        if not home:
+            return ShareResult(BAD_REQUEST, "This conversation has never been in a Slack channel to go back to.")
+        cached = ((session.metadata or {}).get(location.LOCATION_KEY) or {}).get("channel_name") or ""
+        if channel and channel.lstrip("#") not in {home, cached} - {""}:
+            return ShareResult(BAD_REQUEST, (
+                f"An agent can only re-bind its conversation in the channel it was in (<#{home}>), "
+                f"not {channel}. Ask the person to share it elsewhere."))
+        channel = home
     if not channel:
         return ShareResult(BAD_REQUEST, "Name a channel to share to.")
     if mode == BIND and session is None:
@@ -323,6 +388,8 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
         session.metadata = meta
 
     link = client.permalink(installation.bot_token, channel=channel_id, ts=ts)
+    if mode == BIND:
+        _learn_location(session, installation, permalink=link)
     where = link or f"<#{channel_id}>"
     message = (f"Shared to {where}. Replies in that thread now reach this session." if mode == BIND
                else f"Shared to {where}.")
@@ -384,6 +451,7 @@ _DETACHED_HISTORY = 20
 _BINDING_KEYS = (
     services.SLACK_THREAD_KEY, "slack_team", "slack_channel", "slack_thread_ts", "slack_shared_by",
     relay.BOUND_AT, relay.ELSEWHERE_AT, relay.CLOSED_NOTICE, "slack_closed_told",
+    location.LOCATION_KEY,
 )
 
 DETACH_NOTE = (":heavy_minus_sign: This thread is no longer connected to the session — "
@@ -510,3 +578,160 @@ def bound_repo_session(installation: SlackInstallation, key: str) -> Session | N
     return (services.tenant_sessions(installation).filter(Q(agent__isnull=True),
                                                           **{f"metadata__{services.SLACK_THREAD_KEY}": key})
             .order_by("created_at").first())
+
+
+def _learn_location(session: Session | None, installation, *, permalink: str = "") -> None:
+    """Cache where a just-bound thread is, for the caller envelope. Best-effort."""
+    if session is None:
+        return
+    try:
+        location.remember(session, permalink=permalink)
+        location.fill(session, installation)
+    except Exception:  # noqa: BLE001 — the bind has happened; this only names it
+        logger.exception("could not record a bound Slack thread's location")
+
+
+# ---- move to a new thread ------------------------------------------------------
+
+MOVED_NOTE = ":arrow_right: This conversation continues in a new thread: {where}. Replies here won't reach it."
+
+
+def start_new_thread(user, session: Session, summary: str) -> ShareResult:
+    """Move this conversation to a NEW thread in the channel it is in.
+
+    One step where it would otherwise take two (detach, then bind) and a guess
+    at the channel: posts `summary` top-level in the conversation's own channel,
+    binds the session to that post's thread exactly as a share-with-bind does,
+    and tells the old thread where it went. The old binding is kept on
+    `DETACHED_KEY` as history (with `moved_to`), like a detach.
+
+    The turn that asked for the move is done with the old thread: its status
+    line there is closed off with a pointer, and its own reply is not relayed
+    into the new thread (`relay.BOUND_AT`), which opens with `summary` alone —
+    the "clean thread" the move was asked for.
+
+    Permission is the caller's (the route: write access, or the agent's own live
+    turn); this does only the work.
+    """
+    if not (summary or "").strip():
+        return ShareResult(BAD_REQUEST, "A summary is required: it is what the new thread opens with.",
+                           session=session)
+    dest = relay.session_destination(session)
+    if dest is None:
+        return ShareResult(NOT_BOUND_THREAD, "This conversation isn't in a Slack thread, so there's "
+                           "nothing to move. Share it with `bind` to start one.", session=session)
+    installation, channel_id, old_ts = dest
+    before = location.location_of(session) or {}
+    if not old_ts or before.get("is_dm"):
+        return ShareResult(IS_DM, "This conversation is a direct message, which has no threads to "
+                           "move between.", session=session)
+
+    def refuse(status: str, message: str) -> ShareResult:
+        _record(installation, user, status, message, {"channel": channel_id, "mode": "move",
+                "session": str(session.pk)}, ok=False)
+        return ShareResult(status, message, session=session)
+
+    byline, caller_agent = _byline(installation, user, session)
+    if not byline:
+        return refuse(NOT_LINKED, (
+            "Your canopy account isn't linked to a Slack user here. Mention @canopy once in Slack "
+            "to link it, then try again."))
+    agent = session.agent if session.agent_id else caller_agent
+    target = f"`{session.agent.slug}`" if session.agent_id else "this session"
+    text = (f"{byline} started a new thread for the conversation with {target} · "
+            f"<{services.session_url(session)}|open in canopy>\n\n{relay.to_mrkdwn(summary.strip())}"
+            "\n\n_Reply in this thread to talk to this session._")
+    try:
+        body = client.post_message_body(installation.bot_token, channel=channel_id, text=text,
+                                        persona=relay.persona(agent))
+    except client.SlackApiError as e:
+        if e.error in _CANNOT_POST_THERE:
+            return refuse(NOT_IN_CHANNEL, (
+                f"canopy can't post in <#{channel_id}> any more ({e.error}). Invite the canopy app back "
+                "to the channel and try again."))
+        logger.exception("slack new-thread post failed")
+        return refuse(POST_FAILED, f"Slack refused the post: {e.error}.")
+    new_ts = str(body.get("ts") or "")
+
+    now = time.time()
+    with transaction.atomic():
+        locked = Session.objects.select_for_update().get(pk=session.pk)
+        meta = dict(locked.metadata or {})
+        old_key = meta.get(services.SLACK_THREAD_KEY)
+        record = {
+            "thread": old_key,
+            "team": str(meta.get("slack_team") or ""),
+            "channel": channel_id,
+            "thread_ts": old_ts,
+            "shared_by": meta.get("slack_shared_by"),
+            "bound_at": meta.get(relay.BOUND_AT),
+            "detached_at": now,
+            "detached_by": user.pk,
+            "moved_to": new_ts,
+        }
+        shared_by = meta.get("slack_shared_by")
+        for k in _BINDING_KEYS:
+            meta.pop(k, None)
+        meta.update({
+            services.SLACK_THREAD_KEY: services.thread_key(installation.team_id, channel_id, new_ts),
+            "slack_team": installation.team_id,
+            "slack_channel": channel_id,
+            "slack_thread_ts": new_ts,
+            # Nothing said before the move is the new thread's business.
+            relay.ELSEWHERE_AT: now,
+            relay.BOUND_AT: now,
+        })
+        if shared_by:
+            meta["slack_shared_by"] = shared_by
+        meta[DETACHED_KEY] = (list(meta.get(DETACHED_KEY) or []) + [record])[-_DETACHED_HISTORY:]
+        locked.metadata = meta
+        locked.save(update_fields=["metadata", "updated_at"])
+    session.metadata = meta
+
+    from .models import SlackMenuPost
+
+    # An open question goes with the conversation: its post is keyed per
+    # (session, question), so it is re-posted into the new thread, not left behind.
+    SlackMenuPost.objects.filter(session=session).delete()
+
+    new_link = client.permalink(installation.bot_token, channel=channel_id, ts=new_ts)
+    location.remember(session, channel_name=str(before.get("channel_name") or ""), permalink=new_link)
+    where = new_link or location.web_url(installation.team_id, channel_id, new_ts)
+    _close_old_thread(installation, session, channel_id, old_ts, where, agent)
+
+    message = f"Moved this conversation to a new thread: {where}. Replies there now reach this session."
+    _record(installation, user, MOVED, message, {"channel": channel_id, "ts": new_ts, "mode": "move",
+            "from_ts": old_ts, "session": str(session.pk)}, ok=True, kind="slack.moved")
+    return ShareResult(MOVED, message, session=session, channel_id=channel_id, ts=new_ts,
+                       permalink=where, channel_name=str(before.get("channel_name") or ""),
+                       previous={"channel": channel_id, "thread_ts": old_ts,
+                                 "permalink": before.get("permalink") or ""})
+
+
+def _close_old_thread(installation, session: Session, channel_id: str, old_ts: str, where: str,
+                      agent) -> None:
+    """Point the old thread at the new one. Each step best-effort: the move has happened."""
+    from apps.harness.models import Turn
+
+    from .models import SlackTurnPost
+
+    try:
+        client.post_message(installation.bot_token, channel=channel_id, thread_ts=old_ts,
+                            text=MOVED_NOTE.format(where=where), persona=relay.persona(agent))
+    except Exception:  # noqa: BLE001
+        logger.exception("could not post the Slack moved note")
+    try:
+        client.set_session_status(installation.bot_token, channel=channel_id, thread_ts=old_ts,
+                                  status=client.ACTIVE)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not clear the Slack agent-session status")
+    # A turn still in flight stops reaching the old thread (relay.predates_bind),
+    # so its status line there would read "working…" forever. Close it off.
+    posts = SlackTurnPost.objects.filter(turn__chat_session=session, channel_id=channel_id,
+                                         turn__status__in=list(Turn.NON_TERMINAL)).exclude(slack_ts="")
+    for post in posts:
+        try:
+            client.update_message(installation.bot_token, channel=channel_id, ts=post.slack_ts,
+                                  text=f"Moved to a new thread: {where}")
+        except Exception:  # noqa: BLE001
+            logger.exception("could not close a Slack status line after a move")

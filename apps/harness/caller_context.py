@@ -335,6 +335,13 @@ def build(turn, *, reader_user=None) -> dict:
             "session_id": str(cs.pk) if cs is not None else None,
             "thread_id": str(ref.get("thread_id") or "") or None,
             "subject": str(ref.get("subject") or "") or None,
+            # WHERE IN SLACK this conversation is, when its session holds a Slack
+            # thread: {team_id, channel_id, channel_name, thread_ts, permalink,
+            # is_dm}; null otherwise. Without it an agent asked to "post a clean
+            # thread in the channel" had to ask which channel it was in
+            # (2026-10-16). Read from the session's cache — building the envelope
+            # never calls Slack (apps/slack/location.py). Additive: no VERSION bump.
+            "slack": _slack_location(cs),
         },
         # What the caller invoked and the scope it grants (§4). null means the
         # agent's FULL profile: its owner, an admin, canopy itself, or a
@@ -387,6 +394,14 @@ def build(turn, *, reader_user=None) -> dict:
         # has said or done anything here.
         "apps": _apps(cs),
     }
+
+
+def _slack_location(cs) -> dict | None:
+    if cs is None:
+        return None
+    from apps.slack.location import location_of
+
+    return location_of(cs)
 
 
 def _apps(cs) -> dict | None:

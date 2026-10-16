@@ -17,23 +17,31 @@ from apps.mcp.server import mcp
 
 
 def _share_sync(user_id, channel, summary, mode, session_id, claude_session_id,
-                emdash_task, emdash_project, workspace) -> dict:
+                emdash_task, emdash_project, workspace, turn_id="") -> dict:
     from apps.slack import share
 
     user = get_user_model().objects.filter(pk=user_id, is_active=True).first()
     if user is None:
         raise PermissionError("Not authenticated.")
-    try:
-        session = share.resolve_session(
-            user, session_id=session_id, claude_session_id=claude_session_id,
-            emdash_task=emdash_task, emdash_project=emdash_project,
-        )
-    except share.Ambiguous:
-        raise ValueError(
-            "More than one canopy session matches that emdash task; pass claude_session_id "
-            "(or session_id) to say which.") from None
+    own = False
+    if turn_id:
+        session, own = share.resolve_turn_session(user, turn_id)
+        if session is None:
+            raise ValueError(
+                "No conversation of a live turn of yours matches that turn_id (a turn reaches its "
+                "conversation only while it is claimed or running).")
+    else:
+        try:
+            session = share.resolve_session(
+                user, session_id=session_id, claude_session_id=claude_session_id,
+                emdash_task=emdash_task, emdash_project=emdash_project,
+            )
+        except share.Ambiguous:
+            raise ValueError(
+                "More than one canopy session matches that emdash task; pass claude_session_id "
+                "(or session_id) to say which.") from None
     result = share.share_session(user, channel=channel, summary=summary, mode=mode,
-                                 session=session, workspace=workspace)
+                                 session=session, workspace=workspace, own_turn=own)
     if not result.ok:
         raise ValueError(result.message)
     return {
@@ -57,6 +65,7 @@ async def share_session_to_slack(
     emdash_project: str = "",
     session_id: str = "",
     workspace: str = "",
+    turn_id: str = "",
 ) -> dict:
     """Post a summary of the current session into a Slack channel.
 
@@ -80,9 +89,18 @@ async def share_session_to_slack(
     $EMDASH_ROOT_PATH), else `session_id` (canopy's own id). A broadcast works
     without one; a bind does not. `workspace` is needed only when you belong to
     several workspaces with Slack connected and no session is given.
+
+    An AGENT answering a turn names its conversation with `turn_id` (the caller
+    envelope's `turn_id`): its own login cannot open a conversation a person
+    started, but may act on the one of a turn it is running, while that turn is
+    in flight. As that, it may post an update to the thread, or — after
+    `detach_session_from_slack` — bind again, only in the conversation's own
+    channel. To move the conversation to a fresh thread in one step, use
+    `start_new_slack_thread`.
     """
     user_id = current_user_id()
-    summary_line = f"channel={channel} mode={mode} claude={claude_session_id[:12]} task={emdash_task}"
+    summary_line = (f"channel={channel} mode={mode} claude={claude_session_id[:12]} task={emdash_task}"
+                    f" turn={turn_id[:12]}")
     if user_id is not None:
         try:
             check_write_limit(user_id)
@@ -93,7 +111,7 @@ async def share_session_to_slack(
     try:
         out = await sync_to_async(_share_sync, thread_sensitive=True)(
             user_id, channel, summary, mode, session_id, claude_session_id,
-            emdash_task, emdash_project, workspace,
+            emdash_task, emdash_project, workspace, turn_id,
         )
     except Exception as exc:  # noqa: BLE001
         await write_audit(user_id=user_id, tool="share_session_to_slack",
