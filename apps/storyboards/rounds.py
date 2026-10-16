@@ -359,38 +359,42 @@ def _display_name(name: str | None, email: str | None) -> str:
     return address.split("@")[0] if address else ""
 
 
-def ingest_review_suggestion(review, *, name, email, response_json, by_user=None) -> list[int]:
+def ingest_review_suggestion(review, *, name, email, response_json, count, by_user=None) -> list[int]:
     """A review-page suggestion is feedback too: one narrative, one pool (spec C).
 
     Lands on the open round of any board in the review's workspace that carries the
     narrative. Never raises: a pool write must not cost the reviewer their suggestion."""
     try:
-        from apps.feedback import services as fsvc
-
         slug = review.narrative_slug or ""
         rj = response_json if isinstance(response_json, dict) else {}
         base = {"target_kind": "narrative", "target_ref": slug, "target_version": review.version,
                 "author_name": _display_name(name, email), "author_email": (email or "").strip(),
-                "channel": "web", "source_ref": ""}
+                "channel": "web"}
+        ref = f"review:{review.pk}:{count}:"
         items = []
         for s in rj.get("edited_scenes") or []:
             if not isinstance(s, dict) or not s.get("id"):
                 continue
             if s.get("deleted"):
-                items.append({**base, "kind": "comment", "anchor_id": s["id"], "body": "Remove this scene"})
+                items.append({**base, "kind": "comment", "anchor_id": s["id"], "body": "Remove this scene",
+                              "source_ref": f"{ref}{s['id']}:remove"})
             else:
                 items.append({**base, "kind": "suggestion", "anchor_id": s["id"],
-                              "suggested_text": s.get("narration") or "", "body": s.get("feedback") or ""})
+                              "suggested_text": s.get("narration") or "", "body": s.get("feedback") or "",
+                              "source_ref": f"{ref}{s['id']}:scene"})
         for scene_id, text in (rj.get("narration_edits") or {}).items():
-            items.append({**base, "kind": "suggestion", "anchor_id": scene_id, "suggested_text": text})
+            items.append({**base, "kind": "suggestion", "anchor_id": scene_id, "suggested_text": text,
+                          "source_ref": f"{ref}{scene_id}:narration"})
         if (rj.get("overall_feedback") or "").strip():
-            items.append({**base, "kind": "comment", "anchor_id": "", "body": rj["overall_feedback"]})
+            items.append({**base, "kind": "comment", "anchor_id": "", "body": rj["overall_feedback"],
+                          "source_ref": f"{ref}overall"})
         if not items or not slug or review.workspace_id is None:
             return []
         boards = Storyboard.objects.filter(
-            workspace_id=review.workspace_id, acts__entries__narrative_slug=slug).distinct()
+            workspace_id=review.workspace_id, acts__entries__narrative_slug=slug
+        ).distinct().order_by("pk")
         rnd = next((r for r in (current(b) for b in boards) if r is not None), None)
-        return fsvc.ingest(items, workspace=review.workspace, submitted_by=by_user, round=rnd)["ids"]
+        return frounds.ingest_into(rnd, items, workspace=review.workspace, submitted_by=by_user)["ids"]
     except Exception:  # noqa: BLE001
         logger.exception("rounds: could not pool review %s's suggestion", review.pk)
         return []

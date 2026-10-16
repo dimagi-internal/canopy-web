@@ -656,7 +656,7 @@ def suggest_review(request: HttpRequest, rid: UUID, payload: ReviewSuggestIn) ->
     from apps.storyboards import rounds as board_rounds
 
     board_rounds.ingest_review_suggestion(
-        review, name=name, email=email, response_json=payload.response_json,
+        review, name=name, email=email, response_json=payload.response_json, count=count,
         by_user=request.user if request.user.is_authenticated else None,
     )
     notify_suggestion(review, name, count, submitter_email=email)

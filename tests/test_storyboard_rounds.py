@@ -624,3 +624,69 @@ def test_patch_project_errors_do_not_reveal_other_tenants(world):
     assert foreign.status_code == unknown.status_code == 422
     assert foreign.json()["detail"].split(":")[0] == unknown.json()["detail"].split(":")[0]
     assert "workspace" not in foreign.json()["detail"]
+
+
+# ---- 7b: close race, determinism, idempotent review ingest, tenancy ----------
+
+
+def test_note_racing_the_close_lands_in_no_round(world, monkeypatch):
+    """current() said open, then the round closed before the ingest: the note must not
+    attach to the closed round."""
+    _open(world)
+    rnd = FeedbackRound.objects.get()
+    real = board_rounds.current
+
+    def stale_current(board):
+        found = real(board)
+        FeedbackRound.objects.filter(pk=rnd.pk).update(state=FeedbackRound.CLOSED)
+        return found
+
+    monkeypatch.setattr(board_rounds, "current", stale_current)
+    assert _note(world, author_name="Racer").status_code == 200
+    assert Feedback.objects.get(author_name="Racer").round is None
+
+
+_SUGGESTION = {"overall_feedback": "Slow down", "narration_edits": {"s1": "New words"}}
+
+
+def test_review_suggestion_racing_the_close_lands_in_no_round(world, monkeypatch):
+    _open(world)
+    rnd = FeedbackRound.objects.get()
+    real = board_rounds.current
+
+    def stale_current(board):
+        found = real(board)
+        FeedbackRound.objects.filter(pk=rnd.pk).update(state=FeedbackRound.CLOSED)
+        return found
+
+    monkeypatch.setattr(board_rounds, "current", stale_current)
+    ids = board_rounds.ingest_review_suggestion(
+        _review(world), name="Rae", email="rae@x.org", response_json=_SUGGESTION, count=1)
+    assert ids and all(Feedback.objects.get(pk=i).round is None for i in ids)
+
+
+def test_review_suggestion_retry_with_the_same_count_creates_rows_once(world):
+    _open(world)
+    review = _review(world)
+    first = board_rounds.ingest_review_suggestion(
+        review, name="Rae", email="", response_json=_SUGGESTION, count=3)
+    again = board_rounds.ingest_review_suggestion(
+        review, name="Rae", email="", response_json=_SUGGESTION, count=3)
+    assert len(first) == 2 and again == []
+    assert Feedback.objects.count() == 2
+    assert all(f.round is not None for f in Feedback.objects.all())
+
+
+def test_review_suggestion_in_one_workspace_never_reaches_anothers_round(world):
+    other_ws = Workspace.objects.create(slug="other", display_name="Other",
+                                        created_by=world["users"]["owner"])
+    other_board = Storyboard.objects.create(slug="supply", title="Other Supply", workspace=other_ws,
+                                            agent_project=world["project"])
+    act = Act.objects.create(storyboard=other_board, title="RUTF", position=0)
+    Entry.objects.create(act=act, narrative_slug="supply-rutf", position=0)
+    FeedbackRound.objects.create(workspace=other_ws, target_kind="storyboard", target_ref="supply",
+                                 number=1)
+    board_rounds.ingest_review_suggestion(
+        _review(world), name="Rae", email="", response_json=_SUGGESTION, count=1)
+    assert Feedback.objects.filter(workspace=other_ws).count() == 0
+    assert Feedback.objects.filter(workspace=world["ws"], round__isnull=True).count() == 2

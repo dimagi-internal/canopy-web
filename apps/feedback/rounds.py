@@ -65,6 +65,22 @@ def lock_open(rnd) -> FeedbackRound:
     return rnd
 
 
+def ingest_into(rnd, items, *, workspace, submitted_by=None) -> dict:
+    """Ingest `items` into `rnd` only if it is STILL open, else into no round.
+
+    The caller read the round outside any lock; a close can land in between. Re-read
+    it under a row lock so a note never attaches to a closed round: it stays loose
+    and the next round adopts it when consume opens it."""
+    from apps.feedback import services
+
+    with transaction.atomic():
+        live = None
+        if rnd is not None:
+            locked = FeedbackRound.objects.select_for_update().get(pk=rnd.pk)
+            live = locked if locked.state == FeedbackRound.OPEN else None
+        return services.ingest(items, workspace=workspace, submitted_by=submitted_by, round=live)
+
+
 def stage_edit(rnd, edit: dict) -> dict:
     with transaction.atomic():
         rnd = lock_open(rnd)

@@ -25,7 +25,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.common.csrf import csrf_rejected
 from apps.feedback import reactions
-from apps.feedback import services as feedback_services
+from apps.feedback import rounds as frounds
 from apps.harness import artifact_origin
 from apps.storyboards import decisions as decision_rows
 from apps.storyboards import rounds as board_rounds
@@ -442,11 +442,11 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
     }
     if is_member:
         item["author_email"] = request.user.email or ""
-    result = feedback_services.ingest(
+    result = frounds.ingest_into(
+        rnd,
         [item],
         workspace=board.workspace,
         submitted_by=request.user if request.user.is_authenticated else None,
-        round=rnd,
     )
     if is_member and rnd is not None:
         board_rounds.link_participant(board, request.user)
