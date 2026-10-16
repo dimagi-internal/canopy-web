@@ -161,12 +161,6 @@ class RunnerOut(Schema):
     # tenant. Surfaced so the supervisor can show the meaningful owner instead of
     # implying a single-workspace serving scope.
     owner_email: str | None
-    # DEPRECATED compat alias of `owner_email` (the field was `paired_by_email`
-    # until 2026-10-02). Runners and the canopy CLI update independently of this
-    # server, so ones installed before the rename still read this key. Remove once
-    # every runner reports a code_sha at/after the rename and canopy >= the release
-    # that reads `owner_email` is the floor (target: 2026-10-16).
-    paired_by_email: str | None = None
     # Whether THIS caller may mutate the runner (declare capabilities, retire,
     # heartbeat/claim as it) — a property of the (caller, runner) pair, so
     # list_runners stamps it on each row; a Ninja resolver only sees the row.
@@ -307,10 +301,6 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_paused_by_email(obj) -> str | None:
         return obj.paused_by.email if obj.paused_by_id else None
-
-    @staticmethod
-    def resolve_paired_by_email(obj) -> str | None:
-        return obj.owner.email if obj.owner_id else None
 
     @staticmethod
     def resolve_status(obj) -> str:
