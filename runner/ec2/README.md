@@ -412,6 +412,31 @@ so nothing else has to change once the line is there.
 > resolves references anywhere in the file, comments included, and the resolved
 > secret can leak to stdout. Use angle-bracket placeholders, as above.
 
+## Device binding: the box's instance role (Canopy Vault, #1549)
+
+An agent with `require_device_binding` has its credentials resolved only for a request
+carrying a proof from an APPROVED device key of a runner it routes to. An EC2 box has no
+Secure Enclave or TPM, so its key is its **instance role** (`kind=aws-iam`, the HashiCorp
+Vault AWS-auth pattern):
+
+- **At start** `cloud_runner.py` reads the role's credentials from IMDSv2, sends ONE
+  `sts:GetCallerIdentity` to learn the role ARN, and registers it:
+  `POST /api/runner-device-keys/` `{runner, kind: "aws-iam", role_arn, label, proof}`.
+  The log says `device key: PENDING — approve … <approve_url>` until a person approves it in
+  canopy-web (passkey step-up). Idempotent on every restart. Opt out: `CANOPY_DEVICE_KEY=0`.
+- **Every resolve** carries `X-Canopy-Aws-Proof`: standard base64 of
+  `{method: "POST", url: "https://sts.amazonaws.com/", headers, body:
+  "Action=GetCallerIdentity&Version=2011-06-15"}` — a SigV4-signed request that is never
+  sent. `X-Canopy-Proof-Htu` (the resolve URL, no query) and `X-Canopy-Proof-Iat` (unix
+  seconds) are among its SIGNED headers. canopy-web replays it to its own pinned STS
+  endpoint; the ARN AWS answers with must be the approved role.
+- The same proof goes on the canopy CLI's resolves on the box (`canopy agent prepare
+  --runner`, `cred sync`): enrollment writes canopy's cache (`~/.canopy/device-key/
+  aws-iam.json` + `status.json`) and canopy's `device_key_aws.py` signs identically.
+- The signer is stdlib (this file must stay stdlib-only); `tests/test_aws_device_proof.py`
+  checks it byte-for-byte against botocore's `SigV4Auth`. Each stack has its own
+  `RunnerRole`, so approving a role approves exactly that box.
+
 ## Vault standard
 
 See "Where secrets live" above for WHICH KEY reads which vault — this section is

@@ -92,3 +92,13 @@ def test_start_runs_in_the_background_and_swallows_errors(monkeypatch):
     t = dk.start(CFG)
     t.join(5)
     assert not t.is_alive()
+
+
+def test_finds_the_windows_canopy_exe(tmp_path, monkeypatch):
+    # A Windows runner (TPM key, canopy-web#1549): `uv tool install` leaves canopy.exe.
+    monkeypatch.setattr(dk.shutil, "which", lambda _: None)
+    exe = tmp_path / ".local" / "bin" / "canopy.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    exe.chmod(0o755)
+    assert dk.canopy_cli(tmp_path) == str(exe)
