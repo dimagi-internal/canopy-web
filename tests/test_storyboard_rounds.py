@@ -251,3 +251,132 @@ def test_nameless_member_decision_never_leaks_an_email(world):
     resp = Client().get(f"/api/storyboards/supply?t={world['token']}")
     assert resp.json()["decisions"][0]["decided_by"] == "nina"
     assert "@" not in resp.content.decode()
+
+
+def test_staged_value_and_reasoning_are_capped_and_confirm_stores_no_value(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    assert _edit(world, action="write_in", value="x" * 201, author_name="S").status_code == 422
+    assert _edit(world, action="pick", value="Keep as is", reasoning="r" * 2001,
+                 author_name="S").status_code == 422
+    assert _edit(world, action="confirm", value="ignored", author_name="S").status_code == 200
+    (staged,) = FeedbackRound.objects.get().staged_edits
+    assert staged["action"] == "confirm" and staged["value"] == ""
+
+
+# ---------------------------------------------------------------- closing a round
+from apps.agents.models import AgentTask  # noqa: E402
+from apps.harness.models import Turn  # noqa: E402
+
+
+def _close(world, client=None, **body):
+    c = client or world["owner"]
+    return c.post("/api/storyboards/supply/rounds/1/close", body, content_type="application/json")
+
+
+def test_close_applies_edits_and_starts_exactly_one_turn(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    for i in range(12):
+        _note(world, author_name=f"Reviewer {i}", body=f"note {i}")
+    _edit(world, action="pick", value="Keep as is", author_name="Sophie")
+    resp = _close(world, close_note="Lily's team is done")
+    assert resp.status_code == 200, resp.content
+    rnd = FeedbackRound.objects.get()
+    assert rnd.state == "closed" and rnd.task is not None
+    row = world["board"].decisions.get(key="banner")
+    assert row.override == "Keep as is" and row.decided_by_name == "Sophie"
+    assert row.decided_by_verified is False
+    task = rnd.task
+    assert task.project == world["project"] and task.agent == world["agent"]
+    assert "12 notes" in task.title
+    assert Turn.objects.filter(raised_from_task=task).count() == 1
+
+
+def test_double_close_creates_one_task_and_one_turn(world):
+    _open(world)
+    _note(world, author_name="S")
+    assert _close(world).status_code == 200
+    second = _close(world)
+    assert second.status_code == 409 and "closed" in second.json()["detail"]
+    assert AgentTask.objects.count() == 1
+    assert Turn.objects.count() == 1
+
+
+def test_close_with_unpicked_conflict_is_409_and_changes_nothing(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _edit(world, action="pick", value="Keep as is", author_name="Sophie")
+    _edit(world, client=world["viewer"], token=False, action="confirm")
+    resp = _close(world)
+    assert resp.status_code == 409 and "banner" in resp.json()["detail"]
+    assert FeedbackRound.objects.get().state == "open"
+    assert world["board"].decisions.get(key="banner").status == "ai-default"
+    assert AgentTask.objects.count() == 0
+
+
+def test_close_with_a_pick_applies_the_chosen_edit(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _edit(world, action="pick", value="Keep as is", author_name="Sophie")
+    _edit(world, client=world["viewer"], token=False, action="confirm")
+    lily = next(e for e in FeedbackRound.objects.get().staged_edits if e["by_name"] == "Lily")
+    assert _close(world, picks={"banner": lily["edit_id"]}).status_code == 200
+    row = world["board"].decisions.get(key="banner")
+    assert row.confirmed is True and row.decided_by == world["users"]["viewer"]
+
+
+def test_same_intent_from_several_people_is_not_a_conflict(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _edit(world, action="confirm", author_name="Sophie")
+    # Picking the recommended option IS confirming it.
+    _edit(world, action="pick", value="Rename and re-record", author_name="Ama")
+    resp = _close(world)
+    assert resp.status_code == 200, resp.content
+    assert world["board"].decisions.get(key="banner").confirmed is True
+
+
+def test_only_editors_close(world):
+    _open(world)
+    assert _close(world, client=world["viewer"]).status_code == 403
+    assert FeedbackRound.objects.get().state == "open"
+
+
+def test_close_without_a_project_is_422_not_500(world):
+    _open(world)
+    world["board"].agent_project = None
+    world["board"].save()
+    resp = _close(world)
+    assert resp.status_code == 422 and "project" in resp.json()["detail"]
+    assert FeedbackRound.objects.get().state == "open"
+
+
+def test_a_failure_after_the_turn_rolls_the_whole_close_back(world, monkeypatch):
+    """`act` runs for real (task approved, turn enqueued), then blows up: the
+    round must still be open, with no task and no turn left behind."""
+    from apps.agents import services as agent_services
+
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _note(world, author_name="S")
+    _edit(world, action="pick", value="Keep as is", author_name="Sophie")
+    real_act = agent_services.act
+
+    def act_then_fail(*a, **kw):
+        real_act(*a, **kw)
+        assert Turn.objects.count() == 1  # the turn really was enqueued
+        raise RuntimeError("boom after the turn")
+
+    monkeypatch.setattr(agent_services, "act", act_then_fail)
+    board = world["board"]
+    with pytest.raises(RuntimeError):
+        board_rounds.close_round(board, board_rounds.current(board),
+                                 by_user=world["users"]["owner"], note="")
+    rnd = FeedbackRound.objects.get()
+    assert rnd.state == "open" and rnd.task_id is None and rnd.closed_at is None
+    assert AgentTask.objects.count() == 0 and Turn.objects.count() == 0
+    assert world["board"].decisions.get(key="banner").status == "ai-default"
+    monkeypatch.setattr(agent_services, "act", real_act)
+    assert _close(world).status_code == 200  # and the close can simply be retried
+    assert AgentTask.objects.count() == 1 and Turn.objects.count() == 1

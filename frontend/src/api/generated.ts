@@ -1108,6 +1108,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/storyboards/{slug}/rounds/{number}/close": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Close a feedback round and hand it to the project's agent
+         * @description Editors only. Applies staged decision edits, then creates one task on the
+         *     board's project and approves it — exactly one agent turn for the whole round.
+         *     A second close (another tab) gets 409; disagreements nobody picked get 409.
+         */
+        readonly post: operations["close_storyboard_round"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/{slug}/decisions/{key}/edit": {
         readonly parameters: {
             readonly query?: never;
@@ -11270,6 +11292,21 @@ export interface components {
             readonly note_count: number;
             /** People Count */
             readonly people_count: number;
+        };
+        /** RoundCloseIn */
+        readonly RoundCloseIn: {
+            /**
+             * Close Note
+             * @default
+             */
+            readonly close_note: string;
+            /**
+             * Picks
+             * @default {}
+             */
+            readonly picks: {
+                readonly [key: string]: string;
+            };
         };
         /** DecisionEditIn */
         readonly DecisionEditIn: {
@@ -25115,6 +25152,33 @@ export interface operations {
             readonly cookie?: never;
         };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoundOut"];
+                };
+            };
+        };
+    };
+    readonly close_storyboard_round: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RoundCloseIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {

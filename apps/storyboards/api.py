@@ -38,6 +38,7 @@ from apps.storyboards.schemas import (
     DecisionOut,
     NarrativeReadOut,
     NotesOut,
+    RoundCloseIn,
     RoundOut,
     ShareTokenOut,
     StoryboardIn,
@@ -448,6 +449,28 @@ def open_storyboard_round(request: HttpRequest, slug: str) -> dict:
     board = _editable_or_404(request, slug)
     try:
         rnd = board_rounds.open_round(board, by_user=request.user)
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
+    return board_rounds.summary(rnd)
+
+
+@router.post(
+    "/{slug}/rounds/{number}/close",
+    response=RoundOut,
+    auth=session_auth,
+    summary="Close a feedback round and hand it to the project's agent",
+)
+def close_storyboard_round(request: HttpRequest, slug: str, number: int, payload: RoundCloseIn) -> dict:
+    """Editors only. Applies staged decision edits, then creates one task on the
+    board's project and approves it — exactly one agent turn for the whole round.
+    A second close (another tab) gets 409; disagreements nobody picked get 409."""
+    board = _editable_or_404(request, slug)
+    rnd = board_rounds.by_number(board, number)
+    if rnd is None:
+        raise HttpError(404, "no such round")
+    try:
+        rnd = board_rounds.close_round(board, rnd, by_user=request.user,
+                                       note=payload.close_note, picks=payload.picks)
     except board_rounds.RoundError as e:
         raise HttpError(e.status, e.detail)
     return board_rounds.summary(rnd)

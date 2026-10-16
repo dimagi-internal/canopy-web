@@ -5,6 +5,10 @@ may carry, who sees round notes, and what closing does (one task, one turn)."""
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
+
+from django.contrib.auth import get_user_model
+from django.db import transaction
 
 from apps.feedback import rounds as frounds
 from apps.feedback.models import Feedback
@@ -141,12 +145,21 @@ def round_payload(board, rnd, *, viewer) -> dict | None:
 
 
 _STAGED_KEYS = ("edit_id", "key", "action", "value", "reasoning", "by_name", "at")
+_STAGED_VALUE_MAX = 200
+_STAGED_REASONING_MAX = 2000
 
 
 def stage(rnd, row, *, action, value, reasoning, by_name, by_user=None) -> dict:
+    # A confirm carries no value: what is confirmed is the row's recommendation.
+    value = "" if action == "confirm" else (value or "").strip()
+    reasoning = (reasoning or "").strip()
+    if len(value) > _STAGED_VALUE_MAX:
+        raise RoundError(422, f"a staged value is at most {_STAGED_VALUE_MAX} characters")
+    if len(reasoning) > _STAGED_REASONING_MAX:
+        raise RoundError(422, f"reasoning is at most {_STAGED_REASONING_MAX} characters")
     return frounds.stage_edit(rnd, {
-        "key": row.key, "action": action, "value": (value or "").strip(),
-        "reasoning": (reasoning or "").strip(), "by_name": by_name,
+        "key": row.key, "action": action, "value": value,
+        "reasoning": reasoning, "by_name": by_name,
         "by_user_id": by_user.pk if getattr(by_user, "is_authenticated", False) else None,
     })
 
@@ -160,3 +173,118 @@ def pending_by_key(rnd) -> dict[str, list[dict]]:
 
 def pending_for(board, key: str) -> list[dict]:
     return pending_by_key(current(board)).get(key, [])
+
+
+# ------------------------------------------------------------------ closing
+
+
+def _norm(s: str) -> str:
+    return " ".join((s or "").split()).casefold()
+
+
+def _intent(edit: dict, recommended: str) -> tuple[str, str]:
+    """What an edit would do to its row, so two spellings of one wish agree:
+    a write-in is a pick, and picking the recommendation is confirming it
+    (exactly as `decisions.apply_edit` resolves them)."""
+    action, value = edit.get("action", ""), _norm(edit.get("value", ""))
+    if action == "write_in":
+        action = "pick"
+    if action == "pick" and value == _norm(recommended):
+        return ("confirm", "")
+    return (action, "" if action == "confirm" else value)
+
+
+def _choose(board, staged: list[dict], picks: dict[str, str]) -> list[dict]:
+    """One edit per row. Same intent from several people is not a conflict;
+    different intents need the closer's pick (spec C, Closing a round)."""
+    by_key: dict[str, list[dict]] = defaultdict(list)
+    for e in staged:
+        by_key[e["key"]].append(e)
+    recommended = dict(board.decisions.filter(key__in=list(by_key)).values_list("key", "recommended"))
+    chosen, conflicts = [], []
+    for key, edits in by_key.items():
+        intents = {_intent(e, recommended.get(key, "")) for e in edits}
+        if len(intents) == 1:
+            chosen.append(edits[-1])
+        elif key in picks:
+            match = next((e for e in edits if e["edit_id"] == picks[key]), None)
+            if match is None:
+                raise RoundError(422, f"{key}: the picked edit is not one of this round's edits")
+            chosen.append(match)
+        else:
+            conflicts.append(key)
+    if conflicts:
+        raise RoundError(409, "People disagreed on these decisions; pick one edit for each: "
+                              + ", ".join(sorted(conflicts)))
+    return chosen
+
+
+def _hand_to_agent(board, rnd, *, by_user, note: str):
+    """One task on the board's project, approved once -> exactly one turn.
+
+    The task asks for review and is approved by the closer in the same breath:
+    `act(approve)` on a card with no `on_approve` enqueues the card's own turn
+    (`apps.harness.dispatch.enqueue_task_turn`). Both are plain DB writes inside
+    the caller's transaction, so a failure rolls them back with the round."""
+    from apps.agents import services as agent_services
+    from apps.workspaces import services as wsvc
+
+    project = board.agent_project
+    notes = rnd.notes.count()
+    people = rnd.notes.exclude(author_name="").values("author_name").distinct().count()
+    where = f"?ws={board.workspace_id}"
+    (task,) = agent_services.create_tasks(project.agent, [{
+        "title": f"Feedback round {rnd.number} on \u201c{board.title}\u201d: "
+                 f"{notes} {'note' if notes == 1 else 'notes'} from {people} "
+                 f"{'person' if people == 1 else 'people'}",
+        "ask_kind": "review",
+        "ask_body": note or "",
+        "project": project.ext_id,
+        "source_url": wsvc.scoped_url(board.workspace_id, f"/storyboard/{board.slug}"),
+        "next_action": f"Run ddd-feedback-round for storyboard {board.slug} round {rnd.number}.",
+        "plan": (f"1. Read the round: GET /api/storyboards/{board.slug}/rounds/{rnd.number}{where}\n"
+                 "2. Answer every note: POST /api/feedback/<id>/resolve (answered or declined).\n"
+                 "3. Publish the next version of each narrative the notes change.\n"
+                 f"4. POST /api/storyboards/{board.slug}/rounds/{rnd.number}/consume{where} "
+                 "with the run id \u2014 this opens the next round."),
+        "idempotency_key": f"storyboard-round-{rnd.pk}",
+    }])
+    agent_services.act(
+        task, action="approve", comment=note or "", by=by_user.email, by_user=by_user,
+        actor_workspace_ids={board.workspace_id}, may_start_turns=True,
+    )
+    return task
+
+
+def close_round(board, rnd, *, by_user, note: str = "", picks: dict[str, str] | None = None):
+    """Close `rnd` in ONE transaction: lock it, apply its staged edits (the
+    closer resolves disagreements via `picks`), mark it closed, and hand it to
+    the board project's agent as one approved task -> one turn. Any failure
+    leaves the round open with nothing applied and no task or turn."""
+    from apps.storyboards import decisions as decision_rows
+
+    user_model = get_user_model()
+    with transaction.atomic():
+        rnd = frounds.lock_open(rnd)
+        board.refresh_from_db(fields=["agent_project"])
+        if board.agent_project_id is None:
+            raise RoundError(422, "Link this storyboard to a board project before closing the "
+                                  "round: closing hands it to that project's agent.")
+        try:
+            for e in _choose(board, list(rnd.staged_edits), picks or {}):
+                row = board.decisions.filter(key=e["key"]).first()
+                if row is None:  # the publisher dropped it since; nothing to apply
+                    continue
+                uid = e.get("by_user_id")
+                user = user_model.objects.filter(pk=uid).first() if uid else None
+                decision_rows.apply_edit(row, action=e["action"], value=e.get("value", ""),
+                                         reasoning=e.get("reasoning", ""), by_user=user,
+                                         by_name=e.get("by_name", ""))
+        except decision_rows.DecisionInvalid as exc:
+            raise RoundError(422, str(exc)) from None
+        except decision_rows.DecisionConflict as exc:
+            raise RoundError(409, str(exc)) from None
+        frounds.mark_closed(rnd, by_user=by_user, note=note)
+        rnd.task = _hand_to_agent(board, rnd, by_user=by_user, note=note)
+        rnd.save(update_fields=["task"])
+    return rnd

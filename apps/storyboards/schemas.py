@@ -194,6 +194,12 @@ class DecisionEditIn(StrictModel):
     """A guest's name (plan C, inside a round). Ignored for a signed-in member."""
 
 
+class RoundCloseIn(StrictModel):
+    close_note: str = ""
+    picks: dict[str, str] = {}
+    """`picks` maps a decision id to the staged edit chosen where people disagreed."""
+
+
 class RoundOut(StrictModel):
     number: int
     state: str
