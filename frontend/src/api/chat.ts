@@ -300,6 +300,22 @@ export function closeSession(id: string): Promise<CloseResult> {
   });
 }
 
+/** Retire a session row by hand without touching emdash; /unarchive undoes it. */
+export function archiveSession(id: string): Promise<ChatSession> {
+  return request<ChatSession>(`/api/canopy-sessions/${encodeURIComponent(id)}/archive`, { method: "POST" });
+}
+
+export function unarchiveSession(id: string): Promise<ChatSession> {
+  return request<ChatSession>(`/api/canopy-sessions/${encodeURIComponent(id)}/unarchive`, { method: "POST" });
+}
+
+export type StopResult = { cancelled: boolean; interrupted: boolean; route: string };
+
+/** The same stop as the chat's stop button: cancel open turns, else interrupt the agent. */
+export function stopSession(id: string): Promise<StopResult> {
+  return request<StopResult>(`/api/canopy-sessions/${encodeURIComponent(id)}/stop`, { method: "POST" });
+}
+
 export type Attachment = components["schemas"]["AttachmentOut"];
 
 /**
