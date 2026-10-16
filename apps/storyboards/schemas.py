@@ -261,6 +261,9 @@ class StoryboardOut(StrictModel):
     """True when the caller belongs to the owning workspace — i.e. is one of the
     people who SENT this link, not one of the people it was sent to. The only
     thing it changes is whether returning notes are shown."""
+    can_manage: bool = False
+    """True when the caller may open and close feedback rounds (editor or
+    above in the owning workspace). False for viewers and token holders."""
     acts: list[ActOut]
     # Round notes are visible to every reader while the round is open (spec C,
     # Visibility) — names only, never emails.

@@ -690,3 +690,17 @@ def test_review_suggestion_in_one_workspace_never_reaches_anothers_round(world):
         _review(world), name="Rae", email="", response_json=_SUGGESTION, count=1)
     assert Feedback.objects.filter(workspace=other_ws).count() == 0
     assert Feedback.objects.filter(workspace=world["ws"], round__isnull=True).count() == 2
+
+
+# ── can_manage: who gets the Open / Close controls ──────────────────────────
+
+
+def test_can_manage_is_true_only_for_editors(world):
+    def read(client, token=False):
+        q = f"?t={world['token']}" if token else ""
+        return client.get(f"/api/storyboards/supply{q}").json()["can_manage"]
+
+    assert read(world["owner"]) is True
+    assert read(world["ace"]) is True
+    assert read(world["viewer"]) is False
+    assert read(Client(), token=True) is False

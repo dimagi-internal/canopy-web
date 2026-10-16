@@ -1,6 +1,8 @@
-import { useState } from 'react'
-import type { Decision, DecisionEdit, Storyboard } from '@/api/storyboards'
-import { editDecision } from '@/api/storyboards'
+import { useEffect, useState } from 'react'
+import type { Capability, Decision, Note, DecisionEdit, LeaveFeedbackIn, Storyboard } from '@/api/storyboards'
+import { editDecision, leaveFeedback } from '@/api/storyboards'
+import { NotesReturned } from './NotesReturned'
+import { NoteComposer, readReviewerName } from './NoteComposer'
 import { groupDecisions, narrativeTitles, scopeLabel } from './decisionGroups'
 
 /**
@@ -15,12 +17,16 @@ function chip(d: Decision): string {
   return 'Recommended'
 }
 
-export function DecisionRow({ d, canEdit, onEdit, scopeTag }: {
+export function DecisionRow({ d, canEdit, needsName, onEdit, scopeTag, children }: {
   d: Decision
   canEdit: boolean
+  /** A guest staging an edit must be named first; show a hint, not the buttons. */
+  needsName?: boolean
   onEdit: (body: DecisionEdit) => Promise<void>
   /** The narrative this row is about, when the surrounding group does not already say. */
   scopeTag?: string
+  /** Rendered under the row — the per-row note composer. */
+  children?: React.ReactNode
 }) {
   const [busy, setBusy] = useState(false)
   const [writeIn, setWriteIn] = useState('')
@@ -63,7 +69,15 @@ export function DecisionRow({ d, canEdit, onEdit, scopeTag }: {
           {d.override_reasoning && <p>{d.decided_by}: {d.override_reasoning}</p>}
         </details>
       )}
-      {editable && (
+      {(d.pending ?? []).map((e) => (
+        <p key={e.edit_id} className="mt-1 break-words text-sm text-muted-foreground">
+          Pending: {e.by_name} → {e.action === 'confirm' ? d.recommended : e.value}
+        </p>
+      ))}
+      {editable && needsName && (
+        <p className="mt-3 text-sm text-muted-foreground">Add your name in a note first</p>
+      )}
+      {editable && !needsName && (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
           {d.value && !d.confirmed && (
             <button type="button" disabled={busy} onClick={() => run({ action: 'confirm' })}
@@ -87,25 +101,58 @@ export function DecisionRow({ d, canEdit, onEdit, scopeTag }: {
         </div>
       )}
       {error && <p role="alert" className="mt-2 text-sm text-destructive">{error}</p>}
+      {children}
     </li>
   )
 }
 
-export function DecisionLog({ board, token, ws, canEdit }: {
+export function DecisionLog({ board, token, ws, canEdit, inRound, capability, notesByAnchor }: {
   board: Storyboard
   token?: string | null
   ws?: string | null
   canEdit: boolean
+  /** A feedback round is open: guests with the edit grant may stage edits. */
+  inRound?: boolean
+  capability?: Capability
+  /** Round notes anchored to a row (`decision:<id>`), shown under it. */
+  notesByAnchor?: Map<string, Note[]>
 }) {
   // Local copy: an edit returns the updated row, which replaces its old self here.
   const [rows, setRows] = useState<Decision[]>(board.decisions ?? [])
+  // A reload (round opened, closed, edit staged) hands us fresh rows.
+  useEffect(() => setRows(board.decisions ?? []), [board.decisions])
+  const [name, setName] = useState(() => readReviewerName())
   const onChanged = (d: Decision) => setRows((rs) => rs.map((x) => (x.id === d.id ? d : x)))
   const titles = narrativeTitles(board)
   const groups = groupDecisions(rows, titles)
   if (groups.length === 0) return null
+  const cap = capability ?? board.capability
+  const round = inRound ?? !!board.round
+  const isGuest = !canEdit
+  const guestMayStage = isGuest && round && cap === 'suggest'
   const rowFor = (d: Decision, scopeTag?: string) => (
-    <DecisionRow key={d.id} d={d} canEdit={canEdit && !d.superseded_by} scopeTag={scopeTag}
-      onEdit={async (body) => onChanged(await editDecision(board.slug, d.id, body, token, ws))} />
+    <DecisionRow key={d.id} d={d} canEdit={(canEdit || guestMayStage) && !d.superseded_by} scopeTag={scopeTag}
+        needsName={isGuest && !name.trim()}
+        onEdit={async (body) =>
+          onChanged(
+            await editDecision(
+              board.slug, d.id, isGuest ? { ...body, author_name: name.trim() } : body, token, ws,
+            ),
+          )}>
+      <NotesReturned notes={notesByAnchor?.get(`decision:${d.id}`) ?? []} />
+      {(cap === 'comment' || cap === 'suggest') && (
+        <NoteComposer
+          capability={cap}
+          anchorLabel={d.plain_question || d.question}
+          cta="Leave a note on this question"
+          defaults={{ anchor_id: `decision:${d.id}` }}
+          onSubmit={async (payload: LeaveFeedbackIn) => {
+            await leaveFeedback(board.slug, payload, token, ws)
+            setName(readReviewerName())
+          }}
+        />
+      )}
+    </DecisionRow>
   )
   return (
     <section aria-label="Decisions" className="mt-14 flex flex-col gap-6">

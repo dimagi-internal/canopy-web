@@ -127,4 +127,16 @@ describe('DecisionRow', () => {
     render(<DecisionRow d={row({ editable: false })} canEdit onEdit={vi.fn()} />)
     expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull()
   })
+
+  it('shows pending edits from the round', () => {
+    render(<DecisionRow d={{ ...base, pending: [{ edit_id: '1', key: 'banner', action: 'pick',
+      value: 'Keep as is', reasoning: '', by_name: 'Sophie', at: '' }] }} canEdit={false} onEdit={vi.fn()} />)
+    expect(screen.getByText('Pending: Sophie → Keep as is')).toBeTruthy()
+  })
+
+  it('asks a nameless guest for a name instead of showing buttons', () => {
+    render(<DecisionRow d={base} canEdit needsName onEdit={vi.fn()} />)
+    expect(screen.getByText('Add your name in a note first')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull()
+  })
 })

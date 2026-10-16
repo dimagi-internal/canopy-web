@@ -93,6 +93,24 @@ describe('StoryboardPage', () => {
     expect(container.textContent).not.toMatch(/\bACT\b/i)
   })
 
+  it('shows every reader the round banner and the round notes, and the closer its controls', async () => {
+    const round = { number: 1, state: 'open', opened_at: '', opened_by: 'Jon', closed_at: null,
+      close_note: '', pinned_versions: {}, note_count: 1, people_count: 1, staged_edits: [],
+      notes: [{ id: 5, kind: 'comment', body: 'Too fast in cut two.', suggested_text: '',
+        author_name: 'Sophie', anchor_id: '', target_kind: 'narrative', target_ref: 'procurement',
+        target_version: 4, state: 'new', disposition_note: '', resolved_in_version: null,
+        created_at: '2026-07-26T10:00:00Z', mine: false }] }
+    getStoryboard.mockResolvedValue(board({ round, can_manage: false }))
+    renderAt()
+    expect(await screen.findByText(/Feedback round 1 is open/)).toBeTruthy()
+    expect(screen.getByText('Too fast in cut two.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Close round/ })).toBeNull()
+    cleanup()
+    getStoryboard.mockResolvedValue(board({ round, can_manage: true }))
+    renderAt()
+    expect(await screen.findByRole('button', { name: 'Close round and start the next run' })).toBeTruthy()
+  })
+
   it('passes the share token and the workspace through to the API', async () => {
     getStoryboard.mockResolvedValue(board())
     renderAt('/w/connect/storyboard/ecf-supply?t=secret')

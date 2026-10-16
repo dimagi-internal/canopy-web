@@ -114,7 +114,55 @@ export interface Decision {
   superseded_by: string
   /** False for a narrative's read-time caveat — shown, not yet a stored row. */
   editable: boolean
+  /** Edits staged in the open round, not yet applied. */
+  pending?: StagedEdit[]
 }
+
+/** One note in a feedback round — names only, never an email. */
+export interface RoundNote {
+  id: number
+  kind: FeedbackKind | string
+  body: string
+  suggested_text: string
+  author_name: string
+  anchor_id: string
+  target_kind: string
+  target_ref: string
+  target_version: number | null
+  state: string
+  disposition_note: string
+  resolved_in_version: number | null
+  created_at: string
+  /** True for the signed-in viewer's own notes. */
+  mine: boolean
+}
+
+/** A decision edit held until the round closes. */
+export interface StagedEdit {
+  edit_id: string
+  key: string
+  action: string
+  value: string
+  reasoning: string
+  by_name: string
+  at: string
+}
+
+export interface RoundPayload {
+  number: number
+  state: string
+  opened_at: string
+  opened_by: string
+  closed_at: string | null
+  close_note: string
+  pinned_versions: Record<string, number>
+  note_count: number
+  people_count: number
+  notes: RoundNote[]
+  staged_edits: StagedEdit[]
+}
+
+export type RoundSummary = Omit<RoundPayload, 'notes' | 'staged_edits'>
 
 export type DecisionEdit = {
   action: 'confirm' | 'pick' | 'write_in' | 'undo'
@@ -135,9 +183,15 @@ export interface Storyboard {
   layout: Layout
   /** True for the people who SENT the link — the only ones shown the notes. */
   is_member: boolean
+  /** True for editors, who open and close feedback rounds. */
+  can_manage?: boolean
   acts: StoryboardAct[]
   /** The set's decision log. Absent on an older response. */
   decisions?: Decision[]
+  /** The feedback round open now, with everyone's notes. */
+  round?: RoundPayload | null
+  /** The latest finished round, so people can see what happened to their notes. */
+  previous_round?: RoundPayload | null
 }
 
 export interface Note {
@@ -252,6 +306,27 @@ export function editDecision(
     ),
     body,
     'That did not save',
+  )
+}
+
+export function openRound(slug: string, ws?: string | null): Promise<RoundSummary> {
+  return postJson(
+    withToken(`/api/storyboards/${encodeURIComponent(slug)}/rounds`, null, ws),
+    {},
+    'Couldn’t open the round',
+  )
+}
+
+export function closeRound(
+  slug: string,
+  number: number,
+  body: { close_note?: string; picks?: Record<string, string> },
+  ws?: string | null,
+): Promise<RoundSummary> {
+  return postJson(
+    withToken(`/api/storyboards/${encodeURIComponent(slug)}/rounds/${number}/close`, null, ws),
+    body,
+    'Couldn’t close the round',
   )
 }
 

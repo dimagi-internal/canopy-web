@@ -11065,6 +11065,11 @@ export interface components {
              * @default false
              */
             readonly is_member: boolean;
+            /**
+             * Can Manage
+             * @default false
+             */
+            readonly can_manage: boolean;
             /** Acts */
             readonly acts: readonly components["schemas"]["ActOut"][];
             readonly round?: components["schemas"]["RoundPayloadOut"] | null;

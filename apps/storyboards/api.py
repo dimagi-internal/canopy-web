@@ -82,6 +82,14 @@ def _is_member(request: HttpRequest, board: Storyboard) -> bool:
     )
 
 
+def _can_manage(request: HttpRequest, board: Storyboard) -> bool:
+    """May open and close rounds: a signed-in editor of the owning workspace."""
+    return bool(
+        request.user.is_authenticated
+        and perms.can(request.user, board.workspace_id, perms.CONTENT_WRITE)
+    )
+
+
 def _readable_or_404(request: HttpRequest, slug: str, ws: str = "") -> Storyboard:
     """A board the caller may READ, or 404.
 
@@ -308,7 +316,9 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
         if Storyboard.objects.filter(workspace_id=workspace_slug, slug=payload.slug).exists():
             raise HttpError(409, f"a storyboard named {payload.slug!r} already exists in this workspace")
         raise
-    return services.resolve_board(board, is_member=True, viewer=request.user)
+    return services.resolve_board(
+        board, is_member=True, viewer=request.user, can_manage=True
+    )
 
 
 @router.get(
@@ -323,7 +333,10 @@ def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
     board = _readable_or_404(request, slug, ws)
     reactions.record_view(request, reactions.STORYBOARD, board.pk)
     return services.resolve_board(
-        board, is_member=_is_member(request, board), viewer=request.user
+        board,
+        is_member=_is_member(request, board),
+        viewer=request.user,
+        can_manage=_can_manage(request, board),
     )
 
 
@@ -357,7 +370,9 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
         raise HttpError(422, str(e))
     except decision_rows.DecisionConflict as e:
         raise HttpError(409, str(e))
-    return services.resolve_board(board, is_member=True, viewer=request.user)
+    return services.resolve_board(
+        board, is_member=True, viewer=request.user, can_manage=True
+    )
 
 
 @router.post(

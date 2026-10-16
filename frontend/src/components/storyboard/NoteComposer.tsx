@@ -16,7 +16,7 @@ import type { Capability, FeedbackKind, LeaveFeedbackIn } from '@/api/storyboard
  */
 const NAME_KEY = 'canopy.reviewer-name'
 
-function readReviewerName(): string {
+export function readReviewerName(): string {
   try {
     return localStorage.getItem(NAME_KEY) ?? ''
   } catch {
