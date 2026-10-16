@@ -1,27 +1,12 @@
 import { useState } from 'react'
 import type { Decision, DecisionEdit, Storyboard } from '@/api/storyboards'
 import { editDecision } from '@/api/storyboards'
+import { groupDecisions, narrativeTitles, scopeLabel } from './decisionGroups'
 
 /**
- * The set's decision log — ace-web's pattern (spec B). Asks and assumptions
- * are the same row in different states, so ONE row component renders them all;
- * the grouping puts what the reader must do first, and each row appears once.
+ * The set's decision log — ace-web's pattern (spec B). Grouping and scope
+ * labels live in decisionGroups.ts.
  */
-export function groupDecisions(rows: Decision[]): { title: string; open: boolean; rows: Decision[] }[] {
-  const live = rows.filter((d) => !d.superseded_by)
-  const groups = [
-    { title: 'Answer before sharing', open: true,
-      rows: live.filter((d) => d.status !== 'deferred' && d.review_ask === 'required-before' && d.needed_by === 'external-share') },
-    { title: 'Please confirm', open: true,
-      rows: live.filter((d) => d.status !== 'deferred' && d.review_ask !== '' &&
-        !(d.review_ask === 'required-before' && d.needed_by === 'external-share')) },
-    { title: 'What the agent assumed', open: false,
-      rows: live.filter((d) => d.status !== 'deferred' && !d.review_ask) },
-    { title: 'Not needed now', open: false, rows: live.filter((d) => d.status === 'deferred') },
-    { title: 'Replaced', open: false, rows: rows.filter((d) => d.superseded_by) },
-  ]
-  return groups.filter((g) => g.rows.length > 0)
-}
 
 function chip(d: Decision): string {
   if (d.status === 'overridden') return d.decided_by ? `Changed by ${d.decided_by}` : 'Changed'
@@ -30,10 +15,12 @@ function chip(d: Decision): string {
   return 'Recommended'
 }
 
-export function DecisionRow({ d, canEdit, onEdit }: {
+export function DecisionRow({ d, canEdit, onEdit, scopeTag }: {
   d: Decision
   canEdit: boolean
   onEdit: (body: DecisionEdit) => Promise<void>
+  /** The narrative this row is about, when the surrounding group does not already say. */
+  scopeTag?: string
 }) {
   const [busy, setBusy] = useState(false)
   const [writeIn, setWriteIn] = useState('')
@@ -53,6 +40,9 @@ export function DecisionRow({ d, canEdit, onEdit }: {
   }
   return (
     <li id={`decision-${d.id}`} className="rounded-md border border-border bg-card p-4">
+      {scopeTag && (
+        <p className="mb-1 text-xs text-muted-foreground">{scopeTag}</p>
+      )}
       <p className="font-medium text-foreground">{d.plain_question || d.question}</p>
       {d.value && (
         <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
@@ -110,8 +100,13 @@ export function DecisionLog({ board, token, ws, canEdit }: {
   // Local copy: an edit returns the updated row, which replaces its old self here.
   const [rows, setRows] = useState<Decision[]>(board.decisions ?? [])
   const onChanged = (d: Decision) => setRows((rs) => rs.map((x) => (x.id === d.id ? d : x)))
-  const groups = groupDecisions(rows)
+  const titles = narrativeTitles(board)
+  const groups = groupDecisions(rows, titles)
   if (groups.length === 0) return null
+  const rowFor = (d: Decision, scopeTag?: string) => (
+    <DecisionRow key={d.id} d={d} canEdit={canEdit && !d.superseded_by} scopeTag={scopeTag}
+      onEdit={async (body) => onChanged(await editDecision(board.slug, d.id, body, token, ws))} />
+  )
   return (
     <section aria-label="Decisions" className="mt-14 flex flex-col gap-6">
       <h2 className="text-xl font-semibold text-foreground">Before you share this</h2>
@@ -120,12 +115,18 @@ export function DecisionLog({ board, token, ws, canEdit }: {
           <summary className="cursor-pointer font-medium text-foreground">
             {g.title} <span className="text-muted-foreground">({g.rows.length})</span>
           </summary>
-          <ul className="mt-3 flex flex-col gap-3">
-            {g.rows.map((d) => (
-              <DecisionRow key={d.id} d={d} canEdit={canEdit && !d.superseded_by}
-                onEdit={async (body) => onChanged(await editDecision(board.slug, d.id, body, token, ws))} />
-            ))}
-          </ul>
+          {g.byScope ? (
+            g.byScope.map((s) => (
+              <div key={s.scope} className="mt-3">
+                <h3 className="text-sm font-medium text-muted-foreground">{s.label}</h3>
+                <ul className="mt-2 flex flex-col gap-3">{s.rows.map((d) => rowFor(d))}</ul>
+              </div>
+            ))
+          ) : (
+            <ul className="mt-3 flex flex-col gap-3">
+              {g.rows.map((d) => rowFor(d, d.scope ? scopeLabel(d.scope, titles) : undefined))}
+            </ul>
+          )}
         </details>
       ))}
     </section>

@@ -2,7 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
 import type { Decision } from '@/api/storyboards'
-import { DecisionRow, groupDecisions } from './DecisionLog'
+import { DecisionLog, DecisionRow } from './DecisionLog'
+import { groupDecisions, narrativeTitles } from './decisionGroups'
+import type { Storyboard } from '@/api/storyboards'
 
 const base: Decision = {
   id: 'banner', scope: '', question: 'q', plain_question: 'Rename the banner before Edesia sees it?',
@@ -45,6 +47,52 @@ describe('groupDecisions', () => {
   it('omits empty groups', () => {
     expect(groupDecisions([row({ id: 'a', review_ask: '', needed_by: '' })]).map((g) => g.title))
       .toEqual(['What the agent assumed'])
+  })
+})
+
+describe('scope', () => {
+  const titles = new Map([['supply-rutf', 'RUTF supply']])
+  const assumed = (over: Partial<Decision>) => row({ review_ask: '', needed_by: '', ...over })
+
+  it('splits what the agent assumed by scope: whole set first, then each demo by its title', () => {
+    const groups = groupDecisions([
+      assumed({ id: 'n1', scope: 'supply-rutf' }),
+      assumed({ id: 'w1', scope: '' }),
+      assumed({ id: 'u1', scope: 'unknown-slug' }),
+      assumed({ id: 'n2', scope: 'supply-rutf' }),
+    ], titles)
+    const sub = groups[0].byScope!
+    expect(sub.map((s) => s.label)).toEqual(['Whole set', 'RUTF supply', 'One demo'])
+    expect(sub.map((s) => s.rows.map((r) => r.id))).toEqual([['w1'], ['n1', 'n2'], ['u1']])
+  })
+
+  it('only the assumptions group is split by scope', () => {
+    const groups = groupDecisions([row({ id: 'r', scope: 'supply-rutf' })], titles)
+    expect(groups[0].byScope).toBeUndefined()
+  })
+
+  it('reads narrative titles off the board entries', () => {
+    const board = { acts: [{ anchor_id: 'act:1', title: 'I', prose: '', entries: [
+      { narrative_slug: 'supply-rutf', title: 'RUTF supply' }] }] } as unknown as Storyboard
+    expect(narrativeTitles(board).get('supply-rutf')).toBe('RUTF supply')
+  })
+
+  it('renders scope subheadings and a title tag on asks, never the slug', () => {
+    const board = {
+      slug: 'b', acts: [{ anchor_id: 'act:1', title: 'I', prose: '', entries: [
+        { narrative_slug: 'supply-rutf', title: 'RUTF supply' }] }],
+      decisions: [
+        row({ id: 'ask', scope: 'supply-rutf' }),
+        assumed({ id: 'w', scope: '', plain_question: 'Whole-set default' }),
+        assumed({ id: 'n', scope: 'supply-rutf', plain_question: 'Demo default' }),
+      ],
+    } as unknown as Storyboard
+    const { container } = render(<DecisionLog board={board} canEdit={false} />)
+    expect(screen.getByRole('heading', { name: 'Whole set' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'RUTF supply' })).toBeTruthy()
+    // The ask row carries the narrative's title as a tag; nothing shows the slug.
+    expect(screen.getAllByText('RUTF supply')).toHaveLength(2)
+    expect(container.textContent).not.toContain('supply-rutf')
   })
 })
 
