@@ -89,3 +89,21 @@ def test_the_canopy_web_deploy_role_may_pass_the_new_role():
     for app in ("ace-web", "connect-labs"):
         other = mod.policy_for(app, mod.APPS[app])
         assert ROLE not in str(other), app
+
+
+def test_the_canopy_web_deploy_role_may_log_in_to_public_ecr():
+    # deploy-labs.yml logs in to public ECR so the Dockerfile's public.ecr.aws
+    # base images pull authenticated (anonymous pulls hit 429 Data limit
+    # exceeded). The login needs both actions; neither takes a resource.
+    spec = importlib.util.spec_from_file_location("deploy_roles", AWS / "deploy_roles.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    pol = mod.policy_for("canopy-web", mod.APPS["canopy-web"])
+    stmt = {s["Sid"]: s for s in pol["Statement"]}["PublicEcrLoginTakesNoResource"]
+    assert set(stmt["Action"]) == {"ecr-public:GetAuthorizationToken", "sts:GetServiceBearerToken"}
+    assert stmt["Resource"] == "*"
+    # Read-only login: nothing that could push to a public repository.
+    assert not any(a.startswith("ecr-public:") and a != "ecr-public:GetAuthorizationToken"
+                   for s in pol["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"]))
+    workflow = (AWS.parent.parent / ".github/workflows/deploy-labs.yml").read_text()
+    assert "registry-type: public" in workflow

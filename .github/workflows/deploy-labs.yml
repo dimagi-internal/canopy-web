@@ -220,6 +220,19 @@ jobs:
 
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
+      # The Dockerfile's base images come from public.ecr.aws. Pulled anonymously
+      # they share a per-IP data quota with every other GitHub-hosted runner, and
+      # the build failed with `429 toomanyrequests: Data limit exceeded`.
+      # Authenticated pulls get a far higher limit. Fails OPEN: if the deploy
+      # role lacks ecr-public:GetAuthorizationToken / sts:GetServiceBearerToken
+      # (deploy/aws/deploy_roles.py `PublicEcrLoginTakesNoResource`, applied by
+      # hand), the build falls back to today's anonymous pull rather than stopping.
+      - name: Log in to public ECR (higher pull limit)
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+        continue-on-error: true
+        with:
+          registry-type: public
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build and push
