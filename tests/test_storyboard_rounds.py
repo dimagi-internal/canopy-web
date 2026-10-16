@@ -160,3 +160,16 @@ def test_people_count_ignores_blank_author_names(world):
     _note(world, author_name="Sophie")
     Feedback.objects.filter(author_name="Sophie").update(author_name="")
     assert board_rounds.summary(FeedbackRound.objects.get())["people_count"] == 0
+
+
+def test_round_payload_never_exposes_a_members_email(world):
+    pat = User.objects.create_user("pat@dimagi.com", "pat@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(workspace=world["ws"], user=pat,
+                                       role=WorkspaceMembership.EDITOR)
+    c = Client()
+    c.force_login(pat)
+    assert c.post("/api/storyboards/supply/rounds").status_code == 200
+    _note(world, client=c, body="from a nameless member")
+    rnd = Client().get(f"/api/storyboards/supply?t={world['token']}").json()["round"]
+    assert rnd["notes"] and "@" not in str(rnd)
+    assert rnd["notes"][0]["author_name"] == "pat" and rnd["opened_by"] == "pat"

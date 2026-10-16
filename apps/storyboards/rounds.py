@@ -73,13 +73,19 @@ def check_anchor(board, anchor_id: str) -> None:
     # A bare id is a scene id — the convention NarrativeReviewPage already uses.
 
 
-def _display_name(user) -> str:
-    return user.get_full_name() or user.first_name or user.email or user.username
+def public_name(user) -> str:
+    """A member's name as other readers may see it — never an email address."""
+    for candidate in (user.get_full_name(), user.first_name, user.username):
+        candidate = (candidate or "").strip()
+        if candidate and "@" not in candidate:
+            return candidate
+    local = (user.email or "").split("@", 1)[0].strip()
+    return local or "A teammate"
 
 
 def author_for(user, payload_name: str, *, member: bool, in_round: bool) -> str:
     if member and getattr(user, "is_authenticated", False):
-        return _display_name(user)
+        return public_name(user)
     name = (payload_name or "").strip()
     if in_round and not name:
         raise RoundError(422, "Tell us your name so the others in this round know who said it.")
@@ -108,7 +114,7 @@ def summary(rnd) -> dict:
         "number": rnd.number,
         "state": rnd.state,
         "opened_at": rnd.opened_at.isoformat(),
-        "opened_by": (rnd.opened_by.get_full_name() or rnd.opened_by.email) if rnd.opened_by else "",
+        "opened_by": public_name(rnd.opened_by) if rnd.opened_by else "",
         "closed_at": rnd.closed_at.isoformat() if rnd.closed_at else None,
         "close_note": rnd.close_note,
         "pinned_versions": rnd.pinned_versions,
