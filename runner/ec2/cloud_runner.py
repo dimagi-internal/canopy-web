@@ -4606,9 +4606,11 @@ def _encode_project_dir(cwd: pathlib.Path) -> str:
     contains an underscore. Byte-identical to
     packages/canopy_transcript/canopy_transcript/paths.py::encode_project_dir —
     keep the two in step (this file ships to the box as a single file, which is
-    why the duplication exists).
+    why the duplication exists). '\\' and ':' are Claude Code's Windows
+    separators (failure investigation 6, 2026-10-16 — see paths.py).
     """
-    return str(cwd).replace("/", "-").replace(".", "-").replace("_", "-")
+    return (str(cwd).replace("\\", "-").replace(":", "-")
+            .replace("/", "-").replace(".", "-").replace("_", "-"))
 
 
 def _adopt_resume_transcript(cwd: pathlib.Path, session_id: str, agent_slug: str) -> bool:
