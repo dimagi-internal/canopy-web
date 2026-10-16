@@ -464,7 +464,7 @@ def _credential_check() -> None:
     if n == 0:
         _set_check("claude.credentials", "fail",
                    "no Claude credential staged: this box cannot run a turn. Sign in with "
-                   "Claude (or get a backup token) on the runner's credentials.")
+                   "Claude (or create a long-lived token) on the runner's credentials.")
     elif n == 1:
         _set_check("claude.credentials", "warn",
                    "one Claude credential: a usage cap stops every agent here with nothing to fail over to")
@@ -481,7 +481,7 @@ def _credential_check() -> None:
                    else "signed in on this box — claude.ai connectors available")
     else:
         _set_check("claude.login", "warn",
-                   "not signed in on this box: turns run on backup tokens, which cannot use "
+                   "not signed in on this box: turns run on long-lived tokens, which cannot use "
                    "claude.ai connectors (Claude Docs). Sign in with Claude on the runner's credentials.")
 
 
@@ -3599,8 +3599,8 @@ def _reload_claude_credentials() -> bool:
 
 #: What a box waiting for a Claude credential says on the runner page.
 WAITING_FOR_CLAUDE_NOTE = (
-    "needs a Claude sign-in: no backup token, and no working Claude login on this "
-    "box. Sign in with Claude (or get a backup token) on the runner's credentials.")
+    "needs a Claude sign-in: no long-lived token, and no working Claude login on this "
+    "box. Sign in with Claude (or create a long-lived token) on the runner's credentials.")
 
 
 def _beat_while_waiting(runner_id: str) -> None:

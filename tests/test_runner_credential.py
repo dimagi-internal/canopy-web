@@ -199,7 +199,7 @@ def test_the_last_backup_token_cannot_be_removed(client, runner):
     last = client.post(_cred_url(runner), data={"claude_token_secondary": ""},
                        content_type="application/json")
     assert last.status_code == 422
-    assert "last backup token" in last.content.decode()
+    assert "last long-lived token" in last.content.decode()
     both = client.post(_cred_url(runner), data={"claude_token": "", "claude_token_secondary": ""},
                        content_type="application/json")
     assert both.status_code == 422
