@@ -440,14 +440,101 @@ def test_member_edit_without_csrf_token_is_403(board, owner):
     assert resp.status_code == 403
 
 
-def test_brief_only_patch_keeps_existing_rows(board, member):
-    dsvc.publish(board, [_row()])
+def test_brief_only_patch_keeps_ruled_rows_and_drops_unruled_ones(board, member, owner):
+    # The legacy lists are the old publisher's whole decision set: a ruled row
+    # stays, an unruled row it did not send goes (the same as publish()).
+    ruled, _ = dsvc.publish(board, [_row(), _row(id="other")])
+    dsvc.apply_edit(ruled, action="confirm", by_user=owner)
     resp = member.patch(f"/api/w/connect/storyboards/{board.slug}",
                         {"brief": {"audience": "X", "assumptions": ["Y holds."]}},
                         content_type="application/json")
     assert resp.status_code == 200, resp.content
     ids = [d["id"] for d in resp.json()["decisions"]]
-    assert "banner" in ids and len(ids) == 2
+    assert "banner" in ids and "other" not in ids and len(ids) == 2
+
+
+def test_legacy_resend_after_a_ruling_keeps_the_ruling_and_applies_the_patch(ws, member, owner):
+    url = "/api/w/connect/storyboards/"
+    member.post(url, {"slug": "s11", "title": "S11"}, content_type="application/json")
+    member.patch(f"{url}s11", {"brief": LEGACY}, content_type="application/json")
+    board = Storyboard.objects.get(slug="s11")
+    div = board.decisions.get(key__startswith="divergence-")
+    dsvc.apply_edit(div, action="write_in", value="Keep cut 2", by_user=owner)
+    r = member.patch(f"{url}s11", {"title": "Renamed", "brief": LEGACY}, content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert r.json()["title"] == "Renamed"
+    (d,) = [d for d in r.json()["decisions"] if d["id"] == div.key]
+    assert d["value"] == "Keep cut 2" and d["status"] == "overridden" and d["decided_by"] == "Jonathan"
+    assert len(r.json()["decisions"]) == 3
+
+
+def test_reworded_legacy_assumption_replaces_the_unruled_row(ws, member):
+    url = "/api/w/connect/storyboards/"
+    member.post(url, {"slug": "s12", "title": "S12"}, content_type="application/json")
+    first = member.patch(f"{url}s12", {"brief": LEGACY}, content_type="application/json").json()
+    (old_id,) = [d["id"] for d in first["decisions"] if d["id"].startswith("assumption-")]
+    reworded = {**LEGACY, "assumptions": ["SQ-LNS is absent from the demo data."]}
+    r = member.patch(f"{url}s12", {"brief": reworded}, content_type="application/json")
+    assert r.status_code == 200, r.content
+    ids = [d["id"] for d in r.json()["decisions"]]
+    assert old_id not in ids
+    assert any(d["question"] == "SQ-LNS is absent from the demo data." for d in r.json()["decisions"])
+    assert len(ids) == 3
+
+
+def test_overlong_id_is_422(ws, member):
+    resp = member.post("/api/w/connect/storyboards/",
+                       {"slug": "s13", "title": "S13", "decisions": [_row(id="a" * 130)]},
+                       content_type="application/json")
+    assert resp.status_code == 422
+    assert not Storyboard.objects.filter(slug="s13").exists()
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"id": "Not_A_Slug"},
+        {"supersedes": "has spaces"},
+        {"supersedes": "banner"},
+        {"scope": "s" * 201},
+        {"options": [], "recommended": "r" * 301},
+        {"options": ["x" * 301], "recommended": "x" * 301},
+    ],
+)
+def test_validate_enforces_column_bounds_and_slugs(over):
+    with pytest.raises(dsvc.DecisionInvalid):
+        dsvc.validate(_row(**over))
+
+
+def test_overlong_write_in_is_422(board, member):
+    dsvc.publish(board, [_row()])
+    resp = member.post(f"/api/storyboards/{board.slug}/decisions/banner/edit",
+                       {"action": "write_in", "value": "w" * 301}, content_type="application/json")
+    assert resp.status_code == 422
+
+
+def test_legacy_ids_are_valid_slugs_after_truncation():
+    # slugify keeps "_"; with these prefixes the 120-char cut lands on a hyphen
+    # of "ab-ab-…", and the cut before a "-2" suffix on one of "abc-abc-…".
+    cases = [
+        ({"assumptions": ["Uses stock_on_hand weekly"]}, ""),
+        ({"assumptions": ["ab " * 40]}, "p" * 58),
+        ({"assumptions": ["abc " * 30, "abc " * 30]}, "q" * 50),
+    ]
+    for brief, prefix in cases:
+        rows = dsvc.from_legacy_brief(brief, prefix=prefix)
+        assert len({r["id"] for r in rows}) == len(rows)
+        for r in rows:
+            dsvc.validate(r)
+
+
+def test_a_narrative_in_two_acts_yields_its_caveat_rows_once(board, member, monkeypatch):
+    from apps.storyboards import services
+
+    row = dsvc.from_narrative_caveats({"assumptions": ["X holds."]}, "n1")[0]
+    monkeypatch.setattr(services, "_narrative_caveat_rows", lambda b: [row, dict(row)])
+    body = member.get(f"/api/w/connect/storyboards/{board.slug}").json()
+    assert [d["id"] for d in body["decisions"]] == [row["id"]]
 
 
 def test_board_read_includes_narrative_caveats_read_only(board, member, monkeypatch):

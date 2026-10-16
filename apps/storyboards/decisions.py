@@ -10,6 +10,8 @@ Request-free on purpose: the publish routes, the edit route, the round close
 
 from __future__ import annotations
 
+import re
+
 from django.db import transaction
 from django.utils import timezone
 from django.utils.text import slugify
@@ -69,6 +71,16 @@ _SNAPSHOT = (
 )
 
 
+#: A stored row's id / supersedes: lowercase kebab, as `key` is a SlugField.
+_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+#: StoryboardDecision column limits. A row over one passes SQLite (the test
+#: database) and dies in Postgres as a DataError (500), so validate checks them.
+_KEY_MAX = 120  # key, supersedes, superseded_by
+_SCOPE_MAX = 200
+_VALUE_MAX = 300  # recommended, override — and so every option a person may pick
+_NAME_MAX = 200  # decided_by_name
+
+
 class DecisionInvalid(ValueError):  # noqa: N818 - name fixed by the plan's interface
     """The row breaks the contract (422)."""
 
@@ -94,8 +106,31 @@ def _clean_str(raw: dict, name: str) -> str:
     return v.strip()
 
 
-def validate(raw: dict) -> dict:
-    """One publisher row, normalized. Raises DecisionInvalid naming the field."""
+def _check_bounds(row: dict) -> None:
+    """What the columns can hold. Only for rows that will be stored: a read-time
+    narrative caveat is never saved and its id carries the narrative slug."""
+    rid = row["id"]
+    for name in ("id", "supersedes"):
+        v = row[name]
+        if len(v) > _KEY_MAX:
+            raise DecisionInvalid(f"{rid[:_KEY_MAX]}: {name} is longer than {_KEY_MAX} characters")
+        if v and not _ID_RE.match(v):
+            raise DecisionInvalid(f"{rid}: {name} must be lowercase words joined by hyphens")
+    if row["supersedes"] == rid:
+        raise DecisionInvalid(f"{rid}: a row cannot supersede itself")
+    for name, limit in (("scope", _SCOPE_MAX), ("recommended", _VALUE_MAX), ("override", _VALUE_MAX)):
+        if len(row[name]) > limit:
+            raise DecisionInvalid(f"{rid}: {name} is longer than {limit} characters")
+    for o in row["options"]:
+        if len(o) > _VALUE_MAX:
+            raise DecisionInvalid(f"{rid}: an option is longer than {_VALUE_MAX} characters")
+
+
+def validate(raw: dict, *, stored: bool = True) -> dict:
+    """One publisher row, normalized. Raises DecisionInvalid naming the field.
+
+    ``stored=False`` skips the column checks, for read-time rows that are only
+    rendered, never saved."""
     unknown = set(raw) - set(_PUBLISHABLE)
     if unknown & set(_PERSON_OWNED):
         raise DecisionInvalid(
@@ -139,6 +174,8 @@ def validate(raw: dict) -> dict:
         raise DecisionInvalid(f"{row['id']}: a deferred row needs revisit_when")
     if row["status"] in HUMAN_STATUSES:
         raise DecisionInvalid(f"{row['id']}: only a person's edit can make a row {row['status']}")
+    if stored:
+        _check_bounds(row)
     return row
 
 
@@ -149,12 +186,12 @@ def publishable(row) -> dict:
         "id": row.key,
         **{k: getattr(row, k) for k in _PUBLISHABLE if k != "id"},
         "status": row.status if row.status not in HUMAN_STATUSES else "ai-default",
-        "recommended": value_of(row) if _is_ruled(row) else row.recommended,
+        "recommended": value_of(row) if is_ruled(row) else row.recommended,
         "override": "",
     }
 
 
-def _is_ruled(row) -> bool:
+def is_ruled(row) -> bool:
     return row.status in HUMAN_STATUSES or row.confirmed
 
 
@@ -179,14 +216,14 @@ def publish(board, rows: list[dict]):
     superseded = {r["supersedes"]: r["id"] for r in clean if r["supersedes"]}
 
     for key, old in existing.items():
-        if key not in seen and _is_ruled(old) and key not in superseded:
+        if key not in seen and is_ruled(old) and key not in superseded:
             raise DecisionConflict(f"{key}: a person ruled on this row; supersede it instead of dropping it")
 
     out = []
     for pos, r in enumerate(clean):
         old = existing.get(r["id"])
         incoming_value = r["override"] or r["recommended"]
-        if old is not None and _is_ruled(old):
+        if old is not None and is_ruled(old):
             if incoming_value != value_of(old) and r["id"] not in superseded:
                 raise DecisionConflict(
                     f"{r['id']}: a person ruled {value_of(old)!r}; a publish may not change it "
@@ -289,12 +326,16 @@ def apply_edit(row, *, action: str, value: str = "", reasoning: str = "", by_use
             if match is None:
                 if len(value.split()) > _MAX_OPTION_WORDS:
                     raise DecisionInvalid(f"a write-in is at most {_MAX_OPTION_WORDS} words")
+                if len(value) > _VALUE_MAX:
+                    raise DecisionInvalid(f"a write-in is at most {_VALUE_MAX} characters")
                 row.options = [*row.options, value]
                 match = value
             value, action = match, "pick"
         if action == "pick":
             if value not in row.options:
                 raise DecisionInvalid(f"{value!r} is not one of this decision's options")
+            if len(value) > _VALUE_MAX:
+                raise DecisionInvalid(f"that option is longer than {_VALUE_MAX} characters; write in a shorter one")
             if value == row.recommended:
                 action = "confirm"
         if action == "confirm":
@@ -307,7 +348,7 @@ def apply_edit(row, *, action: str, value: str = "", reasoning: str = "", by_use
             row.status = "overridden"
         row.override_reasoning = (reasoning or "").strip()
         row.decided_by = user
-        row.decided_by_name = name
+        row.decided_by_name = name[:_NAME_MAX]
         row.decided_by_verified = user is not None
         row.decided_at = timezone.now()
         row.history = [before, *row.history]
@@ -358,18 +399,18 @@ def serialize(row, *, editable: bool = True) -> dict:
 LEGACY_BRIEF_KEYS = ("assumptions", "divergences", "open_questions")
 
 
-_KEY_MAX = 120  # StoryboardDecision.key
-_RECOMMENDED_MAX = 300  # StoryboardDecision.recommended
-_SCOPE_MAX = 200  # StoryboardDecision.scope
 _OPTION_MAX_CHARS = 120
 
 
 def _key(prefix: str, text: str, taken: set[str]) -> str:
-    base = (f"{prefix}-{slugify(text)[:60]}".rstrip("-") or prefix)[:_KEY_MAX]
+    # slugify keeps underscores and a cut can end on a hyphen; neither passes
+    # _ID_RE, so fold underscores in and strip hyphens after every cut.
+    words = re.sub(r"[-_]+", "-", slugify(text)).strip("-")[:60].strip("-")
+    base = (f"{prefix}-{words}" if words else prefix)[:_KEY_MAX].rstrip("-")
     key, n = base, 2
     while key in taken:
         suffix = f"-{n}"
-        key, n = f"{base[: _KEY_MAX - len(suffix)]}{suffix}", n + 1
+        key, n = f"{base[: _KEY_MAX - len(suffix)].rstrip('-')}{suffix}", n + 1
     taken.add(key)
     return key
 
@@ -466,7 +507,7 @@ def from_legacy_brief(brief: dict, *, taken: set[str] | None = None, prefix: str
                 # Spec: a divergence's recommended is its resolution. Too long
                 # for an option label, it is still the recommendation (free text
                 # is allowed when options is empty), cut to the column.
-                "recommended": opts[0] if opts else resolution[:_RECOMMENDED_MAX],
+                "recommended": opts[0] if opts else resolution[:_VALUE_MAX],
                 "reasoning": resolution if not opts else "",
                 "evidence_basis": "conflicting",
                 "conflict_signals": [

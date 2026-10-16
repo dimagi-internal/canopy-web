@@ -146,10 +146,15 @@ def board_decisions(board: Storyboard) -> list[dict]:
     taken = {d["id"] for d in stored}
     read_only = []
     for raw in _narrative_caveat_rows(board):
+        # First wins: a narrative carried in two acts yields the same rows
+        # twice, and a repeated id is a key collision on the page.
         if raw["id"] in taken:
             continue
+        taken.add(raw["id"])
         try:
-            clean = decision_rows.validate(raw)
+            # Never stored, so the column checks do not apply (the id carries
+            # the narrative slug, which need not be kebab-case).
+            clean = decision_rows.validate(raw, stored=False)
         except decision_rows.DecisionInvalid as e:
             # A malformed read-time caveat must never 500 the public read.
             logger.warning("skipping narrative caveat row on %s: %s", board.slug, e)

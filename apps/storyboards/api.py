@@ -177,12 +177,20 @@ def _write_decisions(board: Storyboard, payload) -> None:
     if payload.brief is not None:
         brief_in = payload.brief.model_dump(exclude_defaults=True)
         legacy = decision_rows.from_legacy_brief(brief_in)
-        if legacy:
-            if rows is None:  # keep what is on the board, add the converted lists
-                rows = [decision_rows.publishable(d) for d in board.decisions.all()]
-            # Ids are deterministic, so a re-sent list lands on the row it became
-            # on the first write; the converted row wins (publish still 409s on
-            # a ruled row whose value it would change).
+        if legacy and rows is None:
+            # An old publisher sends its whole list each time, so the lists ARE
+            # its decision set: an unruled row it no longer sends is dropped
+            # (else a reworded item piles up as a new row). A row a person ruled
+            # on is kept as it stands, winning over its re-sent text — the old
+            # publisher cannot supersede, and must never be 409'd for re-sending.
+            by_id = {r["id"]: r for r in legacy}
+            for d in board.decisions.all():
+                if decision_rows.is_ruled(d):
+                    by_id[d.key] = decision_rows.publishable(d)
+            rows = list(by_id.values())
+        elif legacy:
+            # Both shapes in one write: the converted row wins (publish still
+            # 409s on a ruled row whose value it would change).
             rows = list(({r["id"]: r for r in rows} | {r["id"]: r for r in legacy}).values())
         board.brief = {k: v for k, v in brief_in.items() if k not in decision_rows.LEGACY_BRIEF_KEYS}
         board.save(update_fields=["brief", "updated_at"])
