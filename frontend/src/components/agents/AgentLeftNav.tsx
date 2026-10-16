@@ -38,6 +38,9 @@ export function AgentLeftNav({ agent, waiting }: { agent: AgentDetailOut; waitin
     { to: 'mail', label: 'Mail' },
     // Skills carries its own history.
     { to: 'skills', label: 'Skills' },
+    // Cloud machines and pools it may lease, and the workspace admin's grant
+    // of each — its own entry so the grant has a URL to send an admin.
+    { to: 'capabilities', label: 'Capabilities' },
     // Last, and its own entry: every control that CONFIGURES the agent — owner,
     // admins, callers, turn mode, Slack, runners, credentials. They were
     // sections of Overview, a page named after a dashboard.

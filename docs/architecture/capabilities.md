@@ -178,6 +178,11 @@ inputs from the `s3_uri`s the uploads route returned.
 
 ## 3. Allow it (a workspace admin)
 
+On the web: the agent's **Capabilities** page,
+`https://canopy.dimagi.com/w/<workspace>/agents/<slug>/capabilities` — Grant (optionally
+lowering the limits), Limits, Revoke; members without `integrations` see it read-only.
+Through the API:
+
 `PUT /api/capabilities/grants {"agent", "capability", "max_concurrent"?, "max_lease_s"?}`
 (`integrations`: admin or owner of the agent's workspace). Without a grant an acquire
 is 403 and the message names this call. A grant may only lower the manifest's limits;

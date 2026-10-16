@@ -429,6 +429,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Scrub the timeline or play it back', 'Open a group, skill or commit', 'Sync from GitHub'],
   },
   {
+    path: '/w/:workspace/agents/:slug/capabilities',
+    title: 'Agent capabilities',
+    audience: 'Workspace members (granting and revoking is for workspace admins)',
+    what: "The cloud capabilities this agent declares — an ephemeral EC2 machine (its region, stack and limits) or a pool of named slots — whether this workspace grants each one, with the grant's limits, who granted it and when, and the leases holding or waiting for a machine now. Retired capabilities are collapsed below. The agent can lease a capability only once it is granted.",
+    needsFirst: "A capability published by the agent's deploy (canopy-runtime publish-capabilities).",
+    actions: ['Grant a capability (admins)', 'Lower its max concurrency or lease length (admins)', 'Revoke a grant, releasing its live leases (admins)', 'See live leases'],
+  },
+  {
     path: '/w/:workspace/agents/:slug/settings',
     title: 'Agent settings',
     audience: "The agent's owner and admins (some controls are workspace-owner only)",
