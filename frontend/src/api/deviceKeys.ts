@@ -62,3 +62,33 @@ export async function getCredentialReads(slug: string, name: string): Promise<Ag
   })
   return Array.from(unwrap(res, 'getCredentialReads')) as AgentCredentialReadOut[]
 }
+
+// ---- Canopy Vault Phase 1b (canopy-web#1549): read alerts + canopy-pat rotation ----
+
+export type AgentCredentialAlertOut = Schemas['AgentCredentialAlertOut']
+export type PatRotationOut = Schemas['PatRotationOut']
+
+/** Read-anomaly alerts on this agent's secrets, newest first. */
+export async function getCredentialAlerts(slug: string): Promise<AgentCredentialAlertOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/credential-alerts', { params: { path: { slug } } })
+  return Array.from(unwrap(res, 'getCredentialAlerts')) as AgentCredentialAlertOut[]
+}
+
+export async function getPatRotation(slug: string): Promise<PatRotationOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/pat-rotation', { params: { path: { slug } } })
+  return unwrap(res, 'getPatRotation') as PatRotationOut
+}
+
+export async function setPatRotation(slug: string, enabled: boolean, periodDays: number): Promise<PatRotationOut> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/pat-rotation', {
+    params: { path: { slug } },
+    body: { enabled, period_days: periodDays },
+  })
+  return unwrap(res, 'setPatRotation') as PatRotationOut
+}
+
+/** Rotate now. Needs a passkey step-up, which `apiV2` prompts for and retries. */
+export async function rotatePatNow(slug: string): Promise<PatRotationOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/pat-rotation/rotate', { params: { path: { slug } } })
+  return unwrap(res, 'rotatePatNow') as PatRotationOut
+}

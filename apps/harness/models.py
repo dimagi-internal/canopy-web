@@ -1212,17 +1212,26 @@ class RunnerDeviceKey(models.Model):
 
     Identified by `jkt`, the RFC 7638 thumbprint, which is unique: re-posting the
     same public key is idempotent, and one key never belongs to two runners.
+
+    `kind=aws-iam` (Phase 1b, canopy-web#1549) is an EC2 box's instance ROLE
+    rather than a key: it has no JWK, stores `role_arn` (canonical, path-free)
+    and its `jkt` is the sha256 of that ARN. It proves itself with a signed
+    `sts:GetCallerIdentity` request (`apps/harness/aws_iam_proof.py`).
     """
 
-    SECURE_ENCLAVE, TPM, SOFTWARE = "secure-enclave", "tpm", "software"
-    KIND_CHOICES = [(SECURE_ENCLAVE, "Secure Enclave"), (TPM, "TPM"), (SOFTWARE, "Software")]
+    SECURE_ENCLAVE, TPM, SOFTWARE, AWS_IAM = "secure-enclave", "tpm", "software", "aws-iam"
+    KIND_CHOICES = [(SECURE_ENCLAVE, "Secure Enclave"), (TPM, "TPM"), (SOFTWARE, "Software"),
+                    (AWS_IAM, "AWS IAM role")]
     PENDING, ACTIVE, REVOKED = "pending", "active", "revoked"
     STATUS_CHOICES = [(PENDING, "Pending approval"), (ACTIVE, "Active"), (REVOKED, "Revoked")]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="device_keys")
-    #: The public JWK, reduced to its required members (kty, crv, x, y).
-    public_jwk = models.JSONField()
+    #: The public JWK, reduced to its required members (kty, crv, x, y). Empty
+    #: for `aws-iam`, which has no key.
+    public_jwk = models.JSONField(default=dict, blank=True)
+    #: `aws-iam` only: the IAM role, as `arn:aws:iam::<acct>:role/<name>`.
+    role_arn = models.CharField(max_length=300, blank=True, default="")
     jkt = models.CharField(max_length=64, unique=True)
     kind = models.CharField(max_length=16, choices=KIND_CHOICES)
     label = models.CharField(max_length=120, blank=True, default="")

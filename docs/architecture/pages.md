@@ -119,7 +119,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
     granted/revoked on the row); who can reach it (callers + Slack); how it
     runs (turn mode + runners and source rules — see
     [`runners.md`](runners.md)); Credentials (secrets, the agent's own
-    1Password vault + service account, GitHub delegation).
+    1Password vault + service account, GitHub delegation; for its admins,
+    device keys, canopy-pat rotation, read alerts and per-credential read
+    history).
   - Redirects (query kept): `work`, `items` → `tasks`; `inbox`, `needs-you` →
     `tasks?waiting=me`; `overview`, `work-products` → `projects`; `syncs` →
     `turns#status-reports`; `history` → `skills/history`; `credentials` →

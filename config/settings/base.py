@@ -651,6 +651,14 @@ CAPABILITY_SWEEP_INTERVAL_S = env.int("CAPABILITY_SWEEP_INTERVAL_S", default=30)
 # CANOPY_IDENTITY_BASE_URL (canopy.dimagi.com in production), else "canopy-web".
 CAPABILITY_BROKER_ID = env("CAPABILITY_BROKER_ID", default="")
 
+# --- Canopy Vault Phase 1b (canopy-web#1549) ---
+# Seconds between the canopy-pat rotation's off-request ticks
+# (apps/agents/pat_rotation_scheduler.py, ASGI lifespan; deduplicated fleet-wide). 0 = off.
+CANOPY_PAT_ROTATION_TICK_S = env.int("CANOPY_PAT_ROTATION_TICK_S", default=900)
+# A read-anomaly alert (apps/agents/vault_alerts.py) fires when one agent's secrets
+# are resolved more than this many times inside a 5-minute window.
+CANOPY_VAULT_READ_BURST_LIMIT = env.int("CANOPY_VAULT_READ_BURST_LIMIT", default=50)
+
 # --- Content retention (apps/retention) ---
 # OFF. When true, the runner heartbeat purges chat, turn and shared-transcript
 # content past its RetentionRule's keep_days, at most hourly. Off means nothing

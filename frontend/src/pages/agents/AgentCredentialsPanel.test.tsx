@@ -9,7 +9,7 @@
 // so the screen looked right to whoever built it and was empty for every agent
 // waiting to be registered. Reported 2026-09-23: "I don't even see where the
 // 1pass service account goes".
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -45,13 +45,25 @@ vi.mock('@/api/agents', () => ({
 }))
 
 // Device keys + the read log have their own tests (DeviceKeysTable.test.tsx).
+const { getCredentialAlerts, getPatRotation, setPatRotation, rotatePatNow } = vi.hoisted(() => ({
+  getCredentialAlerts: vi.fn(),
+  getPatRotation: vi.fn(),
+  setPatRotation: vi.fn(),
+  rotatePatNow: vi.fn(),
+}))
 vi.mock('@/api/deviceKeys', () => ({
   getAgentDeviceKeys: () => Promise.resolve([]),
   setDeviceBinding: vi.fn(),
   getCredentialReads: () => Promise.resolve([]),
   approveRunnerDeviceKey: vi.fn(),
   revokeRunnerDeviceKey: vi.fn(),
+  getCredentialAlerts, getPatRotation, setPatRotation, rotatePatNow,
 }))
+
+const ROTATION = {
+  enabled: false, period_days: 30, last_rotated_at: null, next_due_at: null,
+  enabled_by_email: '', history: [],
+}
 
 const { AgentCredentialsPanel } = await import('./AgentCredentialsPanel')
 
@@ -65,9 +77,62 @@ function show() {
   )
 }
 
+beforeEach(() => {
+  getCredentialAlerts.mockResolvedValue([])
+  getPatRotation.mockResolvedValue(ROTATION)
+})
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+})
+
+describe('AgentCredentialsPanel — Vault Phase 1b (canopy-web#1549)', () => {
+  it('turns canopy-pat rotation on with the chosen period', async () => {
+    getAgentCredentialStatus.mockResolvedValue([])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 0, locatable: 0 })
+    setPatRotation.mockResolvedValue({ ...ROTATION, enabled: true, period_days: 14,
+                                       next_due_at: '2026-11-01T00:00:00Z', enabled_by_email: 'jj@dimagi.com' })
+    show()
+    const days = (await screen.findByTestId('pat-rotation-days')) as HTMLInputElement
+    fireEvent.change(days, { target: { value: '14' } })
+    fireEvent.click(screen.getByTestId('pat-rotation-enabled'))
+    await waitFor(() => expect(setPatRotation).toHaveBeenCalledWith('echo', true, 14))
+    await waitFor(() =>
+      expect(screen.getByTestId('pat-rotation-summary').textContent).toContain('on by jj@dimagi.com'))
+  })
+
+  it('lists read alerts, and shows those naming a ref in its read history', async () => {
+    getAgentCredentialStatus.mockResolvedValue([
+      { name: 'canopy-pat', declared: true, set: true, source: 'canopy-web', updated_at: null,
+        last_read_at: '2026-10-16T00:00:00Z', read_count: 3 },
+    ])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 1, locatable: 0 })
+    getCredentialAlerts.mockResolvedValue([
+      { id: 1, kind: 'no-turn', detail: 'a box read outside a turn', refs: ['canopy-pat'], user_email: '',
+        runner: '', runner_name: '', turn_id: '', occurrences: 4, notified: true,
+        created_at: '2026-10-16T00:00:00Z', last_seen_at: '2026-10-16T00:10:00Z' },
+    ])
+    show()
+    const section = await screen.findByTestId('agent-credential-alerts')
+    expect(within(section).getByText('Read outside a turn')).toBeTruthy()
+    expect(within(section).getByText('4×')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('cred-reads-canopy-pat'))
+    expect(await screen.findByTestId('cred-alerts-canopy-pat')).toBeTruthy()
+  })
+
+  it('shows neither to someone who cannot edit', async () => {
+    getAgentCredentialStatus.mockResolvedValue([])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 0, locatable: 0 })
+    render(
+      <MemoryRouter>
+        <AgentCredentialsPanel agent={AGENT} canEdit={false} />
+      </MemoryRouter>,
+    )
+    await screen.findByTestId('agent-credentials')
+    expect(screen.queryByTestId('agent-pat-rotation')).toBeNull()
+    expect(getCredentialAlerts).not.toHaveBeenCalled()
+  })
 })
 
 describe('AgentCredentialsPanel', () => {

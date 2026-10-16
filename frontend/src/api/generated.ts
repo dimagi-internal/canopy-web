@@ -3797,6 +3797,18 @@ export interface paths {
          *     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
          *     an ACTIVE runner device key on a runner this agent routes to or one its
          *     owner owns. Otherwise: 401 `{"error": "device_proof_required"}`.
+         *     An EC2 cloud runner proves its instance role instead, in
+         *     `X-Canopy-Aws-Proof`: base64 JSON `{method, url, headers, body}` of a
+         *     SigV4-signed, unsent `sts:GetCallerIdentity` for `https://sts.amazonaws.com/`
+         *     whose signed headers include `X-Canopy-Proof-Htu` (this URL) and
+         *     `X-Canopy-Proof-Iat` (±120 s); single-use. canopy-web sends it to the pinned
+         *     STS endpoint and accepts the returned role if an ACTIVE `aws-iam` device key
+         *     for it sits on a runner this agent routes to.
+         *
+         *     **Alerts.** With `credential_source` `canopy-web`, the agent's owner is told
+         *     (email + push, at most once per kind per hour) of a box read (`via`
+         *     runner) with no `X-Canopy-Turn-Id`, a read of an undeclared ref, a burst of
+         *     reads, or a refusal for a bad or missing device proof.
          *
          *     **Read log.** Every ref handed out is recorded with the caller, the runner
          *     when known (the proving device key's runner, else `X-Canopy-Runner: <runner
@@ -4053,6 +4065,82 @@ export interface paths {
         readonly get: operations["agent_device_keys"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/credential-alerts": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read-anomaly alerts on this agent's secrets
+         * @description Canopy Vault (canopy-web#1549), newest first: reads with no turn id by
+         *     someone not the owner or an admin, reads of undeclared refs, bursts, and
+         *     resolves refused for a bad or missing device proof. At most one per kind
+         *     per hour (`occurrences` counts the rest). The agent's owner or an admin.
+         */
+        readonly get: operations["agent_credential_alerts"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/pat-rotation": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This agent's canopy-pat rotation: setting, next due, history
+         * @description Never a token. The agent's owner or an admin.
+         */
+        readonly get: operations["get_pat_rotation"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Turn automatic canopy-pat rotation on or off
+         * @description Canopy Vault (canopy-web#1549). When on, every `period_days` (default
+         *     30) canopy-web mints a new token for the agent's own canopy login, writes
+         *     it to the agent's `canopy-pat` credential (a runner picks it up at its next
+         *     `canopy cred sync`), keeps the old token valid for 24 h and then revokes it.
+         *     Turning it on needs the agent to have its own login and a stored
+         *     `canopy-pat`, and — when that login has ever signed in interactively — a
+         *     workspace owner (422/403 otherwise). The owner or an admin.
+         */
+        readonly patch: operations["set_pat_rotation"];
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/pat-rotation/rotate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Rotate this agent's canopy-pat now
+         * @description The same rotation the schedule does, now, whether or not rotation is on:
+         *     a new token in `canopy-pat`, the old one valid for 24 h then revoked. It
+         *     changes a secret, so from a browser it needs a fresh passkey step-up (403
+         *     `step_up_required`); a token may call it. The owner or an admin.
+         */
+        readonly post: operations["rotate_pat_now"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -17240,12 +17328,17 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            readonly kind: "secure-enclave" | "tpm" | "software";
+            readonly kind: "secure-enclave" | "tpm" | "software" | "aws-iam";
             /**
              * Label
              * @default
              */
             readonly label: string;
+            /**
+             * Role Arn
+             * @default
+             */
+            readonly role_arn: string;
             /**
              * Status
              * @enum {string}
@@ -17272,6 +17365,132 @@ export interface components {
              * @default false
              */
             readonly can_manage: boolean;
+        };
+        /**
+         * AgentCredentialAlertOut
+         * @description A read of the agent's secrets that looked wrong (canopy-web#1549). At
+         *     most one per kind per hour; `occurrences` counts repeats inside it.
+         */
+        readonly AgentCredentialAlertOut: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "no-turn" | "undeclared-ref" | "burst" | "device-proof";
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /**
+             * Refs
+             * @default []
+             */
+            readonly refs: readonly string[];
+            /**
+             * User Email
+             * @default
+             */
+            readonly user_email: string;
+            /**
+             * Runner
+             * @default
+             */
+            readonly runner: string;
+            /**
+             * Runner Name
+             * @default
+             */
+            readonly runner_name: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Occurrences
+             * @default 1
+             */
+            readonly occurrences: number;
+            /**
+             * Notified
+             * @default false
+             */
+            readonly notified: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Last Seen At
+             * Format: date-time
+             */
+            readonly last_seen_at: string;
+        };
+        /** PatRotationEventOut */
+        readonly PatRotationEventOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "rotated" | "failed";
+            /** Trigger */
+            readonly trigger: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Revoke After */
+            readonly revoke_after?: string | null;
+            /** Old Revoked At */
+            readonly old_revoked_at?: string | null;
+        };
+        /**
+         * PatRotationOut
+         * @description The agent's canopy-pat rotation: the setting, when it is next due, and
+         *     its recent rotations. Never a token.
+         */
+        readonly PatRotationOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Period Days */
+            readonly period_days: number;
+            /** Last Rotated At */
+            readonly last_rotated_at?: string | null;
+            /** Next Due At */
+            readonly next_due_at?: string | null;
+            /**
+             * Enabled By Email
+             * @default
+             */
+            readonly enabled_by_email: string;
+            /**
+             * History
+             * @default []
+             */
+            readonly history: readonly components["schemas"]["PatRotationEventOut"][];
+        };
+        /**
+         * PatRotationIn
+         * @description Opt the agent's own `canopy-pat` in to (or out of) automatic rotation.
+         */
+        readonly PatRotationIn: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /**
+             * Period Days
+             * @default 30
+             */
+            readonly period_days: number;
         };
         /**
          * AgentCredentialRevealOut
@@ -22374,6 +22593,10 @@ export interface components {
          * RunnerDeviceKeyIn
          * @description Register the PUBLIC half of a key the runner holds. Re-posting the same
          *     key (same RFC 7638 thumbprint) is idempotent.
+         *
+         *     `kind: "aws-iam"` (an EC2 box's instance role, canopy-web#1549) sends
+         *     `role_arn` and `proof` (an `X-Canopy-Aws-Proof` value whose htu is this
+         *     URL) instead of `public_jwk`; the proof's signer must BE `role_arn`.
          */
         readonly RunnerDeviceKeyIn: {
             /**
@@ -22382,19 +22605,29 @@ export interface components {
              */
             readonly runner: string;
             /** Public Jwk */
-            readonly public_jwk: {
+            readonly public_jwk?: {
                 readonly [key: string]: unknown;
-            };
+            } | null;
             /**
              * Kind
              * @enum {string}
              */
-            readonly kind: "secure-enclave" | "tpm" | "software";
+            readonly kind: "secure-enclave" | "tpm" | "software" | "aws-iam";
             /**
              * Label
              * @default
              */
             readonly label: string;
+            /**
+             * Role Arn
+             * @default
+             */
+            readonly role_arn: string;
+            /**
+             * Proof
+             * @default
+             */
+            readonly proof: string;
         };
         /** HuddleSummaryOut */
         readonly HuddleSummaryOut: {
@@ -30550,6 +30783,100 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["RunnerDeviceKeyOut"][];
+                };
+            };
+        };
+    };
+    readonly agent_credential_alerts: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentCredentialAlertOut"][];
+                };
+            };
+        };
+    };
+    readonly get_pat_rotation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PatRotationOut"];
+                };
+            };
+        };
+    };
+    readonly set_pat_rotation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PatRotationIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PatRotationOut"];
+                };
+            };
+        };
+    };
+    readonly rotate_pat_now: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PatRotationOut"];
                 };
             };
         };

@@ -1201,6 +1201,54 @@ class DeviceProofRequiredOut(StrictModel):
     error: Literal["device_proof_required"]
 
 
+class AgentCredentialAlertOut(StrictModel):
+    """A read of the agent's secrets that looked wrong (canopy-web#1549). At
+    most one per kind per hour; `occurrences` counts repeats inside it."""
+
+    id: int
+    kind: Literal["no-turn", "undeclared-ref", "burst", "device-proof"]
+    detail: str = ""
+    refs: list[str] = []
+    user_email: str = ""
+    runner: str = ""
+    runner_name: str = ""
+    turn_id: str = ""
+    occurrences: int = 1
+    #: The owner was emailed or pushed (false: delivery is off, or it failed).
+    notified: bool = False
+    created_at: dt.datetime
+    last_seen_at: dt.datetime
+
+
+class PatRotationIn(StrictModel):
+    """Opt the agent's own `canopy-pat` in to (or out of) automatic rotation."""
+
+    enabled: bool
+    period_days: int = Field(default=30, ge=1, le=365)
+
+
+class PatRotationEventOut(StrictModel):
+    status: Literal["rotated", "failed"]
+    trigger: str
+    detail: str = ""
+    created_at: dt.datetime
+    #: When the replaced token stops working (null: nothing was replaced).
+    revoke_after: dt.datetime | None = None
+    old_revoked_at: dt.datetime | None = None
+
+
+class PatRotationOut(StrictModel):
+    """The agent's canopy-pat rotation: the setting, when it is next due, and
+    its recent rotations. Never a token."""
+
+    enabled: bool
+    period_days: int
+    last_rotated_at: dt.datetime | None = None
+    next_due_at: dt.datetime | None = None
+    enabled_by_email: str = ""
+    history: list[PatRotationEventOut] = []
+
+
 class DeviceBindingIn(StrictModel):
     """Require a device proof on resolve (only meaningful with credential_source
     canopy-web). Owner/admin only, like CredentialSourceIn."""
