@@ -650,6 +650,15 @@ def suggest_review(request: HttpRequest, rid: UUID, payload: ReviewSuggestIn) ->
     # refused — it must never cost the reviewer their suggestion.
     email = (request.user.email if request.user.is_authenticated else None) or _valid_email(payload.email)
     count = review.add_suggestion(payload.response_json, name, email)
+    # One place a narrative's feedback lives (spec C): the suggestion also lands in
+    # the Feedback pool, in a storyboard round when one is open. Late import: both
+    # are product apps and storyboards must not load at reviews import time.
+    from apps.storyboards import rounds as board_rounds
+
+    board_rounds.ingest_review_suggestion(
+        review, name=name, email=email, response_json=payload.response_json,
+        by_user=request.user if request.user.is_authenticated else None,
+    )
     notify_suggestion(review, name, count, submitter_email=email)
     return ReviewSuggestOut(ok=True, suggestion_count=count)
 

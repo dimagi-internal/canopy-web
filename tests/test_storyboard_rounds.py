@@ -532,6 +532,55 @@ def test_patch_project_of_another_workspace_is_422(world):
     assert world["board"].agent_project_id == world["project"].pk
 
 
+# ------------------------------------------------- review-page suggestions join the pool
+
+
+def _review(world, **extra):
+    from apps.reviews.models import ReviewRequest
+
+    return ReviewRequest.objects.create(
+        run_id="supply-rutf-2026-10-14-001", narrative_slug="supply-rutf", version=3,
+        workspace=world["ws"], gate="concept_change", visibility="link", request_json={}, **extra)
+
+
+def _suggest(world, review, **response):
+    return world["viewer"].post(f"/api/reviews/{review.pk}/suggest/", {"response_json": {
+        "decisions": {}, **response}}, content_type="application/json")
+
+
+def test_review_suggestions_land_in_the_open_round(world):
+    _open(world)
+    review = _review(world)
+    resp = _suggest(world, review, overall_feedback="Lead with the forecast", edited_scenes=[
+        {"id": "overview", "title": "t", "narration": "New words", "deleted": False,
+         "features": [], "feedback": "shorter"}])
+    assert resp.status_code == 200, resp.content
+    rows = Feedback.objects.filter(round__number=1, target_ref="supply-rutf")
+    assert {(r.kind, r.anchor_id) for r in rows} == {("suggestion", "overview"), ("comment", "")}
+    assert rows.get(kind="suggestion").suggested_text == "New words"
+    assert rows.get(kind="suggestion").target_version == 3
+
+
+def test_review_suggestion_author_is_never_an_email(world):
+    _open(world)
+    _suggest(world, _review(world), overall_feedback="Lead with the forecast")
+    fb = Feedback.objects.get(target_ref="supply-rutf")
+    assert fb.author_name == "lily" and "@" not in fb.author_name
+
+
+def test_review_suggestion_still_succeeds_when_pooling_fails(world, monkeypatch):
+    from apps.feedback import services as fsvc
+
+    def boom(*a, **k):
+        raise RuntimeError("pool down")
+
+    monkeypatch.setattr(fsvc, "ingest", boom)
+    review = _review(world)
+    assert _suggest(world, review, overall_feedback="Still counted").status_code == 200
+    review.refresh_from_db()
+    assert len(review.suggestions_json) == 1
+
+
 # ------------------------------------------------- task 6 leftovers
 
 
