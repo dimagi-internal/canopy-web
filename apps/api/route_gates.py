@@ -590,6 +590,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "sync": ("integrations",),
     "declare_agent": ("own",),
     "set_channel_ingest": ("own",),
+    "allow_channel_ingest": ("own",),
+    "disallow_channel_ingest": ("own",),  # also revokes the reads the entry allowed
     # --- apps/slack/ingest_api.py (the permission itself is given in Slack, on the
     # approval post: a channel member who holds integrations, or the channel's creator)
     "create_channel_ingest": ("agent-login", "agent-admin"),
@@ -762,6 +764,7 @@ SETTINGS: frozenset[str] = frozenset({
     "set_push_config", "create_mailbox", "update_mailbox", "delete_mailbox",
     "set_config_token", "clear_config_token", "declare_agent", "set_history",
     "set_channel_ingest", "revoke_channel_ingest",  # revoking withdraws an agent's access to a channel
+    "allow_channel_ingest", "disallow_channel_ingest",  # an owner's standing grant of one channel to one agent
     "hcp_registerClient", "hcp_updateClient",
     # sharing and visibility
     "set_narrative_visibility", "storyboards_rotate_token", "ensure_token",

@@ -123,6 +123,41 @@ class SlackWorkspaceLink(models.Model):
         return f"{self.installation} -> {self.workspace_id}"
 
 
+class SlackChannelIngestAllow(models.Model):
+    """An owner's standing, explicit permission for ONE agent to read ONE channel whole.
+
+    The in-channel Approve click (`ingest.decide`) is one way a person grants a
+    whole-channel read; this is the other: a workspace owner names the channel
+    and the agent ahead of time, on the Slack settings page or the API. A
+    request that matches an entry starts reading at once — it is approved by
+    the owner who added the entry, and canopy still posts a notice (with
+    Revoke) in the channel so its members can see it. An entry is its own
+    opt-in: it works whether or not `channel_ingest_enabled` is on, and
+    removing it revokes the reads it allowed. See apps/slack/ingest.py.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="slack_channel_allows")
+    installation = models.ForeignKey(SlackInstallation, on_delete=models.CASCADE,
+                                     related_name="channel_allows")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="slack_channel_allows")
+    channel_id = models.CharField(max_length=32)
+    channel_name = models.CharField(max_length=255, blank=True, default="")
+    #: May the agent also keep following the channel, or only read it once?
+    follow = models.BooleanField(default=False)
+    note = models.CharField(max_length=500, blank=True, default="")
+    added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="+")
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["agent", "channel_id"], name="slack_allow_agent_channel")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.agent_id} may read {self.channel_id}"
+
+
 class SlackChannelIngest(models.Model):
     """An agent's permission to read one Slack channel whole — and the read.
 
@@ -185,6 +220,9 @@ class SlackChannelIngest(models.Model):
     backfilled_at = models.DateTimeField(null=True, blank=True)
     followed_at = models.DateTimeField(null=True, blank=True)
     error = models.CharField(max_length=300, blank=True, default="")
+    #: Set when the read was granted by an owner's allow-list entry, not a click.
+    allowance = models.ForeignKey(SlackChannelIngestAllow, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name="ingests")
 
     class Meta:
         indexes = [models.Index(fields=["status", "next_attempt_at"], name="slack_ingest_due")]

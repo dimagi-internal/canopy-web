@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState, type FormEvent, type JSX } from 'reac
 import { useParams } from 'react-router-dom'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 import {
+  allowSlackChannel,
   clearSlackConfigToken,
+  disallowSlackChannel,
   declareSlackAgent,
   getSlackConfig,
   setSlackChannelIngest,
@@ -28,6 +30,11 @@ export function SlackSettingsPage(): JSX.Element {
   // The history form's draft — seeded from the server, saved explicitly.
   const [historyOn, setHistoryOn] = useState(false)
   const [historyMinutes, setHistoryMinutes] = useState('')
+  // The allow-list form's draft.
+  const [allowChannel, setAllowChannel] = useState('')
+  const [allowAgent, setAllowAgent] = useState('')
+  const [allowFollow, setAllowFollow] = useState(false)
+  const [allowNote, setAllowNote] = useState('')
 
   const load = useCallback(() => {
     getSlackConfig(workspace)
@@ -306,6 +313,11 @@ export function SlackSettingsPage(): JSX.Element {
             does the reading; the agent only gets the transcript, and any approver can revoke it. Workspace owners
             set this.
           </p>
+          <p className="mb-3 text-[12px] text-muted-foreground">
+            Or allow-list a channel explicitly, for one agent: when that agent asks to read it, canopy reads it at
+            once — approved by the owner who added it — and posts a notice with Revoke in the channel instead of
+            asking. An allow-listed channel works whether or not asking is on; removing it revokes its reads.
+          </p>
           <div className="rounded-lg border border-border bg-card p-4 text-[13px]">
             <p className="text-foreground">
               {config.channel_ingest.enabled ? 'Agents may ask to read a channel.' : 'Off — agents cannot ask.'}
@@ -325,6 +337,94 @@ export function SlackSettingsPage(): JSX.Element {
             >
               {config.channel_ingest.enabled ? 'Turn off' : 'Turn on'}
             </button>
+          </div>
+          <div className="mt-3 rounded-lg border border-border bg-card p-4 text-[13px]" data-testid="slack-channel-allowlist">
+            <h3 className="text-[13px] font-semibold text-foreground">Allow-listed channels</h3>
+            {config.channel_ingest.allowed.length === 0 ? (
+              <p className="mt-1 text-[12px] text-muted-foreground">None yet.</p>
+            ) : (
+              <ul className="mt-2 divide-y divide-border">
+                {Array.from(config.channel_ingest.allowed).map((a) => (
+                  <li key={a.id} className="flex items-center justify-between gap-3 py-2">
+                    <span className="text-foreground">
+                      <b>#{a.channel_name || a.channel}</b> for <b>{a.agent}</b>
+                      {a.follow ? ' — read and follow' : ' — read once'}
+                      <span className="block text-[11px] text-muted-foreground">
+                        {a.note ? `${a.note} · ` : ''}added by {a.added_by_email || 'someone'}{' '}
+                        {a.added_at ? relativeAge(a.added_at) : ''}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      aria-label={`Remove #${a.channel_name || a.channel} for ${a.agent}`}
+                      onClick={() =>
+                        void act(async () => {
+                          await disallowSlackChannel(workspace, a.id)
+                          return `Removed #${a.channel_name || a.channel} for ${a.agent}; its reads were revoked.`
+                        })
+                      }
+                      className="rounded-md border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <form
+              className="mt-3 flex flex-wrap items-end gap-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const channel = allowChannel.trim()
+                const agent = allowAgent.trim()
+                if (!channel || !agent) return
+                void act(async () => {
+                  await allowSlackChannel(workspace, { agent, channel, follow: allowFollow, note: allowNote.trim() })
+                  setAllowChannel('')
+                  setAllowNote('')
+                  return `Allow-listed ${channel} for ${agent}.`
+                })
+              }}
+            >
+              <input
+                value={allowChannel}
+                onChange={(e) => setAllowChannel(e.target.value)}
+                placeholder="#channel or C…"
+                aria-label="Channel"
+                className="w-40 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
+              />
+              <input
+                value={allowAgent}
+                onChange={(e) => setAllowAgent(e.target.value)}
+                placeholder="agent slug"
+                aria-label="Agent"
+                className="w-32 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
+              />
+              <input
+                value={allowNote}
+                onChange={(e) => setAllowNote(e.target.value)}
+                placeholder="why (optional)"
+                aria-label="Why"
+                className="w-48 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
+              />
+              <label className="flex items-center gap-1 text-[12px] text-foreground-secondary">
+                <input
+                  type="checkbox"
+                  checked={allowFollow}
+                  onChange={(e) => setAllowFollow(e.target.checked)}
+                  aria-label="Also follow new messages"
+                />
+                also follow
+              </label>
+              <button
+                type="submit"
+                disabled={busy || !allowChannel.trim() || !allowAgent.trim()}
+                className="rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
+              >
+                Allow-list
+              </button>
+            </form>
           </div>
         </section>
       )}

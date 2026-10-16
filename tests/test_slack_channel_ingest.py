@@ -93,6 +93,10 @@ class Channel:
                 msgs = [m for m in self.replies.get(p["ts"], [])
                         if m["ts"] == p["ts"] or float(m["ts"]) >= float(p.get("oldest") or 0)]
                 return _resp({"ok": True, "messages": msgs, "has_more": False})
+            if method == "conversations.list":
+                self.reads.append((method, p))
+                return _resp({"ok": True, "channels": [{"id": "C9", "name": "random"},
+                                                       {"id": CHAN, "name": "canopy-support"}]})
             if method == "conversations.members":
                 return _resp({"ok": True, "members": self.members})
             if method == "conversations.info":
@@ -199,9 +203,20 @@ def test_only_the_agent_or_its_admins_can_ask(channel, enabled, hal_login, alice
     assert _request(_link_client(alice)).status_code == 403
 
 
-def test_a_channel_name_is_not_a_channel(channel, enabled, hal_login):
+def test_a_channel_may_be_named(channel, enabled, hal_login):
     resp = _link_client(hal_login).post("/api/slack-ingests/", {"agent": "hal", "channel": "#canopy-support",
                                                                   "purpose": "x"}, content_type="application/json")
+    assert resp.status_code == 201, resp.content
+    assert resp.json()["channel"] == CHAN and resp.json()["status"] == "pending"
+
+
+def test_a_name_canopy_cannot_see_is_refused(channel, enabled, hal_login):
+    client_ = _link_client(hal_login)
+    resp = client_.post("/api/slack-ingests/", {"agent": "hal", "channel": "#nope", "purpose": "x"},
+                        content_type="application/json")
+    assert resp.status_code == 404
+    resp = client_.post("/api/slack-ingests/", {"agent": "hal", "channel": "not a channel!", "purpose": "x"},
+                        content_type="application/json")
     assert resp.status_code == 422
 
 
@@ -210,7 +225,7 @@ def test_an_owner_turns_the_switch_on(channel, installation, ws, alice):
     resp = owner.put(f"/api/slack-config/{ws.slug}/channel-ingest", {"enabled": True},
                      content_type="application/json")
     assert resp.status_code == 200, resp.content
-    assert resp.json()["channel_ingest"] == {"enabled": True}
+    assert resp.json()["channel_ingest"] == {"enabled": True, "allowed": []}
     assert _link_client(alice).put(f"/api/slack-config/{ws.slug}/channel-ingest", {"enabled": False},
                                    content_type="application/json").status_code == 403
 
@@ -401,3 +416,97 @@ def test_a_pending_request_can_be_withdrawn(pending, channel, hal_login, owen):
     _approve(pending)
     pending.refresh_from_db()
     assert pending.status == SlackChannelIngest.REVOKED
+
+
+# ---- the allow-list: an owner's explicit, standing permission --------------------
+
+def _allow(ws, *, follow=False, channel="#canopy-support", user=None):
+    return _link_client(user or _owner(ws)).post(
+        f"/api/slack-config/{ws.slug}/channel-ingest/allowed",
+        {"agent": "hal", "channel": channel, "follow": follow, "note": "AI champions"},
+        content_type="application/json")
+
+
+@pytest.fixture
+def allowed(channel, installation, ws, hal_login):
+    resp = _allow(ws)
+    assert resp.status_code == 200, resp.content
+    (entry,) = resp.json()["channel_ingest"]["allowed"]
+    return entry
+
+
+def test_an_owner_allow_lists_a_channel_by_name(allowed, ws):
+    assert allowed["channel"] == CHAN and allowed["channel_name"] == "canopy-support"
+    assert allowed["agent"] == "hal" and allowed["follow"] is False and allowed["note"] == "AI champions"
+    assert allowed["added_by_email"] == _owner(ws).email
+    assert Event.objects.filter(kind="slack.ingest_allowed").count() == 1
+
+
+def test_only_an_owner_can_allow_list(channel, installation, ws, hal, hal_login, owen, alice):
+    for user in (owen, alice, hal_login):     # an admin, a member, the agent itself
+        assert _allow(ws, user=user).status_code == 403
+    with pytest.raises(ingest.IngestError):   # and the agent can never grant itself, even if made owner
+        ingest.allow(workspace=ws, agent=hal, channel=CHAN, follow=False, note="", by=hal_login)
+
+
+def test_an_allow_listed_request_reads_at_once_with_the_switch_off(allowed, channel, ws, hal_login, slack):
+    assert not SlackWorkspaceLink.objects.get(workspace=ws).channel_ingest_enabled
+    resp = _request(_link_client(hal_login))
+    assert resp.status_code == 201, resp.content
+    row = SlackChannelIngest.objects.get(pk=resp.json()["id"])
+    assert row.status == SlackChannelIngest.READING and row.decided_by == _owner(ws)
+    (post,) = slack.said("chat.postMessage")
+    buttons = {e["action_id"] for b in post["blocks"] if b["type"] == "actions" for e in b["elements"]}
+    assert buttons == {ingest.REVOKE}                     # a notice, not a question
+    assert "allow-listed" in post["blocks"][0]["text"]["text"]
+    row = _run(row)
+    assert row.status == SlackChannelIngest.READY and row.messages == 6
+    md = _link_client(hal_login).get(f"/api/slack-ingests/{row.pk}/transcript").json()["markdown"]
+    assert "first ever message" in md
+    assert Event.objects.filter(kind="slack.ingest_approved").count() == 1
+
+
+def test_an_allow_listed_name_resolves_without_asking_slack(allowed, channel, hal_login):
+    channel.reads.clear()
+    resp = _link_client(hal_login).post("/api/slack-ingests/", {"agent": "hal", "channel": "#canopy-support",
+                                                                  "purpose": "x"}, content_type="application/json")
+    assert resp.status_code == 201, resp.content
+    assert "conversations.list" not in _reads(channel)
+
+
+def test_a_read_once_entry_does_not_allow_following(allowed, channel, hal_login, ws):
+    assert _request(_link_client(hal_login), follow=True).status_code == 403
+    assert _allow(ws, follow=True).status_code == 200          # adding again updates it
+    assert _request(_link_client(hal_login), follow=True).status_code == 201
+
+
+def test_another_channel_still_needs_the_switch(allowed, channel, hal_login):
+    resp = _link_client(hal_login).post("/api/slack-ingests/", {"agent": "hal", "channel": "C9", "purpose": "x"},
+                                        content_type="application/json")
+    assert resp.status_code == 409 and "allow-listed" in resp.json()["detail"]
+
+
+def test_removing_an_entry_revokes_its_reads(allowed, channel, ws, hal_login):
+    row = SlackChannelIngest.objects.get(pk=_request(_link_client(hal_login)).json()["id"])
+    _run(row)
+    resp = _link_client(_owner(ws)).delete(f"/api/slack-config/{ws.slug}/channel-ingest/allowed/{allowed['id']}")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["channel_ingest"]["allowed"] == []
+    row.refresh_from_db()
+    assert row.status == SlackChannelIngest.REVOKED
+    assert not SlackIngestMessage.objects.filter(ingest=row).exists()
+    assert _request(_link_client(hal_login)).status_code == 409   # and it can't be asked for again
+    assert Event.objects.filter(kind="slack.ingest_disallowed").count() == 1
+
+
+def test_moving_the_agent_drops_its_allow_list(allowed, channel, ws, hal):
+    from apps.agents import move
+    from apps.slack.models import SlackChannelIngestAllow
+    from apps.workspaces.testing import a_workspace
+
+    owner = _owner(ws)
+    dest = a_workspace("elsewhere")
+    wsvc.ensure_member(dest, owner, WorkspaceMembership.OWNER)
+    assert any(b["kind"] == "slack_channel_allow" for b in move.plan(hal, dest, by=owner).stops_working)
+    move.move(hal, dest, by=owner)
+    assert not SlackChannelIngestAllow.objects.exists()

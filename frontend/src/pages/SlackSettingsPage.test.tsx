@@ -10,7 +10,7 @@ const base = {
   commands: { managed: false, app_id: 'A1', set_by_email: '', synced_at: '', error: '' },
   agent: { declared: false, declared_at: '' },
   history: { enabled: true, max_minutes: 120 },
-  channel_ingest: { enabled: false },
+  channel_ingest: { enabled: false, allowed: [] },
 }
 
 vi.mock('@/api/slack', async (orig) => ({
@@ -20,7 +20,9 @@ vi.mock('@/api/slack', async (orig) => ({
   setSlackHistory: vi.fn(async (_ws: string, enabled: boolean, max_minutes: number) => ({
     ...base, history: { enabled, max_minutes },
   })),
-  setSlackChannelIngest: vi.fn(async (_ws: string, enabled: boolean) => ({ ...base, channel_ingest: { enabled } })),
+  setSlackChannelIngest: vi.fn(async (_ws: string, enabled: boolean) => ({ ...base, channel_ingest: { enabled, allowed: [] } })),
+  allowSlackChannel: vi.fn(async () => base),
+  disallowSlackChannel: vi.fn(async () => base),
   declareSlackAgent: vi.fn(async () => ({
     status: 'declared', detail: 'Slack will draw its own working indicator once the app is re-installed.',
     changed: ['features.agent_view'], reinstall_required: true, install_url: 'https://canopy.test/i',
@@ -153,5 +155,27 @@ describe('SlackSettingsPage — whole-channel reads', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     expect((await screen.findByTestId('slack-note')).textContent).toContain('each read still needs an approval')
     expect(slack.setSlackChannelIngest).toHaveBeenCalledWith('connect', true)
+  })
+
+  it('an owner allow-lists a channel for one agent, and removes it', async () => {
+    const entry = {
+      id: 'a1', agent: 'ada', channel: 'C1', channel_name: 'canopy-support', follow: false, note: 'champions',
+      added_by_email: 'jj@dimagi.com', added_at: '',
+    }
+    vi.mocked(slack.getSlackConfig).mockResolvedValue({ ...base, channel_ingest: { enabled: false, allowed: [entry] } })
+    renderPage()
+    const list = await screen.findByTestId('slack-channel-allowlist')
+    expect(list.textContent).toContain('#canopy-support for ada — read once')
+    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: '#ai-champions' } })
+    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'ada' } })
+    fireEvent.click(screen.getByLabelText('Also follow new messages'))
+    fireEvent.click(screen.getByRole('button', { name: 'Allow-list' }))
+    expect((await screen.findByTestId('slack-note')).textContent).toContain('Allow-listed #ai-champions for ada.')
+    expect(slack.allowSlackChannel).toHaveBeenCalledWith('connect', {
+      agent: 'ada', channel: '#ai-champions', follow: true, note: '',
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove #canopy-support for ada' }))
+    expect((await screen.findByTestId('slack-note')).textContent).toContain('its reads were revoked')
+    expect(slack.disallowSlackChannel).toHaveBeenCalledWith('connect', 'a1')
   })
 })
