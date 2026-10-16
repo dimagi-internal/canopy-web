@@ -1131,6 +1131,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/storyboards/{slug}/notes/{note_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a note from the open feedback round
+         * @description Editors only. Removes a test or spam note from the CURRENT OPEN round;
+         *     a note in a closed or consumed round is the agent's record (409).
+         */
+        readonly delete: operations["delete_storyboard_round_note"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/{slug}/rounds/{number}": {
         readonly parameters: {
             readonly query?: never;
@@ -25451,6 +25472,29 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["RoundOut"];
                 };
+            };
+        };
+    };
+    readonly delete_storyboard_round_note: {
+        readonly parameters: {
+            readonly query?: {
+                readonly ws?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly note_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
