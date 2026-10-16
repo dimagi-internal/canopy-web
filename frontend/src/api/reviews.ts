@@ -377,6 +377,26 @@ export async function getReview(
   return parseResponse<ReviewDetail>(resp)
 }
 
+/**
+ * Where a review's page now lives: its narrative on a storyboard (app-relative,
+ * carrying the board's share token only when `token` is the review's own valid
+ * one), or `url: null` for a findings review, whose page stays.
+ */
+export async function getReviewDestination(
+  id: string,
+  token?: string | null,
+  ws?: string | null,
+): Promise<{ url: string | null }> {
+  const q = new URLSearchParams()
+  if (token) q.set('t', token)
+  if (ws) q.set('ws', ws)
+  const qs = q.toString()
+  const resp = await fetch(`${API_BASE}/api/reviews/${id}/destination${qs ? `?${qs}` : ''}`, {
+    credentials: 'same-origin',
+  })
+  return parseResponse<{ url: string | null }>(resp)
+}
+
 /** Submit decisions + narration edits for a review. */
 export async function submitReview(
   id: string,

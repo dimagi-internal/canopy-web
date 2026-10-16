@@ -355,6 +355,10 @@ def close_round(board, rnd, *, by_user, note: str = "", picks: dict[str, str] | 
                 changed += 1
         except decision_rows.DecisionConflict as exc:
             raise RoundError(409, str(exc)) from None
+        # A gate row ruled by this close resolves its review (the DDD gate).
+        from apps.storyboards import review_gate
+
+        review_gate.resolve_ruled(board)
         frounds.mark_closed(rnd, by_user=by_user, note=note)
         rnd.task = _hand_to_agent(board, rnd, by_user=by_user, note=note,
                                   changed=changed, skipped=skipped)

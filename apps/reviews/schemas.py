@@ -155,3 +155,12 @@ class ReviewCreateOut(StrictModel):
     # for a link-visibility review.
     share_url: str | None = None
     workspace: str | None = None
+
+
+class ReviewDestinationOut(StrictModel):
+    """Where a review's page now lives."""
+
+    # App-relative storyboard address at the narrative's entry
+    # (`/w/<ws>/storyboard/<slug>[?t=<board token>]#entry-<narrative>`), or null
+    # for a review with no narrative (a findings review keeps its own page).
+    url: str | None = None

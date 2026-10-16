@@ -30,11 +30,10 @@ describe('uploaded content sandbox', () => {
     expect(offenders).toEqual([])
   })
 
-  it('the walkthrough, run-package and review frames use the shared sandbox', () => {
+  it('the walkthrough and run-package frames use the shared sandbox', () => {
     for (const file of [
       '../pages/WalkthroughViewerPage.tsx',
       '../components/ddd/RunPackage.tsx',
-      '../pages/ReviewPage.tsx',
     ]) {
       expect(sources[file], file).toBeDefined()
       expect(sources[file]).toContain('sandbox={UPLOADED_CONTENT_SANDBOX}')

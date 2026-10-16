@@ -118,10 +118,10 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/review/:id',
-    title: 'Narrative review',
-    audience: 'Whoever the review request was addressed to',
-    what: "The DDD narrative-review surface behind a review request: watch the cut, edit any scene's narration/features/personas inline, see grounding and gaps inline per scene, reorder the build sequence, and resolve the gate (approve / send back to redraft, or answer a findings review). External guests land here with a share token and can only suggest edits, never resolve the gate.",
-    actions: ['Watch the cut', 'Edit narration, features or personas', 'Reorder the build sequence', 'Approve, redraft, or submit findings decisions'],
+    title: 'Review link (forwards to the storyboard)',
+    audience: 'Whoever was sent a review link',
+    what: "A narrative review is read, commented on and decided on its storyboard, so this address forwards there, to the narrative's entry. The review's gate (approve / redraft) is a decision row on the board; ruling it resolves the review for the agent waiting on it. A review link with a valid share token opens the board with the board's own link; a member needs none. A findings review, which belongs to no narrative, still opens here: answer each finding.",
+    actions: ['Open the narrative on its storyboard', 'Answer a findings review'],
   },
   {
     path: '/beta-requests',

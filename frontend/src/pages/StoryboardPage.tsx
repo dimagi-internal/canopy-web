@@ -140,6 +140,14 @@ function Board({
     document.title = `${board.title} · Canopy`
   }, [board.title])
 
+  // A link into one narrative (`#entry-<slug>`, what a retired review link
+  // forwards to) lands on it. The board renders after an async load, so the
+  // browser's own hash jump has nothing to find; do it once it is on screen.
+  useEffect(() => {
+    const id = decodeURIComponent(window.location.hash.replace(/^#/, ''))
+    if (id) document.getElementById(id)?.scrollIntoView?.({ block: 'start' })
+  }, [board.slug])
+
   // The closing half of the loop: the people who sent this link open the same
   // page to read what came back, in place. Reviewers never see it — the fetch
   // is only made for members and 401s for anyone else regardless.

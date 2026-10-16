@@ -28,6 +28,7 @@ from apps.feedback import reactions
 from apps.feedback import rounds as frounds
 from apps.harness import artifact_origin
 from apps.storyboards import decisions as decision_rows
+from apps.storyboards import review_gate
 from apps.storyboards import rounds as board_rounds
 from apps.storyboards import services
 from apps.storyboards.act_keys import act_key
@@ -611,10 +612,20 @@ def edit_storyboard_decision(
         if not member:
             raise HttpError(409, "No feedback round is open, so only a member can change a "
                                  "decision right now.")
-        row = decision_rows.apply_edit(
-            row, action=payload.action, value=payload.value,
-            reasoning=payload.reasoning, by_user=request.user,
-        )
+        if review_gate.is_gate_row(row):
+            # Ruling a review gate resolves the review — it approves a story
+            # for building — so it is the author tier, as submit_review was.
+            if not _can_manage(request, board):
+                raise HttpError(403, "deciding a review gate requires the editor role in its workspace")
+            if payload.action == "undo" and row.review.status != "pending":
+                raise HttpError(409, "this review is already resolved; its ruling cannot be undone")
+        with transaction.atomic():
+            row = decision_rows.apply_edit(
+                row, action=payload.action, value=payload.value,
+                reasoning=payload.reasoning, by_user=request.user,
+            )
+            if review_gate.is_gate_row(row):
+                review_gate.resolve_ruled(board)
     except board_rounds.RoundError as e:
         raise HttpError(e.status, e.detail)
     except decision_rows.DecisionInvalid as e:
