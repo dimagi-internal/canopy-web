@@ -254,6 +254,7 @@ def test_reencrypt_dry_run_then_apply_then_idempotent(fleet, settings):
     old = _legacy(settings.SECRET_KEY, "legacy-value")
     AgentCredential.objects.create(agent=fleet["agent"], name="canopy-pat", value_enc=old)
     settings.FIELD_ENCRYPTION_KEY = "a-new-field-key"
+    settings.FIELD_ENCRYPTION_ACCEPT_LEGACY = True
 
     out = StringIO()
     call_command("reencrypt_secrets", stdout=out)
@@ -272,6 +273,39 @@ def test_reencrypt_dry_run_then_apply_then_idempotent(fleet, settings):
     out = StringIO()
     call_command("reencrypt_secrets", "--apply", stdout=out)
     assert "rewrote 0 value(s)" in out.getvalue()
+
+
+def test_with_a_field_key_secret_key_no_longer_decrypts(settings):
+    from cryptography.fernet import InvalidToken
+
+    from apps.common.encryption import decrypt_secret
+
+    settings.FIELD_ENCRYPTION_KEY = "a-new-field-key"
+    old = _legacy(settings.SECRET_KEY, "legacy-value")
+    with pytest.raises(InvalidToken):
+        decrypt_secret(old)
+    settings.FIELD_ENCRYPTION_ACCEPT_LEGACY = True  # the emergency switch
+    assert decrypt_secret(old) == "legacy-value"
+
+
+def test_without_a_field_key_the_legacy_key_still_writes_and_reads(settings):
+    from apps.common.encryption import decrypt_secret
+
+    settings.FIELD_ENCRYPTION_KEY = ""
+    assert decrypt_secret(_legacy(settings.SECRET_KEY, "dev")) == "dev"
+    assert decrypt_secret(encrypt_secret("dev2")) == "dev2"
+
+
+def test_a_previous_field_key_reads_during_rotation(settings):
+    from apps.common.encryption import decrypt_secret
+
+    settings.FIELD_ENCRYPTION_KEY = "old-field-key"
+    old = encrypt_secret("v")
+    settings.FIELD_ENCRYPTION_KEY = "new-field-key"
+    settings.FIELD_ENCRYPTION_PREVIOUS_KEY = "old-field-key"
+    assert decrypt_secret(old) == "v"
+    new_key = base64.urlsafe_b64encode(hashlib.sha256(b"new-field-key").digest())
+    assert Fernet(new_key).decrypt(encrypt_secret("w").encode()) == b"w"
 
 
 @pytest.mark.django_db
@@ -299,6 +333,7 @@ def test_the_data_migration_moves_legacy_rows_onto_the_field_key(fleet, settings
     old = _legacy(settings.SECRET_KEY, "legacy-value")
     AgentCredential.objects.create(agent=fleet["agent"], name="canopy-pat", value_enc=old)
     settings.FIELD_ENCRYPTION_KEY = "a-new-field-key"
+    settings.FIELD_ENCRYPTION_ACCEPT_LEGACY = True  # how prod read legacy rows when 0053 ran
     _migration_0053().reencrypt(None, None)
     row = AgentCredential.objects.get(name="canopy-pat")
     new_key = base64.urlsafe_b64encode(hashlib.sha256(b"a-new-field-key").digest())
