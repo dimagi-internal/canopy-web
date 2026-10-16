@@ -193,6 +193,15 @@ describe('StoryboardPage', () => {
       expect(screen.getByText(/to nobody else/)).toBeTruthy()
     })
 
+    it('says everyone in an open round sees the notes, not "nobody else"', async () => {
+      getStoryboard.mockResolvedValue(board({ capability: 'comment', round: {
+        number: 1, state: 'open', opened_at: '', opened_by: '', closed_at: null, close_note: '',
+        pinned_versions: {}, note_count: 0, people_count: 0, notes: [], staged_edits: [] } }))
+      renderAt()
+      expect(await screen.findByText(/everyone with this link sees every note/)).toBeTruthy()
+      expect(screen.queryByText(/to nobody else/)).toBeNull()
+    })
+
     it('mentions suggested wording only when the link grants it', async () => {
       getStoryboard.mockResolvedValue(board({ capability: 'comment' }))
       renderAt()
