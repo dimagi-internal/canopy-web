@@ -56,7 +56,7 @@ export const SLOTS: readonly Slot[] = [
     key: 'claude_token',
     statusKey: 'has_claude_token',
     label: 'Backup token 1',
-    hint: 'An older token, used only when the sign-in above is at its usage cap. It cannot use claude.ai connectors such as Claude Docs, and it is no longer signed in from here.',
+    hint: 'Used when the Claude logins above are capped or stop working. Good for a year with nothing to renew; cannot use claude.ai connectors such as Claude Docs.',
     login: { slot: 'primary', labelKey: 'claude_token_label' },
   },
   {
@@ -210,6 +210,8 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
   }
 
   const summary = status ? credentialSummary(status, signedIn) : null
+  const heldTokens = SLOTS.filter((s) => s.login && status?.[s.statusKey]).length
+  const emptySlot = status ? SLOTS.find((s) => s.login && !status[s.statusKey]) : undefined
   const apiSlot = SLOTS.find((s) => !s.login)!
   const apiKeySet = status?.has_claude_api_key ?? false
 
@@ -240,15 +242,29 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
         reload={load}
       />
 
-      {/* Only the backup tokens still held. Nothing here can create one any
-          more (the sign-in above is the only sign-in), so an empty slot is not
-          an invitation — it is a removed token, and Remove should make it go. */}
-      {SLOTS.some((s) => s.login && status?.[s.statusKey]) && (
-        <span className="pt-1 text-[11px] uppercase tracking-wide text-muted-foreground">Backup tokens</span>
+      {/* Backup tokens: `claude setup-token`, good for a year with nothing to
+          renew. The full logins above renew themselves, and on 2026-10-15
+          cloud-ec2-2's stopped renewing with both backups removed — so the box
+          stopped. A backup token is what keeps a box running then, so the page
+          can always get one, and will not remove the last one. The buttons
+          say "token", never "Sign in with Claude": side by side under the same
+          words, an operator once got a token believing it was the full login. */}
+      <div className="flex flex-col gap-0.5 pt-1">
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Backup tokens</span>
+        <span className="text-[11px] text-foreground-subtle">
+          Keep this runner going if the Claude logins above stop working. Good for a year with
+          nothing to renew, but they cannot use claude.ai connectors (Claude Docs).
+        </span>
+      </div>
+      {status && heldTokens === 0 && (
+        <p className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-[12px] text-warning" data-testid="cred-no-backup-warning">
+          ⚠ No backup token: if the Claude login stops working, this runner stops.
+        </p>
       )}
       {SLOTS.filter((s) => s.login && status?.[s.statusKey]).map((slot, i) => {
         const login = slot.login!
         const isSet = true
+        const isLast = heldTokens === 1
         const dropHere = dragging && dragging !== login.slot && dropTarget === login.slot
         return (
           <div key={slot.key}>
@@ -320,7 +336,8 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
                   <button
                     type="button"
                     onClick={() => void remove(slot.key, login.labelKey, slot.label)}
-                    disabled={busy}
+                    disabled={busy || isLast}
+                    title={isLast ? 'The last backup token — get another one before removing this one' : undefined}
                     data-testid={`cred-remove-${slot.key}`}
                     className="ml-auto rounded-md px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
                   >
@@ -329,10 +346,17 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
                 )}
               </div>
               <span className="text-[11px] text-foreground-subtle">{slot.hint}</span>
+              <RunnerReauth runnerId={runnerId} slot={login.slot} isSet onSignedIn={load} />
             </div>
           </div>
         )
       })}
+      {/* The next empty slot, as a way to fill it — never as a "not set" row. */}
+      {emptySlot && (
+        <div className="rounded-md border border-dashed border-border p-2" data-testid={`cred-get-${emptySlot.key}`}>
+          <RunnerReauth runnerId={runnerId} slot={emptySlot.login!.slot} onSignedIn={load} />
+        </div>
+      )}
 
       {/* The API key is not a login: there is nothing to sign in to, so it is
           the one credential still pasted. */}

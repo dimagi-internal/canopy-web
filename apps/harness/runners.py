@@ -61,6 +61,39 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
     return cred
 
 
+LAST_BACKUP_TOKEN_REFUSAL = (
+    "That is this runner's last backup token. Keep at least one: it is what runs "
+    "turns when the Claude sign-in stops working (cloud-ec2-2 went dark on "
+    "2026-10-15 with none). Get a new backup token first, then remove this one.")
+
+
+def would_remove_last_backup_token(runner, *, claude_token=None,
+                                   claude_token_secondary=None) -> bool:
+    """True when this write would clear the box's only backup token(s).
+
+    A backup token (setup-token) is the one credential that never needs
+    renewing. The full sign-in renews itself, and when its renewal fails a box
+    with no backup token stops entirely — so the page may replace a backup
+    token but not take the last one away. A write that clears nothing is fine.
+    """
+    from .models import RunnerCredential
+
+    if "" not in (claude_token, claude_token_secondary):
+        return False
+    # Queried, not `runner.credential`: that accessor caches on the instance,
+    # and the write that follows would then report the stale row back.
+    cred = RunnerCredential.objects.filter(runner=runner).first()
+    if cred is None:
+        return False
+    after = {
+        "primary": bool(cred.claude_token_enc) if claude_token is None else bool(claude_token),
+        "secondary": (bool(cred.claude_token_secondary_enc) if claude_token_secondary is None
+                      else bool(claude_token_secondary)),
+    }
+    had_one = bool(cred.claude_token_enc or cred.claude_token_secondary_enc)
+    return had_one and not any(after.values())
+
+
 def get_runner_credential(runner) -> dict:
     """Decrypt a runner's bundle for the runner to consume. Empty when unset."""
     from apps.common.encryption import decrypt_secret

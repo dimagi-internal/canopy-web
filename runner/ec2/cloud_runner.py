@@ -462,7 +462,9 @@ def _package_checks() -> None:
 def _credential_check() -> None:
     n = len(_CLAUDE_CREDS)
     if n == 0:
-        _set_check("claude.credentials", "fail", "no Claude credential staged: this box cannot run a turn")
+        _set_check("claude.credentials", "fail",
+                   "no Claude credential staged: this box cannot run a turn. Sign in with "
+                   "Claude (or get a backup token) on the runner's credentials.")
     elif n == 1:
         _set_check("claude.credentials", "warn",
                    "one Claude credential: a usage cap stops every agent here with nothing to fail over to")
@@ -3523,6 +3525,26 @@ def _reload_claude_credentials() -> bool:
     return True
 
 
+#: What a box waiting for a Claude credential says on the runner page.
+WAITING_FOR_CLAUDE_NOTE = (
+    "needs a Claude sign-in: no backup token, and no working Claude login on this "
+    "box. Sign in with Claude (or get a backup token) on the runner's credentials.")
+
+
+def _beat_while_waiting(runner_id: str) -> None:
+    """Heartbeat from the credential wait, as online but NOT ready.
+
+    Silence here read as "stale" on the runner page (cloud-ec2-2, 2026-10-15),
+    which says the box is down — when it was up and needed one thing, a sign-in.
+    Not ready keeps routing off it; the note says what to do.
+    """
+    try:
+        _api("POST", f"/runners/{runner_id}/heartbeat",
+             _heartbeat_body([], ready=False, ready_note=WAITING_FOR_CLAUDE_NOTE))
+    except Exception as exc:  # noqa: BLE001 — the wait itself must go on
+        _log(f"warn: heartbeat while waiting for a credential failed ({exc})")
+
+
 def fetch_and_stage_credential(runner_id: str) -> bool:
     """A CLOUD runner owns no secrets at boot beyond its PAT — it fetches its
     credential bundle from canopy-web (the per-runner hub) and stages it into the
@@ -3555,6 +3577,7 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
             _log("staged credential bundle from canopy-web (claude)")
             return True
         _log("waiting for this runner's credential bundle to be set on canopy-web…")
+        _beat_while_waiting(runner_id)
         # The browser sign-in is how a person gives this box a credential, and it
         # is served here too. A box whose only credential was its own login, and
         # whose login expired, restarts into this loop (cloud-ec2-2, 2026-10-15:

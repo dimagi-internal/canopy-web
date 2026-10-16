@@ -322,12 +322,24 @@ which logins, in what order, and what the box last reported about each
   `adopt_default` and joins the list first; `~/.claude-logins/.default-adopted`
   then records that a missing `default` means removed.
 
-**It is the ONLY sign-in.** `POST …/mint` refuses `primary`/`secondary`
-(setup-token) sign-ins with a 422. Tokens already in those slots stay as cap
-backups, shown only while set. The runner reports a `claude.login` health check
-(ok = signed in on the box as the first login's account, warn = backup tokens
-only). Tests: `runner/ec2/tests/test_box_login.py`, `tests/test_runner_logins.py`,
-`tests/test_runner_mint.py`.
+**Backup tokens keep the box alive.** A full login renews itself, and a renewal
+can fail: on 2026-10-15 cloud-ec2-2's login stopped renewing after both backup
+tokens had been removed, and the box stopped. So:
+- The page always offers **Get a backup token** (`POST …/mint` with `slot:
+  primary|secondary` runs `claude setup-token` on the box; the token lands in that
+  slot). Its buttons say "token", never "Sign in with Claude": offered side by
+  side under the same words (2026-10-14) an operator got a token believing it was
+  the full login.
+- `POST …/credential` refuses (422) a write that would clear the **last** backup
+  token; replace it first. The page disables that Remove.
+- A box with no usable credential at all waits in `fetch_and_stage_credential`,
+  heartbeating as online but not ready with a note that says to sign in, and
+  serves the browser sign-in from there — it does not read "stale".
+
+The runner reports a `claude.login` health check (ok = signed in on the box as
+the first login's account, warn = backup tokens only). Tests:
+`runner/ec2/tests/test_box_login.py`, `tests/test_runner_logins.py`,
+`tests/test_runner_mint.py`, `tests/test_runner_credential.py`.
 
 ## The runner software
 

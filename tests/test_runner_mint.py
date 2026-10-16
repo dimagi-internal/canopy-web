@@ -319,15 +319,19 @@ def test_a_box_sign_in_that_did_not_log_in_fails_with_the_reason(client, runner)
     assert "invalid code" in r.json()["detail"]
 
 
-def test_token_sign_ins_are_refused(client, runner):
-    """ONE way to sign a runner in. Offered beside the full login, a setup-token
-    sign-in was indistinguishable from it, and an operator used the wrong one
-    (2026-10-14) — so it cannot be started any more."""
-    for slot in ("primary", "secondary"):
+def test_a_backup_token_can_be_signed_in_again(client, runner):
+    """A setup-token sign-in into a backup slot. Retired 2026-10-14 for looking
+    like the full sign-in; back because a box whose backups were removed had no
+    way to get one but a terminal, and went dark when its login stopped renewing
+    (cloud-ec2-2, 2026-10-15). The token lands in the slot asked for."""
+    for slot, key in (("primary", "claude_token"), ("secondary", "claude_token_secondary")):
         r = _post(client, _base(runner), {"slot": slot})
-        assert r.status_code == 422, r.content
-        assert "retired" in r.content.decode()
-    assert not RunnerMint.objects.filter(runner=runner).exists()
+        assert r.status_code == 200, r.content
+        assert r.json()["slot"] == slot
+        r = _post(client, f"{_base(runner)}/result", {"token": f"sk-ant-oat01-{slot}"})
+        assert r.json()["status"] == RunnerMint.DONE
+        cred = client.get(f"/api/harness/runners/{runner.id}/credential").json()
+        assert cred[key] == f"sk-ant-oat01-{slot}"
 
 
 def test_a_sign_in_with_no_slot_is_the_full_login(client, runner):

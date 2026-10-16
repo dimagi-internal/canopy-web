@@ -144,17 +144,20 @@ describe('RunnerCredentials', () => {
     ],
   }
 
-  it('offers only full sign-ins on the box, one per login', async () => {
+  it('says "Sign in with Claude" only on the full logins; backup tokens say token', async () => {
     // The defect (2026-10-14): three "Sign in with Claude" buttons, two of which
     // made inference-only setup-tokens. An operator signed in on one of those
     // believing it was the full login, and the box still could not read a doc.
+    // Backup tokens can be got here again (2026-10-15), under their own words.
     api.getRunnerCredentialStatus.mockResolvedValue({ ...TWO, logins: LOGINS.logins })
     api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'box', login_key: 'bb' })
     render(<RunnerCredentials runnerId="r1" />)
     await waitFor(() => expect(screen.getByTestId('runner-reauth-box-bb')).toBeTruthy())
-    expect(screen.queryByTestId('runner-reauth-primary')).toBeNull()
-    expect(screen.queryByTestId('runner-reauth-secondary')).toBeNull()
-    expect(screen.getAllByTestId('reauth-start')).toHaveLength(3)
+    for (const slot of ['primary', 'secondary']) {
+      const text = within(screen.getByTestId(`runner-reauth-${slot}`)).getByTestId('reauth-start').textContent
+      expect(text).toBe('Get a new token')
+    }
+    expect(screen.getAllByTestId('reauth-start')).toHaveLength(5)
 
     await act(async () => {
       fireEvent.click(within(screen.getByTestId('runner-reauth-box-bb')).getByTestId('reauth-start'))
@@ -241,13 +244,36 @@ describe('RunnerCredentials', () => {
     confirm.mockRestore()
   })
 
-  it('shows no row for a backup token that is not set', async () => {
+  it('shows no row for a backup token that is not set — only a way to get one', async () => {
     // Reported 2026-10-14: removing both tokens left two "not set" rows behind.
     api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
     render(<RunnerCredentials runnerId="r1" />)
     await waitFor(() => expect(screen.getByTestId('cred-slot-claude_token')).toBeTruthy())
     expect(screen.queryByTestId('cred-slot-claude_token_secondary')).toBeNull()
     expect(screen.queryByTestId('runner-credentials-swap')).toBeNull()
+    expect(within(screen.getByTestId('cred-get-claude_token_secondary')).getByTestId('reauth-start')
+      .textContent).toBe('Get a backup token')
+  })
+
+  it('gets a backup token when there is none, and warns until there is', async () => {
+    // cloud-ec2-2, 2026-10-15: both backups removed, the login stopped renewing,
+    // and the page had no way to get a token back.
+    api.getRunnerCredentialStatus.mockResolvedValue(LOGINS)
+    api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'primary', login_key: '' })
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => expect(screen.getByTestId('cred-no-backup-warning')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId('cred-get-claude_token')).getByTestId('reauth-start'))
+    })
+    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'primary', '')
+  })
+
+  it('will not remove the last backup token', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => screen.getByTestId('cred-remove-claude_token'))
+    expect((screen.getByTestId('cred-remove-claude_token') as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByTestId('cred-no-backup-warning')).toBeNull()
   })
 
   it('does not remove a token when the confirm is declined', async () => {

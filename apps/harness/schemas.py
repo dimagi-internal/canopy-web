@@ -1289,9 +1289,8 @@ class RunnerMintOut(Schema):
 
 
 class RunnerMintStartIn(Schema):
-    # `box` is the only sign-in offered. `primary`/`secondary` (setup-token
-    # mints) are still named so a request for one gets a clear refusal rather
-    # than a validation error — see api.start_runner_mint.
+    # `box` = the full sign-in kept on the runner; `primary`/`secondary` = a
+    # backup token (setup-token) into that slot — see api.start_runner_mint.
     slot: Literal["primary", "secondary", "box"] = "box"
     #: Which login to sign in again; "" = the box's default login.
     login_key: str = ""
