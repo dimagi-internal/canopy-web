@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { WorkbenchRail, WorkbenchShell } from 'canopy-ui'
-import { listSessions, type ChatSession } from '@/api/chat'
+import {
+  archiveSession,
+  closeSession,
+  listSessions,
+  stopSession,
+  transferSession,
+  unarchiveSession,
+  type ChatSession,
+} from '@/api/chat'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { wsUrl } from '@/lib/wsUrl'
 import { ChatPage } from '@/pages/ChatPage'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
+import { closeResultMessage, settleClosing } from '@/components/chat/closeAction'
+import { SessionContextMenu, type IdeAction } from './SessionContextMenu'
 import {
   DEFAULT_FILTERS,
   NO_RUNNER,
@@ -37,11 +47,16 @@ const LIST_LIMIT = 500
 // A runner reports every ~10s per box, and each report rings the doorbell; one
 // refetch per window is plenty.
 const DOORBELL_MIN_MS = 3_000
+// Rail width, dragged by its right edge; double-click the edge to reset.
+const RAIL_DEFAULT = 400
+const RAIL_MIN = 260
+const RAIL_MAX = 900
+const clampRail = (w: number) => Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, w)))
 
-type Prefs = { filters: Omit<IdeFilters, 'query'>; collapsed: string[] }
+type Prefs = { filters: Omit<IdeFilters, 'query'>; collapsed: string[]; railWidth: number }
 
 function loadPrefs(): Prefs {
-  const fallback: Prefs = { filters: { ...DEFAULT_FILTERS }, collapsed: [] }
+  const fallback: Prefs = { filters: { ...DEFAULT_FILTERS }, collapsed: [], railWidth: RAIL_DEFAULT }
   try {
     const raw = window.localStorage.getItem(PREFS_KEY)
     if (!raw) return fallback
@@ -54,6 +69,7 @@ function loadPrefs(): Prefs {
         modes: { ...DEFAULT_FILTERS.modes, ...p.filters?.modes },
       },
       collapsed: Array.isArray(p.collapsed) ? p.collapsed : [],
+      railWidth: typeof p.railWidth === 'number' ? clampRail(p.railWidth) : RAIL_DEFAULT,
     }
   } catch {
     return fallback
@@ -128,7 +144,7 @@ function ModeTag({ mode }: { mode: IdeMode }) {
     <span
       title={mode === 'none' ? 'No canopy turn has been claimed for this session' : `${mode} mode`}
       className={clsx(
-        'w-4 shrink-0 rounded text-center text-[10px] font-semibold leading-4',
+        'w-4 shrink-0 rounded text-center text-[11px] font-semibold leading-4',
         mode === 'manual' && 'bg-muted text-foreground',
         mode === 'auto' && 'bg-primary/10 text-primary',
         mode === 'none' && 'text-muted-foreground',
@@ -160,7 +176,7 @@ function Toggle({
       data-testid={testId}
       onClick={onClick}
       className={clsx(
-        'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]',
+        'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[12px]',
         on
           ? 'border-primary/40 bg-primary/10 text-foreground'
           : 'border-border text-muted-foreground line-through decoration-muted-foreground/50 hover:text-foreground-secondary',
@@ -188,11 +204,21 @@ export function IdePage() {
   const [now, setNow] = useState(() => new Date())
   const lastFetch = useRef(0)
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [railWidth, setRailWidth] = useState(initial.railWidth)
+  const [menu, setMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null)
+  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null)
+  // Closes relayed to a runner, by session id → when asked. The row stays,
+  // marked, until the runner's report retires it (see settleClosing).
+  const [closing, setClosing] = useState<Record<string, number>>({})
+  const closingRef = useRef(closing)
+  useEffect(() => {
+    closingRef.current = closing
+  }, [closing])
 
   useEffect(() => {
     const { hiddenRunners, states, modes, archived } = filters
-    savePrefs({ filters: { hiddenRunners, states, modes, archived }, collapsed: [...collapsed] })
-  }, [filters, collapsed])
+    savePrefs({ filters: { hiddenRunners, states, modes, archived }, collapsed: [...collapsed], railWidth })
+  }, [filters, collapsed, railWidth])
 
   const state = filters.archived ? 'all' : 'active'
   const refresh = useCallback(() => {
@@ -201,6 +227,13 @@ export function IdePage() {
       if (s.status === 'fulfilled') {
         setSessions(s.value)
         setError(null)
+        if (Object.keys(closingRef.current).length) {
+          const settled = settleClosing(closingRef.current, s.value, Date.now())
+          setClosing(settled.pending)
+          if (settled.stuck.length || settled.failed.length) {
+            setNote({ text: 'A delete was not confirmed by its runner — try again, or delete it in emdash.', error: true })
+          }
+        }
       } else {
         setError(s.reason instanceof Error ? s.reason.message : 'failed to load sessions')
       }
@@ -304,23 +337,103 @@ export function IdePage() {
     navigate(`/ide/${visible[next].id}`)
   }
 
+  const startDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = railWidth
+    const move = (ev: PointerEvent) => setRailWidth(clampRail(startW + ev.clientX - startX))
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.style.removeProperty('cursor')
+      document.body.style.removeProperty('user-select')
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  const dismissMenu = useCallback(() => setMenu(null), [])
+  const label = (s: ChatSession) => sessionDisplayTitle(s.title) || '(untitled)'
+  const failed = (e: unknown, fallback: string) =>
+    setNote({ text: e instanceof Error ? e.message : fallback, error: true })
+
+  const runAction = async (s: ChatSession, a: IdeAction) => {
+    setMenu(null)
+    const url = `${window.location.origin}/ide/${s.id}`
+    try {
+      switch (a.kind) {
+        case 'open-tab':
+          window.open(url, '_blank', 'noopener')
+          return
+        case 'copy-link':
+          await navigator.clipboard.writeText(url)
+          setNote({ text: 'Link copied', error: false })
+          return
+        case 'stop': {
+          const r = await stopSession(s.id)
+          setNote({ text: r.cancelled ? `Stopped “${label(s)}”` : `Asked ${s.runner_name ?? 'its runner'} to interrupt “${label(s)}”`, error: false })
+          break
+        }
+        case 'transfer': {
+          const r = await transferSession(s.id, a.runner.id)
+          setNote({
+            text:
+              r.status === 'moved'
+                ? `Moved “${label(s)}” to ${r.runner || a.runner.name}`
+                : `Transfer to ${a.runner.name} is waiting on ${r.approvers?.join(', ') || 'its admin'}`,
+            error: false,
+          })
+          break
+        }
+        case 'archive':
+          await archiveSession(s.id)
+          setNote({ text: `Archived “${label(s)}”`, error: false })
+          break
+        case 'unarchive':
+          await unarchiveSession(s.id)
+          setNote({ text: `Unarchived “${label(s)}”`, error: false })
+          break
+        case 'close': {
+          const where = s.runner_name ? ` This deletes its emdash task on ${s.runner_name}.` : ''
+          const working = s.running ? ' It is still working.' : ''
+          if (!window.confirm(`Delete “${label(s)}”?${working}${where}`)) return
+          const r = await closeSession(s.id)
+          const message = closeResultMessage(r, s)
+          if (message) {
+            setNote({ text: message, error: true })
+            return
+          }
+          if (r.closing) setClosing((prev) => ({ ...prev, [s.id]: Date.now() }))
+          setNote({ text: r.closing ? `Deleting “${label(s)}” on ${s.runner_name}…` : `Deleted “${label(s)}”`, error: false })
+          if (s.id === id && !r.closing) navigate('/ide', { replace: true })
+          break
+        }
+      }
+      void refresh()
+    } catch (e) {
+      failed(e, 'That did not work')
+    }
+  }
+
   const header = (
     <div className="flex flex-col gap-2 px-3 py-2">
       <div className="flex items-baseline gap-2">
         <span className="text-sm font-semibold text-foreground">IDE</span>
-        <span className="text-[11px] text-muted-foreground" data-testid="ide-totals">
+        <span className="text-[12px] text-muted-foreground" data-testid="ide-totals">
           {shown.length} sessions · {totals.running} running · {totals.input} input · {totals.idle} idle
         </span>
         {sessions.length >= LIST_LIMIT && (
           <span
-            className="text-[11px] text-warning"
+            className="text-[12px] text-warning"
             title={`The list returns at most ${LIST_LIMIT} sessions per organisation; older ones are not shown.`}
           >
             capped at {LIST_LIMIT}
           </span>
         )}
         <span
-          className={clsx('ml-auto text-[10px]', live ? 'text-success' : 'text-muted-foreground')}
+          className={clsx('ml-auto text-[11px]', live ? 'text-success' : 'text-muted-foreground')}
           title={live ? 'Updates as runners report' : `Live updates unavailable — polling every ${POLL_MS / 1000}s`}
         >
           {live ? '● live' : '○ polling'}
@@ -328,7 +441,7 @@ export function IdePage() {
       </div>
 
       <div className="flex flex-col gap-1">
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Runners</span>
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Runners</span>
         <div className="flex flex-wrap gap-1">
           {chips.map((c) => (
             <Toggle
@@ -380,23 +493,35 @@ export function IdePage() {
           value={filters.query}
           onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
           placeholder="Filter by title, project or runner"
-          className="min-w-0 flex-1 rounded border border-input bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground"
+          className="min-w-0 flex-1 rounded border border-input bg-background px-2 py-1 text-[13px] text-foreground placeholder:text-muted-foreground"
         />
         <button
           type="button"
           onClick={() => setAllCollapsed(!allCollapsed)}
-          className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
+          className="shrink-0 text-[12px] text-muted-foreground hover:text-foreground"
         >
           {allCollapsed ? 'Expand all' : 'Collapse all'}
         </button>
       </div>
+      {note && (
+        <div
+          className={clsx('flex items-start gap-2 text-[12px]', note.error ? 'text-destructive' : 'text-muted-foreground')}
+          data-testid="ide-note"
+        >
+          <span className="min-w-0 flex-1">{note.text}</span>
+          <button type="button" onClick={() => setNote(null)} className="shrink-0 hover:text-foreground" aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
     </div>
   )
 
   return (
     <WorkbenchShell>
-      <WorkbenchRail width="md:w-[400px]" header={header}>
-        <div className="py-1 text-xs" onKeyDown={onTreeKey} data-testid="ide-tree">
+      <div className="relative flex min-h-0 shrink-0" style={{ width: railWidth }} data-testid="ide-rail">
+      <WorkbenchRail width="md:w-full" className="min-w-0 flex-1" header={header}>
+        <div className="py-1 text-[13px]" onKeyDown={onTreeKey} data-testid="ide-tree">
           {loading && sessions.length === 0 && <p className="px-3 py-2 text-muted-foreground">Loading…</p>}
           {error && <p className="px-3 py-2 text-destructive">{error}</p>}
           {!loading && tree.length === 0 && !error && (
@@ -415,7 +540,7 @@ export function IdePage() {
                   <span className="w-3 text-muted-foreground">{open ? '▾' : '▸'}</span>
                   <span className="truncate">{folder.key || 'No project'}</span>
                   {folder.isAgent && <span className="font-normal text-muted-foreground">agent</span>}
-                  <span className="ml-auto flex shrink-0 items-center gap-2 font-normal text-[10px] text-muted-foreground">
+                  <span className="ml-auto flex shrink-0 items-center gap-2 font-normal text-[11px] text-muted-foreground">
                     {folder.counts.running > 0 && (
                       <span className="flex items-center gap-1" title="running">
                         <StateDot state="running" />
@@ -434,13 +559,18 @@ export function IdePage() {
                 {open &&
                   folder.sessions.map((s) => {
                     const st = sessionState(s)
-                    const title = sessionDisplayTitle(s.title) || '(untitled)'
+                    const title = label(s)
+                    const deleting = s.id in closing
                     return (
                       <Link
                         key={s.id}
                         to={`/ide/${s.id}`}
                         data-testid={`ide-row-${s.id}`}
                         aria-current={s.id === id ? 'page' : undefined}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
+                          setMenu({ session: s, x: e.clientX, y: e.clientY })
+                        }}
                         title={[
                           s.title,
                           `${STATE_LABEL[st]} · ${MODE_LABEL[sessionMode(s)]}`,
@@ -454,22 +584,23 @@ export function IdePage() {
                         className={clsx(
                           'grid grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem] items-center gap-2 py-1 pl-7 pr-2',
                           s.id === id ? 'bg-primary/10 text-foreground' : 'text-foreground-secondary hover:bg-muted',
-                          s.status === 'archived' && 'opacity-60',
+                          (s.status === 'archived' || deleting) && 'opacity-60',
+                          menu?.session.id === s.id && 'ring-1 ring-inset ring-primary/50',
                         )}
                       >
                         <StateDot state={st} />
-                        <span className="truncate">{title}</span>
-                        <span className="max-w-[128px] truncate rounded border border-border px-1 text-[10px] text-muted-foreground">
+                        <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
+                        <span className="max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground">
                           {s.runner_name ?? 'web'}
                         </span>
                         <ModeTag mode={sessionMode(s)} />
                         <span
                           className={clsx(
-                            'text-right text-[10px] tabular-nums',
+                            'text-right text-[11px] tabular-nums',
                             st === 'running' ? 'text-success' : 'text-muted-foreground',
                           )}
                         >
-                          {st === 'running' ? 'live' : shortAge(s.last_activity_at, now)}
+                          {deleting ? '…' : st === 'running' ? 'live' : shortAge(s.last_activity_at, now)}
                         </span>
                       </Link>
                     )
@@ -479,6 +610,17 @@ export function IdePage() {
           })}
         </div>
       </WorkbenchRail>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the session list"
+        title="Drag to resize · double-click to reset"
+        data-testid="ide-rail-resize"
+        onPointerDown={startDrag}
+        onDoubleClick={() => setRailWidth(RAIL_DEFAULT)}
+        className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-primary/30 active:bg-primary/40"
+      />
+      </div>
       <div className="min-h-0 min-w-0 flex-1">
         {id ? (
           <ChatPage key={id} onLeave={() => navigate('/ide', { replace: true })} />
@@ -488,6 +630,16 @@ export function IdePage() {
           </div>
         )}
       </div>
+      {menu && (
+        <SessionContextMenu
+          session={menu.session}
+          x={menu.x}
+          y={menu.y}
+          runners={runners}
+          onAction={(a) => void runAction(menu.session, a)}
+          onDismiss={dismissMenu}
+        />
+      )}
     </WorkbenchShell>
   )
 }

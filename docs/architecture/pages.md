@@ -307,7 +307,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `ChatPage` on the right (`onLeave` keeps a close or a move inside `/ide`).
   Objective by design: every filter is an on/off toggle (each runner, state,
   mode, archived), kept in `localStorage`, and nothing is ranked or labelled
-  "stuck". Refetches when `ws/supervisor/` rings (any frame), polls every 15s
+  "stuck". Right-clicking a row offers the existing session routes (open in a
+  new tab, copy link, stop, transfer to another runner, archive/unarchive,
+  delete = close); the rail's right edge drags to resize (double-click
+  resets). Refetches when `ws/supervisor/` rings (any frame), polls every 15s
   otherwise. Root because it spans workspaces; desktop only (phones use
   `/supervisor`). `frontend/src/pages/ide/`.
 - **`/activity`** — read-only fleet turn log: time, agent, origin, runner,
