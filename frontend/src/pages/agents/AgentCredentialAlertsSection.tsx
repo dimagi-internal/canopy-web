@@ -10,6 +10,7 @@ export const ALERT_LABEL: Record<AgentCredentialAlertOut['kind'], string> = {
   'undeclared-ref': 'Undeclared ref',
   burst: 'Burst of reads',
   'device-proof': 'Device proof refused',
+  'zk-wrap-missing': 'Device not granted the vault key',
 }
 
 export function AgentCredentialAlertsSection({ alerts }: { alerts: AgentCredentialAlertOut[] | null }) {

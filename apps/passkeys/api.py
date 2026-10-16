@@ -32,7 +32,7 @@ router = Router(auth=session_auth, tags=["passkeys"])
 def _out(p: Passkey) -> PasskeyOut:
     return PasskeyOut(
         id=p.pk, label=p.label, created_at=p.created_at, last_used_at=p.last_used_at,
-        backed_up=p.backed_up,
+        backed_up=p.backed_up, prf_enabled=p.prf_enabled,
     )
 
 
@@ -84,9 +84,17 @@ def finish_passkey_registration(request: HttpRequest, payload: PasskeyRegisterIn
 @router.delete("/{int:passkey_id}", response={204: None}, summary="Delete one of my passkeys")
 def delete_passkey(request: HttpRequest, passkey_id: int) -> Status:
     stepup.require_recent_step_up(request)
-    deleted, _ = Passkey.objects.filter(pk=passkey_id, user=request.user).delete()
-    if not deleted:
+    passkey = Passkey.objects.filter(pk=passkey_id, user=request.user).first()
+    if passkey is None:
         raise ProblemError(404, "Passkey not found", type_=TYPE_NOT_FOUND)
+    from apps.passkeys.models import UserVaultKeyset
+
+    # Its vault-key seal (canopy-web#1550) opens with nothing once it is gone.
+    ks = UserVaultKeyset.objects.filter(user=request.user).first()
+    if ks is not None and any(s.get("cred") == passkey.credential_id for s in ks.seals):
+        ks.seals = [s for s in ks.seals if s.get("cred") != passkey.credential_id]
+        ks.save(update_fields=["seals", "updated_at"])
+    passkey.delete()
     return Status(204, None)
 
 

@@ -32,7 +32,10 @@ from django.db import transaction
 #: Body keys whose VALUES are withheld. Matched against each key, at any depth.
 _SECRET_KEY = re.compile(
     r"(secret|token|password|passwd|credential|key$|_key|keys$|private|"
-    r"vault|cookie|refresh|bearer|signing|webhook_?url|dsn)",
+    r"vault|cookie|refresh|bearer|signing|webhook_?url|dsn|plaintext|"
+    # `values` is the body of PUT /credentials ({"values": {ref: secret}}),
+    # whose refs are arbitrary names (`canopy-pat`) the patterns above miss.
+    r"^values$)",
     re.IGNORECASE,
 )
 REDACTED = "[redacted]"

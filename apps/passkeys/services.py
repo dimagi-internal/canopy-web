@@ -138,7 +138,13 @@ def finish_registration(request: HttpRequest, credential: dict, label: str = "")
     if Passkey.objects.filter(credential_id=cred_id).exists():
         raise CeremonyError("that passkey is already registered")
     transports = credential.get("response", {}).get("transports") if isinstance(credential, dict) else None
+    # The PRF extension (canopy-web#1550): registration asks `extensions.prf`,
+    # and the browser answers `prf.enabled`. Absent = it was not reported.
+    ext = credential.get("clientExtensionResults") if isinstance(credential, dict) else None
+    prf = ext.get("prf") if isinstance(ext, dict) else None
+    prf_enabled = prf.get("enabled") if isinstance(prf, dict) and isinstance(prf.get("enabled"), bool) else None
     return Passkey.objects.create(
+        prf_enabled=prf_enabled,
         user=request.user,
         credential_id=cred_id,
         public_key=verified.credential_public_key,

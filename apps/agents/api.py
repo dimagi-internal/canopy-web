@@ -110,6 +110,14 @@ from .schemas import (
     AgentCredentialAlertOut,
     PatRotationIn,
     PatRotationOut,
+    ZkDisableIn,
+    ZkEnableIn,
+    ZkRotateIn,
+    ZkStateOut,
+    ZkValuesIn,
+    ZkValuesOut,
+    ZkWrapMissingOut,
+    ZkWrapsIn,
 )
 
 logger = logging.getLogger(__name__)
@@ -1981,8 +1989,13 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
     # simply break `canopy vault import`.
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
+    from .models import ZeroKnowledgeValue
+
     try:
         services.set_agent_credentials(agent, payload.values, user=request.user)
+    except ZeroKnowledgeValue as exc:
+        raise ProblemError(409, "Zero-knowledge agent", type_=TYPE_CONFLICT, detail=str(exc),
+                           members={"error": "zk_enabled"}) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
     return services.agent_credential_status(agent)
@@ -2039,7 +2052,8 @@ def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialA
 
 
 @router.get("/{slug}/credentials/resolve",
-            response={200: AgentCredentialsResolveOut, 401: DeviceProofRequiredOut},
+            response={200: AgentCredentialsResolveOut, 401: DeviceProofRequiredOut,
+                      409: ZkWrapMissingOut},
             summary="PLAINTEXT — a runner stages this agent's secrets")
 def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None = None):
     """The one route that returns values, and it is not for a browser.
@@ -2110,8 +2124,11 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     # the read log can name the box that proved itself; REQUIRED only when the
     # agent asks for it and resolves from canopy-web.
     device_key, refused = _device_key_from_proof(request, agent)
-    if (agent.require_device_binding and agent.credential_source == agent.CANOPY_WEB
-            and device_key is None):
+    # A zero-knowledge agent ALWAYS needs one (canopy-web#1550): the wrap handed
+    # out is the proving device's, so there is nothing to give without it.
+    if (device_key is None
+            and (agent.zk_enabled
+                 or (agent.require_device_binding and agent.credential_source == agent.CANOPY_WEB))):
         from . import vault_alerts
 
         vault_alerts.device_proof_refused(agent, request, reason=refused or "no device proof")
@@ -2119,7 +2136,17 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
                             headers={"WWW-Authenticate": 'DPoP algs="ES256"'})
 
     wanted = _parse_refs(refs)
-    values = services.resolve_agent_credentials(agent, wanted)
+    zk_wrap = None
+    if agent.zk_enabled:
+        from . import zk
+
+        values, zk_wrap = zk.resolve_payload(agent, device_key, wanted)
+        if zk_wrap is None:
+            zk.device_wrap_missing(agent, request, device_key)
+            return JsonResponse({"error": "zk_wrap_missing", "kv": agent.zk_kv,
+                                 "device_key": str(device_key.pk)}, status=409)
+    else:
+        values = services.resolve_agent_credentials(agent, wanted)
     vault, op_token = services.resolve_agent_vault(agent)
     if agent.credential_source == agent.CANOPY_WEB:
         op_token = ""
@@ -2137,6 +2164,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
         github_token=delegations.decrypt_secret(delegation.secret_enc) if delegation else "",
         salesforce_creds=delegations.salesforce_creds_for(agent) if extra("salesforce_creds") else "",
         mailbox=agent.email or "",
+        zk=agent.zk_enabled, kv=agent.zk_kv if agent.zk_enabled else None, wrap=zk_wrap,
     )
     read = list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)]
     runner = device_key.runner if device_key is not None else _caller_runner(request)
@@ -2255,6 +2283,135 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
     return services.set_agent_vault(
         agent, vault=payload.vault, service_key=payload.service_key,
     )
+
+
+# ---- zero-knowledge vault (Canopy Vault Phase 2, canopy-web#1550) ------------------
+# Formats: docs/vault/zk-v1/zk_v1_reference.py. canopy-web only shape-checks and
+# stores; the browser and the canopy CLI do every encryption (apps/agents/zk.py).
+# Owner/admin only. Writes from a browser need a passkey step-up; a token held
+# by an admin may enable, set values, grant and rotate (the canopy CLI acts as
+# its device) — but turning ZK OFF hands plaintext back, so it is browser-only.
+
+def _zk_problem(exc) -> ProblemError:
+    return ProblemError(exc.status, "Zero-knowledge vault", type_=(
+        TYPE_CONFLICT if exc.status == 409 else TYPE_VALIDATION), detail=str(exc),
+        members={"error": exc.code})
+
+
+def _zk_admin(request: HttpRequest, slug: str, *, browser_only: bool = False):
+    agent = _agent_for_admin(request, slug)
+    if browser_only or stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    return agent
+
+
+def _zk_state(agent, *, include_values: bool = False) -> ZkStateOut:
+    from . import zk
+
+    return ZkStateOut(**zk.state(agent, include_values=include_values))
+
+
+@router.get("/{slug}/vault/zk", response=ZkStateOut,
+            summary="Zero-knowledge state: kv, wraps, and who still needs one")
+def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) -> ZkStateOut:
+    """`pending` lists active device keys (with an ECDH key) on runners this
+    agent's resolve accepts, and current agent admins with a vault key, that
+    hold no wrap at the current `kv` — each with the public key to wrap to.
+    `wraps` are public data. `?values=true` adds the `zk1:` ciphertexts (what
+    rotate and turn-off need), and records a read of each."""
+    agent = _agent_for_admin(request, slug)
+    out = _zk_state(agent, include_values=values)
+    if values and out.values:
+        services.record_credential_reads(agent, list(out.values), user=request.user, via="zk-state")
+    return out
+
+
+@router.post("/{slug}/vault/zk/enable", response=ZkStateOut,
+             summary="Turn on zero-knowledge: wraps + every value as ciphertext, atomically")
+def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkStateOut:
+    """`{kv: 1, wraps: [{kind, target, wrap}], values: [{name, value_zk}]}`.
+    Needs exactly one `recovery` wrap, at least one `member` wrap, and a wrap
+    the caller can open (their member wrap, or a device wrap on a runner they
+    administer). `values` must cover every stored credential; each one's
+    custodial copy is wiped. Errors are problem+json with an `error` code."""
+    from . import zk
+
+    agent = _zk_admin(request, slug)
+    try:
+        zk.enable(agent, kv=payload.kv, wraps=payload.wraps, values=payload.values, user=request.user)
+    except zk.ZkError as exc:
+        raise _zk_problem(exc) from exc
+    agent.refresh_from_db()
+    return _zk_state(agent)
+
+
+@router.put("/{slug}/vault/zk/values", response=ZkValuesOut,
+            summary="Set zero-knowledge values (ciphertext) at the current kv")
+def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) -> ZkValuesOut:
+    """Non-clobbering upsert of `{name, value_zk}`. A `kv` other than the
+    current one is 409 `zk_kv_mismatch` (the vault key was rotated)."""
+    from . import zk
+
+    agent = _zk_admin(request, slug)
+    try:
+        names = zk.set_values(agent, kv=payload.kv, values=payload.values, user=request.user)
+    except zk.ZkError as exc:
+        raise _zk_problem(exc) from exc
+    return ZkValuesOut(kv=payload.kv, names=names)
+
+
+@router.post("/{slug}/vault/zk/wraps", response=ZkStateOut,
+             summary="Grant: wrap the vault key to pending devices or admins")
+def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> ZkStateOut:
+    """`{kv, wraps: [{kind: device|member, target, wrap}]}`. A device target is
+    an ACTIVE key with an ECDH key on a runner this agent routes to; a member
+    target is a current agent admin with a vault key. Replaces that target's
+    wrap at this kv. The recovery wrap is set only by enable and rotate."""
+    from . import zk
+
+    agent = _zk_admin(request, slug)
+    try:
+        zk.add_wraps(agent, kv=payload.kv, wraps=payload.wraps, user=request.user)
+    except zk.ZkError as exc:
+        raise _zk_problem(exc) from exc
+    return _zk_state(agent)
+
+
+@router.post("/{slug}/vault/zk/rotate", response=ZkStateOut,
+             summary="Rotate the vault key: replace every wrap and value atomically")
+def rotate_agent_zk(request: HttpRequest, slug: str, payload: ZkRotateIn) -> ZkStateOut:
+    """`{new_kv: kv + 1, wraps, values}`. Every target holding a wrap now that
+    still qualifies must get one at `new_kv` (422 `zk_rewrap_required`
+    otherwise); a revoked device or removed admin is simply left out. A fresh
+    recovery wrap and a wrap the caller can open are required, and `values`
+    must cover every stored credential."""
+    from . import zk
+
+    agent = _zk_admin(request, slug)
+    try:
+        zk.rotate(agent, new_kv=payload.new_kv, wraps=payload.wraps, values=payload.values,
+                  user=request.user)
+    except zk.ZkError as exc:
+        raise _zk_problem(exc) from exc
+    agent.refresh_from_db()
+    return _zk_state(agent)
+
+
+@router.post("/{slug}/vault/zk/disable", response=ZkStateOut,
+             summary="Turn off zero-knowledge: back to custodial storage (browser + passkey)")
+def disable_agent_zk(request: HttpRequest, slug: str, payload: ZkDisableIn) -> ZkStateOut:
+    """`{values: [{name, plaintext}]}` covering every stored credential, each
+    decrypted in the browser; canopy-web encrypts them at rest as before and
+    deletes every wrap. A browser session with a passkey step-up only."""
+    from . import zk
+
+    agent = _zk_admin(request, slug, browser_only=True)
+    try:
+        zk.disable(agent, values=payload.values, user=request.user)
+    except zk.ZkError as exc:
+        raise _zk_problem(exc) from exc
+    agent.refresh_from_db()
+    return _zk_state(agent)
 
 
 # ---- sender trust: a temporary exception to email alignment ----------------------
@@ -2541,9 +2698,15 @@ def reveal_agent_credential(request: HttpRequest, response: HttpResponse, slug: 
     # (canopy-web#1538). What makes it safe is the conjunction: agent admin (who
     # could already overwrite the value and route a box of their own to read it)
     # AND a person present at the browser (step-up) AND a durable record.
+    from .models import ZeroKnowledgeValue
+
     agent = _agent_for_admin(request, slug)
     stepup.require_recent_step_up(request)
-    value = services.reveal_agent_credential(agent, name, user=request.user)
+    try:
+        value = services.reveal_agent_credential(agent, name, user=request.user)
+    except ZeroKnowledgeValue as exc:
+        raise ProblemError(409, "Zero-knowledge value", type_=TYPE_CONFLICT, detail=str(exc),
+                           members={"error": "zk_enabled"}) from exc
     if value is None:
         raise ProblemError(404, "Credential not found", type_=TYPE_NOT_FOUND,
                            detail=f"{agent.slug} has no value stored under {name!r}")

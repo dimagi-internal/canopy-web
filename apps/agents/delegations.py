@@ -439,6 +439,10 @@ def lender_salesforce_creds(lender: Agent) -> dict:
         raise DelegationError(
             f"{lender.slug} holds no Salesforce credential to lend — it stores one as its "
             f"own credential '{SALESFORCE_CREDENTIAL}' (PUT /api/agents/{lender.slug}/credentials)")
+    if row.is_zk:
+        raise DelegationError(
+            f"{lender.slug} is zero-knowledge: canopy-web cannot read its Salesforce credential "
+            "to lend it (canopy-web#1550)")
     try:
         creds = json.loads(row.plaintext())
     except (ValueError, TypeError) as exc:

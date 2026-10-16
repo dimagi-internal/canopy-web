@@ -175,7 +175,13 @@ class Agent(models.Model):
         related_name="+",
     )
     pat_rotated_at = models.DateTimeField(null=True, blank=True)
-
+    # Canopy Vault Phase 2 (canopy-web#1550): zero-knowledge. When on, every
+    # AgentCredential holds `zk1:` ciphertext under a per-agent vault key (VK)
+    # canopy-web never sees; VK reaches each principal as an AgentVaultWrap.
+    # `zk_kv` is the current vault-key version (0 = never enabled). Formats:
+    # docs/vault/zk-v1/zk_v1_reference.py. Owner/admin only (apps/agents/zk.py).
+    zk_enabled = models.BooleanField(default=False)
+    zk_kv = models.PositiveIntegerField(default=0)
 
     # Runtime autonomy posture, read by the fleet-canonical turn procedure at
     # preflight (canopy agent-core/turn.md § Turn mode). Operational STATE, so
@@ -354,6 +360,10 @@ class AgentBootstrapReport(models.Model):
         return f"bootstrap:{self.agent_id}@{self.runner_name}"
 
 
+class ZeroKnowledgeValue(ValueError):
+    """A custodial path asked for the plaintext of a zero-knowledge value."""
+
+
 class AgentCredential(models.Model):
     """One named secret for one agent, encrypted at rest.
 
@@ -381,8 +391,14 @@ class AgentCredential(models.Model):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="credentials")
     #: Matches a `secrets[].name` in the agent's runtime.yaml.
     name = models.CharField(max_length=120)
-    #: Fernet ciphertext (apps/common/encryption.py). Never plaintext.
-    value_enc = models.TextField()
+    #: Fernet ciphertext (apps/common/encryption.py). Never plaintext. Empty
+    #: for a zero-knowledge value (`value_zk`).
+    value_enc = models.TextField(blank=True, default="")
+    #: Zero-knowledge (canopy-web#1550): `zk1:` AES-GCM ciphertext under the
+    #: agent's vault key at version `kv`. canopy-web cannot decrypt it, so
+    #: `plaintext()` refuses it.
+    value_zk = models.TextField(blank=True, default="")
+    kv = models.PositiveIntegerField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
@@ -418,10 +434,18 @@ class AgentCredential(models.Model):
             return kms_envelope.encrypt(plaintext, context=cls.kms_context(agent, name))
         return encrypt_secret(plaintext)
 
+    @property
+    def is_zk(self) -> bool:
+        return bool(self.value_zk)
+
     def plaintext(self) -> str:
         from apps.common import kms_envelope
         from apps.common.encryption import decrypt_secret
 
+        if self.is_zk:
+            # canopy-web holds no key for this (canopy-web#1550); a caller that
+            # reaches here has a custodial path a zero-knowledge agent must not.
+            raise ZeroKnowledgeValue(f"{self.name} is a zero-knowledge value; canopy-web cannot read it")
         if kms_envelope.is_envelope(self.value_enc):
             return kms_envelope.decrypt(
                 self.value_enc, expect=self.kms_context(self.agent, self.name))
@@ -471,11 +495,13 @@ class AgentCredentialAlert(models.Model):
     credential read history."""
 
     NO_TURN, UNDECLARED, BURST, DEVICE_PROOF = "no-turn", "undeclared-ref", "burst", "device-proof"
+    ZK_WRAP_MISSING = "zk-wrap-missing"
     KIND_CHOICES = [
         (NO_TURN, "Read outside a turn, not by an owner or admin"),
         (UNDECLARED, "Read of a ref the agent does not declare"),
         (BURST, "Burst of reads"),
         (DEVICE_PROOF, "Resolve refused: bad or missing device proof"),
+        (ZK_WRAP_MISSING, "Resolve refused: the device holds no vault-key wrap"),
     ]
 
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="credential_alerts")
@@ -505,6 +531,53 @@ class AgentCredentialAlert(models.Model):
 
     def __str__(self) -> str:
         return f"{self.agent_id}:{self.kind}@{self.created_at:%Y-%m-%d %H:%M}"
+
+
+class AgentVaultWrap(models.Model):
+    """The agent's vault key (VK) at version `kv`, wrapped to ONE principal
+    (Canopy Vault Phase 2, canopy-web#1550; formats in
+    docs/vault/zk-v1/zk_v1_reference.py).
+
+    * `device` — ECDH-ES to a RunnerDeviceKey's `ecdh_public_jwk`;
+    * `member` — ECDH-ES to a person's UserVaultKeyset public key;
+    * `recovery` — under a 256-bit code shown once to whoever enabled or rotated.
+
+    `wrap` is public data (it opens only with the principal's private key), so
+    it is stored and served as-is. canopy-web checks its SHAPE and never tries
+    to open it. One wrap per target per kv; rotating replaces them all."""
+
+    DEVICE, MEMBER, RECOVERY = "device", "member", "recovery"
+    KIND_CHOICES = [(DEVICE, "Device"), (MEMBER, "Member"), (RECOVERY, "Recovery code")]
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="vault_wraps")
+    kv = models.PositiveIntegerField()
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES)
+    device_key = models.ForeignKey(
+        "harness.RunnerDeviceKey", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="vault_wraps",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, related_name="+",
+    )
+    wrap = models.JSONField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["agent_id", "kv", "kind", "created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["agent", "kv", "device_key"], name="one_device_wrap_per_kv",
+                                    condition=models.Q(kind="device")),
+            models.UniqueConstraint(fields=["agent", "kv", "user"], name="one_member_wrap_per_kv",
+                                    condition=models.Q(kind="member")),
+            models.UniqueConstraint(fields=["agent", "kv"], name="one_recovery_wrap_per_kv",
+                                    condition=models.Q(kind="recovery")),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.agent_id}:kv{self.kv}:{self.kind}"
 
 
 class AgentPatRotation(models.Model):

@@ -1213,6 +1213,8 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
 #: stores and the box silently prefers canopy-web, so the screen must say which
 #: is live rather than only that something is set.
 SOURCE_CANOPY_WEB = "canopy-web"
+#: Stored here as zero-knowledge ciphertext (canopy-web#1550).
+SOURCE_CANOPY_WEB_ZK = "canopy-web-zk"
 SOURCE_UNSET = "unset"
 
 
@@ -1225,8 +1227,15 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None) -> int:
     type anything", and storing it makes a declared ref read as SET while
     resolving to nothing — the worst of both.
     """
-    from apps.agents.models import AgentCredential
+    from apps.agents.models import AgentCredential, ZeroKnowledgeValue
 
+    if agent.zk_enabled:
+        # A plaintext write would sit beside ciphertext canopy-web cannot read
+        # (canopy-web#1550): values of a zero-knowledge agent are encrypted by a
+        # member, and arrive through PUT /vault/zk/values.
+        raise ZeroKnowledgeValue(
+            f"{agent.slug} is zero-knowledge: encrypt values under its vault key and "
+            f"PUT /api/agents/{agent.slug}/vault/zk/values (the browser and `canopy vault zk set` do)")
     blank = sorted(k for k, v in values.items() if not (v or "").strip())
     if blank:
         raise ValueError(f"blank value for: {', '.join(blank)}")
@@ -1287,7 +1296,8 @@ def agent_credential_status(agent) -> list[dict]:
             "name": name,
             "declared": name in declared,
             "set": cred is not None,
-            "source": SOURCE_CANOPY_WEB if cred else SOURCE_UNSET,
+            "source": ((SOURCE_CANOPY_WEB_ZK if cred.is_zk else SOURCE_CANOPY_WEB)
+                       if cred else SOURCE_UNSET),
             "updated_at": cred.updated_at if cred else None,
             "updated_by_email": (cred.updated_by.email if cred and cred.updated_by_id else None),
             "last_read_at": read.get("last"),
@@ -1331,6 +1341,8 @@ def resolve_agent_credentials(agent, refs: set[str] | None = None) -> dict[str, 
     qs = AgentCredential.objects.filter(agent=agent).select_related("agent")
     if refs is not None:
         qs = qs.filter(name__in=sorted(set(refs) & declared_credential_names(agent)))
+    # A zero-knowledge agent never reaches here (resolve branches to zk.py);
+    # plaintext() refuses a zk value outright if one ever does.
     return {c.name: c.plaintext() for c in qs}
 
 
@@ -1357,12 +1369,16 @@ def reveal_agent_credential(agent, name: str, *, user) -> str | None:
     reveal that cannot be recorded does not happen.
     """
     from apps.agents.models import AgentCredential
-    from apps.common.encryption import decrypt_secret
     from apps.events import services as events
 
-    cred = AgentCredential.objects.filter(agent=agent, name=name).first()
+    cred = AgentCredential.objects.filter(agent=agent, name=name).select_related("agent").first()
     if cred is None:
         return None
+    if cred.is_zk:
+        # Nothing to show: canopy-web holds only ciphertext (canopy-web#1550).
+        from apps.agents.models import ZeroKnowledgeValue
+
+        raise ZeroKnowledgeValue(f"{name} is a zero-knowledge value; canopy-web cannot reveal it")
     from apps.agents.models import AgentCredentialRead
 
     who = getattr(user, "email", "") or str(getattr(user, "pk", ""))
@@ -1385,7 +1401,7 @@ def reveal_agent_credential(agent, name: str, *, user) -> str | None:
         }],
         workspace=agent.workspace,
     )
-    return decrypt_secret(cred.value_enc)
+    return cred.plaintext()
 
 
 def caller_runs_agent(user, agent) -> bool:

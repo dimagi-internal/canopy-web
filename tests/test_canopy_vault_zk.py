@@ -1,0 +1,691 @@
+"""Canopy Vault Phase 2 (canopy-web#1550), server half: the zero-knowledge vault.
+
+canopy-web never encrypts or decrypts a ZK value; these tests build every wrap,
+seal and value with the NORMATIVE reference (docs/vault/zk-v1/zk_v1_reference.py)
+— so a round trip here is the real protocol, end to end, with canopy-web as the
+store in the middle — and pin each endpoint's rules.
+"""
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+from pathlib import Path
+
+import pytest
+from canopy_sdk.jose import make_dpop_proof
+from cryptography.hazmat.primitives.asymmetric import ec
+from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.test import Client
+from django.utils import timezone
+
+from apps.agents import zk
+from apps.agents.models import (
+    Agent,
+    AgentAdmin,
+    AgentCredential,
+    AgentCredentialAlert,
+    AgentCredentialRead,
+    AgentVaultWrap,
+    ZeroKnowledgeValue,
+)
+from apps.events.models import SettingChange
+from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
+from apps.passkeys.models import Passkey, UserVaultKeyset
+from apps.passkeys.testing import grant_step_up
+from apps.tokens.models import PersonalToken
+from apps.workspaces.models import Workspace, WorkspaceMembership
+
+pytestmark = pytest.mark.django_db
+
+ZK_DIR = Path(__file__).resolve().parent.parent / "docs" / "vault" / "zk-v1"
+RESOLVE = "/api/agents/eva/credentials/resolve"
+HTU = f"http://testserver{RESOLVE}"
+ZK = "/api/agents/eva/vault/zk"
+
+
+def _load_reference():
+    spec = importlib.util.spec_from_file_location("zk_v1_reference", ZK_DIR / "zk_v1_reference.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+ref = _load_reference()
+VECTORS = json.loads((ZK_DIR / "zk_v1_vectors.json").read_text())
+
+
+@pytest.fixture(autouse=True)
+def _fresh_cache():
+    cache.clear()
+    yield
+    cache.clear()
+
+
+def _pat(user) -> str:
+    raw, _ = PersonalToken.create_for_user(user=user, label="t")
+    return raw
+
+
+def _jwk(key) -> dict:
+    from canopy_sdk.keys import header_jwk
+
+    return header_jwk(key)
+
+
+# ---- a fleet with one ZK-capable device and one person with a keyset ---------------
+
+class Fleet:
+    pass
+
+
+def _add_passkey(user, cred: str = "cred-1") -> Passkey:
+    return Passkey.objects.create(user=user, credential_id=ref.b64u(cred.encode()), public_key=b"x",
+                                  prf_enabled=True)
+
+
+def _make_keyset(user, cred_id: str):
+    """A person's keyset exactly as the browser makes one: a key pair, its
+    scalar sealed under a (here, fake) PRF output for one passkey."""
+    priv = ec.generate_private_key(ec.SECP256R1())
+    scalar = priv.private_numbers().private_value.to_bytes(32, "big")
+    seal = ref.seal_user_key(scalar, str(user.pk), cred_id, os.urandom(32), os.urandom(16), os.urandom(12))
+    ks = UserVaultKeyset.objects.create(user=user, public_jwk=ref.jwk(priv.public_key()), seals=[seal])
+    return priv, ks
+
+
+@pytest.fixture
+def fleet(client):
+    f = Fleet()
+    f.user = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    f.ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=f.user)
+    WorkspaceMembership.objects.create(workspace=f.ws, user=f.user, role=WorkspaceMembership.OWNER)
+    f.agent = Agent.objects.create(slug="eva", name="Eva", workspace=f.ws, owner=f.user,
+                                   runtime_secrets=["canopy-pat", "kindora"],
+                                   credential_source=Agent.CANOPY_WEB)
+    f.runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=f.user, status=Runner.ONLINE,
+                                     last_heartbeat_at=timezone.now(), capabilities={})
+    RunnerAssignment.objects.create(agent=f.agent, runner=f.runner, rank=0)
+    client.force_login(f.user)
+    grant_step_up(client)
+    f.client = client
+    client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "pat-value",
+                                                               "kindora": "kin-value"}},
+               content_type="application/json")
+    f.pat = _pat(f.user)
+    f.sign = ec.generate_private_key(ec.SECP256R1())
+    f.ecdh = ec.generate_private_key(ec.SECP256R1())
+    f.device = _register(f, f.sign, f.ecdh)
+    assert f.client.post(f"/api/runner-device-keys/{f.device.pk}/approve").status_code == 200
+    f.device.refresh_from_db()
+    f.passkey = _add_passkey(f.user)
+    f.member_priv, f.keyset = _make_keyset(f.user, f.passkey.credential_id)
+    f.vk = os.urandom(32)
+    f.recovery = os.urandom(32)
+    return f
+
+
+def _register(f, sign, ecdh=None, runner=None) -> RunnerDeviceKey:
+    body = {"runner": str((runner or f.runner).pk), "public_jwk": _jwk(sign), "kind": "secure-enclave",
+            "label": "mbp"}
+    if ecdh is not None:
+        body["ecdh_public_jwk"] = ref.jwk(ecdh.public_key())
+    res = Client().post("/api/runner-device-keys/", data=body, content_type="application/json",
+                        HTTP_AUTHORIZATION=f"Bearer {f.pat}")
+    assert res.status_code in (200, 201), res.content
+    return RunnerDeviceKey.objects.get(pk=res.json()["id"])
+
+
+def _aid(f) -> str:
+    return str(f.agent.pk)
+
+
+def device_wrap(f, kv=1, vk=None, key=None, ecdh=None) -> dict:
+    key, ecdh = key or f.device, ecdh or f.ecdh
+    info = ref.device_info(_aid(f), kv, key.ecdh_jkt)
+    return {"kind": "device", "target": str(key.pk),
+            "wrap": ref.wrap_ecdh_es(vk or f.vk, ecdh.public_key(), info,
+                                     ec.generate_private_key(ec.SECP256R1()), os.urandom(12))}
+
+
+def member_wrap(f, kv=1, vk=None, user=None, pub=None) -> dict:
+    user = user or f.user
+    pub = pub or f.member_priv.public_key()
+    info = ref.member_info(_aid(f), kv, str(user.pk))
+    return {"kind": "member", "target": str(user.pk),
+            "wrap": ref.wrap_ecdh_es(vk or f.vk, pub, info, ec.generate_private_key(ec.SECP256R1()),
+                                     os.urandom(12))}
+
+
+def recovery_wrap(f, kv=1, vk=None, r=None) -> dict:
+    return {"kind": "recovery", "target": None,
+            "wrap": ref.wrap_recovery(vk or f.vk, _aid(f), kv, r or f.recovery, os.urandom(16), os.urandom(12))}
+
+
+def zk_values(f, plain: dict, kv=1, vk=None) -> list[dict]:
+    return [{"name": n, "value_zk": ref.encrypt_value(vk or f.vk, _aid(f), n, kv, v, os.urandom(12))}
+            for n, v in plain.items()]
+
+
+PLAIN = {"canopy-pat": "pat-value", "kindora": "kin-value"}
+
+
+def _enable(f, *, wraps=None, values=None, kv=1, client=None, **headers):
+    body = {"kv": kv,
+            "wraps": wraps if wraps is not None else [member_wrap(f), device_wrap(f), recovery_wrap(f)],
+            "values": values if values is not None else zk_values(f, PLAIN)}
+    return (client or f.client).post(f"{ZK}/enable", data=body, content_type="application/json", **headers)
+
+
+def _resolve(f, key=None, refs=None):
+    url = RESOLVE + (f"?refs={refs}" if refs is not None else "")
+    return Client().get(url, HTTP_AUTHORIZATION=f"Bearer {f.pat}",
+                        HTTP_DPOP=make_dpop_proof(key or f.sign, "GET", HTU),
+                        HTTP_X_CANOPY_TURN_ID="t-1")
+
+
+# ---- the normative files and the shape checks ----------------------------------------
+
+def test_the_committed_reference_reproduces_the_committed_vectors():
+    assert ref.vectors() == VECTORS
+
+
+def test_shape_checks_accept_every_vector_output():
+    out = VECTORS["outputs"]
+    zk.check_value_zk(out["value"])
+    zk.check_ecdh_wrap(out["device_wrap"])
+    zk.check_ecdh_wrap(out["member_wrap"])
+    zk.check_recovery_wrap(out["recovery_wrap"])
+    zk.check_seal(out["user_key_seal"])
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda w: w | {"alg": "ECDH-ES"},
+    lambda w: w | {"n": w["n"] + "AA"},
+    lambda w: w | {"ct": w["ct"][:-4]},
+    lambda w: w | {"epk": w["epk"][:-2]},
+    lambda w: w | {"epk": "Ag" + w["epk"][2:]},  # not an uncompressed point
+    lambda w: w | {"n": w["n"] + "="},  # padding
+    lambda w: w | {"extra": "x"},
+    lambda w: {k: v for k, v in w.items() if k != "ct"},
+])
+def test_shape_checks_refuse_a_malformed_wrap(mutate):
+    with pytest.raises(zk.ZkError) as exc:
+        zk.check_ecdh_wrap(mutate(dict(VECTORS["outputs"]["device_wrap"])))
+    assert exc.value.code == "zk_invalid_shape"
+
+
+@pytest.mark.parametrize("value", ["zk2:AAAA", "AAECAwQFBgcICQoL", "zk1:AAECAwQ", "zk1:+/+/" * 10, 42])
+def test_shape_checks_refuse_a_malformed_value(value):
+    with pytest.raises(zk.ZkError):
+        zk.check_value_zk(value)
+
+
+def test_shape_checks_accept_the_passphrase_seal_and_refuse_a_variant():
+    seal = VECTORS["outputs"]["user_key_seal_2skd"]
+    zk.check_seal(seal)
+    for bad in (seal | {"i": 100000}, seal | {"i": True}, seal | {"kdf": "argon2"},
+                seal | {"cred": "x"}, {k: v for k, v in seal.items() if k != "kdf"}):
+        with pytest.raises(zk.ZkError):
+            zk.check_seal(bad)
+
+
+def test_a_keyset_may_hold_passkey_and_passphrase_seals(fleet):
+    seals = fleet.keyset.seals + [VECTORS["outputs"]["user_key_seal_2skd"]]
+    res = fleet.client.put("/api/vault/keyset", data={"public_jwk": fleet.keyset.public_jwk, "seals": seals},
+                           content_type="application/json")
+    assert res.status_code == 200, res.content
+    assert [s["alg"] for s in res.json()["seals"]] == ["prf", "2skd"]
+    # Deleting the passkey leaves the passphrase seal.
+    fleet.client.delete(f"/api/passkeys/{fleet.passkey.pk}")
+    fleet.keyset.refresh_from_db()
+    assert [s["alg"] for s in fleet.keyset.seals] == ["2skd"]
+
+
+def test_shape_checks_refuse_a_malformed_recovery_wrap_or_seal():
+    with pytest.raises(zk.ZkError):
+        zk.check_recovery_wrap(VECTORS["outputs"]["recovery_wrap"] | {"s": "AAAA"})
+    with pytest.raises(zk.ZkError):
+        zk.check_seal(VECTORS["outputs"]["user_key_seal"] | {"alg": "ecdh-es"})
+
+
+# ---- the person's keyset ---------------------------------------------------------------
+
+def test_keyset_get_names_the_prf_input_of_the_reference(client):
+    user = get_user_model().objects.create_user(username="p", email="p@dimagi.com")
+    client.force_login(user)
+    body = client.get("/api/vault/keyset").json()
+    assert body["exists"] is False and body["user_id"] == str(user.pk)
+    assert body["prf_input"] == ref.b64u(ref.prf_input(str(user.pk)))
+
+
+def test_keyset_put_needs_a_browser_step_up_and_your_own_passkey(client):
+    user = get_user_model().objects.create_user(username="p", email="p@dimagi.com")
+    pk = _add_passkey(user)
+    client.force_login(user)
+    priv = ec.generate_private_key(ec.SECP256R1())
+    seal = ref.seal_user_key(b"\x01" * 32, str(user.pk), pk.credential_id, os.urandom(32),
+                             os.urandom(16), os.urandom(12))
+    body = {"public_jwk": ref.jwk(priv.public_key()), "seals": [seal]}
+    res = client.put("/api/vault/keyset", data=body, content_type="application/json")
+    assert res.status_code == 403 and res.json()["error"] == "step_up_required"
+    res = Client().put("/api/vault/keyset", data=body, content_type="application/json",
+                       HTTP_AUTHORIZATION=f"Bearer {_pat(user)}")
+    assert res.status_code == 403
+    grant_step_up(client)
+    stranger = dict(seal, cred=ref.b64u(b"someone-elses"))
+    res = client.put("/api/vault/keyset", data=body | {"seals": [stranger]}, content_type="application/json")
+    assert res.status_code == 422 and res.json()["error"] == "zk_unknown_passkey"
+    res = client.put("/api/vault/keyset", data=body, content_type="application/json")
+    assert res.status_code == 200, res.content
+    got = res.json()
+    assert got["exists"] and got["public_jwk"] == ref.jwk(priv.public_key())
+    assert got["passkeys"] == [{"credential_id": pk.credential_id, "label": "", "prf_enabled": True,
+                                "sealed": True}]
+
+
+def test_a_new_keyset_needs_replace_and_drops_member_wraps(fleet):
+    assert _enable(fleet).status_code == 200
+    other = ec.generate_private_key(ec.SECP256R1())
+    seal = ref.seal_user_key(b"\x02" * 32, str(fleet.user.pk), fleet.passkey.credential_id,
+                             os.urandom(32), os.urandom(16), os.urandom(12))
+    body = {"public_jwk": ref.jwk(other.public_key()), "seals": [seal]}
+    res = fleet.client.put("/api/vault/keyset", data=body, content_type="application/json")
+    assert res.status_code == 409 and res.json()["error"] == "zk_keyset_exists"
+    res = fleet.client.put("/api/vault/keyset", data=body | {"replace": True}, content_type="application/json")
+    assert res.status_code == 200
+    assert not AgentVaultWrap.objects.filter(kind="member").exists()
+    pending = fleet.client.get(ZK).json()["pending"]
+    assert [(p["kind"], p["target"]) for p in pending] == [("member", str(fleet.user.pk))]
+
+
+def test_deleting_a_passkey_drops_its_seal(fleet):
+    res = fleet.client.delete(f"/api/passkeys/{fleet.passkey.pk}")
+    assert res.status_code == 204
+    fleet.keyset.refresh_from_db()
+    assert fleet.keyset.seals == []
+
+
+def test_registration_records_prf_support(client, settings):
+    from apps.passkeys.testing import SoftAuthenticator
+
+    user = get_user_model().objects.create_user(username="p", email="p@dimagi.com")
+    client.force_login(user)
+    auth = SoftAuthenticator()
+    options = client.post("/api/passkeys/register/begin").json()["options"]
+    cred = auth.create(options)
+    cred["clientExtensionResults"] = {"prf": {"enabled": True}}
+    res = client.post("/api/passkeys/register/finish", data={"credential": cred, "label": "mac"},
+                      content_type="application/json")
+    assert res.status_code == 201, res.content
+    assert res.json()["prf_enabled"] is True
+    assert Passkey.objects.get(user=user).prf_enabled is True
+
+
+# ---- enable ------------------------------------------------------------------------------
+
+def test_enable_wipes_custodial_values_and_turns_zk_on(fleet):
+    res = _enable(fleet)
+    assert res.status_code == 200, res.content
+    state = res.json()
+    assert state["enabled"] and state["kv"] == 1 and state["agent_id"] == _aid(fleet)
+    assert sorted(w["kind"] for w in state["wraps"]) == ["device", "member", "recovery"]
+    assert state["pending"] == [] and state["values"] is None
+    dev = next(w for w in state["wraps"] if w["kind"] == "device")
+    assert dev["public_jwk"] == ref.jwk(fleet.ecdh.public_key())
+    for cred in AgentCredential.objects.filter(agent=fleet.agent):
+        assert cred.value_enc == "" and cred.value_zk.startswith("zk1:") and cred.kv == 1
+        with pytest.raises(ZeroKnowledgeValue):
+            cred.plaintext()
+    status = fleet.client.get("/api/agents/eva/credentials/status").json()
+    assert {r["source"] for r in status} == {"canopy-web-zk"}
+    # The recovery code opens the vault key; the member wrap opens with the keyset.
+    rec = AgentVaultWrap.objects.get(kind="recovery").wrap
+    code = ref.recovery_code(fleet.recovery)
+    assert ref.unwrap_recovery(rec, _aid(fleet), 1, ref.parse_recovery_code(code)) == fleet.vk
+    mem = AgentVaultWrap.objects.get(kind="member").wrap
+    assert ref.unwrap_ecdh_es(mem, fleet.member_priv, ref.member_info(_aid(fleet), 1, str(fleet.user.pk))) \
+        == fleet.vk
+
+
+def test_enable_is_audited_without_the_ciphertext(fleet):
+    assert _enable(fleet).status_code == 200
+    row = SettingChange.objects.filter(operation="enable_agent_zk").get()
+    assert row.request["body"]["values"] == "[redacted]"
+
+
+@pytest.mark.parametrize("wraps, code", [
+    (lambda f: [member_wrap(f), device_wrap(f)], "zk_recovery_required"),
+    (lambda f: [member_wrap(f), recovery_wrap(f), recovery_wrap(f)], "zk_invalid_shape"),
+    (lambda f: [device_wrap(f), recovery_wrap(f)], "zk_member_wrap_required"),
+    (lambda f: [member_wrap(f), member_wrap(f), recovery_wrap(f)], "zk_invalid_shape"),
+    (lambda f: [member_wrap(f) | {"wrap": {"alg": "ecdh-es"}}, recovery_wrap(f)], "zk_invalid_shape"),
+    (lambda f: [member_wrap(f) | {"target": "99999"}, recovery_wrap(f)], "zk_invalid_target"),
+    (lambda f: [member_wrap(f), device_wrap(f) | {"target": "not-a-uuid"}, recovery_wrap(f)],
+     "zk_invalid_shape"),
+])
+def test_enable_refuses_a_bad_wrap_set(fleet, wraps, code):
+    res = _enable(fleet, wraps=wraps(fleet))
+    assert res.status_code == 422 and res.json()["error"] == code, res.content
+    assert not Agent.objects.get(pk=fleet.agent.pk).zk_enabled
+    assert AgentCredential.objects.get(name="canopy-pat").plaintext() == "pat-value"
+
+
+def test_enable_needs_every_stored_value(fleet):
+    res = _enable(fleet, values=zk_values(fleet, {"canopy-pat": "pat-value"}))
+    assert res.status_code == 422 and res.json()["error"] == "zk_values_incomplete"
+    assert "kindora" in res.json()["detail"]
+
+
+def test_enable_refuses_kv_other_than_1_and_a_second_enable(fleet):
+    assert _enable(fleet, kv=2).json()["error"] == "zk_kv_mismatch"
+    assert _enable(fleet).status_code == 200
+    res = _enable(fleet)
+    assert res.status_code == 409 and res.json()["error"] == "zk_already_enabled"
+
+
+def test_enable_refuses_a_device_key_that_is_pending_or_has_no_ecdh_key(fleet):
+    plain_key = _register(fleet, ec.generate_private_key(ec.SECP256R1()))  # no ECDH key
+    fleet.client.post(f"/api/runner-device-keys/{plain_key.pk}/approve")
+    pend = _register(fleet, ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1()))
+    for key in (plain_key, pend):
+        wraps = [member_wrap(fleet), recovery_wrap(fleet),
+                 {"kind": "device", "target": str(key.pk), "wrap": device_wrap(fleet)["wrap"]}]
+        res = _enable(fleet, wraps=wraps)
+        assert res.status_code == 422 and res.json()["error"] == "zk_invalid_target"
+
+
+def test_enable_from_a_browser_needs_a_step_up_and_a_token_does_not(fleet):
+    grant_step_up(fleet.client, seconds=-1)
+    res = _enable(fleet)
+    assert res.status_code == 403 and res.json()["error"] == "step_up_required"
+    res = _enable(fleet, client=Client(), HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
+    assert res.status_code == 200, res.content
+
+
+def test_enable_by_token_with_only_a_device_wrap_the_caller_owns(fleet):
+    # The canopy CLI acts as its device: it may enable without a keyset of its
+    # own, as long as a member (here, the owner's keyset) is wrapped too.
+    other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.EDITOR)
+    AgentAdmin.objects.create(agent=fleet.agent, user=other, granted_by=fleet.user)
+    UserVaultKeyset.objects.filter(user=fleet.user).delete()
+    o_priv, _ = _make_keyset(other, _add_passkey(other, "o-cred").credential_id)
+    wraps = [member_wrap(fleet, user=other, pub=o_priv.public_key()), device_wrap(fleet), recovery_wrap(fleet)]
+    res = _enable(fleet, wraps=wraps, client=Client(), HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
+    assert res.status_code == 200, res.content
+
+
+def test_enable_refuses_a_set_the_caller_cannot_open(fleet):
+    other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.EDITOR)
+    AgentAdmin.objects.create(agent=fleet.agent, user=other, granted_by=fleet.user)
+    o_priv, _ = _make_keyset(other, _add_passkey(other, "o-cred").credential_id)
+    wraps = [member_wrap(fleet, user=other, pub=o_priv.public_key()), recovery_wrap(fleet)]
+    res = _enable(fleet, wraps=wraps)
+    assert res.status_code == 422 and res.json()["error"] == "zk_caller_wrap_required"
+
+
+def test_only_an_admin_reaches_the_zk_routes(fleet):
+    editor = get_user_model().objects.create_user(username="e", email="e@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=editor, role=WorkspaceMembership.EDITOR)
+    c = Client()
+    c.force_login(editor)
+    grant_step_up(c)
+    assert c.get(ZK).status_code == 403
+    assert _enable(fleet, client=c).status_code == 403
+
+
+# ---- after enable: the custodial paths refuse -----------------------------------------------
+
+def test_reveal_and_custodial_writes_refuse_a_zk_agent(fleet):
+    assert _enable(fleet).status_code == 200
+    res = fleet.client.post("/api/agents/eva/credentials/canopy-pat/reveal")
+    assert res.status_code == 409 and res.json()["error"] == "zk_enabled"
+    res = fleet.client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "x"}},
+                           content_type="application/json")
+    assert res.status_code == 409 and res.json()["error"] == "zk_enabled"
+    assert AgentCredential.objects.get(name="canopy-pat").value_enc == ""
+
+
+def test_pat_rotation_refuses_a_zk_agent(fleet):
+    from apps.agents import pat_rotation
+
+    assert _enable(fleet).status_code == 200
+    refusal = pat_rotation.enable_refusal(Agent.objects.get(pk=fleet.agent.pk), fleet.user)
+    assert refusal is not None and refusal.status == 409
+
+
+# ---- resolve ---------------------------------------------------------------------------------
+
+def test_zk_resolve_hands_out_ciphertext_and_the_devices_wrap(fleet):
+    assert _enable(fleet).status_code == 200
+    res = _resolve(fleet)
+    assert res.status_code == 200, res.content
+    body = res.json()
+    assert body["zk"] is True and body["kv"] == 1
+    vk = ref.unwrap_ecdh_es(body["wrap"], fleet.ecdh,
+                            ref.device_info(_aid(fleet), 1, fleet.device.ecdh_jkt))
+    assert vk == fleet.vk
+    got = {n: ref.decrypt_value(vk, _aid(fleet), n, 1, v) for n, v in body["values"].items()}
+    assert got == PLAIN
+    assert set(AgentCredentialRead.objects.values_list("name", flat=True)) == set(PLAIN)
+    # Scoped like a custodial resolve.
+    assert set(_resolve(fleet, refs="kindora").json()["values"]) == {"kindora"}
+
+
+def test_zk_resolve_needs_a_device_proof_even_without_device_binding(fleet):
+    assert _enable(fleet).status_code == 200
+    assert not Agent.objects.get(pk=fleet.agent.pk).require_device_binding
+    res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
+    assert res.status_code == 401 and res.json() == {"error": "device_proof_required"}
+
+
+def test_a_device_without_a_wrap_gets_409_and_the_owner_an_alert(fleet):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    res = _resolve(fleet)
+    assert res.status_code == 409
+    assert res.json() == {"error": "zk_wrap_missing", "kv": 1, "device_key": str(fleet.device.pk)}
+    alert = AgentCredentialAlert.objects.get()
+    assert alert.kind == "zk-wrap-missing" and alert.runner_id == fleet.runner.pk
+    assert not AgentCredentialRead.objects.exists()
+
+
+def test_a_custodial_resolve_says_zk_false(fleet):
+    body = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet.pat}").json()
+    assert body["zk"] is False and body["kv"] is None and body["wrap"] is None
+    assert body["values"]["canopy-pat"] == "pat-value"
+
+
+# ---- values, grants ---------------------------------------------------------------------------
+
+def test_values_put_checks_kv_and_shape(fleet):
+    assert _enable(fleet).status_code == 200
+    vals = zk_values(fleet, {"new-ref": "nv"})
+    res = fleet.client.put(f"{ZK}/values", data={"kv": 2, "values": vals}, content_type="application/json")
+    assert res.status_code == 409 and res.json()["error"] == "zk_kv_mismatch"
+    res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": [{"name": "x", "value_zk": "plain"}]},
+                           content_type="application/json")
+    assert res.status_code == 422
+    res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": vals}, content_type="application/json")
+    assert res.status_code == 200 and res.json() == {"kv": 1, "names": ["new-ref"]}
+    assert AgentCredential.objects.get(name="new-ref").value_zk == vals[0]["value_zk"]
+
+
+def test_before_enable_every_eligible_principal_is_pending(fleet):
+    state = fleet.client.get(ZK).json()
+    assert not state["enabled"]
+    assert sorted((p["kind"], p["target"]) for p in state["pending"]) == sorted(
+        [("device", str(fleet.device.pk)), ("member", str(fleet.user.pk))])
+
+
+def test_values_put_refuses_an_agent_that_is_not_zk(fleet):
+    res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": zk_values(fleet, {"a": "b"})},
+                           content_type="application/json")
+    assert res.status_code == 409 and res.json()["error"] == "zk_not_enabled"
+
+
+def test_grant_pending_devices_and_admins(fleet):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.EDITOR)
+    o_priv, _ = _make_keyset(other, _add_passkey(other, "o-cred").credential_id)
+    # Not an admin yet: not pending, and not grantable.
+    state = fleet.client.get(ZK).json()
+    assert [(p["kind"], p["target"]) for p in state["pending"]] == [("device", str(fleet.device.pk))]
+    assert state["pending"][0]["public_jwk"] == ref.jwk(fleet.ecdh.public_key())
+    assert state["pending"][0]["ecdh_jkt"] == fleet.device.ecdh_jkt
+    res = fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=other, pub=o_priv.public_key())]}, content_type="application/json")
+    assert res.status_code == 422 and res.json()["error"] == "zk_invalid_target"
+    AgentAdmin.objects.create(agent=fleet.agent, user=other, granted_by=fleet.user)
+    assert len(fleet.client.get(ZK).json()["pending"]) == 2
+    res = fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [
+        device_wrap(fleet), member_wrap(fleet, user=other, pub=o_priv.public_key())]},
+        content_type="application/json")
+    assert res.status_code == 200, res.content
+    assert res.json()["pending"] == []
+    assert _resolve(fleet).status_code == 200
+    # Granting again replaces, never duplicates.
+    fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [device_wrap(fleet)]},
+                      content_type="application/json")
+    assert AgentVaultWrap.objects.filter(kind="device").count() == 1
+
+
+def test_wraps_post_refuses_recovery_and_a_stale_kv(fleet):
+    assert _enable(fleet).status_code == 200
+    res = fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [recovery_wrap(fleet)]},
+                            content_type="application/json")
+    assert res.status_code == 422
+    res = fleet.client.post(f"{ZK}/wraps", data={"kv": 3, "wraps": [device_wrap(fleet)]},
+                            content_type="application/json")
+    assert res.status_code == 409
+
+
+def test_state_values_are_ciphertext_and_read_logged(fleet):
+    assert _enable(fleet).status_code == 200
+    body = fleet.client.get(f"{ZK}?values=true").json()
+    assert set(body["values"]) == set(PLAIN) and all(v.startswith("zk1:") for v in body["values"].values())
+    assert set(AgentCredentialRead.objects.filter(via="zk-state").values_list("name", flat=True)) == set(PLAIN)
+
+
+# ---- rotate ------------------------------------------------------------------------------------
+
+def _rotate(f, wraps, values=None, new_kv=2, vk=None):
+    vk = vk or os.urandom(32)
+    return f.client.post(f"{ZK}/rotate", data={
+        "new_kv": new_kv, "wraps": wraps,
+        "values": values if values is not None else zk_values(f, PLAIN, kv=new_kv, vk=vk)},
+        content_type="application/json")
+
+
+def test_rotate_replaces_every_wrap_and_value(fleet):
+    assert _enable(fleet).status_code == 200
+    vk2 = os.urandom(32)
+    wraps = [member_wrap(fleet, kv=2, vk=vk2), device_wrap(fleet, kv=2, vk=vk2), recovery_wrap(fleet, kv=2, vk=vk2)]
+    res = _rotate(fleet, wraps, values=zk_values(fleet, PLAIN, kv=2, vk=vk2))
+    assert res.status_code == 200, res.content
+    assert res.json()["kv"] == 2
+    assert set(AgentVaultWrap.objects.values_list("kv", flat=True)) == {2}
+    assert set(AgentCredential.objects.values_list("kv", flat=True)) == {2}
+    body = _resolve(fleet).json()
+    vk = ref.unwrap_ecdh_es(body["wrap"], fleet.ecdh, ref.device_info(_aid(fleet), 2, fleet.device.ecdh_jkt))
+    assert vk == vk2 and ref.decrypt_value(vk, _aid(fleet), "kindora", 2, body["values"]["kindora"]) == "kin-value"
+
+
+def test_rotate_needs_the_next_kv_and_every_remaining_target(fleet):
+    assert _enable(fleet).status_code == 200
+    res = _rotate(fleet, [member_wrap(fleet, kv=3), device_wrap(fleet, kv=3), recovery_wrap(fleet, kv=3)],
+                  new_kv=3)
+    assert res.status_code == 409 and res.json()["error"] == "zk_kv_mismatch"
+    res = _rotate(fleet, [member_wrap(fleet, kv=2), recovery_wrap(fleet, kv=2)])
+    assert res.status_code == 422 and res.json()["error"] == "zk_rewrap_required"
+    assert str(fleet.device.pk) in res.json()["detail"]
+    res = _rotate(fleet, [member_wrap(fleet, kv=2), device_wrap(fleet, kv=2)])
+    assert res.json()["error"] == "zk_recovery_required"
+
+
+def test_rotate_after_revoking_a_device_leaves_it_out(fleet):
+    assert _enable(fleet).status_code == 200
+    fleet.client.delete(f"/api/runner-device-keys/{fleet.device.pk}")
+    state = fleet.client.get(ZK).json()
+    assert state["rotation_recommended"] is True
+    assert [w["current"] for w in state["wraps"] if w["kind"] == "device"] == [False]
+    res = _rotate(fleet, [member_wrap(fleet, kv=2), recovery_wrap(fleet, kv=2)])
+    assert res.status_code == 200, res.content
+    assert not AgentVaultWrap.objects.filter(kind="device").exists()
+    assert res.json()["rotation_recommended"] is False
+
+
+# ---- disable ------------------------------------------------------------------------------------
+
+def test_disable_is_browser_only_and_restores_custodial_values(fleet):
+    assert _enable(fleet).status_code == 200
+    body = {"values": [{"name": n, "plaintext": v} for n, v in PLAIN.items()]}
+    res = Client().post(f"{ZK}/disable", data=body, content_type="application/json",
+                        HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
+    assert res.status_code == 403
+    res = fleet.client.post(f"{ZK}/disable", data={"values": body["values"][:1]},
+                            content_type="application/json")
+    assert res.status_code == 422 and res.json()["error"] == "zk_values_incomplete"
+    res = fleet.client.post(f"{ZK}/disable", data=body, content_type="application/json")
+    assert res.status_code == 200, res.content
+    assert res.json()["enabled"] is False and res.json()["kv"] == 0
+    assert not AgentVaultWrap.objects.exists()
+    assert AgentCredential.objects.get(name="kindora").plaintext() == "kin-value"
+    assert Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet.pat}").json()["values"] == PLAIN
+    # The plaintext never reaches the settings audit.
+    row = SettingChange.objects.filter(operation="disable_agent_zk").get()
+    assert "kin-value" not in json.dumps(row.request)
+
+
+# ---- device-key enrollment with an ECDH key ------------------------------------------------------
+
+def test_enrollment_records_the_ecdh_key_and_its_thumbprint(fleet):
+    assert fleet.device.ecdh_public_jwk == ref.jwk(fleet.ecdh.public_key())
+    assert fleet.device.ecdh_jkt == ref.jkt(fleet.ecdh.public_key())
+    # The reference's jkt over the vector key matches canopy-web's thumbprint.
+    from apps.harness import device_keys
+
+    assert device_keys.thumbprint(VECTORS["inputs"]["device_pub_jwk"]) == VECTORS["inputs"]["device_jkt"]
+
+
+def test_changing_the_ecdh_key_sends_an_active_key_back_to_pending(fleet):
+    assert _enable(fleet).status_code == 200
+    same = _register(fleet, fleet.sign, fleet.ecdh)
+    assert same.status == RunnerDeviceKey.ACTIVE  # re-posting the same key changes nothing
+    new_ecdh = ec.generate_private_key(ec.SECP256R1())
+    key = _register(fleet, fleet.sign, new_ecdh)
+    assert key.pk == fleet.device.pk and key.status == RunnerDeviceKey.PENDING
+    assert key.ecdh_jkt == ref.jkt(new_ecdh.public_key()) and key.approved_at is None
+    assert not AgentVaultWrap.objects.filter(kind="device").exists()
+    res = fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve")
+    assert res.status_code == 200 and res.json()["zk_pending_agents"] == ["eva"]
+
+
+def test_an_aws_iam_key_with_a_new_ecdh_key_needs_re_approval(fleet, monkeypatch):
+    from apps.harness import aws_iam_proof
+
+    role = "arn:aws:iam::123456789012:role/canopy-runner"
+    monkeypatch.setattr(aws_iam_proof, "verify", lambda proof, request: role)
+
+    def enroll(ecdh):
+        return Client().post("/api/runner-device-keys/", data={
+            "runner": str(fleet.runner.pk), "kind": "aws-iam", "role_arn": role, "proof": "p",
+            "ecdh_public_jwk": ref.jwk(ecdh.public_key())},
+            content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
+
+    first = enroll(ec.generate_private_key(ec.SECP256R1()))
+    assert first.status_code == 201 and first.json()["ecdh_jkt"]
+    fleet.client.post(f"/api/runner-device-keys/{first.json()['id']}/approve")
+    again = enroll(ec.generate_private_key(ec.SECP256R1()))
+    assert again.status_code == 200 and again.json()["status"] == "pending"
+
+
+def test_enrollment_refuses_a_bad_ecdh_key(fleet):
+    res = Client().post("/api/runner-device-keys/", data={
+        "runner": str(fleet.runner.pk), "public_jwk": _jwk(ec.generate_private_key(ec.SECP256R1())),
+        "kind": "software", "ecdh_public_jwk": {"kty": "OKP", "crv": "X25519", "x": "abc"}},
+        content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
+    assert res.status_code == 422

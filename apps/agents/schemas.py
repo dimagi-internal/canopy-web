@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
@@ -1206,7 +1206,7 @@ class AgentCredentialAlertOut(StrictModel):
     most one per kind per hour; `occurrences` counts repeats inside it."""
 
     id: int
-    kind: Literal["no-turn", "undeclared-ref", "burst", "device-proof"]
+    kind: Literal["no-turn", "undeclared-ref", "burst", "device-proof", "zk-wrap-missing"]
     detail: str = ""
     refs: list[str] = []
     user_email: str = ""
@@ -1326,6 +1326,126 @@ class AgentCredentialsResolveOut(StrictModel):
     # agent shares its repo, and deriving the address from the repo or the slug
     # would point two instances at one inbox (canopy-web#984).
     mailbox: str = ""
+    # Zero-knowledge (canopy-web#1550). When `zk`, `values` hold `zk1:`
+    # ciphertext under the agent's vault key at version `kv`, and `wrap` is that
+    # key wrapped to the proving device's ECDH key (docs/vault/zk-v1/).
+    zk: bool = False
+    kv: int | None = None
+    wrap: dict[str, Any] | None = None
+
+
+class ZkWrapMissingOut(StrictModel):
+    """409 from resolve: the agent is zero-knowledge and the proving device
+    holds no vault-key wrap at the current kv (its owner is alerted)."""
+
+    error: Literal["zk_wrap_missing"]
+    kv: int
+    device_key: str
+
+
+# ---- zero-knowledge vault (canopy-web#1550; apps/agents/zk.py) ----------------
+
+ZkWrapKind = Literal["device", "member", "recovery"]
+
+
+class ZkWrapIn(StrictModel):
+    """One wrap of the vault key. `target` is a device key id (`device`), a user
+    id (`member`), or null (`recovery`). `wrap` is the JSON object of
+    docs/vault/zk-v1/zk_v1_reference.py §3 / §5 — shape-checked, never opened."""
+
+    kind: ZkWrapKind
+    target: str | None = None
+    wrap: dict[str, Any]
+
+
+class ZkValueIn(StrictModel):
+    name: str = Field(max_length=120)
+    #: `zk1:` + b64u(nonce12 || AES-GCM ciphertext+tag).
+    value_zk: str
+
+
+class ZkPlainValueIn(StrictModel):
+    name: str = Field(max_length=120)
+    plaintext: str
+
+
+class ZkEnableIn(StrictModel):
+    kv: int = 1
+    wraps: list[ZkWrapIn]
+    values: list[ZkValueIn] = Field(default_factory=list)
+
+
+class ZkValuesIn(StrictModel):
+    kv: int
+    values: list[ZkValueIn]
+
+
+class ZkWrapsIn(StrictModel):
+    kv: int
+    wraps: list[ZkWrapIn]
+
+
+class ZkRotateIn(StrictModel):
+    new_kv: int
+    wraps: list[ZkWrapIn]
+    values: list[ZkValueIn] = Field(default_factory=list)
+
+
+class ZkDisableIn(StrictModel):
+    values: list[ZkPlainValueIn] = Field(default_factory=list)
+
+
+class ZkWrapOut(StrictModel):
+    kind: ZkWrapKind
+    kv: int
+    #: Device key id, user id, or null for the recovery wrap.
+    target: str | None = None
+    #: Who holds it, for a person to read ("box · label", an email).
+    label: str = ""
+    #: Device wraps: the ECDH thumbprint bound into the wrap.
+    ecdh_jkt: str = ""
+    #: False once the holder no longer qualifies (key revoked, admin removed):
+    #: the wrap still opens this kv, so rotate.
+    current: bool = True
+    #: The holder's CURRENT public key (device ECDH key / person's keyset) —
+    #: what rotate re-wraps to. Null for recovery or a holder that is gone.
+    public_jwk: dict[str, Any] | None = None
+    wrap: dict[str, Any]
+    created_by_email: str = ""
+    created_at: dt.datetime
+
+
+class ZkTargetOut(StrictModel):
+    """A principal with no wrap at the current kv. `public_jwk` is what to wrap
+    to: the device's ECDH key, or the person's keyset key."""
+
+    kind: Literal["device", "member"]
+    target: str
+    public_jwk: dict[str, Any]
+    ecdh_jkt: str = ""
+    runner: str = ""
+    runner_name: str = ""
+    label: str = ""
+    device_kind: str = ""
+    email: str = ""
+
+
+class ZkStateOut(StrictModel):
+    agent: str
+    #: The Agent primary key as a string — bound into every AAD and HKDF info.
+    agent_id: str
+    enabled: bool
+    kv: int
+    wraps: list[ZkWrapOut]
+    pending: list[ZkTargetOut]
+    rotation_recommended: bool = False
+    #: name → `zk1:` ciphertext, only with `?values=true` (each read is logged).
+    values: dict[str, str] | None = None
+
+
+class ZkValuesOut(StrictModel):
+    kv: int
+    names: list[str]
 
 
 class BootstrapReportIn(StrictModel):
