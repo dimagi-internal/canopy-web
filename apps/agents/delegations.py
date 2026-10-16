@@ -440,7 +440,7 @@ def lender_salesforce_creds(lender: Agent) -> dict:
             f"{lender.slug} holds no Salesforce credential to lend — it stores one as its "
             f"own credential '{SALESFORCE_CREDENTIAL}' (PUT /api/agents/{lender.slug}/credentials)")
     try:
-        creds = json.loads(decrypt_secret(row.value_enc))
+        creds = json.loads(row.plaintext())
     except (ValueError, TypeError) as exc:
         raise DelegationError(f"{lender.slug}'s Salesforce credential is not valid JSON") from exc
     if not all(creds.get(k) for k in ("refreshToken", "clientId", "instanceUrl")):

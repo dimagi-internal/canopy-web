@@ -63,6 +63,19 @@ Parameters:
   MailEventsTopicArn:
     Type: String
     Default: ""
+  # Canopy Vault KMS envelope encryption for AgentCredential values
+  # (apps/common/kms_envelope.py, canopy-web#1538). OFF by default. The deploy
+  # role holds no kms:* until a human applies deploy_roles.py's
+  # `VaultKmsKeyManagement` statements — flipping this first fails the deploy at
+  # the preflight (or, without it, mid-rollout: the 2026-09-13 incident shape).
+  # Order: apply deploy_roles.py → deploy with EnableVaultKms=true → done.
+  EnableVaultKms:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+
+Conditions:
+  VaultKmsEnabled: !Equals [!Ref EnableVaultKms, "true"]
 
 Resources:
   EcrRepo:
@@ -163,6 +176,55 @@ Resources:
     Properties:
       Name: canopy-web/django-secret-key
       GenerateSecretString: { PasswordLength: 64, ExcludePunctuation: true }
+
+  # At-rest field encryption key (apps/common/encryption.py), separate from
+  # SECRET_KEY so either can rotate without the other. Any high-entropy string
+  # works — encryption.py derives the Fernet key from it with SHA-256. Rows
+  # written under SECRET_KEY before this existed still decrypt (MultiFernet);
+  # `manage.py reencrypt_secrets --apply` moves them across post-deploy.
+  FieldEncryptionKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: canopy-web/field-encryption-key
+      GenerateSecretString: { PasswordLength: 64, ExcludePunctuation: true }
+
+  # --- Canopy Vault KMS key (only when EnableVaultKms=true) ---
+  # Access by KEY POLICY, the AttachmentsBucketPolicy pattern: the task role
+  # reaches this stack only as a parameter. The account-root statement is the
+  # standard one that delegates key administration to IAM (without it the key
+  # is unmanageable and CloudFormation refuses the lockout).
+  VaultKmsKey:
+    Type: AWS::KMS::Key
+    Condition: VaultKmsEnabled
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: canopy-web Canopy Vault — envelope key for AgentCredential values
+      EnableKeyRotation: true
+      Tags:
+        - { Key: canopy-app, Value: canopy-web }
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdministersViaIam
+            Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: kms:*
+            Resource: "*"
+          - Sid: TaskRoleEnvelopeEncryption
+            Effect: Allow
+            Principal: { AWS: !Ref TaskRoleArn }
+            Action:
+              - kms:GenerateDataKey
+              - kms:Decrypt
+            Resource: "*"
+
+  VaultKmsAlias:
+    Type: AWS::KMS::Alias
+    Condition: VaultKmsEnabled
+    Properties:
+      AliasName: alias/canopy-web-vault
+      TargetKeyId: !Ref VaultKmsKey
 
   DatabaseUrl:
     Type: AWS::SecretsManager::Secret
@@ -492,6 +554,14 @@ Resources:
             # reports disabled and the frontend mounts nothing. Registering the
             # credential in the admin is what actually turns the widget on, and
             # revoking it turns it off again without a deploy.
+            #
+            # Canopy Vault KMS envelope (apps/common/kms_envelope.py): present
+            # only when EnableVaultKms=true. Unset = AgentCredential values stay
+            # Fernet, exactly as before.
+            - !If
+              - VaultKmsEnabled
+              - { Name: VAULT_KMS_KEY_ID, Value: !GetAtt VaultKmsKey.Arn }
+              - !Ref AWS::NoValue
           Secrets:
             # Name MUST be SECRET_KEY — that's what config/settings/base.py reads.
             # (It was DJANGO_SECRET_KEY, which nothing read, so prod silently fell
@@ -509,6 +579,7 @@ Resources:
             - { Name: CANOPY_HOST_SIGNING_KEY, ValueFrom: !Ref HostSigningKey }
             - { Name: SLACK_CLIENT_SECRET, ValueFrom: !Ref SlackClientSecret }
             - { Name: SLACK_SIGNING_SECRET, ValueFrom: !Ref SlackSigningSecret }
+            - { Name: FIELD_ENCRYPTION_KEY, ValueFrom: !Ref FieldEncryptionKey }
           LogConfiguration:
             LogDriver: awslogs
             Options:

@@ -502,6 +502,14 @@ RUNNER_CLOUD_CODE_COMMITTED_AT = env.int("RUNNER_CLOUD_CODE_COMMITTED_AT", defau
 # apps/common/encryption.py), so setting it needs no re-encryption at deploy time.
 FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY", default="")
 
+# Canopy Vault KMS envelope encryption for AgentCredential values
+# (apps/common/kms_envelope.py, canopy-web#1538). Empty = off: values stay Fernet
+# under the key above. Set (a KMS key id/ARN) = NEW values are written `kms1:`
+# under a per-value data key; reads handle both formats either way. Set by the
+# task definition only when the stack's EnableVaultKms condition is on.
+VAULT_KMS_KEY_ID = env("VAULT_KMS_KEY_ID", default="")
+VAULT_KMS_REGION = env("VAULT_KMS_REGION", default=env("AWS_REGION", default="us-east-1"))
+
 # --- GitHub App (agent creation creates a real repo) -------------------------
 # A GitHub App authorized PER USER through the user-to-server web flow, so the
 # grant belongs to the human and reaches only the repos they chose plus the ones

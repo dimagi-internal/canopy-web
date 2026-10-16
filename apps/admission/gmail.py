@@ -60,13 +60,12 @@ def access_token(agent) -> tuple[str, str]:
     """(access token, mailbox address) for the agent's `gog-token`, or Unavailable."""
     from apps.agents import google_oauth
     from apps.agents.models import AgentCredential
-    from apps.common.encryption import decrypt_secret
 
     row = AgentCredential.objects.filter(agent=agent, name=TOKEN_REF).first()
     if row is None:
         raise Unavailable("canopy-web holds no gog-token for this agent")
     try:
-        token = json.loads(decrypt_secret(row.value_enc))
+        token = json.loads(row.plaintext())
     except Exception as exc:  # noqa: BLE001
         raise Unavailable("the stored gog-token could not be read") from exc
     if token.get("client") != google_oauth.MINTING_CLIENT or not token.get("refresh_token"):

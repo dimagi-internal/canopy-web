@@ -1225,7 +1225,6 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None) -> int:
     resolving to nothing — the worst of both.
     """
     from apps.agents.models import AgentCredential
-    from apps.common.encryption import encrypt_secret
 
     blank = sorted(k for k, v in values.items() if not (v or "").strip())
     if blank:
@@ -1237,7 +1236,7 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None) -> int:
             agent=agent,
             name=name.strip(),
             defaults={
-                "value_enc": encrypt_secret(value.strip()),
+                "value_enc": AgentCredential.seal(agent, name.strip(), value.strip()),
                 "updated_by": user if getattr(user, "is_authenticated", False) else None,
             },
         )
@@ -1285,15 +1284,41 @@ def agent_credential_status(agent) -> list[dict]:
     return rows
 
 
-def resolve_agent_credentials(agent) -> dict[str, str]:
-    """PLAINTEXT. The only path that returns values, and only to a runner."""
-    from apps.agents.models import AgentCredential
-    from apps.common.encryption import decrypt_secret
+def declared_credential_names(agent) -> set[str]:
+    """Every ref the agent's runtime.yaml declares: `runtime_secrets` (the names)
+    plus `runtime_sources` (where each lives). The set `?refs=` is scoped to."""
+    names = {str(n).strip() for n in (agent.runtime_secrets or []) if str(n).strip()}
+    names |= {str(n).strip() for n in (agent.runtime_sources or {}) if str(n).strip()}
+    return names
 
-    return {
-        c.name: decrypt_secret(c.value_enc)
-        for c in AgentCredential.objects.filter(agent=agent)
-    }
+
+def resolve_agent_credentials(agent, refs: set[str] | None = None) -> dict[str, str]:
+    """PLAINTEXT. The only path that returns values, and only to a runner.
+
+    `refs=None` returns every stored value (the unscoped, original behaviour).
+    A set returns only those refs that the agent also DECLARES — a ref the
+    caller names but runtime.yaml does not is never handed out, so a scoped
+    caller cannot widen its read by guessing names."""
+    from apps.agents.models import AgentCredential
+
+    qs = AgentCredential.objects.filter(agent=agent).select_related("agent")
+    if refs is not None:
+        qs = qs.filter(name__in=sorted(set(refs) & declared_credential_names(agent)))
+    return {c.name: c.plaintext() for c in qs}
+
+
+def record_credential_reads(agent, names, *, user=None, runner=None, via="", turn_id="") -> None:
+    """One `AgentCredentialRead` row per ref handed out (canopy-web#1538)."""
+    from apps.agents.models import AgentCredentialRead
+
+    AgentCredentialRead.objects.bulk_create([
+        AgentCredentialRead(
+            agent=agent, name=str(n)[:120],
+            user=user if getattr(user, "is_authenticated", False) else None,
+            runner=runner, via=via[:16], turn_id=(turn_id or "")[:120],
+        )
+        for n in sorted(set(names))
+    ])
 
 
 def caller_runs_agent(user, agent) -> bool:
