@@ -29,16 +29,6 @@ Parameters:
     Type: String
     Default: ''
     Description: Comma-separated agent slugs this runner may drive.
-  PrepareEngine:
-    Type: String
-    AllowedValues: ['', 'bash', 'canopy']
-    Default: ''
-    Description: >
-      Which implementation prepares each agent on this box: `canopy` runs canopy's
-      `canopy agent prepare --runner` (the one shared with laptops), `bash` the
-      per-agent half of bootstrap_agents.sh. Empty follows the default in
-      cloud_runner.py / bootstrap_agents.sh, which is how the fleet moves without a
-      stack change. Set it on a standby box to drill an engine first.
   RunnerExecutor:
     Type: String
     AllowedValues: ['cli', 'acp']
@@ -298,7 +288,6 @@ Resources:
                 RUNNER_AGENTS=${RunnerAgents}
                 RUNNER_SESSIONS=${RunnerSessions}
                 RUNNER_EXECUTOR=${RunnerExecutor}
-                PREPARE_ENGINE=${PrepareEngine}
                 RUNNER_WORKSPACE=${RunnerWorkspace}
                 RUNNER_NAME=${RunnerName}
                 AGENT_SLUGS=${AgentSlugs}

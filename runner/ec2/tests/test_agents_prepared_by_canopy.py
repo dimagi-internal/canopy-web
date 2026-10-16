@@ -1,15 +1,15 @@
-"""PREPARE_ENGINE=canopy: the box prepares each agent with canopy's `canopy agent prepare
---runner` — the one implementation shared with laptops (canopy
-docs/architecture/agent-setup-lifecycle.md, phase 2) — and keeps only the BOX's own steps.
+"""The box prepares each agent with canopy's `canopy agent prepare --runner` — the one
+implementation shared with laptops (canopy docs/architecture/agent-setup-lifecycle.md) — and
+bootstrap_agents.sh keeps only the BOX's own steps. Drilled on a standby (cloud-ec2-prep,
+2026-10-15): readiness matched the old bash agent for agent before the bash was removed.
 
 Pinned:
 - step 3 calls `canopy agent prepare --runner --slug <s>` per roster agent (with
   --credentials-only on the credentials-only pass), and an agent is READY when its clone is
-  on the box — the bash path's bar, where a warning never made an agent unready;
+  on the box — where a warning never made an agent unready;
 - the CLI is brought current BEFORE agents are prepared (it is what prepares them);
 - the runner's lazy path for a never-seen agent prepares THAT agent only;
-- the switch is a per-box template parameter that reaches runner.env, and empty means
-  "the code's default" so the fleet moves through auto-update, not a stack change.
+- no per-agent preparation is left in the bash.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import subprocess
 
 import pytest
 
-from test_readiness_is_observed import BASH, _fn
+from _bash import BASH, _fn
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
 
@@ -38,8 +38,8 @@ AGENT_ROOT={root}; AGENT_SLUGS=ace,hal; CREDENTIALS_ONLY={credentials_only}
 READY_AGENTS=(); FAILED_AGENTS=()
 ok() {{ :; }}; warn() {{ :; }}; log() {{ :; }}; fail() {{ :; }}
 ensure_plugin_runtime() {{ :; }}
-{_fn("step3_agents_canopy")}
-step3_agents_canopy
+{_fn("step3_agents")}
+step3_agents
 echo "READY=${{READY_AGENTS[*]}} FAILED=${{FAILED_AGENTS[*]:-}}"
 """
     out = subprocess.run([BASH, "-c", script], check=True, capture_output=True, text=True,
@@ -53,17 +53,17 @@ echo "READY=${{READY_AGENTS[*]}} FAILED=${{FAILED_AGENTS[*]:-}}"
 
 @pytest.mark.skipif(BASH is None, reason="needs bash 4+")
 @pytest.mark.parametrize("credentials_only,order", [
-    (0, ["step1_tooling", "step2_gog_config", "step4_claude_plugins", "step3_agents_canopy",
+    (0, ["step1_tooling", "step2_gog_config", "step4_claude_plugins", "step3_agents",
          "step4b_prune_caches", "step5_summary"]),
-    (1, ["step2_gog_config", "reinstall_cli_from_marketplace_clone", "step3_agents_canopy"]),
+    (1, ["step2_gog_config", "reinstall_cli_from_marketplace_clone", "step3_agents"]),
 ])
 def test_the_cli_is_current_before_it_prepares_anything(tmp_path, credentials_only, order):
     stubs = "\n".join(f'{f}() {{ echo {f}; }}' for f in (
-        "step1_tooling", "step2_gog_config", "step3_agents", "step3_agents_canopy",
+        "step1_tooling", "step2_gog_config", "step3_agents",
         "step4_claude_plugins", "step4b_prune_caches", "step5_summary",
         "reinstall_cli_from_marketplace_clone"))
     script = f"""
-PREPARE_ENGINE=canopy; CREDENTIALS_ONLY={credentials_only}
+CREDENTIALS_ONLY={credentials_only}
 log() {{ :; }}
 {stubs}
 {_fn("main")}
@@ -74,26 +74,20 @@ main
     assert out == order
 
 
-def test_the_bash_engine_is_still_the_default():
+def test_no_per_agent_preparation_is_left_in_the_bash():
     text = (HERE / "bootstrap_agents.sh").read_text()
-    assert 'PREPARE_ENGINE="${PREPARE_ENGINE:-bash}"' in text
+    for gone in ("bootstrap_one_agent", "ensure_client_creds", "refresh_gmail_token",
+                 "inject_agent_env", "op inject", "gog auth tokens import", "PREPARE_ENGINE"):
+        assert gone not in text, gone
+    assert "canopy agent prepare --runner" in text
 
 
-def test_the_switch_is_a_template_parameter_that_reaches_runner_env():
-    cfn = (HERE / "runner.cfn.yaml").read_text()
-    assert "PrepareEngine:" in cfn and "AllowedValues: ['', 'bash', 'canopy']" in cfn
-    assert "PREPARE_ENGINE=${PrepareEngine}" in cfn
-    assert "PrepareEngine=${PREPARE_ENGINE_ARG}" in (HERE / "up.sh").read_text()
-
-
-def test_a_never_seen_agent_is_prepared_alone_with_the_canopy_engine(cloud_runner, monkeypatch):
+def test_a_never_seen_agent_is_prepared_alone(cloud_runner, monkeypatch):
     mod = cloud_runner
     runs, fleet = [], []
     monkeypatch.setattr(mod, "_run_teed", lambda cmd, env, timeout: (runs.append(cmd) or (0, [])))
     monkeypatch.setattr(mod, "bootstrap_agent_fleet", lambda: fleet.append(1))
-    monkeypatch.setattr(mod, "PREPARE_ENGINE", "canopy")
-    mod._lazy_prepare("scout")
+    mod.prepare_agent("scout")
     assert fleet == [] and runs[0][1:] == ["agent", "prepare", "--runner", "--slug", "scout"]
-    monkeypatch.setattr(mod, "PREPARE_ENGINE", "bash")
-    mod._lazy_prepare("scout")
-    assert fleet == [1] and len(runs) == 1
+    # ...and it IS what `_ensure_agent_clone` runs (the test loader swaps in a no-op).
+    assert "_LAZY_BOOTSTRAPPER = prepare_agent" in (HERE / "cloud_runner.py").read_text()

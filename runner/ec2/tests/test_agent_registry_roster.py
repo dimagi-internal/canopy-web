@@ -95,11 +95,8 @@ def _run(tmp: pathlib.Path, fn: str, call: str, *, env_extra=None, **curl_kw) ->
         "AGENT_REPO_ORG": "dimagi-internal",
     }
     env.update(env_extra or {})
-    # resolve_roster and agent_repo_url both call agent_registry, so inject the
-    # whole trio rather than the one under test.
-    defs = "\n".join(
-        _extract_function(n) for n in ("agent_registry", "resolve_roster", "agent_repo_url")
-    )
+    # resolve_roster calls agent_registry, so inject both.
+    defs = "\n".join(_extract_function(n) for n in ("agent_registry", "resolve_roster"))
     res = subprocess.run(
         ["bash", "-c", f"set -euo pipefail\n{defs}\n{call}"],
         capture_output=True, text=True, timeout=60, env=env,
@@ -110,17 +107,15 @@ def _run(tmp: pathlib.Path, fn: str, call: str, *, env_extra=None, **curl_kw) ->
 
 # --- the registry read ---------------------------------------------------------
 
-def test_the_registry_yields_slug_and_repo_for_every_agent(tmp_path):
+def test_the_registry_yields_every_agents_slug(tmp_path):
+    """Slugs only: `canopy agent prepare` reads each agent's repo from canopy-web itself."""
     out = _run(
         tmp_path, "agent_registry", "agent_registry",
         slugs=["ace", "echo"],
         repos={"ace": "https://github.com/dimagi-internal/ace",
                "echo": "https://github.com/dimagi-internal/echo"},
     )
-    assert out.splitlines() == [
-        "ace\thttps://github.com/dimagi-internal/ace",
-        "echo\thttps://github.com/dimagi-internal/echo",
-    ]
+    assert out.splitlines() == ["ace", "echo"]
 
 
 def test_a_NEW_agent_needs_no_stack_change(tmp_path):
@@ -132,7 +127,7 @@ def test_a_NEW_agent_needs_no_stack_change(tmp_path):
         repos={"ace": "https://github.com/dimagi-internal/ace",
                "scout": "https://github.com/dimagi-internal/scout"},
     )
-    assert "scout\thttps://github.com/dimagi-internal/scout" in out.splitlines()
+    assert "scout" in out.splitlines()
 
 
 def test_a_token_in_two_tenant_trees_names_each_workspace(tmp_path):
@@ -143,7 +138,7 @@ def test_a_token_in_two_tenant_trees_names_each_workspace(tmp_path):
         slugs=[], repos={"ace": "u1", "nanny": "u2"},
         trees={"dimagi": ["ace"], "marshellis": ["nanny"]},
     )
-    assert sorted(out.splitlines()) == ["ace\tu1", "nanny\tu2"]
+    assert sorted(out.splitlines()) == ["ace", "nanny"]
 
 
 @pytest.mark.parametrize("kw,env", [
@@ -185,17 +180,3 @@ def test_an_empty_registry_falls_back_rather_than_provisioning_nothing(tmp_path)
 
 
 # --- the clone pointer ---------------------------------------------------------
-
-def test_the_clone_url_comes_from_the_registry(tmp_path):
-    out = _run(
-        tmp_path, "agent_repo_url", 'agent_repo_url scout',
-        slugs=["scout"], repos={"scout": "https://github.com/someone-else/scout-fork"},
-    )
-    assert out == "https://github.com/someone-else/scout-fork"
-
-
-def test_the_clone_url_falls_back_to_the_org_convention(tmp_path):
-    """No registry (or no repo_url on the record) → the historical convention."""
-    out = _run(tmp_path, "agent_repo_url", "agent_repo_url hal",
-               slugs=["hal"], repos={}, fail=True)
-    assert out == "https://github.com/dimagi-internal/hal"
