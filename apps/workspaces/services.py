@@ -1528,8 +1528,7 @@ def notify_root_created(ws: Workspace, by_user) -> dict:
     creator is never told about their own act. The email names both one-step
     fixes: nest the workspace (`PUT /api/workspaces/<slug>/parent`, which needs
     an owner of both ends — so the creator invites the org owner as an owner
-    first), or move its agents (`canopy agent register --slug <a> --workspace
-    <org>`, by the agent's owner).
+    first), or move its agents, with their history, into the org.
 
     BEST-EFFORT: never raises — a mail outage must not fail a create."""
     result: dict = {"emailed": [], "failed": [], "orgs": []}
@@ -1556,8 +1555,7 @@ def notify_root_created(ws: Workspace, by_user) -> dict:
                     f"  - nest the workspace: they invite you as an owner of {ws.slug}, then you run "
                     f"PUT /api/workspaces/{ws.slug}/parent {{\"parent\": \"{org.slug}\"}} "
                     f"(canopy-web MCP: set_workspace_parent), or\n"
-                    f"  - move its agents: each agent's owner runs "
-                    f"`canopy agent register --slug <agent> --workspace {org.slug}`.\n\n"
+                    f"  - move its agents (with their history) into {org.slug}.\n\n"
                     f"Workspace: {link}\n\nYou are getting this because you own "
                     f"{org.display_name} on Canopy and {who} has a {domain} address.\n")
             html = (f"<p>{escape(who)} created the workspace <strong>{escape(ws.display_name)}</strong> "
@@ -1568,8 +1566,7 @@ def notify_root_created(ws: Workspace, by_user) -> dict:
                     f"<li><strong>nest the workspace</strong>: they invite you as an owner of "
                     f"{escape(ws.slug)}, then you run <code>set_workspace_parent</code> "
                     f"(parent: {escape(org.slug)}), or</li>"
-                    f"<li><strong>move its agents</strong>: each agent's owner runs "
-                    f"<code>canopy agent register --slug &lt;agent&gt; --workspace {escape(org.slug)}</code>.</li>"
+                    f"<li><strong>move its agents</strong> (with their history) into {escape(org.slug)}.</li>"
                     f"</ul>" + _button(link, "Open the workspace")
                     + f'<p style="color:#78716c;font-size:13px">You are getting this because you own '
                       f"{escape(org.display_name)} on Canopy and {escape(who)} has a "

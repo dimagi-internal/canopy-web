@@ -54,7 +54,7 @@ def test_a_root_created_by_an_org_domain_user_emails_the_org_owners_only(org):
     msg = mail.outbox[0]
     assert "strategy" in msg.subject and "outside Org" in msg.subject
     assert "/api/workspaces/strategy/parent" in msg.body
-    assert "canopy agent register --slug <agent> --workspace org" in msg.body
+    assert "move its agents (with their history) into org" in msg.body
     assert msg.reply_to == ["teammate@dimagi.com"]
 
 
