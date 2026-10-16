@@ -1586,6 +1586,9 @@ class RunnerDeviceKeyOut(Schema):
     #: The ECDH key vault keys are wrapped to (canopy-web#1550); "" / {} if none.
     ecdh_jkt: str = ""
     ecdh_public_jwk: dict[str, Any] = {}
+    #: Pending AGAIN after an approval — its ECDH (encryption) key was added
+    #: or changed (canopy-web#1550), not a new box.
+    reapproval: bool = False
     status: DeviceKeyStatus
     created_at: dt.datetime
     approved_at: dt.datetime | None = None

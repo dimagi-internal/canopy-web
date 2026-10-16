@@ -226,12 +226,12 @@ def _parse_wraps(agent, kv: int, wraps: list, *, allow_recovery: bool) -> list:
 
 
 def _caller_can_open(rows: list, user) -> bool:
-    from apps.harness.runners import can_administer_runner
-
+    """A member wrap to the caller's own keyset, or a device wrap to a key on a
+    runner the caller OWNS (the canopy CLI enabling as its device)."""
     for w in rows:
         if w.kind == "member" and w.user_id == user.pk:
             return True
-        if w.kind == "device" and can_administer_runner(user, w.device_key.runner):
+        if w.kind == "device" and w.device_key.runner.owner_id == user.pk:
             return True
     return False
 
@@ -243,7 +243,7 @@ def _check_full_set(agent, rows: list, user) -> None:
     if not _caller_can_open(rows, user):
         raise ZkError(422, "zk_caller_wrap_required",
                       "include a wrap you can open: a member wrap to your own vault key, or a device "
-                      "wrap to a device key on a runner you administer — else nobody you trust holds "
+                      "wrap to a device key on a runner you own — else nobody you trust holds "
                       "the new vault key")
 
 
@@ -316,9 +316,8 @@ def enable(agent, *, kv: int, wraps: list, values: list, user) -> None:
         if agent.zk_enabled:
             raise ZkError(409, "zk_already_enabled", f"{agent.slug} is already zero-knowledge")
         rows = _parse_wraps(agent, kv, wraps, allow_recovery=True)
-        if not any(w.kind == "member" for w in rows):
-            raise ZkError(422, "zk_member_wrap_required",
-                          "at least one member wrap is required (a person who can grant and rotate)")
+        # The CLI may enable as its device before the owner has a keyset; the
+        # owner's member wrap is then granted later (decision, 2026-10-16).
         _check_full_set(agent, rows, user)
         vals = _parse_values(values)
         _require_coverage(agent, vals)
@@ -440,7 +439,7 @@ def forget_member_wraps(user) -> int:
 def _device_target(k) -> dict:
     return {"kind": "device", "target": str(k.pk), "runner": str(k.runner_id),
             "runner_name": k.runner.name, "label": k.label, "device_kind": k.kind,
-            "ecdh_jkt": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk}
+            "ecdh_jkt": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk, "ecdh_public_jwk": k.ecdh_public_jwk}
 
 
 def _member_target(ks) -> dict:
@@ -476,7 +475,8 @@ def state(agent, *, include_values: bool = False) -> dict:
         if w.kind == "device":
             k = w.device_key
             row.update(target=str(k.pk), label=f"{k.runner.name} · {k.label or k.kind}",
-                       ecdh_jkt=k.ecdh_jkt, current=k.pk in devices, public_jwk=k.ecdh_public_jwk or None)
+                       ecdh_jkt=k.ecdh_jkt, current=k.pk in devices, public_jwk=k.ecdh_public_jwk or None,
+                       ecdh_public_jwk=k.ecdh_public_jwk or None)
         elif w.kind == "member":
             ks = members.get(w.user_id)
             row.update(target=str(w.user_id), label=w.user.email, current=ks is not None,

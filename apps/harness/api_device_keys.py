@@ -64,6 +64,7 @@ def key_out(key: RunnerDeviceKey, *, can_manage: bool) -> RunnerDeviceKeyOut:
         id=key.pk, runner=key.runner_id, runner_name=key.runner.name, jkt=key.jkt,
         kind=key.kind, label=key.label, role_arn=key.role_arn, status=key.status,
         ecdh_jkt=key.ecdh_jkt, ecdh_public_jwk=key.ecdh_public_jwk or {},
+        reapproval=key.status == RunnerDeviceKey.PENDING and key.approved_at is not None,
         created_at=key.created_at,
         approved_at=key.approved_at,
         approved_by_email=(key.approved_by.email if key.approved_by_id else ""),
@@ -150,8 +151,10 @@ def _set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
         key.ecdh_public_jwk, key.ecdh_jkt = jwk, jkt
         fields = ["ecdh_public_jwk", "ecdh_jkt"]
         if key.status == RunnerDeviceKey.ACTIVE:
-            key.status, key.approved_by, key.approved_at = RunnerDeviceKey.PENDING, None, None
-            fields += ["status", "approved_by", "approved_at"]
+            # approved_at/by stay as the record of the earlier approval: a
+            # pending key carrying them is a RE-approval (`reapproval` on the row).
+            key.status = RunnerDeviceKey.PENDING
+            fields += ["status"]
         key.save(update_fields=fields)
         zk.forget_device_wraps(key)
     if before != key.status:

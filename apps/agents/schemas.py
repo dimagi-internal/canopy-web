@@ -1332,6 +1332,8 @@ class AgentCredentialsResolveOut(StrictModel):
     zk: bool = False
     kv: int | None = None
     wrap: dict[str, Any] | None = None
+    #: The Agent pk as a string — bound into every AAD and HKDF info ("" when not zk).
+    agent_id: str = ""
 
 
 class ZkWrapMissingOut(StrictModel):
@@ -1410,6 +1412,8 @@ class ZkWrapOut(StrictModel):
     #: The holder's CURRENT public key (device ECDH key / person's keyset) —
     #: what rotate re-wraps to. Null for recovery or a holder that is gone.
     public_jwk: dict[str, Any] | None = None
+    #: Device wraps: the same key under the name the device-key rows use.
+    ecdh_public_jwk: dict[str, Any] | None = None
     wrap: dict[str, Any]
     created_by_email: str = ""
     created_at: dt.datetime
@@ -1422,6 +1426,8 @@ class ZkTargetOut(StrictModel):
     kind: Literal["device", "member"]
     target: str
     public_jwk: dict[str, Any]
+    #: Devices: the same key as `public_jwk`, under the device-key rows' name.
+    ecdh_public_jwk: dict[str, Any] | None = None
     ecdh_jkt: str = ""
     runner: str = ""
     runner_name: str = ""

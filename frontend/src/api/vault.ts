@@ -30,8 +30,16 @@ function need<T>(res: { data?: unknown; error?: unknown }, fallback: string): T 
   return res.data as T
 }
 
+/** The caller's keyset. A 404 (`no_vault_keyset`) is "not set up yet": its
+ *  body still carries user_id, prf_input and passkeys, returned as exists:false. */
 export async function getKeyset(): Promise<VaultKeysetOut> {
-  return need<VaultKeysetOut>(await apiV2.GET('/api/vault/keyset'), 'Could not load your vault key')
+  const res = await apiV2.GET('/api/vault/keyset')
+  const err = (res as { error?: unknown }).error as (Partial<VaultKeysetOut> & { error?: string }) | undefined
+  if (res.response?.status === 404 && err?.error === 'no_vault_keyset' && err.user_id) {
+    return { user_id: err.user_id, prf_input: err.prf_input ?? '', exists: false, public_jwk: null, seals: [],
+             passkeys: err.passkeys ?? [] } as VaultKeysetOut
+  }
+  return need<VaultKeysetOut>(res, 'Could not load your vault key')
 }
 
 export async function putKeyset(body: { public_jwk: Record<string, unknown>; seals: Record<string, unknown>[]; replace?: boolean }): Promise<VaultKeysetOut> {

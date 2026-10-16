@@ -110,6 +110,13 @@ export function DeviceKeysTable({
                 <span className={`rounded border px-1.5 py-0.5 text-[11px] ${STATUS_TONE[k.status] ?? ''}`}>
                   {k.status}
                 </span>
+                {k.status === 'pending' && k.reapproval && (
+                  // Not a new box: it added (or changed) the key zero-knowledge
+                  // agents' vault keys are wrapped to (canopy-web#1550).
+                  <span className="ml-2 text-[11px] text-muted-foreground" data-testid={`device-key-reapproval-${k.id}`}>
+                    re-approval: encryption key added
+                  </span>
+                )}
                 {k.status === 'active' && k.approved_by_email && (
                   <span className="ml-2 text-[11px] text-muted-foreground">by {k.approved_by_email}</span>
                 )}
