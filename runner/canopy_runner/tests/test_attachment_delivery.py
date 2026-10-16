@@ -18,10 +18,12 @@ class _Client:
         self.fail = fail or set()
         self.fetched: list[str] = []
 
-    def download_attachment(self, attachment_id, dest: pathlib.Path):
+    def download_attachment(self, runner_id, turn_id, attachment_id, dest: pathlib.Path):
         if attachment_id in self.fail:
             raise RuntimeError("boom")
-        self.fetched.append(attachment_id)
+        # Asked for as THIS runner, for THIS turn — the server authorizes by the
+        # claim, not by whether the box's owner can read the chat.
+        self.fetched.append((runner_id, turn_id, attachment_id))
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"PNGDATA")
 
@@ -37,14 +39,16 @@ def _tmp_root(tmp_path, monkeypatch):
 
 def test_a_turn_with_no_attachments_fetches_nothing():
     client = _Client()
-    assert execute.fetch_attachments(client, {"id": "t1", "origin_ref": {}}) == []
+    assert execute.fetch_attachments(client, "r1", {"id": "t1", "origin_ref": {}}) == ([], [])
     assert client.fetched == []
 
 
 def test_attachments_land_on_disk_under_the_turn():
     client = _Client()
-    paths = execute.fetch_attachments(client, _turn([{"id": "a1", "filename": "shot.png"}]))
+    paths, missing = execute.fetch_attachments(client, "r1", _turn([{"id": "a1", "filename": "shot.png"}]))
 
+    assert client.fetched == [("r1", "t1", "a1")]
+    assert missing == []
     assert len(paths) == 1
     assert paths[0].read_bytes() == b"PNGDATA"
     assert paths[0].name == "shot.png"
@@ -54,8 +58,8 @@ def test_attachments_land_on_disk_under_the_turn():
 def test_a_hostile_filename_cannot_escape_the_attachment_root(tmp_path):
     """A runner must never trust a path handed to it over the wire."""
     client = _Client()
-    paths = execute.fetch_attachments(
-        client, _turn([{"id": "a1", "filename": "../../../../.ssh/authorized_keys"}])
+    paths, _ = execute.fetch_attachments(
+        client, "r1", _turn([{"id": "a1", "filename": "../../../../.ssh/authorized_keys"}])
     )
 
     assert len(paths) == 1
@@ -67,11 +71,12 @@ def test_one_unfetchable_attachment_does_not_sink_the_turn():
     """The human's TEXT is usually the substance — answering without the image
     beats never answering."""
     client = _Client(fail={"bad"})
-    paths = execute.fetch_attachments(
-        client, _turn([{"id": "bad", "filename": "x.png"}, {"id": "ok", "filename": "y.png"}])
+    paths, missing = execute.fetch_attachments(
+        client, "r1", _turn([{"id": "bad", "filename": "x.png"}, {"id": "ok", "filename": "y.png"}])
     )
 
     assert [p.name for p in paths] == ["y.png"]
+    assert missing == ["x.png"]
 
 
 def test_the_prompt_tells_the_agent_to_READ_the_file():
@@ -92,8 +97,31 @@ def test_only_files_that_actually_arrived_are_cited():
     """The prompt must never name a file that failed to download — the agent
     would try to read it and derail on a missing path."""
     client = _Client(fail={"bad"})
-    paths = execute.fetch_attachments(client, _turn([{"id": "bad", "filename": "gone.png"}]))
+    paths, _ = execute.fetch_attachments(client, "r1", _turn([{"id": "bad", "filename": "gone.png"}]))
     out = execute.prompt_with_attachments("hi", paths)
 
     assert out == "hi"
     assert "gone.png" not in out
+
+
+def test_a_file_that_never_arrived_is_named_so_the_agent_can_say_so():
+    """Silently dropping the images is how a whole deck review went wrong
+    (2026-10-15: 63 images 404'd, the agent got text only and could not tell
+    why). The agent must be told what is missing — but never told to READ it."""
+    client = _Client(fail={"bad"})
+    paths, missing = execute.fetch_attachments(
+        client, "r1", _turn([{"id": "bad", "filename": "slide-01.jpg"}, {"id": "ok", "filename": "slide-02.jpg"}])
+    )
+    out = execute.prompt_with_attachments("review the deck", paths, missing)
+
+    assert "1 attached file could not be downloaded" in out
+    assert "slide-01.jpg" in out
+    read_list = out.split("before replying:")[1].split("\n\n")[0]
+    assert "slide-02.jpg" in read_list and "slide-01.jpg" not in read_list
+
+
+def test_a_long_list_of_missing_files_is_summarized():
+    out = execute.prompt_with_attachments("hi", [], [f"s{i}.jpg" for i in range(29)])
+
+    assert "29 attached files could not be downloaded" in out
+    assert "and 19 more" in out

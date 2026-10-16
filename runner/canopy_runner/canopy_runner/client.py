@@ -126,13 +126,19 @@ class Client:
             return status, None
         return status, json.loads(raw)
 
-    def download_attachment(self, attachment_id: str, dest: "pathlib.Path") -> None:
-        """Fetch a chat attachment's bytes to `dest`.
+    def download_attachment(self, runner_id: str, turn_id: str, attachment_id: str,
+                            dest: "pathlib.Path") -> None:
+        """Fetch a chat attachment's bytes to `dest`, for a turn this runner holds.
 
-        NOT via _call: that one is rooted at /api/harness and json-decodes the
-        body. Attachments live under /api/canopy-sessions and are raw bytes.
+        Authorized by the TURN (`/harness/runners/{rid}/turns/{tid}/attachments/…`),
+        not by whether this box's owner can read the chat: the person who sent the
+        file is often not the box's owner, and the old session-read route 404'd
+        every one of their files (2026-10-15, 63 images dropped in one chat).
+
+        NOT via _call: that one json-decodes the body; these are raw bytes.
         """
-        url = f"{self.base_url}/api/canopy-sessions/attachments/{attachment_id}/content"
+        url = (f"{self.base_url}/api/harness/runners/{runner_id}/turns/{turn_id}"
+               f"/attachments/{attachment_id}/content")
         req = urllib.request.Request(url, method="GET")
         req.add_header("Authorization", f"Bearer {self.token}")
         _identify(req)

@@ -2050,6 +2050,78 @@ def _github_turn_env(runner_id: str, turn: dict) -> dict:
     return {"CANOPY_REQUESTED_BY": requested_by}
 
 
+# Where a turn's chat attachments land: outside every checkout, so a screenshot
+# never shows up as an untracked file in the agent's repo.
+ATTACHMENT_DIR = pathlib.Path(WORK_DIR) / "attachments"
+
+
+def _attachment_name(name: str) -> str:
+    """A filename safe to join onto a local path — never trust one handed over
+    the wire. Mirrors canopy_runner.execute._safe_name (this file is stdlib-only
+    and imports nothing from canopy_runner)."""
+    name = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    cleaned = "".join(c if (c.isalnum() or c in "._-") else "-" for c in name).strip(".-")
+    return cleaned[:120] or "attachment"
+
+
+def _fetch_attachments(runner_id: str, turn: dict) -> tuple[list[pathlib.Path], list[str]]:
+    """Download the files a person sent with this turn: (paths that arrived,
+    names that did not). The same contract as canopy_runner.execute.
+    fetch_attachments — this box used to ignore attachments altogether, so a
+    screenshot sent to a cloud-served chat simply never reached the agent.
+
+    Fetched through the turn (`/runners/{rid}/turns/{tid}/attachments/…`):
+    canopy-web serves them because this box holds the turn, not because its
+    owner can read the chat. Best-effort per file; a failure is named, never
+    silent."""
+    refs = (turn.get("origin_ref") or {}).get("attachments") or []
+    turn_id = str(turn.get("id", ""))
+    paths: list[pathlib.Path] = []
+    missing: list[str] = []
+    for ref in refs:
+        aid = ref.get("id")
+        if not aid:
+            continue
+        name = _attachment_name(ref.get("filename", ""))
+        dest = ATTACHMENT_DIR / turn_id / name
+        url = (f"{BASE_URL}/api/harness/runners/{runner_id}/turns/{turn_id}"
+               f"/attachments/{aid}/content")
+        try:
+            req = urllib.request.Request(url, method="GET")
+            req.add_header("Authorization", f"Bearer {TOKEN}")
+            req.add_header("X-Canopy-Client", "canopy-cloud-runner")
+            req.add_header("User-Agent", f"canopy-cloud-runner host={socket.gethostname()}")
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                body = resp.read()
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(body)
+        except Exception as exc:  # noqa: BLE001 — one file must never crash the turn's worker
+            _log(f"turn {turn_id[:8]}: attachment {aid} could not be fetched ({exc}); continuing without it")
+            missing.append(name)
+            continue
+        paths.append(dest)
+    return paths, missing
+
+
+def _with_attachments(prompt: str, paths: list[pathlib.Path], missing: list[str]) -> str:
+    """Name the files for the agent to READ, and the ones that never arrived.
+    Same wording as canopy_runner.execute.prompt_with_attachments, so an agent
+    behaves the same whichever box serves it."""
+    out = prompt
+    if paths:
+        lines = "\n".join(f"- {p}" for p in paths)
+        noun = "file" if len(paths) == 1 else "files"
+        out = (f"{out}\n\nThe user attached the following {noun}. "
+               f"Read {'it' if len(paths) == 1 else 'them'} with the Read tool before replying:\n{lines}")
+    if missing:
+        names = ", ".join(missing[:10]) + (f" and {len(missing) - 10} more" if len(missing) > 10 else "")
+        out = (f"{out}\n\n{len(missing)} attached file{'' if len(missing) == 1 else 's'} could not be "
+               f"downloaded and {'is' if len(missing) == 1 else 'are'} not available to you: {names}. "
+               "Tell the user, rather than answering as if you had seen "
+               f"{'it' if len(missing) == 1 else 'them'}.")
+    return out
+
+
 def _chat_session_id(turn: dict) -> str:
     """The canopy Session id (origin_ref.chat_session_id) for a SESSION-targeted
     turn, or "" for an agent/project turn. This is the one identity that is
@@ -5333,6 +5405,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         if not confined:
             # A caller's confined turn gets no repo checkouts; everyone else may ask.
             _TURN_ENV.extra.update(_repo_worktree_env(turn, turn_id))
+            prompt = _with_attachments(prompt, *_fetch_attachments(runner_id, turn))
         if confined:
             # Never resume, never be resumed: an email thread can hold a staff turn
             # (full) and a partner's (confined) on ONE canopy Session, and resuming
@@ -5340,6 +5413,11 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             resume_id = None
             try:
                 prompt = _confined_prompt(turn)
+                # A confined session reads only its capability's paths, so the
+                # files are not fetched — but they are NAMED, never silently lost.
+                withheld = [_attachment_name(r.get("filename", "")) for r in
+                            (turn.get("origin_ref") or {}).get("attachments") or [] if r.get("id")]
+                prompt = _with_attachments(prompt, [], withheld)
                 confine_env, caller_path = _confine(turn)
                 _TURN_ENV.extra = {**per_turn, **confine_env}
                 _TURN_ENV.settings = _native_settings(

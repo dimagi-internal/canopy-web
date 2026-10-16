@@ -243,7 +243,8 @@ def test_a_chat_turns_attachments_reach_the_desktop_session(cfg, tmp_path, monke
     monkeypatch.setattr(execute, "ATTACHMENT_ROOT", tmp_path / "att")
 
     class Client(FakeClient):
-        def download_attachment(self, aid, dest):
+        def download_attachment(self, rid, tid, aid, dest):
+            assert (rid, tid) == ("r", turn["id"]), "fetched for the turn this runner holds"
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"png")
 

@@ -881,7 +881,7 @@ class TurnRun:
         # session: the agent got the words and nothing else, and could not tell.
         # Imported here: execute imports this module lazily, and vice versa.
         from .execute import fetch_attachments, prompt_with_attachments
-        prompt = prompt_with_attachments(prompt, fetch_attachments(self.client, self.turn))
+        prompt = prompt_with_attachments(prompt, *fetch_attachments(self.client, self.rid, self.turn))
         envelope = caller.write_caller_file(self.turn)
         return caller.with_caller_flag(prompt, envelope) if not self.chat else prompt
 

@@ -590,48 +590,64 @@ def _safe_name(name: str) -> str:
     return cleaned[:120] or "attachment"
 
 
-def fetch_attachments(client, turn: dict) -> list[pathlib.Path]:
-    """Download this turn's attachments; return the local paths, newest last.
+def fetch_attachments(client, runner_id: str, turn: dict) -> tuple[list[pathlib.Path], list[str]]:
+    """Download this turn's attachments: (the local paths, newest last; the
+    filenames that could not be fetched).
 
     Best-effort per file: one unreachable attachment must not sink the whole
-    turn, because the human's TEXT is usually the substance and a silently
-    dropped image is better than a chat that never answers. What is not
-    acceptable is dropping it silently from the agent's view, so the prompt only
-    ever cites files that actually made it to disk.
+    turn, because the human's TEXT is usually the substance. But a dropped file
+    is never dropped from the agent's view either — the prompt cites only files
+    that actually made it to disk, and names the ones that did not, so the agent
+    can tell the person instead of answering as if nothing was sent.
     """
     refs = (turn.get("origin_ref") or {}).get("attachments") or []
     paths: list[pathlib.Path] = []
+    missing: list[str] = []
     for ref in refs:
         aid = ref.get("id")
         if not aid:
             continue
-        dest = ATTACHMENT_ROOT / str(turn.get("id", "unknown")) / _safe_name(ref.get("filename", ""))
+        name = _safe_name(ref.get("filename", ""))
+        dest = ATTACHMENT_ROOT / str(turn.get("id", "unknown")) / name
         try:
-            client.download_attachment(aid, dest)
+            client.download_attachment(runner_id, str(turn.get("id", "")), aid, dest)
         except Exception:  # noqa: BLE001 — see docstring
             logger.warning("attachment %s could not be fetched; continuing without it", aid, exc_info=True)
+            missing.append(name)
             continue
         paths.append(dest)
-    return paths
+    return paths, missing
 
 
-def prompt_with_attachments(prompt: str, paths: list[pathlib.Path]) -> str:
-    """Put the files in front of the agent.
+def prompt_with_attachments(prompt: str, paths: list[pathlib.Path],
+                            missing: list[str] | tuple[str, ...] = ()) -> str:
+    """Put the files in front of the agent — and say which ones never arrived.
 
     Absolute paths, and an explicit instruction to read them: an agent that is
     merely TOLD a file exists usually keeps talking, whereas one told to read it
     reaches for the tool. The whole point of the feature is the agent actually
     looking at the screenshot.
     """
-    if not paths:
-        return prompt
-    lines = "\n".join(f"- {p}" for p in paths)
-    noun = "file" if len(paths) == 1 else "files"
-    return (
-        f"{prompt}\n\n"
-        f"The user attached the following {noun}. Read {'it' if len(paths) == 1 else 'them'} "
-        f"with the Read tool before replying:\n{lines}"
-    )
+    out = prompt
+    if paths:
+        lines = "\n".join(f"- {p}" for p in paths)
+        noun = "file" if len(paths) == 1 else "files"
+        out = (
+            f"{out}\n\n"
+            f"The user attached the following {noun}. Read {'it' if len(paths) == 1 else 'them'} "
+            f"with the Read tool before replying:\n{lines}"
+        )
+    if missing:
+        names = ", ".join(missing[:10]) + (f" and {len(missing) - 10} more" if len(missing) > 10 else "")
+        out = (
+            f"{out}\n\n"
+            f"{len(missing)} attached file{'' if len(missing) == 1 else 's'} could not be "
+            f"downloaded and {'is' if len(missing) == 1 else 'are'} not available to you: {names}. "
+            "Tell the user, rather than answering as if you had seen "
+            f"{'it' if len(missing) == 1 else 'them'}."
+        )
+    return out
+
 
 # How much of an unreadable frame a COMPOSER_NOT_VISIBLE failure records: the
 # bottom of the pane is where the composer (or whatever replaced it) is drawn.
@@ -795,7 +811,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     target = agent_slug or project  # the emdash project to drive
     thread_key = _thread_key(turn)
     prompt = turn.get("prompt") or ""
-    prompt = prompt_with_attachments(prompt, fetch_attachments(client, turn))
+    prompt = prompt_with_attachments(prompt, *fetch_attachments(client, runner_id, turn))
     # The envelope lands on disk for `who_is_asking` and the agent's skills; the
     # prompt itself is the person's words and stays exactly as they wrote it.
     envelope = caller.write_caller_file(turn)

@@ -748,6 +748,48 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
     return issued
 
 
+@router.get("/runners/{runner_id}/turns/{turn_id}/attachments/{attachment_id}/content",
+            summary="An attachment from the chat a turn this runner holds belongs to")
+def turn_attachment_content(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID,
+                            attachment_id: uuid.UUID):
+    """The bytes of a file a person sent in the chat this runner is serving, so
+    the agent can open it. Allowed while this runner holds the turn, for any
+    attachment already sent in that turn's chat — earlier messages included, so
+    a box with no local copy (a fresh cloud machine) can still fetch them.
+    Everything else is the same 404 as an id that does not exist."""
+    # Authorized by the TURN, not by whose token the box carries: the runner
+    # speaks as its owner, and its owner need not be able to read the chat (a
+    # teammate's private chat with an agent is visible to its creator and
+    # participants only, canopy_sessions/access.py). Claiming the turn is what
+    # entitles the box to it — the same rule as turn_github_token above.
+    from apps.agents import delegations
+    from apps.agents.services import runner_may_hold_agent
+    from apps.canopy_sessions import attachment_storage
+    from apps.canopy_sessions.models import Attachment
+
+    runner = _runner_or_404(request, runner_id)
+    turn = (
+        Turn.objects.select_related("agent", "chat_session__agent")
+        .filter(pk=turn_id, claimed_by=runner, status__in=services.EXECUTING)
+        .first()
+    )
+    if turn is None or turn.chat_session_id is None:
+        raise HttpError(404, "attachment not found")
+    # A claim already requires this; re-asked because an owner can be demoted
+    # mid-turn.
+    agent = delegations.turn_agent(turn)
+    if agent is not None and not runner_may_hold_agent(runner, agent):
+        raise HttpError(404, "attachment not found")
+    # Sent only: an unsent attachment is still someone's draft (sent_at, not
+    # message, marks a send — a runner-origin session writes no Message row).
+    attachment = Attachment.objects.filter(
+        pk=attachment_id, session_id=turn.chat_session_id, sent_at__isnull=False,
+    ).first()
+    if attachment is None:
+        raise HttpError(404, "attachment not found")
+    return attachment_storage.http_response(attachment)
+
+
 @router.get("/runners/{runner_id}/github-readiness",
             response=list[RunnerGitHubReadinessOut],
             summary="Can each agent this runner serves open a pull request?")

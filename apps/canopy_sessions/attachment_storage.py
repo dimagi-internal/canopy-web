@@ -92,3 +92,30 @@ def delete(key: str) -> None:
     """Best-effort: a missing object is already the desired state, and S3's
     delete is idempotent, so this never raises on "not there"."""
     _client().delete_object(Bucket=_bucket(), Key=key)
+
+
+def http_response(attachment):
+    """An attachment's bytes as the response every reader gets — the browser's
+    thumbnail and the runner's download stream the same thing, with the same
+    headers, whichever door let them in.
+
+    The caller decides WHO may read; this only serves. 503 when no bucket is
+    configured, never a half-response.
+    """
+    from django.http import HttpResponse
+    from ninja.errors import HttpError
+
+    if not is_configured():
+        raise HttpError(503, "attachments are not configured on this deployment")
+    stored = get(attachment.storage_key)
+    response = HttpResponse(stored.body, content_type=stored.content_type)
+    # inline: the browser renders it rather than downloading. filename is already
+    # sanitised at upload, so it is safe in the header.
+    response["Content-Disposition"] = f'inline; filename="{attachment.filename}"'
+    # Served inline from canopy's own origin, and the type allowlist is an env
+    # setting — so if it ever admits a document type (HTML, SVG), the bytes still
+    # run in an opaque origin, never as the viewer. Same rule as walkthrough
+    # content (apps/walkthroughs/streaming.py::SANDBOX_CSP); harmless on an image.
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Security-Policy"] = "sandbox"
+    return response

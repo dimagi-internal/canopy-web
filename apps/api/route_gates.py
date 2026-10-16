@@ -204,6 +204,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_runner_credential_status": ("runner-admin",),
     "get_runner_credential": ("runner",),  # plaintext to the owner's token
     "turn_github_token": ("runner", "runner-holds-agent"),  # turn must be claimed by this box
+    "turn_attachment_content": ("runner", "runner-holds-agent"),  # an attachment of the chat a turn this box holds belongs to
     "runner_github_readiness": ("runner",),
     "start_runner_mint": ("runner-admin",),
     "get_runner_mint": ("runner-admin",),

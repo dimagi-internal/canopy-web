@@ -98,6 +98,12 @@ an emdash task name alone is not an identity.
   `client_id` so the sender's optimistic row dedupes against the queued entry.
 - Pending attachments are scoped to their uploader (`uploaded_by`): one person's
   send must not carry another's staged files.
+- **A runner fetches attachments through the turn it holds, never through the
+  chat's read route** (`GET /api/harness/runners/{rid}/turns/{tid}/attachments/{id}/content`).
+  The runner speaks as its owner, who often cannot read a teammate's chat; the
+  claim is what entitles the box to the chat's sent files. Both runners name any
+  file that failed to download in the prompt, so the agent never answers as if
+  it had seen it; a confined cloud session is told of files it is not given.
 - **Authorship is matched server-side, never carried on the wire.** The prompt
   reaches the agent exactly as typed (the agent learns who is asking from the
   caller envelope via the `caller_context` hook). `persist_transcript_rows` links a
