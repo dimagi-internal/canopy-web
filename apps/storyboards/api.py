@@ -38,6 +38,8 @@ from apps.storyboards.schemas import (
     DecisionOut,
     NarrativeReadOut,
     NotesOut,
+    RoundConsumeIn,
+    RoundDetailOut,
     RoundCloseIn,
     RoundOut,
     ShareTokenOut,
@@ -474,6 +476,41 @@ def close_storyboard_round(request: HttpRequest, slug: str, number: int, payload
     except board_rounds.RoundError as e:
         raise HttpError(e.status, e.detail)
     return board_rounds.summary(rnd)
+
+
+@router.get(
+    "/{slug}/rounds/{number}",
+    response=RoundDetailOut,
+    auth=session_auth,
+    summary="Read a feedback round in full (members)",
+)
+def get_storyboard_round(request: HttpRequest, slug: str, number: int) -> dict:
+    """The agent's read of a round. Members only; a token holder 404s."""
+    board = _owned_or_404(request, slug)
+    rnd = board_rounds.by_number(board, number)
+    if rnd is None:
+        raise HttpError(404, "no such round")
+    return board_rounds.detail(board, rnd, viewer=request.user)
+
+
+@router.post(
+    "/{slug}/rounds/{number}/consume",
+    response=RoundOut,
+    auth=session_auth,
+    summary="Mark a closed round consumed and open the next one",
+)
+def consume_storyboard_round(request: HttpRequest, slug: str, number: int, payload: RoundConsumeIn) -> dict:
+    """Editors only (the agent's PAT). Refuses while any note is unanswered;
+    opens round N+1 on each narrative's current version."""
+    board = _editable_or_404(request, slug)
+    rnd = board_rounds.by_number(board, number)
+    if rnd is None:
+        raise HttpError(404, "no such round")
+    try:
+        nxt = board_rounds.consume_round(board, rnd, run_id=payload.run_id, by_user=request.user)
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
+    return board_rounds.summary(nxt)
 
 
 @router.post(

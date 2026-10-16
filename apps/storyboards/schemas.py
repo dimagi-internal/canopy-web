@@ -234,6 +234,21 @@ class RoundPayloadOut(RoundOut):
     staged_edits: list[StagedEditOut] = []
 
 
+class RoundDetailNoteOut(RoundNoteOut):
+    author_email: str
+
+
+class RoundDetailOut(RoundOut):
+    notes: list[RoundDetailNoteOut]
+    staged_edits: list[StagedEditOut]
+    decisions: list[DecisionOut]
+    board_url: str
+
+
+class RoundConsumeIn(StrictModel):
+    run_id: str
+
+
 class StoryboardOut(StrictModel):
     slug: str
     title: str

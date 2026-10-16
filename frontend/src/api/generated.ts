@@ -1130,6 +1130,47 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/storyboards/{slug}/rounds/{number}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a feedback round in full (members)
+         * @description The agent's read of a round. Members only; a token holder 404s.
+         */
+        readonly get: operations["get_storyboard_round"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/storyboards/{slug}/rounds/{number}/consume": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Mark a closed round consumed and open the next one
+         * @description Editors only (the agent's PAT). Refuses while any note is unanswered;
+         *     opens round N+1 on each narrative's current version.
+         */
+        readonly post: operations["consume_storyboard_round"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/{slug}/decisions/{key}/edit": {
         readonly parameters: {
             readonly query?: never;
@@ -11307,6 +11348,75 @@ export interface components {
             readonly picks: {
                 readonly [key: string]: string;
             };
+        };
+        /** RoundDetailNoteOut */
+        readonly RoundDetailNoteOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Body */
+            readonly body: string;
+            /** Suggested Text */
+            readonly suggested_text: string;
+            /** Author Name */
+            readonly author_name: string;
+            /** Anchor Id */
+            readonly anchor_id: string;
+            /** Target Kind */
+            readonly target_kind: string;
+            /** Target Ref */
+            readonly target_ref: string;
+            /** Target Version */
+            readonly target_version: number | null;
+            /** State */
+            readonly state: string;
+            /** Disposition Note */
+            readonly disposition_note: string;
+            /** Resolved In Version */
+            readonly resolved_in_version: number | null;
+            /** Created At */
+            readonly created_at: string;
+            /** Mine */
+            readonly mine: boolean;
+            /** Author Email */
+            readonly author_email: string;
+        };
+        /** RoundDetailOut */
+        readonly RoundDetailOut: {
+            /** Number */
+            readonly number: number;
+            /** State */
+            readonly state: string;
+            /** Opened At */
+            readonly opened_at: string;
+            /** Opened By */
+            readonly opened_by: string;
+            /** Closed At */
+            readonly closed_at: string | null;
+            /** Close Note */
+            readonly close_note: string;
+            /** Pinned Versions */
+            readonly pinned_versions: {
+                readonly [key: string]: number;
+            };
+            /** Note Count */
+            readonly note_count: number;
+            /** People Count */
+            readonly people_count: number;
+            /** Notes */
+            readonly notes: readonly components["schemas"]["RoundDetailNoteOut"][];
+            /** Staged Edits */
+            readonly staged_edits: readonly components["schemas"]["StagedEditOut"][];
+            /** Decisions */
+            readonly decisions: readonly components["schemas"]["DecisionOut"][];
+            /** Board Url */
+            readonly board_url: string;
+        };
+        /** RoundConsumeIn */
+        readonly RoundConsumeIn: {
+            /** Run Id */
+            readonly run_id: string;
         };
         /** DecisionEditIn */
         readonly DecisionEditIn: {
@@ -25177,6 +25287,56 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["RoundCloseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoundOut"];
+                };
+            };
+        };
+    };
+    readonly get_storyboard_round: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoundDetailOut"];
+                };
+            };
+        };
+    };
+    readonly consume_storyboard_round: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RoundConsumeIn"];
             };
         };
         readonly responses: {

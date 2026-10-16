@@ -325,3 +325,26 @@ def close_round(board, rnd, *, by_user, note: str = "", picks: dict[str, str] | 
                                   changed=changed, skipped=skipped)
         rnd.save(update_fields=["task"])
     return rnd
+
+
+def detail(board, rnd, *, viewer) -> dict:
+    """What the agent reads: every note with its author's email, the staged
+    edits, and the board's current decisions (rulings are binding)."""
+    from apps.storyboards import services
+    from apps.workspaces import services as wsvc
+
+    out = round_payload(board, rnd, viewer=viewer)
+    emails = dict(rnd.notes.values_list("pk", "author_email"))
+    for n in out["notes"]:
+        n["author_email"] = emails.get(n["id"], "")
+    out["decisions"] = services.board_decisions(board)
+    out["board_url"] = wsvc.scoped_url(board.workspace_id, f"/storyboard/{board.slug}")
+    return out
+
+
+def consume_round(board, rnd, *, run_id: str, by_user):
+    """Mark a closed, fully answered round consumed and open the next one, in one
+    transaction — a refusal either way leaves the round closed."""
+    with transaction.atomic():
+        frounds.mark_consumed(rnd, run_id=run_id)
+        return open_round(board, by_user=by_user)

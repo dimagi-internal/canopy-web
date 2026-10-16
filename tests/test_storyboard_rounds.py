@@ -429,3 +429,62 @@ def test_a_closed_ask_from_act_is_409_not_500(world, monkeypatch):
     resp = _close(world)
     assert resp.status_code == 409 and "closed" in resp.json()["detail"]
     assert FeedbackRound.objects.get().state == "open" and AgentTask.objects.count() == 0
+
+
+# ------------------------------------------------- the agent's read, and consume
+
+
+def _closed_round_with_a_note(world):
+    _open(world)
+    _note(world, author_name="Sophie", author_email="s@example.org")
+    assert _close(world).status_code == 200
+    return FeedbackRound.objects.get(number=1)
+
+
+def test_agent_reads_the_round_with_emails_and_rulings(world):
+    dsvc.publish(world["board"], [ROW])
+    _closed_round_with_a_note(world)
+    body = world["ace"].get("/api/storyboards/supply/rounds/1").json()
+    assert body["state"] == "closed" and body["notes"][0]["author_email"] == "s@example.org"
+    assert body["decisions"][0]["id"] == "banner"
+
+
+def test_token_holder_cannot_read_round_detail(world):
+    _closed_round_with_a_note(world)
+    assert Client().get(f"/api/storyboards/supply/rounds/1?t={world['token']}").status_code in (401, 404)
+
+
+def test_consume_refuses_unanswered_notes(world):
+    _closed_round_with_a_note(world)
+    resp = world["ace"].post("/api/storyboards/supply/rounds/1/consume", {"run_id": "r1"},
+                             content_type="application/json")
+    assert resp.status_code == 409
+    assert FeedbackRound.objects.filter(state="open").count() == 0
+
+
+def test_consume_opens_the_next_round_on_new_versions(world, monkeypatch):
+    from apps.feedback import services as fsvc
+
+    rnd = _closed_round_with_a_note(world)
+    for fb in rnd.notes.all():
+        fsvc.resolve(fb.pk, workspace_slugs=["connect"], state="declined", note="out of scope")
+    monkeypatch.setattr(board_rounds, "pinned_versions", lambda b: {"supply-rutf": 5})
+    resp = world["ace"].post("/api/storyboards/supply/rounds/1/consume", {"run_id": "r1"},
+                             content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["number"] == 2 and resp.json()["pinned_versions"] == {"supply-rutf": 5}
+    assert FeedbackRound.objects.get(number=1).state == "consumed"
+    assert FeedbackRound.objects.get(number=1).consumed_by_run == "r1"
+
+
+def test_note_left_while_closed_is_adopted_by_the_next_round(world):
+    from apps.feedback import services as fsvc
+
+    rnd = _closed_round_with_a_note(world)
+    _note(world, author_name="Late")
+    for fb in rnd.notes.all():
+        fsvc.resolve(fb.pk, workspace_slugs=["connect"], state="answered", note="done")
+    world["ace"].post("/api/storyboards/supply/rounds/1/consume", {"run_id": "r1"},
+                      content_type="application/json")
+    assert Feedback.objects.get(author_name="Late").round.number == 2
+
