@@ -9,3 +9,11 @@ class SlackConfig(AppConfig):
     def ready(self) -> None:
         # Posts agent replies back into the Slack thread (apps/slack/relay.py).
         from apps.slack import signals  # noqa: F401
+
+        # Moving an agent revokes and re-homes its channel ingests (agent_move.py).
+        # Registered from here, as apps/mail does, so the move needs no Slack import.
+        from apps.agents import move
+
+        from .agent_move import participant
+
+        move.register(participant)

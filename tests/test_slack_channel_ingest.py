@@ -379,6 +379,22 @@ def test_turning_the_switch_off_stops_reading(following, channel, ws):
     assert not channel.reads
 
 
+def test_moving_the_agent_revokes_its_reads_and_rehomes_them(following, channel, ws, hal):
+    """The approval was given by the source workspace's admins; it does not travel."""
+    from apps.agents import move
+    from apps.workspaces.testing import a_workspace
+
+    owner = _owner(ws)
+    dest = a_workspace("elsewhere")
+    wsvc.ensure_member(dest, owner, WorkspaceMembership.OWNER)
+    plan = move.plan(hal, dest, by=owner)
+    assert any(b["kind"] == "slack_channel_ingest" for b in plan.stops_working)
+    move.move(hal, dest, by=owner)
+    following.refresh_from_db()
+    assert following.status == SlackChannelIngest.REVOKED and following.workspace_id == "elsewhere"
+    assert not SlackIngestMessage.objects.filter(ingest=following).exists()
+
+
 def test_a_pending_request_can_be_withdrawn(pending, channel, hal_login, owen):
     resp = _link_client(hal_login).post(f"/api/slack-ingests/{pending.pk}/revoke")
     assert resp.json()["status"] == "revoked"
