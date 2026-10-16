@@ -662,6 +662,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "force_release_capability_lease": ("integrations", "agent-admin"),
     "refresh_agent_capability": ("agent-admin", "agent-login"),
     "terminate_capability_orphans": ("integrations", "agent-admin"),
+    # pool slot data: read masked by members; secret values leave only via the lease read
+    "list_capability_slot_data": ("member", "agent-login"),
+    "set_capability_slot_data": ("integrations", "agent-login"),
+    "delete_capability_slot_data": ("integrations", "agent-login"),
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
 }
@@ -740,6 +744,7 @@ SETTINGS: frozenset[str] = frozenset({
     "set_runner_order", "set_shared_vault",
     # cloud capabilities: what an agent declares, and who may lease it
     "put_agent_capabilities", "set_capability_grant", "delete_capability_grant",
+    "set_capability_slot_data", "delete_capability_slot_data",  # a slot's credentials
     # workspaces: integrations
     "connect_app", "update_connected_app", "tokens_connected_apps_disconnect_app",
     "set_push_config", "create_mailbox", "update_mailbox", "delete_mailbox",

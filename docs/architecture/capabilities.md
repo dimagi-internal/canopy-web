@@ -207,8 +207,9 @@ it (a laptop session). PAT-authenticated; every route is also an MCP tool.
 
 A **lease** is `{lease_id, agent, capability, status, ready, position, instance_id,
 params, turn_id, created_at, provisioning_at, ready_at, ended_at, expires_at,
-last_heartbeat_at, idle_release_s, reason, ready_info, slot, out_prefix}` (`slot`: a
-`pool` lease's slot, else null). `out_prefix` is the
+last_heartbeat_at, idle_release_s, reason, ready_info, slot, out_prefix, slot_data}` (`slot`: a
+`pool` lease's slot, else null; `slot_data`: a ready pool lease's slot data, for its
+acquirer only — § 6 "Slot data" — else null). `out_prefix` is the
 lease's `out/` as an `s3://` URI, the same value as `CANOPY_LEASE_OUT`, for a CLI that needs
 `--out` as a literal (argv is never shell-expanded, so `$CANOPY_LEASE_OUT` is not
 expanded). On a 0.9.0+ stack it names the machine, so it is `""` until `instance_id` is set
@@ -336,3 +337,48 @@ limits: {max_lease_s: 14400, idle_release_s: 900}
   (`capability.lease.ready` names the slot) and spend (slot-seconds from `ready_at`).
 - **No machine:** exec, exec status, uploads and artifacts on a pool lease are 422, and so
   are `…/refresh` and `…/terminate-orphans` on a pool capability.
+
+### Slot data: what each slot is
+
+A pool slot is a fixed thing — ACE's `worker-1` is one Connect test worker — and the
+holder needs its details. canopy-web keeps them next to the lease, one row per slot
+(`CapabilitySlotData`, unique on capability + slot): a `public` map (str → str: a phone, a
+name) and a `secret` map (a PIN, a backup code) stored only as Fernet ciphertext of a JSON
+object (`apps/common/encryption.py`, the same keys as `AgentCredential`). Every slot holds
+its own values; there is no default or shared value across slots.
+
+| Route | Gate | Body → response |
+|---|---|---|
+| `PUT /api/agents/{slug}/capabilities/{name}/slots/{slot}` | workspace admin (`integrations`), or the agent's own login | `{"public": {k: v\|null}?, "secret": {k: v\|null}?}` → the masked slot |
+| `GET /api/agents/{slug}/capabilities/{name}/slots` | member, or the agent's own login | → `{agent, capability, slots: [masked slot]}`, one per declared slot, in order |
+| `DELETE /api/agents/{slug}/capabilities/{name}/slots/{slot}` | as PUT | → 204, idempotent |
+
+A **masked slot** is `{slot, declared, public, secret_keys, updated_at, updated_by, held,
+lease_id}`: public values, the NAMES of the secret keys, and whether (and which) live lease
+holds it. MCP tools: `set_capability_slot_data`, `list_capability_slot_data`,
+`delete_capability_slot_data`.
+
+- **Writes are per key.** A string writes the key, `null` deletes it, a key left out is
+  kept, a section left out is untouched. Values are non-blank strings (≤ 4096); keys match
+  `[A-Za-z0-9_.-]{1,64}`, at most 50 per section; a key is public or secret, never both
+  (send `null` in one section and the value in the other to move it). A slot left with no
+  keys has no row. 422 unless the capability is a `pool` that declares `slot` (and is not
+  retired); a refusal names the key, never the value.
+- **Republishing keeps the data.** It is keyed by the capability row and the slot name, not
+  the manifest. Data for a slot the manifest no longer declares is kept but never
+  delivered; DELETE removes it (PUT refuses it).
+- **Delivery — the only door a secret value leaves by.** The acquire response and `GET
+  /api/capabilities/leases/{id}` (and its long-poll, and the `get_capability_lease` tool)
+  carry `slot_data: {"public": {…}, "secret": {…}}`, decrypted, when ALL hold: the caller is
+  the lease's `requested_by` (the login that acquired it — an agent's PAT gets it for the
+  leases it acquired), the lease is a pool lease in `ready`, its slot is still declared, and
+  the slot has data. Otherwise `slot_data` is `null` — on every list, on release, once the
+  lease is terminal, and for every other caller, workspace admins and owners included.
+- **Every delivery of secret values is an event**, `capability.slot.secret_delivered`
+  (lease id, slot, user, secret key names). Writes are `capability.slot.data_set` /
+  `.data_deleted` with key names.
+- **Never in a log.** No event, error, `__str__`/`repr`, MCP call-log row or settings-audit
+  row carries a secret value: the audit stores the request body with `secret` redacted and
+  a masked before/after (`public`, `secret_keys`, and `secret_keys_written` — so a rotated
+  PIN is still a recorded change). Not a digest either: a PIN's hash is the PIN.
+

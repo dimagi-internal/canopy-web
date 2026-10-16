@@ -69,6 +69,11 @@ class CapabilityLeaseOut(StrictModel):
     #: is launched — or s3://<bucket>/leases/<id>/out/ on a stack from before 0.9.0.
     #: Always "" for a pool lease.
     out_prefix: str
+    #: A `pool` lease's slot data, decrypted — `{"public": {...}, "secret": {...}}` —
+    #: ONLY on the acquire response and GET /leases/{id}, ONLY to the user who
+    #: acquired the lease, ONLY while it is `ready`, and only when the slot has
+    #: data; null everywhere else (lists, releases, other callers, admins).
+    slot_data: dict[str, dict[str, str]] | None = None
 
 
 class AgentCapabilityOut(StrictModel):
@@ -214,3 +219,37 @@ class CapabilityArtifactsOut(StrictModel):
     artifacts: list[CapabilityArtifactOut]
     #: How long the URLs work: up to 3600, less when canopy-web's credentials expire sooner.
     expires_in_s: int
+
+
+class CapabilitySlotDataIn(StrictModel):
+    """Per-key upsert of one pool slot's data. In each section a key set to a
+    string is written, a key set to null is deleted, and a key left out is kept;
+    a section left out is untouched. Values are non-blank strings (≤ 4096); keys
+    match [A-Za-z0-9_.-]{1,64}; a key is public or secret, never both."""
+
+    public: dict[str, str | None] | None = None
+    #: Encrypted at rest; never returned by any read except to a ready lease's holder.
+    secret: dict[str, str | None] | None = None
+
+
+class CapabilitySlotDataOut(StrictModel):
+    """A slot's data, MASKED: public values, secret key NAMES — never a secret value."""
+
+    slot: str
+    #: Whether the manifest declares this slot now (data for an undeclared slot
+    #: is kept, never delivered).
+    declared: bool
+    public: dict[str, str]
+    secret_keys: list[str]
+    updated_at: dt.datetime | None
+    updated_by: str | None
+    #: A live lease holds this slot now.
+    held: bool
+    lease_id: str | None
+
+
+class CapabilitySlotsOut(StrictModel):
+    agent: str
+    capability: str
+    #: One per declared slot, in declared order.
+    slots: list[CapabilitySlotDataOut]
