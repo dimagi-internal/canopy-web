@@ -26,6 +26,22 @@ def test_encoding_collapses_every_separator_it_knows():
     assert encode_project_dir("/a/b.c/d_e") == "-a-b-c-d-e"
 
 
+def test_windows_path_encodes_like_claude_code_and_has_no_anchor():
+    """Claude Code on Windows stores `C:\\Users\\x\\repo` as `C--Users-x-repo`.
+
+    Before 2026-10-16 the `C:\\` survived the encoding, and globbing it under
+    ~/.claude/projects raised pathlib's "Non-relative patterns are unsupported",
+    crashing fizzy's Slack turn 2f115d03 on shayoni-win-cdp (failure
+    investigation 6). The encoded name must never carry an anchor.
+    """
+    from pathlib import PureWindowsPath
+
+    win = PureWindowsPath(r"C:\Users\shayoni\emdash\worktrees\fizzy\emdash\slack_x")
+    encoded = encode_project_dir(win)
+    assert encoded == "C--Users-shayoni-emdash-worktrees-fizzy-emdash-slack-x"
+    assert PureWindowsPath(encoded).anchor == ""
+
+
 # ---------------------------------------------------------------------------
 # resolve_emdash_transcript — a project dir outlives its worktree (issue #615)
 # ---------------------------------------------------------------------------

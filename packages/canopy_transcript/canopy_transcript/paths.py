@@ -21,6 +21,7 @@ history.
 """
 from __future__ import annotations
 
+import glob
 import re
 from pathlib import Path
 
@@ -45,8 +46,16 @@ def encode_project_dir(worktree: Path | str) -> str:
 
     Keep this in step with ``runner/ec2/cloud_runner.py::_encode_project_dir``,
     which is the same function on the box that ships as a single file.
+
+    Windows: Claude Code stores ``C:\\Users\\x\\repo`` as ``C--Users-x-repo``, so
+    ``\\`` and ``:`` encode to '-' too. Without them the encoded name kept its
+    ``C:\\`` anchor, and globbing it under ``~/.claude/projects`` raised pathlib's
+    "Non-relative patterns are unsupported" — which crashed fizzy's Slack turn
+    2f115d03 on shayoni-win-cdp before it reached an agent (2026-10-16, failure
+    investigation 6).
     """
-    return str(worktree).replace("/", "-").replace(".", "-").replace("_", "-")
+    return (str(worktree).replace("\\", "-").replace(":", "-")
+            .replace("/", "-").replace(".", "-").replace("_", "-"))
 
 
 # emdash 1.2 renamed the worktree ROOT as well as the leaf: a task now lives at
@@ -121,7 +130,9 @@ def resolve_emdash_transcript(
     orphaned: list[Path] = []
     for base in _worktree_bases(repo, task, home):
         prefix = encode_project_dir(base)
-        for proj_dir in claude_home.glob(prefix + "*"):
+        # Escaped: the prefix is a literal path, never a pattern (cloud_runner
+        # already escapes its equivalent glob).
+        for proj_dir in claude_home.glob(glob.escape(prefix) + "*"):
             if not proj_dir.is_dir():
                 continue
             rest = proj_dir.name[len(prefix):]
