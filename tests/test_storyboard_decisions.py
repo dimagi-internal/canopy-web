@@ -422,7 +422,7 @@ def test_non_member_edit_is_refused(board):
     resp = Client().post(f"/api/storyboards/{board.slug}/decisions/banner/edit?t={token}",
                          {"action": "confirm", "author_name": "Lily"},
                          content_type="application/json")
-    assert resp.status_code == 403
+    assert resp.status_code == 409
 
 
 def test_edit_unknown_row_is_404(board, member):

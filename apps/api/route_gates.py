@@ -457,7 +457,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "patch_storyboard": ("content.write",),
     "storyboards_rotate_token": ("content.write",),
     "open_storyboard_round": ("content.write",),
-    "edit_storyboard_decision": ("token-link", "member"),  # members apply immediately; a token holder only inside an open round (plan C)
+    "edit_storyboard_decision": ("token-link", "member"),  # inside an open round every edit is staged (members too); outside one a member applies immediately and a link holder is refused (409)
     "ensure_token": ("content.write",),
     "leave_feedback": ("token-link", "member"),  # ?t= with comment/suggest grant; ANY member bypasses the grant
     "list_notes": ("member",),  # members only; token holder 404s

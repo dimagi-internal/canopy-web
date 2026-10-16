@@ -9,6 +9,7 @@ import logging
 from apps.feedback import rounds as frounds
 from apps.feedback.models import Feedback
 from apps.runs import aggregate
+from apps.storyboards.decisions import public_name
 from apps.storyboards.models import Entry, Storyboard
 
 logger = logging.getLogger(__name__)
@@ -71,16 +72,6 @@ def check_anchor(board, anchor_id: str) -> None:
     if ":" in a:
         raise RoundError(422, f"unknown anchor {a!r}")
     # A bare id is a scene id — the convention NarrativeReviewPage already uses.
-
-
-def public_name(user) -> str:
-    """A member's name as other readers may see it — never an email address."""
-    for candidate in (user.get_full_name(), user.first_name, user.username):
-        candidate = (candidate or "").strip()
-        if candidate and "@" not in candidate:
-            return candidate
-    local = (user.email or "").split("@", 1)[0].strip()
-    return local or "A teammate"
 
 
 def author_for(user, payload_name: str, *, member: bool, in_round: bool) -> str:
@@ -147,3 +138,25 @@ def round_payload(board, rnd, *, viewer) -> dict | None:
             for e in rnd.staged_edits
         ],
     }
+
+
+_STAGED_KEYS = ("edit_id", "key", "action", "value", "reasoning", "by_name", "at")
+
+
+def stage(rnd, row, *, action, value, reasoning, by_name, by_user=None) -> dict:
+    return frounds.stage_edit(rnd, {
+        "key": row.key, "action": action, "value": (value or "").strip(),
+        "reasoning": (reasoning or "").strip(), "by_name": by_name,
+        "by_user_id": by_user.pk if getattr(by_user, "is_authenticated", False) else None,
+    })
+
+
+def pending_by_key(rnd) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    for e in (rnd.staged_edits if rnd is not None else []):
+        out.setdefault(e.get("key", ""), []).append({k: e.get(k, "") for k in _STAGED_KEYS})
+    return out
+
+
+def pending_for(board, key: str) -> list[dict]:
+    return pending_by_key(current(board)).get(key, [])

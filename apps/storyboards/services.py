@@ -142,7 +142,10 @@ def board_decisions(board: Storyboard) -> list[dict]:
     """Stored rows, then each narrative's read-time caveats (unsaved, read-only)."""
     from apps.storyboards.models import StoryboardDecision
 
-    stored = [decision_rows.serialize(d) for d in board.decisions.all()]
+    from apps.storyboards import rounds  # rounds imports this module
+
+    pending = rounds.pending_by_key(rounds.current(board))
+    stored = [decision_rows.serialize(d, pending=pending.get(d.key)) for d in board.decisions.all()]
     taken = {d["id"] for d in stored}
     read_only = []
     for raw in _narrative_caveat_rows(board):

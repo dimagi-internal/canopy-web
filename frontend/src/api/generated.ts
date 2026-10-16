@@ -10703,6 +10703,11 @@ export interface components {
             readonly superseded_by: string;
             /** Editable */
             readonly editable: boolean;
+            /**
+             * Pending
+             * @default []
+             */
+            readonly pending: readonly components["schemas"]["StagedEditOut"][];
         };
         /**
          * Divergence

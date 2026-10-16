@@ -173,3 +173,81 @@ def test_round_payload_never_exposes_a_members_email(world):
     rnd = Client().get(f"/api/storyboards/supply?t={world['token']}").json()["round"]
     assert rnd["notes"] and "@" not in str(rnd)
     assert rnd["notes"][0]["author_name"] == "pat" and rnd["opened_by"] == "pat"
+
+
+# --- Task 4: decision edits inside a round are staged ---
+
+from apps.storyboards import decisions as dsvc  # noqa: E402
+
+ROW = {"id": "banner", "question": "Rename?", "options": ["Rename and re-record", "Keep as is"],
+       "recommended": "Rename and re-record", "review_ask": "required-before",
+       "needed_by": "external-share"}
+
+
+def _edit(world, client=None, token=True, **body):
+    c = client or Client()
+    q = f"?t={world['token']}" if token else ""
+    return c.post(f"/api/storyboards/supply/decisions/banner/edit{q}", body,
+                  content_type="application/json")
+
+
+def test_in_round_a_guest_edit_is_staged_not_applied(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    resp = _edit(world, action="pick", value="Keep as is", author_name="Sophie")
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert body["value"] == "Rename and re-record"
+    assert body["pending"][0]["by_name"] == "Sophie"
+    assert world["board"].decisions.get(key="banner").status == "ai-default"
+
+
+def test_in_round_a_member_edit_is_staged_too(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _edit(world, client=world["viewer"], token=False, action="confirm")
+    assert world["board"].decisions.get(key="banner").confirmed is False
+    assert FeedbackRound.objects.get().staged_edits[0]["by_name"] == "Lily"
+
+
+def test_guest_needs_suggest_grant_and_a_name(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    assert _edit(world, action="confirm").status_code == 422
+    world["board"].capability = Storyboard.CAP_COMMENT
+    world["board"].save()
+    assert _edit(world, action="confirm", author_name="S").status_code == 403
+
+
+def test_staged_edit_is_validated_now(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    assert _edit(world, action="pick", value="Not an option", author_name="S").status_code == 422
+    assert _edit(world, action="undo", author_name="S").status_code == 409
+
+
+def test_outside_a_round_a_guest_edit_is_409(world):
+    dsvc.publish(world["board"], [ROW])
+    resp = _edit(world, action="confirm", author_name="S")
+    assert resp.status_code == 409 and "round" in resp.json()["detail"]
+
+
+def test_pending_shows_on_the_board_read(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _edit(world, action="confirm", author_name="Sophie")
+    body = Client().get(f"/api/storyboards/supply?t={world['token']}").json()
+    assert body["decisions"][0]["pending"][0]["by_name"] == "Sophie"
+
+
+def test_nameless_member_decision_never_leaks_an_email(world):
+    nameless = User.objects.create_user("nina@dimagi.com", "nina@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(workspace=world["ws"], user=nameless,
+                                       role=WorkspaceMembership.EDITOR)
+    dsvc.publish(world["board"], [ROW])
+    c = Client()
+    c.force_login(nameless)
+    assert _edit(world, client=c, token=False, action="confirm").status_code == 200
+    resp = Client().get(f"/api/storyboards/supply?t={world['token']}")
+    assert resp.json()["decisions"][0]["decided_by"] == "nina"
+    assert "@" not in resp.content.decode()

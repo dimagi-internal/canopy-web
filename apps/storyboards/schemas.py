@@ -144,6 +144,16 @@ class DecisionHistoryOut(StrictModel):
     at: str
 
 
+class StagedEditOut(StrictModel):
+    edit_id: str
+    key: str
+    action: str
+    value: str
+    reasoning: str
+    by_name: str
+    at: str
+
+
 class DecisionOut(StrictModel):
     id: str
     scope: str
@@ -172,6 +182,8 @@ class DecisionOut(StrictModel):
     superseded_by: str
     editable: bool
     """False for a narrative's read-time caveat: shown, not yet a stored row."""
+    pending: list[StagedEditOut] = []
+    """Edits staged in the open round, applied when it closes."""
 
 
 class DecisionEditIn(StrictModel):
@@ -209,16 +221,6 @@ class RoundNoteOut(StrictModel):
     resolved_in_version: int | None
     created_at: str
     mine: bool
-
-
-class StagedEditOut(StrictModel):
-    edit_id: str
-    key: str
-    action: str
-    value: str
-    reasoning: str
-    by_name: str
-    at: str
 
 
 class RoundPayloadOut(RoundOut):

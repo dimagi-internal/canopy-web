@@ -462,24 +462,41 @@ def open_storyboard_round(request: HttpRequest, slug: str) -> dict:
 def edit_storyboard_decision(
     request: HttpRequest, slug: str, key: str, payload: DecisionEditIn, ws: str = ""
 ) -> dict:
-    # Self-enforcing like the read: a wrong token 404s. A member's edit applies
-    # immediately, attributed and undoable; a link holder may edit only inside
-    # an open feedback round, where it is staged (plan C).
+    # Self-enforcing like the read: a wrong token 404s. Inside an open feedback
+    # round every edit is staged (members too); outside one a member's edit
+    # applies immediately and a link holder's is refused.
     board = _readable_or_404(request, slug, ws)
     row = board.decisions.filter(key=key).first()
     if row is None:
         raise HttpError(404, "no such decision on this storyboard")
-    # Plan C replaces this refusal with staging inside an open round.
-    if not _is_member(request, board):
-        raise HttpError(403, "only a member can change a decision outside a feedback round")
+    member = _is_member(request, board)
+    token = request.GET.get("t")
     # auth=None skips Ninja's cookie-auth CSRF check, so a session caller re-runs it.
     if request.user.is_authenticated and csrf_rejected(request):
         raise HttpError(403, "CSRF verification failed")
+    rnd = board_rounds.current(board)
     try:
+        if rnd is not None:
+            if not member and not board.grants(Storyboard.CAP_SUGGEST, token):
+                raise HttpError(403, "this link does not grant changing decisions")
+            name = board_rounds.author_for(request.user, payload.author_name,
+                                           member=member, in_round=True)
+            decision_rows.check_edit(row, action=payload.action, value=payload.value)
+            board_rounds.stage(rnd, row, action=payload.action, value=payload.value,
+                               reasoning=payload.reasoning, by_name=name,
+                               by_user=request.user if member else None)
+            if member:
+                board_rounds.link_participant(board, request.user)
+            return decision_rows.serialize(row, pending=board_rounds.pending_for(board, row.key))
+        if not member:
+            raise HttpError(409, "No feedback round is open, so only a member can change a "
+                                 "decision right now.")
         row = decision_rows.apply_edit(
             row, action=payload.action, value=payload.value,
             reasoning=payload.reasoning, by_user=request.user,
         )
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
     except decision_rows.DecisionInvalid as e:
         raise HttpError(422, str(e))
     except decision_rows.DecisionConflict as e:
