@@ -110,13 +110,24 @@ class ChannelIngestOut(StrictModel):
     error: str
     # Where the transcript is read — by the agent's own login only.
     transcript_url: str
+    read_mark: int = Field(description="The agent's read mark: pass it as `after` to get only newer messages")
+    read_at: str
 
 
 class ChannelIngestTranscriptOut(StrictModel):
     id: str
     status: str
-    messages: int
+    messages: int = Field(description="Messages in this markdown (only the new ones when `after` was given)")
     markdown: str
+    total: int = Field(description="Messages in the whole transcript")
+    after: int = Field(description="The read mark this read started after (0 = the whole transcript)")
+    mark: int = Field(description="The read mark to record once these messages are kept")
+    first_ts: str = Field(description="Slack ts of the oldest message here ('' when none)")
+    last_ts: str = Field(description="Slack ts of the newest message here ('' when none)")
+
+
+class ChannelIngestReadMarkIn(StrictModel):
+    mark: int = Field(ge=0, description="The `mark` a transcript read returned")
 
 
 class SlackConfigTokenIn(StrictModel):

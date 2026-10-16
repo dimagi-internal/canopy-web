@@ -7,7 +7,7 @@ The REST side only ASKS and READS; the permission is given in Slack, on the
 message `create_channel_ingest` posts (apps/slack/ingest.py). Who may do what:
 
 * request — the agent's own login, or an admin of the agent;
-* read the transcript — the agent's own login, and nobody else;
+* read the transcript, and record how far it has read — the agent's own login, and nobody else;
 * see an ingest's status — the agent's login, its admins, a workspace admin;
 * revoke — those, plus whoever approved it (`ingest.may_revoke`).
 """
@@ -24,7 +24,7 @@ from apps.workspaces import services as wsvc
 
 from . import ingest as ingest_svc
 from .models import SlackChannelIngest
-from .schemas import ChannelIngestIn, ChannelIngestOut, ChannelIngestTranscriptOut
+from .schemas import ChannelIngestIn, ChannelIngestOut, ChannelIngestReadMarkIn, ChannelIngestTranscriptOut
 
 router = Router(auth=session_auth, tags=["slack"])
 
@@ -46,6 +46,7 @@ def _out(i: SlackChannelIngest) -> dict:
         "revoked_at": _iso(i.revoked_at), "messages": i.messages, "backfilled_at": _iso(i.backfilled_at),
         "followed_at": _iso(i.followed_at), "error": i.error,
         "transcript_url": public_url(f"/api/slack-ingests/{i.pk}/transcript"),
+        "read_mark": i.read_mark, "read_at": _iso(i.read_at),
     }
 
 
@@ -107,16 +108,33 @@ def get_channel_ingest(request: HttpRequest, ingest_id: str) -> dict:
 
 @router.get("/{ingest_id}/transcript", response=ChannelIngestTranscriptOut,
             summary="The channel as Markdown — the requesting agent's own login only")
-def get_channel_ingest_transcript(request: HttpRequest, ingest_id: str) -> dict:
+def get_channel_ingest_transcript(request: HttpRequest, ingest_id: str, after: int = 0) -> dict:
     """Readable once approved (partial while `reading`, whole when `ready`).
     Nobody but the agent itself reads it here — not its owner, not an admin:
-    the approval was for that agent."""
+    the approval was for that agent.
+
+    `after` (the ingest's `read_mark`) returns only messages canopy stored since
+    that read — a new reply to an old thread included, under its parent. Record
+    the returned `mark` with `POST …/read-mark` once you have kept the text."""
+    i = _agent_reads(request, ingest_id)
+    return {"id": str(i.pk), "status": i.status, **ingest_svc.transcript(i, after=max(0, after))}
+
+
+@router.post("/{ingest_id}/read-mark", response=ChannelIngestOut,
+             summary="Record how far the agent has read the transcript")
+def mark_channel_ingest_read(request: HttpRequest, ingest_id: str, payload: ChannelIngestReadMarkIn) -> dict:
+    """Moves `read_mark` forward to `mark` (never back, never past what is stored),
+    so the next `GET …/transcript?after=<read_mark>` holds only what is new."""
+    return _out(ingest_svc.mark_read(_agent_reads(request, ingest_id), payload.mark))
+
+
+def _agent_reads(request: HttpRequest, ingest_id: str) -> SlackChannelIngest:
     i = _ingest_or_404(request, ingest_id)
     if not _is_agent_login(request.user, i.agent):
         raise HttpError(403, f"only {i.agent.slug}'s own login can read this transcript")
     if i.status not in ingest_svc.LIVE:
         raise HttpError(409, f"nothing to read: this ingest is {i.status}")
-    return {"id": str(i.pk), "status": i.status, "messages": i.messages, "markdown": ingest_svc.transcript(i)}
+    return i
 
 
 @router.post("/{ingest_id}/revoke", response=ChannelIngestOut, summary="Stop reading and delete the transcript")

@@ -1102,10 +1102,35 @@ export interface paths {
          * @description Readable once approved (partial while `reading`, whole when `ready`).
          *     Nobody but the agent itself reads it here — not its owner, not an admin:
          *     the approval was for that agent.
+         *
+         *     `after` (the ingest's `read_mark`) returns only messages canopy stored since
+         *     that read — a new reply to an old thread included, under its parent. Record
+         *     the returned `mark` with `POST …/read-mark` once you have kept the text.
          */
         readonly get: operations["get_channel_ingest_transcript"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/slack-ingests/{ingest_id}/read-mark": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Record how far the agent has read the transcript
+         * @description Moves `read_mark` forward to `mark` (never back, never past what is stored),
+         *     so the next `GET …/transcript?after=<read_mark>` holds only what is new.
+         */
+        readonly post: operations["mark_channel_ingest_read"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -11625,6 +11650,13 @@ export interface components {
             readonly error: string;
             /** Transcript Url */
             readonly transcript_url: string;
+            /**
+             * Read Mark
+             * @description The agent's read mark: pass it as `after` to get only newer messages
+             */
+            readonly read_mark: number;
+            /** Read At */
+            readonly read_at: string;
         };
         /** ChannelIngestIn */
         readonly ChannelIngestIn: {
@@ -11656,10 +11688,46 @@ export interface components {
             readonly id: string;
             /** Status */
             readonly status: string;
-            /** Messages */
+            /**
+             * Messages
+             * @description Messages in this markdown (only the new ones when `after` was given)
+             */
             readonly messages: number;
             /** Markdown */
             readonly markdown: string;
+            /**
+             * Total
+             * @description Messages in the whole transcript
+             */
+            readonly total: number;
+            /**
+             * After
+             * @description The read mark this read started after (0 = the whole transcript)
+             */
+            readonly after: number;
+            /**
+             * Mark
+             * @description The read mark to record once these messages are kept
+             */
+            readonly mark: number;
+            /**
+             * First Ts
+             * @description Slack ts of the oldest message here ('' when none)
+             */
+            readonly first_ts: string;
+            /**
+             * Last Ts
+             * @description Slack ts of the newest message here ('' when none)
+             */
+            readonly last_ts: string;
+        };
+        /** ChannelIngestReadMarkIn */
+        readonly ChannelIngestReadMarkIn: {
+            /**
+             * Mark
+             * @description The `mark` a transcript read returned
+             */
+            readonly mark: number;
         };
         /** StoryboardListItemOut */
         readonly StoryboardListItemOut: {
@@ -27176,7 +27244,9 @@ export interface operations {
     };
     readonly get_channel_ingest_transcript: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly after?: number;
+            };
             readonly header?: never;
             readonly path: {
                 readonly ingest_id: string;
@@ -27192,6 +27262,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ChannelIngestTranscriptOut"];
+                };
+            };
+        };
+    };
+    readonly mark_channel_ingest_read: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly ingest_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ChannelIngestReadMarkIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ChannelIngestOut"];
                 };
             };
         };

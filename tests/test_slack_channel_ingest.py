@@ -358,6 +358,50 @@ def test_follow_adds_new_messages_and_replies(following, channel, hal_login):
     assert md.count("first ever message") == 1
 
 
+def test_a_followed_read_catches_up_from_the_read_mark(following, channel, hal_login, owen):
+    c = _link_client(hal_login)
+    base = f"/api/slack-ingests/{following.pk}"
+    first = c.get(f"{base}/transcript").json()
+    assert first["after"] == 0 and first["messages"] == first["total"] == 6 and first["mark"] > 0
+    assert c.get(base).json()["read_mark"] == 0                      # reading alone moves nothing
+    resp = c.post(f"{base}/read-mark", {"mark": first["mark"]}, content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["read_mark"] == first["mark"] and resp.json()["read_at"]
+
+    # Nothing new yet: an empty catch-up, and the mark stays put.
+    none = c.get(f"{base}/transcript", {"after": first["mark"]}).json()
+    assert none["messages"] == 0 and none["mark"] == first["mark"] and none["total"] == 6
+    assert "Nothing new since the last read" in none["markdown"] and "last word" not in none["markdown"]
+
+    # A new channel message, and a late reply to a thread that was already read.
+    channel.history.insert(0, {"ts": "1700000600.000000", "user": BOB, "text": "something new"})
+    channel.history[2]["latest_reply"] = "1700000650.000000"
+    channel.replies["1700000400.000000"].append(
+        {"ts": "1700000650.000000", "user": BOB, "text": "late reply", "thread_ts": "1700000400.000000"})
+    _run(following)
+    new = c.get(f"{base}/transcript", {"after": first["mark"]}).json()
+    md = new["markdown"]
+    assert new["messages"] == 2 and new["total"] == 8 and new["mark"] > first["mark"]
+    assert (new["first_ts"], new["last_ts"]) == ("1700000600.000000", "1700000650.000000")
+    assert "something new" in md and "late reply" in md
+    assert "first ever message" not in md and "last word" not in md and "reply one" not in md
+    assert "earlier thread, already read" in md and "a thread about" in md     # the reply keeps its context
+    assert md.index("a thread about") < md.index("late reply")
+    assert "New since the last read: 2 message(s)" in md
+
+
+def test_the_read_mark_never_goes_back_or_past_the_transcript(following, hal_login, owen):
+    c = _link_client(hal_login)
+    base = f"/api/slack-ingests/{following.pk}"
+    top = c.get(f"{base}/transcript").json()["mark"]
+    assert c.post(f"{base}/read-mark", {"mark": top + 1000},
+                  content_type="application/json").json()["read_mark"] == top
+    assert c.post(f"{base}/read-mark", {"mark": 1}, content_type="application/json").json()["read_mark"] == top
+    # Only the agent's own login records how far it has read.
+    assert _link_client(owen).post(f"{base}/read-mark", {"mark": 0},
+                                   content_type="application/json").status_code == 403
+
+
 def test_revoke_stops_follow_and_deletes_the_transcript(following, channel, owen, hal_login):
     resp = _link_client(owen).post(f"/api/slack-ingests/{following.pk}/revoke")
     assert resp.status_code == 200, resp.content
