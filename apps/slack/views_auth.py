@@ -118,6 +118,7 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
         inst.bot_user_id = str(data.get("bot_user_id") or "")
         inst.app_id = str(data.get("app_id") or "") or inst.app_id
         inst.bot_token = str(data.get("access_token") or "")
+        inst.granted_scopes = str(data.get("scope") or "")
         if inst.pk is None:
             inst.installed_by = request.user
         inst.save()
@@ -133,6 +134,11 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
         SlackUserLink.objects.get_or_create(
             installation=inst, slack_user_id=installer, defaults={"user": request.user},
         )
+    # Bring the app up to date — its commands, scopes and agent declaration —
+    # now, where canopy can already edit it, rather than on the next switch flip.
+    if inst.manages_commands:
+        from .commands import sync_quietly
+        sync_quietly(inst)
     return _page("Slack connected",
                  f"<b>{escape(inst.team_name)}</b> now talks to the <b>{escape(slug)}</b> workspace. "
                  "Turn on the agents you want reachable from each agent's Overview page.")

@@ -11425,13 +11425,6 @@ export interface components {
             /** Archived */
             readonly archived?: boolean | null;
         };
-        /** SlackAgentOut */
-        readonly SlackAgentOut: {
-            /** Declared */
-            readonly declared: boolean;
-            /** Declared At */
-            readonly declared_at: string;
-        };
         /** SlackChannelAllowOut */
         readonly SlackChannelAllowOut: {
             /** Id */
@@ -11486,7 +11479,7 @@ export interface components {
             /** Install Url */
             readonly install_url: string;
             readonly commands: components["schemas"]["SlackCommandsOut"];
-            readonly agent: components["schemas"]["SlackAgentOut"];
+            readonly reinstall: components["schemas"]["SlackReinstallOut"];
             readonly history: components["schemas"]["SlackHistoryOut"];
             readonly channel_ingest: components["schemas"]["SlackChannelIngestSwitchOut"];
         };
@@ -11496,6 +11489,13 @@ export interface components {
             readonly enabled: boolean;
             /** Max Minutes */
             readonly max_minutes: number;
+        };
+        /** SlackReinstallOut */
+        readonly SlackReinstallOut: {
+            /** Needed */
+            readonly needed: boolean;
+            /** Turns On */
+            readonly turns_on: readonly string[];
         };
         /** SlackSyncOut */
         readonly SlackSyncOut: {
@@ -11541,6 +11541,11 @@ export interface components {
              * @default []
              */
             readonly redirects_removed: readonly string[];
+            /**
+             * Declared
+             * @default []
+             */
+            readonly declared: readonly string[];
         };
         /** SlackConfigTokenIn */
         readonly SlackConfigTokenIn: {

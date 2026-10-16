@@ -188,6 +188,20 @@ def user_email(token: str, slack_user_id: str) -> str:
     return str((user_info(token, slack_user_id).get("profile") or {}).get("email") or "")
 
 
+def granted_scopes(token: str) -> list[str] | None:
+    """The scopes this token holds, from the `X-OAuth-Scopes` header Slack puts
+    on every answer (here, `auth.test`'s). None when Slack did not say."""
+    from collections.abc import Mapping
+
+    resp = requests.post(API + "auth.test", headers={"Authorization": f"Bearer {token}"}, timeout=TIMEOUT)
+    resp.raise_for_status()
+    if not resp.json().get("ok"):
+        return None
+    headers = getattr(resp, "headers", None)
+    raw = headers.get("X-OAuth-Scopes") if isinstance(headers, Mapping) else None
+    return [s.strip() for s in raw.split(",") if s.strip()] if isinstance(raw, str) else None
+
+
 def oauth_access(*, client_id: str, client_secret: str, code: str, redirect_uri: str) -> dict:
     return call("oauth.v2.access", data={
         "client_id": client_id, "client_secret": client_secret,

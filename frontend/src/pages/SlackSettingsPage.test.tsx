@@ -8,7 +8,7 @@ const base = {
   workspace: 'connect', connected: true, team_name: 'Dimagi', installed_by_email: 'jj@dimagi.com',
   installed_at: '', install_url: 'https://canopy.test/canopy/auth/slack/install/?workspace=connect',
   commands: { managed: false, app_id: 'A1', set_by_email: '', synced_at: '', error: '' },
-  agent: { declared: false, declared_at: '' },
+  reinstall: { needed: false, turns_on: [] as string[] },
   history: { enabled: true, max_minutes: 120 },
   channel_ingest: { enabled: false, allowed: [] },
 }
@@ -16,17 +16,13 @@ const base = {
 vi.mock('@/api/slack', async (orig) => ({
   ...(await orig<typeof import('@/api/slack')>()),
   getSlackConfig: vi.fn(async () => base),
-  setSlackConfigToken: vi.fn(async () => ({ status: 'synced', detail: '', added: ['/hal'], removed: [], unfit: [], scopes_added: [], webhooks_moved: [], redirects_removed: [] })),
+  setSlackConfigToken: vi.fn(async () => ({ status: 'synced', detail: '', added: ['/hal'], removed: [], unfit: [], scopes_added: [], webhooks_moved: [], redirects_removed: [], declared: [] })),
   setSlackHistory: vi.fn(async (_ws: string, enabled: boolean, max_minutes: number) => ({
     ...base, history: { enabled, max_minutes },
   })),
   setSlackChannelIngest: vi.fn(async (_ws: string, enabled: boolean) => ({ ...base, channel_ingest: { enabled, allowed: [] } })),
   allowSlackChannel: vi.fn(async () => base),
   disallowSlackChannel: vi.fn(async () => base),
-  declareSlackAgent: vi.fn(async () => ({
-    status: 'declared', detail: 'Slack will draw its own working indicator once the app is re-installed.',
-    changed: ['features.agent_view'], reinstall_required: true, install_url: 'https://canopy.test/i',
-  })),
 }))
 
 const { SlackSettingsPage } = await import('./SlackSettingsPage')
@@ -56,55 +52,46 @@ describe('SlackSettingsPage', () => {
 describe('syncSummary', () => {
   it('says when the webhooks moved', () => {
     expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [],
-      scopes_added: [], webhooks_moved: ['event_subscriptions', 'interactivity'], redirects_removed: [] }))
+      scopes_added: [], webhooks_moved: ['event_subscriptions', 'interactivity'], redirects_removed: [], declared: [] }))
       .toBe('Moved the event_subscriptions and interactivity URL to this address.')
   })
   it('reads like a sentence', () => {
-    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [], scopes_added: [], webhooks_moved: [], redirects_removed: [] }))
+    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [], scopes_added: [], webhooks_moved: [], redirects_removed: [], declared: [] }))
       .toBe('Slash commands already match.')
-    expect(slack.syncSummary({ status: 'not_configured', detail: 'no token', added: [], updated: [], removed: [], unfit: [], scopes_added: [], webhooks_moved: [], redirects_removed: [] }))
+    expect(slack.syncSummary({ status: 'not_configured', detail: 'no token', added: [], updated: [], removed: [], unfit: [], scopes_added: [], webhooks_moved: [], redirects_removed: [], declared: [] }))
       .toBe('no token')
     expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [],
-      scopes_added: ['files:read'], webhooks_moved: [], redirects_removed: [] }))
+      scopes_added: ['files:read'], webhooks_moved: [], redirects_removed: [], declared: [] }))
       .toBe('Added the files:read permission — reconnect Slack to grant it.')
     expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: ['/hal'], removed: [],
-      unfit: [], scopes_added: [], webhooks_moved: [], redirects_removed: [] }))
+      unfit: [], scopes_added: [], webhooks_moved: [], redirects_removed: [], declared: [] }))
       .toBe('Updated /hal.')
+    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [],
+      scopes_added: [], webhooks_moved: [], redirects_removed: [], declared: ['features.agent_view'] }))
+      .toBe('Turned on Slack\'s own "Working…" indicator.')
   })
 })
 
 
-describe('SlackSettingsPage — working indicator', () => {
+describe('SlackSettingsPage — reinstall notice', () => {
   afterEach(cleanup)
 
-  // Declaring edits the app's manifest, so it needs the configuration token —
-  // the button stays disabled without one.
-  const managed = { ...base, commands: { ...base.commands, managed: true } }
-  const renderManaged = () => {
-    vi.mocked(slack.getSlackConfig).mockResolvedValue(managed)
-    return render(
-      <MemoryRouter initialEntries={['/w/connect/settings/slack']}>
-        <Routes><Route path="/w/:workspace/settings/slack" element={<SlackSettingsPage />} /></Routes>
-      </MemoryRouter>,
-    )
-  }
-
-  it('declares the app an agent, after confirming, and says what is left to do', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    renderManaged()
-    const button = await screen.findByRole('button', { name: 'Declare as agent' })
-    fireEvent.click(button)
-    expect(confirm).toHaveBeenCalled()                       // one-way, so never silently
-    expect((await screen.findByTestId('slack-note')).textContent).toContain('re-installed')
-    expect(slack.declareSlackAgent).toHaveBeenCalledWith('connect')
+  it('shows nothing about permissions when the install has them all', async () => {
+    vi.mocked(slack.getSlackConfig).mockResolvedValue(base)
+    renderPage()
+    await screen.findByTestId('slack-settings')
+    expect(screen.queryByTestId('slack-reinstall')).toBeNull()
+    expect(screen.queryByText(/Working indicator/)).toBeNull()   // no longer a choice on the page
   })
 
-  it('does nothing if the confirm is declined', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
-    vi.mocked(slack.declareSlackAgent).mockClear()
-    renderManaged()
-    fireEvent.click(await screen.findByRole('button', { name: 'Declare as agent' }))
-    expect(slack.declareSlackAgent).not.toHaveBeenCalled()
+  it('says what a reinstall turns on, and links to it', async () => {
+    vi.mocked(slack.getSlackConfig).mockResolvedValue({
+      ...base, reinstall: { needed: true, turns_on: ['finding channels by name (#general)'] },
+    })
+    renderPage()
+    const notice = await screen.findByTestId('slack-reinstall')
+    expect(notice.textContent).toContain('Slack needs a reinstall to turn on: finding channels by name (#general).')
+    expect(screen.getByRole('link', { name: 'Reinstall' }).getAttribute('href')).toBe(base.install_url)
   })
 })
 
@@ -145,15 +132,15 @@ describe('SlackSettingsPage — channel history', () => {
   })
 })
 
-describe('SlackSettingsPage — whole-channel reads', () => {
+describe('SlackSettingsPage — reading whole channels', () => {
   afterEach(cleanup)
 
   it('is off by default and an owner turns it on', async () => {
     vi.mocked(slack.getSlackConfig).mockResolvedValue(base)
     renderPage()
-    expect((await screen.findByTestId('slack-channel-ingest')).textContent).toContain('Off — agents cannot ask.')
+    expect((await screen.findByTestId('slack-channel-ingest')).textContent).toContain('Off — agents can only read channels on the list.')
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
-    expect((await screen.findByTestId('slack-note')).textContent).toContain('each read still needs an approval')
+    expect((await screen.findByTestId('slack-note')).textContent).toContain('someone in the channel still has to approve each one')
     expect(slack.setSlackChannelIngest).toHaveBeenCalledWith('connect', true)
   })
 
@@ -170,8 +157,8 @@ describe('SlackSettingsPage — whole-channel reads', () => {
     expect(screen.queryByLabelText('Also follow new messages')).toBeNull()
     fireEvent.change(screen.getByLabelText('Channel'), { target: { value: '#ai-champions' } })
     fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'ada' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Allow-list' }))
-    expect((await screen.findByTestId('slack-note')).textContent).toContain('Allow-listed #ai-champions for ada.')
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect((await screen.findByTestId('slack-note')).textContent).toContain('ada may now read #ai-champions.')
     expect(slack.allowSlackChannel).toHaveBeenCalledWith('connect', {
       agent: 'ada', channel: '#ai-champions', follow: false, note: '',
     })

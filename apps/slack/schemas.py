@@ -18,11 +18,12 @@ class SlackCommandsOut(StrictModel):
     error: str
 
 
-class SlackAgentOut(StrictModel):
-    # Whether the Slack app is declared an agent — Slack's own "Working…"
-    # indicator and its Stop button are drawn only for one that is.
-    declared: bool
-    declared_at: str
+class SlackReinstallOut(StrictModel):
+    # Whether this install is missing permissions canopy now asks for — they
+    # land only when someone re-installs — and, in plain words, what they turn
+    # on. False when every one is granted, or when Slack has not said.
+    needed: bool
+    turns_on: list[str]
 
 
 class SlackHistoryOut(StrictModel):
@@ -76,7 +77,7 @@ class SlackConfigOut(StrictModel):
     installed_at: str
     install_url: str
     commands: SlackCommandsOut
-    agent: SlackAgentOut
+    reinstall: SlackReinstallOut
     history: SlackHistoryOut
     channel_ingest: SlackChannelIngestSwitchOut
 
@@ -149,6 +150,8 @@ class SlackSyncOut(StrictModel):
     #: Sign-in callbacks removed from the app because they sat on an address
     #: canopy has left.
     redirects_removed: list[str] = []
+    #: The app was made an agent in this sync (Slack's own working indicator).
+    declared: list[str] = []
 
 
 class SlackDeclareAgentOut(StrictModel):
