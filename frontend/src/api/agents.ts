@@ -485,6 +485,15 @@ export async function setAgentCredentials(
   return Array.from(unwrap(res, 'setAgentCredentials'))
 }
 
+/** PLAINTEXT of one stored value. Needs a passkey step-up, which the API
+ *  client prompts for and retries on its own; every reveal is recorded. */
+export async function revealAgentCredential(slug: string, name: string): Promise<string> {
+  const res = await apiV2.POST('/api/agents/{slug}/credentials/{name}/reveal', {
+    params: { path: { slug, name } },
+  })
+  return unwrap(res, 'revealAgentCredential').value
+}
+
 export async function deleteAgentCredential(
   slug: string,
   name: string,

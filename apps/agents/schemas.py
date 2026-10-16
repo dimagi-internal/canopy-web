@@ -1208,6 +1208,13 @@ class DeviceBindingIn(StrictModel):
     require_device_binding: bool
 
 
+class AgentCredentialRevealOut(StrictModel):
+    """PLAINTEXT, once, to an agent admin at a browser who just confirmed a passkey."""
+
+    name: str
+    value: str
+
+
 class AgentCredentialAccessOut(StrictModel):
     """Whether the CALLER may resolve this agent's secrets — never the values.
 

@@ -3,6 +3,7 @@ import type { paths } from "./generated";
 import { API_BASE, getCsrfToken } from "./base";
 import { currentNext, loginHref } from "../auth/loginHref";
 import { isScopedViewerPath } from "../lib/scopedLinks";
+import { stepUpMiddleware } from "../auth/stepUp";
 
 // A lapsed session should bounce the user through OAuth exactly ONCE. The guard
 // below is what makes that a bounce and not a loop: if we land back here still
@@ -229,3 +230,8 @@ apiV2.use({
     return response;
   },
 });
+
+// Passkey step-up (canopy-web#1538): a 403 `step_up_required` prompts for the
+// passkey and retries the request once. LAST, so the copy it keeps for the
+// retry already carries the CSRF header and the workspace-rewritten URL.
+apiV2.use(stepUpMiddleware());

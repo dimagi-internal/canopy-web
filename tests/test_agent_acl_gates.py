@@ -24,6 +24,7 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from apps.agents.models import Agent, AgentTask
+from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
 
@@ -56,6 +57,7 @@ def _patch_turn_mode(client, mode="auto"):
 
 
 def _put_credentials(client, values=None):
+    grant_step_up(client)  # isolate the ROLE gate from the passkey step-up
     return client.put(
         "/api/agents/aclbot/credentials",
         data={"values": values or {"a-secret": "shh"}}, content_type="application/json",

@@ -22,6 +22,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment
+from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -55,6 +56,7 @@ def fleet(client):
 
 
 def _put(client, values):
+    grant_step_up(client)  # a browser write needs a passkey step-up (tests/test_agent_credential_stepup.py)
     return client.put(
         "/api/agents/ace/credentials",
         data={"values": values}, content_type="application/json",

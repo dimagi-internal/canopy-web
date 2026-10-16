@@ -13,6 +13,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent, AgentAdmin
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -40,8 +41,10 @@ def _as(user) -> Client:
 
 
 def _creds(user):
-    return _as(user).put("/api/agents/ace/credentials",
-                         data={"values": {"TOKEN": "x"}}, content_type="application/json")
+    c = _as(user)
+    grant_step_up(c)  # a browser write needs a passkey step-up; this tests the ADMIN gate
+    return c.put("/api/agents/ace/credentials",
+                 data={"values": {"TOKEN": "x"}}, content_type="application/json")
 
 
 # --- who is an admin ------------------------------------------------------------

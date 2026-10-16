@@ -28,7 +28,10 @@ export async function getAgentDeviceKeys(slug: string): Promise<RunnerDeviceKeyO
   return Array.from(unwrap(res, 'getAgentDeviceKeys')) as RunnerDeviceKeyOut[]
 }
 
-/** pending → active. Browser session only; the server adds a passkey step-up. */
+/** pending → active. Browser session + a fresh passkey step-up: a 403
+ *  `step_up_required` is answered by `apiV2`'s step-up middleware
+ *  (`auth/stepUp.ts`), which prompts for the passkey and retries this call —
+ *  so both approve buttons (agent Credentials, account Settings) get it free. */
 export async function approveRunnerDeviceKey(id: string): Promise<RunnerDeviceKeyOut> {
   const res = await apiV2.POST('/api/runner-device-keys/{key_id}/approve', {
     params: { path: { key_id: id } },

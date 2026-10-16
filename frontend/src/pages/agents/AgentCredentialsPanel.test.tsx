@@ -10,22 +10,35 @@
 // waiting to be registered. Reported 2026-09-23: "I don't even see where the
 // 1pass service account goes".
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
-        deleteAgentCredential, startGoogleMint } = vi.hoisted(() => ({
-  getAgentCredentialStatus: vi.fn(),
-  getAgentVault: vi.fn(),
-  setAgentVault: vi.fn(),
-  setAgentCredentials: vi.fn(),
-  deleteAgentCredential: vi.fn(),
-  startGoogleMint: vi.fn(),
-}))
+        deleteAgentCredential, startGoogleMint, revealAgentCredential, AgentApiError } = vi.hoisted(() => {
+  class AgentApiError extends Error {
+    status: number
+    detail: string
+    constructor(message: string, status: number, detail: string) {
+      super(message)
+      this.status = status
+      this.detail = detail
+    }
+  }
+  return {
+    getAgentCredentialStatus: vi.fn(),
+    getAgentVault: vi.fn(),
+    setAgentVault: vi.fn(),
+    setAgentCredentials: vi.fn(),
+    deleteAgentCredential: vi.fn(),
+    startGoogleMint: vi.fn(),
+    revealAgentCredential: vi.fn(),
+    AgentApiError,
+  }
+})
 
 vi.mock('@/api/agents', () => ({
   getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
-  deleteAgentCredential, startGoogleMint,
+  deleteAgentCredential, startGoogleMint, revealAgentCredential, AgentApiError,
   // The GitHub and Salesforce sections have their own tests; here they only have to not throw.
   getAgentGitHub: () => new Promise(() => {}),
   getAgentSalesforce: () => new Promise(() => {}),
@@ -151,8 +164,54 @@ describe('AgentCredentialsPanel', () => {
       </MemoryRouter>,
     )
     const note = await screen.findByTestId('credentials-note')
-    expect(note.textContent).toContain('write-only')
-    expect(note.textContent).toContain('Only Echo’s admins can change them.')
+    expect(note.textContent).toContain('asks for your passkey')
+    expect(note.textContent).toContain('Only Echo’s admins can change or reveal them.')
     expect(screen.getAllByText(/encrypted at rest/i)).toHaveLength(1)
+  })
+
+  it('reveals one stored value on demand, and only to someone who may edit', async () => {
+    getAgentCredentialStatus.mockResolvedValue([
+      { name: 'nova-api-key', declared: true, set: true, source: 'canopy', updated_at: null },
+    ])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 1, locatable: 0 })
+    revealAgentCredential.mockResolvedValue('the-plaintext')
+    show()
+    const btn = await screen.findByTestId('reveal-nova-api-key')
+    expect(screen.queryByTestId('revealed-nova-api-key')).toBeNull()
+    fireEvent.click(btn)
+    await waitFor(() => expect(screen.getByTestId('revealed-nova-api-key').textContent).toContain('the-plaintext'))
+    expect(revealAgentCredential).toHaveBeenCalledWith('echo', 'nova-api-key')
+    // Hide drops it from the page.
+    fireEvent.click(screen.getByTestId('reveal-nova-api-key'))
+    expect(screen.queryByTestId('revealed-nova-api-key')).toBeNull()
+  })
+
+  it('shows the server’s reason when a reveal is refused', async () => {
+    getAgentCredentialStatus.mockResolvedValue([
+      { name: 'nova-api-key', declared: true, set: true, source: 'canopy', updated_at: null },
+    ])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 1, locatable: 0 })
+    revealAgentCredential.mockRejectedValue(
+      new AgentApiError('revealAgentCredential failed: {...}', 403, 'Confirm it’s you with your passkey, then try again.'),
+    )
+    show()
+    fireEvent.click(await screen.findByTestId('reveal-nova-api-key'))
+    expect((await screen.findByTestId('agent-credentials-error')).textContent).toBe(
+      'Confirm it’s you with your passkey, then try again.',
+    )
+  })
+
+  it('offers no Reveal to a viewer who cannot edit', async () => {
+    getAgentCredentialStatus.mockResolvedValue([
+      { name: 'nova-api-key', declared: true, set: true, source: 'canopy', updated_at: null },
+    ])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 1, locatable: 0 })
+    render(
+      <MemoryRouter>
+        <AgentCredentialsPanel agent={AGENT} canEdit={false} />
+      </MemoryRouter>,
+    )
+    await screen.findByTestId('cred-nova-api-key')
+    expect(screen.queryByTestId('reveal-nova-api-key')).toBeNull()
   })
 })
