@@ -148,6 +148,8 @@ from .runners import (
     set_runner_flags,  # noqa: F401
     start_runner_mint,  # noqa: F401
     submit_mint_code,  # noqa: F401
+    LAST_BACKUP_TOKEN_REFUSAL,  # noqa: F401
+    would_remove_last_backup_token,  # noqa: F401
     swap_runner_logins,  # noqa: F401
     take_mint_code,  # noqa: F401
     add_runner_login,  # noqa: F401

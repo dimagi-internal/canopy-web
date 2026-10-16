@@ -391,3 +391,24 @@ def test_a_box_waiting_for_a_credential_still_serves_the_browser_sign_in(cr, tmp
     assert cr.fetch_and_stage_credential("rid") is True
     assert drained == ["rid"]
     assert cr._claude_cred_label() == "box-login"
+
+
+def test_a_box_waiting_for_a_credential_heartbeats_as_not_ready(cr, tmp_path, monkeypatch):
+    """The same box read "stale" for hours, which says it is down. It was up and
+    needed a sign-in: the wait heartbeats, not ready (so nothing routes to it),
+    with a note that says what to do."""
+    beats = []
+
+    def api(method, path, body=None):
+        if path.endswith("/heartbeat"):
+            beats.append(body)
+        return 200, {}
+
+    monkeypatch.setattr(cr, "_api", api)
+    monkeypatch.setattr(cr, "_drain_mint", lambda rid: _store_login(tmp_path))
+    monkeypatch.setattr(cr, "POLL_SECONDS", 0)
+    assert cr.fetch_and_stage_credential("rid") is True
+    assert len(beats) == 1
+    assert beats[0]["ready"] is False
+    assert "Sign in with Claude" in beats[0]["ready_note"]
+    assert len(beats[0]["ready_note"]) <= 200

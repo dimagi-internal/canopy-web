@@ -175,12 +175,14 @@ export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = fa
           data-testid="reauth-start"
           className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
         >
-          {!idle ? 'Start again' : isSet || outcomeIsFresh ? 'Sign in again' : 'Sign in with Claude'}
+          {!idle ? 'Start again'
+            : slot !== 'box' ? (isSet ? 'Get a new token' : 'Get a backup token')
+              : isSet || outcomeIsFresh ? 'Sign in again' : 'Sign in with Claude'}
         </button>
         <span className="text-[11px] text-foreground-subtle">
           {slot === 'box'
             ? 'you open one link and paste one code back'
-            : <>{isSet ? 'replaces this login only' : 'fills this login'} &mdash; you open one link and paste one code back</>}
+            : <>{isSet ? 'replaces this token only' : 'a token good for a year'} &mdash; you open one link and paste one code back</>}
         </span>
       </div>
 
