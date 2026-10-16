@@ -119,7 +119,11 @@ def test_the_brief_round_trips_through_create_and_read(member, ws):
     body = member.get("/api/storyboards/supply?ws=connect").json()
     assert body["brief"]["data_disclosure"].startswith("All on-screen data is synthetic")
     assert body["brief"]["short_version"]["items"] == [{"narrative_slug": SLUG, "cut_id": "procurements"}]
-    assert body["brief"]["divergences"][0]["resolution"] == "Re-record cut 2"
+    # the three legacy lists became decision rows (one each) and left the brief
+    assert len(body["decisions"]) == 3
+    assert any(d["recommended"] == "Re-record cut 2" or "Re-record cut 2" in d["options"]
+               for d in body["decisions"])
+    assert not body["brief"]["divergences"]
 
 
 def test_a_board_without_a_brief_reads_an_empty_one(member, ws):

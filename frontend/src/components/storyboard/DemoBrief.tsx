@@ -1,11 +1,11 @@
-import type { Divergence, Storyboard, StoryboardEntry } from '@/api/storyboards'
+import type { Divergence, Storyboard } from '@/api/storyboards'
 import { fmtDuration } from '@/components/ddd/CutPlayer'
 
 /**
  * The framing a set of demos needs and a title + lede cannot carry: who it is
  * for, the point to land, what is true about the data on screen, the order to
- * play it in and the short version, and — at the end — what we assumed and
- * where the script and the data disagree. All of it is optional; a board
+ * play it in and the short version. The set's assumptions and open questions live in the decision
+ * log (DecisionLog), not here. All of it is optional; a board
  * without a brief renders exactly as before.
  *
  * This existed as a Google Doc beside the board ("Connect Supply demos: scripts
@@ -178,33 +178,11 @@ export function BriefPanel({ board }: { board: Storyboard }) {
 
 export type Tagged<T> = { item: T; from: string | null }
 
-function collect(board: Storyboard) {
-  const brief = board.brief ?? {}
-  const assumptions: Tagged<string>[] = (brief.assumptions ?? []).map((item) => ({ item, from: null }))
-  const divergences: Tagged<Divergence>[] = (brief.divergences ?? []).map((item) => ({ item, from: null }))
-  const questions: Tagged<string>[] = (brief.open_questions ?? []).map((item) => ({ item, from: null }))
-  for (const act of board.acts) {
-    for (const e of act.entries as StoryboardEntry[]) {
-      for (const a of e.assumptions ?? []) assumptions.push({ item: a, from: e.title })
-      for (const d of e.divergences ?? []) divergences.push({ item: d, from: e.title })
-      for (const q of e.open_questions ?? []) questions.push({ item: q, from: e.title })
-    }
-  }
-  return { assumptions, divergences, questions }
-}
-
 function From({ from }: { from: string | null }) {
   return from ? <span className="text-muted-foreground"> · {from}</span> : null
 }
 
-/** What we assumed, where the script and the data disagree, and what is still
- *  open — the set's own and each narrative's, in one place. */
-export function Caveats({ board }: { board: Storyboard }) {
-  return <CaveatsView {...collect(board)} />
-}
-
-/** The same section for anything with caveats — a board, or one narrative's
- *  review page. */
+/** The caveats section for one narrative's review page. */
 export function CaveatsView({
   assumptions,
   divergences,

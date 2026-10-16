@@ -11,9 +11,12 @@ remove — and ``storyboards`` is product tier, so importing product is legal.
 """
 from __future__ import annotations
 
+import logging
+
 from apps.reviews.models import ReviewRequest
 from apps.runs import aggregate
 from apps.storyboards import cuts as entry_cuts
+from apps.storyboards import decisions as decision_rows
 from apps.storyboards.models import Entry, Storyboard
 
 # A narrative's stored `title` is derived from the opening of its story, so on a
@@ -23,6 +26,8 @@ from apps.storyboards.models import Entry, Storyboard
 # treatment. A genuinely short title (a real one, should narratives ever carry
 # one) is still preferred.
 _MAX_CARD_TITLE = 70
+
+logger = logging.getLogger(__name__)
 
 
 def _card_title(narrative_slug: str, stored_title: str | None) -> str:
@@ -41,6 +46,17 @@ def _streamable_anonymously(video_url: str | None) -> bool:
     answer.
     """
     return bool(video_url) and "t=" in (video_url or "")
+
+
+def _version_request_json(current: dict) -> dict:
+    """A version's own request_json, or {} when it has no review behind it."""
+    if not current.get("review_id"):
+        return {}
+    return (
+        ReviewRequest.objects.filter(pk=current["review_id"])
+        .values_list("request_json", flat=True)
+        .first()
+    ) or {}
 
 
 def _entry_payload(entry, workspace_slugs: set[str], *, is_member: bool) -> dict:
@@ -80,13 +96,7 @@ def _entry_payload(entry, workspace_slugs: set[str], *, is_member: bool) -> dict
 
     # The version's own request_json: the per-cut words the publisher wrote
     # (screen notes, audience note, provenance) and the narrative's caveats.
-    request_json = {}
-    if current.get("review_id"):
-        request_json = (
-            ReviewRequest.objects.filter(pk=current["review_id"])
-            .values_list("request_json", flat=True)
-            .first()
-        ) or {}
+    request_json = _version_request_json(current)
 
     return {
         **entry_cuts.caveats(request_json, entry.narrative_slug),
@@ -106,6 +116,52 @@ def _entry_payload(entry, workspace_slugs: set[str], *, is_member: bool) -> dict
         "video_viewer_url": current.get("video_viewer_url") if shared else None,
         "published": bool(current),
     }
+
+
+def _narrative_caveat_rows(board: Storyboard) -> list[dict]:
+    """Each narrative's own caveats, as read-only rows scoped to that narrative.
+
+    Until the publisher sends decisions[], this is where a narrative's
+    assumptions still come from; same lookup as _entry_payload."""
+    out: list[dict] = []
+    workspace_slugs = {board.workspace_id}
+    for act in board.acts.all():
+        for e in act.entries.all():
+            narrative = aggregate.build_narrative(e.narrative_slug, workspace_slugs)
+            current = (narrative or {}).get("current_version") or {}
+            out.extend(
+                decision_rows.from_narrative_caveats(
+                    entry_cuts.caveats(_version_request_json(current), e.narrative_slug),
+                    e.narrative_slug,
+                )
+            )
+    return out
+
+
+def board_decisions(board: Storyboard) -> list[dict]:
+    """Stored rows, then each narrative's read-time caveats (unsaved, read-only)."""
+    from apps.storyboards.models import StoryboardDecision
+
+    stored = [decision_rows.serialize(d) for d in board.decisions.all()]
+    taken = {d["id"] for d in stored}
+    read_only = []
+    for raw in _narrative_caveat_rows(board):
+        # First wins: a narrative carried in two acts yields the same rows
+        # twice, and a repeated id is a key collision on the page.
+        if raw["id"] in taken:
+            continue
+        taken.add(raw["id"])
+        try:
+            # Never stored, so the column checks do not apply (the id carries
+            # the narrative slug, which need not be kebab-case).
+            clean = decision_rows.validate(raw, stored=False)
+        except decision_rows.DecisionInvalid as e:
+            # A malformed read-time caveat must never 500 the public read.
+            logger.warning("skipping narrative caveat row on %s: %s", board.slug, e)
+            continue
+        unsaved = StoryboardDecision(storyboard=board, key=clean.pop("id"), **clean)
+        read_only.append(decision_rows.serialize(unsaved, editable=False))
+    return stored + read_only
 
 
 def board_feedback(board: Storyboard):
@@ -169,6 +225,7 @@ def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:
         "title": board.title,
         "lede": board.lede,
         "brief": board.brief or {},
+        "decisions": board_decisions(board),
         "capability": board.capability,
         "layout": board.layout,
         # The page shows returning notes only to the people who sent the link.

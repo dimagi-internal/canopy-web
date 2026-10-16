@@ -13,7 +13,8 @@ import { useScopedPath } from '@/lib/scopedLinks'
 import { NoteComposer } from '@/components/storyboard/NoteComposer'
 import { NotesReturned, groupNotes } from '@/components/storyboard/NotesReturned'
 import { PublicHeader } from '@/components/PublicHeader'
-import { BriefPanel, Caveats } from '@/components/storyboard/DemoBrief'
+import { BriefPanel } from '@/components/storyboard/DemoBrief'
+import { DecisionLog } from '@/components/storyboard/DecisionLog'
 import { EntryCuts } from '@/components/storyboard/EntryCuts'
 
 /**
@@ -83,7 +84,7 @@ export default function StoryboardPage() {
       </Centered>
     )
 
-  return <Board board={state.data} token={token} />
+  return <Board board={state.data} token={token} workspace={workspace} />
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
@@ -97,7 +98,15 @@ function Centered({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Board({ board, token }: { board: Storyboard; token: string | null }) {
+function Board({
+  board,
+  token,
+  workspace,
+}: {
+  board: Storyboard
+  token: string | null
+  workspace?: string
+}) {
   // A shared link gets bookmarked and sits among a dozen other tabs. "Canopy"
   // tells the reader nothing about which one this is.
   useEffect(() => {
@@ -213,10 +222,10 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
           </section>
         ))}
 
-        {/* What the demos assume, and where the script and data disagree —
+        {/* The decision log: what must be answered, confirmed or was assumed —
             the last thing read before a reviewer sends this on. Kept on a reel
             too: a disclosure is not review furniture. */}
-        <Caveats board={board} />
+        <DecisionLog board={board} token={token} ws={workspace} canEdit={board.is_member} />
 
         {!reel && grouped.loose.length > 0 && (
           <section className="mt-11 flex flex-col gap-4">

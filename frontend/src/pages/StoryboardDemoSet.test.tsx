@@ -44,6 +44,16 @@ function cut(over: Partial<api.EntryCut> = {}): api.EntryCut {
   }
 }
 
+function decision(over: Partial<api.Decision> = {}): api.Decision {
+  return {
+    id: 'd', scope: '', question: 'q', plain_question: 'q', options: [], recommended: '', override: '', value: '',
+    reasoning: '', override_reasoning: '', source: '', evidence_basis: 'stated', conflict_signals: [],
+    status: 'ai-default', revisit_when: '', review_ask: '', needed_by: '', confirm_reason: '', decided_by: '',
+    decided_by_verified: false, decided_at: null, confirmed: false, history: [], supersedes: '', superseded_by: '',
+    editable: true, ...over,
+  }
+}
+
 function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
   return {
     slug: 'supply',
@@ -57,10 +67,11 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
       purpose: 'One set of screens shows where every sachet is.',
       data_disclosure: 'All on-screen data is synthetic. Source: Labs programme 10112.',
       short_version: { label: '3-minute version', items: [{ narrative_slug: 'rutf', cut_id: 'buying' }] },
-      assumptions: ['Programme 10112 stands in for the real programme.'],
-      divergences: [{ script: 'Four suppliers', data: 'Three in tender 356', resolution: 'Re-record', narrative_slug: '' }],
-      open_questions: [],
     },
+    decisions: [
+      decision({ id: 'partner-store', plain_question: 'Name the partner store?', review_ask: 'required-before', needed_by: 'external-share' }),
+      decision({ id: 'stand-in', plain_question: 'Programme 10112 stands in for the real programme.', review_ask: '' }),
+    ],
     acts: [
       {
         anchor_id: 'act:part-1',
@@ -190,20 +201,20 @@ describe('Storyboard as a demo set', () => {
     expect(screen.getAllByText('Show the map first.')).toHaveLength(1)
   })
 
-  it('collects the set and each demo’s caveats in one place', async () => {
+  it('ends with the decision log, asks first', async () => {
     getStoryboard.mockResolvedValue(board())
     renderAt()
-    const caveats = await screen.findByRole('region', { name: 'Caveats' })
-    expect(caveats.textContent).toContain('Four suppliers')
-    expect(caveats.textContent).toContain('Three in tender 356')
-    expect(caveats.textContent).toContain('Programme 10112 stands in')
-    expect(caveats.textContent).toContain('Name the partner store?')
-    expect(caveats.textContent).toContain('RUTF stock at scale')
+    const log = await screen.findByRole('region', { name: 'Decisions' })
+    expect(log.textContent).toContain('Answer before sharing')
+    expect(log.textContent).toContain('Name the partner store?')
+    expect(log.textContent).toContain('What the agent assumed')
+    expect(log.textContent).toContain('Programme 10112 stands in')
   })
 
   it('renders a board without a brief or cuts exactly as before', async () => {
     getStoryboard.mockResolvedValue(board({
       brief: undefined,
+      decisions: [],
       acts: [{ anchor_id: 'act:a', title: 'A', prose: '', entries: [{
         narrative_slug: 'x', title: 'X', lede: '', version: 1, video_url: '/v', video_viewer_url: '/v', published: true,
       }] }],
@@ -211,7 +222,7 @@ describe('Storyboard as a demo set', () => {
     renderAt()
     await screen.findByText('X')
     expect(screen.queryByRole('region', { name: 'About this set' })).toBeNull()
-    expect(screen.queryByRole('region', { name: 'Caveats' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Decisions' })).toBeNull()
   })
 
   it('on a reel shows the cuts and nothing to answer', async () => {

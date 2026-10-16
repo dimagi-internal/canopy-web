@@ -114,11 +114,80 @@ class ActOut(StrictModel):
     entries: list[EntryOut]
 
 
+class DecisionIn(StrictModel):
+    """One decision row as a publisher sends it (spec B). Person-owned fields —
+    decided_by, confirmed, history — are not accepted: the server sets them."""
+
+    id: str
+    scope: str = ""
+    question: str
+    plain_question: str = ""
+    options: list[str] = []
+    recommended: str = ""
+    override: str = ""
+    reasoning: str = ""
+    source: str = ""
+    evidence_basis: Literal["stated", "inferred", "conflicting"] = "inferred"
+    conflict_signals: list[str] = []
+    status: Literal["ai-default", "deferred"] = "ai-default"
+    revisit_when: str = ""
+    review_ask: Literal["", "recommended-confirmation", "required-before"] = ""
+    needed_by: Literal["", "external-share", "next-run"] = ""
+    confirm_reason: str = ""
+    supersedes: str = ""
+
+
+class DecisionHistoryOut(StrictModel):
+    status: str
+    value: str
+    decided_by: str
+    at: str
+
+
+class DecisionOut(StrictModel):
+    id: str
+    scope: str
+    question: str
+    plain_question: str
+    options: list[str]
+    recommended: str
+    override: str
+    value: str
+    reasoning: str
+    override_reasoning: str
+    source: str
+    evidence_basis: str
+    conflict_signals: list[str]
+    status: str
+    revisit_when: str
+    review_ask: str
+    needed_by: str
+    confirm_reason: str
+    decided_by: str
+    decided_by_verified: bool
+    decided_at: str | None
+    confirmed: bool
+    history: list[DecisionHistoryOut]
+    supersedes: str
+    superseded_by: str
+    editable: bool
+    """False for a narrative's read-time caveat: shown, not yet a stored row."""
+
+
+class DecisionEditIn(StrictModel):
+    action: Literal["confirm", "pick", "write_in", "undo"]
+    value: str = ""
+    reasoning: str = ""
+    author_name: str = ""
+    """A guest's name (plan C, inside a round). Ignored for a signed-in member."""
+
+
 class StoryboardOut(StrictModel):
     slug: str
     title: str
     lede: str
     brief: StoryboardBrief = StoryboardBrief()
+    decisions: list[DecisionOut] = []
     capability: str
     layout: str
     is_member: bool = False
@@ -189,6 +258,7 @@ class StoryboardIn(StrictModel):
     title: str
     lede: str = ""
     brief: StoryboardBrief | None = None
+    decisions: list[DecisionIn] | None = None
     capability: Capability = "read"
     layout: Layout = "review"
     acts: list[ActIn] = []
@@ -206,6 +276,8 @@ class StoryboardPatchIn(StrictModel):
     lede: str | None = None
     brief: StoryboardBrief | None = None
     """Replaces the whole brief (send ``{}`` to clear it)."""
+    # Replaces the whole set; a ruled row may be reworded, never moved or dropped.
+    decisions: list[DecisionIn] | None = None
     capability: Capability | None = None
     layout: Layout | None = None
     acts: list[ActIn] | None = None
