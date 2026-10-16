@@ -91,6 +91,12 @@ const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
     label: 'The HCP service (administrators)',
     match: (p) => p === '/hcp-clients',
   },
+  {
+    // The desktop session IDE, opened from your account menu (it spans
+    // workspaces, so it is in no workspace nav).
+    label: 'Session IDE (desktop)',
+    match: (p) => p === '/ide' || p.startsWith('/ide/'),
+  },
 ]
 
 export function guideGroups(surfaces: SurfaceDescriptor[] = SURFACES): GuideGroup[] {

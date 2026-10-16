@@ -78,6 +78,22 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Answer a blocked agent', 'See which runners are online', 'Install it as a phone app and get pushed when an agent needs you'],
   },
   {
+    path: '/ide',
+    title: 'IDE',
+    audience: 'Someone running sessions on several runners or laptop logins (desktop)',
+    what: 'An emdash-style session viewer: a tree of emdash projects (repos and agents) with every session under it — whether it is running, waiting for input or idle, its runner, auto or manual mode, and how long since it last did anything — beside the open chat. Every filter is an on/off toggle: each runner, each state, each mode, archived. Spans every workspace, so it is not tenant-scoped. Built for a wide screen; on a phone use the Supervisor.',
+    needsFirst: 'At least one session you can see.',
+    actions: ['Switch runners on and off', 'Filter by state, mode or text', 'Open a session and reply or answer its question in place'],
+  },
+  {
+    path: '/ide/:id',
+    title: 'IDE — one session',
+    audience: 'Someone running sessions on several runners or laptop logins (desktop)',
+    what: 'The IDE with one session open on the right: the same live chat as /w/:workspace/chat/:id, with the project tree still beside it. Arrow keys in the tree move between sessions.',
+    needsFirst: 'A session you can see.',
+    actions: ['Send a message', 'Answer a question the agent is blocked on', 'Arrow up/down to the next session'],
+  },
+  {
     path: '/schedules',
     title: 'Schedules (all workspaces)',
     audience: 'Anyone with recurring agent work',

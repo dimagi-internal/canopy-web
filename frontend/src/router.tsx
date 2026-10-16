@@ -122,6 +122,11 @@ const AgentHistorySection = lazySection(() =>
 const ChatPage = lazySection(() =>
   import('./pages/ChatPage').then((m) => ({ default: m.ChatPage })),
 )
+// The desktop session IDE: project tree + the open chat. Lazy for the same
+// reason as ChatPage, which it embeds.
+const IdePage = lazySection(() =>
+  import('./pages/ide/IdePage').then((m) => ({ default: m.IdePage })),
+)
 const ChatListPage = lazySection(() =>
   import('./pages/ChatListPage').then((m) => ({ default: m.ChatListPage })),
 )
@@ -252,6 +257,8 @@ export const routeTable: RouteObject[] = [
       { path: '/people/me', element: <PeopleMePage /> },
       { path: '/hcp-clients', element: <HcpClientsPage /> },
       { path: '/supervisor', element: <SupervisorPage /> },
+      { path: '/ide', element: <LazySection><IdePage /></LazySection> },
+      { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
       { path: '/schedules', element: <SchedulesPage /> },
       { path: '/activity', element: <ActivityPage /> },
       { path: '/settings', element: <SettingsPage /> },

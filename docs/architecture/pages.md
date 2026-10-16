@@ -298,6 +298,16 @@ Every browser-facing address canopy-web serves. The SPA route table is
   spans workspaces. Loaded by the phone PWA, the menubar's WKWebView and
   desktop browsers; installable as a PWA; pushes only about the Feed
   (`apps/canopy_sessions/feed.py`).
+- **`/ide`** (+ `/:id`) — the desktop session IDE: one `WorkbenchRail` tree of
+  emdash projects (repos and agents, by the row's `emdash_project`) with every
+  session you can see, each row showing reported state (running / input /
+  idle), runner, mode and time since last activity; the open session is
+  `ChatPage` on the right (`onLeave` keeps a close or a move inside `/ide`).
+  Objective by design: every filter is an on/off toggle (each runner, state,
+  mode, archived), kept in `localStorage`, and nothing is ranked or labelled
+  "stuck". Refetches when `ws/supervisor/` rings (any frame), polls every 15s
+  otherwise. Root because it spans workspaces; desktop only (phones use
+  `/supervisor`). `frontend/src/pages/ide/`.
 - **`/activity`** — read-only fleet turn log: time, agent, origin, runner,
   status, client-side filters, inline event-ledger drill-down. "What did fire"
   beside `/schedules` ("what will fire").

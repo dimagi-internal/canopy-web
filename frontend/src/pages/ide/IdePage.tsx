@@ -1,0 +1,495 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { clsx } from 'clsx'
+import { WorkbenchRail, WorkbenchShell } from 'canopy-ui'
+import { listSessions, type ChatSession } from '@/api/chat'
+import { listRunners, type RunnerOut } from '@/api/harness'
+import { wsUrl } from '@/lib/wsUrl'
+import { ChatPage } from '@/pages/ChatPage'
+import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
+import {
+  DEFAULT_FILTERS,
+  NO_RUNNER,
+  buildTree,
+  runnerKey,
+  sessionMode,
+  sessionState,
+  shortAge,
+  type IdeFilters,
+  type IdeMode,
+  type IdeState,
+} from './ideTree'
+
+/**
+ * /ide — a desktop, emdash-style session viewer across every runner and login:
+ * a tree of emdash projects (repos and agents) with their sessions, each row
+ * showing what the server reports about it, and the open session on the right.
+ *
+ * It shows data, not verdicts: every filter is a plain on/off toggle over a
+ * reported field, and nothing ranks one session above another.
+ */
+
+const PREFS_KEY = 'canopy.ide.v1'
+const POLL_MS = 15_000
+// The list endpoint's ceiling (no paging). Asked for in full so archived
+// sessions are not silently cut at the default 200; hitting it is said aloud.
+const LIST_LIMIT = 500
+// A runner reports every ~10s per box, and each report rings the doorbell; one
+// refetch per window is plenty.
+const DOORBELL_MIN_MS = 3_000
+
+type Prefs = { filters: Omit<IdeFilters, 'query'>; collapsed: string[] }
+
+function loadPrefs(): Prefs {
+  const fallback: Prefs = { filters: { ...DEFAULT_FILTERS }, collapsed: [] }
+  try {
+    const raw = window.localStorage.getItem(PREFS_KEY)
+    if (!raw) return fallback
+    const p = JSON.parse(raw) as Partial<Prefs>
+    return {
+      filters: {
+        ...DEFAULT_FILTERS,
+        ...p.filters,
+        states: { ...DEFAULT_FILTERS.states, ...p.filters?.states },
+        modes: { ...DEFAULT_FILTERS.modes, ...p.filters?.modes },
+      },
+      collapsed: Array.isArray(p.collapsed) ? p.collapsed : [],
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function savePrefs(p: Prefs) {
+  try {
+    window.localStorage.setItem(PREFS_KEY, JSON.stringify(p))
+  } catch {
+    // storage disabled — prefs last for this tab only
+  }
+}
+
+/** Refetch whenever a runner reports (ws/supervisor/ frames), so a session
+ *  changing state shows within seconds; the poll is the fallback. */
+function useDoorbell(ring: () => void): boolean {
+  const ringRef = useRef(ring)
+  ringRef.current = ring
+  const [connected, setConnected] = useState(false)
+  useEffect(() => {
+    let ws: WebSocket | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let closed = false
+    let attempt = 0
+    const connect = () => {
+      if (closed) return
+      ws = new WebSocket(wsUrl('ws/supervisor/'))
+      ws.onopen = () => {
+        attempt = 0
+        setConnected(true)
+      }
+      ws.onmessage = () => ringRef.current()
+      ws.onclose = () => {
+        setConnected(false)
+        if (closed) return
+        const backoff = [1000, 2000, 5000, 10000][Math.min(attempt++, 3)]
+        timer = setTimeout(connect, backoff)
+      }
+    }
+    connect()
+    return () => {
+      closed = true
+      if (timer) clearTimeout(timer)
+      ws?.close()
+    }
+  }, [])
+  return connected
+}
+
+type RunnerChip = { key: string; name: string; status: string | null; host: string; count: number }
+
+const STATE_LABEL: Record<IdeState, string> = { running: 'running', input: 'input', idle: 'idle' }
+const MODE_LABEL: Record<IdeMode, string> = { manual: 'manual', auto: 'auto', none: 'no turn' }
+
+function StateDot({ state }: { state: IdeState }) {
+  return (
+    <span
+      aria-hidden
+      className={clsx(
+        'inline-block h-2 w-2 shrink-0 rounded-full',
+        state === 'running' && 'animate-pulse bg-success',
+        state === 'input' && 'bg-warning',
+        state === 'idle' && 'bg-muted-foreground/40',
+      )}
+    />
+  )
+}
+
+function ModeTag({ mode }: { mode: IdeMode }) {
+  return (
+    <span
+      title={mode === 'none' ? 'No canopy turn has been claimed for this session' : `${mode} mode`}
+      className={clsx(
+        'w-4 shrink-0 rounded text-center text-[10px] font-semibold leading-4',
+        mode === 'manual' && 'bg-muted text-foreground',
+        mode === 'auto' && 'bg-primary/10 text-primary',
+        mode === 'none' && 'text-muted-foreground',
+      )}
+    >
+      {mode === 'manual' ? 'M' : mode === 'auto' ? 'A' : '–'}
+    </span>
+  )
+}
+
+function Toggle({
+  on,
+  onClick,
+  children,
+  title,
+  testId,
+}: {
+  on: boolean
+  onClick: (e: MouseEvent<HTMLButtonElement>) => void
+  children: ReactNode
+  title?: string
+  testId?: string
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      title={title}
+      data-testid={testId}
+      onClick={onClick}
+      className={clsx(
+        'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]',
+        on
+          ? 'border-primary/40 bg-primary/10 text-foreground'
+          : 'border-border text-muted-foreground line-through decoration-muted-foreground/50 hover:text-foreground-secondary',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function runnerOnline(status: string | null): boolean {
+  return status === 'online'
+}
+
+export function IdePage() {
+  const { id } = useParams()
+  const navigate = useNavigate()
+  const [initial] = useState(loadPrefs)
+  const [filters, setFilters] = useState<IdeFilters>({ ...initial.filters, query: '' })
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initial.collapsed))
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [runners, setRunners] = useState<RunnerOut[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => new Date())
+  const lastFetch = useRef(0)
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const { hiddenRunners, states, modes, archived } = filters
+    savePrefs({ filters: { hiddenRunners, states, modes, archived }, collapsed: [...collapsed] })
+  }, [filters, collapsed])
+
+  const state = filters.archived ? 'all' : 'active'
+  const refresh = useCallback(() => {
+    lastFetch.current = Date.now()
+    return Promise.allSettled([listSessions(state, { limit: LIST_LIMIT }), listRunners()]).then(([s, r]) => {
+      if (s.status === 'fulfilled') {
+        setSessions(s.value)
+        setError(null)
+      } else {
+        setError(s.reason instanceof Error ? s.reason.message : 'failed to load sessions')
+      }
+      if (r.status === 'fulfilled') setRunners(r.value ?? [])
+      setNow(new Date())
+      setLoading(false)
+    })
+  }, [state])
+
+  useEffect(() => {
+    void refresh()
+    const poll = window.setInterval(() => void refresh(), POLL_MS)
+    const onFocus = () => void refresh()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.clearInterval(poll)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(new Date()), 30_000)
+    return () => window.clearInterval(t)
+  }, [])
+
+  const ring = useCallback(() => {
+    if (pending.current) return
+    const wait = Math.max(0, lastFetch.current + DOORBELL_MIN_MS - Date.now())
+    pending.current = setTimeout(() => {
+      pending.current = null
+      void refresh()
+    }, wait)
+  }, [refresh])
+  const live = useDoorbell(ring)
+
+  // Every runner you can see, plus any a visible session is bound to (a
+  // teammate's box you cannot list), plus "no runner" for web chats.
+  const chips = useMemo<RunnerChip[]>(() => {
+    const byKey = new Map<string, RunnerChip>()
+    for (const r of runners) {
+      if (r.status === 'retired') continue
+      byKey.set(r.id, { key: r.id, name: r.name, status: r.status, host: r.host, count: 0 })
+    }
+    for (const s of sessions) {
+      if (!filters.archived && s.status === 'archived') continue
+      const key = runnerKey(s)
+      const chip =
+        byKey.get(key) ??
+        (key === NO_RUNNER
+          ? { key, name: 'no runner', status: null, host: '', count: 0 }
+          : { key, name: s.runner_name ?? key, status: s.runner_status ?? null, host: s.runner_host ?? '', count: 0 })
+      chip.count += 1
+      byKey.set(key, chip)
+    }
+    return [...byKey.values()].sort(
+      (a, b) => Number(b.key !== NO_RUNNER) - Number(a.key !== NO_RUNNER) || a.name.localeCompare(b.name),
+    )
+  }, [runners, sessions, filters.archived])
+
+  const tree = useMemo(() => buildTree(sessions, filters), [sessions, filters])
+  const shown = useMemo(() => tree.flatMap((f) => f.sessions), [tree])
+  const totals = useMemo(() => {
+    const t: Record<IdeState, number> = { running: 0, input: 0, idle: 0 }
+    for (const f of tree) for (const k of Object.keys(t) as IdeState[]) t[k] += f.counts[k]
+    return t
+  }, [tree])
+
+  const toggleRunner = (key: string) =>
+    setFilters((f) => ({
+      ...f,
+      hiddenRunners: f.hiddenRunners.includes(key) ? f.hiddenRunners.filter((k) => k !== key) : [...f.hiddenRunners, key],
+    }))
+  // Alt-click: show only this runner, or everything again if it already is.
+  const soloRunner = (key: string) =>
+    setFilters((f) => {
+      const others = chips.map((c) => c.key).filter((k) => k !== key)
+      const alreadySolo = !f.hiddenRunners.includes(key) && others.every((k) => f.hiddenRunners.includes(k))
+      return { ...f, hiddenRunners: alreadySolo ? [] : others }
+    })
+  const toggleState = (k: IdeState) => setFilters((f) => ({ ...f, states: { ...f.states, [k]: !f.states[k] } }))
+  const toggleMode = (k: IdeMode) => setFilters((f) => ({ ...f, modes: { ...f.modes, [k]: !f.modes[k] } }))
+  const toggleFolder = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
+  const allCollapsed = tree.length > 0 && tree.every((f) => collapsed.has(f.key))
+  const setAllCollapsed = (on: boolean) => setCollapsed(on ? new Set(tree.map((f) => f.key)) : new Set())
+
+  // Up/down walks the visible rows while focus is in the tree.
+  const onTreeKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    const visible = tree.flatMap((f) => (collapsed.has(f.key) ? [] : f.sessions))
+    if (!visible.length) return
+    e.preventDefault()
+    const i = visible.findIndex((s) => s.id === id)
+    const next = e.key === 'ArrowDown' ? Math.min(visible.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1)
+    navigate(`/ide/${visible[next].id}`)
+  }
+
+  const header = (
+    <div className="flex flex-col gap-2 px-3 py-2">
+      <div className="flex items-baseline gap-2">
+        <span className="text-sm font-semibold text-foreground">IDE</span>
+        <span className="text-[11px] text-muted-foreground" data-testid="ide-totals">
+          {shown.length} sessions · {totals.running} running · {totals.input} input · {totals.idle} idle
+        </span>
+        {sessions.length >= LIST_LIMIT && (
+          <span
+            className="text-[11px] text-warning"
+            title={`The list returns at most ${LIST_LIMIT} sessions per organisation; older ones are not shown.`}
+          >
+            capped at {LIST_LIMIT}
+          </span>
+        )}
+        <span
+          className={clsx('ml-auto text-[10px]', live ? 'text-success' : 'text-muted-foreground')}
+          title={live ? 'Updates as runners report' : `Live updates unavailable — polling every ${POLL_MS / 1000}s`}
+        >
+          {live ? '● live' : '○ polling'}
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Runners</span>
+        <div className="flex flex-wrap gap-1">
+          {chips.map((c) => (
+            <Toggle
+              key={c.key}
+              on={!filters.hiddenRunners.includes(c.key)}
+              onClick={(e) => (e.altKey ? soloRunner(c.key) : toggleRunner(c.key))}
+              testId={`ide-runner-${c.key}`}
+              title={`${[c.name, c.host, c.status].filter(Boolean).join(' · ')}\nAlt-click: show only this runner`}
+            >
+              {c.key !== NO_RUNNER && (
+                <span
+                  aria-hidden
+                  className={clsx('h-1.5 w-1.5 rounded-full', runnerOnline(c.status) ? 'bg-success' : 'bg-muted-foreground/50')}
+                />
+              )}
+              <span className="max-w-[140px] truncate">{c.name}</span>
+              <span className="text-muted-foreground">{c.count}</span>
+            </Toggle>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1">
+        {(['running', 'input', 'idle'] as IdeState[]).map((k) => (
+          <Toggle key={k} on={filters.states[k]} onClick={() => toggleState(k)} testId={`ide-state-${k}`}>
+            <StateDot state={k} />
+            {STATE_LABEL[k]}
+          </Toggle>
+        ))}
+        <span className="mx-1 h-3 w-px bg-border" />
+        {(['manual', 'auto', 'none'] as IdeMode[]).map((k) => (
+          <Toggle key={k} on={filters.modes[k]} onClick={() => toggleMode(k)} testId={`ide-mode-${k}`}>
+            {MODE_LABEL[k]}
+          </Toggle>
+        ))}
+        <span className="mx-1 h-3 w-px bg-border" />
+        <Toggle
+          on={filters.archived}
+          onClick={() => setFilters((f) => ({ ...f, archived: !f.archived }))}
+          testId="ide-archived"
+        >
+          archived
+        </Toggle>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input
+          type="search"
+          value={filters.query}
+          onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
+          placeholder="Filter by title, project or runner"
+          className="min-w-0 flex-1 rounded border border-input bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground"
+        />
+        <button
+          type="button"
+          onClick={() => setAllCollapsed(!allCollapsed)}
+          className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          {allCollapsed ? 'Expand all' : 'Collapse all'}
+        </button>
+      </div>
+    </div>
+  )
+
+  return (
+    <WorkbenchShell>
+      <WorkbenchRail width="md:w-[400px]" header={header}>
+        <div className="py-1 text-xs" onKeyDown={onTreeKey} data-testid="ide-tree">
+          {loading && sessions.length === 0 && <p className="px-3 py-2 text-muted-foreground">Loading…</p>}
+          {error && <p className="px-3 py-2 text-destructive">{error}</p>}
+          {!loading && tree.length === 0 && !error && (
+            <p className="px-3 py-2 text-muted-foreground">No sessions match these filters.</p>
+          )}
+          {tree.map((folder) => {
+            const open = !collapsed.has(folder.key)
+            return (
+              <div key={folder.key || '(none)'}>
+                <button
+                  type="button"
+                  onClick={() => toggleFolder(folder.key)}
+                  aria-expanded={open}
+                  className="flex w-full items-center gap-1.5 px-2 py-1 text-left font-semibold text-foreground-secondary hover:bg-muted"
+                >
+                  <span className="w-3 text-muted-foreground">{open ? '▾' : '▸'}</span>
+                  <span className="truncate">{folder.key || 'No project'}</span>
+                  {folder.isAgent && <span className="font-normal text-muted-foreground">agent</span>}
+                  <span className="ml-auto flex shrink-0 items-center gap-2 font-normal text-[10px] text-muted-foreground">
+                    {folder.counts.running > 0 && (
+                      <span className="flex items-center gap-1" title="running">
+                        <StateDot state="running" />
+                        {folder.counts.running}
+                      </span>
+                    )}
+                    {folder.counts.input > 0 && (
+                      <span className="flex items-center gap-1" title="waiting for input">
+                        <StateDot state="input" />
+                        {folder.counts.input}
+                      </span>
+                    )}
+                    <span title="sessions shown">{folder.sessions.length}</span>
+                  </span>
+                </button>
+                {open &&
+                  folder.sessions.map((s) => {
+                    const st = sessionState(s)
+                    const title = sessionDisplayTitle(s.title) || '(untitled)'
+                    return (
+                      <Link
+                        key={s.id}
+                        to={`/ide/${s.id}`}
+                        data-testid={`ide-row-${s.id}`}
+                        aria-current={s.id === id ? 'page' : undefined}
+                        title={[
+                          s.title,
+                          `${STATE_LABEL[st]} · ${MODE_LABEL[sessionMode(s)]}`,
+                          s.runner_name ? `runner ${s.runner_name}${s.runner_host ? ` (${s.runner_host})` : ''}` : 'no runner',
+                          `workspace ${s.workspace}`,
+                          `last activity ${new Date(s.last_activity_at).toLocaleString()}`,
+                          s.status === 'archived' ? 'archived' : '',
+                        ]
+                          .filter(Boolean)
+                          .join('\n')}
+                        className={clsx(
+                          'grid grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem] items-center gap-2 py-1 pl-7 pr-2',
+                          s.id === id ? 'bg-primary/10 text-foreground' : 'text-foreground-secondary hover:bg-muted',
+                          s.status === 'archived' && 'opacity-60',
+                        )}
+                      >
+                        <StateDot state={st} />
+                        <span className="truncate">{title}</span>
+                        <span className="max-w-[128px] truncate rounded border border-border px-1 text-[10px] text-muted-foreground">
+                          {s.runner_name ?? 'web'}
+                        </span>
+                        <ModeTag mode={sessionMode(s)} />
+                        <span
+                          className={clsx(
+                            'text-right text-[10px] tabular-nums',
+                            st === 'running' ? 'text-success' : 'text-muted-foreground',
+                          )}
+                        >
+                          {st === 'running' ? 'live' : shortAge(s.last_activity_at, now)}
+                        </span>
+                      </Link>
+                    )
+                  })}
+              </div>
+            )
+          })}
+        </div>
+      </WorkbenchRail>
+      <div className="min-h-0 min-w-0 flex-1">
+        {id ? (
+          <ChatPage key={id} onLeave={() => navigate('/ide', { replace: true })} />
+        ) : (
+          <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
+            Pick a session on the left.
+          </div>
+        )}
+      </div>
+    </WorkbenchShell>
+  )
+}
+
+export default IdePage

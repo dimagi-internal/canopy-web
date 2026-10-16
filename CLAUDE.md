@@ -73,6 +73,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 **Root:**
 - `/` — public product site (Astro, `site/`, `config/public_site.py`) for everyone; `/app` — the door into the app (`LOGIN_REDIRECT_URL`); `/about` — public explainer
 - `/supervisor` — cross-fleet Feed, Waiting on you, Sessions, Agents, Runners (phone PWA + menubar)
+- `/ide` (+ `/:id`) — desktop session IDE: project tree of every session (state, runner, mode, age) beside the open chat
 - `/activity`, `/schedules` — turn log and schedules across your workspaces
 - `/plugins/marketplace.json` — your agents as ONE Claude Code catalog, `canopy-agents` (github sources, your own GitHub access; `docs/architecture/plugin-marketplace.md`)
 - `/settings` — your account (runners you administer, GitHub, connected apps, tokens)

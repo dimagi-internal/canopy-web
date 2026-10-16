@@ -15,4 +15,8 @@ describe("sessionsPath", () => {
     expect(sessionsPath("active", { reply: true })).toBe("/api/canopy-sessions/?reply=true");
     expect(sessionsPath("all", { reply: true })).toBe("/api/canopy-sessions/?state=all&reply=true");
   });
+
+  it("passes a limit through", () => {
+    expect(sessionsPath("all", { limit: 500 })).toBe("/api/canopy-sessions/?state=all&limit=500");
+  });
 });
