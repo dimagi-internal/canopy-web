@@ -124,13 +124,13 @@ class SlackWorkspaceLink(models.Model):
 
 
 class SlackChannelIngestAllow(models.Model):
-    """An owner's standing, explicit permission for ONE agent to read ONE channel whole.
+    """An admin's (or owner's) standing, explicit permission for ONE agent to read ONE channel whole.
 
     The in-channel Approve click (`ingest.decide`) is one way a person grants a
-    whole-channel read; this is the other: a workspace owner names the channel
+    whole-channel read; this is the other: a workspace owner or admin names the channel
     and the agent ahead of time, on the Slack settings page or the API. A
     request that matches an entry starts reading at once — it is approved by
-    the owner who added the entry, and canopy still posts a notice (with
+    whoever added the entry, and canopy still posts a notice (with
     Revoke) in the channel so its members can see it. An entry is its own
     opt-in: it works whether or not `channel_ingest_enabled` is on, and
     removing it revokes the reads it allowed. See apps/slack/ingest.py.

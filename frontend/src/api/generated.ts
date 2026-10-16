@@ -969,7 +969,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Allow-list one channel for one agent to read whole (owner)
+         * Allow-list one channel for one agent to read whole (admin or owner)
          * @description Explicit, standing permission: when this agent asks to read this channel
          *     (`POST /api/slack-ingests/`) canopy reads it at once — approved by you — and
          *     posts a notice with Revoke in the channel instead of Approve/Decline.
@@ -993,7 +993,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Remove a channel from an agent's allow-list; revokes its reads (owner) */
+        /** Remove a channel from an agent's allow-list; revokes its reads (admin or owner) */
         readonly delete: operations["disallow_channel_ingest"];
         readonly options?: never;
         readonly head?: never;

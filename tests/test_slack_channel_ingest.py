@@ -442,9 +442,15 @@ def test_an_owner_allow_lists_a_channel_by_name(allowed, ws):
     assert Event.objects.filter(kind="slack.ingest_allowed").count() == 1
 
 
-def test_only_an_owner_can_allow_list(channel, installation, ws, hal, hal_login, owen, alice):
-    for user in (owen, alice, hal_login):     # an admin, a member, the agent itself
+def test_an_admin_or_owner_can_allow_list_but_not_a_member(channel, installation, ws, hal, hal_login, owen, alice):
+    for user in (alice, hal_login):           # a member; the agent itself
         assert _allow(ws, user=user).status_code == 403
+    resp = _allow(ws, user=owen)              # an admin
+    assert resp.status_code == 200, resp.content
+    (entry,) = resp.json()["channel_ingest"]["allowed"]
+    assert entry["added_by_email"] == owen.email
+    resp = _link_client(owen).delete(f"/api/slack-config/{ws.slug}/channel-ingest/allowed/{entry['id']}")
+    assert resp.status_code == 200 and resp.json()["channel_ingest"]["allowed"] == []
     with pytest.raises(ingest.IngestError):   # and the agent can never grant itself, even if made owner
         ingest.allow(workspace=ws, agent=hal, channel=CHAN, follow=False, note="", by=hal_login)
 
