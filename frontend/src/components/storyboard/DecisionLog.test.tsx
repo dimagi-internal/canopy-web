@@ -1,8 +1,15 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
 import type { Decision } from '@/api/storyboards'
 import { DecisionLog, DecisionRow } from './DecisionLog'
+import * as api from '@/api/storyboards'
+
+vi.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ status: 'anonymous' }) }))
+vi.mock('@/api/storyboards', async () => {
+  const actual = await vi.importActual<typeof api>('@/api/storyboards')
+  return { ...actual, editDecision: vi.fn() }
+})
 import { groupDecisions, narrativeTitles } from './decisionGroups'
 import type { Storyboard } from '@/api/storyboards'
 
@@ -138,5 +145,34 @@ describe('DecisionRow', () => {
     render(<DecisionRow d={base} canEdit needsName onEdit={vi.fn()} />)
     expect(screen.getByText('Add your name in a note first')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull()
+  })
+})
+
+describe('guest staging in a round', () => {
+  const guestBoard = { slug: 'b', acts: [], decisions: [base], capability: 'suggest', round: { number: 1 } } as unknown as Storyboard
+
+  let store: Record<string, string>
+  beforeEach(() => {
+    store = {}
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => { store[k] = v },
+    })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('sends the remembered name with the edit', async () => {
+    store['canopy.reviewer-name'] = 'Sophie'
+    ;(api.editDecision as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(base)
+    render(<DecisionLog board={guestBoard} canEdit={false} token="tok" ws="connect" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Keep as is' }))
+    await vi.waitFor(() => expect(api.editDecision).toHaveBeenCalledWith(
+      'b', 'banner', { action: 'pick', value: 'Keep as is', author_name: 'Sophie' }, 'tok', 'connect'))
+  })
+
+  it('shows the add-your-name hint, not buttons, when no name is remembered', () => {
+    render(<DecisionLog board={guestBoard} canEdit={false} />)
+    expect(screen.getByText('Add your name in a note first')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Keep as is' })).toBeNull()
   })
 })

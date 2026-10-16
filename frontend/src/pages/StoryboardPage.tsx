@@ -214,7 +214,7 @@ function Board({
             to play it in. Absent on a board without a brief. */}
         <BriefPanel board={board} />
 
-        <RoundBanner board={board} canManage={!!board.can_manage} ws={workspace} onChanged={onChanged} />
+        <RoundBanner key={board.round?.number ?? 'none'} board={board} canManage={!!board.can_manage} ws={workspace} onChanged={onChanged} />
 
         {board.acts.map((act, i) => (
           <section key={`${act.title}-${i}`} className="mt-11 flex flex-col gap-4">

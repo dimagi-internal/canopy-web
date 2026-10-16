@@ -42,7 +42,7 @@ describe('RoundBanner', () => {
     const round = { number: 1, state: 'open', opened_at: '', opened_by: 'Jonathan', closed_at: null,
       close_note: '', pinned_versions: {}, note_count: 7, people_count: 3, notes: [],
       staged_edits: [edit({ edit_id: '1' }), edit({ edit_id: '2', action: 'confirm', value: '' })] }
-    render(<RoundBanner board={board(round)} canManage onChanged={vi.fn()} />)
+    render(<RoundBanner board={board(round, { decisions: [{ id: 'banner', plain_question: 'Rename?', recommended: 'Rename' } as never] })} canManage onChanged={vi.fn()} />)
     expect(screen.getByText(/7 notes from 3 people/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Close round and start the next run' }))
     expect(screen.getByText(/People disagreed/)).toBeTruthy()
@@ -59,6 +59,32 @@ describe('RoundBanner', () => {
       close_note: '', pinned_versions: {}, note_count: 0, people_count: 0, notes: [], staged_edits: [] }
     render(<RoundBanner board={board(round)} canManage={false} onChanged={vi.fn()} />)
     expect(screen.getByText(/Feedback round 2 is open/)).toBeTruthy()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  const open = (decisions: Storyboard['decisions']) => {
+    const round = { number: 1, state: 'open', opened_at: '', opened_by: '', closed_at: null, close_note: '',
+      pinned_versions: {}, note_count: 0, people_count: 0, notes: [],
+      staged_edits: [edit({ edit_id: '1' }), edit({ edit_id: '2', action: 'confirm', value: '' })] }
+    render(<RoundBanner board={board(round, { decisions })} canManage onChanged={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Close round and start the next run' }))
+  }
+
+  it('needs no pick for a removed or replaced row', () => {
+    open([{ id: 'other' } as never])
+    expect(screen.queryAllByRole('radio')).toHaveLength(0)
+    expect((screen.getByRole('button', { name: 'Close and hand to the agent' }) as HTMLButtonElement).disabled).toBe(false)
+    cleanup()
+    open([{ id: 'banner', superseded_by: 'x' } as never])
+    expect(screen.queryAllByRole('radio')).toHaveLength(0)
+    expect((screen.getByRole('button', { name: 'Close and hand to the agent' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('says the round is with the agent after close, with no Open button', () => {
+    const prev = { number: 3, state: 'closed', opened_at: '', opened_by: '', closed_at: '', close_note: '',
+      pinned_versions: {}, note_count: 0, people_count: 0, notes: [], staged_edits: [] }
+    render(<RoundBanner board={{ ...board(null), previous_round: prev }} canManage onChanged={vi.fn()} />)
+    expect(screen.getByText(/Round 3 is closed and with the agent/)).toBeTruthy()
     expect(screen.queryByRole('button')).toBeNull()
   })
 })

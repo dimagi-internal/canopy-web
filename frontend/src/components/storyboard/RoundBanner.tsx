@@ -53,6 +53,18 @@ export function RoundBanner({ board, canManage, ws, onChanged }: {
     }
   }
   if (!round) {
+    // Closed but not yet consumed: the agent has it, and opening another would 409.
+    const waiting = board.previous_round?.state === 'closed' ? board.previous_round : null
+    if (waiting) {
+      return (
+        <div className="mb-6 rounded-md border border-border bg-muted p-4 text-sm">
+          <p className="text-foreground">
+            Round {waiting.number} is closed and with the agent; the next round opens when it
+            publishes the new version.
+          </p>
+        </div>
+      )
+    }
     if (!canManage) return null
     return (
       <div className="mb-6 rounded-md border border-border bg-muted p-4 text-sm">
@@ -67,13 +79,16 @@ export function RoundBanner({ board, canManage, ws, onChanged }: {
   }
   const decisions = board.decisions ?? []
   // A replaced row is skipped by the server, so it needs no pick.
+  // The server skips a replaced row and one removed mid-round, so neither
+  // needs a pick: keep only keys whose decision exists and is not superseded.
+  const live = new Set(decisions.filter((d) => !d.superseded_by).map((d) => d.id))
   const conflicts = Object.fromEntries(
-    Object.entries(conflictsOf(
-      round.staged_edits,
-      Object.fromEntries(decisions.map((d) => [d.id, d.recommended])),
-    )).filter(
-      ([key]) => !decisions.find((d) => d.id === key)?.superseded_by,
-    ),
+    Object.entries(
+      conflictsOf(
+        round.staged_edits,
+        Object.fromEntries(decisions.map((d) => [d.id, d.recommended])),
+      ),
+    ).filter(([key]) => live.has(key)),
   )
   const unpicked = Object.keys(conflicts).filter((k) => !picks[k])
   return (
