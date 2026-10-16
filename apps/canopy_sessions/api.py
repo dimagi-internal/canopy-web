@@ -175,7 +175,15 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "origin": session.origin,
         "running": running,
         "runner_name": runner.name if runner else None,
+        "runner_id": runner.id if runner else None,
+        # The macOS user@host the live session belongs to — two laptop logins are
+        # two runners told apart by this, so it names WHICH login on a shared box.
+        "runner_host": binding.host if binding else "",
         "runner_location": runner.location if runner else None,
+        # The emdash project its worktree lives under: the binding's reported one,
+        # else the session's own (repo for a project chat, agent slug for an agent
+        # chat). What /ide groups by — `project` is blank on every agent chat.
+        "emdash_project": (binding.emdash_project if binding else "") or session.emdash_project,
         # See SessionOut.runner_online: an embedder's delegated user cannot list
         # runners, so the session payload is where they learn their bound runner
         # went away. None when unbound — nothing to be offline.

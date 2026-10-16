@@ -154,3 +154,25 @@ def test_running_false_when_runner_online_but_interaction_stale():
     row = next(r for r in c.get("/api/canopy-sessions/").json() if r["id"] == str(disc.id))
     assert row["running"] is False
     assert row["runner_name"] == "laptop"        # still shown, just not "running"
+
+
+def test_list_row_names_its_runner_login_and_emdash_project():
+    # /ide groups by emdash project and filters by runner: the row carries the
+    # runner's id, the macOS login it lives on, and the project its worktree is in.
+    user, ws, c = _ctx()
+    disc = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="disc")
+    runner = Runner.objects.create(name="jj-air", workspace=ws, location=Runner.LOCAL,
+                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), owner=user)
+    RunnerBinding.objects.create(session=disc, runner=runner, session_key="echo-1",
+                                 host="ace@jj-air", emdash_project="canopy-web",
+                                 last_interacted_at=timezone.now(), live_seen_at=timezone.now())
+    project_chat = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_WEB,
+                                          title="web", project="ace-web")
+    rows = {r["id"]: r for r in c.get("/api/canopy-sessions/").json()}
+    row = rows[str(disc.id)]
+    assert row["runner_id"] == str(runner.id)
+    assert row["runner_host"] == "ace@jj-air"
+    assert row["emdash_project"] == "canopy-web"
+    unbound = rows[str(project_chat.id)]
+    assert unbound["runner_id"] is None and unbound["runner_host"] == ""
+    assert unbound["emdash_project"] == "ace-web"   # falls back to the session's own
