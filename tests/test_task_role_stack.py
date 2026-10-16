@@ -53,8 +53,10 @@ def test_attachments_bucket_is_the_one_canopy_web_writes():
     web = _load("canopy-web.cfn.yaml")
     bucket = web["Resources"]["AttachmentsBucket"]["Properties"]["BucketName"]
     assert role["Parameters"]["AttachmentsBucketName"]["Default"] == bucket
+    # `"Name" in e` skips a conditional (`!If`) entry such as VAULT_KMS_KEY_ID.
     env = {e["Name"]: e["Value"] for e in
-           web["Resources"]["TaskDefinition"]["Properties"]["ContainerDefinitions"][0]["Environment"]}
+           web["Resources"]["TaskDefinition"]["Properties"]["ContainerDefinitions"][0]["Environment"]
+           if "Name" in e}
     assert env["CANOPY_ATTACHMENTS_BUCKET"] == bucket
 
 
