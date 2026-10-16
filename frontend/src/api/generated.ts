@@ -1139,7 +1139,9 @@ export interface paths {
          *     Without this the loop had no closing half: a reviewer could leave notes and
          *     the people who sent them the link had no way to read them short of curl.
          *
-         *     A token holder must not reach it. Seeing the other reviewers' notes would
+         *     Outside a round, a token holder must not reach it. (Inside one,
+         *     ``GET /{slug}`` shows the round's notes to everyone by design — spec C.)
+         *     Seeing the other reviewers' notes would
          *     bias exactly the independent read you asked for, and the rows carry names
          *     that were given to us rather than to each other — so this uses
          *     ``_owned_or_404`` (membership), not ``_readable_or_404`` (membership OR
@@ -10822,6 +10824,70 @@ export interface components {
              */
             readonly open_questions: readonly string[];
         };
+        /** RoundNoteOut */
+        readonly RoundNoteOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Body */
+            readonly body: string;
+            /** Suggested Text */
+            readonly suggested_text: string;
+            /** Author Name */
+            readonly author_name: string;
+            /** Anchor Id */
+            readonly anchor_id: string;
+            /** Target Kind */
+            readonly target_kind: string;
+            /** Target Ref */
+            readonly target_ref: string;
+            /** Target Version */
+            readonly target_version: number | null;
+            /** State */
+            readonly state: string;
+            /** Disposition Note */
+            readonly disposition_note: string;
+            /** Resolved In Version */
+            readonly resolved_in_version: number | null;
+            /** Created At */
+            readonly created_at: string;
+            /** Mine */
+            readonly mine: boolean;
+        };
+        /** RoundPayloadOut */
+        readonly RoundPayloadOut: {
+            /** Number */
+            readonly number: number;
+            /** State */
+            readonly state: string;
+            /** Opened At */
+            readonly opened_at: string;
+            /** Opened By */
+            readonly opened_by: string;
+            /** Closed At */
+            readonly closed_at: string | null;
+            /** Close Note */
+            readonly close_note: string;
+            /** Pinned Versions */
+            readonly pinned_versions: {
+                readonly [key: string]: number;
+            };
+            /** Note Count */
+            readonly note_count: number;
+            /** People Count */
+            readonly people_count: number;
+            /**
+             * Notes
+             * @default []
+             */
+            readonly notes: readonly components["schemas"]["RoundNoteOut"][];
+            /**
+             * Staged Edits
+             * @default []
+             */
+            readonly staged_edits: readonly components["schemas"]["StagedEditOut"][];
+        };
         /**
          * ShortVersion
          * @description A subset of the arc for when there is less time ("the 3-minute version").
@@ -10842,6 +10908,23 @@ export interface components {
              * @default []
              */
             readonly items: readonly components["schemas"]["CutRef"][];
+        };
+        /** StagedEditOut */
+        readonly StagedEditOut: {
+            /** Edit Id */
+            readonly edit_id: string;
+            /** Key */
+            readonly key: string;
+            /** Action */
+            readonly action: string;
+            /** Value */
+            readonly value: string;
+            /** Reasoning */
+            readonly reasoning: string;
+            /** By Name */
+            readonly by_name: string;
+            /** At */
+            readonly at: string;
         };
         /**
          * StoryboardBrief
@@ -10916,6 +10999,8 @@ export interface components {
             readonly is_member: boolean;
             /** Acts */
             readonly acts: readonly components["schemas"]["ActOut"][];
+            readonly round?: components["schemas"]["RoundPayloadOut"] | null;
+            readonly previous_round?: components["schemas"]["RoundPayloadOut"] | null;
         };
         /** ActIn */
         readonly ActIn: {

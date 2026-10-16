@@ -111,3 +111,52 @@ def test_note_after_close_waits_for_next_round(world):
     rnd.save()
     assert _note(world, author_name="Late").status_code == 200
     assert Feedback.objects.get(author_name="Late").round is None
+
+
+def test_token_holder_sees_everyones_round_notes_without_emails(world):
+    _open(world)
+    _note(world, author_name="Sophie", author_email="sophie@example.org")
+    _note(world, client=world["viewer"], body="Name the suppliers")
+    body = Client().get(f"/api/storyboards/supply?t={world['token']}").json()
+    notes = body["round"]["notes"]
+    assert {n["author_name"] for n in notes} == {"Sophie", "Lily"}
+    assert all("author_email" not in n for n in notes)
+    assert "sophie@example.org" not in str(body)
+
+
+def test_outside_a_round_token_holders_see_no_notes(world):
+    _note(world, author_name="Sophie")
+    body = Client().get(f"/api/storyboards/supply?t={world['token']}").json()
+    assert body["round"] is None and body["previous_round"] is None
+
+
+def test_member_sees_mine_flag(world):
+    _open(world)
+    _note(world, client=world["viewer"], body="mine")
+    _note(world, author_name="Sophie", body="theirs")
+    notes = world["viewer"].get("/api/w/connect/storyboards/supply").json()["round"]["notes"]
+    assert {n["body"]: n["mine"] for n in notes} == {"mine": True, "theirs": False}
+
+
+def test_previous_round_carries_dispositions(world):
+    from apps.feedback import services as fsvc
+
+    _open(world)
+    _note(world, author_name="Sophie")
+    rnd = FeedbackRound.objects.get()
+    fb = rnd.notes.get()
+    fsvc.resolve(fb.pk, workspace_slugs=["connect"], state="answered", note="Slowed cut 1",
+                 resolved_in_version=4)
+    rnd.state = FeedbackRound.CONSUMED
+    rnd.save()
+    prev = Client().get(f"/api/storyboards/supply?t={world['token']}").json()["previous_round"]
+    (n,) = prev["notes"]
+    assert n["state"] == "answered" and n["disposition_note"] == "Slowed cut 1"
+    assert n["resolved_in_version"] == 4
+
+
+def test_people_count_ignores_blank_author_names(world):
+    _open(world)
+    _note(world, author_name="Sophie")
+    Feedback.objects.filter(author_name="Sophie").update(author_name="")
+    assert board_rounds.summary(FeedbackRound.objects.get())["people_count"] == 0

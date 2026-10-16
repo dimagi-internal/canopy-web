@@ -301,7 +301,7 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
         raise HttpError(422, str(e))
     except decision_rows.DecisionConflict as e:
         raise HttpError(409, str(e))
-    return services.resolve_board(board, is_member=True)
+    return services.resolve_board(board, is_member=True, viewer=request.user)
 
 
 @router.get(
@@ -315,7 +315,9 @@ def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
     `ws` is the workspace the page's URL names; a board elsewhere 404s."""
     board = _readable_or_404(request, slug, ws)
     reactions.record_view(request, reactions.STORYBOARD, board.pk)
-    return services.resolve_board(board, is_member=_is_member(request, board))
+    return services.resolve_board(
+        board, is_member=_is_member(request, board), viewer=request.user
+    )
 
 
 @router.patch("/{slug}", response=StoryboardOut, auth=session_auth, summary="Edit a storyboard")
@@ -338,7 +340,7 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
         raise HttpError(422, str(e))
     except decision_rows.DecisionConflict as e:
         raise HttpError(409, str(e))
-    return services.resolve_board(board, is_member=True)
+    return services.resolve_board(board, is_member=True, viewer=request.user)
 
 
 @router.post(
@@ -497,7 +499,9 @@ def list_notes(request: HttpRequest, slug: str) -> dict:
     Without this the loop had no closing half: a reviewer could leave notes and
     the people who sent them the link had no way to read them short of curl.
 
-    A token holder must not reach it. Seeing the other reviewers' notes would
+    Outside a round, a token holder must not reach it. (Inside one,
+    ``GET /{slug}`` shows the round's notes to everyone by design — spec C.)
+    Seeing the other reviewers' notes would
     bias exactly the independent read you asked for, and the rows carry names
     that were given to us rather than to each other — so this uses
     ``_owned_or_404`` (membership), not ``_readable_or_404`` (membership OR

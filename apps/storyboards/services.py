@@ -196,8 +196,10 @@ def board_feedback(board: Storyboard):
     )
 
 
-def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:
+def resolve_board(board: Storyboard, *, is_member: bool = False, viewer=None) -> dict:
     """The read model for the shared page: acts → entries → current release."""
+    from apps.storyboards import rounds  # rounds imports this module
+
     workspace_slugs = {board.workspace_id}
 
     acts = []
@@ -231,6 +233,8 @@ def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:
         # The page shows returning notes only to the people who sent the link.
         "is_member": is_member,
         "acts": acts,
+        "round": rounds.round_payload(board, rounds.current(board), viewer=viewer),
+        "previous_round": rounds.round_payload(board, rounds.latest_finished(board), viewer=viewer),
     }
 
 

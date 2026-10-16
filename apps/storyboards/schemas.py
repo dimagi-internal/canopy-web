@@ -182,6 +182,50 @@ class DecisionEditIn(StrictModel):
     """A guest's name (plan C, inside a round). Ignored for a signed-in member."""
 
 
+class RoundOut(StrictModel):
+    number: int
+    state: str
+    opened_at: str
+    opened_by: str
+    closed_at: str | None
+    close_note: str
+    pinned_versions: dict[str, int]
+    note_count: int
+    people_count: int
+
+
+class RoundNoteOut(StrictModel):
+    id: int
+    kind: str
+    body: str
+    suggested_text: str
+    author_name: str
+    anchor_id: str
+    target_kind: str
+    target_ref: str
+    target_version: int | None
+    state: str
+    disposition_note: str
+    resolved_in_version: int | None
+    created_at: str
+    mine: bool
+
+
+class StagedEditOut(StrictModel):
+    edit_id: str
+    key: str
+    action: str
+    value: str
+    reasoning: str
+    by_name: str
+    at: str
+
+
+class RoundPayloadOut(RoundOut):
+    notes: list[RoundNoteOut] = []
+    staged_edits: list[StagedEditOut] = []
+
+
 class StoryboardOut(StrictModel):
     slug: str
     title: str
@@ -195,6 +239,10 @@ class StoryboardOut(StrictModel):
     people who SENT this link, not one of the people it was sent to. The only
     thing it changes is whether returning notes are shown."""
     acts: list[ActOut]
+    # Round notes are visible to every reader while the round is open (spec C,
+    # Visibility) — names only, never emails.
+    round: RoundPayloadOut | None = None
+    previous_round: RoundPayloadOut | None = None
 
 
 class NoteOut(StrictModel):
@@ -218,18 +266,6 @@ class NoteOut(StrictModel):
 
 class NotesOut(StrictModel):
     items: list[NoteOut]
-
-
-class RoundOut(StrictModel):
-    number: int
-    state: str
-    opened_at: str
-    opened_by: str
-    closed_at: str | None
-    close_note: str
-    pinned_versions: dict[str, int]
-    note_count: int
-    people_count: int
 
 
 class StoryboardListItemOut(ArtifactSignalsOut):

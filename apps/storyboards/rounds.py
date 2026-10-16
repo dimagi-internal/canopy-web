@@ -113,5 +113,31 @@ def summary(rnd) -> dict:
         "close_note": rnd.close_note,
         "pinned_versions": rnd.pinned_versions,
         "note_count": notes.count(),
-        "people_count": notes.values("author_name").distinct().count(),
+        "people_count": notes.exclude(author_name="").values("author_name").distinct().count(),
+    }
+
+
+def note_out(fb, *, viewer) -> dict:
+    return {
+        "id": fb.pk, "kind": fb.kind, "body": fb.body, "suggested_text": fb.suggested_text,
+        "author_name": fb.author_name or "Anonymous", "anchor_id": fb.anchor_id,
+        "target_kind": fb.target_kind, "target_ref": fb.target_ref,
+        "target_version": fb.target_version, "state": fb.state,
+        "disposition_note": fb.disposition_note, "resolved_in_version": fb.resolved_in_version,
+        "created_at": fb.created_at.isoformat(),
+        "mine": bool(getattr(viewer, "is_authenticated", False) and fb.submitted_by_id == viewer.pk),
+    }
+
+
+def round_payload(board, rnd, *, viewer) -> dict | None:
+    if rnd is None:
+        return None
+    notes = rnd.notes.exclude(body="", suggested_text="").order_by("created_at")
+    return {
+        **summary(rnd),
+        "notes": [note_out(fb, viewer=viewer) for fb in notes],
+        "staged_edits": [
+            {k: e.get(k, "") for k in ("edit_id", "key", "action", "value", "reasoning", "by_name", "at")}
+            for e in rnd.staged_edits
+        ],
     }
