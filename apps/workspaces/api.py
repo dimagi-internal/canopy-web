@@ -218,8 +218,8 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
 
 @router.get("/", response=list[WorkspaceOut], summary="List my workspaces",)
 def list_workspaces(request: HttpRequest) -> list[WorkspaceOut]:
-    # Direct memberships PLUS workspaces owned by inheritance (descendants of
-    # one the caller owns) — read through `services`, the sole authorizer.
+    # Direct memberships PLUS workspaces held by inheritance (descendants of
+    # one the caller owns or administers) — read through `services`, the sole authorizer.
     #
     # ORDER IS A CONTRACT: the client's default workspace — where `/` and every
     # legacy flat route (`/agents`, …) land — is the FIRST entry. Before the
@@ -795,8 +795,8 @@ def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
     (the default ordered list and every source rule), plus every runner those
     agents route to or that lives in the tree. Admin and above."""
     # `logs.read` — the operational read tier (runner drills, health) — on the
-    # root, and again on every descendant: only OWNERSHIP flows down the tree,
-    # so an admin of the root sees a division only where they are its admin too.
+    # root, and again on every descendant: the tree carries owner and admin
+    # down, so an admin of the root sees every division (`INHERITS_DOWN`).
     from apps.harness import topology
 
     m = _require(request.user, slug, perms.LOGS_READ)
