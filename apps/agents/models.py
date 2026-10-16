@@ -163,6 +163,18 @@ class Agent(models.Model):
     # one its owner owns) — a PAT alone no longer reads the values. Owner/admin
     # only (PATCH /device-binding); absent from AgentIn like credential_source.
     require_device_binding = models.BooleanField(default=False)
+    # Canopy Vault Phase 1b (canopy-web#1549): rotate the agent's own
+    # `canopy-pat` every `pat_rotation_days` (apps/agents/pat_rotation.py).
+    # Owner/admin opt-in (PATCH /pat-rotation); `pat_rotation_enabled_by` is the
+    # person whose standing the background job acts on (the impersonation guard
+    # in `mint_agent_canopy_token` is re-checked against them every rotation).
+    pat_rotation_enabled = models.BooleanField(default=False)
+    pat_rotation_days = models.PositiveSmallIntegerField(default=30)
+    pat_rotation_enabled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    pat_rotated_at = models.DateTimeField(null=True, blank=True)
 
 
     # Runtime autonomy posture, read by the fleet-canonical turn procedure at
@@ -448,6 +460,88 @@ class AgentCredentialRead(models.Model):
 
     def __str__(self) -> str:
         return f"{self.agent_id}:{self.name}@{self.created_at:%Y-%m-%d %H:%M}"
+
+
+class AgentCredentialAlert(models.Model):
+    """A read of an agent's secrets that looked wrong, and whether its owner was
+    told (Canopy Vault Phase 1b, canopy-web#1549; `apps/agents/vault_alerts.py`).
+
+    At most one row per (agent, kind) per hour: a repeat inside the hour bumps
+    `occurrences` on the open row instead of notifying again. Shown beside the
+    credential read history."""
+
+    NO_TURN, UNDECLARED, BURST, DEVICE_PROOF = "no-turn", "undeclared-ref", "burst", "device-proof"
+    KIND_CHOICES = [
+        (NO_TURN, "Read outside a turn, not by an owner or admin"),
+        (UNDECLARED, "Read of a ref the agent does not declare"),
+        (BURST, "Burst of reads"),
+        (DEVICE_PROOF, "Resolve refused: bad or missing device proof"),
+    ]
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="credential_alerts")
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    #: Human-readable: what was seen. Never a value.
+    detail = models.CharField(max_length=500, blank=True, default="")
+    #: The refs involved, when the kind is about refs.
+    refs = models.JSONField(default=list, blank=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    runner = models.ForeignKey(
+        "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    turn_id = models.CharField(max_length=120, blank=True, default="")
+    #: How many times it happened inside this row's hour (1 = just this one).
+    occurrences = models.PositiveIntegerField(default=1)
+    #: What the notification did: {"emailed": [...], "pushed": n, ...}.
+    notified = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["agent", "kind", "-created_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.agent_id}:{self.kind}@{self.created_at:%Y-%m-%d %H:%M}"
+
+
+class AgentPatRotation(models.Model):
+    """One automatic (or on-demand) rotation of an agent's `canopy-pat`
+    (Canopy Vault Phase 1b, canopy-web#1549; `apps/agents/pat_rotation.py`).
+
+    The new token is written to the agent's `canopy-pat` AgentCredential; the
+    old one keeps working for the overlap (`revoke_after`, also set as its
+    `expires_at` so it dies even if nothing revokes it) and is then revoked."""
+
+    ROTATED, FAILED = "rotated", "failed"
+    STATUS_CHOICES = [(ROTATED, "Rotated"), (FAILED, "Failed")]
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="pat_rotations")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES)
+    #: `scheduler` or `manual`.
+    trigger = models.CharField(max_length=16, default="scheduler")
+    detail = models.CharField(max_length=500, blank=True, default="")
+    old_token = models.ForeignKey(
+        "tokens.PersonalToken", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    new_token = models.ForeignKey(
+        "tokens.PersonalToken", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    revoke_after = models.DateTimeField(null=True, blank=True)
+    old_revoked_at = models.DateTimeField(null=True, blank=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.agent_id}:pat-rotation:{self.status}@{self.created_at:%Y-%m-%d %H:%M}"
 
 
 class AgentDelegation(models.Model):

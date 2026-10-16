@@ -116,6 +116,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_device_binding": ("agent-admin",),
     "agent_credential_reads": ("agent-admin",),  # the read log; never a value
     "agent_device_keys": ("agent-admin",),  # can_manage per key = runner-admin
+    "agent_credential_alerts": ("agent-admin",),  # read-anomaly alerts; never a value
+    "get_pat_rotation": ("agent-admin",),
+    "set_pat_rotation": ("agent-admin",),  # turning it on also asks mint_agent_canopy_token's guard
+    "rotate_pat_now": ("agent-admin",),  # browser: + passkey step-up; token allowed
     "set_slack_enabled": ("agent-admin",),
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
@@ -747,6 +751,7 @@ SETTINGS: frozenset[str] = frozenset({
     "publish_interface", "unpublish_interface",
     "set_credential_source", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",
     "set_device_binding", "approve_runner_device_key", "revoke_runner_device_key",
+    "set_pat_rotation", "rotate_pat_now",
     "set_agent_github", "delete_agent_github", "set_agent_salesforce", "delete_agent_salesforce",
     "set_slack_enabled", "set_turn_mode", "set_sender_trust", "delete_sender_trust",
     # agents: routing (handlers report before/after — apps/harness/routing_audit.py)

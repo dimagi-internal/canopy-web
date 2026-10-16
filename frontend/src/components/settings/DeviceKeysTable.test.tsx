@@ -15,7 +15,7 @@ const { DeviceKeysTable } = await import('./DeviceKeysTable')
 
 const KEY = {
   id: 'k1', runner: 'r1', runner_name: 'jj-mbp', jkt: 'abcdefghijklmnopqrstuvwxyz', kind: 'secure-enclave' as const,
-  label: 'laptop', status: 'pending' as const, created_at: '2026-10-16T00:00:00Z', approved_at: null,
+  label: 'laptop', role_arn: '', status: 'pending' as const, created_at: '2026-10-16T00:00:00Z', approved_at: null,
   approved_by_email: '', revoked_at: null, last_used_at: null, can_manage: true,
 }
 
@@ -42,6 +42,17 @@ describe('DeviceKeysTable', () => {
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Revoke' }))
     await waitFor(() => expect(revokeRunnerDeviceKey).toHaveBeenCalledWith('k1'))
+  })
+
+  it('names an EC2 box by its instance role (canopy-web#1549)', () => {
+    render(
+      <DeviceKeysTable
+        keys={[{ ...KEY, kind: 'aws-iam', label: '', role_arn: 'arn:aws:iam::123456789012:role/canopy-runner' }]}
+        onChange={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('123456789012:role/canopy-runner')).toBeTruthy()
+    expect(screen.getByText('aws-iam')).toBeTruthy()
   })
 
   it('offers no actions on a key whose runner you do not manage', () => {

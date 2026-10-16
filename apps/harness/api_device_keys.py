@@ -4,6 +4,9 @@ The contract, which canopy's CLI/runner half builds against (canopy#946):
 
 * `POST /api/runner-device-keys/` `{runner, public_jwk, kind, label}` →
   `{id, jkt, status: "pending", approve_url}`; the same `jkt` again is idempotent.
+  An EC2 box registers its instance role instead (canopy-web#1549):
+  `{runner, kind: "aws-iam", role_arn, proof}`, the proof an
+  `X-Canopy-Aws-Proof` value for this URL (`aws_iam_proof.py`).
 * `GET /api/runner-device-keys/?runner=<id>` → the keys, with status.
 * `POST /api/runner-device-keys/{id}/approve` → `active`. A BROWSER session of
   the runner's owner or an admin, behind a fresh passkey step-up.
@@ -59,7 +62,8 @@ def approve_url(key: RunnerDeviceKey) -> str:
 def key_out(key: RunnerDeviceKey, *, can_manage: bool) -> RunnerDeviceKeyOut:
     return RunnerDeviceKeyOut(
         id=key.pk, runner=key.runner_id, runner_name=key.runner.name, jkt=key.jkt,
-        kind=key.kind, label=key.label, status=key.status, created_at=key.created_at,
+        kind=key.kind, label=key.label, role_arn=key.role_arn, status=key.status,
+        created_at=key.created_at,
         approved_at=key.approved_at,
         approved_by_email=(key.approved_by.email if key.approved_by_id else ""),
         revoked_at=key.revoked_at, last_used_at=key.last_used_at, can_manage=can_manage,
@@ -82,11 +86,16 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
     Re-posting the same key returns the existing row (200) whatever its status —
     a revoked key stays revoked."""
     runner = _administered_runner_or_404(request, payload.runner)
-    try:
-        jwk = device_keys.normalize_public_jwk(payload.public_jwk)
-    except device_keys.KeyError_ as exc:
-        raise HttpError(422, str(exc)) from exc
-    jkt = device_keys.thumbprint(jwk)
+    role_arn = ""
+    if payload.kind == RunnerDeviceKey.AWS_IAM:
+        role_arn, jkt = _verified_role(request, payload)
+        jwk: dict = {}
+    else:
+        try:
+            jwk = device_keys.normalize_public_jwk(payload.public_jwk)
+        except device_keys.KeyError_ as exc:
+            raise HttpError(422, str(exc)) from exc
+        jkt = device_keys.thumbprint(jwk)
 
     existing = RunnerDeviceKey.objects.filter(jkt=jkt).first()
     if existing is not None:
@@ -97,7 +106,7 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
     try:
         with transaction.atomic():
             key = RunnerDeviceKey.objects.create(
-                runner=runner, public_jwk=jwk, jkt=jkt, kind=payload.kind,
+                runner=runner, public_jwk=jwk, role_arn=role_arn, jkt=jkt, kind=payload.kind,
                 label=payload.label.strip(), created_by=request.user,
             )
     except IntegrityError:  # a concurrent identical POST won the race
@@ -106,6 +115,30 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
             id=key.pk, jkt=jkt, status=key.status, approve_url=approve_url(key))
     return 201, RunnerDeviceKeyCreatedOut(
         id=key.pk, jkt=jkt, status=key.status, approve_url=approve_url(key))
+
+
+def _verified_role(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[str, str]:
+    """`(canonical role ARN, jkt)` for an aws-iam registration, after its proof
+    — signed for THIS URL — came back from STS as `role_arn` (canopy-web#1549).
+    Registering a role you cannot sign as is refused, so a pending row always
+    names an identity the registering box actually holds."""
+    from . import aws_iam_proof
+
+    if payload.public_jwk:
+        raise HttpError(422, "an aws-iam key has no public_jwk; send role_arn and proof")
+    try:
+        claimed = aws_iam_proof.canonical_role_arn(payload.role_arn)
+    except aws_iam_proof.AwsProofError as exc:
+        raise HttpError(422, f"role_arn: {exc}") from exc
+    if not payload.proof:
+        raise HttpError(422, "an aws-iam key needs a proof (a signed sts:GetCallerIdentity)")
+    try:
+        proven = aws_iam_proof.verify(payload.proof, request)
+    except aws_iam_proof.AwsProofError as exc:
+        raise HttpError(422, f"proof: {exc}") from exc
+    if proven != claimed:
+        raise HttpError(422, f"the proof was signed by {proven}, not {claimed}")
+    return claimed, aws_iam_proof.role_jkt(claimed)
 
 
 @router.get("/", response=list[RunnerDeviceKeyOut], summary="List runner device keys")

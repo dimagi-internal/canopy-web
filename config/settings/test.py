@@ -41,3 +41,5 @@ MCP_APPS_BACKGROUND_REFRESH = False
 CAPABILITY_SWEEP_INTERVAL_S = 0
 # Likewise the Slack channel-ingest reader: tests call `ingest.tick()` / `advance()`.
 SLACK_INGEST_TICK_S = 0
+# Likewise the canopy-pat rotation: tests call `pat_rotation.tick()` / `rotate()`.
+CANOPY_PAT_ROTATION_TICK_S = 0

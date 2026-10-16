@@ -1536,18 +1536,24 @@ class ResolveInvestigationIn(Schema):
 
 # ---- Runner device keys (Canopy Vault, canopy-web#1538 Phase 1a) -------------
 
-DeviceKeyKind = Literal["secure-enclave", "tpm", "software"]
+DeviceKeyKind = Literal["secure-enclave", "tpm", "software", "aws-iam"]
 DeviceKeyStatus = Literal["pending", "active", "revoked"]
 
 
 class RunnerDeviceKeyIn(Schema):
     """Register the PUBLIC half of a key the runner holds. Re-posting the same
-    key (same RFC 7638 thumbprint) is idempotent."""
+    key (same RFC 7638 thumbprint) is idempotent.
+
+    `kind: "aws-iam"` (an EC2 box's instance role, canopy-web#1549) sends
+    `role_arn` and `proof` (an `X-Canopy-Aws-Proof` value whose htu is this
+    URL) instead of `public_jwk`; the proof's signer must BE `role_arn`."""
 
     runner: uuid.UUID
-    public_jwk: dict[str, Any]
+    public_jwk: dict[str, Any] | None = None
     kind: DeviceKeyKind
     label: str = Field(default="", max_length=120)
+    role_arn: str = Field(default="", max_length=300)
+    proof: str = Field(default="", max_length=20000)
 
 
 class RunnerDeviceKeyCreatedOut(Schema):
@@ -1567,6 +1573,8 @@ class RunnerDeviceKeyOut(Schema):
     jkt: str
     kind: DeviceKeyKind
     label: str = ""
+    #: `aws-iam` only: the instance role the box proves itself as.
+    role_arn: str = ""
     status: DeviceKeyStatus
     created_at: dt.datetime
     approved_at: dt.datetime | None = None

@@ -107,6 +107,9 @@ from .schemas import (
     AgentCredentialReadOut,
     DeviceBindingIn,
     DeviceProofRequiredOut,
+    AgentCredentialAlertOut,
+    PatRotationIn,
+    PatRotationOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -2058,6 +2061,18 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
     an ACTIVE runner device key on a runner this agent routes to or one its
     owner owns. Otherwise: 401 `{"error": "device_proof_required"}`.
+    An EC2 cloud runner proves its instance role instead, in
+    `X-Canopy-Aws-Proof`: base64 JSON `{method, url, headers, body}` of a
+    SigV4-signed, unsent `sts:GetCallerIdentity` for `https://sts.amazonaws.com/`
+    whose signed headers include `X-Canopy-Proof-Htu` (this URL) and
+    `X-Canopy-Proof-Iat` (±120 s); single-use. canopy-web sends it to the pinned
+    STS endpoint and accepts the returned role if an ACTIVE `aws-iam` device key
+    for it sits on a runner this agent routes to.
+
+    **Alerts.** With `credential_source` `canopy-web`, the agent's owner is told
+    (email + push, at most once per kind per hour) of a box read (`via`
+    runner) with no `X-Canopy-Turn-Id`, a read of an undeclared ref, a burst of
+    reads, or a refusal for a bad or missing device proof.
 
     **Read log.** Every ref handed out is recorded with the caller, the runner
     when known (the proving device key's runner, else `X-Canopy-Runner: <runner
@@ -2094,9 +2109,12 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     # Device proof (canopy-web#1538 Phase 1a). Verified whenever one is sent, so
     # the read log can name the box that proved itself; REQUIRED only when the
     # agent asks for it and resolves from canopy-web.
-    device_key = _device_key_from_proof(request, agent)
+    device_key, refused = _device_key_from_proof(request, agent)
     if (agent.require_device_binding and agent.credential_source == agent.CANOPY_WEB
             and device_key is None):
+        from . import vault_alerts
+
+        vault_alerts.device_proof_refused(agent, request, reason=refused or "no device proof")
         return JsonResponse({"error": "device_proof_required"}, status=401,
                             headers={"WWW-Authenticate": 'DPoP algs="ES256"'})
 
@@ -2128,6 +2146,11 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
             agent, read, user=request.user, runner=runner, via=via, turn_id=turn_id)
     except Exception:  # noqa: BLE001 - a log hiccup must not deny a runner its secrets
         logger.exception("credential read log failed for %s", agent.slug)
+    from . import vault_alerts
+
+    # Never raises (canopy-web#1549): an alert hiccup must not deny a runner either.
+    vault_alerts.after_read(agent, request, via=via, turn_id=turn_id, asked=wanted,
+                            handed=list(values), runner=runner)
     try:
         from apps.events import services as events
 
@@ -2165,19 +2188,35 @@ def _parse_refs(refs: str | None) -> set[str] | None:
 
 
 def _device_key_from_proof(request: HttpRequest, agent):
-    """The ACTIVE RunnerDeviceKey whose DPoP proof this request carries, if the
-    proof verifies and its runner serves `agent`; else None. A bad proof is not
-    an error here — whether one is REQUIRED is the caller's decision."""
-    if not request.META.get("HTTP_DPOP"):
-        return None
-    from apps.harness import device_keys
+    """`(key, refused)`: the ACTIVE RunnerDeviceKey whose proof this request
+    carries, if the proof verifies and its runner serves `agent`, else None and
+    why. A bad proof is not an error here — whether one is REQUIRED is the
+    caller's decision.
 
+    Two proofs: a DPoP proof from a key the box holds (`DPoP`, Phase 1a), or an
+    EC2 box's instance role (`X-Canopy-Aws-Proof`, Phase 1b — a signed
+    sts:GetCallerIdentity canopy-web replays to the pinned STS endpoint;
+    `apps/harness/aws_iam_proof.py`)."""
+    from apps.harness import aws_iam_proof, device_keys
+
+    aws = request.META.get(aws_iam_proof.PROOF_HEADER, "")
+    if aws:
+        try:
+            role = aws_iam_proof.verify(aws, request)
+        except aws_iam_proof.AwsProofError as exc:
+            logger.info("aws iam proof refused for %s: %s", agent.slug, exc)
+            return None, f"AWS IAM proof refused: {exc}"
+        key = aws_iam_proof.active_key_for_agent(agent, role)
+        return key, (None if key else f"no active aws-iam key for {role} on a runner it routes to")
+    if not request.META.get("HTTP_DPOP"):
+        return None, "no device proof"
     try:
         jkt = device_keys.verify_proof(request)
     except device_keys.ProofError as exc:
         logger.info("device proof refused for %s: %s", agent.slug, exc)
-        return None
-    return device_keys.active_key_for_agent(agent, jkt)
+        return None, f"DPoP proof refused: {exc}"
+    key = device_keys.active_key_for_agent(agent, jkt)
+    return key, (None if key else "the DPoP key is not an active key on a runner it routes to")
 
 
 def _caller_runner(request: HttpRequest):
@@ -2414,6 +2453,81 @@ def agent_device_keys(request: HttpRequest, slug: str):
     agent = _agent_for_admin(request, slug)
     return [key_out(k, can_manage=can_administer_runner(request.user, k.runner))
             for k in device_keys.keys_for_agent(agent)]
+
+
+@router.get("/{slug}/credential-alerts", response=list[AgentCredentialAlertOut],
+            summary="Read-anomaly alerts on this agent's secrets")
+def agent_credential_alerts(request: HttpRequest, slug: str, limit: int = 50):
+    """Canopy Vault (canopy-web#1549), newest first: reads with no turn id by
+    someone not the owner or an admin, reads of undeclared refs, bursts, and
+    resolves refused for a bad or missing device proof. At most one per kind
+    per hour (`occurrences` counts the rest). The agent's owner or an admin."""
+    from . import vault_alerts
+
+    agent = _agent_for_admin(request, slug)
+    return vault_alerts.alerts_for(agent, limit=max(1, min(limit, 200)))
+
+
+@router.get("/{slug}/pat-rotation", response=PatRotationOut,
+            summary="This agent's canopy-pat rotation: setting, next due, history")
+def get_pat_rotation(request: HttpRequest, slug: str) -> PatRotationOut:
+    """Never a token. The agent's owner or an admin."""
+    from . import pat_rotation
+
+    agent = _agent_for_admin(request, slug)
+    return PatRotationOut(**pat_rotation.status(agent))
+
+
+@router.patch("/{slug}/pat-rotation", response=PatRotationOut,
+              summary="Turn automatic canopy-pat rotation on or off")
+def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) -> PatRotationOut:
+    """Canopy Vault (canopy-web#1549). When on, every `period_days` (default
+    30) canopy-web mints a new token for the agent's own canopy login, writes
+    it to the agent's `canopy-pat` credential (a runner picks it up at its next
+    `canopy cred sync`), keeps the old token valid for 24 h and then revokes it.
+    Turning it on needs the agent to have its own login and a stored
+    `canopy-pat`, and — when that login has ever signed in interactively — a
+    workspace owner (422/403 otherwise). The owner or an admin."""
+    from apps.events import audit
+
+    from . import pat_rotation
+
+    agent = _agent_for_admin(request, slug)
+    before = (agent.pat_rotation_enabled, agent.pat_rotation_days)
+    if payload.enabled:
+        refusal = pat_rotation.enable_refusal(agent, request.user)
+        if refusal:
+            raise HttpError(refusal.status, str(refusal))
+        if not agent.pat_rotation_enabled:
+            agent.pat_rotation_enabled_by = request.user
+    agent.pat_rotation_enabled = payload.enabled
+    agent.pat_rotation_days = payload.period_days
+    agent.save(update_fields=["pat_rotation_enabled", "pat_rotation_days",
+                              "pat_rotation_enabled_by", "updated_at"])
+    audit.note_change(scope=f"agent:{agent.slug}/pat-rotation",
+                      before=f"{'on' if before[0] else 'off'}/{before[1]}d",
+                      after=f"{'on' if payload.enabled else 'off'}/{payload.period_days}d")
+    return PatRotationOut(**pat_rotation.status(agent))
+
+
+@router.post("/{slug}/pat-rotation/rotate", response=PatRotationOut,
+             summary="Rotate this agent's canopy-pat now")
+def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
+    """The same rotation the schedule does, now, whether or not rotation is on:
+    a new token in `canopy-pat`, the old one valid for 24 h then revoked. It
+    changes a secret, so from a browser it needs a fresh passkey step-up (403
+    `step_up_required`); a token may call it. The owner or an admin."""
+    from . import pat_rotation
+
+    agent = _agent_for_admin(request, slug)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    try:
+        pat_rotation.rotate(agent, trigger="manual", actor=request.user)
+    except pat_rotation.RotationRefused as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    agent.refresh_from_db()
+    return PatRotationOut(**pat_rotation.status(agent))
 
 
 @router.post("/{slug}/credentials/{name}/reveal", response=AgentCredentialRevealOut,

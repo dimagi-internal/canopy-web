@@ -16,7 +16,10 @@ import { AgentGitHubSection } from '@/pages/agents/AgentGitHubSection'
 import { AgentSalesforceSection } from '@/pages/agents/AgentSalesforceSection'
 import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
 import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
+import { AgentPatRotationSection } from '@/pages/agents/AgentPatRotationSection'
+import { AgentCredentialAlertsSection } from '@/pages/agents/AgentCredentialAlertsSection'
 import { CredentialReadHistory } from '@/pages/agents/CredentialReadHistory'
+import { getCredentialAlerts, type AgentCredentialAlertOut } from '@/api/deviceKeys'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
 // "What is stopping this agent from running" — a question that on 2026-09-05
@@ -112,6 +115,19 @@ export function AgentCredentialsPanel({
       cancelled = true
     }
   }, [agent.slug])
+
+  // Read alerts (canopy-web#1549): admins only, like the read history.
+  const [alerts, setAlerts] = useState<AgentCredentialAlertOut[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    if (!canEdit) return
+    getCredentialAlerts(agent.slug)
+      .then((a) => !cancelled && setAlerts(a))
+      .catch(() => !cancelled && setAlerts([]))
+    return () => {
+      cancelled = true
+    }
+  }, [agent.slug, canEdit])
 
   useEffect(() => {
     if (!revealed) return
@@ -221,7 +237,7 @@ export function AgentCredentialsPanel({
           {r.updated_by_email ? ` · ${r.updated_by_email}` : ''}
         </span>
       )}
-      {r.set && <CredentialReadHistory slug={agent.slug} row={r} />}
+      {r.set && <CredentialReadHistory slug={agent.slug} row={r} alerts={alerts} />}
 
       <input
         type="password"
@@ -364,6 +380,8 @@ export function AgentCredentialsPanel({
         requireDeviceBinding={agent.require_device_binding}
         canEdit={canEdit}
       />
+      <AgentPatRotationSection slug={agent.slug} canEdit={canEdit} />
+      <AgentCredentialAlertsSection alerts={alerts} />
 
       {/* Zero refs is UNDECLARED, not provisioned: nothing to list. Saying
           "ready" would assert a box can run it, which nobody has established;
