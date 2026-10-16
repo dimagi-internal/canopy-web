@@ -43,3 +43,12 @@ def cloud_runner(load_cloud_runner):
     specific env values should use `load_cloud_runner` directly instead, so
     they can set env before loading."""
     return load_cloud_runner()
+
+
+@pytest.fixture(autouse=True)
+def _no_aws_device_proof(monkeypatch):
+    """Every resolve tries to attach the box's IAM-role device proof (canopy-web#1549),
+    which reads IMDS — through urllib.request.urlopen, which many tests fake to record
+    what the runner fetched. Off by default here; tests/test_aws_device_proof.py turns it
+    back on and points IMDS at a closed port."""
+    monkeypatch.setenv("CANOPY_DEVICE_KEY", "0")

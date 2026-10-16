@@ -60,7 +60,11 @@ bootstrap_agents.sh (see runner/ec2/README.md), not this file directly.
 """
 from __future__ import annotations
 
+import base64
 import contextlib
+import datetime
+import hashlib
+import hmac
 import json
 import os
 import fcntl
@@ -79,6 +83,7 @@ import termios
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -934,6 +939,234 @@ def _stage_salesforce(slug: str) -> pathlib.Path | None:
         return None
 
 
+# ── Canopy Vault device proof: this box's IAM role (canopy-web#1549, Phase 1b) ──
+#
+# An EC2 box has no Secure Enclave; the strongest identity it has is its instance
+# role. As in HashiCorp Vault's AWS auth, it proves the role by SigV4-signing — and
+# NOT sending — an `sts:GetCallerIdentity`, and hands canopy-web the signed request in
+# `X-Canopy-Aws-Proof`: standard base64 of compact JSON {method, url, headers, body}.
+# canopy-web replays it to its own pinned https://sts.amazonaws.com/ and accepts the
+# proof when the ARN AWS answers with is an ACTIVE aws-iam RunnerDeviceKey of a runner
+# the agent routes to. `X-Canopy-Proof-Htu` (the URL being called, no query) and
+# `X-Canopy-Proof-Iat` (unix seconds) are SIGNED headers, so a captured proof works
+# against no other endpoint and goes stale.
+#
+# The signer is the stdlib's hmac/hashlib, not botocore: this file runs on the box's
+# system python3 and must stay stdlib-only (tests/test_stdlib_only.py). It is pinned
+# byte-for-byte to botocore's SigV4Auth by tests/test_aws_device_proof.py, and canopy's
+# `device_key_aws.py` carries the same signer for the canopy CLI's resolves on this box
+# (`canopy agent prepare --runner`, `cred sync`) — which is why enrollment also writes
+# canopy's status cache below. Credentials come from IMDSv2, live only in memory, and
+# are never logged. Every step fails OPEN: no proof is a header not sent, never a turn
+# that cannot run (canopy-web decides whether a proof is required).
+AWS_PROOF_HEADER = "X-Canopy-Aws-Proof"
+_STS_URL = "https://sts.amazonaws.com/"
+_STS_HOST = "sts.amazonaws.com"
+_STS_BODY = "Action=GetCallerIdentity&Version=2011-06-15"
+_STS_CONTENT_TYPE = "application/x-www-form-urlencoded; charset=utf-8"
+_IMDS_TIMEOUT = 2.0
+_AWS_CREDS: dict = {}
+_AWS_CREDS_LOCK = threading.Lock()
+
+
+def _imds_base() -> str:
+    return (os.environ.get("CANOPY_AWS_IMDS_URL", "").strip()
+            or "http://169.254.169.254").rstrip("/")
+
+
+def _imds(path: str, *, token: str = "", put: bool = False, headers: dict | None = None) -> str:
+    req = urllib.request.Request(_imds_base() + path, method="PUT" if put else "GET",
+                                 data=b"" if put else None)
+    for name, value in (headers or {}).items():
+        req.add_header(name, value)
+    if token:
+        req.add_header("X-aws-ec2-metadata-token", token)
+    with urllib.request.urlopen(req, timeout=_IMDS_TIMEOUT) as resp:
+        return resp.read().decode("utf-8")
+
+
+def _aws_instance_credentials() -> dict | None:
+    """The instance role's temporary credentials (IMDSv2) as {access_key, secret_key,
+    token, expires_at}, or None off EC2 / with no role. Cached until 5 min before expiry."""
+    now = time.time()
+    with _AWS_CREDS_LOCK:
+        hit = _AWS_CREDS.get(_imds_base())
+        if hit and (not hit["expires_at"] or hit["expires_at"] - 300 > now):
+            return hit
+    try:
+        token = _imds("/latest/api/token", put=True,
+                      headers={"X-aws-ec2-metadata-token-ttl-seconds": "21600"})
+        roles = _imds("/latest/meta-data/iam/security-credentials/", token=token).split()
+        if not roles:
+            return None
+        doc = json.loads(_imds(f"/latest/meta-data/iam/security-credentials/{roles[0]}",
+                               token=token))
+        if doc.get("Code", "Success") != "Success" or not doc.get("AccessKeyId"):
+            return None
+        try:
+            expires = datetime.datetime.strptime(
+                str(doc.get("Expiration")), "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=datetime.timezone.utc).timestamp()
+        except ValueError:
+            expires = 0.0
+        creds = {"access_key": str(doc["AccessKeyId"]), "secret_key": str(doc["SecretAccessKey"]),
+                 "token": str(doc.get("Token") or ""), "expires_at": expires}
+    except Exception:  # noqa: BLE001 — not EC2, IMDS off, no role: all mean "no identity"
+        return None
+    with _AWS_CREDS_LOCK:
+        _AWS_CREDS[_imds_base()] = creds
+    return creds
+
+
+def _sigv4(creds: dict, headers: dict, amz_date: str) -> dict:
+    """`headers` + X-Amz-Date, X-Amz-Security-Token and Authorization for a POST of
+    _STS_BODY to https://sts.amazonaws.com/ — every given header signed."""
+    out = dict(headers)
+    out["X-Amz-Date"] = amz_date
+    if creds.get("token"):
+        out["X-Amz-Security-Token"] = creds["token"]
+    canon = {name.lower().strip(): " ".join(str(v).split()) for name, v in out.items()}
+    canon.setdefault("host", _STS_HOST)
+    signed = ";".join(sorted(canon))
+    canonical = "\n".join(["POST", "/", "", "".join(f"{k}:{canon[k]}\n" for k in sorted(canon)),
+                           signed, hashlib.sha256(_STS_BODY.encode()).hexdigest()])
+    scope = f"{amz_date[:8]}/us-east-1/sts/aws4_request"
+    to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope,
+                         hashlib.sha256(canonical.encode()).hexdigest()])
+    key = ("AWS4" + creds["secret_key"]).encode()
+    for part in (amz_date[:8], "us-east-1", "sts", "aws4_request"):
+        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+    sig = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    out["Authorization"] = (f"AWS4-HMAC-SHA256 Credential={creds['access_key']}/{scope}, "
+                            f"SignedHeaders={signed}, Signature={sig}")
+    return out
+
+
+def _signed_get_caller_identity(creds: dict, htu: str = "", *, now: float | None = None,
+                                iat: int | None = None) -> dict:
+    t = time.time() if now is None else now
+    headers = {"Content-Type": _STS_CONTENT_TYPE, "Host": _STS_HOST}
+    if htu:
+        headers["X-Canopy-Proof-Htu"] = htu
+        headers["X-Canopy-Proof-Iat"] = str(int(t if iat is None else iat))
+    amz_date = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t))
+    return {"method": "POST", "url": _STS_URL, "headers": _sigv4(creds, headers, amz_date),
+            "body": _STS_BODY}
+
+
+def _htu(url: str) -> str:
+    """scheme://host/path — no query, no fragment (the contract's htu)."""
+    parts = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def aws_proof(url: str, *, creds: dict | None = None, now: float | None = None) -> str:
+    """The X-Canopy-Aws-Proof value for a request to `url`, or "" when this box has no
+    instance role to prove."""
+    creds = creds or _aws_instance_credentials()
+    if not creds:
+        return ""
+    req = _signed_get_caller_identity(creds, _htu(url), now=now)
+    return base64.b64encode(json.dumps(req, separators=(",", ":")).encode()).decode("ascii")
+
+
+def _aws_proof_headers(url: str) -> dict:
+    """{X-Canopy-Aws-Proof: …} for every resolve this box makes, or {} — never raises."""
+    if os.environ.get("CANOPY_DEVICE_KEY", "1") == "0":
+        return {}
+    try:
+        proof = aws_proof(url)
+    except Exception as exc:  # noqa: BLE001 — a proof is an addition, never a new failure
+        _log(f"warn: could not build the aws-iam device proof ({exc.__class__.__name__})")
+        return {}
+    return {AWS_PROOF_HEADER: proof} if proof else {}
+
+
+def normalize_role_arn(arn: str) -> str:
+    """arn:aws:sts::1:assumed-role/ROLE/i-… → arn:aws:iam::1:role/ROLE (canopy-web
+    normalises what STS answers the same way)."""
+    m = re.fullmatch(r"arn:([\w-]+):sts::(\d+):assumed-role/([^/]+)/.+", arn.strip())
+    return f"arn:{m.group(1)}:iam::{m.group(2)}:role/{m.group(3)}" if m else arn.strip()
+
+
+def _aws_role_arn(creds: dict) -> str:
+    """SEND one GetCallerIdentity (needs no IAM permission) and return the role ARN."""
+    doc = _signed_get_caller_identity(creds)
+    req = urllib.request.Request(doc["url"], data=doc["body"].encode(), method="POST")
+    for name, value in doc["headers"].items():
+        req.add_header(name, value)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        text = resp.read().decode("utf-8")
+    m = re.search(r"<Arn>([^<]+)</Arn>", text)
+    if not m:
+        raise RuntimeError("STS answered without an Arn")
+    return normalize_role_arn(m.group(1))
+
+
+def _device_key_dir() -> pathlib.Path:
+    override = os.environ.get("CANOPY_DEVICE_KEY_DIR", "").strip()
+    return pathlib.Path(override).expanduser() if override else (
+        pathlib.Path.home() / ".canopy" / "device-key")
+
+
+def _write_device_key_cache(role_arn: str, status: dict) -> None:
+    """canopy's own cache files (device_key.aws_path / status_path), so the canopy CLI's
+    resolves on this box — `canopy agent prepare --runner`, `cred sync` — attach the same
+    proof. Not secrets: a role ARN and a key's id/status."""
+    d = _device_key_dir()
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _write_private_text(d / "aws-iam.json", json.dumps({"role_arn": role_arn}, indent=1))
+    _write_private_text(d / "status.json", json.dumps(status, indent=1, sort_keys=True))
+
+
+def enroll_aws_device_key(runner_id: str) -> dict:
+    """Register this box's instance role as its device key: `POST /api/runner-device-keys/`
+    {runner, kind: "aws-iam", role_arn, label, proof}. Idempotent on the server. Logs the
+    approve URL while pending. Returns the status, or {"error": …}; never raises."""
+    if os.environ.get("CANOPY_DEVICE_KEY", "1") == "0":
+        return {"skipped": "CANOPY_DEVICE_KEY=0"}
+    try:
+        creds = _aws_instance_credentials()
+        if not creds:
+            _log("device key: no EC2 instance role here — aws-iam device key not enrolled")
+            return {"error": "no instance role"}
+        role_arn = _aws_role_arn(creds)
+        path = "/api/runner-device-keys/"
+        status, body = _api("POST", "/", {
+            "runner": runner_id, "kind": "aws-iam", "role_arn": role_arn,
+            "label": f"{RUNNER_NAME} (EC2 instance role)",
+            "proof": aws_proof(BASE_URL + path, creds=creds)},
+            prefix="/api/runner-device-keys")
+    except Exception as exc:  # noqa: BLE001 — never take the runner down over its key
+        _log(f"device key: aws-iam enrollment failed ({exc.__class__.__name__}: {exc})")
+        return {"error": str(exc)}
+    if status not in (200, 201) or not isinstance(body, dict):
+        _log(f"device key: canopy-web did not register the aws-iam key (HTTP {status}) — "
+             "an older canopy-web, or the role is not this runner's")
+        return {"error": f"HTTP {status}"}
+    st = {"id": body.get("id"), "jkt": str(body.get("jkt") or ""),
+          "status": str(body.get("status") or "pending"),
+          "approve_url": str(body.get("approve_url") or ""), "kind": "aws-iam",
+          "runner": runner_id, "role_arn": role_arn, "checked_at": time.time()}
+    try:
+        _write_device_key_cache(role_arn, st)
+    except OSError as exc:
+        _log(f"warn: device key: could not write canopy's status cache ({exc})")
+    _log(f"device key: aws-iam {role_arn} for runner {runner_id} — {st['status']}")
+    if st["status"] == "pending" and st["approve_url"]:
+        _log(f"device key: PENDING — approve this box's instance role in canopy-web "
+             f"(passkey step-up): {st['approve_url']}")
+    return st
+
+
+def start_aws_device_key_enrollment(runner_id: str) -> threading.Thread:
+    """Enroll in the background so a slow STS/canopy-web never delays the first claim."""
+    t = threading.Thread(target=enroll_aws_device_key, args=(runner_id,), daemon=True,
+                         name="aws-device-key-enroll")
+    t.start()
+    return t
+
+
 def _agent_op_token(slug: str) -> str:
     """THIS agent's 1Password key, or "" — never another agent's, never a
     box-wide one. canopy-web is the custodian (`Agent.op_sa_token_enc`)."""
@@ -945,9 +1178,12 @@ def _agent_op_token(slug: str) -> str:
     # The turn this resolve is for, so canopy-web's read log names it (Canopy Vault,
     # canopy#946). Known when called from a turn's thread; an older canopy-web ignores it.
     turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
+    # And this box's IAM-role device proof (canopy-web#1549) — required only for an
+    # agent with require_device_binding; ignored by canopy-web otherwise.
+    proof = _aws_proof_headers(f"{BASE_URL}/api/agents/{slug}/credentials/resolve")
     try:
         status, payload = _api("GET", f"/{slug}/credentials/resolve", prefix="/api/agents",
-                               headers={"X-Canopy-Turn-Id": turn_id})
+                               headers={"X-Canopy-Turn-Id": turn_id, **proof})
         if status == 200 and isinstance(payload, dict):
             token = str(payload.get("op_sa_token") or "")
             _AGENT_VAULT[slug] = str(payload.get("op_vault") or "").strip()
@@ -5879,6 +6115,9 @@ def main() -> None:
     runner_id = pair_or_load()
     global _RUNNER_ID
     _RUNNER_ID = runner_id
+    # Canopy Vault: register this box's instance role as its device key (background,
+    # fail-open; logs the approve URL while pending). canopy-web#1549.
+    start_aws_device_key_enrollment(runner_id)
     _retire_shared_github_credentials()
     if not fetch_and_stage_credential(runner_id):
         return  # stopped before a credential was provisioned

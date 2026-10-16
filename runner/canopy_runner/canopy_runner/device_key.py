@@ -3,8 +3,9 @@
 canopy-web can hand an agent's credentials only to an APPROVED device
 (`Agent.require_device_binding`, canopy-web#1538). The key and its enrollment live in
 canopy — `canopy vault device --enroll` makes the key (the Secure Enclave via
-`~/.canopy/bin/canopy-device-key`, built by install-runner.sh; a software key where there
-is no enclave), registers it for this runner (`POST /api/runner-device-keys/`, idempotent
+`~/.canopy/bin/canopy-device-key`, built by install-runner.sh, on a Mac; the TPM through
+the "Microsoft Platform Crypto Provider" on Windows, canopy-web#1549; a software key where
+there is neither), registers it for this runner (`POST /api/runner-device-keys/`, idempotent
 on the key's thumbprint) and caches the status beside it. This module only runs that, once
 per start, in the background, as this runner's identity — and says what a person must do:
 while the key is `pending` it logs the approve URL and, on macOS, shows ONE notification
@@ -40,8 +41,8 @@ def canopy_cli(home: Optional[Path] = None) -> Optional[str]:
     if found:
         return found
     home = home or Path.home()
-    for cand in (home / ".local" / "bin" / "canopy", Path("/opt/homebrew/bin/canopy"),
-                 Path("/usr/local/bin/canopy")):
+    for cand in (home / ".local" / "bin" / "canopy", home / ".local" / "bin" / "canopy.exe",
+                 Path("/opt/homebrew/bin/canopy"), Path("/usr/local/bin/canopy")):
         if cand.is_file() and os.access(cand, os.X_OK):
             return str(cand)
     return None
@@ -102,7 +103,7 @@ def enroll(cfg, *, runner: Runner = subprocess.run, home: Optional[Path] = None,
     logger.info("device key: %s key %s… for runner %s — %s", st.get("kind"), jkt[:12],
                 cfg.runner_id, status)
     if status == "pending" and url:
-        logger.warning("device key: PENDING — approve it in canopy-web (Touch ID passkey): %s",
+        logger.warning("device key: PENDING — approve it in canopy-web (passkey step-up): %s",
                        url)
         marker = notified_path(home)
         try:
