@@ -11,14 +11,16 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import commands, services
-from .models import SlackInstallation, SlackWorkspaceLink
+from . import commands, ingest, services
+from .models import SlackChannelIngestAllow, SlackInstallation, SlackWorkspaceLink
 from .schemas import (
+    SlackChannelAllowIn,
     SlackChannelIngestSwitchIn,
     SlackConfigOut,
     SlackConfigTokenIn,
@@ -85,8 +87,17 @@ def _out(ws: Workspace) -> dict:
             "max_minutes": link.history_max_minutes if link else
             SlackWorkspaceLink._meta.get_field("history_max_minutes").default,
         },
-        "channel_ingest": {"enabled": bool(link and link.channel_ingest_enabled)},
+        "channel_ingest": {"enabled": bool(link and link.channel_ingest_enabled),
+                           "allowed": [_allow_out(a) for a in SlackChannelIngestAllow.objects
+                                       .select_related("agent", "added_by").filter(workspace=ws)
+                                       .order_by("channel_name", "agent__slug")]},
     }
+
+
+def _allow_out(a: SlackChannelIngestAllow) -> dict:
+    return {"id": str(a.pk), "agent": a.agent.slug, "channel": a.channel_id, "channel_name": a.channel_name,
+            "follow": a.follow, "note": a.note, "added_by_email": getattr(a.added_by, "email", "") or "",
+            "added_at": a.added_at.isoformat() if a.added_at else ""}
 
 
 @router.get("/{workspace}", response=SlackConfigOut, summary="This workspace's Slack connection")
@@ -138,6 +149,42 @@ def set_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChann
     ws = _workspace_with(request.user, workspace, perms.OWN)
     _installation_or_409(ws)
     SlackWorkspaceLink.objects.filter(workspace=ws).update(channel_ingest_enabled=payload.enabled)
+    return _out(ws)
+
+
+@router.post("/{workspace}/channel-ingest/allowed", response=SlackConfigOut,
+             summary="Allow-list one channel for one agent to read whole (owner)")
+def allow_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChannelAllowIn) -> dict:
+    """Explicit, standing permission: when this agent asks to read this channel
+    (`POST /api/slack-ingests/`) canopy reads it at once — approved by you — and
+    posts a notice with Revoke in the channel instead of Approve/Decline.
+    Works whether or not asking is on for the workspace. Adding it again
+    updates `follow` and `note`."""
+    ws = _workspace_with(request.user, workspace, perms.OWN)
+    _installation_or_409(ws)
+    agent = Agent.objects.filter(slug=payload.agent, workspace=ws).first()
+    if agent is None:
+        raise HttpError(404, f"agent '{payload.agent}' is not in '{ws.slug}'")
+    try:
+        ingest.allow(workspace=ws, agent=agent, channel=payload.channel, follow=payload.follow,
+                     note=payload.note, by=request.user)
+    except ingest.IngestError as e:
+        raise HttpError(e.status, str(e)) from e
+    return _out(ws)
+
+
+@router.delete("/{workspace}/channel-ingest/allowed/{allow_id}", response=SlackConfigOut,
+               summary="Remove a channel from an agent's allow-list; revokes its reads (owner)")
+def disallow_channel_ingest(request: HttpRequest, workspace: str, allow_id: str) -> dict:
+    ws = _workspace_with(request.user, workspace, perms.OWN)
+    try:
+        entry = (SlackChannelIngestAllow.objects.select_related("agent", "workspace", "installation")
+                 .filter(pk=allow_id, workspace=ws).first())
+    except Exception:  # noqa: BLE001 — not a UUID
+        entry = None
+    if entry is None:
+        raise HttpError(404, "no such allow-list entry")
+    ingest.disallow(entry, by=request.user)
     return _out(ws)
 
 

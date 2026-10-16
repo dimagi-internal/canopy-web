@@ -10,14 +10,20 @@ someone who can give it, asked in the channel itself (canopy-web#1533):
    ONE message in the target channel naming the agent, the purpose and who
    asked, with Approve / Decline. Nothing is read before an Approve. A decline
    is final for that request.
-2. **Approved by someone who can.** `decide` accepts an Approve only from a
+2. **Approved by someone who can** — in the channel, or ahead of time. `decide` accepts an Approve only from a
    person who is in the channel now (`conversations.members`) AND either
    administers the agent's canopy workspace (`perms.INTEGRATIONS`) or created
    the channel. The agent's own canopy login can never approve — or decline:
    an agent must not be able to answer its own request either way. Anyone in
    the channel may Decline; refusing is the safe direction.
+   **Or allow-listed explicitly**: a workspace owner names the channel and the
+   agent beforehand (`allow`, `SlackChannelIngestAllow`). A request that
+   matches starts reading at once, approved by that owner, and canopy posts a
+   notice with Revoke in the channel instead of the Approve/Decline buttons.
 3. **The workspace opted in.** `SlackWorkspaceLink.channel_ingest_enabled`,
-   default off, set once by an owner. Off refuses new requests and stops reads.
+   default off, set once by an owner. Off refuses new requests and stops reads
+   — except those an allow-list entry grants: an entry is its own, narrower
+   opt-in, and removing it revokes what it allowed.
 4. **The agent never holds a token.** canopy pages the channel itself
    (`advance`, off-request: ingest_scheduler.py), resumably and within Slack's
    rate limits, into `SlackIngestMessage` rows; the agent gets text through
@@ -43,7 +49,13 @@ from django.utils import timezone
 from apps.workspaces import permissions as perms
 
 from . import client
-from .models import SlackChannelIngest, SlackIngestMessage, SlackInstallation, SlackWorkspaceLink
+from .models import (
+    SlackChannelIngest,
+    SlackChannelIngestAllow,
+    SlackIngestMessage,
+    SlackInstallation,
+    SlackWorkspaceLink,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +65,7 @@ ACTIONS = (APPROVE, DECLINE, REVOKE)
 
 _PAGE = 200
 _CHANNEL = re.compile(r"^[CG][A-Z0-9]{1,31}$")
+_NAME = re.compile(r"^#?([a-z0-9][a-z0-9_\-]{0,79})$")
 #: Statuses in which canopy may still read the channel.
 LIVE = (SlackChannelIngest.READING, SlackChannelIngest.READY)
 
@@ -67,8 +80,7 @@ class IngestError(Exception):
 
 # --- the audit ---------------------------------------------------------------
 
-def _record(ingest: SlackChannelIngest, kind: str, summary: str, *, level: str = "", key: str = "",
-            **payload) -> None:
+def _event(workspace, kind: str, summary: str, *, level: str = "", key: str = "", **payload) -> None:
     """One row in the workspace event log. Bookkeeping must never fail the act."""
     from apps.events import services as events_services
     from apps.events.models import Event
@@ -80,11 +92,16 @@ def _record(ingest: SlackChannelIngest, kind: str, summary: str, *, level: str =
             "level": level or Event.INFO,
             "key": key,
             "summary": summary[:500],
-            "payload": {"ingest": str(ingest.pk), "team": ingest.installation.team_id,
-                        "channel": ingest.channel_id, "agent": ingest.agent.slug, **payload},
-        }], workspace=ingest.workspace)
+            "payload": payload,
+        }], workspace=workspace)
     except Exception:  # noqa: BLE001
         logger.exception("could not record a Slack channel ingest event")
+
+
+def _record(ingest: SlackChannelIngest, kind: str, summary: str, *, level: str = "", key: str = "",
+            **payload) -> None:
+    _event(ingest.workspace, kind, summary, level=level, key=key, ingest=str(ingest.pk),
+           team=ingest.installation.team_id, channel=ingest.channel_id, agent=ingest.agent.slug, **payload)
 
 
 def _who(user) -> str:
@@ -100,12 +117,46 @@ def link_for(workspace_id: str) -> SlackWorkspaceLink | None:
             .filter(workspace_id=workspace_id).first())
 
 
+def resolve_channel(token: str, ref: str) -> tuple[str, str]:
+    """`C…`/`G…` or `#name` -> (channel id, name). A name is looked up among the
+    channels the canopy app can see (`conversations.list`); raises IngestError."""
+    ref = (ref or "").strip()
+    if _CHANNEL.match(ref):
+        return ref, client.channel_name(token, ref)
+    m = _NAME.match(ref.lower())
+    if not m:
+        raise IngestError("`channel` must be a Slack channel id (C… or G…) or a #channel-name", 422)
+    name, cursor = m.group(1), ""
+    for _ in range(50):
+        data = {"types": "public_channel,private_channel", "exclude_archived": "true", "limit": 1000,
+                **({"cursor": cursor} if cursor else {})}
+        try:
+            body = client.call("conversations.list", token=token, data=data)
+        except client.SlackApiError as e:
+            raise IngestError(f"Slack would not list channels to find #{name} ({e.error}) — use the "
+                              "channel's id (C…) instead", 409) from e
+        for c in body.get("channels") or []:
+            if c.get("name") == name:
+                return str(c["id"]), name
+        cursor = (body.get("response_metadata") or {}).get("next_cursor") or ""
+        if not cursor:
+            break
+    raise IngestError(f"canopy can't see a channel named #{name} — check the name, or invite the canopy app "
+                      "to it if it is private", 404)
+
+
+def allowance_for(agent, channel_id: str) -> SlackChannelIngestAllow | None:
+    return SlackChannelIngestAllow.objects.select_related("added_by").filter(
+        agent=agent, channel_id=channel_id).first()
+
+
 def request(*, agent, channel_id: str, purpose: str, follow: bool, requested_by) -> SlackChannelIngest:
-    """Create a PENDING ingest and post its approval message. Reads nothing."""
-    channel_id = (channel_id or "").strip()
+    """Create a PENDING ingest and post its approval message — or, when an owner
+    allow-listed this channel for this agent, start reading and post a notice."""
+    ref = (channel_id or "").strip()
     purpose = (purpose or "").strip()
-    if not _CHANNEL.match(channel_id):
-        raise IngestError("`channel` must be a Slack channel id (C… or G…), not a name", 422)
+    if not (_CHANNEL.match(ref) or _NAME.match(ref.lower())):
+        raise IngestError("`channel` must be a Slack channel id (C… or G…) or a #channel-name", 422)
     if not purpose:
         raise IngestError("say what the channel is being read for (`purpose`)", 422)
     if agent.user_id is None:
@@ -114,19 +165,32 @@ def request(*, agent, channel_id: str, purpose: str, follow: bool, requested_by)
     link = link_for(agent.workspace_id)
     if link is None:
         raise IngestError("Slack is not connected to this agent's workspace", 409)
-    if not link.channel_ingest_enabled:
-        raise IngestError("channel ingest is off for this workspace — an owner turns it on in the "
-                          "Slack settings (`channel_ingest_enabled`)", 409)
     inst = link.installation
+    # A name the owner allow-listed resolves without asking Slack.
+    by_name = (SlackChannelIngestAllow.objects.filter(agent=agent, channel_name=ref.lstrip("#").lower()).first()
+               if not _CHANNEL.match(ref) else None)
+    channel_id, name = (by_name.channel_id, by_name.channel_name) if by_name else resolve_channel(inst.bot_token, ref)
+    allowance = allowance_for(agent, channel_id)
+    if allowance is None and not link.channel_ingest_enabled:
+        raise IngestError("channel ingest is off for this workspace, and this channel is not allow-listed for "
+                          f"{agent.slug} — an owner allow-lists it (or turns asking on) in the Slack settings", 409)
+    if allowance is not None and follow and not allowance.follow:
+        raise IngestError(f"#{name or channel_id} is allow-listed for {agent.slug} to read once, not to follow — "
+                          "ask without follow, or have an owner allow following", 403)
     if SlackChannelIngest.objects.filter(agent=agent, channel_id=channel_id,
                                          status__in=(SlackChannelIngest.PENDING, *LIVE)).exists():
         raise IngestError(f"{agent.slug} already has a pending or live ingest of this channel", 409)
+    now = timezone.now()
     ingest = SlackChannelIngest.objects.create(
         workspace_id=agent.workspace_id, installation=inst, agent=agent, channel_id=channel_id,
-        channel_name=client.channel_name(inst.bot_token, channel_id), purpose=purpose[:2000],
-        follow=bool(follow), requested_by=requested_by,
+        channel_name=name, purpose=purpose[:2000], follow=bool(follow), requested_by=requested_by,
+        **({"allowance": allowance, "status": SlackChannelIngest.READING, "decided_by": allowance.added_by,
+            "decided_at": now} if allowance else {}),
     )
-    text, blocks = approval_message(ingest)
+    if allowance is not None:
+        text, blocks = allowed_message(ingest)
+    else:
+        text, blocks = approval_message(ingest)
     try:
         ts = client.post_message(inst.bot_token, channel=channel_id, text=text, blocks=blocks)
     except client.SlackApiError as e:
@@ -137,11 +201,58 @@ def request(*, agent, channel_id: str, purpose: str, follow: bool, requested_by)
             "not_in_channel", "channel_not_found") else ""
         raise IngestError(f"Slack refused the approval message ({e.error}).{hint}", 409) from e
     ingest.approval_ts = ts
-    ingest.save(update_fields=["approval_ts"])
+    if allowance is not None:
+        # Read only once the notice is up: the channel sees it before canopy reads a line.
+        ingest.next_attempt_at = timezone.now()
+    ingest.save(update_fields=["approval_ts", "next_attempt_at"])
+    if allowance is not None:
+        _record(ingest, "approved", f"{agent.slug} started reading all of <#{channel_id}>"
+                f"{' and following it' if follow else ''} under the allow-list entry "
+                f"{_who(allowance.added_by)} added: {purpose}"[:500], user=getattr(requested_by, "pk", None),
+                allowance=str(allowance.pk), follow=ingest.follow, purpose=purpose[:500])
+        return ingest
     _record(ingest, "requested", f"{_who(requested_by)} asked for {agent.slug} to read all of "
             f"<#{channel_id}>{' and follow it' if follow else ''}: {purpose}"[:500],
             user=getattr(requested_by, "pk", None), follow=ingest.follow, purpose=purpose[:500])
     return ingest
+
+
+# --- the allow-list ----------------------------------------------------------
+
+def allow(*, workspace, agent, channel: str, follow: bool, note: str, by) -> SlackChannelIngestAllow:
+    """An owner allow-lists one channel for one agent. Reads nothing by itself:
+    the agent still asks (`request`), with a purpose, and the channel is told."""
+    if agent.workspace_id != workspace.slug:
+        raise IngestError(f"{agent.slug} is not an agent of '{workspace.slug}'", 404)
+    if agent.user_id is not None and getattr(by, "pk", None) == agent.user_id:
+        raise IngestError(f"{agent.slug} can't allow-list a channel for itself", 403)
+    link = link_for(workspace.slug)
+    if link is None:
+        raise IngestError("Slack is not connected to this workspace", 409)
+    channel_id, name = resolve_channel(link.installation.bot_token, channel)
+    entry, created = SlackChannelIngestAllow.objects.update_or_create(
+        agent=agent, channel_id=channel_id,
+        defaults={"workspace": workspace, "installation": link.installation, "channel_name": name,
+                  "follow": bool(follow), "note": (note or "").strip()[:500], "added_by": by})
+    _event(workspace, "allowed", f"{_who(by)} allow-listed <#{channel_id}> for {agent.slug} to read whole"
+           f"{' and follow' if follow else ''}" + (f": {entry.note}" if entry.note else ""),
+           allowance=str(entry.pk), team=link.installation.team_id, channel=channel_id, agent=agent.slug,
+           user=getattr(by, "pk", None), follow=entry.follow, updated=not created)
+    return entry
+
+
+def disallow(entry: SlackChannelIngestAllow, *, by) -> int:
+    """Remove an entry and revoke every pending or live read it allowed. Returns how many."""
+    live = list(SlackChannelIngest.objects.select_related("agent", "installation", "workspace", "allowance")
+                .filter(allowance=entry, status__in=(SlackChannelIngest.PENDING, *LIVE)))
+    for i in live:
+        revoke(i, user=by)
+    _event(entry.workspace, "disallowed", f"{_who(by)} removed <#{entry.channel_id}> from {entry.agent.slug}'s "
+           f"allow-list" + (f"; {len(live)} read(s) revoked" if live else ""), allowance=str(entry.pk),
+           team=entry.installation.team_id, channel=entry.channel_id, agent=entry.agent.slug,
+           user=getattr(by, "pk", None), revoked=len(live))
+    entry.delete()
+    return len(live)
 
 
 def _approvers_line(ingest: SlackChannelIngest) -> str:
@@ -172,9 +283,30 @@ def approval_message(ingest: SlackChannelIngest) -> tuple[str, list[dict]]:
     return f"{agent.slug} is asking to read this channel. Purpose: {ingest.purpose}", blocks
 
 
+def allowed_message(ingest: SlackChannelIngest) -> tuple[str, list[dict]]:
+    """The notice an allow-listed read posts: who allowed it, why it is read, and Revoke."""
+    agent, allowance = ingest.agent, ingest.allowance
+    scope = ("everything ever posted in this channel, threads included, *and is following new messages*"
+             if ingest.follow else "everything ever posted in this channel, threads included (once)")
+    text = (f":unlock: *{agent.slug}* is reading {scope}.\n*Purpose:* {ingest.purpose}\n"
+            f"*Allowed by:* {_who(allowance.added_by)}, who allow-listed this channel for {agent.slug} on "
+            f"{allowance.added_at:%Y-%m-%d}")
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text[:3000]}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": (
+            f"An owner of the *{ingest.workspace_id}* canopy workspace allow-listed this read. canopy does the "
+            "reading; only the agent gets the transcript. Whoever allowed it, the agent's owner or a workspace "
+            "admin can revoke it.")}]},
+        {"type": "actions", "block_id": "ingest_revoke", "elements": [
+            {"type": "button", "action_id": REVOKE, "style": "danger", "value": str(ingest.pk),
+             "text": {"type": "plain_text", "text": "Revoke"}}]},
+    ]
+    return f"{agent.slug} is reading this channel (allow-listed). Purpose: {ingest.purpose}", blocks
+
+
 def _settled_blocks(ingest: SlackChannelIngest, outcome: str) -> list[dict]:
     """The approval post once decided: the ask, what happened, and a Revoke while it is live."""
-    text, blocks = approval_message(ingest)
+    text, blocks = allowed_message(ingest) if ingest.allowance_id else approval_message(ingest)
     out = [blocks[0], {"type": "context", "elements": [{"type": "mrkdwn", "text": outcome[:3000]}]}]
     if ingest.status in LIVE:
         out.append({"type": "actions", "block_id": "ingest_revoke", "elements": [
@@ -438,8 +570,9 @@ def advance(ingest: SlackChannelIngest, *, calls: int | None = None) -> SlackCha
     if ingest is None or ingest.status not in LIVE:
         return ingest
     link = link_for(ingest.workspace_id)
-    if link is None or not link.channel_ingest_enabled:
-        # The switch is also a stop: an owner turning it off ends every read.
+    if link is None or not (link.channel_ingest_enabled or ingest.allowance_id):
+        # The switch is also a stop: an owner turning it off ends every read it
+        # allowed. An allow-listed read stops when its entry is removed (`disallow`).
         ingest.next_attempt_at = timezone.now() + follow_interval()
         ingest.error = "channel ingest is off for this workspace"
         ingest.save(update_fields=["next_attempt_at", "error"])

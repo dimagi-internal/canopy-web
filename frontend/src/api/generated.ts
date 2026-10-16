@@ -959,6 +959,47 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/slack-config/{workspace}/channel-ingest/allowed": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Allow-list one channel for one agent to read whole (owner)
+         * @description Explicit, standing permission: when this agent asks to read this channel
+         *     (`POST /api/slack-ingests/`) canopy reads it at once — approved by you — and
+         *     posts a notice with Revoke in the channel instead of Approve/Decline.
+         *     Works whether or not asking is on for the workspace. Adding it again
+         *     updates `follow` and `note`.
+         */
+        readonly post: operations["allow_channel_ingest"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/slack-config/{workspace}/channel-ingest/allowed/{allow_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Remove a channel from an agent's allow-list; revokes its reads (owner) */
+        readonly delete: operations["disallow_channel_ingest"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/slack-config/{workspace}/sync": {
         readonly parameters: {
             readonly query?: never;
@@ -10800,10 +10841,31 @@ export interface components {
             /** Declared At */
             readonly declared_at: string;
         };
+        /** SlackChannelAllowOut */
+        readonly SlackChannelAllowOut: {
+            /** Id */
+            readonly id: string;
+            /** Agent */
+            readonly agent: string;
+            /** Channel */
+            readonly channel: string;
+            /** Channel Name */
+            readonly channel_name: string;
+            /** Follow */
+            readonly follow: boolean;
+            /** Note */
+            readonly note: string;
+            /** Added By Email */
+            readonly added_by_email: string;
+            /** Added At */
+            readonly added_at: string;
+        };
         /** SlackChannelIngestSwitchOut */
         readonly SlackChannelIngestSwitchOut: {
             /** Enabled */
             readonly enabled: boolean;
+            /** Allowed */
+            readonly allowed: readonly components["schemas"]["SlackChannelAllowOut"][];
         };
         /** SlackCommandsOut */
         readonly SlackCommandsOut: {
@@ -10906,6 +10968,31 @@ export interface components {
             /** Enabled */
             readonly enabled: boolean;
         };
+        /** SlackChannelAllowIn */
+        readonly SlackChannelAllowIn: {
+            /**
+             * Agent
+             * @description The agent's slug (an agent of this workspace).
+             */
+            readonly agent: string;
+            /**
+             * Channel
+             * @description The Slack channel: its id (C… or G…) or #name.
+             */
+            readonly channel: string;
+            /**
+             * Follow
+             * @description Also allow following new messages, not only one read.
+             * @default false
+             */
+            readonly follow: boolean;
+            /**
+             * Note
+             * @description Why — shown on the settings page and in the log.
+             * @default
+             */
+            readonly note: string;
+        };
         /** SlackDeclareAgentOut */
         readonly SlackDeclareAgentOut: {
             /** Status */
@@ -10984,7 +11071,7 @@ export interface components {
             readonly agent: string;
             /**
              * Channel
-             * @description The Slack channel id (C… or G…) — not its name.
+             * @description The Slack channel: its id (C… or G…), or #name.
              */
             readonly channel: string;
             /**
@@ -25635,6 +25722,55 @@ export interface operations {
                 readonly "application/json": components["schemas"]["SlackChannelIngestSwitchIn"];
             };
         };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackConfigOut"];
+                };
+            };
+        };
+    };
+    readonly allow_channel_ingest: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlackChannelAllowIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackConfigOut"];
+                };
+            };
+        };
+    };
+    readonly disallow_channel_ingest: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly allow_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {

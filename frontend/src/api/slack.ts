@@ -56,6 +56,29 @@ export async function setSlackChannelIngest(workspace: string, enabled: boolean)
   return res.data as SlackConfigOut
 }
 
+// An owner's explicit allow-list: one channel (id or #name) for one agent. A
+// matching ask reads at once, with a notice in the channel. Owners only.
+export async function allowSlackChannel(
+  workspace: string,
+  body: { agent: string; channel: string; follow: boolean; note: string },
+): Promise<SlackConfigOut> {
+  const res = await apiV2.POST('/api/slack-config/{workspace}/channel-ingest/allowed', {
+    params: { path: { workspace } },
+    body,
+  })
+  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to allow-list that channel'))
+  return res.data as SlackConfigOut
+}
+
+// Removing an entry also revokes the reads it allowed. Owners only.
+export async function disallowSlackChannel(workspace: string, allowId: string): Promise<SlackConfigOut> {
+  const res = await apiV2.DELETE('/api/slack-config/{workspace}/channel-ingest/allowed/{allow_id}', {
+    params: { path: { workspace, allow_id: allowId } },
+  })
+  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to remove that channel'))
+  return res.data as SlackConfigOut
+}
+
 export async function syncSlackCommands(workspace: string): Promise<SlackSyncOut> {
   const res = await apiV2.POST('/api/slack-config/{workspace}/sync', { params: { path: { workspace } } })
   if (!res.response.ok) throw new Error(problemMessage(res.error, 'Sync failed'))
