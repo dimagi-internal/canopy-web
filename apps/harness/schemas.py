@@ -1546,10 +1546,16 @@ class RunnerDeviceKeyIn(Schema):
 
     `kind: "aws-iam"` (an EC2 box's instance role, canopy-web#1549) sends
     `role_arn` and `proof` (an `X-Canopy-Aws-Proof` value whose htu is this
-    URL) instead of `public_jwk`; the proof's signer must BE `role_arn`."""
+    URL) instead of `public_jwk`; the proof's signer must BE `role_arn`.
+
+    `ecdh_public_jwk` (zero-knowledge vault, canopy-web#1550) is a SEPARATE
+    P-256 public key the box does ECDH with, for every kind including
+    `aws-iam`. Sending a new or different one for an `active` key sends it
+    back to `pending` — a person approves again."""
 
     runner: uuid.UUID
     public_jwk: dict[str, Any] | None = None
+    ecdh_public_jwk: dict[str, Any] | None = None
     kind: DeviceKeyKind
     label: str = Field(default="", max_length=120)
     role_arn: str = Field(default="", max_length=300)
@@ -1562,6 +1568,8 @@ class RunnerDeviceKeyCreatedOut(Schema):
     status: DeviceKeyStatus
     #: Where a person who owns or administers the runner approves it.
     approve_url: str
+    #: RFC 7638 thumbprint of the ECDH key ("" when none was sent).
+    ecdh_jkt: str = ""
 
 
 class RunnerDeviceKeyOut(Schema):
@@ -1575,6 +1583,9 @@ class RunnerDeviceKeyOut(Schema):
     label: str = ""
     #: `aws-iam` only: the instance role the box proves itself as.
     role_arn: str = ""
+    #: The ECDH key vault keys are wrapped to (canopy-web#1550); "" / {} if none.
+    ecdh_jkt: str = ""
+    ecdh_public_jwk: dict[str, Any] = {}
     status: DeviceKeyStatus
     created_at: dt.datetime
     approved_at: dt.datetime | None = None
@@ -1583,3 +1594,6 @@ class RunnerDeviceKeyOut(Schema):
     last_used_at: dt.datetime | None = None
     #: The caller owns or administers this key's runner (may approve / revoke).
     can_manage: bool = False
+    #: On approve only: zero-knowledge agents the caller administers that this
+    #: key now waits on a vault-key grant for (offer "Grant" right away).
+    zk_pending_agents: list[str] = []

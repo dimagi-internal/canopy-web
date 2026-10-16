@@ -53,7 +53,8 @@ def _burst_limit() -> int:
 
 
 def _applies(agent) -> bool:
-    return agent.credential_source == agent.CANOPY_WEB
+    # A zero-knowledge agent's values come from canopy-web whatever the source says.
+    return agent.credential_source == agent.CANOPY_WEB or agent.zk_enabled
 
 
 def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None,

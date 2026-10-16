@@ -120,6 +120,13 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_pat_rotation": ("agent-admin",),
     "set_pat_rotation": ("agent-admin",),  # turning it on also asks mint_agent_canopy_token's guard
     "rotate_pat_now": ("agent-admin",),  # browser: + passkey step-up; token allowed
+    # zero-knowledge vault (apps/agents/zk.py): browser writes need a passkey step-up
+    "get_agent_zk_state": ("agent-admin",),  # wraps are public; ?values= ciphertext, read-logged
+    "enable_agent_zk": ("agent-admin",),  # browser: + step-up; token allowed
+    "set_agent_zk_values": ("agent-admin",),  # browser: + step-up; token allowed
+    "add_agent_zk_wraps": ("agent-admin",),  # browser: + step-up; token allowed
+    "rotate_agent_zk": ("agent-admin",),  # browser: + step-up; token allowed
+    "disable_agent_zk": ("agent-admin",),  # browser session + step-up only (plaintext comes back)
     "set_slack_enabled": ("agent-admin",),
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
@@ -701,6 +708,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "passkey_step_up_status": ("self",),
     "begin_passkey_step_up": ("self",),
     "finish_passkey_step_up": ("self",),
+    # --- apps/passkeys/api_vault.py  (the caller's OWN zero-knowledge vault key)
+    "get_vault_keyset": ("self",),
+    "put_vault_keyset": ("self",),  # browser session + passkey step-up only
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
 }
@@ -752,6 +762,7 @@ SETTINGS: frozenset[str] = frozenset({
     "set_credential_source", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",
     "set_device_binding", "approve_runner_device_key", "revoke_runner_device_key",
     "set_pat_rotation", "rotate_pat_now",
+    "enable_agent_zk", "set_agent_zk_values", "add_agent_zk_wraps", "rotate_agent_zk", "disable_agent_zk",
     "set_agent_github", "delete_agent_github", "set_agent_salesforce", "delete_agent_salesforce",
     "set_slack_enabled", "set_turn_mode", "set_sender_trust", "delete_sender_trust",
     # agents: routing (handlers report before/after — apps/harness/routing_audit.py)
@@ -798,6 +809,7 @@ SETTINGS: frozenset[str] = frozenset({
     "set_presence_preference", "set_session_workspace_preference", "set_preferences",
     "set_my_agent_memory", "set_my_grant_collection",
     "finish_passkey_registration", "delete_passkey",  # the second factor a step-up asks for
+    "put_vault_keyset",  # the person's zero-knowledge vault key
     "create_my_memory_collection", "update_my_memory_collection", "delete_my_memory_collection",
     "grant_my_session_agent", "set_my_session_memory", "hcp_revokeGrant",
     "contact_hcp_policy", "contact_hcp_revoke", "contact_hcp_grant", "contact_hcp_opt_in",

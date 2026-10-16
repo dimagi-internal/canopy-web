@@ -105,7 +105,7 @@ def test_register_returns_the_contract_shape_and_is_idempotent(fleet):
     res = _register(fleet)
     assert res.status_code == 201
     body = res.json()
-    assert set(body) == {"id", "jkt", "status", "approve_url"}
+    assert set(body) == {"id", "jkt", "status", "approve_url", "ecdh_jkt"}
     assert body["status"] == "pending"
     assert body["approve_url"].endswith(f"/settings?device_key={body['id']}#device-keys")
     from canopy_sdk.contract import jwk_thumbprint

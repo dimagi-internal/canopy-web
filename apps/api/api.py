@@ -232,6 +232,7 @@ from apps.tokens.embed_api import embed_router
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
 from apps.passkeys.api import router as passkeys_router  # noqa: E402
+from apps.passkeys.api_vault import router as vault_keyset_router  # noqa: E402
 
 api.add_router("/issues", issues_router)
 api.add_router("", common_router)
@@ -277,6 +278,7 @@ api.add_router("/agents", contributors_router)  # ideas + contributor pages on a
 api.add_router("/agents", agent_capabilities_router)  # what an agent declares it can lease
 api.add_router("/capabilities", capabilities_router)  # grants + leases (cloud capabilities)
 api.add_router("/passkeys", passkeys_router)  # a person's passkeys + the step-up (canopy-web#1538)
+api.add_router("/vault", vault_keyset_router)  # a person's zero-knowledge vault key (canopy-web#1550)
 # Fleet-wide task and project lists (/api/tasks/, /api/projects/) — the
 # per-agent filters across every agent the caller can see.
 api.add_router("", fleet_tasks_router)

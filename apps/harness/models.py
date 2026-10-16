@@ -1232,6 +1232,14 @@ class RunnerDeviceKey(models.Model):
     public_jwk = models.JSONField(default=dict, blank=True)
     #: `aws-iam` only: the IAM role, as `arn:aws:iam::<acct>:role/<name>`.
     role_arn = models.CharField(max_length=300, blank=True, default="")
+    #: Zero-knowledge vault (canopy-web#1550): a SEPARATE P-256 key the box
+    #: does ECDH with — Secure Enclave keys are per-purpose, so the signing key
+    #: cannot also agree keys; for `aws-iam` it is a 0600 key file on the box.
+    #: Setting or changing it on an `active` key sends the key back to
+    #: `pending` (a new key to receive vault keys is a new trust decision).
+    ecdh_public_jwk = models.JSONField(default=dict, blank=True)
+    #: RFC 7638 thumbprint of `ecdh_public_jwk` — bound into every device wrap.
+    ecdh_jkt = models.CharField(max_length=64, blank=True, default="", db_index=True)
     jkt = models.CharField(max_length=64, unique=True)
     kind = models.CharField(max_length=16, choices=KIND_CHOICES)
     label = models.CharField(max_length=120, blank=True, default="")

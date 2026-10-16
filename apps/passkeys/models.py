@@ -34,6 +34,10 @@ class Passkey(models.Model):
     aaguid = models.CharField(max_length=64, blank=True)
     #: Synced (iCloud Keychain, Google Password Manager) rather than device-bound.
     backed_up = models.BooleanField(default=False)
+    #: The authenticator reported the WebAuthn PRF extension at registration
+    #: (`clientExtensionResults.prf.enabled`) — it can seal a vault keyset
+    #: (canopy-web#1550). None: registered before that was asked.
+    prf_enabled = models.BooleanField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
 
@@ -42,3 +46,29 @@ class Passkey(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - admin/debug only
         return f"{self.label or 'passkey'} ({self.user_id})"
+
+
+class UserVaultKeyset(models.Model):
+    """A person's zero-knowledge vault identity (Canopy Vault Phase 2,
+    canopy-web#1550; formats in docs/vault/zk-v1/zk_v1_reference.py §4).
+
+    A P-256 ECDH key pair generated in the person's browser. Only the PUBLIC
+    half is readable here (`public_jwk`, which other members wrap agents' vault
+    keys to). The private scalar exists only as `seals`: one per PRF-capable
+    passkey, each AES-GCM under a key derived from that passkey's WebAuthn PRF
+    output — which never leaves the browser. canopy-web checks the seals' shape
+    and that each names one of the person's own passkeys; it cannot open one.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="vault_keyset",
+    )
+    #: {kty, crv, x, y} — EC P-256, public members only.
+    public_jwk = models.JSONField()
+    #: [{"alg": "prf", "cred", "s", "n", "ct"}, ...] — one per passkey.
+    seals = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:  # pragma: no cover - admin/debug only
+        return f"vault-keyset:{self.user_id}"

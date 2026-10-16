@@ -63,6 +63,7 @@ def key_out(key: RunnerDeviceKey, *, can_manage: bool) -> RunnerDeviceKeyOut:
     return RunnerDeviceKeyOut(
         id=key.pk, runner=key.runner_id, runner_name=key.runner.name, jkt=key.jkt,
         kind=key.kind, label=key.label, role_arn=key.role_arn, status=key.status,
+        ecdh_jkt=key.ecdh_jkt, ecdh_public_jwk=key.ecdh_public_jwk or {},
         created_at=key.created_at,
         approved_at=key.approved_at,
         approved_by_email=(key.approved_by.email if key.approved_by_id else ""),
@@ -96,25 +97,66 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
         except device_keys.KeyError_ as exc:
             raise HttpError(422, str(exc)) from exc
         jkt = device_keys.thumbprint(jwk)
+    ecdh_jwk, ecdh_jkt = _ecdh(payload)
 
     existing = RunnerDeviceKey.objects.filter(jkt=jkt).first()
     if existing is not None:
         if existing.runner_id != runner.pk:
             raise HttpError(409, "this key is already registered to a different runner")
-        return 200, RunnerDeviceKeyCreatedOut(
-            id=existing.pk, jkt=jkt, status=existing.status, approve_url=approve_url(existing))
+        _set_ecdh(existing, ecdh_jwk, ecdh_jkt)
+        return 200, _created(existing)
     try:
         with transaction.atomic():
             key = RunnerDeviceKey.objects.create(
                 runner=runner, public_jwk=jwk, role_arn=role_arn, jkt=jkt, kind=payload.kind,
                 label=payload.label.strip(), created_by=request.user,
+                ecdh_public_jwk=ecdh_jwk or {}, ecdh_jkt=ecdh_jkt,
             )
     except IntegrityError:  # a concurrent identical POST won the race
         key = RunnerDeviceKey.objects.get(jkt=jkt)
-        return 200, RunnerDeviceKeyCreatedOut(
-            id=key.pk, jkt=jkt, status=key.status, approve_url=approve_url(key))
-    return 201, RunnerDeviceKeyCreatedOut(
-        id=key.pk, jkt=jkt, status=key.status, approve_url=approve_url(key))
+        _set_ecdh(key, ecdh_jwk, ecdh_jkt)
+        return 200, _created(key)
+    return 201, _created(key)
+
+
+def _created(key: RunnerDeviceKey) -> RunnerDeviceKeyCreatedOut:
+    return RunnerDeviceKeyCreatedOut(id=key.pk, jkt=key.jkt, status=key.status,
+                                     approve_url=approve_url(key), ecdh_jkt=key.ecdh_jkt)
+
+
+def _ecdh(payload: RunnerDeviceKeyIn) -> tuple[dict | None, str]:
+    """The registration's ECDH public key, checked, and its thumbprint."""
+    if not payload.ecdh_public_jwk:
+        return None, ""
+    try:
+        jwk = device_keys.normalize_public_jwk(payload.ecdh_public_jwk)
+    except device_keys.KeyError_ as exc:
+        raise HttpError(422, f"ecdh_public_jwk: {exc}") from exc
+    return jwk, device_keys.thumbprint(jwk)
+
+
+def _set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
+    """Attach or change a known key's ECDH key (canopy-web#1550). An ACTIVE key
+    goes back to `pending`: which key receives an agent's vault key is a trust
+    decision a person makes, not one the box makes by re-posting. Wraps to the
+    old ECDH key are dropped (they name its thumbprint). Re-sending the same
+    key, or none, changes nothing; a revoked key stays revoked."""
+    if jwk is None or jkt == key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED:
+        return
+    from apps.agents import zk
+
+    before = key.status
+    with transaction.atomic():
+        key.ecdh_public_jwk, key.ecdh_jkt = jwk, jkt
+        fields = ["ecdh_public_jwk", "ecdh_jkt"]
+        if key.status == RunnerDeviceKey.ACTIVE:
+            key.status, key.approved_by, key.approved_at = RunnerDeviceKey.PENDING, None, None
+            fields += ["status", "approved_by", "approved_at"]
+        key.save(update_fields=fields)
+        zk.forget_device_wraps(key)
+    if before != key.status:
+        audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
+                          before=before, after=key.status)
 
 
 def _verified_role(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[str, str]:
@@ -179,7 +221,25 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
         key.save(update_fields=["status", "approved_by", "approved_at"])
     audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
                       before=before, after=key.status)
-    return key_out(key, can_manage=True)
+    out = key_out(key, can_manage=True)
+    out.zk_pending_agents = _zk_agents_waiting_on(request.user, key)
+    return out
+
+
+def _zk_agents_waiting_on(user, key: RunnerDeviceKey) -> list[str]:
+    """Zero-knowledge agents `user` administers that this (now active) key
+    should be granted the vault key of — the "Grant" offer after approving."""
+    if key.status != RunnerDeviceKey.ACTIVE or not key.ecdh_jkt:
+        return []
+    from apps.agents.models import Agent, AgentVaultWrap
+
+    out = []
+    for agent in Agent.objects.filter(zk_enabled=True).select_related("workspace", "owner"):
+        if (agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)
+                and not AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device",
+                                                      device_key=key).exists()):
+            out.append(agent.slug)
+    return sorted(out)
 
 
 @router.delete("/{key_id}", response=RunnerDeviceKeyOut, summary="Revoke a device key")

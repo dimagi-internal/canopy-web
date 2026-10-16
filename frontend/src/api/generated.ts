@@ -3868,6 +3868,144 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/vault/zk": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Zero-knowledge state: kv, wraps, and who still needs one
+         * @description `pending` lists active device keys (with an ECDH key) on runners this
+         *     agent's resolve accepts, and current agent admins with a vault key, that
+         *     hold no wrap at the current `kv` — each with the public key to wrap to.
+         *     `wraps` are public data. `?values=true` adds the `zk1:` ciphertexts (what
+         *     rotate and turn-off need), and records a read of each.
+         */
+        readonly get: operations["get_agent_zk_state"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/zk/enable": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Turn on zero-knowledge: wraps + every value as ciphertext, atomically
+         * @description `{kv: 1, wraps: [{kind, target, wrap}], values: [{name, value_zk}]}`.
+         *     Needs exactly one `recovery` wrap, at least one `member` wrap, and a wrap
+         *     the caller can open (their member wrap, or a device wrap on a runner they
+         *     administer). `values` must cover every stored credential; each one's
+         *     custodial copy is wiped. Errors are problem+json with an `error` code.
+         */
+        readonly post: operations["enable_agent_zk"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/zk/values": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set zero-knowledge values (ciphertext) at the current kv
+         * @description Non-clobbering upsert of `{name, value_zk}`. A `kv` other than the
+         *     current one is 409 `zk_kv_mismatch` (the vault key was rotated).
+         */
+        readonly put: operations["set_agent_zk_values"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/zk/wraps": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Grant: wrap the vault key to pending devices or admins
+         * @description `{kv, wraps: [{kind: device|member, target, wrap}]}`. A device target is
+         *     an ACTIVE key with an ECDH key on a runner this agent routes to; a member
+         *     target is a current agent admin with a vault key. Replaces that target's
+         *     wrap at this kv. The recovery wrap is set only by enable and rotate.
+         */
+        readonly post: operations["add_agent_zk_wraps"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/zk/rotate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Rotate the vault key: replace every wrap and value atomically
+         * @description `{new_kv: kv + 1, wraps, values}`. Every target holding a wrap now that
+         *     still qualifies must get one at `new_kv` (422 `zk_rewrap_required`
+         *     otherwise); a revoked device or removed admin is simply left out. A fresh
+         *     recovery wrap and a wrap the caller can open are required, and `values`
+         *     must cover every stored credential.
+         */
+        readonly post: operations["rotate_agent_zk"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/zk/disable": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Turn off zero-knowledge: back to custodial storage (browser + passkey)
+         * @description `{values: [{name, plaintext}]}` covering every stored credential, each
+         *     decrypted in the browser; canopy-web encrypts them at rest as before and
+         *     deletes every wrap. A browser session with a passkey step-up only.
+         */
+        readonly post: operations["disable_agent_zk"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/sender-trust": {
         readonly parameters: {
             readonly query?: never;
@@ -5239,6 +5377,34 @@ export interface paths {
         readonly put?: never;
         /** Finish a passkey step-up; opens a five-minute window */
         readonly post: operations["finish_passkey_step_up"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vault/keyset": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * My zero-knowledge vault key (public half + seals)
+         * @description `exists: false` until set up. `prf_input` is what to pass as
+         *     `extensions.prf.eval.first` when asserting a passkey to open a seal.
+         */
+        readonly get: operations["get_vault_keyset"];
+        /**
+         * Set up or extend my vault key (browser + passkey)
+         * @description `{public_jwk, seals, replace}`. `seals` replaces the stored list; each
+         *     must name one of the caller's passkeys. A different `public_jwk` from the
+         *     stored one is 409 `zk_keyset_exists` unless `replace` is true, which also
+         *     drops every agent's member wrap to the old key.
+         */
+        readonly put: operations["put_vault_keyset"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -17059,6 +17225,17 @@ export interface components {
              * @default
              */
             readonly mailbox: string;
+            /**
+             * Zk
+             * @default false
+             */
+            readonly zk: boolean;
+            /** Kv */
+            readonly kv?: number | null;
+            /** Wrap */
+            readonly wrap?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /**
          * DeviceProofRequiredOut
@@ -17071,6 +17248,22 @@ export interface components {
              * @constant
              */
             readonly error: "device_proof_required";
+        };
+        /**
+         * ZkWrapMissingOut
+         * @description 409 from resolve: the agent is zero-knowledge and the proving device
+         *     holds no vault-key wrap at the current kv (its owner is alerted).
+         */
+        readonly ZkWrapMissingOut: {
+            /**
+             * Error
+             * @constant
+             */
+            readonly error: "zk_wrap_missing";
+            /** Kv */
+            readonly kv: number;
+            /** Device Key */
+            readonly device_key: string;
         };
         /** AgentVaultOut */
         readonly AgentVaultOut: {
@@ -17106,6 +17299,203 @@ export interface components {
             readonly vault?: string | null;
             /** Service Key */
             readonly service_key?: string | null;
+        };
+        /** ZkStateOut */
+        readonly ZkStateOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Agent Id */
+            readonly agent_id: string;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Kv */
+            readonly kv: number;
+            /** Wraps */
+            readonly wraps: readonly components["schemas"]["ZkWrapOut"][];
+            /** Pending */
+            readonly pending: readonly components["schemas"]["ZkTargetOut"][];
+            /**
+             * Rotation Recommended
+             * @default false
+             */
+            readonly rotation_recommended: boolean;
+            /** Values */
+            readonly values?: {
+                readonly [key: string]: string;
+            } | null;
+        };
+        /**
+         * ZkTargetOut
+         * @description A principal with no wrap at the current kv. `public_jwk` is what to wrap
+         *     to: the device's ECDH key, or the person's keyset key.
+         */
+        readonly ZkTargetOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member";
+            /** Target */
+            readonly target: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Ecdh Jkt
+             * @default
+             */
+            readonly ecdh_jkt: string;
+            /**
+             * Runner
+             * @default
+             */
+            readonly runner: string;
+            /**
+             * Runner Name
+             * @default
+             */
+            readonly runner_name: string;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Device Kind
+             * @default
+             */
+            readonly device_kind: string;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+        };
+        /** ZkWrapOut */
+        readonly ZkWrapOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member" | "recovery";
+            /** Kv */
+            readonly kv: number;
+            /** Target */
+            readonly target?: string | null;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Ecdh Jkt
+             * @default
+             */
+            readonly ecdh_jkt: string;
+            /**
+             * Current
+             * @default true
+             */
+            readonly current: boolean;
+            /** Public Jwk */
+            readonly public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Wrap */
+            readonly wrap: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Created By Email
+             * @default
+             */
+            readonly created_by_email: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** ZkEnableIn */
+        readonly ZkEnableIn: {
+            /**
+             * Kv
+             * @default 1
+             */
+            readonly kv: number;
+            /** Wraps */
+            readonly wraps: readonly components["schemas"]["ZkWrapIn"][];
+            /** Values */
+            readonly values?: readonly components["schemas"]["ZkValueIn"][];
+        };
+        /** ZkValueIn */
+        readonly ZkValueIn: {
+            /** Name */
+            readonly name: string;
+            /** Value Zk */
+            readonly value_zk: string;
+        };
+        /**
+         * ZkWrapIn
+         * @description One wrap of the vault key. `target` is a device key id (`device`), a user
+         *     id (`member`), or null (`recovery`). `wrap` is the JSON object of
+         *     docs/vault/zk-v1/zk_v1_reference.py §3 / §5 — shape-checked, never opened.
+         */
+        readonly ZkWrapIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member" | "recovery";
+            /** Target */
+            readonly target?: string | null;
+            /** Wrap */
+            readonly wrap: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** ZkValuesOut */
+        readonly ZkValuesOut: {
+            /** Kv */
+            readonly kv: number;
+            /** Names */
+            readonly names: readonly string[];
+        };
+        /** ZkValuesIn */
+        readonly ZkValuesIn: {
+            /** Kv */
+            readonly kv: number;
+            /** Values */
+            readonly values: readonly components["schemas"]["ZkValueIn"][];
+        };
+        /** ZkWrapsIn */
+        readonly ZkWrapsIn: {
+            /** Kv */
+            readonly kv: number;
+            /** Wraps */
+            readonly wraps: readonly components["schemas"]["ZkWrapIn"][];
+        };
+        /** ZkRotateIn */
+        readonly ZkRotateIn: {
+            /** New Kv */
+            readonly new_kv: number;
+            /** Wraps */
+            readonly wraps: readonly components["schemas"]["ZkWrapIn"][];
+            /** Values */
+            readonly values?: readonly components["schemas"]["ZkValueIn"][];
+        };
+        /** ZkDisableIn */
+        readonly ZkDisableIn: {
+            /** Values */
+            readonly values?: readonly components["schemas"]["ZkPlainValueIn"][];
+        };
+        /** ZkPlainValueIn */
+        readonly ZkPlainValueIn: {
+            /** Name */
+            readonly name: string;
+            /** Plaintext */
+            readonly plaintext: string;
         };
         /** SenderTrustOut */
         readonly SenderTrustOut: {
@@ -17340,6 +17730,18 @@ export interface components {
              */
             readonly role_arn: string;
             /**
+             * Ecdh Jkt
+             * @default
+             */
+            readonly ecdh_jkt: string;
+            /**
+             * Ecdh Public Jwk
+             * @default {}
+             */
+            readonly ecdh_public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
              * Status
              * @enum {string}
              */
@@ -17365,6 +17767,11 @@ export interface components {
              * @default false
              */
             readonly can_manage: boolean;
+            /**
+             * Zk Pending Agents
+             * @default []
+             */
+            readonly zk_pending_agents: readonly string[];
         };
         /**
          * AgentCredentialAlertOut
@@ -17378,7 +17785,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            readonly kind: "no-turn" | "undeclared-ref" | "burst" | "device-proof";
+            readonly kind: "no-turn" | "undeclared-ref" | "burst" | "device-proof" | "zk-wrap-missing";
             /**
              * Detail
              * @default
@@ -19456,6 +19863,8 @@ export interface components {
             readonly last_used_at?: string | null;
             /** Backed Up */
             readonly backed_up: boolean;
+            /** Prf Enabled */
+            readonly prf_enabled?: boolean | null;
         };
         /** PasskeyOptionsOut */
         readonly PasskeyOptionsOut: {
@@ -19495,6 +19904,54 @@ export interface components {
             readonly credential: {
                 readonly [key: string]: unknown;
             };
+        };
+        /** VaultKeysetOut */
+        readonly VaultKeysetOut: {
+            /** User Id */
+            readonly user_id: string;
+            /** Prf Input */
+            readonly prf_input: string;
+            /** Exists */
+            readonly exists: boolean;
+            /** Public Jwk */
+            readonly public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Seals */
+            readonly seals?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Passkeys */
+            readonly passkeys?: readonly components["schemas"]["VaultKeysetPasskeyOut"][];
+            /** Updated At */
+            readonly updated_at?: string | null;
+        };
+        /** VaultKeysetPasskeyOut */
+        readonly VaultKeysetPasskeyOut: {
+            /** Credential Id */
+            readonly credential_id: string;
+            /** Label */
+            readonly label: string;
+            /** Prf Enabled */
+            readonly prf_enabled?: boolean | null;
+            /** Sealed */
+            readonly sealed: boolean;
+        };
+        /** VaultKeysetIn */
+        readonly VaultKeysetIn: {
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Seals */
+            readonly seals: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Replace
+             * @default false
+             */
+            readonly replace: boolean;
         };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
@@ -22588,6 +23045,11 @@ export interface components {
             readonly status: "pending" | "active" | "revoked";
             /** Approve Url */
             readonly approve_url: string;
+            /**
+             * Ecdh Jkt
+             * @default
+             */
+            readonly ecdh_jkt: string;
         };
         /**
          * RunnerDeviceKeyIn
@@ -22597,6 +23059,11 @@ export interface components {
          *     `kind: "aws-iam"` (an EC2 box's instance role, canopy-web#1549) sends
          *     `role_arn` and `proof` (an `X-Canopy-Aws-Proof` value whose htu is this
          *     URL) instead of `public_jwk`; the proof's signer must BE `role_arn`.
+         *
+         *     `ecdh_public_jwk` (zero-knowledge vault, canopy-web#1550) is a SEPARATE
+         *     P-256 public key the box does ECDH with, for every kind including
+         *     `aws-iam`. Sending a new or different one for an `active` key sends it
+         *     back to `pending` — a person approves again.
          */
         readonly RunnerDeviceKeyIn: {
             /**
@@ -22606,6 +23073,10 @@ export interface components {
             readonly runner: string;
             /** Public Jwk */
             readonly public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
                 readonly [key: string]: unknown;
             } | null;
             /**
@@ -30413,6 +30884,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["DeviceProofRequiredOut"];
                 };
             };
+            /** @description Conflict */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkWrapMissingOut"];
+                };
+            };
         };
     };
     readonly get_agent_vault: {
@@ -30459,6 +30939,160 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentVaultOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_zk_state: {
+        readonly parameters: {
+            readonly query?: {
+                readonly values?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly enable_agent_zk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkEnableIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly set_agent_zk_values: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkValuesIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkValuesOut"];
+                };
+            };
+        };
+    };
+    readonly add_agent_zk_wraps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkWrapsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly rotate_agent_zk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkRotateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly disable_agent_zk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkDisableIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkStateOut"];
                 };
             };
         };
@@ -32298,6 +32932,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["StepUpStatusOut"];
+                };
+            };
+        };
+    };
+    readonly get_vault_keyset: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultKeysetOut"];
+                };
+            };
+        };
+    };
+    readonly put_vault_keyset: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultKeysetIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultKeysetOut"];
                 };
             };
         };

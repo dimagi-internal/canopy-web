@@ -65,6 +65,10 @@ def enable_refusal(agent, actor) -> RotationRefused | None:
     from apps.agents.models import AgentCredential
     from apps.workspaces import permissions as perms
 
+    if agent.zk_enabled:
+        # canopy-web cannot encrypt under a vault key it never holds (canopy-web#1550).
+        return RotationRefused(f"{agent.slug} is zero-knowledge: canopy-web cannot write its "
+                               f"{CANOPY_PAT_REF}; rotate it from a member's browser or the canopy CLI", 409)
     if agent.user_id is None:
         return RotationRefused(f"{agent.slug} has no canopy login of its own (canopy user); "
                                "mint its canopy token once first, then rotation can take over")
@@ -102,7 +106,7 @@ def _current_token(agent):
     if cred is None or agent.user_id is None:
         return None
     try:
-        raw = cred.plaintext()
+        raw = cred.plaintext()  # refuses a zero-knowledge value: "not a token we know"
     except Exception:  # noqa: BLE001 - an undecryptable value is just "not a token we know"
         return None
     digest = hashlib.sha256(raw.encode()).hexdigest()

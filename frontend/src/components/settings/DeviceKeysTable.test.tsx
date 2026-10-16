@@ -17,6 +17,7 @@ const KEY = {
   id: 'k1', runner: 'r1', runner_name: 'jj-mbp', jkt: 'abcdefghijklmnopqrstuvwxyz', kind: 'secure-enclave' as const,
   label: 'laptop', role_arn: '', status: 'pending' as const, created_at: '2026-10-16T00:00:00Z', approved_at: null,
   approved_by_email: '', revoked_at: null, last_used_at: null, can_manage: true,
+  ecdh_jkt: '', ecdh_public_jwk: {}, zk_pending_agents: [] as string[],
 }
 
 afterEach(() => {

@@ -199,7 +199,7 @@ def test_enroll_verifies_the_proof_and_lands_pending(fleet, sts):
     res = _enroll(fleet, role_arn="arn:aws:iam::123456789012:role/svc/canopy-runner")
     assert res.status_code == 201, res.content
     body = res.json()
-    assert set(body) == {"id", "jkt", "status", "approve_url"} and body["status"] == "pending"
+    assert set(body) == {"id", "jkt", "status", "approve_url", "ecdh_jkt"} and body["status"] == "pending"
     key = RunnerDeviceKey.objects.get()
     assert key.kind == "aws-iam" and key.role_arn == ROLE and key.public_jwk == {}
     assert body["jkt"] == key.jkt == hashlib.sha256(ROLE.encode()).hexdigest()
