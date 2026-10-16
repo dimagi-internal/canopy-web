@@ -458,6 +458,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "storyboards_rotate_token": ("content.write",),
     "open_storyboard_round": ("content.write",),
     "close_storyboard_round": ("content.write",),
+    "delete_storyboard_round_note": ("content.write",),
     "get_storyboard_round": ("member",),
     "consume_storyboard_round": ("content.write",),
     "edit_storyboard_decision": ("token-link", "member"),  # inside an open round every edit is staged (members too); outside one a member applies immediately and a link holder is refused (409)
@@ -794,7 +795,7 @@ NOT_SETTINGS: dict[str, str] = {
     "create_shareouts": "content", "clear_shareouts": "content",
     "create_storyboard": "content", "patch_storyboard": "content", "leave_feedback": "content",
     "edit_storyboard_decision": "content", "open_storyboard_round": "content",
-    "close_storyboard_round": "content", "consume_storyboard_round": "content",
+    "close_storyboard_round": "content", "delete_storyboard_round_note": "content", "consume_storyboard_round": "content",
     "upload_walkthrough": "content", "patch_walkthrough": "content", "delete_walkthrough": "content",
     "ingest_feedback": "content", "resolve_feedback": "content",
     "open_thread": "content", "close_thread": "content",

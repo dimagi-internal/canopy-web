@@ -867,3 +867,64 @@ def test_the_board_read_honours_the_workspace_path_pin(world):
     _twin_board(world)
     assert world["ace"].get("/api/w/connect/storyboards/supply").json()["title"] == "Connect Supply"
     assert world["ace"].get("/api/w/ws2/storyboards/supply").json()["title"] == "WS2 Supply"
+
+
+# ------------------------------------------------------------------ deleting a note
+
+
+def _delete(world, note_id, client=None, token=False):
+    c = client or world["owner"]
+    q = f"?t={world['token']}" if token else ""
+    return c.delete(f"/api/storyboards/supply/notes/{note_id}{q}")
+
+
+def _note_id(world):
+    resp = _note(world, author_name="Guest")
+    assert resp.status_code in (200, 201), resp.content
+    return Feedback.objects.latest("pk").pk
+
+
+def test_editor_deletes_a_guest_note_in_the_open_round(world):
+    _open(world)
+    nid = _note_id(world)
+    rnd = board_rounds.current(world["board"])
+    assert board_rounds.summary(rnd)["note_count"] == 1
+    resp = _delete(world, nid)
+    assert resp.status_code == 204, resp.content
+    assert not Feedback.objects.filter(pk=nid).exists()
+    assert board_rounds.summary(board_rounds.current(world["board"]))["note_count"] == 0
+
+
+def test_viewer_cannot_delete_a_note(world):
+    _open(world)
+    nid = _note_id(world)
+    assert _delete(world, nid, client=world["viewer"]).status_code == 403
+    assert Feedback.objects.filter(pk=nid).exists()
+
+
+def test_token_holder_cannot_delete_a_note(world):
+    _open(world)
+    nid = _note_id(world)
+    assert _delete(world, nid, client=Client(), token=True).status_code in (401, 403, 404)
+    assert Feedback.objects.filter(pk=nid).exists()
+
+
+def test_note_in_a_closed_round_cannot_be_deleted(world):
+    _open(world)
+    nid = _note_id(world)
+    assert _close(world).status_code == 200
+    resp = _delete(world, nid)
+    assert resp.status_code == 409
+    assert Feedback.objects.filter(pk=nid).exists()
+
+
+def test_note_from_another_board_is_404(world):
+    _open(world)
+    other = Storyboard.objects.create(slug="other", title="Other", workspace=world["ws"],
+                                      agent_project=world["project"])
+    other_rnd = board_rounds.open_round(other, by_user=world["users"]["owner"])
+    fb = Feedback.objects.create(workspace=world["ws"], target_kind="storyboard", target_ref="other",
+                                 kind="comment", body="elsewhere", round=other_rnd)
+    assert _delete(world, fb.pk).status_code == 404
+    assert _delete(world, 999999).status_code == 404
+    assert Feedback.objects.filter(pk=fb.pk).exists()

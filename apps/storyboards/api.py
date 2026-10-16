@@ -519,6 +519,23 @@ def close_storyboard_round(
     return board_rounds.summary(rnd)
 
 
+@router.delete(
+    "/{slug}/notes/{note_id}",
+    response={204: None},
+    auth=session_auth,
+    summary="Remove a note from the open feedback round",
+)
+def delete_storyboard_round_note(request: HttpRequest, slug: str, note_id: int, ws: str = ""):
+    """Editors only. Removes a test or spam note from the CURRENT OPEN round;
+    a note in a closed or consumed round is the agent's record (409)."""
+    board = _editable_or_404(request, slug, ws)
+    try:
+        board_rounds.delete_open_round_note(board, note_id)
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
+    return 204, None
+
+
 @router.get(
     "/{slug}/rounds/{number}",
     response=RoundDetailOut,

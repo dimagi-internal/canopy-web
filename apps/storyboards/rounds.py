@@ -362,6 +362,24 @@ def close_round(board, rnd, *, by_user, note: str = "", picks: dict[str, str] | 
     return rnd
 
 
+def delete_open_round_note(board, note_id: int) -> None:
+    """Hard-delete a note from this board's CURRENT OPEN round (a test or spam
+    note every link holder would otherwise see). Closed and consumed rounds are
+    the agent's record and stay immutable."""
+    with transaction.atomic():
+        # A note targets its narrative; what ties it to this board is its round.
+        fb = Feedback.objects.filter(pk=note_id, round__workspace_id=board.workspace_id,
+                                     round__target_kind=TARGET, round__target_ref=board.slug
+                                     ).select_related("round").first()
+        if fb is None:
+            raise RoundError(404, "no such note on this storyboard")
+        try:
+            frounds.lock_open(fb.round)
+        except RoundError:
+            raise RoundError(409, "only a note in the open round can be removed") from None
+        fb.delete()
+
+
 def detail(board, rnd, *, viewer) -> dict:
     """What the agent reads: every note with its author's email, the staged
     edits, and the board's current decisions (rulings are binding)."""
