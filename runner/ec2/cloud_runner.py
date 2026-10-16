@@ -250,12 +250,16 @@ def _log(msg: str) -> None:
 
 
 def _api(method: str, path: str, body: dict | None = None, *,
-         prefix: str = "/api/harness") -> tuple[int, dict | None]:
+         prefix: str = "/api/harness",
+         headers: dict | None = None) -> tuple[int, dict | None]:
     """Call canopy-web. `prefix` defaults to the harness router this runner lives
     on; pass another (e.g. `/api/events`) for the few cross-router calls."""
     url = f"{BASE_URL}{prefix}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
+    for name, value in (headers or {}).items():
+        if value:
+            req.add_header(name, value)
     req.add_header("Authorization", f"Bearer {TOKEN}")
     req.add_header("Content-Type", "application/json")
     # Provenance (canopy-web apps/common/request_context.py): what canopy records
@@ -938,8 +942,12 @@ def _agent_op_token(slug: str) -> str:
     if hit and now - hit[0] < _AGENT_OP_TTL_SECONDS:
         return hit[1]
     token = ""
+    # The turn this resolve is for, so canopy-web's read log names it (Canopy Vault,
+    # canopy#946). Known when called from a turn's thread; an older canopy-web ignores it.
+    turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
     try:
-        status, payload = _api("GET", f"/{slug}/credentials/resolve", prefix="/api/agents")
+        status, payload = _api("GET", f"/{slug}/credentials/resolve", prefix="/api/agents",
+                               headers={"X-Canopy-Turn-Id": turn_id})
         if status == 200 and isinstance(payload, dict):
             token = str(payload.get("op_sa_token") or "")
             _AGENT_VAULT[slug] = str(payload.get("op_vault") or "").strip()

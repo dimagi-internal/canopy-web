@@ -91,7 +91,7 @@ Set-StrictMode -Version Latest
 $RUNNER_SRC   = "runner/canopy_runner/canopy_runner"
 # Same list as provenance.CODE_PATHS, install-runner.sh and deploy-labs.yml
 # (tests/test_runner_code_paths.py). A different list here = a box marked stale forever.
-$RUNNER_CODE_PATHS = @("runner/canopy_runner/canopy_runner", "runner/canopy_runner/scripts", "runner/menubar", "assets/brand")
+$RUNNER_CODE_PATHS = @("runner/canopy_runner/canopy_runner", "runner/canopy_runner/scripts", "runner/menubar", "runner/device-key", "assets/brand")
 $TASK_FOLDER  = "\Canopy"
 $RUNNER_TASK  = "canopy-runner"
 $UPDATER_TASK = "canopy-runner-updater"

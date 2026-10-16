@@ -43,7 +43,7 @@ RUNNER_SRC="runner/canopy_runner/canopy_runner"
 # What counts as the runner's code for staleness: the package, the installer, the
 # menu-bar app and the icons it bundles. Same list as provenance.CODE_PATHS and
 # deploy-labs.yml (tests/test_runner_code_paths.py keeps the three equal).
-RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar assets/brand"
+RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand"
 LABEL="com.canopy.runner"
 UPDATER_LABEL="com.canopy.runner.updater"
 CONFIG="$HOME/.canopy/runner.json"
@@ -373,6 +373,32 @@ if [ "$DO_LAUNCHD" -eq 1 ] && [ "$(uname -s)" = "Darwin" ] \
     mkdir -p "$HOME/.canopy" && printf '%s\n' "$want" > "$MENUBAR_STAMP"
   else
     echo "WARNING: menu-bar app build failed — the runner itself is installed and running." >&2
+  fi
+fi
+
+# --- device key helper (macOS) -----------------------------------------------
+# canopy-device-key holds this Mac's Secure Enclave key for Canopy Vault's device proof
+# (canopy#946). canopy's `vault device` / resolve client look for it at
+# ~/.canopy/bin/canopy-device-key; the runner enrolls the key at startup. Same shape as
+# the menu-bar app: rebuilt only when its source changes, best-effort (no swiftc is a
+# warning — canopy then refuses to make a key on this Mac rather than silently using a
+# software one). Not gated on launchd: a hand install wants it too. Opt out with
+# CANOPY_DEVICE_KEY=0.
+DEVKEY="$TMP/runner/device-key"
+DEVKEY_STAMP="$HOME/.canopy/device-key-bin.sha"
+DEVKEY_BIN="$HOME/.canopy/bin/canopy-device-key"
+if [ "$(uname -s)" = "Darwin" ] && [ "${CANOPY_DEVICE_KEY:-1}" = "1" ] \
+   && [ -f "$DEVKEY/build.sh" ]; then
+  want="$(cat "$DEVKEY/Sources/main.swift" "$DEVKEY/build.sh" | shasum | cut -d' ' -f1)"
+  have="$(cat "$DEVKEY_STAMP" 2>/dev/null || true)"
+  if [ -x "$DEVKEY_BIN" ] && [ "$want" = "$have" ]; then
+    echo "==> canopy-device-key unchanged"
+  elif ! command -v swiftc >/dev/null 2>&1; then
+    echo "WARNING: swiftc not found (xcode-select --install) — canopy-device-key not built." >&2
+  elif CANOPY_DEVICE_KEY_BIN="$DEVKEY_BIN" bash "$DEVKEY/build.sh"; then
+    mkdir -p "$HOME/.canopy" && printf '%s\n' "$want" > "$DEVKEY_STAMP"
+  else
+    echo "WARNING: canopy-device-key build failed — the runner itself is installed." >&2
   fi
 fi
 
