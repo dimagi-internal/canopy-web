@@ -155,7 +155,7 @@ describe('RunnerCredentials', () => {
     await waitFor(() => expect(screen.getByTestId('runner-reauth-box-bb')).toBeTruthy())
     for (const slot of ['primary', 'secondary']) {
       const text = within(screen.getByTestId(`runner-reauth-${slot}`)).getByTestId('reauth-start').textContent
-      expect(text).toBe('Get a new token')
+      expect(text).toBe('Replace this token')
     }
     expect(screen.getAllByTestId('reauth-start')).toHaveLength(5)
 
@@ -252,7 +252,7 @@ describe('RunnerCredentials', () => {
     expect(screen.queryByTestId('cred-slot-claude_token_secondary')).toBeNull()
     expect(screen.queryByTestId('runner-credentials-swap')).toBeNull()
     expect(within(screen.getByTestId('cred-get-claude_token_secondary')).getByTestId('reauth-start')
-      .textContent).toBe('Get a backup token')
+      .textContent).toBe('+ Create a long-lived token')
   })
 
   it('gets a backup token when there is none, and warns until there is', async () => {

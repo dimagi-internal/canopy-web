@@ -62,9 +62,9 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
 
 
 LAST_BACKUP_TOKEN_REFUSAL = (
-    "That is this runner's last backup token. Keep at least one: it is what runs "
-    "turns when the Claude sign-in stops working (cloud-ec2-2 went dark on "
-    "2026-10-15 with none). Get a new backup token first, then remove this one.")
+    "That is this runner's last long-lived token. Keep at least one: it is what "
+    "runs turns when every full Claude login stops renewing (cloud-ec2-2 went dark "
+    "on 2026-10-15 with none). Create another first, then remove this one.")
 
 
 def would_remove_last_backup_token(runner, *, claude_token=None,

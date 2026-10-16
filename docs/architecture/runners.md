@@ -322,10 +322,10 @@ which logins, in what order, and what the box last reported about each
   `adopt_default` and joins the list first; `~/.claude-logins/.default-adopted`
   then records that a missing `default` means removed.
 
-**Backup tokens keep the box alive.** A full login renews itself, and a renewal
+**Long-lived tokens keep the box alive.** A full login renews itself, and a renewal
 can fail: on 2026-10-15 cloud-ec2-2's login stopped renewing after both backup
 tokens had been removed, and the box stopped. So:
-- The page always offers **Get a backup token** (`POST …/mint` with `slot:
+- The page always offers **Create a long-lived token** (`POST …/mint` with `slot:
   primary|secondary` runs `claude setup-token` on the box; the token lands in that
   slot). Its buttons say "token", never "Sign in with Claude": offered side by
   side under the same words (2026-10-14) an operator got a token believing it was

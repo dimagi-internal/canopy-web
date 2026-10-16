@@ -5967,7 +5967,7 @@ export interface paths {
          *       Inference only, but good for a year with nothing to renew — what keeps the
          *       box running when the full login fails. Retired on 2026-10-14 because the
          *       page offered it beside the full login under the same words; it is back
-         *       under its own ("Get a backup token"), since without it a box whose only
+         *       under its own ("Create a long-lived token"), since without it a box whose only
          *       backup was removed had no way to get one but a terminal.
          */
         readonly post: operations["start_runner_mint"];
