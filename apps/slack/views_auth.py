@@ -40,6 +40,8 @@ BOT_SCOPES = [
     "im:history", "im:read", "im:write",
     "users:read", "users:read.email",
     "channels:history", "groups:history",
+    # The channel's NAME for the caller envelope's `conversation.slack` (apps/slack/location.py).
+    "channels:read", "groups:read",
     # Download what people attach, so a screenshot reaches the agent (apps/slack/files.py).
     "files:read",
 ]

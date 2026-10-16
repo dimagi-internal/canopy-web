@@ -19,12 +19,13 @@ class SlackApiError(Exception):
         self.error = error
 
 
-def call(method: str, *, token: str = "", data: dict | None = None, json: dict | None = None) -> dict:
+def call(method: str, *, token: str = "", data: dict | None = None, json: dict | None = None,
+         timeout: float = TIMEOUT) -> dict:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     if json is not None:
-        resp = requests.post(API + method, headers=headers, json=json, timeout=TIMEOUT)
+        resp = requests.post(API + method, headers=headers, json=json, timeout=timeout)
     else:
-        resp = requests.post(API + method, headers=headers, data=data or {}, timeout=TIMEOUT)
+        resp = requests.post(API + method, headers=headers, data=data or {}, timeout=timeout)
     resp.raise_for_status()
     body = resp.json()
     if not body.get("ok"):
@@ -128,10 +129,20 @@ def lookup_user_id(token: str, email: str) -> str:
         return ""
 
 
-def permalink(token: str, *, channel: str, ts: str) -> str:
+def permalink(token: str, *, channel: str, ts: str, timeout: float = TIMEOUT) -> str:
     try:
-        return str(call("chat.getPermalink", token=token,
+        return str(call("chat.getPermalink", token=token, timeout=timeout,
                         data={"channel": channel, "message_ts": ts}).get("permalink") or "")
+    except SlackApiError:
+        return ""
+
+
+def channel_name(token: str, channel: str, *, timeout: float = TIMEOUT) -> str:
+    """A channel's name, or "" — Slack answers `missing_scope` to an install without
+    `channels:read` (public) / `groups:read` (private), and a DM has no name."""
+    try:
+        return str((call("conversations.info", token=token, timeout=timeout,
+                         data={"channel": channel}).get("channel") or {}).get("name") or "")
     except SlackApiError:
         return ""
 

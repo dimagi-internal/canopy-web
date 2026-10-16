@@ -76,6 +76,11 @@ class FakeSlack:
         self.lookup: dict[str, str] = {}
         # Timestamps chat.postMessage hands out, in order, before falling back to one fixed ts.
         self.ts_seq: list[str] = []
+        # channel id -> name, for conversations.info. Empty = answer like an
+        # install without channels:read (`{"ok": true}` and no channel).
+        self.channels: dict[str, str] = {}
+        # When set, chat.getPermalink answers like Slack does for this workspace domain.
+        self.permalink_base = ""
 
     def __call__(self, url, headers=None, json=None, data=None, timeout=None):
         method = url.rsplit("/", 1)[-1]
@@ -92,6 +97,12 @@ class FakeSlack:
         elif method == "chat.postMessage":
             ts = self.ts_seq.pop(0) if self.ts_seq else "1700000999.000100"
             body = {"ok": True, "ts": ts, "channel": payload.get("channel")}
+        elif method == "conversations.info" and payload.get("channel") in self.channels:
+            body = {"ok": True, "channel": {"id": payload["channel"],
+                                            "name": self.channels[payload["channel"]]}}
+        elif method == "chat.getPermalink" and self.permalink_base:
+            ts = str(payload.get("message_ts") or "").replace(".", "")
+            body = {"ok": True, "permalink": f"{self.permalink_base}/archives/{payload.get('channel')}/p{ts}"}
         elif method == "users.lookupByEmail":
             uid = self.lookup.get(payload.get("email", ""))
             body = {"ok": True, "user": {"id": uid}} if uid else {"ok": False, "error": "users_not_found"}

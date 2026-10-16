@@ -184,11 +184,45 @@ class SlackBindingOut(Schema):
 class SlackDetachIn(Schema):
     """Which session to disconnect — the same identifiers `share_session_to_slack`
     takes, tried in this order: canopy's `session_id`, the Claude Code session id
-    (`$CLAUDE_CODE_SESSION_ID`), the emdash task + project."""
+    (`$CLAUDE_CODE_SESSION_ID`), the emdash task + project. An agent names its
+    own conversation with `turn_id` instead (its caller envelope's `turn_id`)."""
     session_id: str = ""
     claude_session_id: str = ""
     emdash_task: str = ""
     emdash_project: str = ""
+    #: A live turn of the caller's own: the agent's own login acting on the
+    #: conversation it is having (`access.own_turn_session`). Tried first.
+    turn_id: str = ""
+
+
+class SlackNewThreadIn(Schema):
+    """Which conversation to move, and what the new thread opens with."""
+    #: Markdown: what the new thread is for. Required — it is the thread's first post.
+    summary: str
+    #: An agent's own live turn (the caller envelope's `turn_id`) — tried first.
+    turn_id: str = ""
+    session_id: str = ""
+    claude_session_id: str = ""
+
+
+class SlackPlaceOut(Schema):
+    channel: str
+    thread_ts: str
+    permalink: str = ""
+
+
+class SlackNewThreadOut(Schema):
+    #: "moved".
+    status: str
+    message: str
+    session_id: uuid.UUID
+    channel: str
+    #: The channel's name when canopy knows it (needs Slack's channels:read); "" otherwise.
+    channel_name: str = ""
+    thread_ts: str
+    permalink: str = ""
+    #: The thread the conversation left (it was told where it went).
+    previous: SlackPlaceOut
 
 
 class SlackDetachOut(Schema):

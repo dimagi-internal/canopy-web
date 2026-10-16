@@ -239,3 +239,44 @@ def can_share(user, session) -> bool:
 
 def can_write(user, session) -> bool:
     return role_for(user, session) in _WRITE_ROLES
+
+
+def own_turn_session(user, turn_id):
+    """The ONE conversation an agent's own login may act on without reading it:
+    the session of a live turn it is running. None otherwise.
+
+    An agent's own login (`Agent.user`) is not a leg of `visible_session_q`: a
+    Slack thread a person started belongs to that person, so the agent answering
+    it cannot open it, list it, or name it by id (and must not — that would hand
+    it every conversation it ever had). But the agent IS having this
+    conversation, and moving it to a new Slack thread or detaching it is part of
+    having it (2026-10-16, an ACE turn told to "post a new clean thread" that
+    404'd on its own session). So: named by `turn_id`, and only while that turn
+    is in flight (claimed, running or waiting on a person), only for the login
+    of the agent the turn runs AS, and only inside a workspace that login
+    belongs to. Grants nothing to read; the callers decide what acting means
+    (`share.share_session`, `share.detach_session`, `share.start_new_thread`).
+    """
+    import uuid
+
+    from apps.harness.models import Turn
+
+    if not getattr(user, "is_authenticated", False) or not turn_id:
+        return None
+    try:
+        pk = uuid.UUID(str(turn_id))
+    except ValueError:
+        return None
+    turn = (Turn.objects.select_related("chat_session", "chat_session__agent", "agent")
+            .filter(pk=pk, chat_session__isnull=False,
+                    status__in=list(Turn.NON_TERMINAL - {Turn.QUEUED}))
+            .first())
+    if turn is None:
+        return None
+    agent = turn.acting_agent
+    if agent is None or agent.user_id is None or agent.user_id != user.pk:
+        return None
+    session = turn.chat_session
+    if session.workspace_id not in _tenant_slugs(user):
+        return None
+    return session

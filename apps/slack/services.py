@@ -119,6 +119,9 @@ class Inbound:
     #: Slack's file objects on the message (`subtype: file_share`) — downloaded
     #: into session attachments when the turn is sent, see `files.store`.
     files: tuple = ()
+    #: The channel's name when the payload carries it (a slash command does; an
+    #: event does not). "directmessage"/"privategroup" are Slack's placeholders, not names.
+    channel_name: str = ""
 
     @property
     def anchor(self) -> str:
@@ -796,6 +799,25 @@ def _adoption_ref(inbound: Inbound) -> dict | None:
                                     "prefix": inbound.adopt_prefix}}
 
 
+#: What Slack's slash-command payload says for a channel that has no name to give.
+_NOT_A_CHANNEL_NAME = frozenset({"directmessage", "privategroup", "mpdm"})
+
+
+def _remember_location(session: Session, inbound: Inbound) -> None:
+    """Cache where in Slack this conversation is, for the agent's caller envelope
+    (`location.py`). Before the turn is enqueued, so the claim that follows reads it.
+    Best-effort: a lookup that fails names nothing and holds nothing up."""
+    from . import location
+
+    try:
+        name = inbound.channel_name if inbound.channel_name not in _NOT_A_CHANNEL_NAME else ""
+        if name:
+            location.remember(session, channel_name=name)
+        location.fill(session, installation_for(inbound.team_id))
+    except Exception:  # noqa: BLE001
+        logger.exception("could not record a Slack conversation's location")
+
+
 def _send(session: Session, created: bool, agent: Agent | None, principal: Principal, prompt: str,
           inbound: Inbound, *, named: bool = True) -> Outcome:
     # A SHARED session that has been closed has no one left to answer: say so
@@ -817,6 +839,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         if stored:
             origin_ref = {**(origin_ref or {}), "attachments": stored}
         prompt = "\n\n".join(p for p in (prompt, *notes) if p) or "(sent an attachment)"
+    _remember_location(session, inbound)
     _message, turn = session_services.send_message(
         session=session,
         text=prompt,

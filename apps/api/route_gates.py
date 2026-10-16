@@ -316,7 +316,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "export_session": ("session-acl", "self"),  # visible AND you started it
     "answer_menu": ("session-acl",),  # write
     "close_session": ("session-acl",),  # write
-    "detach_session_from_slack": ("session-acl",),  # write
+    "detach_session_from_slack": ("session-acl", "agent-login"),  # write; or the agent's own live turn
+    "start_new_slack_thread": ("session-acl", "agent-login"),  # write; or the agent's own live turn
     "stop_session_turn": ("session-acl",),  # write
     "attach_session": ("session-acl",),  # READ gate on a POST (viewer signal)
     "detach_session": ("session-acl",),  # READ gate on a POST
@@ -809,7 +810,8 @@ NOT_SETTINGS: dict[str, str] = {
     "resolve_failure_investigation": "content",
     # conversation
     "create_session": "conversation", "delete_attachment": "conversation", "reset_sessions": "conversation",
-    "detach_session_from_slack": "conversation", "approve_transfer_request": "conversation",
+    "detach_session_from_slack": "conversation", "start_new_slack_thread": "conversation",
+    "approve_transfer_request": "conversation",
     "cancel_transfer_request": "conversation", "decline_transfer_request": "conversation",
     "answer_menu": "conversation", "app_view_call": "conversation", "app_view_context": "conversation",
     "app_view_message": "conversation", "app_view_read": "conversation", "archive_session": "conversation",

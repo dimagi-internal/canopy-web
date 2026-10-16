@@ -414,6 +414,16 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
   system account, unknown). See "What agents know about a person" below.
 * **`trigger.kind`** (v3) — what canopy-initiated work the turn is
   (`origin_ref.trigger`); null otherwise.
+* **`conversation`** — `{session_id, thread_id, subject, slack}`. `slack` (v3,
+  additive) is where in Slack the conversation is, whenever its session holds a
+  Slack thread (born there, or bound by a share): `{team_id, channel_id,
+  channel_name, thread_ts, permalink, is_dm}`; null otherwise. Read from the
+  session's cache (`apps/slack/location.py`) — building the envelope never calls
+  Slack. `channel_name` needs the install's `channels:read` / `groups:read`
+  (a re-install after this landed) unless a slash command named it, and is null
+  for a DM; `thread_ts` is null for a DM; `permalink` falls back to the web-client
+  link. With `turn_id`, the agent may act on that conversation: see "Agents and
+  their own conversation" in `api-surface.md` (`start_new_slack_thread`).
 
 Readers accept both spellings: `relationship: caller` means `contact`, `profile:
 restricted` means `confined` (`normalize_relationship`, `normalize_profile`; the

@@ -302,7 +302,10 @@ def commands(request: HttpRequest) -> HttpResponse:
     # and what is happening to it, rather than two saying half each.
     inbound = services.Inbound(team_id=team_id, channel_id=channel_id, slack_user_id=slack_user_id,
                                text=f"{agent.slug} {ask}", ts=root_ts, thread_ts=root_ts,
-                               adopt_ts=root_ts, adopt_prefix=anchor)
+                               adopt_ts=root_ts, adopt_prefix=anchor,
+                               # A slash command is the one payload that names the channel
+                               # (events carry only its id) — kept for the caller envelope.
+                               channel_name=str(post.get("channel_name") or ""))
     outcome = services.handle_message(inbound)
     return _ephemeral(outcome.message)
 

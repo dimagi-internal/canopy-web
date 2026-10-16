@@ -7648,11 +7648,47 @@ export interface paths {
          *
          *     Name the session with `session_id`, else `claude_session_id`
          *     ($CLAUDE_CODE_SESSION_ID), else `emdash_task` + `emdash_project`. Needs
-         *     owner or editor access to the session. Idempotent: a session with no thread
-         *     answers `status: not_bound`. To connect it again, share it with `bind`,
-         *     which starts a fresh thread.
+         *     owner or editor access to the session. An agent names the conversation it
+         *     is having with `turn_id` instead: its own login may act on the conversation
+         *     of a turn it is running, while that turn is in flight. Idempotent: a session
+         *     with no thread answers `status: not_bound`. To connect it again, share it
+         *     with `bind`, which starts a fresh thread.
          */
         readonly post: operations["detach_session_from_slack"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/slack/new-thread": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move a session's conversation to a new Slack thread in the same channel
+         * @description Start a new thread in the channel this conversation is in, and move the
+         *     conversation there.
+         *
+         *     Posts `summary` (Markdown) as a new top-level message in the conversation's
+         *     own Slack channel, binds the session to that message's thread — replies
+         *     there reach the session, the session's replies post there — and tells the
+         *     old thread where it went. Replies in the old thread no longer reach the
+         *     session. The channel is always the conversation's own; to post elsewhere,
+         *     share instead.
+         *
+         *     An agent names the conversation it is having with `turn_id` (its caller
+         *     envelope's `turn_id`): its own login may move the conversation of a turn it
+         *     is running, while that turn is in flight, and no other. Anyone else names
+         *     it with `session_id` or `claude_session_id` and needs owner or editor
+         *     access. 409 when the session holds no thread or is a direct message.
+         */
+        readonly post: operations["start_new_slack_thread"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -22102,7 +22138,8 @@ export interface components {
          * SlackDetachIn
          * @description Which session to disconnect — the same identifiers `share_session_to_slack`
          *     takes, tried in this order: canopy's `session_id`, the Claude Code session id
-         *     (`$CLAUDE_CODE_SESSION_ID`), the emdash task + project.
+         *     (`$CLAUDE_CODE_SESSION_ID`), the emdash task + project. An agent names its
+         *     own conversation with `turn_id` instead (its caller envelope's `turn_id`).
          */
         readonly SlackDetachIn: {
             /**
@@ -22125,6 +22162,73 @@ export interface components {
              * @default
              */
             readonly emdash_project: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+        };
+        /** SlackNewThreadOut */
+        readonly SlackNewThreadOut: {
+            /** Status */
+            readonly status: string;
+            /** Message */
+            readonly message: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Channel */
+            readonly channel: string;
+            /**
+             * Channel Name
+             * @default
+             */
+            readonly channel_name: string;
+            /** Thread Ts */
+            readonly thread_ts: string;
+            /**
+             * Permalink
+             * @default
+             */
+            readonly permalink: string;
+            readonly previous: components["schemas"]["SlackPlaceOut"];
+        };
+        /** SlackPlaceOut */
+        readonly SlackPlaceOut: {
+            /** Channel */
+            readonly channel: string;
+            /** Thread Ts */
+            readonly thread_ts: string;
+            /**
+             * Permalink
+             * @default
+             */
+            readonly permalink: string;
+        };
+        /**
+         * SlackNewThreadIn
+         * @description Which conversation to move, and what the new thread opens with.
+         */
+        readonly SlackNewThreadIn: {
+            /** Summary */
+            readonly summary: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Session Id
+             * @default
+             */
+            readonly session_id: string;
+            /**
+             * Claude Session Id
+             * @default
+             */
+            readonly claude_session_id: string;
         };
         /** TransferOut */
         readonly TransferOut: {
@@ -33972,6 +34076,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SlackDetachOut"];
+                };
+            };
+        };
+    };
+    readonly start_new_slack_thread: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlackNewThreadIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackNewThreadOut"];
                 };
             };
         };
