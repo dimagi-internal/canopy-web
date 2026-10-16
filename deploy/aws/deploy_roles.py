@@ -95,6 +95,12 @@ APPS = {
         # and the migrate step registering a copy of the live one — so without
         # this the first pipeline deploy after the cutover fails on iam:PassRole.
         "task_roles": ["canopy-web-task-role"],
+        # deploy-labs.yml logs in to PUBLIC ECR before buildx so the Dockerfile's
+        # `FROM public.ecr.aws/...` base images pull authenticated. Anonymous
+        # pulls share a per-IP data quota with every other GitHub runner and
+        # failed the build with `429 toomanyrequests: Data limit exceeded`
+        # (runs 38857394563, 38857717539, 2026-10-15).
+        "public_ecr_login": True,
     },
     "ace-web": {
         "sub": "repo:dimagi-internal/ace-web:*",
@@ -173,6 +179,19 @@ def policy_for(app: str, cfg: dict) -> dict:
         "Action": "ecr:GetAuthorizationToken",
         "Resource": "*",
     })
+
+    if cfg.get("public_ecr_login"):
+        # Public ECR login (`amazon-ecr-login` with registry-type: public) calls
+        # ecr-public:GetAuthorizationToken, which needs sts:GetServiceBearerToken
+        # alongside it. Neither supports resource-level permissions. The token
+        # only authenticates PULLS of public images — this grants no push to
+        # any public repository.
+        st.append({
+            "Sid": "PublicEcrLoginTakesNoResource",
+            "Effect": "Allow",
+            "Action": ["ecr-public:GetAuthorizationToken", "sts:GetServiceBearerToken"],
+            "Resource": "*",
+        })
 
     if cfg.get("ecs_services"):
         # Scoped: this deployment may roll ITS service and run ITS task family,
