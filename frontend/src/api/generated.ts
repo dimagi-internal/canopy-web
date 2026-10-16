@@ -5809,6 +5809,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/attachments/{attachment_id}/content": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An attachment from the chat a turn this runner holds belongs to
+         * @description The bytes of a file a person sent in the chat this runner is serving, so
+         *     the agent can open it. Allowed while this runner holds the turn, for any
+         *     attachment already sent in that turn's chat — earlier messages included, so
+         *     a box with no local copy (a fresh cloud machine) can still fetch them.
+         *     Everything else is the same 404 as an id that does not exist.
+         */
+        readonly get: operations["turn_attachment_content"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/github-readiness": {
         readonly parameters: {
             readonly query?: never;
@@ -8103,12 +8127,11 @@ export interface paths {
         };
         /**
          * Stream an attachment's bytes
-         * @description The bytes, for both readers: the browser rendering a thumbnail and the
-         *     runner downloading into the agent's workspace (which authenticates with a
-         *     PAT, resolved upstream into request.user like any other caller).
-         *
-         *     Gated on who can read the session, not on who uploaded it — a session is
-         *     multiplayer, so a teammate who can read it must see what was shared in it.
+         * @description The bytes, for a person who can read the chat — the browser rendering a
+         *     thumbnail. Gated on who can read the session, not on who uploaded it: a
+         *     session is multiplayer, so a teammate who can read it sees what was shared
+         *     in it. A runner does NOT come through here; it fetches what the turn it is
+         *     serving carries via the harness route (turn_attachment_content).
          */
         readonly get: operations["attachment_content"];
         readonly put?: never;
@@ -31733,6 +31756,28 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["TurnGitHubTokenOut"];
                 };
+            };
+        };
+    };
+    readonly turn_attachment_content: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly turn_id: string;
+                readonly attachment_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

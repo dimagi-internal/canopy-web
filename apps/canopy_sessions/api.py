@@ -14,7 +14,7 @@ from django.db.models import Max
 from django.db.models.functions import Coalesce
 
 from django.conf import settings
-from django.http import Http404, HttpRequest, HttpResponse
+from django.http import Http404, HttpRequest
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja import File, Router
@@ -1265,13 +1265,11 @@ def upload_attachment(
     summary="Stream an attachment's bytes",
 )
 def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
-    """The bytes, for both readers: the browser rendering a thumbnail and the
-    runner downloading into the agent's workspace (which authenticates with a
-    PAT, resolved upstream into request.user like any other caller).
-
-    Gated on who can read the session, not on who uploaded it — a session is
-    multiplayer, so a teammate who can read it must see what was shared in it.
-    """
+    """The bytes, for a person who can read the chat — the browser rendering a
+    thumbnail. Gated on who can read the session, not on who uploaded it: a
+    session is multiplayer, so a teammate who can read it sees what was shared
+    in it. A runner does NOT come through here; it fetches what the turn it is
+    serving carries via the harness route (turn_attachment_content)."""
     attachment = get_object_or_404(
         Attachment.objects.select_related("session").filter(
             session__in=_site_scoped(request, Session.objects.all())),
@@ -1282,21 +1280,7 @@ def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
     if attachment.session.workspace_id not in _visible_slugs(request) or not access.can_read(
             request.user, attachment.session):
         raise HttpError(404, "attachment not found")
-    if not attachment_storage.is_configured():
-        raise HttpError(503, "attachments are not configured on this deployment")
-
-    stored = attachment_storage.get(attachment.storage_key)
-    response = HttpResponse(stored.body, content_type=stored.content_type)
-    # inline: the browser renders it rather than downloading. filename is already
-    # sanitised at upload, so it is safe in the header.
-    response["Content-Disposition"] = f'inline; filename="{attachment.filename}"'
-    # Served inline from canopy's own origin, and the type allowlist is an env
-    # setting — so if it ever admits a document type (HTML, SVG), the bytes still
-    # run in an opaque origin, never as the viewer. Same rule as walkthrough
-    # content (apps/walkthroughs/streaming.py::SANDBOX_CSP); harmless on an image.
-    response["X-Content-Type-Options"] = "nosniff"
-    response["Content-Security-Policy"] = "sandbox"
-    return response
+    return attachment_storage.http_response(attachment)
 
 
 @router.delete("/attachments/{attachment_id}", response={204: None})
