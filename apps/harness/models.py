@@ -1200,6 +1200,51 @@ class RunnerAdmin(models.Model):
         return f"admin:{self.runner_id}:{self.user_id}"
 
 
+class RunnerDeviceKey(models.Model):
+    """A hardware-bound (or software) key a runner proves possession of
+    (Canopy Vault, canopy-web#1538 Phase 1a).
+
+    The box generates an EC P-256 key — in the Secure Enclave or a TPM where it
+    can — and registers only the PUBLIC half. It starts `pending`; a person who
+    owns or administers the runner approves it from a browser (behind a passkey
+    step-up), and from then on `/credentials/resolve` for an agent with
+    `require_device_binding` accepts a DPoP proof signed by it (RFC 9449).
+
+    Identified by `jkt`, the RFC 7638 thumbprint, which is unique: re-posting the
+    same public key is idempotent, and one key never belongs to two runners.
+    """
+
+    SECURE_ENCLAVE, TPM, SOFTWARE = "secure-enclave", "tpm", "software"
+    KIND_CHOICES = [(SECURE_ENCLAVE, "Secure Enclave"), (TPM, "TPM"), (SOFTWARE, "Software")]
+    PENDING, ACTIVE, REVOKED = "pending", "active", "revoked"
+    STATUS_CHOICES = [(PENDING, "Pending approval"), (ACTIVE, "Active"), (REVOKED, "Revoked")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="device_keys")
+    #: The public JWK, reduced to its required members (kty, crv, x, y).
+    public_jwk = models.JSONField()
+    jkt = models.CharField(max_length=64, unique=True)
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES)
+    label = models.CharField(max_length=120, blank=True, default="")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="+")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"devicekey:{self.runner_id}:{self.jkt[:12]}:{self.status}"
+
+
 class RunnerFlag(models.Model):
     """One property a runner's OWNER vouches for (spec 2026-09-30-zdr-runners).
 

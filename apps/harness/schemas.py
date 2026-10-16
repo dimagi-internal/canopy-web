@@ -1532,3 +1532,46 @@ class FailureInvestigationOut(Schema):
 class ResolveInvestigationIn(Schema):
     note: str = Field(min_length=1, max_length=10000,
                       description="What was wrong and what you changed to fix it.")
+
+
+# ---- Runner device keys (Canopy Vault, canopy-web#1538 Phase 1a) -------------
+
+DeviceKeyKind = Literal["secure-enclave", "tpm", "software"]
+DeviceKeyStatus = Literal["pending", "active", "revoked"]
+
+
+class RunnerDeviceKeyIn(Schema):
+    """Register the PUBLIC half of a key the runner holds. Re-posting the same
+    key (same RFC 7638 thumbprint) is idempotent."""
+
+    runner: uuid.UUID
+    public_jwk: dict[str, Any]
+    kind: DeviceKeyKind
+    label: str = Field(default="", max_length=120)
+
+
+class RunnerDeviceKeyCreatedOut(Schema):
+    id: uuid.UUID
+    jkt: str
+    status: DeviceKeyStatus
+    #: Where a person who owns or administers the runner approves it.
+    approve_url: str
+
+
+class RunnerDeviceKeyOut(Schema):
+    """A device key and its state. Public material only — there is no secret."""
+
+    id: uuid.UUID
+    runner: uuid.UUID
+    runner_name: str
+    jkt: str
+    kind: DeviceKeyKind
+    label: str = ""
+    status: DeviceKeyStatus
+    created_at: dt.datetime
+    approved_at: dt.datetime | None = None
+    approved_by_email: str = ""
+    revoked_at: dt.datetime | None = None
+    last_used_at: dt.datetime | None = None
+    #: The caller owns or administers this key's runner (may approve / revoke).
+    can_manage: bool = False

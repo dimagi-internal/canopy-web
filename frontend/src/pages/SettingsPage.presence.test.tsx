@@ -36,6 +36,8 @@ vi.mock('@/api/tokens', () => ({
 
 // RunnersPanel lists the boxes you administer; not what these tests are about.
 vi.mock('@/api/harness', () => ({ listRunners: vi.fn().mockResolvedValue([]) }))
+// DeviceKeysPanel likewise (DeviceKeysTable.test.tsx covers it).
+vi.mock('@/api/deviceKeys', () => ({ listRunnerDeviceKeys: vi.fn().mockResolvedValue([]) }))
 
 const { SettingsPage } = await import('./SettingsPage')
 const { PRESENCE_PREFERENCE_CHANGED_EVENT } = await import('@/presence/events')

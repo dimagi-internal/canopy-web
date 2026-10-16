@@ -231,6 +231,7 @@ def agent_detail(agent: Agent) -> dict:
         "turn_mode": agent.turn_mode,
         "slack_enabled": agent.slack_enabled,
         "credential_source": agent.credential_source,
+        "require_device_binding": agent.require_device_binding,
         "op_vault": agent.op_vault or "",
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
@@ -1267,12 +1268,21 @@ def agent_credential_status(agent) -> list[dict]:
     """
     from apps.agents.models import AgentCredential
 
+    from django.db.models import Count, Max
+
+    from apps.agents.models import AgentCredentialRead
+
     stored = {c.name: c for c in AgentCredential.objects.filter(agent=agent).select_related("updated_by")}
     declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
+    reads = {
+        r["name"]: r for r in AgentCredentialRead.objects.filter(agent=agent)
+        .values("name").annotate(last=Max("created_at"), n=Count("id"))
+    }
 
     rows: list[dict] = []
     for name in declared + [n for n in sorted(stored) if n not in declared]:
         cred = stored.get(name)
+        read = reads.get(name) or {}
         rows.append({
             "name": name,
             "declared": name in declared,
@@ -1280,8 +1290,25 @@ def agent_credential_status(agent) -> list[dict]:
             "source": SOURCE_CANOPY_WEB if cred else SOURCE_UNSET,
             "updated_at": cred.updated_at if cred else None,
             "updated_by_email": (cred.updated_by.email if cred and cred.updated_by_id else None),
+            "last_read_at": read.get("last"),
+            "read_count": read.get("n", 0),
         })
     return rows
+
+
+def credential_reads(agent, name: str, *, limit: int = 100) -> list[dict]:
+    """The read history of one credential, newest first."""
+    from apps.agents.models import AgentCredentialRead
+
+    qs = (AgentCredentialRead.objects.filter(agent=agent, name=name)
+          .select_related("user", "runner").order_by("-created_at")[:limit])
+    return [{
+        "name": r.name,
+        "user_email": r.user.email if r.user_id else "",
+        "runner": str(r.runner_id) if r.runner_id else "",
+        "runner_name": r.runner.name if r.runner_id else "",
+        "via": r.via, "turn_id": r.turn_id, "created_at": r.created_at,
+    } for r in qs]
 
 
 def declared_credential_names(agent) -> set[str]:

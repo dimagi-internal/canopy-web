@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { listRunners, type RunnerOut } from '@/api/harness'
+import { listRunnerDeviceKeys, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
+import { DeviceKeysTable } from '@/components/settings/DeviceKeysTable'
 import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
@@ -65,6 +67,8 @@ export function SettingsPage() {
 
       <RunnersPanel />
 
+      <DeviceKeysPanel />
+
       <SessionWorkspacePanel />
 
       {/* Presence */}
@@ -102,6 +106,46 @@ export function SettingsPage() {
 
       <TokensPanel />
 
+    </div>
+  )
+}
+
+/**
+ * Device keys on the runners you administer (Canopy Vault, canopy-web#1538). A
+ * box registering a key prints `approve_url`, which lands here with
+ * `?device_key=<id>`; that row is marked so the approver knows which one.
+ */
+function DeviceKeysPanel() {
+  const [keys, setKeys] = useState<RunnerDeviceKeyOut[] | null>(null)
+  const [params] = useSearchParams()
+  const highlight = params.get('device_key')
+
+  useEffect(() => {
+    listRunnerDeviceKeys()
+      .then(setKeys)
+      .catch(() => setKeys([]))
+  }, [])
+
+  // Nothing to say to someone with no keys and no link to one.
+  if (keys !== null && keys.length === 0 && !highlight) return null
+  return (
+    <div id="device-keys" className="rounded-xl border border-border bg-card p-5 space-y-3" data-testid="settings-device-keys">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground">Device keys</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Keys your runners hold to prove which box is reading an agent&apos;s secrets. A new key does nothing until
+          you approve it.
+        </p>
+      </div>
+      {keys === null ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <DeviceKeysTable
+          keys={keys}
+          highlight={highlight}
+          onChange={(next) => setKeys((ks) => (ks ?? []).map((k) => (k.id === next.id ? next : k)))}
+        />
+      )}
     </div>
   )
 }

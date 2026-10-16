@@ -157,6 +157,12 @@ class Agent(models.Model):
     credential_source = models.CharField(
         max_length=16, choices=CREDENTIAL_SOURCE_CHOICES, default=ONEPASSWORD,
     )
+    # Canopy Vault device binding (canopy-web#1538 Phase 1a). When on AND the
+    # source is `canopy-web`, `/credentials/resolve` also demands a DPoP proof
+    # signed by an ACTIVE RunnerDeviceKey on a runner this agent routes to (or
+    # one its owner owns) — a PAT alone no longer reads the values. Owner/admin
+    # only (PATCH /device-binding); absent from AgentIn like credential_source.
+    require_device_binding = models.BooleanField(default=False)
 
 
     # Runtime autonomy posture, read by the fleet-canonical turn procedure at

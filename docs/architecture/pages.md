@@ -307,7 +307,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/settings`** — your account: runners you administer (each linking to
   `/supervisor?tab=runners&runner=<id>`, where a box's Claude login and admins
   live), presence, GitHub, connected apps (OAuth MCP clients, disconnectable,
-  plus the MCP address and `claude mcp add` line), personal access tokens.
+  plus the MCP address and `claude mcp add` line), personal access tokens, and
+  runner device keys (`#device-keys`, shown when you have any or arrive by a
+  box's `approve_url` with `?device_key=<id>`, which marks that row; approve /
+  revoke — Canopy Vault, #1538).
 - **`/sessions`** — your shared Claude Code transcripts (`/canopy:share-session`).
 - **`/system`** — capability catalog + Workflows view, read live from the
   canopy plugin.
