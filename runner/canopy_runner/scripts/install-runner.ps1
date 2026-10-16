@@ -95,6 +95,12 @@ $RUNNER_CODE_PATHS = @("runner/canopy_runner/canopy_runner", "runner/canopy_runn
 $TASK_FOLDER  = "\Canopy"
 $RUNNER_TASK  = "canopy-runner"
 $UPDATER_TASK = "canopy-runner-updater"
+# DOMAIN\user from the process token, not $env:USERNAME (an environment variable
+# can name another account -- the reason #1008 reads identity from the OS). The
+# AtLogOn trigger MUST carry it: with no -User the trigger means "any user's
+# logon", which only an administrator may register, so an ordinary install failed
+# at Register-ScheduledTask with "Access is denied" (first Windows run, 2026-10-16).
+$TASK_USER    = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $CanopyDir    = Join-Path $HOME ".canopy"
 
 function Fail($msg) { Write-Error $msg; exit 1 }
@@ -259,7 +265,7 @@ function Register-CanopyTask {
     # cmd.exe wrapper: Task Scheduler has no StandardOutPath, so without this the
     # logs macOS gets for free simply never exist on Windows.
     $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$CommandLine`""
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+    $principal = New-ScheduledTaskPrincipal -UserId $TASK_USER -LogonType Interactive -RunLevel Limited
     $settings = if ($RestartOnFailure) {
         # The KeepAlive analogue. ExecutionTimeLimit 0 = never kill a long-running
         # daemon; without it Task Scheduler stops the task after 3 days by default.
@@ -270,8 +276,20 @@ function Register-CanopyTask {
         New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
             -MultipleInstances IgnoreNew
     }
-    Register-ScheduledTask -TaskName $Name -TaskPath $TASK_FOLDER -Action $action `
-        -Trigger $Triggers -Principal $principal -Settings $settings -Force | Out-Null
+    try {
+        Register-ScheduledTask -TaskName $Name -TaskPath $TASK_FOLDER -Action $action `
+            -Trigger $Triggers -Principal $principal -Settings $settings -Force | Out-Null
+    } catch {
+        if ("$_" -notmatch "Access is denied|0x80070005") { throw }
+        # The usual cause on a box that installed once before: the first run was
+        # elevated, so the task (or the \Canopy folder) is an admin's, and -Force
+        # cannot replace it from an ordinary window.
+        Fail ("Task Scheduler refused to register $TASK_FOLDER\$Name for $TASK_USER (Access is denied). " +
+              "This installer is meant to run from an ordinary, non-elevated window. If an earlier run was " +
+              "elevated, remove its tasks once from an elevated PowerShell -- " +
+              "Unregister-ScheduledTask -TaskPath '$TASK_FOLDER\' -Confirm:`$false -- then re-run this here. " +
+              "Error: $_")
+    }
     Info "registered $TASK_FOLDER\$Name"
 }
 
@@ -280,7 +298,7 @@ $updaterLog = Join-Path $CanopyDir "updater.log"
 
 Register-CanopyTask -Name $RUNNER_TASK -RestartOnFailure `
     -CommandLine "`"$Bin`" run --config `"$Config`" >> `"$runnerLog`" 2>&1" `
-    -Triggers @(New-ScheduledTaskTrigger -AtLogOn)
+    -Triggers @(New-ScheduledTaskTrigger -AtLogOn -User $TASK_USER)
 
 if (-not $NoAutoUpdate) {
     # A COPY of this installer, frozen at the last install -- so a stray
