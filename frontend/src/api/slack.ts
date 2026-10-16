@@ -56,8 +56,8 @@ export async function setSlackChannelIngest(workspace: string, enabled: boolean)
   return res.data as SlackConfigOut
 }
 
-// An owner's explicit allow-list: one channel (id or #name) for one agent. A
-// matching ask reads at once, with a notice in the channel. Owners only.
+// An admin's explicit allow-list: one channel (id or #name) for one agent. A
+// matching ask reads at once, with a notice in the channel. Admins and owners.
 export async function allowSlackChannel(
   workspace: string,
   body: { agent: string; channel: string; follow: boolean; note: string },
@@ -70,7 +70,7 @@ export async function allowSlackChannel(
   return res.data as SlackConfigOut
 }
 
-// Removing an entry also revokes the reads it allowed. Owners only.
+// Removing an entry also revokes the reads it allowed. Admins and owners.
 export async function disallowSlackChannel(workspace: string, allowId: string): Promise<SlackConfigOut> {
   const res = await apiV2.DELETE('/api/slack-config/{workspace}/channel-ingest/allowed/{allow_id}', {
     params: { path: { workspace, allow_id: allowId } },

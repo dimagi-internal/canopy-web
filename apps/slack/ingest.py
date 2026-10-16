@@ -16,9 +16,9 @@ someone who can give it, asked in the channel itself (canopy-web#1533):
    the channel. The agent's own canopy login can never approve — or decline:
    an agent must not be able to answer its own request either way. Anyone in
    the channel may Decline; refusing is the safe direction.
-   **Or allow-listed explicitly**: a workspace owner names the channel and the
+   **Or allow-listed explicitly**: a workspace owner or admin names the channel and the
    agent beforehand (`allow`, `SlackChannelIngestAllow`). A request that
-   matches starts reading at once, approved by that owner, and canopy posts a
+   matches starts reading at once, approved by that person, and canopy posts a
    notice with Revoke in the channel instead of the Approve/Decline buttons.
 3. **The workspace opted in.** `SlackWorkspaceLink.channel_ingest_enabled`,
    default off, set once by an owner. Off refuses new requests and stops reads
@@ -166,17 +166,17 @@ def request(*, agent, channel_id: str, purpose: str, follow: bool, requested_by)
     if link is None:
         raise IngestError("Slack is not connected to this agent's workspace", 409)
     inst = link.installation
-    # A name the owner allow-listed resolves without asking Slack.
+    # A name an admin allow-listed resolves without asking Slack.
     by_name = (SlackChannelIngestAllow.objects.filter(agent=agent, channel_name=ref.lstrip("#").lower()).first()
                if not _CHANNEL.match(ref) else None)
     channel_id, name = (by_name.channel_id, by_name.channel_name) if by_name else resolve_channel(inst.bot_token, ref)
     allowance = allowance_for(agent, channel_id)
     if allowance is None and not link.channel_ingest_enabled:
         raise IngestError("channel ingest is off for this workspace, and this channel is not allow-listed for "
-                          f"{agent.slug} — an owner allow-lists it (or turns asking on) in the Slack settings", 409)
+                          f"{agent.slug} — an owner or admin allow-lists it (or an owner turns asking on) in the Slack settings", 409)
     if allowance is not None and follow and not allowance.follow:
         raise IngestError(f"#{name or channel_id} is allow-listed for {agent.slug} to read once, not to follow — "
-                          "ask without follow, or have an owner allow following", 403)
+                          "ask without follow, or have an owner or admin allow following", 403)
     if SlackChannelIngest.objects.filter(agent=agent, channel_id=channel_id,
                                          status__in=(SlackChannelIngest.PENDING, *LIVE)).exists():
         raise IngestError(f"{agent.slug} already has a pending or live ingest of this channel", 409)
@@ -220,7 +220,7 @@ def request(*, agent, channel_id: str, purpose: str, follow: bool, requested_by)
 # --- the allow-list ----------------------------------------------------------
 
 def allow(*, workspace, agent, channel: str, follow: bool, note: str, by) -> SlackChannelIngestAllow:
-    """An owner allow-lists one channel for one agent. Reads nothing by itself:
+    """An owner or admin allow-lists one channel for one agent. Reads nothing by itself:
     the agent still asks (`request`), with a purpose, and the channel is told."""
     if agent.workspace_id != workspace.slug:
         raise IngestError(f"{agent.slug} is not an agent of '{workspace.slug}'", 404)
@@ -294,7 +294,7 @@ def allowed_message(ingest: SlackChannelIngest) -> tuple[str, list[dict]]:
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": text[:3000]}},
         {"type": "context", "elements": [{"type": "mrkdwn", "text": (
-            f"An owner of the *{ingest.workspace_id}* canopy workspace allow-listed this read. canopy does the "
+            f"An owner or admin of the *{ingest.workspace_id}* canopy workspace allow-listed this read. canopy does the "
             "reading; only the agent gets the transcript. Whoever allowed it, the agent's owner or a workspace "
             "admin can revoke it.")}]},
         {"type": "actions", "block_id": "ingest_revoke", "elements": [

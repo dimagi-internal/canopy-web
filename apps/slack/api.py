@@ -153,14 +153,14 @@ def set_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChann
 
 
 @router.post("/{workspace}/channel-ingest/allowed", response=SlackConfigOut,
-             summary="Allow-list one channel for one agent to read whole (owner)")
+             summary="Allow-list one channel for one agent to read whole (admin or owner)")
 def allow_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChannelAllowIn) -> dict:
     """Explicit, standing permission: when this agent asks to read this channel
     (`POST /api/slack-ingests/`) canopy reads it at once — approved by you — and
     posts a notice with Revoke in the channel instead of Approve/Decline.
     Works whether or not asking is on for the workspace. Adding it again
     updates `follow` and `note`."""
-    ws = _workspace_with(request.user, workspace, perms.OWN)
+    ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
     _installation_or_409(ws)
     agent = Agent.objects.filter(slug=payload.agent, workspace=ws).first()
     if agent is None:
@@ -174,9 +174,9 @@ def allow_channel_ingest(request: HttpRequest, workspace: str, payload: SlackCha
 
 
 @router.delete("/{workspace}/channel-ingest/allowed/{allow_id}", response=SlackConfigOut,
-               summary="Remove a channel from an agent's allow-list; revokes its reads (owner)")
+               summary="Remove a channel from an agent's allow-list; revokes its reads (admin or owner)")
 def disallow_channel_ingest(request: HttpRequest, workspace: str, allow_id: str) -> dict:
-    ws = _workspace_with(request.user, workspace, perms.OWN)
+    ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
     try:
         entry = (SlackChannelIngestAllow.objects.select_related("agent", "workspace", "installation")
                  .filter(pk=allow_id, workspace=ws).first())

@@ -315,8 +315,9 @@ export function SlackSettingsPage(): JSX.Element {
           </p>
           <p className="mb-3 text-[12px] text-muted-foreground">
             Or allow-list a channel explicitly, for one agent: when that agent asks to read it, canopy reads it at
-            once — approved by the owner who added it — and posts a notice with Revoke in the channel instead of
-            asking. An allow-listed channel works whether or not asking is on; removing it revokes its reads.
+            once — approved by whoever added it — and posts a notice with Revoke in the channel instead of
+            asking. An allow-listed channel works whether or not asking is on; removing it revokes its reads. Workspace
+            owners and admins manage this list.
           </p>
           <div className="rounded-lg border border-border bg-card p-4 text-[13px]">
             <p className="text-foreground">
