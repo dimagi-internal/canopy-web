@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Capability, Decision, Note, DecisionEdit, LeaveFeedbackIn, Storyboard } from '@/api/storyboards'
 import { editDecision, leaveFeedback } from '@/api/storyboards'
 import { NotesReturned } from './NotesReturned'
-import { NoteComposer, readReviewerName } from './NoteComposer'
+import { NoteComposer, readReviewerName, REVIEWER_NAME_EVENT } from './NoteComposer'
 import { groupDecisions, narrativeTitles, scopeLabel } from './decisionGroups'
 
 /**
@@ -122,6 +122,14 @@ export function DecisionLog({ board, token, ws, canEdit, inRound, capability, no
   // A reload (round opened, closed, edit staged) hands us fresh rows.
   useEffect(() => setRows(board.decisions ?? []), [board.decisions])
   const [name, setName] = useState(() => readReviewerName())
+  // The name is typed in any NoteComposer on the page (or another tab): re-read it
+  // whenever one saves it, another tab writes it, or this window regains focus.
+  useEffect(() => {
+    const refresh = () => setName(readReviewerName())
+    const events = [REVIEWER_NAME_EVENT, 'storage', 'focus'] as const
+    events.forEach((e) => window.addEventListener(e, refresh))
+    return () => events.forEach((e) => window.removeEventListener(e, refresh))
+  }, [])
   const onChanged = (d: Decision) => setRows((rs) => rs.map((x) => (x.id === d.id ? d : x)))
   const titles = narrativeTitles(board)
   const groups = groupDecisions(rows, titles)

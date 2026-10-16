@@ -78,7 +78,6 @@ export function RoundBanner({ board, canManage, ws, onChanged }: {
     )
   }
   const decisions = board.decisions ?? []
-  // A replaced row is skipped by the server, so it needs no pick.
   // The server skips a replaced row and one removed mid-round, so neither
   // needs a pick: keep only keys whose decision exists and is not superseded.
   const live = new Set(decisions.filter((d) => !d.superseded_by).map((d) => d.id))

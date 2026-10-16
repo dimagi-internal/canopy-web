@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
 import type { Decision } from '@/api/storyboards'
 import { DecisionLog, DecisionRow } from './DecisionLog'
+import { rememberReviewerName } from './NoteComposer'
 import * as api from '@/api/storyboards'
 
 vi.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ status: 'anonymous' }) }))
@@ -168,6 +169,20 @@ describe('guest staging in a round', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Keep as is' }))
     await vi.waitFor(() => expect(api.editDecision).toHaveBeenCalledWith(
       'b', 'banner', { action: 'pick', value: 'Keep as is', author_name: 'Sophie' }, 'tok', 'connect'))
+  })
+
+  it('picks up a name typed elsewhere after it mounted', async () => {
+    render(<DecisionLog board={guestBoard} canEdit={false} />)
+    expect(screen.getByText('Add your name in a note first')).toBeTruthy()
+    rememberReviewerName('Sophie') // e.g. a NoteComposer on another scene
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Keep as is' })).toBeTruthy())
+  })
+
+  it('re-reads the name when the window regains focus', async () => {
+    render(<DecisionLog board={guestBoard} canEdit={false} />)
+    store['canopy.reviewer-name'] = 'Sophie' // another tab saved it
+    fireEvent.focus(window)
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Keep as is' })).toBeTruthy())
   })
 
   it('shows the add-your-name hint, not buttons, when no name is remembered', () => {
