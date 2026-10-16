@@ -27,6 +27,16 @@ def _no_imds(monkeypatch, tmp_path):
     monkeypatch.setenv("CANOPY_DEVICE_KEY_DIR", str(tmp_path / "dk"))
 
 
+@pytest.fixture(autouse=True)
+def _no_canopy_cli(cloud_runner, monkeypatch):
+    """No test may run this machine's real canopy CLI to make an ECDH key; the default is
+    an older canopy that cannot (the enrollment is then exactly the pre-#1550 one).
+    Returns the real function for the test that drives it with a faked subprocess."""
+    real = cloud_runner._ecdh_public_key
+    monkeypatch.setattr(cloud_runner, "_ecdh_public_key", lambda: {})
+    return real
+
+
 def test_signature_matches_botocore(cloud_runner):
     pytest.importorskip("botocore")
     from botocore.auth import SigV4Auth
@@ -178,3 +188,63 @@ def test_enrollment_survives_an_older_canopy_web(cloud_runner, monkeypatch):
     monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: (422, None))
     monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
     assert cloud_runner.enroll_aws_device_key("r-1") == {"error": "HTTP 422"}
+
+
+# ── the zero-knowledge vault's ECDH key (canopy-web#1550) ─────────────────────
+
+ECDH_JWK = {"kty": "EC", "crv": "P-256", "x": "a_hdX-hFmLEMphmewJzNfTXc1xlf3R3Hc3oMZwBu8lE",
+            "y": "uVLyXuwd7tH8oZGDiZBGY1fTFK37fpdguNmvyPOala0"}
+
+
+def test_enrollment_sends_the_ecdh_key_canopy_made(cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_runner, "_aws_instance_credentials", lambda: CREDS)
+    monkeypatch.setattr(cloud_runner, "_aws_role_arn", lambda creds: ROLE)
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    monkeypatch.setattr(cloud_runner, "_ecdh_public_key",
+                        lambda: {"jwk": ECDH_JWK, "jkt": "PypibSbF5m1Gccn93S70AQoOITKZeDXpPTyfRY-cAHc"})
+    posts = []
+
+    def api(method, path, body=None, *, prefix="/api/harness", headers=None):
+        posts.append(body)
+        return 201, {"id": "k1", "jkt": "f" * 64, "status": "pending", "approve_url": "u"}
+
+    monkeypatch.setattr(cloud_runner, "_api", api)
+    cloud_runner.enroll_aws_device_key("r-ec2")
+    assert posts[0]["ecdh_public_jwk"] == ECDH_JWK
+    cached = json.loads((tmp_path / "dk" / "status.json").read_text())
+    assert cached["ecdh_jkt"].startswith("Pypib") and cached["ecdh_kind"] == "software"
+
+
+@pytest.mark.parametrize("rc,out,want", [
+    (0, json.dumps({"kind": "software", "jkt": "J", "jwk": ECDH_JWK, "created": True}),
+     {"jwk": ECDH_JWK, "jkt": "J"}),
+    (2, "", {}),                                                   # an older canopy: no flag
+    (0, json.dumps({"jwk": {**ECDH_JWK, "d": "PRIVATE"}}), {}),    # never a private member
+    (0, "not json", {}),
+])
+def test_ecdh_key_comes_from_the_canopy_cli(cloud_runner, monkeypatch, _no_canopy_cli,
+                                            rc, out, want):
+    import subprocess
+    monkeypatch.setattr(cloud_runner, "_ecdh_public_key", _no_canopy_cli)   # the real one
+    seen = []
+
+    def run(argv, **kw):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, rc, out, "Error: No such option" if rc else "")
+
+    monkeypatch.setattr(cloud_runner.subprocess, "run", run)
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    assert cloud_runner._ecdh_public_key() == want
+    assert seen[0][1:] == ["vault", "device", "--ecdh-jwk", "--kind", "aws-iam"]
+
+
+def test_a_zk_agent_without_a_wrap_is_a_named_health_failure(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "_api",
+                        lambda *a, **k: (409, {"error": "zk_wrap_missing"}))
+    monkeypatch.setattr(cloud_runner, "_aws_proof_headers", lambda url: {})
+    logs = []
+    monkeypatch.setattr(cloud_runner, "_log", logs.append)
+    cloud_runner._AGENT_OP.pop("eva", None)
+    assert cloud_runner._agent_op_token("eva") == ""
+    assert any("grant" in line for line in logs)
+    assert cloud_runner._HEALTH["zk.eva"]["status"] == "fail"

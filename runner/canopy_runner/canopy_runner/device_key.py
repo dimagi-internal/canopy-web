@@ -11,6 +11,11 @@ per start, in the background, as this runner's identity — and says what a pers
 while the key is `pending` it logs the approve URL and, on macOS, shows ONE notification
 per key. `canopy vault status` / `canopy vault device` show the same URL.
 
+The same enrollment registers this machine's ECDH key (``ecdh_public_jwk``) for the
+zero-knowledge vault (canopy-web#1550) — canopy makes it beside the signing key. Adding or
+changing it sends an active key back to ``pending``, so the notification marker is keyed by
+both thumbprints and a re-approval is announced like a first one.
+
 Fail-open everywhere: no canopy CLI, an older canopy without `vault`, an older canopy-web
 without the route, no network — each is one log line, and the runner carries on exactly as
 before. A runner never blocks or exits over its device key. Opt out: CANOPY_DEVICE_KEY=0.
@@ -100,8 +105,15 @@ def enroll(cfg, *, runner: Runner = subprocess.run, home: Optional[Path] = None,
         logger.warning("device key: canopy printed no status")
         return {"error": "no status"}
     status, url, jkt = st.get("status"), st.get("approve_url") or "", st.get("jkt") or ""
+    ecdh_jkt = st.get("ecdh_jkt") or ""
     logger.info("device key: %s key %s… for runner %s — %s", st.get("kind"), jkt[:12],
                 cfg.runner_id, status)
+    # The zero-knowledge vault's ECDH key (canopy-web#1550) rides the same enrollment.
+    if ecdh_jkt:
+        logger.info("device key: ECDH key %s… (%s) registered beside it", ecdh_jkt[:12],
+                    st.get("ecdh_kind") or "?")
+    elif st.get("ecdh_note"):
+        logger.info("device key: no ECDH key — %s", st["ecdh_note"])
     if status == "pending" and url:
         logger.warning("device key: PENDING — approve it in canopy-web (passkey step-up): %s",
                        url)
@@ -110,13 +122,16 @@ def enroll(cfg, *, runner: Runner = subprocess.run, home: Optional[Path] = None,
             seen = marker.read_text(encoding="utf-8").strip()
         except OSError:
             seen = ""
-        if seen != jkt:
+        # Keyed by BOTH thumbprints: adding/changing the ECDH key on an active key sends it
+        # back to pending, and that re-approval deserves its own notification.
+        mark = f"{jkt}:{ecdh_jkt}" if ecdh_jkt else jkt
+        if seen != mark:
             _notify("Canopy: approve this Mac's device key",
                     "Open canopy-web to approve it (Touch ID). `canopy vault device` shows the link.",
                     runner)
             try:
                 marker.parent.mkdir(parents=True, exist_ok=True)
-                marker.write_text(jkt, encoding="utf-8")
+                marker.write_text(mark, encoding="utf-8")
             except OSError:
                 pass
     return st

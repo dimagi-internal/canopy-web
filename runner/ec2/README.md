@@ -436,6 +436,14 @@ Vault AWS-auth pattern):
 - The signer is stdlib (this file must stay stdlib-only); `tests/test_aws_device_proof.py`
   checks it byte-for-byte against botocore's `SigV4Auth`. Each stack has its own
   `RunnerRole`, so approving a role approves exactly that box.
+- **Zero-knowledge vault (#1550).** A role cannot do ECDH, so the box also holds a software
+  ECDH key (`~/.canopy/device-key/ecdh.pem`, 0600) that a ZK agent's vault key is wrapped
+  to. `cloud_runner.py` stays stdlib-only: it asks the canopy CLI to make it
+  (`canopy vault device --ecdh-jwk --kind aws-iam` → the PUBLIC JWK) and sends it as
+  `ecdh_public_jwk` in the same enrollment (adding it to an approved key needs
+  re-approval). It never decrypts: a ZK agent's values are opened by the canopy CLI on the
+  box (`agent prepare --runner`, `cred sync`). A 409 `zk_wrap_missing` is a failing
+  `zk.<slug>` health check — an admin must grant this runner's device.
 
 ## Vault standard
 

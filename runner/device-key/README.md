@@ -10,7 +10,19 @@ canopy-device-key info                  # {"secure_enclave_available", "key_pres
 canopy-device-key create                # idempotent; {"kind", "created", "jwk"}
 canopy-device-key public-jwk            # {"kty":"EC","crv":"P-256","x","y"}
 canopy-device-key sign <base64url>      # raw r||s (64 bytes) as base64url — ES256
+canopy-device-key ecdh-create           # idempotent; {"kind", "created", "jwk"} — the ZK key
+canopy-device-key ecdh-public-jwk       # its public JWK
+canopy-device-key ecdh-derive <epk>     # Z (32-byte shared x-coordinate), base64url;
+                                        # epk = base64url X9.62 uncompressed P-256 point
 ```
+
+**Zero-knowledge vault (canopy-web#1550).** A second, separate enclave key —
+`SecureEnclave.P256.KeyAgreement.PrivateKey`, same access control, stored as
+`~/.canopy/device-key/se-ecdh.key` (0600) — that a zero-knowledge agent's vault key is
+ECDH-ES-wrapped to. It only answers `ecdh-derive`: Z for a wrap's ephemeral point; canopy's
+`orchestrator/vault_zk.py` does the HKDF + AES-GCM unwrap. Smoke-tested on a real enclave
+by wrapping a random key with `docs/vault/zk-v1/zk_v1_reference.py` to its public key and
+unwrapping through `ecdh-derive`.
 
 - CryptoKit `SecureEnclave.P256.Signing.PrivateKey`, access control `.privateKeyUsage`
   only (no user presence — unattended turns must never prompt), `AfterFirstUnlockThisDeviceOnly`.

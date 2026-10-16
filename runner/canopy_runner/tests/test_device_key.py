@@ -102,3 +102,22 @@ def test_finds_the_windows_canopy_exe(tmp_path, monkeypatch):
     exe.write_text("")
     exe.chmod(0o755)
     assert dk.canopy_cli(tmp_path) == str(exe)
+
+
+def test_a_new_ecdh_key_sending_the_key_back_to_pending_notifies_again(tmp_path, monkeypatch):
+    """canopy-web#1550: registering the ECDH key on an approved key resets it to pending —
+    same signing thumbprint, so a marker keyed by jkt alone would stay silent."""
+    def pending(ecdh_jkt):
+        return Fake(out=json.dumps({"status": "pending", "jkt": "JKT-1", "kind": "secure-enclave",
+                                    "approve_url": "https://canopy.example/approve/4",
+                                    "ecdh_jkt": ecdh_jkt, "ecdh_kind": "secure-enclave"}))
+
+    notes = lambda f: sum(1 for a, _ in f.calls if a[0] == "osascript")   # noqa: E731
+    first = Fake()                                    # an older canopy: no ECDH key
+    _enroll(tmp_path, first, monkeypatch)
+    again = pending("ECDH-1")
+    _enroll(tmp_path, again, monkeypatch)
+    assert notes(first) == 1 and notes(again) == 1
+    quiet = pending("ECDH-1")
+    _enroll(tmp_path, quiet, monkeypatch)
+    assert notes(quiet) == 0
