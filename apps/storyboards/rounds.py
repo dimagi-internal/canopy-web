@@ -219,7 +219,23 @@ def _choose(board, staged: list[dict], picks: dict[str, str]) -> list[dict]:
     return chosen
 
 
-def _hand_to_agent(board, rnd, *, by_user, note: str):
+def _skipped_text(skipped: list[dict]) -> str:
+    """The staged edits a close could not apply, for the agent to rule on."""
+    if not skipped:
+        return ""
+    lines = ["Staged edits not applied \u2014 their decision was replaced or removed during "
+             "the round; carry each into the next version or decline it:"]
+    for e in skipped:
+        where = (f"replaced by {e['superseded_by']}" if e.get("superseded_by")
+                 else "removed by the publisher")
+        what = e.get("action", "")
+        if e.get("value"):
+            what += f" \u201c{e['value']}\u201d"
+        lines.append(f"- {e['key']} ({where}): {e.get('by_name') or 'someone'} wanted {what}")
+    return "\n".join(lines)
+
+
+def _hand_to_agent(board, rnd, *, by_user, note: str, changed: int, skipped: list[dict]):
     """One task on the board's project, approved once -> exactly one turn.
 
     The task asks for review and is approved by the closer in the same breath:
@@ -233,12 +249,14 @@ def _hand_to_agent(board, rnd, *, by_user, note: str):
     notes = rnd.notes.count()
     people = rnd.notes.exclude(author_name="").values("author_name").distinct().count()
     where = f"?ws={board.workspace_id}"
+    body = "\n\n".join(p for p in ((note or "").strip(), _skipped_text(skipped)) if p)
     (task,) = agent_services.create_tasks(project.agent, [{
         "title": f"Feedback round {rnd.number} on \u201c{board.title}\u201d: "
                  f"{notes} {'note' if notes == 1 else 'notes'} from {people} "
-                 f"{'person' if people == 1 else 'people'}",
+                 f"{'person' if people == 1 else 'people'}, "
+                 f"{changed} {'decision' if changed == 1 else 'decisions'} changed",
         "ask_kind": "review",
-        "ask_body": note or "",
+        "ask_body": body,
         "project": project.ext_id,
         "source_url": wsvc.scoped_url(board.workspace_id, f"/storyboard/{board.slug}"),
         "next_action": f"Run ddd-feedback-round for storyboard {board.slug} round {rnd.number}.",
@@ -249,10 +267,17 @@ def _hand_to_agent(board, rnd, *, by_user, note: str):
                  "with the run id \u2014 this opens the next round."),
         "idempotency_key": f"storyboard-round-{rnd.pk}",
     }])
-    agent_services.act(
-        task, action="approve", comment=note or "", by=by_user.email, by_user=by_user,
-        actor_workspace_ids={board.workspace_id}, may_start_turns=True,
-    )
+    try:
+        agent_services.act(
+            task, action="approve", comment=note or "", by=by_user.email, by_user=by_user,
+            actor_workspace_ids={board.workspace_id}, may_start_turns=True,
+        )
+    except agent_services.ClosedAskError:
+        # Backstop only: `lock_open` already refuses a second close. Should the
+        # idempotency key ever replay an already-approved task (a lock the
+        # database did not honour, e.g. SQLite), refuse cleanly — never a 500,
+        # never a second turn — and let the caller's transaction roll back.
+        raise RoundError(409, f"round {rnd.number} is closed") from None
     return task
 
 
@@ -260,7 +285,11 @@ def close_round(board, rnd, *, by_user, note: str = "", picks: dict[str, str] | 
     """Close `rnd` in ONE transaction: lock it, apply its staged edits (the
     closer resolves disagreements via `picks`), mark it closed, and hand it to
     the board project's agent as one approved task -> one turn. Any failure
-    leaves the round open with nothing applied and no task or turn."""
+    leaves the round open with nothing applied and no task or turn.
+
+    An edit staged on a row the publisher replaced (superseded) or removed
+    mid-round is skipped, not applied, and listed on the task for the agent to
+    rule on — a routine republish must never make the round impossible to close."""
     from apps.storyboards import decisions as decision_rows
 
     user_model = get_user_model()
@@ -270,21 +299,29 @@ def close_round(board, rnd, *, by_user, note: str = "", picks: dict[str, str] | 
         if board.agent_project_id is None:
             raise RoundError(422, "Link this storyboard to a board project before closing the "
                                   "round: closing hands it to that project's agent.")
+        rows = {r.key: r for r in board.decisions.all()}
+        live, skipped = [], []
+        for e in rnd.staged_edits:
+            row = rows.get(e["key"])
+            if row is None or row.superseded_by:
+                skipped.append({**e, "superseded_by": row.superseded_by if row else ""})
+            else:
+                live.append(e)
+        changed = 0
         try:
-            for e in _choose(board, list(rnd.staged_edits), picks or {}):
-                row = board.decisions.filter(key=e["key"]).first()
-                if row is None:  # the publisher dropped it since; nothing to apply
-                    continue
+            for e in _choose(board, live, picks or {}):
                 uid = e.get("by_user_id")
                 user = user_model.objects.filter(pk=uid).first() if uid else None
-                decision_rows.apply_edit(row, action=e["action"], value=e.get("value", ""),
+                decision_rows.apply_edit(rows[e["key"]], action=e["action"], value=e.get("value", ""),
                                          reasoning=e.get("reasoning", ""), by_user=user,
                                          by_name=e.get("by_name", ""))
+                changed += 1
         except decision_rows.DecisionInvalid as exc:
             raise RoundError(422, str(exc)) from None
         except decision_rows.DecisionConflict as exc:
             raise RoundError(409, str(exc)) from None
         frounds.mark_closed(rnd, by_user=by_user, note=note)
-        rnd.task = _hand_to_agent(board, rnd, by_user=by_user, note=note)
+        rnd.task = _hand_to_agent(board, rnd, by_user=by_user, note=note,
+                                  changed=changed, skipped=skipped)
         rnd.save(update_fields=["task"])
     return rnd

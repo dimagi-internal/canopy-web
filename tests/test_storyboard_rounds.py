@@ -1,14 +1,13 @@
 """Feedback rounds on a storyboard (spec C)."""
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents.models import Agent, AgentProject, ProjectParticipant
+from apps.agents.models import Agent, AgentProject, AgentTask, ProjectParticipant
 from apps.feedback.models import Feedback, FeedbackRound
+from apps.harness.models import Turn
 from apps.storyboards import rounds as board_rounds
 from apps.storyboards.models import Act, Entry, Storyboard
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -265,8 +264,6 @@ def test_staged_value_and_reasoning_are_capped_and_confirm_stores_no_value(world
 
 
 # ---------------------------------------------------------------- closing a round
-from apps.agents.models import AgentTask  # noqa: E402
-from apps.harness.models import Turn  # noqa: E402
 
 
 def _close(world, client=None, **body):
@@ -289,7 +286,7 @@ def test_close_applies_edits_and_starts_exactly_one_turn(world):
     assert row.decided_by_verified is False
     task = rnd.task
     assert task.project == world["project"] and task.agent == world["agent"]
-    assert "12 notes" in task.title
+    assert "12 notes" in task.title and "1 decision changed" in task.title
     assert Turn.objects.filter(raised_from_task=task).count() == 1
 
 
@@ -380,3 +377,55 @@ def test_a_failure_after_the_turn_rolls_the_whole_close_back(world, monkeypatch)
     monkeypatch.setattr(agent_services, "act", real_act)
     assert _close(world).status_code == 200  # and the close can simply be retried
     assert AgentTask.objects.count() == 1 and Turn.objects.count() == 1
+
+
+def test_close_skips_and_reports_an_edit_on_a_row_superseded_mid_round(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _edit(world, action="pick", value="Keep as is", author_name="Sophie")
+    # The agent republishes mid-round and replaces the row the edit was staged on.
+    dsvc.publish(world["board"], [ROW, {**ROW, "id": "banner-v2", "supersedes": "banner",
+                                       "recommended": "Keep as is"}])
+    resp = _close(world, close_note="Done for now")
+    assert resp.status_code == 200, resp.content
+    old = world["board"].decisions.get(key="banner")
+    assert old.superseded_by == "banner-v2" and old.status == "ai-default"
+    task = FeedbackRound.objects.get().task
+    assert "0 decisions changed" in task.title
+    assert task.ask_body.startswith("Done for now")
+    assert "banner" in task.ask_body and "banner-v2" in task.ask_body
+    assert "Sophie" in task.ask_body and "Keep as is" in task.ask_body
+    assert Turn.objects.filter(raised_from_task=task).count() == 1
+
+
+def test_close_with_a_pick_that_is_not_one_of_the_rows_edits_is_422(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _edit(world, action="pick", value="Keep as is", author_name="Sophie")
+    _edit(world, client=world["viewer"], token=False, action="confirm")
+    resp = _close(world, picks={"banner": "not-an-edit"})
+    assert resp.status_code == 422 and "banner" in resp.json()["detail"]
+    assert FeedbackRound.objects.get().state == "open" and AgentTask.objects.count() == 0
+
+
+def test_close_an_unknown_round_is_404(world):
+    _open(world)
+    resp = world["owner"].post("/api/storyboards/supply/rounds/7/close", {},
+                               content_type="application/json")
+    assert resp.status_code == 404
+
+
+def test_a_closed_ask_from_act_is_409_not_500(world, monkeypatch):
+    """Backstop: should `act` find the task's ask already closed (an idempotency
+    replay of the round's task), the close is refused cleanly and rolled back."""
+    from apps.agents import services as agent_services
+
+    _open(world)
+
+    def closed(*a, **kw):
+        raise agent_services.ClosedAskError("ace/T1 has no open ask")
+
+    monkeypatch.setattr(agent_services, "act", closed)
+    resp = _close(world)
+    assert resp.status_code == 409 and "closed" in resp.json()["detail"]
+    assert FeedbackRound.objects.get().state == "open" and AgentTask.objects.count() == 0
