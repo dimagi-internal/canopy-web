@@ -19,6 +19,11 @@ import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
 import { AgentPatRotationSection } from '@/pages/agents/AgentPatRotationSection'
 import { AgentCredentialAlertsSection } from '@/pages/agents/AgentCredentialAlertsSection'
 import { CredentialReadHistory } from '@/pages/agents/CredentialReadHistory'
+import { AgentZkSection } from '@/pages/agents/AgentZkSection'
+import type { ZkStateOut } from '@/api/vault'
+import { revealZkValue, setZkValue, unlockVaultKey } from '@/vault/operations'
+import { PrfUnsupportedError, PRF_UNSUPPORTED } from '@/vault/prf'
+import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { getCredentialAlerts, type AgentCredentialAlertOut } from '@/api/deviceKeys'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
@@ -60,6 +65,7 @@ export const REVEAL_MS = 60_000
 /** The server's own reason (`detail`) when there is one, not the wrapper text. */
 function reason(e: unknown, fallback: string): string {
   if (e instanceof AgentApiError && e.detail) return e.detail
+  if (e instanceof PrfUnsupportedError) return PRF_UNSUPPORTED
   return e instanceof Error ? e.message : fallback
 }
 
@@ -99,6 +105,15 @@ export function AgentCredentialsPanel({
   const [onVault] = useState(() => report('vault'))
   const [onGitHub] = useState(() => report('github'))
   const [onSalesforce] = useState(() => report('salesforce'))
+  // Zero-knowledge (canopy-web#1550): when on, Save and Reveal encrypt and
+  // decrypt HERE under the agent's vault key, unlocked with the person's own
+  // vault key (passkey or passphrase) — canopy-web never sees the value.
+  const [zk, setZk] = useState<ZkStateOut | null>(null)
+  const unlocker = useUnlockPrompt()
+  const unlock = () => unlockVaultKey(unlocker.prompt)
+  const reload = useCallback(() => {
+    getAgentCredentialStatus(agent.slug).then(setRows).catch(() => undefined)
+  }, [agent.slug])
 
   useEffect(() => {
     let cancelled = false
@@ -143,7 +158,12 @@ export function AgentCredentialsPanel({
     setBusy(true)
     setError(null)
     try {
-      setRows(await setAgentCredentials(agent.slug, { [name]: value }))
+      if (zk?.enabled) {
+        await setZkValue(agent.slug, name, value, unlock)
+        setRows(await getAgentCredentialStatus(agent.slug))
+      } else {
+        setRows(await setAgentCredentials(agent.slug, { [name]: value }))
+      }
       // Never keep a secret in component state once it has landed.
       setDraft((d) => ({ ...d, [name]: '' }))
     } catch (e) {
@@ -157,7 +177,10 @@ export function AgentCredentialsPanel({
     setBusy(true)
     setError(null)
     try {
-      setRevealed({ name, value: await revealAgentCredential(agent.slug, name) })
+      const value = zk?.enabled
+        ? await revealZkValue(agent.slug, name, unlock)
+        : await revealAgentCredential(agent.slug, name)
+      setRevealed({ name, value })
     } catch (e) {
       setError(reason(e, 'Failed to reveal'))
     } finally {
@@ -380,7 +403,16 @@ export function AgentCredentialsPanel({
         requireDeviceBinding={agent.require_device_binding}
         canEdit={canEdit}
       />
-      <AgentPatRotationSection slug={agent.slug} canEdit={canEdit} />
+      <AgentZkSection
+        slug={agent.slug}
+        storedNames={rows.filter((r) => r.set).map((r) => r.name)}
+        canEdit={canEdit}
+        onState={setZk}
+        onChanged={reload}
+        unlock={unlock}
+        unlockElement={unlocker.element}
+      />
+      {!zk?.enabled && <AgentPatRotationSection slug={agent.slug} canEdit={canEdit} />}
       <AgentCredentialAlertsSection alerts={alerts} />
 
       {/* Zero refs is UNDECLARED, not provisioned: nothing to list. Saying

@@ -7,6 +7,7 @@ import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
 import { PasskeysPanel } from '@/components/settings/PasskeysPanel'
+import { VaultKeyPanel } from '@/components/settings/VaultKeyPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 import { useMemoryVisible } from '@/auth/memoryRollout'
@@ -102,6 +103,8 @@ export function SettingsPage() {
       </div>
 
       <PasskeysPanel />
+
+      <VaultKeyPanel />
 
       <GitHubPanel />
 

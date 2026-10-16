@@ -64,8 +64,8 @@ export function StepUpDialog(): JSX.Element {
         </DialogTitle>
         <DialogDescription className="text-[13px] text-foreground-secondary">
           {req?.hasPasskey
-            ? 'This action handles a secret, so it needs your passkey (Touch ID, Windows Hello or your phone). One confirmation covers the next five minutes.'
-            : 'This action handles a secret, so it needs a passkey, and you have none yet. Register this device — Touch ID, Windows Hello or your phone — and the action continues.'}
+            ? 'This action handles a secret, so it needs your passkey — Touch ID, your device password or PIN, your phone, or a security key. One confirmation covers the next five minutes.'
+            : 'This action handles a secret, so it needs a passkey, and you have none yet. Register this device — Touch ID, your device password or PIN, your phone, or a security key — and the action continues.'}
         </DialogDescription>
         {!supported && (
           <p className="text-[13px] text-destructive" data-testid="step-up-unsupported">

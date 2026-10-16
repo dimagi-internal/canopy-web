@@ -10,6 +10,8 @@ const { approveRunnerDeviceKey, revokeRunnerDeviceKey } = vi.hoisted(() => ({
   revokeRunnerDeviceKey: vi.fn(),
 }))
 vi.mock('@/api/deviceKeys', () => ({ approveRunnerDeviceKey, revokeRunnerDeviceKey }))
+const { grantPending } = vi.hoisted(() => ({ grantPending: vi.fn() }))
+vi.mock('@/vault/operations', () => ({ grantPending, unlockVaultKey: vi.fn() }))
 
 const { DeviceKeysTable } = await import('./DeviceKeysTable')
 
@@ -33,6 +35,17 @@ describe('DeviceKeysTable', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...KEY, status: 'active' }))
     expect(approveRunnerDeviceKey).toHaveBeenCalledWith('k1')
+  })
+
+  it('offers the vault-key grant right after approving, for zero-knowledge agents (canopy-web#1550)', async () => {
+    approveRunnerDeviceKey.mockResolvedValue({ ...KEY, status: 'active', zk_pending_agents: ['eva'] })
+    grantPending.mockResolvedValue({})
+    render(<DeviceKeysTable keys={[KEY]} onChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    expect((await screen.findByTestId('device-key-zk-grant')).textContent).toContain('eva')
+    fireEvent.click(screen.getByTestId('device-key-zk-grant-button'))
+    await waitFor(() => expect(grantPending).toHaveBeenCalledWith('eva', expect.any(Function)))
+    expect((await screen.findByText(/Granted: eva/))).toBeTruthy()
   })
 
   it('revokes after confirming', async () => {
