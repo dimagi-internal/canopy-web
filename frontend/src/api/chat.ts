@@ -112,17 +112,21 @@ export type SessionState = "active" | "archived" | "all";
  * `agent_spoke_last`) — the supervisor feed's fields, opt-in so the other list
  * callers do not carry text they never render.
  */
-export function sessionsPath(state: SessionState = "active", opts: { reply?: boolean } = {}): string {
+export function sessionsPath(
+  state: SessionState = "active",
+  opts: { reply?: boolean; limit?: number } = {},
+): string {
   const params = new URLSearchParams();
   if (state !== "active") params.set("state", state);
   if (opts.reply) params.set("reply", "true");
+  if (opts.limit) params.set("limit", String(opts.limit));
   const q = params.toString();
   return q ? `/api/canopy-sessions/?${q}` : "/api/canopy-sessions/";
 }
 
 export function listSessions(
   state: SessionState = "active",
-  opts: { reply?: boolean } = {},
+  opts: { reply?: boolean; limit?: number } = {},
 ): Promise<ChatSession[]> {
   return request<ChatSession[]>(sessionsPath(state, opts));
 }

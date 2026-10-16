@@ -263,7 +263,14 @@ class SessionOut(Schema):
     origin: str = "web"
     running: bool = False
     runner_name: str | None = None
+    #: The bound runner's id — a stable key to filter by, where names can repeat.
+    runner_id: uuid.UUID | None = None
+    #: The macOS user@host the live session belongs to ("" when unbound or unreported).
+    runner_host: str = ""
     runner_location: str | None = None
+    #: The emdash project its worktree lives under — the repo for a project chat,
+    #: the agent's own repo (its slug) for an agent chat. What /ide groups by.
+    emdash_project: str = ""
     # Is the bound runner reachable right now? Carried on the session because a
     # session's own payload is the only place a caller who can see the session is
     # guaranteed to learn this: GET /api/harness/runners/ is scoped to runners the

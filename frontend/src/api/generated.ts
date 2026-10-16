@@ -14324,8 +14324,20 @@ export interface components {
             readonly running: boolean;
             /** Runner Name */
             readonly runner_name?: string | null;
+            /** Runner Id */
+            readonly runner_id?: string | null;
+            /**
+             * Runner Host
+             * @default
+             */
+            readonly runner_host: string;
             /** Runner Location */
             readonly runner_location?: string | null;
+            /**
+             * Emdash Project
+             * @default
+             */
+            readonly emdash_project: string;
             /** Runner Online */
             readonly runner_online?: boolean | null;
             /** Runner Status */
@@ -22608,8 +22620,20 @@ export interface components {
             readonly running: boolean;
             /** Runner Name */
             readonly runner_name?: string | null;
+            /** Runner Id */
+            readonly runner_id?: string | null;
+            /**
+             * Runner Host
+             * @default
+             */
+            readonly runner_host: string;
             /** Runner Location */
             readonly runner_location?: string | null;
+            /**
+             * Emdash Project
+             * @default
+             */
+            readonly emdash_project: string;
             /** Runner Online */
             readonly runner_online?: boolean | null;
             /** Runner Status */

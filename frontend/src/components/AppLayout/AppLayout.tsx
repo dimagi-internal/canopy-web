@@ -98,6 +98,13 @@ function UserMenu() {
             Supervisor
           </Link>
           <Link
+            to="/ide"
+            onClick={() => setOpen(false)}
+            className="hidden px-3 py-2 text-sm text-foreground-secondary hover:bg-muted md:block"
+          >
+            IDE
+          </Link>
+          <Link
             to="/settings"
             onClick={() => setOpen(false)}
             className="block px-3 py-2 text-sm text-foreground-secondary hover:bg-muted"
@@ -277,6 +284,8 @@ function AppShell() {
     location.pathname.startsWith('/review') ||
     /^\/w\/[^/]+\/review\//.test(location.pathname) ||
     location.pathname.startsWith('/timeline') ||
+    // The session IDE: a project tree beside the open chat, each scrolling itself.
+    location.pathname.startsWith('/ide') ||
     // An individual Agent Workspace (/agents/<slug>) is a full-bleed workbench
     // like DDD; the bare /agents LIST stays in the standard container.
     /^\/agents\/[^/]+/.test(location.pathname) ||

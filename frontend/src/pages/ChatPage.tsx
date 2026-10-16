@@ -90,8 +90,12 @@ const BACKFILL_TIMEOUT_MS = 30_000
  * reusable `canopy-ui/chat` ChatPanel. All live chat state lives in
  * `useSessionSocket`; this page supplies seams (attach/detach, scroll-back,
  * full backfill, running/idle) + a minimal title shell.
+ *
+ * Also the right pane of /ide/:id, where `onLeave` replaces the page's own
+ * navigation: a closed session drops back to the tree instead of out of /ide,
+ * and a move between workspaces keeps the /ide URL (it names no workspace).
  */
-export function ChatPage() {
+export function ChatPage({ onLeave }: { onLeave?: () => void } = {}) {
   const { id = '' } = useParams()
   const appHost = useMemo(() => appHostFor(id), [id])
   const navigate = useNavigate()
@@ -550,6 +554,7 @@ export function ChatPage() {
     }
     if (intent.confirm && !window.confirm('This chat is still working. Close it anyway?')) return
     const leave = () => {
+      if (onLeave) return onLeave()
       const to = closeDestination(window.history.state?.idx, meta.workspace)
       if (to === -1) navigate(-1)
       else navigate(to, { replace: true })
@@ -586,7 +591,7 @@ export function ChatPage() {
     } finally {
       setClosing(false)
     }
-  }, [id, meta, navigate])
+  }, [id, meta, navigate, onLeave])
 
   const loadFull = useCallback(async () => {
     if (loadingFull) return
@@ -765,6 +770,7 @@ export function ChatPage() {
     if (!id) return
     const moved = await moveSession(id, workspace)
     setMeta((prev) => (prev ? { ...prev, workspace: moved.workspace } : prev))
+    if (onLeave) return
     // The URL names the workspace; keep it true so a reload lands here.
     navigate(`/w/${encodeURIComponent(moved.workspace)}/chat/${encodeURIComponent(id)}`, {
       replace: true,
