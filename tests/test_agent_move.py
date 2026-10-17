@@ -271,6 +271,8 @@ _NOT_THE_AGENTS = {
     "beta_requests.BetaRequest": "`user_agent` is a browser string, not an agent",
     "events.SettingChange": "`user_agent` is a browser string; audit stays where it happened",
     "agents.EngagementEvent": "what people did, recorded in the workspace they did it in; telemetry stays there",
+    "huddles.HuddleGroup": "a work group is its workspace's (lead, channel); the agents it names are "
+                           "re-checked at every announcement, and a leader that moved out fails it",
 }
 
 

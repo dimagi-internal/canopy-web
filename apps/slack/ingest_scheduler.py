@@ -29,8 +29,20 @@ def _tick() -> None:
     close_old_connections()
     try:
         ingest.tick()
+        _expire_group_runs()
     finally:
         close_old_connections()
+
+
+def _expire_group_runs() -> None:
+    """Work group announcements nobody confirmed lapse after 24 h (apps/huddles/groups.py)
+    — on this loop because it is the one that already reads channels for them."""
+    from apps.huddles import groups
+
+    try:
+        groups.expire_due()
+    except Exception:  # noqa: BLE001 — never stop the reads over it
+        logger.exception("work group expiry failed")
 
 
 async def run_forever(interval_s: float) -> None:

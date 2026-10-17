@@ -86,6 +86,7 @@ function Stepper({ huddle }: { huddle: Huddle }) {
 /** "Work group X · #channel · lead Y · read N messages (A → B)" — set when the
  * huddle ran for a work group's confirmed run, null otherwise. */
 function GroupLine({ group }: { group: NonNullable<Huddle['group']> }) {
+  const { workspace = '' } = useParams()
   const ts = (v: string) => {
     const n = Number(v)
     return v && Number.isFinite(n)
@@ -95,7 +96,10 @@ function GroupLine({ group }: { group: NonNullable<Huddle['group']> }) {
   const read = group.read
   return (
     <p data-group={group.slug} className="mt-2 text-[13px] text-foreground-secondary">
-      Work group <span className="font-medium text-foreground">{group.name}</span>
+      Work group{' '}
+      <Link className="font-medium text-primary hover:underline" to={`/w/${workspace}/huddles/groups/${group.slug}`}>
+        {group.name}
+      </Link>
       {group.channel_name && <> · #{group.channel_name}</>}
       {group.lead_email && <> · lead {group.lead_email}</>}
       {read && (

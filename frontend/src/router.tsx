@@ -109,6 +109,9 @@ const HuddlesPage = lazySection(() =>
 const HuddlePage = lazySection(() =>
   import('./pages/huddles/HuddlePage').then((m) => ({ default: m.HuddlePage })),
 )
+const HuddleGroupPage = lazySection(() =>
+  import('./pages/huddles/HuddleGroupPage').then((m) => ({ default: m.HuddleGroupPage })),
+)
 // Agent threads: a direct, bounded conversation between agents (apps/threads).
 const ThreadPage = lazySection(() =>
   import('./pages/threads/ThreadPage').then((m) => ({ default: m.ThreadPage })),
@@ -350,6 +353,8 @@ export const routeTable: RouteObject[] = [
       // A team of agents syncing in rounds (canopy `huddle`), derived from turns.
       { path: '/w/:workspace/huddles', element: <LazySection><HuddlesPage /></LazySection> },
       { path: '/w/:workspace/huddles/:id', element: <LazySection><HuddlePage /></LazySection> },
+      // A work group: lead, channel, agents, cadence, and its runs (apps/huddles/groups.py).
+      { path: '/w/:workspace/huddles/groups/:slug', element: <LazySection><HuddleGroupPage /></LazySection> },
       { path: '/w/:workspace/threads/:id', element: <LazySection><ThreadPage /></LazySection> },
       {
         path: '/w/:workspace/agents/:slug',

@@ -9,6 +9,12 @@ const row = {
 }
 const listHuddles = vi.fn(async () => [row])
 vi.mock('@/api/huddles', () => ({ listHuddles, getHuddle: vi.fn() }))
+vi.mock('@/api/huddleGroups', () => ({
+  listHuddleGroups: vi.fn(async () => []), createHuddleGroup: vi.fn(), updateHuddleGroup: vi.fn(),
+}))
+vi.mock('@/api/agents', () => ({ listAgents: vi.fn(async () => ({ items: [] })) }))
+vi.mock('@/api/workspaces', () => ({ listMembers: vi.fn(async () => []) }))
+vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceRole: () => 'viewer' }))
 const { HuddlesPage } = await import('./HuddlesPage')
 afterEach(cleanup)
 

@@ -284,6 +284,15 @@ GATES: dict[str, tuple[str, ...]] = {
     "back_project": ("member",),  # as yourself; an agent's login is refused (it backs as itself)
     "unback_project": ("member", "self"),
     "back_project_as_agent": ("agent-login",),  # the backer's own login, or the project's agent's
+    # --- apps/huddles/groups_api.py: work groups. None of these can start a channel read
+    "list_huddle_groups": ("member",),
+    "create_huddle_group": ("integrations",),  # + integrations where the leader agent lives
+    "get_huddle_group": ("member",),
+    "update_huddle_group": ("integrations",),
+    "delete_huddle_group": ("integrations",),
+    "list_huddle_group_runs": ("member",),
+    "get_huddle_group_run": ("member", "agent-login"),  # material included: members, and the leader's login
+    "finish_huddle_group_run": ("agent-login",),  # the leader agent's own login only
     # --- apps/threads/api.py: bounded agent->agent conversations; messages are tagged turns
     "open_thread": ("agent.work",),  # editor in the moderator agent's workspace
     "list_threads": ("member",),  # threads in the caller's workspaces; no message content
@@ -812,6 +821,8 @@ SETTINGS: frozenset[str] = frozenset({
     "set_config_token", "clear_config_token", "declare_agent", "set_history",
     "set_channel_ingest", "revoke_channel_ingest",  # revoking withdraws an agent's access to a channel
     "allow_channel_ingest", "disallow_channel_ingest",  # an admin's standing grant of one channel to one agent
+    # work groups: a channel allow-listed for an agent + a schedule
+    "create_huddle_group", "update_huddle_group", "delete_huddle_group",
     "hcp_registerClient", "hcp_updateClient",
     # sharing and visibility
     "set_narrative_visibility", "storyboards_rotate_token", "ensure_token",
@@ -903,6 +914,7 @@ NOT_SETTINGS: dict[str, str] = {
     "create_turn": "turn", "enqueue_turn": "turn", "cancel_turn": "turn", "append_turn_events": "turn",
     "finish_turn": "turn", "start_turn": "turn", "append_turn_transcript": "turn",
     "fire_schedule_route": "turn",
+    "finish_huddle_group_run": "turn",  # the leader's turn reporting its work group run done
     # runner-protocol
     "post_bootstrap_report": "runner-protocol", "update_runner_capabilities": "runner-protocol",
     "claim_admission_notices": "runner-protocol", "report_admission_notice": "runner-protocol",
