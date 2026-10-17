@@ -233,6 +233,11 @@ class SlackChannelIngest(models.Model):
     #: Set when the read was granted by an owner's allow-list entry, not a click.
     allowance = models.ForeignKey(SlackChannelIngestAllow, on_delete=models.SET_NULL, null=True, blank=True,
                                   related_name="ingests")
+    #: A person's `/<agent> read-channel <ask>` waiting on this read: the Slack
+    #: message it came from and the ask. When the pass finishes, canopy hands the
+    #: agent everything since `read_mark` with the ask, in that message's thread,
+    #: and clears this (`ingest.read_channel`, `_deliver`). Empty = nobody waiting.
+    pending_ask = models.JSONField(default=dict, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["status", "next_attempt_at"], name="slack_ingest_due")]

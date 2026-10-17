@@ -223,7 +223,7 @@ def events(request: HttpRequest) -> HttpResponse:
     if outcome.status not in services.OK_STATUSES:
         _record(installation, inbound, outcome.status, outcome.message, outcome=outcome)
         _tell(installation, inbound, outcome.message)
-    elif outcome.status in (services.ANSWERED, services.MOVED, services.NOTHING_QUEUED):
+    elif outcome.status in (services.ANSWERED, services.MOVED, services.NOTHING_QUEUED, services.READING_CHANNEL):
         _tell(installation, inbound, outcome.message)
     # A SENT message is acknowledged by its public status line in the thread
     # (apps/slack/status.py) — picked up, or blocked and why — so no private note.
@@ -269,6 +269,8 @@ def commands(request: HttpRequest) -> HttpResponse:
                           + " Add `--history` before your ask to give the agent this channel's recent"
                           " messages: `/canopy hal --history --min 30 pick this up`, `--history --msgs 5`"
                           " or `--history 9am` (your Slack timezone)."
+                          " `/hal read-channel <ask>` reads everything in this channel since hal's last read"
+                          " (a channel a workspace admin allow-listed for it)."
                           " `/canopy cloud` sends anything of yours stuck behind an offline"
                           " runner to a cloud runner (runner admins only).")
     if word == services.CLOUD_WORD:

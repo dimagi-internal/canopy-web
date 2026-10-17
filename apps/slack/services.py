@@ -84,6 +84,11 @@ def session_url(session: Session) -> str:
     return public_url(f"/w/{session.workspace_id}/chat/{session.id}")
 
 
+def settings_url(workspace_id: str) -> str:
+    """The workspace's Slack settings page."""
+    return public_url(f"/w/{workspace_id}/settings/slack")
+
+
 def link_url(team_id: str, slack_user_id: str) -> str:
     token = signing.dumps({"t": team_id, "u": slack_user_id}, salt=LINK_SALT)
     return public_url("/auth/slack/link/?" + urlencode({"token": token}))
@@ -151,8 +156,10 @@ WINDOW_REFUSED = "window_refused"
 # Sending waiting work to a cloud runner, and the ways that can go.
 MOVED, NO_CLOUD, FORBIDDEN, MOVE_FAILED, NOTHING_QUEUED = (
     "moved", "no_cloud", "forbidden", "move_failed", "nothing_queued")
+#: `/<agent> read-channel <ask>` started reading; the answer comes when it is done.
+READING_CHANNEL = "reading_channel"
 #: Outcomes that are the system working, not refusing — nothing to log.
-OK_STATUSES = {SENT, ANSWERED, STALE, MOVED, NOTHING_QUEUED}
+OK_STATUSES = {SENT, ANSWERED, STALE, MOVED, NOTHING_QUEUED, READING_CHANNEL}
 
 
 @dataclass
@@ -513,6 +520,17 @@ def handle_message(inbound: Inbound) -> Outcome:
     if not prompt and not inbound.files and not joining:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
     title = prompt or "Slack thread"
+    from . import ingest
+
+    reading, ask = ingest.is_read_channel(prompt)
+    if reading:
+        # The one way an allow-listed channel is read: a person, here, asking.
+        try:
+            note = ingest.read_channel(installation=installation, agent=agent, inbound=inbound,
+                                       user=principal.user, ask=ask)
+        except ingest.IngestError as e:
+            return Outcome(WINDOW_REFUSED, str(e), agent=agent, workspace_id=agent.workspace_id)
+        return Outcome(READING_CHANNEL, note, agent=agent, workspace_id=agent.workspace_id)
     win, ask = None, prompt
     if window.has_flag(prompt):
         # The agent's tenant decides, not the Slack's: a Slack can serve several.
@@ -668,6 +686,22 @@ def _first_closed_notice(session: Session, slack_user_id: str) -> bool:
         locked.metadata = meta
         locked.save(update_fields=["metadata", "updated_at"])
     return True
+
+
+def deliver_channel_read(inbound: Inbound, agent: Agent, material: str, ask: str) -> Outcome:
+    """Send a finished `read-channel` read to the agent: the channel since its last
+    read, then the ask, in the thread of the command that asked for it. The sender
+    is checked again — they may have lost access while the channel was read."""
+    installation = installation_for(inbound.team_id)
+    if installation is None:
+        return Outcome(NOT_INSTALLED, "This Slack workspace isn't connected to canopy.")
+    principal, refusal = resolve_principal(installation, inbound.slack_user_id, agent.workspace_id)
+    if refusal is not None:
+        return refusal
+    key = thread_key(inbound.team_id, inbound.channel_id, inbound.anchor)
+    session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
+                                      title="Slack: read-channel" + (f" — {ask}" if ask else ""))
+    return _send(session, created, agent, principal, f"{material}\n\n{ask or window.DEFAULT_ASK}", inbound)
 
 
 def _with_window(installation: SlackInstallation, principal: Principal, agent: Agent,

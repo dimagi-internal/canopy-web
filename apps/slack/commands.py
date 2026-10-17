@@ -170,7 +170,7 @@ def desired_commands(installation: SlackInstallation) -> tuple[dict[str, dict], 
             unfit.append(agent.slug)
             continue
         want[name] = {"command": name, "url": url, "description": f"Ask {agent.name or agent.slug}"[:100],
-                      "usage_hint": f"{HISTORY_HINT}<ask>", "should_escape": False}
+                      "usage_hint": f"read-channel <ask> | {HISTORY_HINT}<ask>", "should_escape": False}
     return want, unfit
 
 

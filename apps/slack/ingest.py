@@ -6,6 +6,11 @@ said in it from now on, handed to one agent as a transcript. So it keeps every
 guarantee window.py makes, and adds the one a bigger read needs — consent from
 someone who can give it, asked in the channel itself (canopy-web#1533):
 
+0. **Started by a person, in Slack.** On an allow-listed channel the only
+   way to read is a person typing `/<agent> read-channel <ask>` in it
+   (`read_channel`): canopy reads everything since the agent's last read there
+   and hands it to the agent with the ask, in that command's thread. The agent
+   cannot start one from the API (owner decision, 2026-10-16).
 1. **Asked for, never assumed.** `request` creates a PENDING ingest and posts
    ONE message in the target channel naming the agent, the purpose and who
    asked, with Approve / Decline. Nothing is read before an Approve. A decline
@@ -171,6 +176,10 @@ def request(*, agent, channel_id: str, purpose: str, follow: bool, requested_by)
                if not _CHANNEL.match(ref) else None)
     channel_id, name = (by_name.channel_id, by_name.channel_name) if by_name else resolve_channel(inst.bot_token, ref)
     allowance = allowance_for(agent, channel_id)
+    if allowance is not None:
+        raise IngestError(f"#{name or channel_id} is allow-listed for {agent.slug}, and an allow-listed channel is "
+                          f"read only when a person asks in Slack: `/{agent.slug} read-channel <ask>` in the "
+                          "channel", 409)
     if allowance is None and not link.channel_ingest_enabled:
         raise IngestError("channel ingest is off for this workspace, and this channel is not allow-listed for "
                           f"{agent.slug} — an owner or admin allow-lists it (or an owner turns asking on) in the Slack settings", 409)
@@ -636,6 +645,8 @@ def advance(ingest: SlackChannelIngest, *, calls: int | None = None) -> SlackCha
                 new=new, total=ingest.messages, phase=ingest.phase, error=error)
     if ingest.status == SlackChannelIngest.FAILED:
         _settle_post(ingest, f":warning: canopy couldn't read this channel for *{ingest.agent.slug}*: {error}.")
+    if ingest.phase == SlackChannelIngest.IDLE or ingest.status == SlackChannelIngest.FAILED:
+        _deliver(ingest)
     return ingest
 
 
@@ -656,6 +667,104 @@ def tick(*, limit: int = 5) -> int:
             logger.exception("slack channel ingest %s failed", pk)
         n += 1
     return n
+
+
+# --- `/<agent> read-channel <ask>` -------------------------------------------
+
+#: The word, first after the agent's name, that reads the channel.
+READ_WORD = "read-channel"
+
+
+def is_read_channel(prompt: str) -> tuple[bool, str]:
+    """(asked, the ask after the word) — `read-channel` must be the first word."""
+    head, _, rest = (prompt or "").strip().partition(" ")
+    if head.lower().lstrip("-—–") == READ_WORD:
+        return True, rest.strip()
+    return False, prompt
+
+
+def read_channel(*, installation, agent, inbound, user, ask: str) -> str:
+    """A person typed `/<agent> read-channel <ask>` in a channel: read it.
+
+    Only an allow-listed channel, only a member's command. Reads everything the
+    agent has not had from this channel yet (all of it, the first time) — off
+    the request, since a whole channel cannot be read in Slack's 3 seconds — and
+    `_deliver` hands it to the agent with the ask in the command's thread.
+    Returns the note for the person; raises IngestError to refuse.
+    """
+    from dataclasses import asdict
+
+    from .services import settings_url
+
+    channel_id = inbound.channel_id
+    if inbound.is_dm:
+        raise IngestError(f"`{READ_WORD}` works in a channel, not a DM — type it in the channel to read.")
+    if user is None:
+        raise IngestError(f"Only members of the *{agent.workspace_id}* canopy workspace can ask "
+                          f"`{agent.slug}` to read a channel.")
+    allowance = allowance_for(agent, channel_id)
+    if allowance is None:
+        raise IngestError(f"This channel isn't on `{agent.slug}`'s list of channels it may read. A workspace owner "
+                          f"or admin can add it in canopy's Slack settings: {settings_url(agent.workspace_id)}")
+    now = timezone.now()
+    with transaction.atomic():
+        row = (SlackChannelIngest.objects.select_for_update()
+               .filter(agent=agent, channel_id=channel_id, allowance=allowance, status__in=LIVE)
+               .order_by("-created_at").first())
+        if row is not None and row.pending_ask:
+            raise IngestError(f"`{agent.slug}` is still reading this channel for an earlier `{READ_WORD}`. "
+                              "Try again once it has answered.")
+        if row is None:
+            row = SlackChannelIngest.objects.create(
+                workspace_id=agent.workspace_id, installation=installation, agent=agent, channel_id=channel_id,
+                channel_name=allowance.channel_name or inbound.channel_name, follow=False, requested_by=user,
+                allowance=allowance, status=SlackChannelIngest.READING, decided_by=allowance.added_by,
+                decided_at=now)
+        elif row.phase == SlackChannelIngest.IDLE:
+            _start_follow_pass(row)            # only what is new since the last pass
+        row.purpose = (ask or READ_WORD)[:2000]
+        row.pending_ask = {"inbound": {k: v for k, v in asdict(inbound).items() if k != "files"},
+                           "ask": ask, "by": user.pk}
+        row.next_attempt_at = now
+        row.save()
+    _record(row, "read_channel", f"{_who(user)} asked {agent.slug} to read <#{channel_id}> since its last read "
+            f"(`{READ_WORD}`)" + (f": {ask}" if ask else ""), user=user.pk, ask=ask[:500],
+            allowance=str(allowance.pk), after=row.read_mark)
+    since = "everything in it" if not row.read_mark else "everything since its last read here"
+    return f"`{agent.slug}` is reading this channel ({since}) and will answer in this thread."
+
+
+def _deliver(ingest: SlackChannelIngest) -> None:
+    """Hand a finished read to the person's waiting `read-channel` ask, once."""
+    from . import services
+
+    with transaction.atomic():
+        row = SlackChannelIngest.objects.select_for_update().filter(pk=ingest.pk).first()
+        if row is None or not row.pending_ask:
+            return
+        pending = row.pending_ask
+        row.pending_ask = {}
+        row.save(update_fields=["pending_ask"])
+    row = SlackChannelIngest.objects.select_related("agent", "installation", "workspace", "decided_by").get(pk=row.pk)
+    inbound = services.Inbound(**pending["inbound"])
+    token = row.installation.bot_token
+    if row.status not in LIVE:
+        _tell_thread(token, inbound, f":warning: canopy couldn't read this channel for `{row.agent.slug}`: "
+                     f"{row.error or row.status}.")
+        return
+    t = transcript(row, after=row.read_mark)
+    outcome = services.deliver_channel_read(inbound, row.agent, t["markdown"], pending.get("ask") or "")
+    if outcome.status == services.SENT:
+        mark_read(row, t["mark"])
+    else:
+        _tell_thread(token, inbound, outcome.message)
+
+
+def _tell_thread(token: str, inbound, text: str) -> None:
+    try:
+        client.post_message(token, channel=inbound.channel_id, thread_ts=inbound.reply_thread_ts, text=text)
+    except Exception:  # noqa: BLE001 — the read stands; the note is a courtesy
+        logger.exception("could not post a read-channel note")
 
 
 # --- the transcript ----------------------------------------------------------
@@ -711,7 +820,15 @@ def transcript(ingest: SlackChannelIngest, *, after: int = 0) -> dict:
         return f"{indent}- **{clock} UTC — {who}:** {text}"
 
     label = f"#{ingest.channel_name}" if ingest.channel_name else ingest.channel_id
-    approver = f"<@{ingest.decided_by_slack_id}>" if ingest.decided_by_slack_id else "—"
+    if ingest.decided_by_slack_id:
+        approver = f"<@{ingest.decided_by_slack_id}>"
+    elif ingest.allowance_id or ingest.decided_by_id:
+        # Approved ahead of time, on the allow-list: there is no Slack click to
+        # point at, so name the canopy person who added the entry.
+        who = getattr(ingest.decided_by, "email", "") or "an owner or admin"
+        approver = f"{who} (allow-listed)" if ingest.allowance_id else who
+    else:
+        approver = "—"
     first_ts, last_ts = (rows[0].ts, rows[-1].ts) if rows else ("", "")
     if not after:
         count = f"- Messages: {len(rows)}"

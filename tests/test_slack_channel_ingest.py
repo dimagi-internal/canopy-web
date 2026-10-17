@@ -499,35 +499,15 @@ def test_an_admin_or_owner_can_allow_list_but_not_a_member(channel, installation
         ingest.allow(workspace=ws, agent=hal, channel=CHAN, follow=False, note="", by=hal_login)
 
 
-def test_an_allow_listed_request_reads_at_once_with_the_switch_off(allowed, channel, ws, hal_login, slack):
-    assert not SlackWorkspaceLink.objects.get(workspace=ws).channel_ingest_enabled
-    resp = _request(_link_client(hal_login))
-    assert resp.status_code == 201, resp.content
-    row = SlackChannelIngest.objects.get(pk=resp.json()["id"])
-    assert row.status == SlackChannelIngest.READING and row.decided_by == _owner(ws)
-    (post,) = slack.said("chat.postMessage")
-    buttons = {e["action_id"] for b in post["blocks"] if b["type"] == "actions" for e in b["elements"]}
-    assert buttons == {ingest.REVOKE}                     # a notice, not a question
-    assert "allow-listed" in post["blocks"][0]["text"]["text"]
-    row = _run(row)
-    assert row.status == SlackChannelIngest.READY and row.messages == 6
-    md = _link_client(hal_login).get(f"/api/slack-ingests/{row.pk}/transcript").json()["markdown"]
-    assert "first ever message" in md
-    assert Event.objects.filter(kind="slack.ingest_approved").count() == 1
-
-
-def test_an_allow_listed_name_resolves_without_asking_slack(allowed, channel, hal_login):
-    channel.reads.clear()
-    resp = _link_client(hal_login).post("/api/slack-ingests/", {"agent": "hal", "channel": "#canopy-support",
-                                                                  "purpose": "x"}, content_type="application/json")
-    assert resp.status_code == 201, resp.content
-    assert "conversations.list" not in _reads(channel)
-
-
-def test_a_read_once_entry_does_not_allow_following(allowed, channel, hal_login, ws):
-    assert _request(_link_client(hal_login), follow=True).status_code == 403
-    assert _allow(ws, follow=True).status_code == 200          # adding again updates it
-    assert _request(_link_client(hal_login), follow=True).status_code == 201
+def test_an_allow_listed_channel_is_never_read_from_the_api(allowed, channel, ws, hal_login, slack):
+    """Owner decision, 2026-10-16: a read starts only from a person in Slack."""
+    for ref in (CHAN, "#canopy-support"):
+        channel.reads.clear()
+        resp = _link_client(hal_login).post("/api/slack-ingests/", {"agent": "hal", "channel": ref, "purpose": "x"},
+                                            content_type="application/json")
+        assert resp.status_code == 409 and "/hal read-channel" in resp.json()["detail"]
+        assert "conversations.list" not in _reads(channel)        # an allow-listed name resolves locally
+    assert not slack.said("chat.postMessage") and not SlackChannelIngest.objects.exists()
 
 
 def test_another_channel_still_needs_the_switch(allowed, channel, hal_login):
@@ -536,16 +516,69 @@ def test_another_channel_still_needs_the_switch(allowed, channel, hal_login):
     assert resp.status_code == 409 and "allow-listed" in resp.json()["detail"]
 
 
-def test_removing_an_entry_revokes_its_reads(allowed, channel, ws, hal_login):
-    row = SlackChannelIngest.objects.get(pk=_request(_link_client(hal_login)).json()["id"])
-    _run(row)
+# ---- `/hal read-channel <ask>`: the one way an allow-listed channel is read --------
+
+def _read_channel(text="what's new?", user=ALICE):
+    from tests.test_slack import command
+    resp = command(f"hal read-channel {text}".strip(), user=user)
+    assert resp.status_code == 200, resp.content
+    return resp.json()["text"]
+
+
+def _turns():
+    from apps.harness.models import Turn
+    return list(Turn.objects.order_by("created_at"))
+
+
+def test_read_channel_reads_everything_then_only_what_is_new(allowed, channel, linked, hal, ws, slack):
+    slack.ts_seq = ["1700000801.000100", "1700000802.000100"]   # each command's own anchor message
+    note = _read_channel("what's new?")
+    assert "is reading this channel (everything in it)" in note
+    row = SlackChannelIngest.objects.get()
+    assert row.status == SlackChannelIngest.READING and row.allowance_id and row.pending_ask["ask"] == "what's new?"
+    assert not _turns()                                           # nothing sent until the read is done
+    row = _run(row)
+    assert row.status == SlackChannelIngest.READY and row.pending_ask == {}
+    (turn,) = _turns()
+    assert turn.chat_session.agent == hal
+    assert "first ever message" in turn.prompt and "reply two" in turn.prompt
+    assert turn.prompt.rstrip().endswith("what's new?")
+    assert f"Approved by: {_owner(ws).email} (allow-listed)" in turn.prompt
+    assert row.read_mark and Event.objects.filter(kind="slack.ingest_read_channel").count() == 1
+
+    channel.history.insert(0, {"ts": "1700000600.000000", "user": BOB, "text": "brand new"})
+    note = _read_channel("and now?")
+    assert "since its last read here" in note
+    _run(SlackChannelIngest.objects.get())
+    second = _turns()[-1]
+    assert second.pk != turn.pk
+    assert "brand new" in second.prompt and "first ever message" not in second.prompt
+    assert second.prompt.rstrip().endswith("and now?")
+
+
+def test_read_channel_needs_the_channel_on_the_list(channel, linked, hal, installation):
+    note = _read_channel()
+    assert "isn't on `hal`'s list of channels it may read" in note and "/settings/slack" in note
+    assert not SlackChannelIngest.objects.exists() and not _turns()
+    assert "conversations.history" not in _reads(channel)
+
+
+def test_read_channel_is_refused_while_an_earlier_one_is_reading(allowed, channel, linked, hal):
+    _read_channel()
+    assert "still reading this channel" in _read_channel("again")
+    assert SlackChannelIngest.objects.count() == 1
+
+
+def test_removing_an_entry_revokes_its_reads(allowed, channel, ws, linked, hal):
+    _read_channel()
+    row = _run(SlackChannelIngest.objects.get())
     resp = _link_client(_owner(ws)).delete(f"/api/slack-config/{ws.slug}/channel-ingest/allowed/{allowed['id']}")
     assert resp.status_code == 200, resp.content
     assert resp.json()["channel_ingest"]["allowed"] == []
     row.refresh_from_db()
     assert row.status == SlackChannelIngest.REVOKED
     assert not SlackIngestMessage.objects.filter(ingest=row).exists()
-    assert _request(_link_client(hal_login)).status_code == 409   # and it can't be asked for again
+    assert "isn't on `hal`'s list" in _read_channel()              # and it can't be asked for again
     assert Event.objects.filter(kind="slack.ingest_disallowed").count() == 1
 
 
