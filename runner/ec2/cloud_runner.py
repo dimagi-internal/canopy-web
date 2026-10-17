@@ -1272,6 +1272,12 @@ def _refresh_agent_env_canopy(slug: str, op_token: str, vault: str) -> None:
     env = {k: v for k, v in _child_safe_env().items()
            if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
     env.update(OP_SERVICE_ACCOUNT_TOKEN=op_token, AGENT_VAULT=vault, AGENT_SLUG=slug)
+    # The turn this sync is for, so the resolve it makes names it (canopy's cred_resolve
+    # reads CANOPY_TURN_ID). It lives in this thread's turn env, not the process's, so
+    # without this every claim-time sync read as a box outside a turn (canopy-web#1563).
+    turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
+    if turn_id:
+        env["CANOPY_TURN_ID"] = turn_id
     try:
         res = subprocess.run([_canopy_cli(), "cred", "sync", "--agent", slug, "--ttl", "0"],
                              env=env, cwd=str(pathlib.Path(AGENT_ROOT) / slug),
