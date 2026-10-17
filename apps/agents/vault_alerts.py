@@ -7,7 +7,9 @@ owner, its explicit admins) the way canopy tells an admin about an access
 request: an email and a Web Push, each linking to the agent's Credentials.
 
 * `no-turn` — a read by a BOX (resolve's `via == "runner"`: the caller pairs a
-  runner this agent routes to) that names no `X-Canopy-Turn-Id`. The issue's
+  runner this agent routes to AND the request names that box — a device proof
+  or an owned `X-Canopy-Runner`; a bare token names no box and is an admin read,
+  canopy-web#1563) that names no `X-Canopy-Turn-Id`. The issue's
   wording is "not from an owner or admin at a browser"; read against the code:
   every resolve caller is already an agent admin (`caller_runs_agent` requires
   it), resolve is bearer-only, and the owner/admin-at-a-browser read is a
@@ -175,6 +177,31 @@ def _link(agent) -> str:
     return wsvc.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings#credentials")
 
 
+#: What each kind watches for and what the owner should do, in plain words. The
+#: detail line says what was seen; without this an owner cannot tell a misused
+#: token from a config gap (canopy-web#1563).
+_WHY = {
+    "no-turn": ("Canopy watches for this because a runner box should only read an agent's "
+                "secrets while it is running one of the agent's turns; a box reading them "
+                "at any other time is what a stolen or misused runner token looks like. "
+                "If you were not working on that box, pause it and revoke its token."),
+    "undeclared-ref": ("Canopy watches for this because an agent should only ask for the "
+                       "secrets its runtime.yaml declares. Usually the agent's repo is "
+                       "missing a declaration, so add those names to its runtime.yaml. If "
+                       "the agent should never use them, find out who asked."),
+    "burst": ("Canopy watches for this because a normal turn reads an agent's secrets a "
+              "few times, not dozens; a burst can mean a loop or someone harvesting them. "
+              "Check which box and turn the reads came from."),
+    "device-proof": ("Canopy refused this read because the agent only hands its secrets to "
+                     "approved devices, and the caller could not prove it was one. If that "
+                     "was your own box, approve its device key; if not, someone holds a "
+                     "token without the device."),
+    "zk-wrap-missing": ("Canopy refused this read because the device has not been granted "
+                        "this agent's vault key. Grant the device if it should run the "
+                        "agent."),
+}
+
+
 def _notify(agent, alert) -> dict:
     """Email + Web Push to each recipient. Never raises."""
     from django.core.mail import EmailMultiAlternatives
@@ -184,11 +211,14 @@ def _notify(agent, alert) -> dict:
         link = _link(agent)
         label = dict(alert.KIND_CHOICES).get(alert.kind, alert.kind)
         subject = f"Canopy vault alert · {agent.name or agent.slug}: {label}"
-        text = (f"{alert.detail}\n\nSee {agent.slug}'s credential read history: {link}\n\n"
+        why = _WHY.get(alert.kind, "")
+        text = (f"{alert.detail}\n\n" + (f"{why}\n\n" if why else "")
+                + f"See {agent.slug}'s credential read history: {link}\n\n"
                 f"At most one alert of this kind per agent per hour. You are getting this "
                 f"because you own {agent.slug} on Canopy.\n")
         html = (f"<p>{escape(alert.detail)}</p>"
-                f'<p><a href="{escape(link)}">See {escape(agent.slug)}&rsquo;s credential read '
+                + (f"<p>{escape(why)}</p>" if why else "")
+                + f'<p><a href="{escape(link)}">See {escape(agent.slug)}&rsquo;s credential read '
                 f"history</a></p><p style=\"color:#78716c;font-size:13px\">At most one alert of "
                 f"this kind per agent per hour. You are getting this because you own "
                 f"{escape(agent.slug)} on Canopy.</p>")

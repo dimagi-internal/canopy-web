@@ -384,11 +384,36 @@ def test_a_refused_device_proof_alerts_the_owner_once_an_hour(fleet, sts):
     assert len(_alerts("device-proof")) == 2 and len(mail.outbox) == 2
 
 
+def _resolve_as_box(fleet, turn=""):
+    headers = {"HTTP_AUTHORIZATION": f"Bearer {fleet['pat']}",
+               "HTTP_X_CANOPY_RUNNER": str(fleet["runner"].pk)}
+    if turn:
+        headers["HTTP_X_CANOPY_TURN_ID"] = turn
+    return Client().get(RESOLVE, **headers)
+
+
 def test_a_box_read_without_a_turn_id_alerts(fleet):
-    assert _resolve(fleet, turn="").status_code == 200
+    assert _resolve_as_box(fleet).status_code == 200
     [alert] = _alerts("no-turn")
-    assert alert.refs == ["canopy-pat"]
+    assert alert.refs == ["canopy-pat"] and alert.runner_id == fleet["runner"].pk
     assert _alerts() == [alert]
+    body = mail.outbox[0].body
+    assert "stolen or misused runner token" in body and "revoke its token" in body
+
+
+def test_a_proven_box_read_without_a_turn_id_alerts(fleet, sts):
+    _active_role(fleet, sts)
+    assert _resolve(fleet, proof=_proof(), turn="").status_code == 200
+    assert len(_alerts("no-turn")) == 1
+
+
+def test_an_owner_who_pairs_a_box_resolving_by_hand_is_expected(fleet):
+    """canopy-web#1563: the owner pairs a runner the agent routes to, but this
+    request names no box (no device proof, no X-Canopy-Runner) — it is their
+    own session, so it is an admin read and raises no no-turn alert."""
+    assert _resolve(fleet, turn="").status_code == 200
+    assert _alerts("no-turn") == [] and mail.outbox == []
+    assert AgentCredentialRead.objects.filter(agent=fleet["agent"]).latest("pk").via == "admin"
 
 
 def test_a_read_inside_a_turn_raises_nothing(fleet):
@@ -438,7 +463,7 @@ def test_no_alerts_for_an_agent_on_1password(fleet):
 
 
 def test_alerts_are_listed_for_admins_only(fleet):
-    _resolve(fleet, turn="")
+    _resolve_as_box(fleet)
     rows = fleet["client"].get("/api/agents/eva/credential-alerts").json()
     assert [r["kind"] for r in rows] == ["no-turn"] and rows[0]["notified"] is True
     viewer = get_user_model().objects.create_user(username="v", email="v@dimagi.com")

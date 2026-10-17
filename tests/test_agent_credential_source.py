@@ -139,11 +139,22 @@ def test_an_admin_without_a_runner_resolves_and_is_audited_as_admin(cs, who):
 
 
 def test_a_runner_resolve_is_audited_as_runner(cs):
+    box = _box(cs["admin"], cs["agent"])
+    res = _bearer(cs["admin"]).get("/api/agents/csbot/credentials/resolve",
+                                   HTTP_X_CANOPY_RUNNER=str(box.pk))
+    assert res.status_code == 200, res.content
+    [ev] = _resolve_events(cs["agent"])
+    assert ev.payload["via"] == "runner"
+
+
+def test_a_runner_owner_resolving_without_naming_the_box_is_audited_as_admin(cs):
+    """canopy-web#1563: pairing a box is a fact about the caller; a request
+    that names no box is the admin's own session."""
     _box(cs["admin"], cs["agent"])
     res = _bearer(cs["admin"]).get("/api/agents/csbot/credentials/resolve")
     assert res.status_code == 200, res.content
     [ev] = _resolve_events(cs["agent"])
-    assert ev.payload["via"] == "runner"
+    assert ev.payload["via"] == "admin"
 
 
 def test_an_admin_session_cookie_is_still_refused(cs):

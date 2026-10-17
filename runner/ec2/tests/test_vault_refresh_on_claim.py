@@ -73,6 +73,17 @@ def test_it_is_canopy_cred_sync_with_the_agents_own_key_and_vault(cloud_runner, 
     assert cwd.endswith("/agents/ace")          # where cred sync finds the template
 
 
+def test_cred_sync_names_the_turn_it_was_claimed_for(cloud_runner, box, monkeypatch):
+    """canopy-web#1563: the turn id is thread-local, so a sync that only inherited the
+    process env resolved with no X-Canopy-Turn-Id and raised a no-turn vault alert."""
+    monkeypatch.delenv("CANOPY_TURN_ID", raising=False)
+    monkeypatch.setattr(cloud_runner._TURN_ENV, "extra",
+                        {"CANOPY_TURN_ID": "6c5bebf8-7d75-46aa-a37e-aa50b8e47378"}, raising=False)
+    cloud_runner._agent_env("ace")
+    (_argv, env, _cwd), = box["calls"]
+    assert env["CANOPY_TURN_ID"] == "6c5bebf8-7d75-46aa-a37e-aa50b8e47378"
+
+
 def test_a_burst_of_claims_refreshes_once_per_ttl(cloud_runner, box):
     cloud_runner._agent_env("ace"); cloud_runner._agent_env("ace")
     assert len(box["calls"]) == 1
