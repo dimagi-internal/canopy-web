@@ -4,10 +4,16 @@ import { performStepUp, registerThisDevice } from '@/api/passkeys'
 import { setStepUpHandler, type StepUpRequest } from './stepUp'
 import { defaultLabel, webauthnSupported } from './webauthn'
 
+/** A NotAllowedError faster than this is the browser refusing (no user
+ *  gesture), not a person dismissing the sheet. */
+const GESTURE_REFUSAL_MS = 1500
+
 /**
  * The prompt behind every passkey step-up (canopy-web#1538). Mounted once at
- * the app root; `stepUp.ts`'s middleware opens it when a request comes back
- * `step_up_required`, and retries that request when it resolves.
+ * the app root; `stepUp.ts`'s middleware calls it when a request comes back
+ * `step_up_required`, and retries that request when it resolves. A person with
+ * a passkey goes straight to the browser's passkey sheet; this dialog appears
+ * only when the browser refuses that (Safari wants a fresh click) or it fails.
  *
  * A person with no passkey yet is offered to register THIS device right here —
  * registering verifies them, which opens the step-up window too, so the
@@ -21,15 +27,28 @@ export function StepUpDialog(): JSX.Element {
   const settle = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null)
 
   useEffect(() => {
-    setStepUpHandler(
-      (next) =>
-        new Promise<void>((resolve, reject) => {
-          settle.current = { resolve, reject }
-          setError('')
-          setBusy(false)
-          setReq(next)
-        }),
-    )
+    const openDialog = (next: StepUpRequest, why = '') =>
+      new Promise<void>((resolve, reject) => {
+        settle.current = { resolve, reject }
+        setError(why)
+        setBusy(false)
+        setReq(next)
+      })
+    setStepUpHandler(async (next) => {
+      if (!next.hasPasskey || !webauthnSupported()) return openDialog(next)
+      // Go straight to the browser's passkey sheet: the dialog is only a fresh
+      // click for browsers (Safari) that refuse WebAuthn outside one. Such a
+      // refusal is an immediate NotAllowedError; a dismissal takes a person.
+      const started = Date.now()
+      try {
+        await performStepUp()
+        return
+      } catch (e) {
+        const refused = e instanceof Error && e.name === 'NotAllowedError'
+        if (refused && Date.now() - started > GESTURE_REFUSAL_MS) throw new Error('Passkey confirmation cancelled')
+        return openDialog(next, refused ? '' : e instanceof Error ? e.message : '')
+      }
+    })
     return () => setStepUpHandler(null)
   }, [])
 

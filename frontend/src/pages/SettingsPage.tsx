@@ -104,7 +104,7 @@ export function SettingsPage() {
 
       <PasskeysPanel />
 
-      <VaultKeyPanel />
+      <VaultKeyPanel onlyWhenNeeded />
 
       <GitHubPanel />
 

@@ -206,3 +206,27 @@ describe('Grant pending, unlocking with a passphrase', () => {
       zk.deviceInfo(AGENT_ID, 1, deviceJkt)))).toEqual(Array.from(vk))
   })
 })
+
+describe('Vault key card on Settings', () => {
+  it('stays hidden until a person has a key or was sent to set one up', async () => {
+    api.getKeyset.mockResolvedValue(keysetOut())
+    window.location.hash = ''
+    const { container } = render(<VaultKeyPanel onlyWhenNeeded />)
+    await waitFor(() => expect(api.getKeyset).toHaveBeenCalled())
+    expect(container.querySelector('[data-testid="settings-vault-key"]')).toBeNull()
+  })
+
+  it('shows when linked as #vault-key', async () => {
+    api.getKeyset.mockResolvedValue(keysetOut())
+    window.location.hash = '#vault-key'
+    render(<VaultKeyPanel onlyWhenNeeded />)
+    expect(await screen.findByTestId('settings-vault-key')).toBeTruthy()
+    window.location.hash = ''
+  })
+
+  it('shows once a key exists', async () => {
+    api.getKeyset.mockResolvedValue(keysetOut({ exists: true, public_jwk: { kty: 'EC' }, seals: [{ alg: 'prf' }] }))
+    render(<VaultKeyPanel onlyWhenNeeded />)
+    expect(await screen.findByTestId('settings-vault-key')).toBeTruthy()
+  })
+})
