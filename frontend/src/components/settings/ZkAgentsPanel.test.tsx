@@ -24,8 +24,12 @@ afterEach(() => {
 const ready = { enabled: true, kv: 1, pending: [], sealed: [] }
 
 function fleet() {
-  agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal' }, { slug: 'eva', name: 'Eva' },
-    { slug: 'ada', name: 'Ada' }, { slug: 'ace', name: 'ACE' }] })
+  const cw = 'canopy-web'
+  agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal', credential_source: cw },
+    { slug: 'eva', name: 'Eva', credential_source: cw }, { slug: 'ada', name: 'Ada', credential_source: cw },
+    { slug: 'ace', name: 'ACE', credential_source: cw },
+    // A 1Password agent I administer, with something stored: still not one of mine here.
+    { slug: 'lex', name: 'lex', credential_source: '1password' }] })
   vault.getZkState.mockImplementation(async (slug: string) => {
     if (slug === 'ace') throw new Error('403') // not mine
     if (slug === 'hal') return ready
@@ -43,12 +47,13 @@ describe('ZkAgentsPanel', () => {
     expect(screen.getByTestId('zk-agent-status-eva').textContent).toBe('Waiting for your key')
     expect(screen.getByTestId('zk-agent-status-ada').textContent).toBe('cloud-ec2-2 waiting')
     expect(screen.queryByTestId('zk-agent-ace')).toBeNull()
+    expect(screen.queryByTestId('zk-agent-lex')).toBeNull()
     expect(screen.queryByText(/turn off|turn on|zero-knowledge/i)).toBeNull()
     expect(screen.getByTestId('zk-agents-start').textContent).toBe('Finish setup for 2 agents')
   })
 
   it('says so when no agent keeps secrets here', async () => {
-    agents.listAgents.mockResolvedValue({ items: [{ slug: 'ada', name: 'Ada' }] })
+    agents.listAgents.mockResolvedValue({ items: [{ slug: 'ada', name: 'Ada', credential_source: 'canopy-web' }] })
     vault.getZkState.mockResolvedValue({ enabled: true, kv: 0, pending: [] })
     agents.getAgentCredentialStatus.mockResolvedValue([])
     render(<ZkAgentsPanel />)
