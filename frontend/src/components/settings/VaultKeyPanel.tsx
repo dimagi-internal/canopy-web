@@ -68,7 +68,7 @@ export function EmergencyKit({ secretKey, email, onDone }: { secretKey: string; 
   )
 }
 
-export function VaultKeyPanel({ email = '' }: { email?: string }) {
+export function VaultKeyPanel({ email = '', onlyWhenNeeded = false }: { email?: string; onlyWhenNeeded?: boolean }) {
   const [ks, setKs] = useState<VaultKeysetOut | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -151,8 +151,13 @@ export function VaultKeyPanel({ email = '' }: { email?: string }) {
     </form>
   )
 
+  // On Settings the card waits until it matters: a person who has no vault key
+  // and arrived without asking for one (an agent's zero-knowledge section links
+  // here as #vault-key) has nothing to do with it yet.
+  if (onlyWhenNeeded && !ks?.exists && !kit && window.location.hash !== '#vault-key') return null
+
   return (
-    <div id="vault-key" className="rounded-xl border border-border bg-card p-5 space-y-3" data-testid="settings-vault-key">
+    <div id="vault-key"className="rounded-xl border border-border bg-card p-5 space-y-3" data-testid="settings-vault-key">
       <div>
         <h2 className="text-sm font-semibold text-foreground">Vault key</h2>
         <p className="mt-1 text-sm text-muted-foreground">
