@@ -56,6 +56,27 @@ describe('SecurityCard', () => {
     expect(document.body.textContent).not.toMatch(/PRF|ECDH|wrap|\bkv\b/)
   })
 
+  it('set up once, from the You row: one passkey touch makes the key, then the recovery code — no agent involved', async () => {
+    const base = { user_id: USER, prf_input: 'cHJm', exists: false, public_jwk: null, seals: [],
+                   passkeys: [{ credential_id: 'cred-1', label: 'mac', prf_enabled: true, sealed: false }] }
+    vault.getKeyset.mockResolvedValue(base)
+    vault.putKeyset.mockImplementation(async (b: Record<string, unknown>) => {
+      const next = { ...base, exists: true, ...b }
+      vault.getKeyset.mockResolvedValue(next)
+      return next
+    })
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: PRF_OUT })
+    render(<SecurityCard machines={null} />)
+    fireEvent.click(await screen.findByTestId('security-setup'))
+    await screen.findByTestId('security-recovery-code')
+    expect(prf.assertWithPrf).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('security-recovery-saved'))
+    fireEvent.click(screen.getByTestId('security-recovery-keep'))
+    expect(await screen.findByTestId('security-recovery-ok')).toBeTruthy()
+    const last = vault.putKeyset.mock.calls.at(-1)![0]
+    expect(last.seals.map((s: { alg: string }) => s.alg)).toEqual(['prf', 'recovery'])
+  })
+
   it('makes the ONE recovery code once, and stores it only after it is kept', async () => {
     const me = await keyset()
     render(<SecurityCard machines={null} />)

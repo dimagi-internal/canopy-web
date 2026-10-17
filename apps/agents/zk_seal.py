@@ -92,6 +92,18 @@ def recipients_for(agent) -> list[tuple[str, str, dict]]:
     return out
 
 
+def sealed_targets(value: str) -> set[tuple[str, str]]:
+    """The `(kind, target)` pairs a `zks1:` value was sealed to; empty for
+    anything else (or a value too malformed to read — it was checked on write)."""
+    if not isinstance(value, str) or not value.startswith(SEALED_PREFIX):
+        return set()
+    try:
+        body = json.loads(b64u_bytes(value[len(SEALED_PREFIX):], "value_zk"))
+        return {(r["kind"], r["target"]) for r in body["r"]}
+    except (ValueError, KeyError, TypeError, ZkError):
+        return set()
+
+
 def seal_for_agent(agent, name: str, plaintext: str) -> str:
     """Seal one server-minted value to everyone who may read `agent`, at its kv."""
     return seal_to(plaintext, agent_id=str(agent.pk), name=name, kv=agent.zk_kv,

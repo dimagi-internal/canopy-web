@@ -241,17 +241,27 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
     """Zero-knowledge agents `user` administers that this (now active) key
     should be granted the vault key of — the "Grant" offer after approving.
     `assume_active`: as if it were approved (the list, for a pending key).
-    An agent born zero-knowledge with no vault key yet (kv 0) has nothing to
-    grant and is left out."""
+
+    An agent born zero-knowledge (kv 0) has no vault key to grant, only values
+    sealed to whoever could read it when each was saved. It is listed when one
+    of those values was not sealed to this key: the browser then creates the
+    agent's vault key in the same passkey touch (opening the sealed values with
+    the person's own key), so a machine approved later can read them too —
+    nobody has to "finish setting up" an agent by hand."""
     if (key.status != RunnerDeviceKey.ACTIVE and not assume_active) or not key.ecdh_jkt:
         return []
-    from apps.agents.models import Agent, AgentVaultWrap
+    from apps.agents.models import Agent, AgentCredential, AgentVaultWrap
+    from apps.agents.zk_seal import sealed_targets
 
     out = []
-    for agent in Agent.objects.filter(zk_enabled=True, zk_kv__gt=0).select_related("workspace", "owner"):
-        if (agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)
-                and not AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device",
-                                                      device_key=key).exists()):
+    for agent in Agent.objects.filter(zk_enabled=True).select_related("workspace", "owner"):
+        if not (agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)):
+            continue
+        if agent.zk_kv == 0:
+            stored = AgentCredential.objects.filter(agent=agent).exclude(value_zk="").values_list("value_zk", flat=True)
+            if any(("device", key.ecdh_jkt) not in sealed_targets(v) for v in stored):
+                out.append(agent.slug)
+        elif not AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device", device_key=key).exists():
             out.append(agent.slug)
     return sorted(out)
 

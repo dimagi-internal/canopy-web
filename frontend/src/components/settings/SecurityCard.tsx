@@ -8,9 +8,10 @@ import {
   prepareRecoveryCode,
   recoverVaultKey,
   unlockVaultKey,
+  vaultKeyForFlow,
   type PreparedRecovery,
 } from '@/vault/operations'
-import { PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
+import { browserSupportsPrf, PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { PasskeysPanel } from './PasskeysPanel'
 import { useHash } from '@/lib/useHash'
@@ -26,7 +27,6 @@ import { ZkAgentsPanel } from './ZkAgentsPanel'
  * #device-keys, #your-agents.
  */
 export function SecurityCard({ machines }: { machines: ReactNode }) {
-  const [youVersion, setYouVersion] = useState(0)
   return (
     <div id="security" className="rounded-xl border border-border bg-card p-5 space-y-5" data-testid="settings-security">
       <div>
@@ -39,13 +39,13 @@ export function SecurityCard({ machines }: { machines: ReactNode }) {
 
       <Row id="you" title="You">
         <PasskeysPanel />
-        <RecoveryRow key={youVersion} />
+        <RecoveryRow />
       </Row>
 
       <Row id="your-machines" title="Your machines">{machines}</Row>
 
       <Row id="your-agents" title="Your agents">
-        <ZkAgentsPanel onChanged={() => setYouVersion((v) => v + 1)} />
+        <ZkAgentsPanel />
       </Row>
     </div>
   )
@@ -94,6 +94,17 @@ function RecoveryRow() {
     setError('')
     try {
       setSaved(false)
+      if (!ks?.exists) {
+        // First time: one passkey touch makes the key the agents' secrets are
+        // sealed to, then the recovery code for it.
+        const got = await vaultKeyForFlow(await browserSupportsPrf(), prompt)
+        if (!got) {
+          setMore(true) // no passkey here can hold it: the passphrase option, below
+          return
+        }
+        setMade(await prepareRecoveryCode(got.me))
+        return
+      }
       setMade(await prepareRecoveryCode(await unlockVaultKey(prompt)))
     } catch (e) {
       fail(e, 'Could not make a recovery code.')
@@ -155,9 +166,17 @@ function RecoveryRow() {
   return (
     <div className="space-y-2 text-sm" data-testid="security-recovery">
       {!exists ? (
-        <p className="text-muted-foreground" data-testid="security-no-key">
-          Your vault key is made the first time you finish setting up an agent, with a recovery code to keep.
-        </p>
+        !made && (
+          <div className="flex flex-wrap items-center gap-2" data-testid="security-no-key">
+            <span className="text-muted-foreground">
+              Set up once: one passkey touch, and a recovery code to keep. After that your agents&rsquo; secrets stay
+              private to you on their own.
+            </span>
+            <Button size="sm" disabled={busy} onClick={() => void create()} data-testid="security-setup">
+              {busy ? 'Working…' : 'Set up'}
+            </Button>
+          </div>
+        )
       ) : hasRecoveryCode(ks) ? (
         <p className="text-success" data-testid="security-recovery-ok">Recovery code saved ✓</p>
       ) : !made && (

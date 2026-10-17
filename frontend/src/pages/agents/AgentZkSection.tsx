@@ -1,21 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getKeyset, getZkState, type ZkStateOut } from '@/api/vault'
-import { deletePasskey, listPasskeys } from '@/api/passkeys'
+import { getZkState, type ZkStateOut } from '@/api/vault'
 import {
-  ensureRecoveryCode,
-  grantPending,
-  hasRecoveryCode,
-  vaultKeyForFlow,
-  vaultKeyRoute,
-  type KeysetPasskey,
+  giveAccess,
   recoverWithCode,
   rotateVaultKey,
-  turnOnZk,
   unlockVaultKey,
   type Unlock,
 } from '@/vault/operations'
-import { browserSupportsPrf, PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
-import { PassphraseSetup } from '@/vault/PassphraseSetup'
+import { PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 // Zero-knowledge for this agent (Canopy Vault Phase 2, canopy-web#1550). With
@@ -54,7 +46,6 @@ function download(slug: string, code: string, kv: number, person: boolean) {
 
 export function AgentZkSection({
   slug,
-  storedNames,
   canEdit,
   onState,
   onChanged,
@@ -62,8 +53,8 @@ export function AgentZkSection({
   unlockElement,
 }: {
   slug: string
-  /** Credentials stored in canopy-web right now (what "turn on" encrypts). */
-  storedNames: string[]
+  /** Credentials stored in canopy-web right now (no longer needed here: nothing is turned on by hand). */
+  storedNames?: string[]
   canEdit: boolean
   /** Reports the state up, so Save/Reveal on the rows can go zero-knowledge. */
   onState?: (s: ZkStateOut | null) => void
@@ -76,13 +67,6 @@ export function AgentZkSection({
   const own = useUnlockPrompt()
   const unlock: Unlock = unlockProp ?? (() => unlockVaultKey(own.prompt))
   const [state, setState] = useState<ZkStateOut | null>(null)
-  const [hasKey, setHasKey] = useState<boolean | null>(null)
-  const [passkeys, setPasskeys] = useState<KeysetPasskey[]>([])
-  /** Passkeys an upgrade just replaced — offered for deletion. */
-  const [replaced, setReplaced] = useState<KeysetPasskey[]>([])
-  const [browserPrf, setBrowserPrf] = useState<boolean | null>(null)
-  /** The action waiting on an inline passphrase setup (no PRF passkey). */
-  const [askPassphrase, setAskPassphrase] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [code, setCode] = useState<{ code: string; kv: number; person: boolean } | null>(null)
@@ -102,14 +86,6 @@ export function AgentZkSection({
     getZkState(slug)
       .then((s) => !cancelled && update(s))
       .catch(() => !cancelled && update(null))
-    getKeyset()
-      .then((k) => {
-        if (cancelled) return
-        setHasKey(k.exists)
-        setPasskeys([...(k.passkeys ?? [])])
-      })
-      .catch(() => !cancelled && setHasKey(false))
-    void browserSupportsPrf().then((v) => !cancelled && setBrowserPrf(v))
     return () => {
       cancelled = true
     }
@@ -146,92 +122,6 @@ export function AgentZkSection({
     }
   }
 
-  /** Turn on (or finish a born-zero-knowledge agent). A person with no vault
-   *  key gets one in the same step: by the passkey touch when it can hold one
-   *  (that touch also steps up), else by an inline passphrase. */
-  const start = (label: string) => {
-    if (hasKey !== false) {
-      void run(label, async () => {
-        // No recovery code yet: unlock once, make the person's ONE code, then go on.
-        if (hasRecoveryCode(await getKeyset())) return turnOnZk(slug, storedNames, confirmCode(1), unlock)
-        const me = await unlock()
-        await ensureRecoveryCode(me, confirmCode(0, true))
-        return turnOnZk(slug, storedNames, confirmCode(1), async () => me)
-      }, true)
-      return
-    }
-    if (vaultKeyRoute(passkeys, browserPrf) === 'passphrase') {
-      setAskPassphrase(label)
-      return
-    }
-    void run(label, async () => {
-      const got = await vaultKeyForFlow(browserPrf, own.prompt)
-      if (!got) {
-        setAskPassphrase(label) // no passkey here can hold a vault key: a passphrase, no error
-        return state
-      }
-      setReplaced(got.replaced)
-      setHasKey(true)
-      await ensureRecoveryCode(got.me, confirmCode(0, true))
-      return turnOnZk(slug, storedNames, confirmCode(1), async () => got.me)
-    }, true)
-  }
-
-  /** After an upgrade: offer to delete the passkeys it replaced. */
-  const removeReplaced = async () => {
-    setBusy('remove the old passkey')
-    setError(null)
-    try {
-      const mine = await listPasskeys()
-      for (const p of mine.filter((k) => replaced.some((r) => r.credential_id === k.credential_id))) {
-        await deletePasskey(p.id)
-      }
-      setReplaced([])
-    } catch (e) {
-      setError(message(e, 'Could not remove the old passkey'))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const passphraseSetup = askPassphrase && (
-    <PassphraseSetup
-      note={USE_A_PASSPHRASE}
-      submitLabel="Finish setup"
-      onCancel={() => setAskPassphrase(null)}
-      onReady={(me) => {
-        const label = askPassphrase
-        setAskPassphrase(null)
-        setHasKey(true)
-        void run(label, async () => {
-          await ensureRecoveryCode(me, confirmCode(0, true))
-          return turnOnZk(slug, storedNames, confirmCode(1), async () => me)
-        }, true)
-      }}
-    />
-  )
-
-  /** "Upgrade your passkey" leads when that is the first thing the click does. */
-  const actionLabel = (base: string) =>
-    hasKey === false && vaultKeyRoute(passkeys, browserPrf) === 'upgrade'
-      ? `Upgrade your passkey and ${base.charAt(0).toLowerCase()}${base.slice(1)}`
-      : base
-
-  const replacedNotice = replaced.length > 0 && (
-    <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="zk-replaced-passkeys">
-      <span className="text-foreground-secondary">
-        Your new passkey holds the vault key. Remove the old one ({replaced.map((p) => p.label || 'passkey').join(', ')})?
-      </span>
-      <button type="button" disabled={busy !== null} onClick={() => void removeReplaced()}
-              className="text-destructive hover:underline disabled:opacity-40" data-testid="zk-remove-replaced">
-        Remove
-      </button>
-      <button type="button" onClick={() => setReplaced([])} className="text-muted-foreground hover:underline">
-        Keep it
-      </button>
-    </div>
-  )
-
   const pending = state.pending
   const current = state.wraps.filter((w) => w.kv === state.kv)
   return (
@@ -239,55 +129,18 @@ export function AgentZkSection({
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         Who can read these secrets
       </h3>
-      {replacedNotice}
 
-      {!state.enabled ? (
-        <div className="space-y-2 text-[12px]">
-          <p className="text-muted-foreground">
-            These secrets were saved before canopy-web stopped keeping readable copies. Finish setup to lock them to
-            you and this agent&rsquo;s {pending.filter((p) => p.kind === 'device').length} approved machine(s), so
-            canopy-web can no longer read them.
-          </p>
-          {askPassphrase === 'finish setup' ? passphraseSetup : (
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => start('finish setup')}
-              className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
-              data-testid="zk-enable"
-            >
-              {busy ? 'Working…' : actionLabel('Finish setup')}
-            </button>
-          )}
-        </div>
-      ) : state.kv === 0 ? (
-        // Born zero-knowledge (canopy-web#1550): no vault key yet. Every value
-        // that arrives is sealed to the owner and the agent's devices.
-        <div className="space-y-2 text-[12px]" data-testid="zk-born">
-          <p className="text-foreground">
-            Locked to you and this agent&rsquo;s approved machines
-            {(state.sealed ?? []).length ? ` (${(state.sealed ?? []).length} secret(s))` : ''}; canopy-web cannot read
-            them.
-          </p>
-          <p className="text-muted-foreground">
-            Finish setup so machines you approve later can read them too.
-          </p>
-          {askPassphrase === 'finish setup' ? passphraseSetup : (
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => start('finish setup')}
-              className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
-              data-testid="zk-create-key"
-            >
-              {busy ? 'Working…' : actionLabel('Finish setup')}
-            </button>
-          )}
-        </div>
+      {!state.enabled || state.kv === 0 ? (
+        // Nothing to do here by hand: an agent with no key of its own yet (kv 0)
+        // has each secret sealed to you and its approved machines as it arrives,
+        // and approving a new machine gives it access (canopy-web#1550).
+        <p className="text-[12px] text-foreground" data-testid="zk-private">
+          Only you and the machines you approve can read these — canopy-web can&rsquo;t.
+        </p>
       ) : (
         <div className="space-y-2 text-[12px]">
           <p className="text-foreground" data-testid="zk-on">
-            Ready · only the people and machines below can read these secrets; canopy-web cannot.
+            Only you and the machines you approve can read these — canopy-web can&rsquo;t.
           </p>
           <table className="w-full text-[12px]" data-testid="zk-wraps">
             <thead>
@@ -318,23 +171,17 @@ export function AgentZkSection({
               ))}
             </tbody>
           </table>
-          {(state.sealed ?? []).length > 0 && (
-            <p className="text-muted-foreground" data-testid="zk-sealed">
-              New: {(state.sealed ?? []).join(', ')}. Confirm once so machines you approve later can read
-              {(state.sealed ?? []).length === 1 ? ' it' : ' them'} too.
-            </p>
-          )}
           {state.rotation_recommended && (
             <p className="text-warning" data-testid="zk-rotate-recommended">
               A machine or person who is no longer allowed could still read these. Change the key to shut them out.
             </p>
           )}
           <div className="flex flex-wrap gap-2">
-            {(pending.length > 0 || (state.sealed ?? []).length > 0) && (
+            {pending.length > 0 && (
               <button type="button" disabled={busy !== null} data-testid="zk-grant"
-                      onClick={() => void run('grant access', () => grantPending(slug, unlock))}
+                      onClick={() => void run('give access', () => giveAccess(slug, unlock))}
                       className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">
-                {pending.length > 0 ? `Let ${pending.length} waiting in` : 'Confirm'}
+                {`Give ${pending.length === 1 ? 'them' : `all ${pending.length}`} access`}
               </button>
             )}
             <button type="button" disabled={busy !== null} data-testid="zk-rotate"
