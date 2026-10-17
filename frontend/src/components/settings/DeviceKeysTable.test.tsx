@@ -10,8 +10,8 @@ const { approveRunnerDeviceKey, revokeRunnerDeviceKey } = vi.hoisted(() => ({
   revokeRunnerDeviceKey: vi.fn(),
 }))
 vi.mock('@/api/deviceKeys', () => ({ approveRunnerDeviceKey, revokeRunnerDeviceKey }))
-const { grantPending } = vi.hoisted(() => ({ grantPending: vi.fn() }))
-vi.mock('@/vault/operations', () => ({ grantPending, unlockVaultKey: vi.fn() }))
+const { grantPending, approveAndGrant } = vi.hoisted(() => ({ grantPending: vi.fn(), approveAndGrant: vi.fn() }))
+vi.mock('@/vault/operations', () => ({ grantPending, approveAndGrant, unlockVaultKey: vi.fn() }))
 
 const { DeviceKeysTable } = await import('./DeviceKeysTable')
 
@@ -28,6 +28,25 @@ afterEach(() => {
 })
 
 describe('DeviceKeysTable', () => {
+  it('approves and grants in one go when zero-knowledge agents wait on the key (canopy-web#1550)', async () => {
+    approveAndGrant.mockResolvedValue({ key: { ...KEY, status: 'active' }, granted: ['eva'], failed: [] })
+    const onChange = vi.fn()
+    render(<DeviceKeysTable keys={[{ ...KEY, zk_pending_agents: ['eva'] }]} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...KEY, status: 'active' }))
+    expect(approveAndGrant).toHaveBeenCalledWith('k1', ['eva'], expect.any(Function))
+    expect(approveRunnerDeviceKey).not.toHaveBeenCalled()
+    expect(await screen.findByText(/Granted: eva/)).toBeTruthy()
+    expect(screen.queryByTestId('device-key-zk-grant-button')).toBeNull()
+  })
+
+  it('leaves a grant that failed for the Grant button', async () => {
+    approveAndGrant.mockResolvedValue({ key: { ...KEY, status: 'active' }, granted: [], failed: ['eva'] })
+    render(<DeviceKeysTable keys={[{ ...KEY, zk_pending_agents: ['eva'] }]} onChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    expect(await screen.findByTestId('device-key-zk-grant-button')).toBeTruthy()
+  })
+
   it('approves a pending key and reports the new state', async () => {
     approveRunnerDeviceKey.mockResolvedValue({ ...KEY, status: 'active' })
     const onChange = vi.fn()

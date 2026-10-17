@@ -40,6 +40,10 @@ export function mintOutcome(status: string | null): { tone: 'ok' | 'error'; text
       return { tone: 'error', text: 'Google did not return which mailbox consented, so nothing was stored.' }
     case 'exchange-failed':
       return { tone: 'error', text: 'The token exchange with Google failed. Nothing was stored — try again.' }
+    case 'zk-no-recipients':
+      // A zero-knowledge agent: the token is sealed to its devices and members,
+      // and it has neither yet (canopy-web#1550).
+      return { tone: 'error', text: 'This agent is zero-knowledge and nobody can read its secrets yet. Approve one of its runners’ device keys, or set up your vault key, then connect again.' }
     default:
       return null
   }

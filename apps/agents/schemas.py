@@ -1328,7 +1328,10 @@ class AgentCredentialsResolveOut(StrictModel):
     mailbox: str = ""
     # Zero-knowledge (canopy-web#1550). When `zk`, `values` hold `zk1:`
     # ciphertext under the agent's vault key at version `kv`, and `wrap` is that
-    # key wrapped to the proving device's ECDH key (docs/vault/zk-v1/).
+    # key wrapped to the proving device's ECDH key (docs/vault/zk-v1/). A value
+    # canopy-web minted itself may instead be `zks1:`, sealed to each device's
+    # ECDH key directly (§6) — opened with the device key, no wrap needed; `wrap`
+    # is null when every value is `zks1` (and always at kv 0, before a vault key).
     zk: bool = False
     kv: int | None = None
     wrap: dict[str, Any] | None = None
@@ -1362,8 +1365,15 @@ class ZkWrapIn(StrictModel):
 
 class ZkValueIn(StrictModel):
     name: str = Field(max_length=120)
-    #: `zk1:` + b64u(nonce12 || AES-GCM ciphertext+tag).
+    #: `zk1:` + b64u(nonce12 || AES-GCM ciphertext+tag) — or, on PUT /values
+    #: only, `zks1:` sealed to recipients (§6).
     value_zk: str
+    #: Compare-and-swap (PUT /values only): lowercase hex SHA-256 of the
+    #: `value_zk` the caller read and is replacing — a settle sends it so a
+    #: value canopy-web minted meanwhile is never overwritten. "" = expect no
+    #: value stored. Any mismatch refuses the whole request (409
+    #: `zk_value_changed`); omitted/null = unconditional.
+    expect: str | None = None
 
 
 class ZkPlainValueIn(StrictModel):
@@ -1445,8 +1455,13 @@ class ZkStateOut(StrictModel):
     wraps: list[ZkWrapOut]
     pending: list[ZkTargetOut]
     rotation_recommended: bool = False
-    #: name → `zk1:` ciphertext, only with `?values=true` (each read is logged).
+    #: name → `zk1:` ciphertext (or `zks1:` sealed to recipients), only with
+    #: `?values=true` (each read is logged).
     values: dict[str, str] | None = None
+    #: Names of server-minted values still sealed to recipients (`zks1`),
+    #: waiting for a vault-key holder to settle them into `zk1`. kv 0 = the
+    #: agent is zero-knowledge from birth and has no vault key yet.
+    sealed: list[str] = []
 
 
 class ZkValuesOut(StrictModel):

@@ -199,7 +199,15 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
             Q(runner__owner=request.user) | Q(runner_id__in=admin_of),
         ).exclude(runner__status=Runner.RETIRED)
     qs = qs.select_related("runner", "approved_by").order_by("-created_at")
-    return [key_out(k, can_manage=True) for k in qs]
+    out = []
+    for k in qs:
+        row = key_out(k, can_manage=True)
+        if k.status == RunnerDeviceKey.PENDING:
+            # What approving it will leave waiting on a vault-key wrap, so the
+            # browser can approve AND wrap in one passkey touch (canopy-web#1550).
+            row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=True)
+        out.append(row)
+    return out
 
 
 @router.post("/{key_id}/approve", response=RunnerDeviceKeyOut,
@@ -225,19 +233,22 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
                       before=before, after=key.status)
     out = key_out(key, can_manage=True)
-    out.zk_pending_agents = _zk_agents_waiting_on(request.user, key)
+    out.zk_pending_agents = zk_agents_waiting_on(request.user, key)
     return out
 
 
-def _zk_agents_waiting_on(user, key: RunnerDeviceKey) -> list[str]:
+def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = False) -> list[str]:
     """Zero-knowledge agents `user` administers that this (now active) key
-    should be granted the vault key of — the "Grant" offer after approving."""
-    if key.status != RunnerDeviceKey.ACTIVE or not key.ecdh_jkt:
+    should be granted the vault key of — the "Grant" offer after approving.
+    `assume_active`: as if it were approved (the list, for a pending key).
+    An agent born zero-knowledge with no vault key yet (kv 0) has nothing to
+    grant and is left out."""
+    if (key.status != RunnerDeviceKey.ACTIVE and not assume_active) or not key.ecdh_jkt:
         return []
     from apps.agents.models import Agent, AgentVaultWrap
 
     out = []
-    for agent in Agent.objects.filter(zk_enabled=True).select_related("workspace", "owner"):
+    for agent in Agent.objects.filter(zk_enabled=True, zk_kv__gt=0).select_related("workspace", "owner"):
         if (agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)
                 and not AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device",
                                                       device_key=key).exists()):

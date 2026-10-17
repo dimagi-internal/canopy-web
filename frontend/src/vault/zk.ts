@@ -170,6 +170,59 @@ export async function decryptValue(vk: Uint8Array, agentId: string, name: string
   return dec.decode(await gcmDecrypt(vk, blob.slice(0, 12), blob.slice(12), valueAad(agentId, name, kv)))
 }
 
+// ---- 6. sealed to recipients (zks1) ------------------------------------------------------
+//
+// What canopy-web mints itself (a Gmail token, a rotated canopy-pat) — or what
+// anyone writes before an agent born zero-knowledge has a vault key (kv 0) — is
+// sealed straight to each recipient's public key. A vault-key holder later
+// "settles" it into an ordinary zk1 value.
+
+export const SEALED_PREFIX = 'zks1:'
+export interface SealedEntry { kind: 'device' | 'member'; target: string; epk: PublicJwk; ct: string }
+export interface Recipient { kind: 'device' | 'member'; target: string; publicJwk: { x?: string; y?: string } }
+
+export const isSealed = (stored: string) => stored.startsWith(SEALED_PREFIX)
+
+export const sealInfo = (agentId: string, name: string, kv: number, kind: string, target: string) =>
+  `canopy-vault/v1/seal-value|${agentId}|${name}|${kv}|${kind}:${target}`
+
+export async function sealValue(plaintext: string, agentId: string, name: string, kv: number,
+                                recipients: Recipient[],
+                                opts: { ephemerals?: Ephemeral[]; nonces?: Uint8Array[] } = {}): Promise<string> {
+  if (!recipients.length) throw new Error('Nobody can read this agent yet: approve a device or set up your vault key.')
+  const r: SealedEntry[] = []
+  for (let i = 0; i < recipients.length; i++) {
+    const { kind, target, publicJwk: q } = recipients[i]
+    let eph = opts.ephemerals?.[i]
+    if (!eph) {
+      const pair = (await subtle().generateKey(ECDH, true, ['deriveBits'])) as CryptoKeyPair
+      eph = { privateKey: pair.privateKey, publicJwk: publicJwk(await subtle().exportKey('jwk', pair.publicKey)) }
+    }
+    const nonce = opts.nonces?.[i] ?? randomBytes(12)
+    const key = await hkdf(await ecdhZ(eph.privateKey, q), new Uint8Array(0), sealInfo(agentId, name, kv, kind, target))
+    const ct = await gcmEncrypt(key, nonce, enc.encode(plaintext), valueAad(agentId, name, kv))
+    r.push({ kind, target, epk: publicJwk(eph.publicJwk), ct: b64u(concat(nonce, ct)) })
+  }
+  return SEALED_PREFIX + b64u(enc.encode(JSON.stringify({ kv, r })))
+}
+
+/** Open the entry sealed to (kind, target) with that recipient's private key. */
+export async function openSealedValue(stored: string, agentId: string, name: string, kind: string, target: string,
+                                      priv: CryptoKey): Promise<string> {
+  if (!isSealed(stored)) throw new Error('not a zks1 value')
+  const body = JSON.parse(dec.decode(unb64u(stored.slice(SEALED_PREFIX.length)))) as { kv: number; r: SealedEntry[] }
+  const entry = body.r.find((e) => e.kind === kind && String(e.target) === target)
+  if (!entry) throw new Error(`${name} was sealed before you could read it — a device holding it can settle it.`)
+  const key = await hkdf(await ecdhZ(priv, entry.epk), new Uint8Array(0), sealInfo(agentId, name, body.kv, kind, target))
+  const blob = unb64u(entry.ct)
+  return dec.decode(await gcmDecrypt(key, blob.slice(0, 12), blob.slice(12), valueAad(agentId, name, body.kv)))
+}
+
+/** The compare-and-swap digest PUT /values `expect` names: hex SHA-256. */
+export async function valueDigest(stored: string): Promise<string> {
+  return stored ? bytesToHex(await sha256(enc.encode(stored))) : ''
+}
+
 // ---- 3. ECDH-ES wraps -------------------------------------------------------------------
 
 export const deviceInfo = (agentId: string, kv: number, deviceJkt: string) =>

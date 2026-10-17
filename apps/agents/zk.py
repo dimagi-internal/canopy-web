@@ -247,7 +247,11 @@ def _check_full_set(agent, rows: list, user) -> None:
                       "the new vault key")
 
 
-def _parse_values(values: list) -> dict[str, str]:
+def _parse_values(values: list, *, allow_sealed: bool = False) -> dict[str, str]:
+    """`allow_sealed`: a `zks1:` value (sealed to recipients, `zk_seal.py`) is
+    accepted too — never by enable/rotate, which must leave every value `zk1`."""
+    from .zk_seal import SEALED_PREFIX, check_sealed_value
+
     out: dict[str, str] = {}
     for i, v in enumerate(values):
         name = (v.name or "").strip()
@@ -255,7 +259,10 @@ def _parse_values(values: list) -> dict[str, str]:
             raise _shape(f"values[{i}]: name is required")
         if name in out:
             raise _shape(f"values[{i}]: {name} appears twice")
-        out[name] = check_value_zk(v.value_zk, name)
+        if allow_sealed and isinstance(v.value_zk, str) and v.value_zk.startswith(SEALED_PREFIX):
+            out[name] = check_sealed_value(v.value_zk, name)
+        else:
+            out[name] = check_value_zk(v.value_zk, name)
     return out
 
 
@@ -269,6 +276,29 @@ def _require_coverage(agent, names) -> None:
     if missing:
         raise ZkError(422, "zk_values_incomplete",
                       "every stored credential must be included; missing: " + ", ".join(missing))
+
+
+def value_digest(value_zk: str) -> str:
+    """What a compare-and-swap `expect` names: hex SHA-256 of the stored text."""
+    import hashlib
+
+    return hashlib.sha256(value_zk.encode()).hexdigest() if value_zk else ""
+
+
+def _check_expected(agent, values: list) -> None:
+    """Compare-and-swap for PUT /values (a settle): every value carrying
+    `expect` must still be what the caller read, under the agent row lock."""
+    from .models import AgentCredential
+
+    want = {(v.name or "").strip(): v.expect for v in values if getattr(v, "expect", None) is not None}
+    if not want:
+        return
+    have = dict(AgentCredential.objects.filter(agent=agent, name__in=list(want))
+                .values_list("name", "value_zk"))
+    changed = sorted(n for n, e in want.items() if value_digest(have.get(n, "")) != e.strip().lower())
+    if changed:
+        raise ZkError(409, "zk_value_changed",
+                      "changed since you read it (re-read and try again): " + ", ".join(changed))
 
 
 def _write_values(agent, values: dict[str, str], kv: int, user) -> None:
@@ -313,7 +343,9 @@ def enable(agent, *, kv: int, wraps: list, values: list, user) -> None:
         raise ZkError(422, "zk_kv_mismatch", "enable starts the vault key at kv 1")
     with transaction.atomic():
         agent = _locked(agent)
-        if agent.zk_enabled:
+        # kv 0 is "zero-knowledge from birth, no vault key yet" (`born_zk`):
+        # enabling it creates the first vault key, settling every sealed value.
+        if agent.zk_enabled and agent.zk_kv != 0:
             raise ZkError(409, "zk_already_enabled", f"{agent.slug} is already zero-knowledge")
         rows = _parse_wraps(agent, kv, wraps, allow_recovery=True)
         # The CLI may enable as its device before the owner has a keyset; the
@@ -335,7 +367,14 @@ def set_values(agent, *, kv: int, values: list, user) -> list[str]:
         _require_enabled(agent)
         if kv != agent.zk_kv:
             raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {agent.zk_kv}, not {kv}")
-        vals = _parse_values(values)
+        # A `zks1` value is legal here: a browser sealing to recipients before
+        # the vault key exists (kv 0), or one not yet settled.
+        vals = _parse_values(values, allow_sealed=True)
+        if agent.zk_kv == 0 and any(not v.startswith("zks1:") for v in vals.values()):
+            raise ZkError(409, "zk_no_vault_key",
+                          f"{agent.slug} has no vault key yet: seal values to its recipients (zks1), "
+                          "or create the vault key first")
+        _check_expected(agent, values)
         _write_values(agent, vals, kv, user)
     return sorted(vals)
 
@@ -349,6 +388,8 @@ def add_wraps(agent, *, kv: int, wraps: list, user) -> int:
         _require_enabled(agent)
         if kv != agent.zk_kv:
             raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {agent.zk_kv}, not {kv}")
+        if kv == 0:
+            raise ZkError(409, "zk_no_vault_key", f"{agent.slug} has no vault key yet to grant")
         rows = _parse_wraps(agent, kv, wraps, allow_recovery=False)
         for w in rows:
             AgentVaultWrap.objects.filter(agent=agent, kv=kv, kind=w.kind, device_key=w.device_key,
@@ -365,6 +406,8 @@ def rotate(agent, *, new_kv: int, wraps: list, values: list, user) -> None:
     with transaction.atomic():
         agent = _locked(agent)
         _require_enabled(agent)
+        if agent.zk_kv == 0:
+            raise ZkError(409, "zk_no_vault_key", f"{agent.slug} has no vault key yet: create it (enable)")
         if new_kv != agent.zk_kv + 1:
             raise ZkError(409, "zk_kv_mismatch",
                           f"the vault key is at kv {agent.zk_kv}; rotate to kv {agent.zk_kv + 1}")
@@ -489,6 +532,10 @@ def state(agent, *, include_values: bool = False) -> dict:
         # still opens the vault key it was made for: only a rotation retires it.
         "rotation_recommended": any(not w["current"] for w in wraps if w["kind"] != "recovery"),
         "values": None,
+        # Server-minted values sealed to recipients (`zks1`), waiting for a
+        # vault-key holder to re-encrypt them as `zk1` — names only.
+        "sealed": sorted(AgentCredential.objects.filter(agent=agent, value_zk__startswith="zks1:")
+                         .values_list("name", flat=True)),
     }
     if include_values:
         out["values"] = {c.name: c.value_zk for c in AgentCredential.objects.filter(agent=agent)
@@ -496,10 +543,17 @@ def state(agent, *, include_values: bool = False) -> dict:
     return out
 
 
+def needs_wrap(values: dict) -> bool:
+    """A device can read `zks1` values with its own key; only `zk1` values need
+    the vault key, so only they make a missing wrap fatal."""
+    return any(v.startswith(ZK_PREFIX) for v in values.values())
+
+
 def resolve_payload(agent, device_key, wanted: set[str] | None) -> tuple[dict, dict | None]:
-    """`(values, wrap)` for a resolve by `device_key`: the ciphertexts (scoped by
-    `?refs=` like a custodial resolve) and that device's wrap at the current kv,
-    or None when it has none."""
+    """`(values, wrap)` for a resolve by `device_key`: the ciphertexts (`zk1`
+    under the vault key, or `zks1` sealed to recipients — scoped by `?refs=`
+    like a custodial resolve) and that device's wrap at the current kv, or None
+    when it has none."""
     from . import services
     from .models import AgentCredential, AgentVaultWrap
 
@@ -507,8 +561,8 @@ def resolve_payload(agent, device_key, wanted: set[str] | None) -> tuple[dict, d
     if wanted is not None:
         qs = qs.filter(name__in=sorted(set(wanted) & services.declared_credential_names(agent)))
     values = {c.name: c.value_zk for c in qs}
-    w = AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device",
-                                      device_key=device_key).first()
+    w = (AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device",
+                                       device_key=device_key).first() if agent.zk_kv else None)
     return values, (w.wrap if w is not None else None)
 
 

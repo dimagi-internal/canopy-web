@@ -65,10 +65,14 @@ def enable_refusal(agent, actor) -> RotationRefused | None:
     from apps.agents.models import AgentCredential
     from apps.workspaces import permissions as perms
 
+    # A zero-knowledge agent rotates too: the new token is sealed to its
+    # devices and members (`zks1`, apps/agents/zk_seal.py), never stored readable.
     if agent.zk_enabled:
-        # canopy-web cannot encrypt under a vault key it never holds (canopy-web#1550).
-        return RotationRefused(f"{agent.slug} is zero-knowledge: canopy-web cannot write its "
-                               f"{CANOPY_PAT_REF}; rotate it from a member's browser or the canopy CLI", 409)
+        from . import zk_seal
+
+        if not zk_seal.recipients_for(agent):
+            return RotationRefused(f"{agent.slug} is zero-knowledge and nobody can read a new "
+                                   f"{CANOPY_PAT_REF} yet: approve a device or add a member with a vault key", 409)
     if agent.user_id is None:
         return RotationRefused(f"{agent.slug} has no canopy login of its own (canopy user); "
                                "mint its canopy token once first, then rotation can take over")
@@ -105,6 +109,19 @@ def _current_token(agent):
     cred = AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).select_related("agent").first()
     if cred is None or agent.user_id is None:
         return None
+    if cred.is_zk:
+        # canopy-web cannot read the stored value; the token it minted last is
+        # the one to retire (if a person stored another since, that one is
+        # superseded anyway).
+        from apps.agents.models import AgentPatRotation
+
+        last = (AgentPatRotation.objects.filter(agent=agent, status=AgentPatRotation.ROTATED,
+                                                new_token__isnull=False)
+                .order_by("-created_at").first())
+        if last is None:
+            return None
+        return PersonalToken.objects.filter(pk=last.new_token_id, user_id=agent.user_id,
+                                            revoked_at__isnull=True).first()
     try:
         raw = cred.plaintext()  # refuses a zero-knowledge value: "not a token we know"
     except Exception:  # noqa: BLE001 - an undecryptable value is just "not a token we know"
@@ -147,7 +164,7 @@ def _rotate_locked(agent, *, now, trigger: str, actor):
     old = _current_token(agent)
     raw, new = PersonalToken.create_for_user(
         user=agent.user, label=f"{agent.slug} agent (rotated {now:%Y-%m-%d})"[:100], ttl_days=0)
-    services.set_agent_credentials(agent, {CANOPY_PAT_REF: raw}, user=actor)
+    services.set_agent_credentials(agent, {CANOPY_PAT_REF: raw}, user=actor, minted=True)
     revoke_after = None
     if old is not None:
         revoke_after = now + OVERLAP

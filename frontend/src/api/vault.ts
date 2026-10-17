@@ -53,7 +53,9 @@ export async function getZkState(slug: string, values = false): Promise<ZkStateO
   )
 }
 
-type Value = { name: string; value_zk: string }
+/** `expect`: compare-and-swap — hex SHA-256 of the stored value being replaced
+ *  ("" = none stored); a mismatch refuses the whole PUT (409 zk_value_changed). */
+type Value = { name: string; value_zk: string; expect?: string | null }
 
 export async function enableZk(slug: string, body: { kv: number; wraps: ZkWrapIn[]; values: Value[] }): Promise<ZkStateOut> {
   return need<ZkStateOut>(await apiV2.POST('/api/agents/{slug}/vault/zk/enable', { params: { path: { slug } }, body: body as never }),

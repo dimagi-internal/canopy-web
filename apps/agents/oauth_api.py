@@ -131,5 +131,13 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
     )
     import json as _json
 
-    services.set_agent_credentials(agent, {GOG_TOKEN_REF: _json.dumps(token)}, user=request.user)
+    from .zk import ZkError
+
+    try:
+        # Minted here: a zero-knowledge agent gets it sealed to its devices and
+        # members (`zks1`), never stored where canopy-web could read it.
+        services.set_agent_credentials(agent, {GOG_TOKEN_REF: _json.dumps(token)}, user=request.user,
+                                       minted=True)
+    except ZkError:
+        return done(agent, "zk-no-recipients")
     return done(agent, "ok")
