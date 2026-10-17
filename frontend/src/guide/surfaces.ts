@@ -352,7 +352,15 @@ export const SURFACES: SurfaceDescriptor[] = [
     audience: 'Anyone following how the fleet works as a team',
     what: 'Every huddle in this workspace — a team of agents syncing in rounds, led by one of them — with its type, team, leader, members, rounds dispatched and outcomes filed. Derived from turns; nothing is stored for it.',
     needsFirst: 'A team leader running `canopy huddle plan`.',
-    actions: ['Open a huddle', 'See which huddles are still in flight'],
+    actions: ['Open a huddle', 'See which huddles are still in flight', 'Open or create a work group'],
+  },
+  {
+    path: '/w/:workspace/huddles/groups/:slug',
+    title: 'Work group',
+    audience: 'A work group\'s lead and members, and the workspace admins who set it up',
+    what: 'One work group — its lead, Slack channel, agents and cadence — and every run: announced in the channel, confirmed or skipped by the lead, what was read, the Slack post and the result. The channel is read only when the lead presses Confirm in Slack.',
+    needsFirst: 'A workspace owner or admin creating the work group on the Huddles page.',
+    actions: ['See each run and what it read', 'Open the Slack post or the huddle it produced', 'Edit or delete the group (admins)'],
   },
   {
     path: '/w/:workspace/huddles/:id',
