@@ -23,7 +23,8 @@ from apps.harness.models import Runner, RunnerAccessToken, RunnerDeviceKey
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.test_canopy_vault_phase1b import ROLE, _proof, sts  # noqa: F401 — sts is a fixture
 
-pytestmark = pytest.mark.django_db
+# The fake STS answers every instance-role proof (tests/test_canopy_vault_phase1b.py).
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts")]
 
 SESSIONS = "/api/runner-sessions/"
 HTU = f"http://testserver{SESSIONS}"
@@ -58,7 +59,7 @@ def _exchange(runner, **headers):
                          content_type="application/json", **headers)
 
 
-def _token(box, sts_fixture) -> str:
+def _token(box) -> str:
     res = _exchange(box["runner"], HTTP_X_CANOPY_AWS_PROOF=_proof(HTU))
     assert res.status_code == 201, res.content
     return res.json()["access_token"]
@@ -66,7 +67,7 @@ def _token(box, sts_fixture) -> str:
 
 # ---- the exchange ---------------------------------------------------------------------
 
-def test_an_instance_role_proof_buys_an_hour_long_runner_token(box, sts):
+def test_an_instance_role_proof_buys_an_hour_long_runner_token(box):
     res = _exchange(box["runner"], HTTP_X_CANOPY_AWS_PROOF=_proof(HTU))
     assert res.status_code == 201, res.content
     body = res.json()
@@ -90,12 +91,12 @@ def test_a_dpop_proof_from_a_held_key_buys_one_too(box):
 
 
 @pytest.mark.parametrize("status", [RunnerDeviceKey.PENDING, RunnerDeviceKey.REVOKED])
-def test_only_an_approved_key_counts(box, sts, status):
+def test_only_an_approved_key_counts(box, status):
     RunnerDeviceKey.objects.filter(pk=box["aws_key"].pk).update(status=status)
     assert _exchange(box["runner"], HTTP_X_CANOPY_AWS_PROOF=_proof(HTU)).status_code == 401
 
 
-def test_no_proof_a_replayed_proof_or_another_runner_is_refused(box, sts):
+def test_no_proof_a_replayed_proof_or_another_runner_is_refused(box):
     assert _exchange(box["runner"]).status_code == 401
     proof = _proof(HTU)
     assert _exchange(box["runner"], HTTP_X_CANOPY_AWS_PROOF=proof).status_code == 201
@@ -107,7 +108,7 @@ def test_no_proof_a_replayed_proof_or_another_runner_is_refused(box, sts):
         "http://testserver/api/agents/eva/credentials/resolve")).status_code == 401
 
 
-def test_a_retired_runner_or_an_inactive_owner_gets_nothing(box, sts):
+def test_a_retired_runner_or_an_inactive_owner_gets_nothing(box):
     Runner.objects.filter(pk=box["runner"].pk).update(status=Runner.RETIRED)
     assert _exchange(box["runner"], HTTP_X_CANOPY_AWS_PROOF=_proof(HTU)).status_code == 401
     Runner.objects.filter(pk=box["runner"].pk).update(status=Runner.ONLINE)
@@ -117,8 +118,8 @@ def test_a_retired_runner_or_an_inactive_owner_gets_nothing(box, sts):
 
 # ---- what the token opens -------------------------------------------------------------
 
-def test_the_token_runs_the_runner_protocol_as_the_owner(box, sts):
-    raw = _token(box, sts)
+def test_the_token_runs_the_runner_protocol_as_the_owner(box):
+    raw = _token(box)
     res = Client().post(f"/api/harness/runners/{box['runner'].pk}/heartbeat",
                         data={}, content_type="application/json",
                         HTTP_AUTHORIZATION=f"Bearer {raw}")
@@ -131,16 +132,16 @@ def test_the_token_runs_the_runner_protocol_as_the_owner(box, sts):
     ("post", "/api/harness/runners/{other}/heartbeat"),  # another runner of the same owner
     ("post", "/api/agents/eva/credentials"),   # a write outside the protocol
 ])
-def test_the_token_opens_nothing_else(box, sts, method, path):
-    raw = _token(box, sts)
+def test_the_token_opens_nothing_else(box, method, path):
+    raw = _token(box)
     res = getattr(Client(), method)(path.format(other=box["other"].pk), data={},
                                     content_type="application/json",
                                     HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert res.status_code == 403, (path, res.status_code)
 
 
-def test_revoking_the_device_key_kills_the_token_at_once(box, sts):
-    raw = _token(box, sts)
+def test_revoking_the_device_key_kills_the_token_at_once(box):
+    raw = _token(box)
     RunnerDeviceKey.objects.filter(pk=box["aws_key"].pk).update(
         status=RunnerDeviceKey.REVOKED, revoked_at=timezone.now())
     res = Client().post(f"/api/harness/runners/{box['runner'].pk}/heartbeat",
@@ -149,8 +150,8 @@ def test_revoking_the_device_key_kills_the_token_at_once(box, sts):
     assert res.status_code == 401
 
 
-def test_an_expired_token_is_refused(box, sts):
-    raw = _token(box, sts)
+def test_an_expired_token_is_refused(box):
+    raw = _token(box)
     RunnerAccessToken.objects.update(expires_at=timezone.now())
     assert RunnerAccessToken.lookup(raw) is None
 
@@ -166,8 +167,8 @@ def _socket(path, raw):
 
 
 @pytest.mark.django_db(transaction=True)
-async def test_the_token_opens_its_own_runner_socket_and_closes_when_the_key_is_revoked(box, sts):
-    raw = await database_sync_to_async(_token)(box, sts)
+async def test_the_token_opens_its_own_runner_socket_and_closes_when_the_key_is_revoked(box):
+    raw = await database_sync_to_async(_token)(box)
 
     other = _socket(f"/ws/runner/{box['other'].pk}/", raw)
     connected, _ = await other.connect()
