@@ -162,7 +162,14 @@ def summaries(anchor_rows, visible_qs, workspaces) -> list[dict]:
         top[h] = max(top.get(h, 0), _int(ref.get("round")))
     counts: dict[str, int] = {}
     if ids:
-        for url in _outputs_qs(workspaces).values_list("source_url", flat=True):
+        from apps.agents.models import AgentProject
+
+        # A huddle's outcomes: its proposed projects, and (filed before those
+        # existed) its loose tasks.
+        urls = list(_outputs_qs(workspaces).values_list("source_url", flat=True))
+        urls += AgentProject.objects.filter(agent__workspace_id__in=list(workspaces),
+                                            source_url__contains="/huddles/").values_list("source_url", flat=True)
+        for url in urls:
             h = _huddle_of_url(url)
             if h in ids:
                 counts[h] = counts.get(h, 0) + 1
@@ -250,8 +257,9 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
             Q(source_url__endswith=f"/huddles/{hid}") | Q(source_url__endswith=f"/huddles/{hid}/"))
         .order_by("agent__slug", "id")
     ]
+    projects = projects_of(hid, workspaces, user=user)
     base = _base(anchor, rounds_dispatched=max([r for _, r in latest] or [0]),
-                 outcome_count=len(outputs))
+                 outcome_count=len(outputs) + len(projects))
     # The leader's digest is the anchor's content; same gate as a round's.
     readable = turn_access.can_read_turn_content(user, anchor, memo)
     # The principal's priorities brief the huddle ran on (canopy `huddle plan
@@ -261,4 +269,23 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
     return {**base, "summary": anchor.report_summary if readable else "",
             "priorities_brief": brief if readable else "",
             "deadline_at": (min(r1) + DEADLINE) if r1 else None,
-            "cells": cells, "outputs": outputs}
+            "cells": cells, "outputs": outputs,
+            "projects": projects,
+            # The work group it ran for: filled by the work-groups layer from the
+            # anchor's `origin_ref` group run.
+            "group": None}
+
+
+def projects_of(huddle_id: str, workspaces, *, user) -> list[dict]:
+    """The projects this huddle proposed — `source_url` is its page — filed by an
+    agent in any of `workspaces`, each as `proposals.card` renders it (the same
+    card the project page shows)."""
+    from apps.agents import proposals
+    from apps.agents.models import AgentProject
+
+    rows = (AgentProject.objects.select_related("agent", "owner_user")
+            .filter(agent__workspace_id__in=list(workspaces))
+            .filter(Q(source_url__endswith=f"/huddles/{huddle_id}")
+                    | Q(source_url__endswith=f"/huddles/{huddle_id}/"))
+            .order_by("agent__slug", "pk"))
+    return [proposals.card(p, user) for p in rows]

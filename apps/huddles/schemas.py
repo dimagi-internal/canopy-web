@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from apps.agents.schemas import ProposedProjectOut
 from apps.common.schemas import StrictModel
 
 
@@ -53,6 +54,28 @@ class HuddleOutputOut(StrictModel):
     updated_at: dt.datetime | None = None
 
 
+class HuddleGroupReadOut(StrictModel):
+    """What a work-group run read from its channel before the huddle."""
+
+    messages: int = 0
+    first_ts: str = ""
+    last_ts: str = ""
+    #: The read started after this (the group's last read), blank for a first read.
+    since: str = ""
+
+
+class HuddleGroupOut(StrictModel):
+    """The work group a huddle ran for, when its anchor's `origin_ref` carries a
+    group run (filled by the work-groups layer; null otherwise)."""
+
+    slug: str
+    name: str
+    channel_name: str = ""
+    lead_email: str = ""
+    run_id: int | None = None
+    read: HuddleGroupReadOut | None = None
+
+
 class HuddleOut(HuddleSummaryOut):
     summary: str = ""
     # The numbered priorities the huddle worked toward ("" for a huddle planned
@@ -60,4 +83,9 @@ class HuddleOut(HuddleSummaryOut):
     priorities_brief: str = ""
     deadline_at: dt.datetime | None = None
     cells: list[HuddleCellOut] = []
+    # A huddle filed before proposed projects existed: its outcomes as loose tasks.
     outputs: list[HuddleOutputOut] = []
+    # The projects it proposed (their `source_url` is this huddle's page), each as
+    # the project page shows it — people back, comment and decide right here.
+    projects: list[ProposedProjectOut] = []
+    group: HuddleGroupOut | None = None

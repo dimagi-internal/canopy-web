@@ -42,7 +42,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * the capabilities of ``apps/workspaces/permissions.py``: ``content.write``,
   ``agent.work``, ``session.drive``, ``events.write``, ``logs.read``,
   ``members.manage``, ``integrations``, ``runners.route``, ``retention.manage``,
-  ``admission.manage``, ``own``.
+  ``admission.manage``, ``projects.decide``, ``own``.
 * ``agent-admin`` — ``Agent.is_admin`` (its owner, a workspace owner, an
   ``AgentAdmin``).
 * ``agent-owner`` — the agent's owner or a workspace owner (transfer, admin
@@ -81,7 +81,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "anonymous", "token-link", "authenticated", "self", "member",
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
     "members.manage", "integrations", "runners.route", "retention.manage",
-    "admission.manage", "own",
+    "admission.manage", "projects.decide", "own",
     "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
@@ -277,6 +277,13 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_huddle": ("member", "session-acl", "turn-content"),  # prompt/reply/digest only with turn-content
     # --- apps/agents/engagement_api.py: what people do with projects + huddles
     "record_engagement_view": ("member",),  # the project's agent workspace / the huddle's visible anchor
+    "engagement_summary": ("member",),  # events of the caller's listed workspaces (the read rule)
+    # --- apps/agents/proposals_api.py: proposed projects + backings (layer 1, 2026-10-16)
+    "propose_project": ("agent.work", "agent-login"),  # an editor, or the agent itself
+    "list_project_backings": ("member",),
+    "back_project": ("member",),  # as yourself; an agent's login is refused (it backs as itself)
+    "unback_project": ("member", "self"),
+    "back_project_as_agent": ("agent-login",),  # the backer's own login, or the project's agent's
     # --- apps/threads/api.py: bounded agent->agent conversations; messages are tagged turns
     "open_thread": ("agent.work",),  # editor in the moderator agent's workspace
     "list_threads": ("member",),  # threads in the caller's workspaces; no message content
@@ -737,6 +744,8 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "add_person_fact": "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, attributed, visible to its subject and retractable by them",
     "refresh_mail_domain": "re-checks DNS and SES verification and caches the answer; changes no configuration",
     "edit_storyboard_decision": "a member's ruling on a demo-set default is the reader-tier act the decision log exists for; it is attributed and undoable (owner decision 2026-10-15)",
+    "back_project": "any member says where they stand on a project, as themself, in one line — a signal that starts nothing (decision 5, 2026-10-16); deciding is the decision card's, gated to projects.decide or the project's owner",
+    "unback_project": "withdraws only the caller's OWN backing",
     "record_engagement_view": "records only that the caller opened a page they can already read, once a day; changes nothing",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
 }
@@ -848,6 +857,8 @@ NOT_SETTINGS: dict[str, str] = {
     "sync_skill_history": "content", "create_tasks": "content", "patch_task": "content",
     "create_idea": "content",  # an idea is a task with kind=idea
     "record_engagement_view": "telemetry",  # the engagement view beacon
+    "propose_project": "content", "back_project": "content", "unback_project": "content",
+    "back_project_as_agent": "content",
     "check_scaffold_repo": "action",  # POST only to keep a token out of the URL; writes nothing
     "create_channel_ingest": "request",  # asks the channel; the approval click is the grant
     "mark_channel_ingest_read": "action",  # moves the agent's own read position; grants nothing

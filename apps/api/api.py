@@ -219,6 +219,7 @@ from apps.harness.api_investigations import router as investigations_router  # n
 from apps.harness.api_device_keys import router as device_keys_router  # noqa: E402
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.agents.engagement_api import router as engagement_router  # noqa: E402
+from apps.agents.proposals_api import router as proposals_router  # noqa: E402
 from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
 from apps.canopy_sessions.app_views_api import router as app_views_router  # noqa: E402
@@ -262,6 +263,8 @@ api.add_router("/sessions", sessions_router)
 # Agents are workspace-scoped. Mounted flat (single, clean schema); the canonical
 # tenant URL /api/w/{ws}/agents/... is gated + stripped to this flat path by
 # apps.api.tenancy.WorkspaceResolveMiddleware, which also sets request.workspace_slug.
+# Before the agents router: `…/projects/propose/` must not be read as a project ref.
+api.add_router("/agents", proposals_router)  # proposed projects + backings (layer 1, 2026-10-16)
 api.add_router("/agents", agents_router)
 # A2A Agent Card discovery — public in the login middleware; each route
 # self-enforces (apps/agents/a2a_api.py).

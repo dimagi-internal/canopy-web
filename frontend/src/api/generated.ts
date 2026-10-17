@@ -2812,6 +2812,98 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/projects/propose/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Propose a project (or revise an open proposal of the same name)
+         * @description Creates the project with `status=proposed`, its plan steps as `suggested`
+         *     tasks, ONE decision card ("Start this project?", a review ask whose body is
+         *     the why and the done-when) and one linked `suggested` task on each partner's
+         *     own board. 201 when created; 200 when an open proposed project of this agent's
+         *     with the same name was revised instead (its backings go stale, no second
+         *     card). 409 when a project of that name was declined and no `new_evidence` is
+         *     given. The agent itself, or an editor.
+         */
+        readonly post: operations["propose_project"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/backings/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Where everyone stands on a project: backs, backs with changes, passes
+         * @description Oldest first. `stale` marks a backing of an earlier version (the project was
+         *     revised since); `mine` marks the caller's own. Members.
+         */
+        readonly get: operations["list_project_backings"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/backings/me/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Back a project, back it with changes, or pass — as yourself
+         * @description Replaces your earlier stance. `line` (at most 280 characters) is required
+         *     unless you simply back it. You become one of the project's participants. Any
+         *     member; backing is a signal — it never starts the project.
+         */
+        readonly put: operations["back_project"];
+        readonly post?: never;
+        /** Withdraw your backing of a project */
+        readonly delete: operations["unback_project"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/backings/agents/{backer}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Record an agent's stance on a project (a co-sign)
+         * @description Called by `backer`'s own login, or by the project's agent's (a huddle's lead
+         *     files its members' round-3 answers: co-sign → backs, amend →
+         *     backs_with_changes, decline → passes). Replaces that agent's earlier stance.
+         */
+        readonly put: operations["back_project_as_agent"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/": {
         readonly parameters: {
             readonly query?: never;
@@ -8173,6 +8265,31 @@ export interface paths {
          *     for anything the caller cannot see.
          */
         readonly post: operations["record_engagement_view"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/engagement/summary": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What people actually did with projects, huddles and work-group runs
+         * @description Over the last `days` (default 14), in the workspaces you can list: event
+         *     counts by kind and surface; the unique people who did anything; for each
+         *     project proposed in the window, the time to its first human reaction, the time
+         *     to its decision, its backers and comments; the proposals nobody reacted to;
+         *     and work-group runs announced vs confirmed vs skipped vs expired, with the
+         *     median time to confirm. `group` (a work group slug) and `agent` narrow it.
+         */
+        readonly get: operations["engagement_summary"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -14984,6 +15101,246 @@ export interface components {
             /** Visibility */
             readonly visibility?: ("private" | "link") | null;
         };
+        /** ProjectBackerOut */
+        readonly ProjectBackerOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "person" | "agent";
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /** Person Id */
+            readonly person_id?: number | null;
+            /** Name */
+            readonly name: string;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+        };
+        /** ProjectBackingOut */
+        readonly ProjectBackingOut: {
+            readonly backer: components["schemas"]["ProjectBackerOut"];
+            /**
+             * Stance
+             * @enum {string}
+             */
+            readonly stance: "backs" | "backs_with_changes" | "passes";
+            /**
+             * Line
+             * @default
+             */
+            readonly line: string;
+            /**
+             * Source
+             * @default web
+             */
+            readonly source: string;
+            /**
+             * Huddle Id
+             * @default
+             */
+            readonly huddle_id: string;
+            /**
+             * Stale
+             * @default false
+             */
+            readonly stale: boolean;
+            /**
+             * Mine
+             * @default false
+             */
+            readonly mine: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** ProjectProposeOut */
+        readonly ProjectProposeOut: {
+            /** Created */
+            readonly created: boolean;
+            readonly project: components["schemas"]["ProposedProjectOut"];
+        };
+        /**
+         * ProposalCommentOut
+         * @description A reply on the decision card — the project's comment thread.
+         */
+        readonly ProposalCommentOut: {
+            /** By */
+            readonly by: string;
+            /**
+             * By Agent
+             * @default false
+             */
+            readonly by_agent: boolean;
+            /** Comment */
+            readonly comment: string;
+            /**
+             * At
+             * Format: date-time
+             */
+            readonly at: string;
+        };
+        /**
+         * ProposalPartnerOut
+         * @description A partner's linked task, on the partner's own board.
+         */
+        readonly ProposalPartnerOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Task Id */
+            readonly task_id: number;
+            /** Status */
+            readonly status: string;
+            /** Url */
+            readonly url: string;
+        };
+        /**
+         * ProposedProjectOut
+         * @description A proposed (or once-proposed) project as both the project page and the
+         *     huddle page render it: what it is, its decision and whether the reader may
+         *     make it, where people stand, what they said, and its partners.
+         */
+        readonly ProposedProjectOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent */
+            readonly agent: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Ref */
+            readonly ref: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "proposed" | "active" | "done" | "archived";
+            /** Outcome */
+            readonly outcome: string;
+            /**
+             * Why
+             * @default
+             */
+            readonly why: string;
+            /** Plan */
+            readonly plan?: readonly string[];
+            /** Url */
+            readonly url: string;
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Proposed At */
+            readonly proposed_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /** Owner Email */
+            readonly owner_email?: string | null;
+            /**
+             * Notes
+             * @default
+             */
+            readonly notes: string;
+            /** Decision Task */
+            readonly decision_task?: string | null;
+            /** Decision Task Id */
+            readonly decision_task_id?: number | null;
+            /**
+             * Decision Open
+             * @default false
+             */
+            readonly decision_open: boolean;
+            /**
+             * May Decide
+             * @default false
+             */
+            readonly may_decide: boolean;
+            /** Backings */
+            readonly backings?: readonly components["schemas"]["ProjectBackingOut"][];
+            /** Comments */
+            readonly comments?: readonly components["schemas"]["ProposalCommentOut"][];
+            /** Partners */
+            readonly partners?: readonly components["schemas"]["ProposalPartnerOut"][];
+        };
+        /**
+         * ProjectProposeIn
+         * @description Create or revise a proposed project (`POST …/projects/propose/`).
+         */
+        readonly ProjectProposeIn: {
+            /** Name */
+            readonly name: string;
+            /** Outcome */
+            readonly outcome: string;
+            /** Why */
+            readonly why: string;
+            /** Plan */
+            readonly plan?: readonly string[];
+            /** Partners */
+            readonly partners?: readonly string[];
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /**
+             * Owner Email
+             * @default
+             */
+            readonly owner_email: string;
+            /**
+             * New Evidence
+             * @default
+             */
+            readonly new_evidence: string;
+            /**
+             * Group
+             * @default
+             */
+            readonly group: string;
+        };
+        /** ProjectBackingIn */
+        readonly ProjectBackingIn: {
+            /**
+             * Stance
+             * @enum {string}
+             */
+            readonly stance: "backs" | "backs_with_changes" | "passes";
+            /**
+             * Line
+             * @default
+             */
+            readonly line: string;
+        };
+        /** AgentBackingIn */
+        readonly AgentBackingIn: {
+            /**
+             * Stance
+             * @enum {string}
+             */
+            readonly stance: "backs" | "backs_with_changes" | "passes";
+            /**
+             * Line
+             * @default
+             */
+            readonly line: string;
+            /**
+             * Huddle Id
+             * @default
+             */
+            readonly huddle_id: string;
+        };
         /** AgentOut */
         readonly AgentOut: {
             /** Id */
@@ -16356,7 +16713,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            readonly status: "active" | "done" | "archived";
+            readonly status: "proposed" | "active" | "done" | "archived";
             /** Owner Note */
             readonly owner_note: string;
             /** Owner Email */
@@ -16488,7 +16845,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            readonly status: "active" | "done" | "archived";
+            readonly status: "proposed" | "active" | "done" | "archived";
             /** Owner Note */
             readonly owner_note: string;
             /** Owner Email */
@@ -16534,6 +16891,7 @@ export interface components {
             readonly participants?: readonly components["schemas"]["ProjectParticipantOut"][];
             /** Recent Turns */
             readonly recent_turns?: readonly components["schemas"]["TurnBriefOut"][];
+            readonly proposal?: components["schemas"]["ProposedProjectOut"] | null;
         };
         /**
          * AgentTaskOut
@@ -16710,10 +17068,10 @@ export interface components {
             readonly role: string;
             /**
              * Source
-             * @description How canopy first learned it: a fact filed against the project, a conversation that raised one of its tasks, a person adding them, or an agent writing their contributor page.
+             * @description How canopy first learned it: a fact filed against the project, a conversation that raised one of its tasks, a person adding them, an agent writing their contributor page, a storyboard comment, backing it, or replying on one of its tasks.
              * @enum {string}
              */
-            readonly source: "fact" | "turn" | "manual" | "summary" | "review";
+            readonly source: "fact" | "turn" | "manual" | "summary" | "review" | "backing" | "reply";
             /**
              * Since
              * Format: date-time
@@ -19083,7 +19441,7 @@ export interface components {
              * @description How they joined (a participant row's source), or `idea`: not a participant, but an idea's own evidence (its human why, or the turn that raised it) names them.
              * @enum {string}
              */
-            readonly source: "fact" | "turn" | "manual" | "summary" | "review" | "idea";
+            readonly source: "fact" | "turn" | "manual" | "summary" | "review" | "backing" | "reply" | "idea";
             /**
              * Since
              * Format: date-time
@@ -23324,6 +23682,56 @@ export interface components {
              */
             readonly has_transcript: boolean;
         };
+        /**
+         * HuddleGroupOut
+         * @description The work group a huddle ran for, when its anchor's `origin_ref` carries a
+         *     group run (filled by the work-groups layer; null otherwise).
+         */
+        readonly HuddleGroupOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Channel Name
+             * @default
+             */
+            readonly channel_name: string;
+            /**
+             * Lead Email
+             * @default
+             */
+            readonly lead_email: string;
+            /** Run Id */
+            readonly run_id?: number | null;
+            readonly read?: components["schemas"]["HuddleGroupReadOut"] | null;
+        };
+        /**
+         * HuddleGroupReadOut
+         * @description What a work-group run read from its channel before the huddle.
+         */
+        readonly HuddleGroupReadOut: {
+            /**
+             * Messages
+             * @default 0
+             */
+            readonly messages: number;
+            /**
+             * First Ts
+             * @default
+             */
+            readonly first_ts: string;
+            /**
+             * Last Ts
+             * @default
+             */
+            readonly last_ts: string;
+            /**
+             * Since
+             * @default
+             */
+            readonly since: string;
+        };
         /** HuddleOut */
         readonly HuddleOut: {
             /** Id */
@@ -23392,6 +23800,12 @@ export interface components {
              * @default []
              */
             readonly outputs: readonly components["schemas"]["HuddleOutputOut"][];
+            /**
+             * Projects
+             * @default []
+             */
+            readonly projects: readonly components["schemas"]["ProposedProjectOut"][];
+            readonly group?: components["schemas"]["HuddleGroupOut"] | null;
         };
         /** HuddleOutputOut */
         readonly HuddleOutputOut: {
@@ -23442,6 +23856,103 @@ export interface components {
              * @default
              */
             readonly huddle_id: string;
+        };
+        /** EngagementCountOut */
+        readonly EngagementCountOut: {
+            /** Kind */
+            readonly kind: string;
+            /** Surface */
+            readonly surface: string;
+            /** N */
+            readonly n: number;
+        };
+        /** EngagementPersonOut */
+        readonly EngagementPersonOut: {
+            /** User Id */
+            readonly user_id: number;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /** Events */
+            readonly events: number;
+        };
+        /** EngagementProposalOut */
+        readonly EngagementProposalOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Ref */
+            readonly ref: string;
+            /** Name */
+            readonly name: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Proposed At
+             * Format: date-time
+             */
+            readonly proposed_at: string;
+            /** First Reaction S */
+            readonly first_reaction_s?: number | null;
+            /** Decision */
+            readonly decision?: string | null;
+            /** Decision S */
+            readonly decision_s?: number | null;
+            /**
+             * Backers
+             * @default 0
+             */
+            readonly backers: number;
+            /**
+             * Comments
+             * @default 0
+             */
+            readonly comments: number;
+        };
+        /** EngagementRunsOut */
+        readonly EngagementRunsOut: {
+            /**
+             * Announced
+             * @default 0
+             */
+            readonly announced: number;
+            /**
+             * Confirmed
+             * @default 0
+             */
+            readonly confirmed: number;
+            /**
+             * Skipped
+             * @default 0
+             */
+            readonly skipped: number;
+            /**
+             * Expired
+             * @default 0
+             */
+            readonly expired: number;
+            /** Median Confirm S */
+            readonly median_confirm_s?: number | null;
+        };
+        /** EngagementSummaryOut */
+        readonly EngagementSummaryOut: {
+            /**
+             * Since
+             * Format: date-time
+             */
+            readonly since: string;
+            /** Days */
+            readonly days: number;
+            /** Counts */
+            readonly counts?: readonly components["schemas"]["EngagementCountOut"][];
+            /** People */
+            readonly people?: readonly components["schemas"]["EngagementPersonOut"][];
+            /** Proposals */
+            readonly proposals?: readonly components["schemas"]["EngagementProposalOut"][];
+            /** Unanswered */
+            readonly unanswered?: readonly components["schemas"]["EngagementProposalOut"][];
+            readonly runs: components["schemas"]["EngagementRunsOut"];
         };
         /** ThreadMessageOut */
         readonly ThreadMessageOut: {
@@ -29604,6 +30115,140 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionRotateTokenOut"];
+                };
+            };
+        };
+    };
+    readonly propose_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectProposeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectProposeOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectProposeOut"];
+                };
+            };
+        };
+    };
+    readonly list_project_backings: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectBackingOut"][];
+                };
+            };
+        };
+    };
+    readonly back_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectBackingIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectBackingOut"];
+                };
+            };
+        };
+    };
+    readonly unback_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly back_project_as_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly backer: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentBackingIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectBackingOut"];
                 };
             };
         };
@@ -36432,6 +37077,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EngagementViewOut"];
+                };
+            };
+        };
+    };
+    readonly engagement_summary: {
+        readonly parameters: {
+            readonly query?: {
+                readonly days?: number;
+                readonly group?: string;
+                readonly agent?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EngagementSummaryOut"];
                 };
             };
         };

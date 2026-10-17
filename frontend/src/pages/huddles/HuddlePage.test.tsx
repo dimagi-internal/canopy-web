@@ -50,10 +50,15 @@ const huddle = {
   outputs: [{ agent: 'eva', task_id: 1, ext_id: 'T41', title: 'Joint Q4 brief', status: 'suggested',
               assigned: 'eva', project: 'P3', url: '/w/connect/agents/eva/work' }],
 }
-vi.mock('@/api/huddles', () => ({ getHuddle: vi.fn(async () => huddle), listHuddles: vi.fn(async () => []) }))
+// The huddle the page loads; a test swaps it for one that proposed projects.
+let current: Record<string, unknown> = huddle
+vi.mock('@/api/huddles', () => ({ getHuddle: vi.fn(async () => current), listHuddles: vi.fn(async () => []) }))
 vi.mock('@/components/activity/TurnTranscript', () => ({ TurnTranscript: () => <div>transcript</div> }))
 const { HuddlePage } = await import('./HuddlePage')
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  current = huddle
+})
 
 function renderAt() {
   return render(<MemoryRouter initialEntries={['/w/connect/huddles/work-fleet-20261006?view=map']}>
@@ -130,4 +135,25 @@ it('lists outputs under their idea, with live status in plain words', async () =
   expect(card?.textContent).toContain("medium job · 80% sure it's worth it")
   expect(card?.textContent).toContain('waiting for your yes/no')
   expect(screen.getByRole('link', { name: /on Eva's board/ }).getAttribute('href')).toBe('/w/connect/agents/eva/work')
+})
+
+it('renders a work-group huddle\'s proposed projects with the shared card, not the loose tasks', async () => {
+  current = {
+    ...huddle, outputs: [],
+    group: { slug: 'champions-a', name: 'Champions A', channel_name: 'ai-champions-a',
+             lead_email: 'shayoni@dimagi.com', run_id: 3,
+             read: { messages: 12, first_ts: '', last_ts: '', since: '' } },
+    projects: [{
+      id: 1, agent: 'eva', workspace: 'connect', ref: 'P7', name: 'Prompt library', status: 'proposed',
+      outcome: 'Twenty tested prompts.', why: 'Rewritten weekly.', plan: [], url: '/w/connect/agents/eva/projects/P7',
+      source_url: '', proposed_at: null, expires_at: null, owner_email: null, notes: '', decision_task: 'T9',
+      decision_task_id: 9, decision_open: true, may_decide: false, backings: [], comments: [], partners: [],
+    }],
+  }
+  renderAt()
+  expect(await screen.findByRole('article', { name: 'Proposed project: Prompt library' })).toBeTruthy()
+  const line = document.querySelector('[data-group="champions-a"]')
+  expect(line?.textContent).toContain('#ai-champions-a')
+  expect(line?.textContent).toContain('read 12 messages')
+  expect(screen.queryByText('What was decided')).toBeNull()
 })

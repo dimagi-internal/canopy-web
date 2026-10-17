@@ -3,6 +3,8 @@ import { Link, useOutletContext, useParams } from 'react-router-dom'
 
 import { AgentApiError, getProject, patchProject, type ProjectDetailOut, type TaskOut } from '@/api/agents'
 import { relativeTime } from '@/components/activity/turnLog'
+import { ProposedProjectCard } from '@/components/projects/ProposedProjectCard'
+import { useEngagementView } from '@/components/projects/useEngagementView'
 import { nestTasks, TaskCard } from '@/components/TasksBoard'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { ProjectOverview } from '@/pages/agents/ProjectOverview'
@@ -71,6 +73,8 @@ export function AgentProjectPage(): JSX.Element {
 
   const fresh = data?.key === key ? data : null
   const detail = fresh?.detail ?? null
+  // Did anyone look? The view beacon (EngagementEvent), once a day per person.
+  useEngagementView(detail ? { project: detail.id, workspace: detail.workspace } : null)
 
   const back = (
     <Link to=".." relative="path" className="text-[12px] text-muted-foreground hover:text-foreground">
@@ -171,6 +175,19 @@ export function AgentProjectPage(): JSX.Element {
     // pb-28: room under the last section for the site-wide floating "Canopy AI" button.
     <div className="max-w-4xl px-6 py-8 pb-28">
       {back}
+      {/* A proposed project leads with its decision: the same card the huddle
+          page that proposed it shows. */}
+      {detail.proposal && (
+        <div className="mt-4">
+          <ProposedProjectCard
+            proposal={detail.proposal}
+            onChanged={() => {
+              reload()
+              refreshWaiting()
+            }}
+          />
+        </div>
+      )}
       <div className="mt-4">
         <ProjectOverview
           agent={agent.slug}

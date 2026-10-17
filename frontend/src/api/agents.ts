@@ -784,3 +784,58 @@ export async function deleteAgent(slug: string): Promise<void> {
     throw new Error(typeof detail === 'string' && detail ? detail : 'Deleting the agent failed')
   }
 }
+
+// ---- proposed projects: the decision card, backings, the view beacon ----------
+// Shared by the project page and the huddle page (`components/projects`). Each
+// takes the project's own `workspace`: a huddle page in one workspace lists
+// projects whose agents may live in another one of the caller's.
+
+export type ProposedProjectOut = Schemas['ProposedProjectOut']
+export type ProjectBackingOut = Schemas['ProjectBackingOut']
+export type BackingStance = Schemas['ProjectBackingIn']['stance']
+
+const pin = (workspace?: string) => (workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {})
+
+/** Approve / decline / reply on a proposed project's decision card (`actOnTask`, pinned). */
+export async function actOnProposal(
+  p: Pick<ProposedProjectOut, 'agent' | 'workspace' | 'decision_task'>,
+  action: 'approve' | 'decline' | 'reply',
+  comment = '',
+): Promise<ActResult> {
+  const res = await apiV2.POST('/api/agents/{slug}/tasks/{ref}/actions', {
+    params: { path: { slug: p.agent, ref: p.decision_task ?? '' } },
+    ...pin(p.workspace),
+    body: { action, comment },
+  })
+  return unwrap(res, 'actOnProposal') as ActResult
+}
+
+/** Say where you stand on a project, as yourself (replaces your earlier stance). */
+export async function backProject(
+  p: Pick<ProposedProjectOut, 'agent' | 'workspace' | 'ref'>,
+  stance: BackingStance,
+  line = '',
+): Promise<ProjectBackingOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/projects/{ref}/backings/me/', {
+    params: { path: { slug: p.agent, ref: p.ref } },
+    ...pin(p.workspace),
+    body: { stance, line },
+  })
+  return unwrap(res, 'backProject') as ProjectBackingOut
+}
+
+export async function unbackProject(p: Pick<ProposedProjectOut, 'agent' | 'workspace' | 'ref'>): Promise<void> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/projects/{ref}/backings/me/', {
+    params: { path: { slug: p.agent, ref: p.ref } },
+    ...pin(p.workspace),
+  })
+  if (res.error !== undefined) unwrap(res, 'unbackProject')
+}
+
+/** The view beacon: once per person, per object, per UTC day (server-side). */
+export async function recordEngagementView(
+  target: { project: number; workspace?: string } | { huddle_id: string; workspace?: string },
+): Promise<void> {
+  const body = 'project' in target ? { project: target.project, huddle_id: '' } : { huddle_id: target.huddle_id }
+  await apiV2.POST('/api/engagement/view', { ...pin(target.workspace), body })
+}

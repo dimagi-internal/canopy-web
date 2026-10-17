@@ -12,6 +12,7 @@ import { createProject, patchProject, type ProjectOut, type TaskOut } from '@/ap
 // `ProjectGroupHeader` as the header of each group.
 
 const STATUS_LABEL: Record<string, string> = {
+  proposed: 'Proposed',
   active: 'Active',
   done: 'Done',
   archived: 'Archived',
@@ -36,7 +37,9 @@ export function StatusChip({ status }: { status: string }): JSX.Element {
       ? 'bg-success/10 text-success border-success/30'
       : status === 'archived'
         ? 'bg-muted text-muted-foreground border-border'
-        : 'bg-primary/10 text-primary border-primary/30'
+        : status === 'proposed'
+          ? 'bg-special/10 text-special border-special/30'
+          : 'bg-primary/10 text-primary border-primary/30'
   return (
     <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${tone}`}>
       {STATUS_LABEL[status] ?? status}

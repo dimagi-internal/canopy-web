@@ -30,12 +30,12 @@ outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.m
 |---|---|---|
 | **viewer** | `read` | Reads the workspace; talks to an agent through what its interface offers members. |
 | **editor** | + `content.write`, `agent.work`, `session.drive`, `events.write` | Makes things; **edits agents and dispatches turns to them** — those turns always run `manual`. |
-| **admin** | + `logs.read`, `members.manage`, `integrations`, `runners.route`, `retention.manage` | **Runs the workspace**: every log, members below admin, the integrations, the default runner order, how long chat and turn content is kept. **Holds no agent keys** — a workspace admin is not an agent admin. |
+| **admin** | + `logs.read`, `members.manage`, `integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide` | **Runs the workspace**: every log, members below admin, the integrations, the default runner order, how long chat and turn content is kept, which turns are refused, and starting or declining a proposed project (beside that project's own owner). **Holds no agent keys** — a workspace admin is not an agent admin. |
 | **owner** | + `own` | **The keys**: the shared vault, the Slack app, connected sites, deleting the workspace — and is **every agent's admin**. |
 
 **Workspace permissions** (the capability names): `read`, `content.write`,
 `agent.work`, `session.drive`, `events.write`, `logs.read`, `members.manage`,
-`integrations`, `runners.route`, `retention.manage`, `own`.
+`integrations`, `runners.route`, `retention.manage`, `admission.manage`, `projects.decide`, `own`.
 
 ## Getting into a workspace
 
