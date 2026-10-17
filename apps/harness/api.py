@@ -816,12 +816,13 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.get("/runners/{runner_id}/agents", response=list[str],
-            summary="The agents this runner serves: the ones whose secrets it may read")
+            summary="The agents this runner runs: the ones it should prepare")
 def runner_agents(request: HttpRequest, runner_id: uuid.UUID) -> list[str]:
-    """Slugs, by the same rule a credential resolve checks a box's device proof
-    against (`device_keys.runner_serves_agent`). The box's refresh prepares only
-    these: listing every agent its token can see made it ask for vaults it may
-    not open, and each refusal emailed that agent's owner (canopy-web#1563)."""
+    """Slugs of the agents this box RUNS (`routing.agents_routed_to`): the
+    claim's own static gates, so a box prepares exactly what it can be handed.
+    The box's refresh prepares only these: listing every agent its token could
+    see made it ask for vaults it may not open, and each refusal emailed that
+    agent's owner (canopy-web#1563)."""
     from . import device_keys
 
     runner = _runner_or_404(request, runner_id)

@@ -24,7 +24,10 @@ request: an email and a Web Push, each linking to the agent's Credentials.
 * `burst` — more than CANOPY_VAULT_READ_BURST_LIMIT resolves (default 50) of one
   agent inside a 5-minute window. Counted per resolve request, not per ref: one
   unscoped resolve of ACE hands out 45 refs and is one read.
-* `device-proof` — a resolve refused for a bad or missing device proof.
+* `device-proof` — a resolve refused for a bad or missing device proof. NOT a
+  good proof from an approved box that does not run the agent: that is routing,
+  recorded as an `agent.credentials.refused` event with no alert
+  (`unrouted_box_refused`, canopy-web#1563).
 
 Debounced to one alert per kind per agent per hour: a repeat inside the hour
 bumps the open alert's `occurrences` and tells no one again. Every alert is an
@@ -124,6 +127,31 @@ def device_proof_refused(agent, request, *, reason: str, runner=None):
         return None
 
 
+def unrouted_box_refused(agent, request, *, runner) -> None:
+    """A resolve refused because the proving box, approved and active, does not
+    run this agent. Logged and recorded as an `agent.credentials.refused` event,
+    never an owner alert: nothing was handed out, the box is a known one, and the
+    old alert's advice ("approve its device key") was wrong for it — routing, not
+    the key, is what said no (fizzy, 2026-10-17, canopy-web#1563). A box that
+    keeps asking shows on the event's count, and its owner can see it there."""
+    try:
+        logger.info("resolve of %s refused: %s does not run it", agent.slug, runner.name)
+        from apps.events import services as events
+
+        events.record([{
+            "source": "agents.credentials",
+            "kind": "agent.credentials.refused",
+            "level": "info",
+            "key": f"{agent.slug}:refused:{runner.pk}",
+            "summary": (f"{runner.name} asked for {agent.slug}'s secrets but does not run "
+                        f"{agent.slug}; refused, nothing handed out")[:300],
+            "payload": {"agent": agent.slug, "runner": str(runner.pk),
+                        "runner_name": runner.name, "user": _who(request.user)},
+        }], workspace=agent.workspace)
+    except Exception:  # noqa: BLE001 - must not turn a 401 into a 500
+        logger.exception("unrouted-box event failed for %s", agent.slug)
+
+
 #: The resolve extras (RESOLVE_SECRET_EXTRAS in api.py) are fields, not refs a
 #: runtime.yaml declares, so naming them is never "undeclared".
 _EXTRAS = {"op_sa_token", "shared_op_sa_token", "github_token", "salesforce_creds"}
@@ -205,9 +233,10 @@ _WHY = {
               "few times, not dozens; a burst can mean a loop or someone harvesting them. "
               "Check which box and turn the reads came from."),
     "device-proof": ("Canopy refused this read because the agent only hands its secrets to "
-                     "approved devices, and the caller could not prove it was one. If that "
-                     "was your own box, approve its device key; if not, someone holds a "
-                     "token without the device."),
+                     "approved devices, and the caller could not prove it was one: no proof, "
+                     "or a key nobody approved. If that was your own box, approve its device "
+                     "key; if not, someone holds a token without the device. (A known box "
+                     "that simply does not run the agent is refused without this alert.)"),
     "zk-wrap-missing": ("Canopy refused this read because the device has not been granted "
                         "this agent's vault key. Grant the device if it should run the "
                         "agent."),

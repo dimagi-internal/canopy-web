@@ -202,7 +202,10 @@ def operator(agent):
 
 @pytest.fixture
 def runner(operator, agent):
+    # Enrolled where the agent lives, as pairing does: a box serves only the
+    # workspaces it is enrolled in, and readiness lists the agents it runs.
     r = Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, owner=operator,
+                              workspace=agent.workspace,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
     return r

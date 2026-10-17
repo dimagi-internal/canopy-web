@@ -2171,7 +2171,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     # Device proof (canopy-web#1538 Phase 1a). Verified whenever one is sent, so
     # the read log can name the box that proved itself; REQUIRED only when the
     # agent asks for it and resolves from canopy-web.
-    device_key, refused = _device_key_from_proof(request, agent)
+    device_key, refused, unrouted = _device_key_from_proof(request, agent)
     # A zero-knowledge agent ALWAYS needs one (canopy-web#1550): the wrap handed
     # out is the proving device's, so there is nothing to give without it.
     if (device_key is None
@@ -2179,8 +2179,16 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
                  or (agent.require_device_binding and agent.credential_source == agent.CANOPY_WEB))):
         from . import vault_alerts
 
+        if unrouted is not None:
+            # An APPROVED box that does not run this agent: a routing fact, not a
+            # misused token, so the owner is not emailed (fizzy, canopy-web#1563).
+            vault_alerts.unrouted_box_refused(agent, request, runner=unrouted)
+            return JsonResponse({"error": "device_proof_required", "reason": "not_routed",
+                                 "detail": refused}, status=401,
+                                headers={"WWW-Authenticate": 'DPoP algs="ES256"'})
         vault_alerts.device_proof_refused(agent, request, reason=refused or "no device proof")
-        return JsonResponse({"error": "device_proof_required"}, status=401,
+        return JsonResponse({"error": "device_proof_required", "reason": "no_valid_proof",
+                             "detail": refused or "no device proof"}, status=401,
                             headers={"WWW-Authenticate": 'DPoP algs="ES256"'})
 
     wanted = _parse_refs(refs)
@@ -2274,10 +2282,13 @@ def _parse_refs(refs: str | None) -> set[str] | None:
 
 
 def _device_key_from_proof(request: HttpRequest, agent):
-    """`(key, refused)`: the ACTIVE RunnerDeviceKey whose proof this request
-    carries, if the proof verifies and its runner serves `agent`, else None and
-    why. A bad proof is not an error here — whether one is REQUIRED is the
-    caller's decision.
+    """`(key, refused, unrouted)`: the ACTIVE RunnerDeviceKey whose proof this
+    request carries, if the proof verifies and its runner serves `agent`; else
+    None and why. `unrouted` is the runner when the proof is GOOD — an approved,
+    active key — and only the routing says no: the box simply does not run this
+    agent (`device_keys.runner_serves_agent`). That is a different answer from a
+    proof nobody approved, and the two get different follow-ups. A bad proof is
+    not an error here — whether one is REQUIRED is the caller's decision.
 
     Two proofs: a DPoP proof from a key the box holds (`DPoP`, Phase 1a), or an
     EC2 box's instance role (`X-Canopy-Aws-Proof`, Phase 1b — a signed
@@ -2291,18 +2302,28 @@ def _device_key_from_proof(request: HttpRequest, agent):
             role = aws_iam_proof.verify(aws, request)
         except aws_iam_proof.AwsProofError as exc:
             logger.info("aws iam proof refused for %s: %s", agent.slug, exc)
-            return None, f"AWS IAM proof refused: {exc}"
+            return None, f"AWS IAM proof refused: {exc}", None
         key = aws_iam_proof.active_key_for_agent(agent, role)
-        return key, (None if key else f"no active aws-iam key for {role} on a runner it routes to")
+        if key is not None:
+            return key, None, None
+        known = aws_iam_proof.known_key(role)
+        if known is not None:
+            return None, f"{known.runner.name} does not run {agent.slug}", known.runner
+        return None, f"no approved device key for {role}", None
     if not request.META.get("HTTP_DPOP"):
-        return None, "no device proof"
+        return None, "no device proof", None
     try:
         jkt = device_keys.verify_proof(request)
     except device_keys.ProofError as exc:
         logger.info("device proof refused for %s: %s", agent.slug, exc)
-        return None, f"DPoP proof refused: {exc}"
+        return None, f"DPoP proof refused: {exc}", None
     key = device_keys.active_key_for_agent(agent, jkt)
-    return key, (None if key else "the DPoP key is not an active key on a runner it routes to")
+    if key is not None:
+        return key, None, None
+    known = device_keys.known_key(jkt)
+    if known is not None:
+        return None, f"{known.runner.name} does not run {agent.slug}", known.runner
+    return None, "the DPoP key is not an approved device key", None
 
 
 def _caller_runner(request: HttpRequest):

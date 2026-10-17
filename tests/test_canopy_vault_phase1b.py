@@ -129,7 +129,7 @@ def fleet(client):
     agent = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=jj,
                                  runtime_secrets=["canopy-pat", "gog-token"],
                                  credential_source=Agent.CANOPY_WEB)
-    runner = Runner.objects.create(name="ec2-box", kind=Runner.CLOUD, owner=jj,
+    runner = Runner.objects.create(name="ec2-box", kind=Runner.CLOUD, owner=jj, workspace=ws,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                    capabilities={})
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
