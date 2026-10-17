@@ -356,21 +356,34 @@ def _agents_line(group: HuddleGroup) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def _since(group: HuddleGroup) -> str:
-    entry = ingest_svc.allowance_for(group.leader_agent, group.channel_id)
-    row = None
-    if entry is not None:
-        from apps.slack.models import SlackChannelIngest
+def read_from(group: HuddleGroup, slot: dt.datetime) -> dt.datetime:
+    """Where a run's read starts, fixed when it is announced: the announcement
+    quotes it, the lead confirms THAT, and the read is cut to it
+    (slack.ingest.start_group_read / transcript `oldest`). The end of this group's
+    last read; for its first run, one cadence before the slot — never the whole
+    channel. Other reads of the channel (a `read-channel`, a revoked read) don't
+    count: they weren't this group's."""
+    prev = (group.runs.exclude(read_last_ts="").filter(slot__lt=slot).order_by("-slot").first())
+    if prev is not None:
+        return dt.datetime.fromtimestamp(float(prev.read_last_ts), tz=dt.UTC)
+    from canopy_cron import next_slots
 
-        row = (SlackChannelIngest.objects.filter(allowance=entry, read_mark__gt=0, read_at__isnull=False)
-               .order_by("-read_at").first())
-    return ingest_svc._slack_date(row.read_at.timestamp()) if row else "the channel began (its first read)"
+    sched = group.schedule
+    try:
+        a, b = next_slots(sched.cron, sched.timezone, now=slot, count=2)
+        return slot - (b - a)
+    except Exception:  # noqa: BLE001 — a cadence that can't be stepped reads one week
+        return slot - dt.timedelta(days=7)
+
+
+def _since(run: HuddleGroupRun) -> str:
+    return ingest_svc._slack_date(run.read_since.timestamp())
 
 
 def announcement(run: HuddleGroupRun) -> tuple[str, list[dict]]:
     g = run.group
     text = (f":calendar: *{g.name} huddle* is due. <@{g.lead_slack_id}>: Confirm to have {_agents_line(g)} "
-            f"read what was posted here since {_since(g)} and work on it.")
+            f"read what was posted here since {_since(run)} and work on it.")
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": text[:3000]}},
         {"type": "context", "elements": [{"type": "mrkdwn", "text": (
@@ -428,7 +441,8 @@ def announce(schedule, slot: dt.datetime, *, manual: bool = False) -> tuple[Hudd
     group = HuddleGroup.objects.select_related("workspace", "lead", "leader_agent", "leader_agent__user",
                                                "installation").get(schedule=schedule)
     with transaction.atomic():
-        run, created = HuddleGroupRun.objects.get_or_create(group=group, slot=slot, defaults={"manual": manual})
+        run, created = HuddleGroupRun.objects.get_or_create(
+            group=group, slot=slot, defaults={"manual": manual, "read_since": read_from(group, slot)})
         if created and (schedule.last_slot is None or slot > schedule.last_slot) and not manual:
             schedule.last_slot = slot
             schedule.save(update_fields=["last_slot", "updated_at"])
@@ -520,7 +534,7 @@ def click(installation, *, run_id: str, slack_user_id: str, channel_id: str, mes
                 return "That huddle was already answered."
             row = ingest_svc.start_group_read(
                 agent=g.leader_agent, installation=g.installation, channel_id=g.channel_id, user=g.lead,
-                run_id=run.pk, purpose=f"{g.name} work group huddle")
+                run_id=run.pk, purpose=f"{g.name} work group huddle", oldest=run.read_since)
             HuddleGroupRun.objects.filter(pk=run.pk).update(ingest=row)
     except ingest_svc.IngestError as e:
         _event(g, "confirm_refused", f"the {g.name} huddle could not start reading: {e}", level=Event.WARN,
@@ -561,8 +575,10 @@ def deliver_read(run_id: int, ingest_id) -> None:
         _fail(run, f"canopy couldn't read this channel for `{g.leader_agent.slug}`: {row.error or row.status}",
               tell_thread=True)
         return
-    prev_at = row.read_at if row.read_mark else None
-    t = ingest_svc.transcript(row, after=row.read_mark)
+    since = run.read_since            # what the lead confirmed — the read is cut to it
+    # Cut by the confirmed start alone, not the agent's read mark: a `read-channel`
+    # in between moves that mark, and the group would silently skip what it read.
+    t = ingest_svc.transcript(row, oldest=since.timestamp() if since else 0.0)
     ingest_svc.mark_read(row, t["mark"])
     SlackChannelIngest.objects.filter(pk=row.pk).update(last_read_by_slack=(g.lead_slack_id or "")[:32])
     sched = g.schedule
@@ -581,11 +597,11 @@ def deliver_read(run_id: int, ingest_id) -> None:
         )
         HuddleGroupRun.objects.filter(pk=run.pk).update(
             status=HuddleGroupRun.RUNNING, material=t["markdown"], read_messages=t["messages"],
-            read_first_ts=t["first_ts"] or "", read_last_ts=t["last_ts"] or "", read_since=prev_at, turn=turn)
+            read_first_ts=t["first_ts"] or "", read_last_ts=t["last_ts"] or run.read_last_ts or "", turn=turn)
     run.refresh_from_db()
     _event(g, "run_started", f"{g.name} huddle: read {t['messages']} message(s); {g.leader_agent.slug}'s turn "
            f"queued (run {run.pk})", run=run.pk, turn=str(turn.pk), messages=t["messages"])
-    _thread(run, ingest_svc._what_was_read(g.leader_agent.slug, t, prev_at)
+    _thread(run, ingest_svc._what_was_read(g.leader_agent.slug, t, since, as_confirmed=True)
             + f"\nStarted — follow it at {page_url(g)}")
 
 
