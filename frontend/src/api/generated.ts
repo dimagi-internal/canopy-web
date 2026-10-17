@@ -4102,28 +4102,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/vault/zk/disable": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Turn off zero-knowledge: back to custodial storage (browser + passkey)
-         * @description `{values: [{name, plaintext}]}` covering every stored credential, each
-         *     decrypted in the browser; canopy-web encrypts them at rest as before and
-         *     deletes every wrap. A browser session with a passkey step-up only.
-         */
-        readonly post: operations["disable_agent_zk"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/sender-trust": {
         readonly parameters: {
             readonly query?: never;
@@ -18082,18 +18060,6 @@ export interface components {
             readonly wraps: readonly components["schemas"]["ZkWrapIn"][];
             /** Values */
             readonly values?: readonly components["schemas"]["ZkValueIn"][];
-        };
-        /** ZkDisableIn */
-        readonly ZkDisableIn: {
-            /** Values */
-            readonly values?: readonly components["schemas"]["ZkPlainValueIn"][];
-        };
-        /** ZkPlainValueIn */
-        readonly ZkPlainValueIn: {
-            /** Name */
-            readonly name: string;
-            /** Plaintext */
-            readonly plaintext: string;
         };
         /** SenderTrustOut */
         readonly SenderTrustOut: {
@@ -32286,32 +32252,6 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["ZkRotateIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ZkStateOut"];
-                };
-            };
-        };
-    };
-    readonly disable_agent_zk: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["ZkDisableIn"];
             };
         };
         readonly responses: {

@@ -455,16 +455,21 @@ def test_only_an_admin_reaches_the_zk_routes(fleet):
     assert _enable(fleet, client=c).status_code == 403
 
 
-# ---- after enable: the custodial paths refuse -----------------------------------------------
+# ---- after enable: reveal refuses, a plaintext write is sealed --------------------------------
 
-def test_reveal_and_custodial_writes_refuse_a_zk_agent(fleet):
+def test_reveal_refuses_and_a_plaintext_write_is_sealed_on_a_zk_agent(fleet):
     assert _enable(fleet).status_code == 200
     res = fleet.client.post("/api/agents/eva/credentials/canopy-pat/reveal")
     assert res.status_code == 409 and res.json()["error"] == "zk_enabled"
+    # Zero-knowledge is the only mode: `canopy vault import` writes in plaintext
+    # and canopy-web seals the value to the agent's readers, keeping no copy.
     res = fleet.client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "x"}},
                            content_type="application/json")
-    assert res.status_code == 409 and res.json()["error"] == "zk_enabled"
-    assert AgentCredential.objects.get(name="canopy-pat").value_enc == ""
+    assert res.status_code == 200, res.content
+    row = AgentCredential.objects.get(name="canopy-pat")
+    assert row.value_enc == "" and row.value_zk.startswith("zks1:") and row.kv == 1
+    assert ref.open_sealed_value(row.value_zk, _aid(fleet), "canopy-pat", "member", str(fleet.user.pk),
+                                 fleet.member_priv) == "x"
 
 
 
@@ -630,28 +635,6 @@ def test_rotate_after_revoking_a_device_leaves_it_out(fleet):
     assert res.json()["rotation_recommended"] is False
 
 
-# ---- disable ------------------------------------------------------------------------------------
-
-def test_disable_is_browser_only_and_restores_custodial_values(fleet):
-    assert _enable(fleet).status_code == 200
-    body = {"values": [{"name": n, "plaintext": v} for n, v in PLAIN.items()]}
-    res = Client().post(f"{ZK}/disable", data=body, content_type="application/json",
-                        HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
-    assert res.status_code == 403
-    res = fleet.client.post(f"{ZK}/disable", data={"values": body["values"][:1]},
-                            content_type="application/json")
-    assert res.status_code == 422 and res.json()["error"] == "zk_values_incomplete"
-    res = fleet.client.post(f"{ZK}/disable", data=body, content_type="application/json")
-    assert res.status_code == 200, res.content
-    assert res.json()["enabled"] is False and res.json()["kv"] == 0
-    assert not AgentVaultWrap.objects.exists()
-    assert AgentCredential.objects.get(name="kindora").plaintext() == "kin-value"
-    assert Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet.pat}").json()["values"] == PLAIN
-    # The plaintext never reaches the settings audit.
-    row = SettingChange.objects.filter(operation="disable_agent_zk").get()
-    assert "kin-value" not in json.dumps(row.request)
-
-
 # ---- device-key enrollment with an ECDH key ------------------------------------------------------
 
 def test_enrollment_records_the_ecdh_key_and_its_thumbprint(fleet):
@@ -738,13 +721,6 @@ def test_server_seal_opens_with_the_reference_for_device_and_member(fleet):
                                  fleet.member_priv) == '{"t":1}'
 
 
-def test_a_person_still_cannot_write_plaintext_to_a_zk_agent_with_a_vault_key(fleet):
-    assert _enable(fleet).status_code == 200
-    res = fleet.client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "x"}},
-                           content_type="application/json")
-    assert res.status_code == 409 and res.json()["error"] == "zk_enabled"
-
-
 def test_resolve_hands_a_sealed_value_to_a_device_without_a_wrap(fleet):
     Agent.objects.filter(pk=fleet.agent.pk).update(runtime_secrets=["canopy-pat", "kindora", "gog-token"])
     assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
@@ -815,12 +791,12 @@ def _upsert(slug, ws, owner):
                                                  avatar_url=""), workspace=ws, owner=owner)
 
 
-def test_a_new_agent_is_born_zk_only_when_its_owner_has_a_vault_key(fleet):
+def test_every_new_agent_is_born_zk_with_or_without_a_vault_key(fleet):
     born = _upsert("newbie", fleet.ws, fleet.user)
     assert born.zk_enabled and born.zk_kv == 0
     other = get_user_model().objects.create_user(username="nokey", email="nokey@dimagi.com")
-    plain = _upsert("plain", fleet.ws, other)
-    assert not plain.zk_enabled
+    nokey = _upsert("plain", fleet.ws, other)
+    assert nokey.zk_enabled and nokey.zk_kv == 0
     # An existing agent is never switched by an upsert.
     _upsert("eva", fleet.ws, fleet.user)
     assert not _agent(fleet).zk_enabled
@@ -963,3 +939,95 @@ def test_the_heartbeat_sweep_is_throttled_and_never_raises(fleet, monkeypatch):
     cache.clear()
     monkeypatch.setattr(zk_notify, "sweep", lambda now=None: 1 / 0)
     zk_notify.maybe_sweep()  # swallowed
+
+
+# ---- one recovery code per person (§4c) -------------------------------------------------
+
+def _add_recovery_seal(f, r=None):
+    scalar = f.member_priv.private_numbers().private_value.to_bytes(32, "big")
+    seal = ref.seal_user_key_recovery(scalar, str(f.user.pk), r or f.recovery, os.urandom(16), os.urandom(12))
+    res = f.client.put("/api/vault/keyset", data={"public_jwk": f.keyset.public_jwk,
+                                                  "seals": f.keyset.seals + [seal]},
+                       content_type="application/json")
+    assert res.status_code == 200, res.content
+    f.keyset.refresh_from_db()
+    return seal
+
+
+def test_shape_checks_accept_the_person_recovery_seal():
+    zk.check_seal(VECTORS["outputs"]["user_key_seal_recovery"])
+    with pytest.raises(zk.ZkError):
+        zk.check_seal(VECTORS["outputs"]["user_key_seal_recovery"] | {"cred": "x"})
+
+
+def test_the_person_recovery_code_opens_the_keyset(fleet):
+    seal = _add_recovery_seal(fleet)
+    code = ref.recovery_code(fleet.recovery)
+    scalar = ref.open_user_key_recovery(seal, str(fleet.user.pk), ref.parse_recovery_code(code))
+    assert scalar == fleet.member_priv.private_numbers().private_value.to_bytes(32, "big")
+    assert [s["alg"] for s in fleet.keyset.seals] == ["prf", "recovery"]
+
+
+def test_a_keyset_holds_at_most_one_recovery_seal_and_never_only_that(fleet):
+    seal = ref.seal_user_key_recovery(b"\0" * 32, str(fleet.user.pk), fleet.recovery, os.urandom(16), os.urandom(12))
+    for seals in (fleet.keyset.seals + [seal, seal], [seal]):
+        res = fleet.client.put("/api/vault/keyset", data={"public_jwk": fleet.keyset.public_jwk, "seals": seals},
+                               content_type="application/json")
+        assert res.status_code == 422, res.content
+
+
+def test_enable_needs_no_agent_recovery_wrap_when_the_member_has_a_recovery_code(fleet):
+    _add_recovery_seal(fleet)
+    res = _enable(fleet, wraps=[member_wrap(fleet), device_wrap(fleet)])
+    assert res.status_code == 200, res.content
+    kinds = sorted(AgentVaultWrap.objects.filter(agent=fleet.agent).values_list("kind", flat=True))
+    assert kinds == ["device", "member"]
+
+
+def test_enable_still_needs_a_recovery_without_the_member_recovery_code(fleet):
+    res = _enable(fleet, wraps=[device_wrap(fleet)])
+    assert res.status_code == 422 and res.json()["error"] == "zk_recovery_required", res.content
+
+
+def test_rotate_needs_no_agent_recovery_wrap_when_the_member_has_a_recovery_code(fleet):
+    _add_recovery_seal(fleet)
+    assert _enable(fleet).status_code == 200
+    vk2 = os.urandom(32)
+    res = _rotate(fleet, [member_wrap(fleet, kv=2, vk=vk2), device_wrap(fleet, kv=2, vk=vk2)], vk=vk2)
+    assert res.status_code == 200, res.content
+
+
+# ---- the canopy-web vault has no custodial mode ---------------------------------------------
+
+def test_disable_is_gone(fleet):
+    assert _enable(fleet).status_code == 200
+    res = fleet.client.post(f"{ZK}/disable", data={"values": []}, content_type="application/json")
+    assert res.status_code in (404, 405)
+    assert _agent(fleet).zk_enabled
+
+
+def test_custodial_agents_are_listed_never_converted(fleet):
+    from django.core.management import call_command
+    from io import StringIO
+
+    from apps.agents.management.commands.list_custodial_vault_agents import custodial_vault_agents
+
+    rows = custodial_vault_agents()
+    assert [r["slug"] for r in rows] == ["eva"] and rows[0]["custodial_values"] == ["canopy-pat", "kindora"]
+    out = StringIO()
+    call_command("list_custodial_vault_agents", stdout=out)
+    assert "eva" in out.getvalue() and "kin-value" not in out.getvalue()
+    assert not _agent(fleet).zk_enabled  # reported, not converted
+    assert _enable(fleet).status_code == 200
+    assert custodial_vault_agents() == []
+
+
+def test_make_zero_knowledge_seals_every_custodial_value(fleet):
+    assert services.make_zero_knowledge(_agent(fleet)) == 2
+    agent = _agent(fleet)
+    assert agent.zk_enabled and agent.zk_kv == 0
+    for name, plain in PLAIN.items():
+        row = AgentCredential.objects.get(name=name)
+        assert row.value_enc == ""
+        assert ref.open_sealed_value(row.value_zk, _aid(fleet), name, "device", fleet.device.ecdh_jkt,
+                                     fleet.ecdh) == plain

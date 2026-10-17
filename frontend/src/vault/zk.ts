@@ -278,6 +278,27 @@ export async function openUserKey(seal: UserKeySeal, userId: string, prfOut: Uin
   return gcmDecrypt(kek, unb64u(seal.n), unb64u(seal.ct), enc.encode(info))
 }
 
+// ---- 4c. the person's recovery code -----------------------------------------------------------
+// ONE code per person: it opens their key, and so every agent they hold.
+
+export const userRecoveryInfo = (userId: string) => `canopy-vault/v1/user-key|${userId}|recovery`
+
+export async function sealUserKeyRecovery(scalar: Uint8Array, userId: string, r: Uint8Array,
+                                          opts: { salt?: Uint8Array; nonce?: Uint8Array } = {}): Promise<PersonRecoverySeal> {
+  const salt = opts.salt ?? randomBytes(16)
+  const nonce = opts.nonce ?? randomBytes(12)
+  const info = userRecoveryInfo(userId)
+  const kek = await hkdf(r, salt, info)
+  const ct = await gcmEncrypt(kek, nonce, scalar, enc.encode(info))
+  return { alg: 'recovery', s: b64u(salt), n: b64u(nonce), ct: b64u(ct) }
+}
+
+export async function openUserKeyRecovery(seal: PersonRecoverySeal, userId: string, r: Uint8Array): Promise<Bytes> {
+  const info = userRecoveryInfo(userId)
+  const kek = await hkdf(r, unb64u(seal.s), info)
+  return gcmDecrypt(kek, unb64u(seal.n), unb64u(seal.ct), enc.encode(info))
+}
+
 // ---- 5. recovery ------------------------------------------------------------------------------
 
 export const recoveryInfo = (agentId: string, kv: number) => `canopy-vault/v1/wrap-recovery|${agentId}|${kv}`
@@ -329,7 +350,8 @@ export function parseRecoveryCode(code: string): Bytes {
 
 export const PBKDF2_ITERATIONS = 650000
 export interface PassphraseSeal { alg: '2skd'; kdf: 'pbkdf2-sha256'; i: number; s: string; n: string; ct: string }
-export type AnySeal = UserKeySeal | PassphraseSeal
+export interface PersonRecoverySeal { alg: 'recovery'; s: string; n: string; ct: string }
+export type AnySeal = UserKeySeal | PassphraseSeal | PersonRecoverySeal
 
 export const passphraseInfo = (userId: string) => `canopy-vault/v1/user-key|${userId}|passphrase`
 

@@ -75,15 +75,41 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
 
 
 def born_zk_fields(owner) -> dict:
-    """A new agent starts zero-knowledge when its owner has a vault key
-    (canopy-web#1550): `zk_enabled` at kv 0 — no vault key yet, so every value
-    that arrives is sealed to the owner and the agent's devices (`zks1`) until
-    the owner creates the vault key. Without a vault key it starts custodial."""
-    from apps.passkeys.models import UserVaultKeyset
-
-    if owner is None or not UserVaultKeyset.objects.filter(user=owner).exists():
-        return {}
+    """Every new agent starts zero-knowledge (canopy-web#1550; the ONLY mode of
+    the canopy-web vault, Jonathan 2026-10-17): `zk_enabled` at kv 0 — no vault
+    key yet, so every value that arrives is sealed (`zks1`) to whoever may read
+    the agent (its owner's vault key, its approved machines) until a holder
+    creates the vault key."""
     return {"zk_enabled": True, "zk_kv": 0}
+
+
+def make_zero_knowledge(agent) -> int:
+    """Move a custodial agent to zero-knowledge, server side: each stored value
+    is sealed to the agent's readers (`zks1`, kv 0) and its custodial copy
+    wiped, atomically. canopy-web held these values readable until now; after
+    this it cannot. Raises ZkError `zk_no_recipients` when nobody could read
+    them (no vault key, no approved machine) — nothing changes then. Returns
+    the number of values sealed; a no-op on an agent already zero-knowledge."""
+    from django.db import transaction
+
+    from apps.agents.models import AgentCredential
+
+    from . import zk, zk_seal
+
+    with transaction.atomic():
+        agent = zk._locked(agent)
+        if agent.zk_enabled:
+            return 0
+        agent.zk_enabled, agent.zk_kv = True, 0
+        rows = list(AgentCredential.objects.filter(agent=agent))
+        plain = {r.name: r.plaintext() for r in rows if not r.is_zk}
+        sealed = {name: zk_seal.seal_for_agent(agent, name, value) for name, value in plain.items()}
+        for r in rows:
+            if r.name in sealed:
+                r.value_zk, r.kv, r.value_enc = sealed[r.name], 0, ""
+                r.save(update_fields=["value_zk", "kv", "value_enc", "updated_at"])
+        agent.save(update_fields=["zk_enabled", "zk_kv", "updated_at"])
+    return len(sealed)
 
 
 def list_agents() -> list[Agent]:
@@ -1246,22 +1272,19 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
     type anything", and storing it makes a declared ref read as SET while
     resolving to nothing — the worst of both.
 
-    `minted`: canopy-web made this value itself (Connect Google mailbox, canopy-pat
-    rotation). For a zero-knowledge agent it is then sealed to every recipient
-    (`zks1`, `zk_seal.py`) instead of refused — as is any write to an agent born
-    zero-knowledge that has no vault key yet (kv 0), where nothing else could
-    encrypt it.
+    Zero-knowledge is the canopy-web vault's only mode (Jonathan, 2026-10-17):
+    on a zero-knowledge agent — every agent created since, and every agent that
+    held nothing (migration 0057) — a value written in plaintext (`canopy vault
+    import`, or one canopy-web made itself: `minted`, Connect Google mailbox,
+    canopy-pat rotation) is sealed to every reader of the agent (`zks1`,
+    `zk_seal.py`) and the plaintext forgotten. Only an older agent that already
+    held custodial values is still written custodially until it is converted
+    (`manage.py list_custodial_vault_agents` lists them).
     """
-    from apps.agents.models import AgentCredential, ZeroKnowledgeValue
+    from apps.agents.models import AgentCredential
 
+    del minted  # every write is sealed now; kept for callers' clarity
     blank = sorted(k for k, v in values.items() if not (v or "").strip())
-    if agent.zk_enabled and not (minted or agent.zk_kv == 0):
-        # A plaintext write would sit beside ciphertext canopy-web cannot read
-        # (canopy-web#1550): values of a zero-knowledge agent are encrypted by a
-        # member, and arrive through PUT /vault/zk/values.
-        raise ZeroKnowledgeValue(
-            f"{agent.slug} is zero-knowledge: encrypt values under its vault key and "
-            f"PUT /api/agents/{agent.slug}/vault/zk/values (the browser and `canopy vault zk set` do)")
     if blank:
         raise ValueError(f"blank value for: {', '.join(blank)}")
 

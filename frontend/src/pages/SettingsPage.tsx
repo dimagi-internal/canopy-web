@@ -6,9 +6,7 @@ import { DeviceKeysTable } from '@/components/settings/DeviceKeysTable'
 import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
-import { PasskeysPanel } from '@/components/settings/PasskeysPanel'
-import { VaultKeyPanel } from '@/components/settings/VaultKeyPanel'
-import { ZkAgentsPanel } from '@/components/settings/ZkAgentsPanel'
+import { SecurityCard } from '@/components/settings/SecurityCard'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 import { useMemoryVisible } from '@/auth/memoryRollout'
@@ -57,7 +55,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-lg font-semibold text-foreground">Settings</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Your account: the runners you administer, presence, passkeys, GitHub, connected apps and access tokens.
+          Your account: the runners you administer, presence, security, GitHub, connected apps and access tokens.
         </p>
         {memoryVisible && (
           <p className="mt-1 text-xs">
@@ -69,8 +67,6 @@ export function SettingsPage() {
       </div>
 
       <RunnersPanel />
-
-      <DeviceKeysPanel />
 
       <SessionWorkspacePanel />
 
@@ -103,11 +99,7 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <PasskeysPanel />
-
-      <ZkAgentsPanel />
-
-      <VaultKeyPanel onlyWhenLinked />
+      <SecurityCard machines={<DeviceKeysPanel />} />
 
       <GitHubPanel />
 
@@ -135,19 +127,14 @@ function DeviceKeysPanel() {
       .catch(() => setKeys([]))
   }, [])
 
-  // Nothing to say to someone with no keys and no link to one.
-  if (keys !== null && keys.length === 0 && !highlight) return null
+  // A row of the Security card: the machines that may read agents' secrets.
+  // A new one can read nothing until you approve it.
   return (
-    <div id="device-keys" className="rounded-xl border border-border bg-card p-5 space-y-3" data-testid="settings-device-keys">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground">Device keys</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Keys your runners hold to prove which box is reading an agent&apos;s secrets. A new key does nothing until
-          you approve it.
-        </p>
-      </div>
+    <div id="device-keys" className="space-y-2" data-testid="settings-device-keys">
       {keys === null ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : keys.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No machines yet. One shows up here when a runner asks to read secrets.</p>
       ) : (
         <DeviceKeysTable
           keys={keys}

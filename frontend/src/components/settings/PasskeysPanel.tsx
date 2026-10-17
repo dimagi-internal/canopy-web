@@ -75,15 +75,9 @@ export function PasskeysPanel() {
   }
 
   return (
-    <div id="passkeys" className="rounded-xl border border-border bg-card p-5 space-y-4" data-testid="settings-passkeys">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground">Passkeys</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          The confirmation canopy asks for — Touch ID, your device password or PIN, your phone, or a security key — before revealing or changing an
-          agent&rsquo;s secret or approving a runner&rsquo;s device key. One confirmation covers five minutes. You still
-          sign in with Google.
-        </p>
-      </div>
+    // A row of the Security card: how you confirm it's you (Touch ID, a
+    // device PIN, a phone, a security key). One confirmation covers 5 minutes.
+    <div id="passkeys" className="space-y-3" data-testid="settings-passkeys">
 
       {!supported ? (
         <p className="text-sm text-destructive">This browser does not support passkeys.</p>
@@ -149,10 +143,9 @@ export function PasskeysPanel() {
           </tbody>
         </table>
       )}
-      {sealedBy !== null && (
+      {sealedBy !== null && hasPassphrase && (
         <p className="text-xs text-muted-foreground" data-testid="passkeys-vault-status">
-          {hasPassphrase ? 'Your passphrase and Secret Key also unlock your vault. ' : ''}
-          <a href="#vault-key" className="underline">Manage your vault key</a>
+          Your passphrase and Secret Key also unlock your vault.
         </p>
       )}
     </div>

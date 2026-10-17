@@ -58,6 +58,15 @@ PUBLIC key — no secret of the newcomer is needed. Removing access = rotate VK.
             seal = {"alg":"2skd","kdf":"pbkdf2-sha256","i":650000,"s":b64u(salt),
                     "n":b64u(nonce12),"ct":b64u(AES-GCM(KEK, nonce, s, aad=info))}
 
+4c. User keyset seal by the person's RECOVERY CODE — ONE per person, opening
+   their key and so every agent they hold (the per-agent §5 recovery wrap is
+   then optional; existing ones stay valid). R = 32 random bytes, shown once in
+   the §5 recovery-code format.
+            info = "canopy-vault/v1/user-key|{user_id}|recovery"
+            KEK  = HKDF-SHA256(ikm=R, salt=salt16, info)
+            seal = {"alg":"recovery","s":b64u(salt),"n":b64u(nonce12),
+                    "ct":b64u(AES-GCM(KEK, nonce, s, aad=info))}
+
 5. Recovery wrap of VK:   R = 32 random bytes, shown once as Crockford base32 in
    groups of 4 ("recovery code");
             info = "canopy-vault/v1/wrap-recovery|{agent_id}|{kv}"
@@ -240,6 +249,26 @@ def parse_secret_key_code(code: str) -> bytes:
     return v.to_bytes(16, "big")
 
 
+# --- 4c. person recovery-code seal -----------------------------------------------------
+def user_recovery_info(user_id) -> str:
+    return f"canopy-vault/v1/user-key|{user_id}|recovery"
+
+
+def seal_user_key_recovery(scalar32, user_id, r, salt, nonce) -> dict:
+    info = user_recovery_info(user_id)
+    kek = hkdf(r, salt, info)
+    return {"alg": "recovery", "s": b64u(salt), "n": b64u(nonce),
+            "ct": b64u(AESGCM(kek).encrypt(nonce, scalar32, info.encode()))}
+
+
+def open_user_key_recovery(seal, user_id, r) -> bytes:
+    if seal.get("alg") != "recovery":
+        raise ValueError("unsupported seal")
+    info = user_recovery_info(user_id)
+    kek = hkdf(r, unb64u(seal["s"]), info)
+    return AESGCM(kek).decrypt(unb64u(seal["n"]), unb64u(seal["ct"]), info.encode())
+
+
 # --- 5. recovery ---------------------------------------------------------------------------
 def recovery_info(agent_id, kv) -> str:
     return f"canopy-vault/v1/wrap-recovery|{agent_id}|{kv}"
@@ -347,6 +376,16 @@ def vectors() -> dict:
             continue
         raise AssertionError("2skd binding not enforced")
 
+    urseal = seal_user_key_recovery(user_scalar, user_id, r, salt, nonce)
+    assert open_user_key_recovery(urseal, user_id, parse_recovery_code(code)) == user_scalar
+    for bad in (lambda: open_user_key_recovery(urseal, "8", r),
+                lambda: open_user_key_recovery(urseal, user_id, bytes(32))):
+        try:
+            bad()
+        except Exception:
+            continue
+        raise AssertionError("recovery seal binding not enforced")
+
     e3, e4 = _priv("5e" * 32), _priv("6f" * 32)
     nonce2 = bytes.fromhex("0c0d0e0f1011121314151617")
     sealed = seal_value("minted-token", agent_id, "gog-token", kv,
@@ -412,6 +451,7 @@ def vectors() -> dict:
             "user_key_seal_2skd": pseal,
             "secret_key_code": sk_code,
             "sealed_value": sealed,
+            "user_key_seal_recovery": urseal,
         },
     }
 

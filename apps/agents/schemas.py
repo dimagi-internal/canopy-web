@@ -1498,11 +1498,6 @@ class ZkValueIn(StrictModel):
     expect: str | None = None
 
 
-class ZkPlainValueIn(StrictModel):
-    name: str = Field(max_length=120)
-    plaintext: str
-
-
 class ZkEnableIn(StrictModel):
     kv: int = 1
     wraps: list[ZkWrapIn]
@@ -1523,10 +1518,6 @@ class ZkRotateIn(StrictModel):
     new_kv: int
     wraps: list[ZkWrapIn]
     values: list[ZkValueIn] = Field(default_factory=list)
-
-
-class ZkDisableIn(StrictModel):
-    values: list[ZkPlainValueIn] = Field(default_factory=list)
 
 
 class ZkWrapOut(StrictModel):

@@ -1,7 +1,7 @@
 // Canopy Vault Phase 2 (canopy-web#1550): the zero-knowledge vault's REST calls.
-// Every body here is ciphertext, a wrap or a seal — except `disableZk`, which
-// sends the plaintexts back for custodial storage (the one way out). Its own
-// module so the vault UI can be tested without dragging in ./agents.
+// Every body here is ciphertext, a wrap or a seal: there is no way back to
+// custodial storage. Its own module so the vault UI can be tested without
+// dragging in ./agents.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
 import { problemMessage } from './problem'
@@ -75,9 +75,4 @@ export async function addZkWraps(slug: string, body: { kv: number; wraps: ZkWrap
 export async function rotateZk(slug: string, body: { new_kv: number; wraps: ZkWrapIn[]; values: Value[] }): Promise<ZkStateOut> {
   return need<ZkStateOut>(await apiV2.POST('/api/agents/{slug}/vault/zk/rotate', { params: { path: { slug } }, body: body as never }),
     'Could not rotate the vault key')
-}
-
-export async function disableZk(slug: string, body: { values: { name: string; plaintext: string }[] }): Promise<ZkStateOut> {
-  return need<ZkStateOut>(await apiV2.POST('/api/agents/{slug}/vault/zk/disable', { params: { path: { slug } }, body: body as never }),
-    'Could not turn off zero-knowledge')
 }

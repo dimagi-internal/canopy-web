@@ -110,7 +110,6 @@ from .schemas import (
     AgentCredentialAlertOut,
     PatRotationIn,
     PatRotationOut,
-    ZkDisableIn,
     ZkEnableIn,
     ZkRotateIn,
     ZkStateOut,
@@ -956,6 +955,18 @@ def set_credential_source(request: HttpRequest, slug: str,
     secrets come from is part of controlling them. Absent from AgentIn, so the
     repo's self-publish upsert cannot move it."""
     agent = _agent_for_admin(request, slug)
+    if payload.credential_source == "canopy-web":
+        # Zero-knowledge is the canopy-web vault's only mode (Jonathan,
+        # 2026-10-17): moving here seals every stored value to the agent's
+        # readers and wipes the custodial copies, or refuses when nobody could
+        # read them yet.
+        from . import zk
+
+        try:
+            services.make_zero_knowledge(agent)
+        except zk.ZkError as exc:
+            raise _zk_problem(exc) from exc
+        agent.refresh_from_db()
     agent.credential_source = payload.credential_source
     agent.save(update_fields=["credential_source", "updated_at"])
     return _detail(request, agent)
@@ -2027,15 +2038,11 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
     # simply break `canopy vault import`.
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
-    from .models import ZeroKnowledgeValue
     from .zk import ZkError
 
     try:
         services.set_agent_credentials(agent, payload.values, user=request.user)
-    except ZeroKnowledgeValue as exc:
-        raise ProblemError(409, "Zero-knowledge agent", type_=TYPE_CONFLICT, detail=str(exc),
-                           members={"error": "zk_enabled"}) from exc
-    except ZkError as exc:  # born zero-knowledge, but nobody to seal to yet
+    except ZkError as exc:  # zero-knowledge, but nobody to seal to yet
         raise _zk_problem(exc) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
@@ -2442,23 +2449,6 @@ def rotate_agent_zk(request: HttpRequest, slug: str, payload: ZkRotateIn) -> ZkS
     try:
         zk.rotate(agent, new_kv=payload.new_kv, wraps=payload.wraps, values=payload.values,
                   user=request.user)
-    except zk.ZkError as exc:
-        raise _zk_problem(exc) from exc
-    agent.refresh_from_db()
-    return _zk_state(agent)
-
-
-@router.post("/{slug}/vault/zk/disable", response=ZkStateOut,
-             summary="Turn off zero-knowledge: back to custodial storage (browser + passkey)")
-def disable_agent_zk(request: HttpRequest, slug: str, payload: ZkDisableIn) -> ZkStateOut:
-    """`{values: [{name, plaintext}]}` covering every stored credential, each
-    decrypted in the browser; canopy-web encrypts them at rest as before and
-    deletes every wrap. A browser session with a passkey step-up only."""
-    from . import zk
-
-    agent = _zk_admin(request, slug, browser_only=True)
-    try:
-        zk.disable(agent, values=payload.values, user=request.user)
     except zk.ZkError as exc:
         raise _zk_problem(exc) from exc
     agent.refresh_from_db()
