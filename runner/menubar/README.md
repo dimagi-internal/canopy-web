@@ -14,8 +14,12 @@ status item like any other app.
 
 ## What it does
 
-- **Status tree**, tinted by runner state (green=running, amber=paused, red=stopped),
-  read from `~/.canopy/` (the `PAUSED` sentinel, the heartbeat file, launchctl).
+- **Status tree**, tinted by runner state, read from `~/.canopy/` (launchctl, the
+  `PAUSED` sentinel, the heartbeat file, and `server-status.json`: canopy's answer to the
+  daemon's last heartbeat, written by `Client.heartbeat`). Green only while canopy is
+  accepting the box; amber = paused; **red = stopped, or canopy refusing it** (a revoked
+  or expired token, 401/403/404 — the menu says which and since when); orange = no local
+  heartbeat, or canopy unreachable for 2 min.
 - **Left-click → the fleet panel**: a `WKWebView` loading the deployed `/supervisor`
   React surface — the *same* app the phone PWA and desktop browser load, so there are
   zero duplicated components. Authenticated seamlessly by minting a session from the

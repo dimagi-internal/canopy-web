@@ -44,9 +44,11 @@ class ClientError(Exception):
     identically however many times it is sent.
     """
 
-    def __init__(self, message: str, *, transient: bool = False):
+    def __init__(self, message: str, *, transient: bool = False, status: int | None = None):
         super().__init__(message)
         self.transient = transient
+        # The HTTP status when canopy answered; None for a network fault.
+        self.status = status
 
 
 class Client:
@@ -114,7 +116,7 @@ class Client:
             except Exception:
                 error_body = b"(could not read error body)"
             raise ClientError(f"{method} {label} -> {exc.code}: {error_body!r}",
-                              transient=exc.code >= 500) from exc
+                              transient=exc.code >= 500, status=exc.code) from exc
         except urllib.error.URLError as exc:
             raise ClientError(f"{method} {label} -> {exc.reason}", transient=True) from exc
         except (TimeoutError, ConnectionError) as exc:
@@ -202,7 +204,15 @@ class Client:
         # Delivers a follow-up into a running chat turn (canopy-web#1153).
         from .chat_bridge import MIDTURN_VERSION
         body["midturn"] = MIDTURN_VERSION
-        _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
+        # Every heartbeat path ends here, so this is where the menu bar learns
+        # whether canopy still accepts this box (server_status.py).
+        from . import server_status
+        try:
+            _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
+        except Exception as exc:
+            server_status.refused(exc)
+            raise
+        server_status.accepted(payload or {})
         return payload or {}
 
     def set_paused(self, runner_id: str, paused: bool, note: str = "",
