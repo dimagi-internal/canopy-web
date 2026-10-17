@@ -62,6 +62,11 @@ class SlackInstallation(models.Model):
     #: that lives in Slack's manifest: it answers "has anyone done this yet?"
     #: without an API round trip on every settings page load.
     agent_declared_at = models.DateTimeField(null=True, blank=True)
+    #: The bot scopes this install actually granted, comma-separated, as Slack
+    #: reported them (the OAuth exchange, or `X-OAuth-Scopes` for an install
+    #: from before this was kept). A scope added to the app later lands only on
+    #: a re-install, and this is how the settings page knows one is due.
+    granted_scopes = models.TextField(blank=True, default="")
 
     def __str__(self) -> str:  # pragma: no cover
         return self.team_name or self.team_id

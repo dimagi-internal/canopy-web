@@ -81,6 +81,10 @@ class FakeSlack:
         self.channels: dict[str, str] = {}
         # When set, chat.getPermalink answers like Slack does for this workspace domain.
         self.permalink_base = ""
+        # What an install grants (oauth.v2.access `scope`); None = everything canopy asks for.
+        self.granted: list[str] | None = None
+        # What auth.test's X-OAuth-Scopes header says; None = no header.
+        self.header_scopes: list[str] | None = None
 
     def __call__(self, url, headers=None, json=None, data=None, timeout=None):
         method = url.rsplit("/", 1)[-1]
@@ -107,8 +111,14 @@ class FakeSlack:
             uid = self.lookup.get(payload.get("email", ""))
             body = {"ok": True, "user": {"id": uid}} if uid else {"ok": False, "error": "users_not_found"}
         elif method == "oauth.v2.access":
+            from apps.slack.views_auth import BOT_SCOPES
             body = {"ok": True, "access_token": "xoxb-new", "bot_user_id": BOT, "app_id": "A_CANOPY",
+                    "scope": ",".join(BOT_SCOPES if self.granted is None else self.granted),
                     "team": {"id": TEAM, "name": "Dimagi"}, "authed_user": {"id": self.installer}}
+        elif method == "auth.test":
+            body = {"ok": True}
+            if self.header_scopes is not None:
+                resp.headers = {"X-OAuth-Scopes": ",".join(self.header_scopes)}
         elif method == "tooling.tokens.rotate":
             self.rotations += 1
             n = self.rotations
@@ -678,6 +688,52 @@ def test_install_round_trip_stores_an_encrypted_token(slack, ws):
     # The installer proved both identities in that one trip, so they are linked.
     assert SlackUserLink.objects.get(slack_user_id=ALICE).user.email == "owner@dimagi.com"
     assert inst.bot_token == "xoxb-new" and "xoxb-new" not in inst.bot_token_enc
+    from apps.slack.views_auth import BOT_SCOPES
+    assert inst.granted_scopes.split(",") == BOT_SCOPES
+    assert c.get(f"/api/slack-config/{ws.slug}").json()["reinstall"] == {"needed": False, "turns_on": []}
+
+
+def _install(slack, ws):
+    c = _link_client(_owner(ws))
+    start = c.get("/auth/slack/install/", {"workspace": ws.slug})
+    state = parse_qs(urlparse(start["Location"]).query)["state"][0]
+    assert c.get("/auth/slack/callback/", {"code": "abc", "state": state}).status_code == 200
+    return c
+
+
+def test_an_install_missing_permissions_says_what_a_reinstall_turns_on(slack, ws):
+    from apps.slack.views_auth import BOT_SCOPES
+    slack.granted = [s for s in BOT_SCOPES if s not in {"assistant:write", "channels:read", "groups:read"}]
+    c = _install(slack, ws)
+    assert c.get(f"/api/slack-config/{ws.slug}").json()["reinstall"] == {
+        "needed": True,
+        "turns_on": ['Slack\'s own "Working…" indicator and Stop button', "finding channels by name (#general)"],
+    }
+    slack.granted = None                                          # reinstalled: the notice goes
+    _install(slack, ws)
+    assert c.get(f"/api/slack-config/{ws.slug}").json()["reinstall"]["needed"] is False
+
+
+def test_an_older_install_is_asked_once_what_it_holds(slack, ws, installation, owner_client):
+    from apps.slack.views_auth import BOT_SCOPES
+    slack.header_scopes = [s for s in BOT_SCOPES if s != "files:read"]
+    body = owner_client.get(f"/api/slack-config/{ws.slug}").json()
+    assert body["reinstall"] == {"needed": True, "turns_on": ["files and screenshots people send"]}
+    installation.refresh_from_db()
+    assert "files:read" not in installation.granted_scopes and installation.granted_scopes
+    asked = len(slack.said("auth.test"))
+    owner_client.get(f"/api/slack-config/{ws.slug}")
+    assert len(slack.said("auth.test")) == asked                  # remembered, not asked each load
+
+
+def test_when_slack_does_not_say_nothing_is_reported_missing(slack, ws, installation, owner_client):
+    assert owner_client.get(f"/api/slack-config/{ws.slug}").json()["reinstall"] == {"needed": False, "turns_on": []}
+
+
+def test_connecting_slack_syncs_the_app_when_canopy_can_edit_it(slack, ws, installation, managed):
+    del slack.manifest["features"]["agent_view"]
+    _install(slack, ws)
+    assert "agent_view" in slack.manifest["features"]
 
 
 def test_install_callback_rejects_a_foreign_state(slack, ws):
@@ -1938,15 +1994,18 @@ def test_connecting_the_token_rotates_it_and_syncs_enabled_agents(slack, hal, in
     cmds = _commands(slack)
     assert set(cmds) == {"/canopy", "/standup", "/hal"}
     assert cmds["/hal"]["url"] == "https://canopy.test/canopy/api/slack/commands"
-    # Everything else in the manifest is written back untouched.
-    assert slack.manifest["settings"]["event_subscriptions"]["bot_events"] == ["app_mention", "message.im"]
+    # Everything else in the manifest is written back untouched (the agent events are added beside it).
+    assert slack.manifest["settings"]["event_subscriptions"]["bot_events"][:2] == ["app_mention", "message.im"]
     assert cmds["/standup"]["url"] == "https://elsewhere.example/standup"
     # The app's bot scopes are made to cover what the install asks for — files:read
     # included, or attachments could never download. Takes effect on a re-install.
     from apps.slack.views_auth import BOT_SCOPES
     bot = set(slack.manifest["oauth_config"]["scopes"]["bot"])
-    assert set(BOT_SCOPES) - {"assistant:write"} <= bot and "assistant:write" not in bot
+    assert set(BOT_SCOPES) <= bot
     assert "files:read" in managed["scopes_added"]
+    # And it is declared an agent in the same sync — no button (owner decision, 2026-10-16).
+    assert slack.manifest["features"]["agent_view"]["agent_description"]
+    assert managed["declared"] and installation.agent_declared_at is not None
 
 
 def test_flipping_the_switch_adds_and_removes_the_command(slack, hal, managed, owner_client):
@@ -2021,7 +2080,7 @@ def test_a_sync_moves_the_event_and_interactivity_urls_off_a_former_address(
 
     conf = slack.manifest["settings"]
     assert conf["event_subscriptions"]["request_url"] == f"{new}/api/slack/events"
-    assert conf["event_subscriptions"]["bot_events"] == ["message.im"]
+    assert conf["event_subscriptions"]["bot_events"][0] == "message.im"   # kept (agent events beside it)
     assert conf["interactivity"]["request_url"] == f"{new}/api/slack/interactions"
     assert set(resp["webhooks_moved"]) == {"event_subscriptions", "interactivity"}
     assert _commands(slack)["/hal"]["url"] == f"{new}/api/slack/commands"
@@ -2230,22 +2289,17 @@ def test_a_stop_for_a_thread_we_do_not_know_is_harmless(slack, linked, hal, alic
                   "thread_ts": "1700009999.000100", "user": ALICE}).status_code == 200
 
 
-# ---- declaring the app an agent (the owner-only button) --------------------------
+# ---- declaring the app an agent ----------------------------------------------------
 #
-# The manifest edits that make Slack draw its own indicator. Driven through the
-# API the settings page calls, because the management command beside it cannot be
-# run on a deployment with no shell — which is this one.
+# The manifest edits that make Slack draw its own indicator. Every sync makes them
+# (since 2026-10-16); the owner-only endpoint stays for an operator.
 
 
 def _declare(owner_client, ws):
     return owner_client.post(f"/api/slack-config/{ws.slug}/declare-agent")
 
 
-def test_declaring_makes_the_three_manifest_edits(slack, ws, installation, managed, owner_client):
-    body = _declare(owner_client, ws).json()
-    assert body["status"] == "declared" and body["reinstall_required"] is True
-    assert "/auth/slack/install/" in body["install_url"]
-
+def test_the_sync_makes_the_three_manifest_edits(slack, ws, installation, managed, owner_client):
     assert slack.manifest["features"]["agent_view"]["agent_description"]
     assert "assistant:write" in slack.manifest["oauth_config"]["scopes"]["bot"]
     events = slack.manifest["settings"]["event_subscriptions"]["bot_events"]
@@ -2255,7 +2309,8 @@ def test_declaring_makes_the_three_manifest_edits(slack, ws, installation, manag
 
     installation.refresh_from_db()
     assert installation.agent_declared_at is not None
-    assert owner_client.get(f"/api/slack-config/{ws.slug}").json()["agent"]["declared"] is True
+    body = _declare(owner_client, ws).json()                     # the endpoint finds nothing left to do
+    assert body["status"] == "already_declared" and body["changed"] == []
 
 
 def test_declaring_twice_writes_nothing_the_second_time(slack, ws, installation, managed, owner_client):
@@ -2267,10 +2322,15 @@ def test_declaring_twice_writes_nothing_the_second_time(slack, ws, installation,
 
 
 def test_an_app_on_the_older_assistant_view_is_refused(slack, ws, installation, managed, owner_client):
+    del slack.manifest["features"]["agent_view"]
     slack.manifest["features"]["assistant_view"] = {"assistant_description": "old"}
     writes = len(slack.said("apps.manifest.update"))
     assert _declare(owner_client, ws).status_code == 422          # one-way switch: a human decides
     assert len(slack.said("apps.manifest.update")) == writes
+    # A sync leaves it alone too, and still syncs.
+    synced = owner_client.post(f"/api/slack-config/{ws.slug}/sync").json()
+    assert synced["status"] == "synced" and synced["declared"] == []
+    assert "agent_view" not in slack.manifest["features"]
 
 
 def test_only_an_owner_may_declare(slack, ws, installation, managed, alice):

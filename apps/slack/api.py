@@ -29,6 +29,43 @@ from .schemas import (
     SlackSyncOut,
 )
 
+#: What each permission canopy asks for turns on, for the reinstall notice.
+#: A scope missing from here is named as itself.
+_SCOPE_FEATURES = {
+    "assistant:write": "Slack's own \"Working…\" indicator and Stop button",
+    "channels:read": "finding channels by name (#general)", "groups:read": "finding channels by name (#general)",
+    "channels:history": "reading channel messages", "groups:history": "reading channel messages",
+    "files:read": "files and screenshots people send",
+    "chat:write.customize": "replies under each agent's own name and picture",
+}
+
+
+def _missing_scopes(inst: SlackInstallation) -> list[str]:
+    """Scopes canopy asks for that this install never granted. An install
+    from before canopy kept them is asked once (`X-OAuth-Scopes`); if Slack
+    does not say, nothing is reported missing rather than guessed."""
+    from . import client
+    from .views_auth import BOT_SCOPES
+
+    if not inst.granted_scopes:
+        try:
+            got = client.granted_scopes(inst.bot_token)
+        except Exception:  # noqa: BLE001 — a settings page must not fail on Slack
+            got = None
+        if not got:
+            return []
+        inst.granted_scopes = ",".join(got)
+        SlackInstallation.objects.filter(pk=inst.pk).update(granted_scopes=inst.granted_scopes)
+    have = {s.strip() for s in inst.granted_scopes.split(",")}
+    return [s for s in BOT_SCOPES if s not in have]
+
+
+def _reinstall_out(inst: SlackInstallation | None) -> dict:
+    missing = _missing_scopes(inst) if inst is not None else []
+    turns_on = list(dict.fromkeys(_SCOPE_FEATURES.get(s, s) for s in missing))
+    return {"needed": bool(missing), "turns_on": turns_on}
+
+
 router = Router(auth=session_auth, tags=["slack"])
 
 
@@ -78,10 +115,7 @@ def _out(ws: Workspace) -> dict:
             "synced_at": iso(inst.commands_synced_at) if inst else "",
             "error": inst.commands_sync_error if inst else "",
         },
-        "agent": {
-            "declared": bool(inst and inst.agent_declared_at),
-            "declared_at": iso(inst.agent_declared_at) if inst else "",
-        },
+        "reinstall": _reinstall_out(inst),
         "history": {
             "enabled": bool(link and link.history_enabled),
             "max_minutes": link.history_max_minutes if link else

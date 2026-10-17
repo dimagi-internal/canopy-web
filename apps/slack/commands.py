@@ -191,6 +191,13 @@ def reconcile(installation: SlackInstallation) -> dict:
         # delete tenant A's `/hal` as "not wanted".
         ours = {f"/{s.lower()}" for s in Agent.objects.filter(workspace_id__in=installation.workspace_ids())
                 .values_list("slug", flat=True)} | {BASE_COMMAND}
+        # Declared an agent as part of the same sync (owner decision, 2026-10-16:
+        # it is not an option anyone weighs, so it is not a button). An app on
+        # the older assistant_view is left alone: that swap is one-way.
+        try:
+            declared = _declare_into(manifest)
+        except ValueError:
+            declared = []
         features = manifest.setdefault("features", {})
         current = list(features.get("slash_commands") or [])
 
@@ -213,13 +220,12 @@ def reconcile(installation: SlackInstallation) -> dict:
 
         # The app's declared bot scopes must cover what the install asks for
         # (views_auth.BOT_SCOPES), or a new scope never lands. Adding one still
-        # needs a re-install to take effect; this only puts it on the app. Not
-        # the agent scope: that one is `declare_agent`'s deliberate act.
+        # needs a re-install to take effect; this only puts it on the app.
         from .views_auth import BOT_SCOPES
 
         scopes = manifest.setdefault("oauth_config", {}).setdefault("scopes", {})
         bot = list(scopes.get("bot") or [])
-        scopes_added = [s for s in BOT_SCOPES if s not in bot and s != AGENT_SCOPE]
+        scopes_added = [s for s in BOT_SCOPES if s not in bot]
         if scopes_added:
             scopes["bot"] = sorted({*bot, *scopes_added})
         # Slack compares the install's redirect_uri exactly, and it is built from
@@ -240,16 +246,20 @@ def reconcile(installation: SlackInstallation) -> dict:
             oauth["redirect_urls"] = [u for u in redirects if u not in former_callbacks]
         webhooks_moved = _move_webhooks(manifest)
         if (added or removed or updated or scopes_added or redirect_added or webhooks_moved
-                or redirects_removed):
+                or redirects_removed or declared):
             features["slash_commands"] = kept
             client.call("apps.manifest.update", token=token,
                         data={"app_id": installation.app_id, "manifest": json.dumps(manifest)})
         installation.commands_synced_at = timezone.now()
         installation.commands_sync_error = ""
-        installation.save(update_fields=["commands_synced_at", "commands_sync_error"])
+        fields = ["commands_synced_at", "commands_sync_error"]
+        if "agent_view" in features and not installation.agent_declared_at:
+            installation.agent_declared_at = timezone.now()
+            fields.append("agent_declared_at")
+        installation.save(update_fields=fields)
         return {"added": sorted(added), "removed": sorted(removed), "updated": sorted(updated), "unfit": unfit,
                 "scopes_added": scopes_added, "webhooks_moved": webhooks_moved,
-                "redirects_removed": redirects_removed}
+                "redirects_removed": redirects_removed, "declared": declared}
     except NotConfigured:
         raise
     except Exception as e:
@@ -285,10 +295,10 @@ def sync_quietly(installation: SlackInstallation | None) -> dict:
 # owns — so it is done here, through the same configuration token, rather than
 # by hand in a UI nobody can diff.
 #
-# NOT done on a deploy or a switch flip, unlike `reconcile`. It changes how the
-# app presents itself (agent conversations render in the app's Messages tab) and
-# `agent_view` cannot be swapped back to the older `assistant_view` once set, so
-# it is an explicit act: `manage.py slack_declare_agent`.
+# Part of every `reconcile` since 2026-10-16 (owner decision): it used to be an
+# owner's button, but nobody weighs it — every canopy Slack should show the
+# indicator. `declare_agent` remains for `manage.py slack_declare_agent` and the
+# API, and both refuse an app on the older `assistant_view` (a one-way swap).
 
 AGENT_SCOPE = "assistant:write"
 AGENT_EVENTS = ["agent_session_stopped", "agent_session_title_changed", "app_context_changed"]
@@ -306,8 +316,18 @@ def declare_agent(installation: SlackInstallation, *, description: str = "") -> 
     token = _access_token(installation)
     manifest = client.call("apps.manifest.export", token=token,
                            data={"app_id": installation.app_id})["manifest"]
-    changed = []
+    changed = _declare_into(manifest, description)
+    if changed:
+        client.call("apps.manifest.update", token=token,
+                    data={"app_id": installation.app_id, "manifest": json.dumps(manifest)})
+    return {"changed": changed,
+            "reinstall_required": any(c.startswith("scope") for c in changed)}
 
+
+def _declare_into(manifest: dict, description: str = "") -> list[str]:
+    """The three agent edits, made to `manifest` in place. Returns what changed;
+    raises ValueError for an app on the older assistant_view."""
+    changed = []
     features = manifest.setdefault("features", {})
     if "assistant_view" in features:
         # Slack's own note: the swap is one-way, and this tool is not the place
@@ -329,9 +349,4 @@ def declare_agent(installation: SlackInstallation, *, description: str = "") -> 
     if missing:
         subs["bot_events"] = events + missing
         changed.append("events " + ", ".join(missing))
-
-    if changed:
-        client.call("apps.manifest.update", token=token,
-                    data={"app_id": installation.app_id, "manifest": json.dumps(manifest)})
-    return {"changed": changed,
-            "reinstall_required": any(c.startswith("scope") for c in changed)}
+    return changed

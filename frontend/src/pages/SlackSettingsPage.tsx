@@ -5,7 +5,6 @@ import {
   allowSlackChannel,
   clearSlackConfigToken,
   disallowSlackChannel,
-  declareSlackAgent,
   getSlackConfig,
   setSlackChannelIngest,
   setSlackConfigToken,
@@ -90,9 +89,7 @@ export function SlackSettingsPage(): JSX.Element {
           <p className="mt-1 text-[13px] text-foreground-secondary">
             Connected to <b>{config.team_name || 'Slack'}</b>
             {config.installed_by_email ? ` by ${config.installed_by_email}` : ''}
-            {config.installed_at ? `, ${relativeAge(config.installed_at)}` : ''}.{' '}
-            <a href={config.install_url} className="text-primary hover:underline">Reinstall</a> after changing the
-            app&apos;s permissions.
+            {config.installed_at ? `, ${relativeAge(config.installed_at)}` : ''}.
           </p>
         ) : (
           <p className="mt-1 text-[13px] text-foreground-secondary">
@@ -100,6 +97,20 @@ export function SlackSettingsPage(): JSX.Element {
             <a href={config.install_url} className="text-primary hover:underline">Connect Slack</a> (workspace
             owners).
           </p>
+        )}
+        {config.reinstall.needed && (
+          <div className="mt-3 rounded-lg border border-border bg-card p-4 text-[13px]" data-testid="slack-reinstall">
+            <p className="text-foreground">
+              Slack needs a reinstall to turn on: {config.reinstall.turns_on.join('; ')}. Workspace owners can
+              do this.
+            </p>
+            <a
+              href={config.install_url}
+              className="mt-3 inline-block rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground"
+            >
+              Reinstall
+            </a>
+          </div>
         )}
       </section>
 
@@ -186,57 +197,6 @@ export function SlackSettingsPage(): JSX.Element {
         </section>
       )}
 
-      {config.connected && (
-        <section className="mt-8">
-          <h2 className="text-[15px] font-semibold text-foreground">Working indicator</h2>
-          <p className="mt-1 mb-3 text-[12px] text-muted-foreground">
-            Declaring the app an agent lets Slack draw its own <b>Working…</b> indicator and a{' '}
-            <b>Stop</b> button in the thread, instead of only the status line canopy posts. Two things
-            to know first: agent conversations in DMs move to the app&apos;s Messages tab, and Slack does
-            not allow this to be swapped back to the older assistant experience.
-          </p>
-          <div className="rounded-lg border border-border bg-card p-4 text-[13px]">
-            {config.agent?.declared ? (
-              <p className="text-foreground">
-                Declared an agent{config.agent?.declared_at ? <> {relativeAge(config.agent.declared_at)}</> : null}. If
-                you have not re-installed since,{' '}
-                <a href={config.install_url} className="text-primary hover:underline">do that once</a> — the
-                permission it needs only lands on a fresh install.
-              </p>
-            ) : (
-              <>
-                <p className="text-foreground-secondary">
-                  Not declared, so Slack shows no indicator of its own. canopy&apos;s status line works either way.
-                </p>
-                <button
-                  type="button"
-                  disabled={busy || !cmds.managed}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        'Declare this Slack app an agent? DM conversations move to the app\'s Messages tab, and Slack cannot switch this back to the older assistant experience.',
-                      )
-                    ) {
-                      void act(async () => {
-                        const r = await declareSlackAgent(workspace)
-                        return r.changed.length ? `${r.detail} Changed: ${r.changed.join('; ')}.` : r.detail
-                      })
-                    }
-                  }}
-                  className="mt-3 rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
-                >
-                  Declare as agent
-                </button>
-                {!cmds.managed && (
-                  <p className="mt-2 text-[11px] text-muted-foreground">
-                    Needs the app configuration token above — canopy edits the app&apos;s manifest to do this.
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-        </section>
-      )}
 
       {config.connected && (
         <section className="mt-8" data-testid="slack-history">
@@ -304,41 +264,18 @@ export function SlackSettingsPage(): JSX.Element {
 
       {config.connected && (
         <section className="mt-8" data-testid="slack-channel-ingest">
-          <h2 className="text-[15px] font-semibold text-foreground">Whole-channel reads</h2>
+          <h2 className="text-[15px] font-semibold text-foreground">Reading whole channels</h2>
           <p className="mt-1 mb-3 text-[12px] text-muted-foreground">
-            Lets this workspace&apos;s agents <i>ask</i> to read a channel&apos;s entire history, once. Each ask posts an Approve / Decline message in that channel, and nothing is read until a
-            member of the channel who is an owner or admin here — or the channel&apos;s creator — approves it. canopy
-            does the reading; the agent only gets the transcript, and any approver can revoke it. Workspace owners
-            set this.
+            An agent can read a channel&apos;s full history, threads included, to learn from it. canopy does the
+            reading and gives the agent a transcript. Nothing is read without permission, given one of two ways.
           </p>
-          <p className="mb-3 text-[12px] text-muted-foreground">
-            Or allow-list a channel explicitly, for one agent: when that agent asks to read it, canopy reads it at
-            once — approved by whoever added it — and posts a notice with Revoke in the channel instead of
-            asking. An allow-listed channel works whether or not asking is on; removing it revokes its reads. Workspace
-            owners and admins manage this list.
-          </p>
-          <div className="rounded-lg border border-border bg-card p-4 text-[13px]">
-            <p className="text-foreground">
-              {config.channel_ingest.enabled ? 'Agents may ask to read a channel.' : 'Off — agents cannot ask.'}
+          <div className="rounded-lg border border-border bg-card p-4 text-[13px]" data-testid="slack-channel-allowlist">
+            <h3 className="text-[13px] font-semibold text-foreground">Channels agents may read</h3>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              Add a channel and the agent that may read it. When that agent asks, canopy reads the channel and posts
+              a note there saying so, with a button to stop it. Removing a channel stops its reads. Owners and admins
+              can change this list.
             </p>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                void act(async () => {
-                  const c = await setSlackChannelIngest(workspace, !config.channel_ingest.enabled)
-                  return c.channel_ingest.enabled
-                    ? 'Agents may now ask to read a channel — each read still needs an approval in the channel.'
-                    : 'Whole-channel reads are off; live reads stop.'
-                })
-              }
-              className="mt-3 rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
-            >
-              {config.channel_ingest.enabled ? 'Turn off' : 'Turn on'}
-            </button>
-          </div>
-          <div className="mt-3 rounded-lg border border-border bg-card p-4 text-[13px]" data-testid="slack-channel-allowlist">
-            <h3 className="text-[13px] font-semibold text-foreground">Allow-listed channels</h3>
             {config.channel_ingest.allowed.length === 0 ? (
               <p className="mt-1 text-[12px] text-muted-foreground">None yet.</p>
             ) : (
@@ -382,21 +319,21 @@ export function SlackSettingsPage(): JSX.Element {
                   await allowSlackChannel(workspace, { agent, channel, follow: false, note: allowNote.trim() })
                   setAllowChannel('')
                   setAllowNote('')
-                  return `Allow-listed ${channel} for ${agent}.`
+                  return `${agent} may now read ${channel}.`
                 })
               }}
             >
               <input
                 value={allowChannel}
                 onChange={(e) => setAllowChannel(e.target.value)}
-                placeholder="#channel or C…"
+                placeholder="#channel or ID"
                 aria-label="Channel"
                 className="w-40 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
               />
               <input
                 value={allowAgent}
                 onChange={(e) => setAllowAgent(e.target.value)}
-                placeholder="agent slug"
+                placeholder="agent"
                 aria-label="Agent"
                 className="w-32 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
               />
@@ -412,9 +349,34 @@ export function SlackSettingsPage(): JSX.Element {
                 disabled={busy || !allowChannel.trim() || !allowAgent.trim()}
                 className="rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
               >
-                Allow-list
+                Add
               </button>
             </form>
+          </div>
+          <div className="mt-3 rounded-lg border border-border bg-card p-4 text-[13px]">
+            <h3 className="text-[13px] font-semibold text-foreground">Ask in the channel</h3>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              For a channel not on the list, an agent can ask instead. canopy posts Approve and Decline buttons in
+              the channel, and an owner or admin who is in it, or whoever created it, decides. Owners turn this on.
+            </p>
+            <p className="mt-2 text-foreground">
+              {config.channel_ingest.enabled ? 'On — agents can ask.' : 'Off — agents can only read channels on the list.'}
+            </p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  const c = await setSlackChannelIngest(workspace, !config.channel_ingest.enabled)
+                  return c.channel_ingest.enabled
+                    ? 'Agents can now ask to read a channel; someone in the channel still has to approve each one.'
+                    : 'Asking is off; reads that were approved this way stop.'
+                })
+              }
+              className="mt-3 rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
+            >
+              {config.channel_ingest.enabled ? 'Turn off' : 'Turn on'}
+            </button>
           </div>
         </section>
       )}

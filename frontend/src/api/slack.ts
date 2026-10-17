@@ -5,7 +5,6 @@ import type { components } from './generated'
 
 export type SlackConfigOut = components['schemas']['SlackConfigOut']
 export type SlackSyncOut = components['schemas']['SlackSyncOut']
-export type SlackDeclareAgentOut = components['schemas']['SlackDeclareAgentOut']
 
 export async function getSlackConfig(workspace: string): Promise<SlackConfigOut> {
   const res = await apiV2.GET('/api/slack-config/{workspace}', { params: { path: { workspace } } })
@@ -85,14 +84,6 @@ export async function syncSlackCommands(workspace: string): Promise<SlackSyncOut
   return res.data as SlackSyncOut
 }
 
-export async function declareSlackAgent(workspace: string): Promise<SlackDeclareAgentOut> {
-  const res = await apiV2.POST('/api/slack-config/{workspace}/declare-agent', {
-    params: { path: { workspace } },
-  })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Slack refused that change'))
-  return res.data as SlackDeclareAgentOut
-}
-
 // "Added /hal." — one line saying what a sync did, for a banner.
 export function syncSummary(r: SlackSyncOut): string {
   if (r.status !== 'synced') return r.detail || 'Not synced.'
@@ -105,6 +96,7 @@ export function syncSummary(r: SlackSyncOut): string {
       ? `Added the ${r.scopes_added.join(', ')} permission — reconnect Slack to grant it` : '',
     r.webhooks_moved?.length ? `Moved the ${r.webhooks_moved.join(' and ')} URL to this address` : '',
     r.redirects_removed?.length ? `Removed the sign-in callback on a former address` : '',
+    r.declared?.length ? `Turned on Slack's own "Working…" indicator` : '',
   ].filter(Boolean)
   return parts.length ? `${parts.join('. ')}.` : 'Slash commands already match.'
 }
