@@ -310,6 +310,18 @@ def test_finished_posts_a_pointer_only_from_the_leaders_login(group, slack, chan
     assert "first ever message" in got["material"] and got["read_messages"] == 6
 
 
+def test_revoking_the_read_deletes_the_runs_copy_too(group, slack, channel):
+    run = _fire(group)
+    click(groups.CONFIRM, str(run.pk), user=ALICE, message_ts=run.announce_ts)
+    row = SlackChannelIngest.objects.get()
+    _run(row)
+    run.refresh_from_db()
+    assert "first ever message" in run.material
+    ingest.revoke(row, user=group.lead)
+    run.refresh_from_db()
+    assert run.material == ""
+
+
 def test_unconfirmed_runs_lapse_after_a_day(group, slack):
     run = _fire(group)
     HuddleGroupRun.objects.filter(pk=run.pk).update(created_at=timezone.now() - timedelta(hours=25))

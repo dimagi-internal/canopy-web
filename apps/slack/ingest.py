@@ -447,6 +447,11 @@ def revoke(ingest: SlackChannelIngest, *, user=None, slack_user_id: str = "") ->
             revoked_at=timezone.now(), next_attempt_at=None)
         if moved:
             SlackIngestMessage.objects.filter(ingest=ingest).delete()
+            # "Deleted what it had read" includes the copy a work group run kept
+            # (apps/huddles/groups.deliver_read) for its leader's turn.
+            from apps.huddles.models import HuddleGroupRun
+
+            HuddleGroupRun.objects.filter(ingest=ingest).update(material="")
     ingest.refresh_from_db()
     if moved:
         who = f"<@{slack_user_id}>" if slack_user_id else _who(user)
