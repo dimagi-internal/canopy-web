@@ -513,6 +513,7 @@ def test_an_allow_listed_request_reads_at_once_with_the_switch_off(allowed, chan
     assert row.status == SlackChannelIngest.READY and row.messages == 6
     md = _link_client(hal_login).get(f"/api/slack-ingests/{row.pk}/transcript").json()["markdown"]
     assert "first ever message" in md
+    assert f"- Approved by: {_owner(ws).email} (allow-listed) at " in md   # who, not a blank
     assert Event.objects.filter(kind="slack.ingest_approved").count() == 1
 
 

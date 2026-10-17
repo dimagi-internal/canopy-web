@@ -711,7 +711,15 @@ def transcript(ingest: SlackChannelIngest, *, after: int = 0) -> dict:
         return f"{indent}- **{clock} UTC — {who}:** {text}"
 
     label = f"#{ingest.channel_name}" if ingest.channel_name else ingest.channel_id
-    approver = f"<@{ingest.decided_by_slack_id}>" if ingest.decided_by_slack_id else "—"
+    if ingest.decided_by_slack_id:
+        approver = f"<@{ingest.decided_by_slack_id}>"
+    elif ingest.allowance_id or ingest.decided_by_id:
+        # Approved ahead of time, on the allow-list: there is no Slack click to
+        # point at, so name the canopy person who added the entry.
+        who = getattr(ingest.decided_by, "email", "") or "an owner or admin"
+        approver = f"{who} (allow-listed)" if ingest.allowance_id else who
+    else:
+        approver = "—"
     first_ts, last_ts = (rows[0].ts, rows[-1].ts) if rows else ("", "")
     if not after:
         count = f"- Messages: {len(rows)}"
