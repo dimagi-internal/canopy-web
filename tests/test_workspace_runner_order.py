@@ -136,6 +136,9 @@ def test_an_order_does_not_touch_agent_turns(fleet):
     _order(ws, first)
     agent = Agent.objects.create(slug="hal", name="Hal", workspace=ws)
     RunnerAssignment.objects.create(agent=agent, runner=hal, rank=0)
+    # A laptop claims an agent only when its emdash has the agent's project.
+    hal.capabilities = {**hal.capabilities, "projects": [*hal.project_names(), "hal"]}
+    hal.save(update_fields=["capabilities"])
     turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="a1")
     assert services.claim_next_turn(hal).pk == turn.pk
 

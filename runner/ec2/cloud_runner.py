@@ -546,6 +546,9 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
     readable = mailboxes_readable()
     if readable is not None:
         body["mailboxes_readable"] = readable
+    unprepared = agents_unprepared()
+    if unprepared is not None:
+        body["agents_unprepared"] = unprepared
     return {**body, **extra}
 
 
@@ -2775,6 +2778,27 @@ def _guard_shared_clone(repo_dir: pathlib.Path) -> None:
 _LAZY_BOOTSTRAP_LOCK = threading.Lock()
 _LAZY_BOOTSTRAP_TRIED: dict[str, float] = {}
 LAZY_BOOTSTRAP_RETRY = int(os.environ.get("LAZY_BOOTSTRAP_RETRY", "600"))
+#: Where bootstrap_agents.sh writes the agents its last full pass could not set up.
+UNPREPARED_FILE = ".unprepared"
+
+
+def agents_unprepared() -> list[str] | None:
+    """The agents this box TRIED to set up and has no clone of — reported on the
+    heartbeat so canopy-web gives it none of their turns (routing.cannot_serve).
+    Before, such a turn ran in a bare scratch dir with none of the agent's plugin
+    or credentials, and ended having done nothing (fizzy on cloud-ec2-2,
+    2026-10-15). None until anything was tried: "unknown", never "all fine"."""
+    tried: set[str] = set(_LAZY_BOOTSTRAP_TRIED)
+    path = pathlib.Path(AGENT_ROOT) / UNPREPARED_FILE
+    known = bool(tried)
+    try:
+        tried |= {ln.strip() for ln in path.read_text().splitlines() if ln.strip()}
+        known = True
+    except OSError:
+        pass
+    if not known:
+        return None
+    return sorted(s for s in tried if not (pathlib.Path(AGENT_ROOT) / s / ".git").is_dir())
 
 
 def _ensure_agent_clone(slug: str) -> None:

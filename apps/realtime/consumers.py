@@ -35,6 +35,15 @@ def _valid_health(raw):
     except Exception:  # noqa: BLE001
         return None
 
+
+def _str_list(raw):
+    """A list of non-empty strings off a heartbeat frame, or None (not reported,
+    or malformed — which costs the report, never the beat)."""
+    if not isinstance(raw, list) or len(raw) > 500:
+        return None
+    return [s for s in raw if isinstance(s, str) and s.strip()]
+
+
 class TurnConsumer(AsyncJsonWebsocketConsumer):
     REPLAY_PAGE = 500
 
@@ -410,6 +419,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             code_sha=str(frame.get("code_sha") or ""),
             code_committed_at=committed_at,
             health=_valid_health(frame.get("health")),
+            agents_unprepared=_str_list(frame.get("agents_unprepared")),
             **caps,
         )
         return runner.refresh_pending(), list(getattr(runner, "cancel_turn_ids", None) or [])

@@ -43,11 +43,13 @@ from .routing import (
     blocking_turn,
     busy_agent_ids,
     busy_session_ids,
+    cannot_serve,
     load_assignment_rows,
     load_workspace_orders,
     profile_q,
     repo_order_for,
     ridable_sessions,
+    routed_slug,
     runner_target_q,
     runner_tenant_slugs,
 )
@@ -146,7 +148,8 @@ def _may_hold(r: Runner, t: Turn, holds: dict | None) -> bool:
 
 def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
                     *, ignore_requirements: bool = False, orders: dict | None = None,
-                    ignore_hold: bool = False, holds: dict | None = None) -> bool:
+                    ignore_hold: bool = False, holds: dict | None = None,
+                    ignore_serve: bool = False) -> bool:
     """The per-candidate refinements claim_next_turn applies after the coarse
     target match — same checks, same ORDER, so coverage can't overstate what
     claiming will do.
@@ -154,7 +157,8 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     `ignore_requirements` answers the counterfactual "would this runner take it
     if the conversation required nothing?" — only ever asked to decide whether
     a requirement is what BLOCKS a turn, never to route one. `ignore_hold` is
-    the same counterfactual for `runner_may_hold_agent`."""
+    the same counterfactual for `runner_may_hold_agent`, and `ignore_serve` for a
+    box's own report that it cannot run the agent (`routing.cannot_serve`)."""
     reqs = frozenset() if ignore_requirements else rr.requirements_of(t)
     if not rr.satisfies(r.flags, reqs):
         return False  # above the pin and the binding, as in claim_next_turn
@@ -189,20 +193,23 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     # actor rule pointing at an offline box must report `offline`
     # (recoverable), never `config` (never runs).
     rows = assignment_rows_for(
-        routed_agent, t.origin, actors.actor_of(t), defaults, priorities, requires=reqs
+        routed_agent, t.origin, actors.actor_of(t), defaults, priorities, requires=reqs,
+        serves="" if ignore_serve else routed_slug(t, routed_agent),
     )
     return any(row_runner.id == r.id for _rank, row_runner in rows)
 
 
 def _coverage(ids, runners, defaults: dict, priorities: dict,
-              *, ignore_requirements: bool = False, ignore_hold: bool = False) -> dict:
+              *, ignore_requirements: bool = False, ignore_hold: bool = False,
+              ignore_serve: bool = False) -> dict:
     """{runner: {turn pk it could claim}} over `ids` — the coverage half of both
     `unclaimable_queued_turns` and `turn_reach`, one implementation so the web
     warning and the Slack acknowledgement cannot disagree about the same turn.
 
     `ignore_requirements=True` is the counterfactual used only to diagnose: which
     runners would take the turn if its conversation required nothing;
-    `ignore_hold=True` likewise, if every runner's owner could hold the agent."""
+    `ignore_hold=True` likewise, if every runner's owner could hold the agent;
+    `ignore_serve=True`, if no box had reported it cannot run the agent."""
     out: dict = {}
     holds: dict = {}
     orders = load_workspace_orders(
@@ -229,7 +236,8 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
             # it, and saying otherwise would mask a genuinely parked queue.
             if _refined_allows(r, t, defaults, priorities,
                                ignore_requirements=ignore_requirements, orders=orders,
-                               ignore_hold=ignore_hold, holds=holds):
+                               ignore_hold=ignore_hold, holds=holds,
+                               ignore_serve=ignore_serve):
                 covered.add(t.pk)
         out[r] = covered
     return out
@@ -468,6 +476,11 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     unheld = {t.pk for t in queued if t.pk not in claimable_ever and t.acting_agent is not None}
     blocked_by_hold = set().union(*_coverage(unheld, runners, defaults, priorities,
                                              ignore_hold=True).values()) if unheld else set()
+    # And for a box's own report that it cannot run the agent: a turn only such
+    # boxes would take is a setup gap on those boxes, named with what each said.
+    unserved = {t.pk for t in queued if t.pk not in claimable_ever and t.acting_agent is not None}
+    by_unserving = _coverage(unserved, runners, defaults, priorities,
+                             ignore_serve=True) if unserved else {}
 
     out = []
     for t in queued:
@@ -484,6 +497,14 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
             kind = "config"
             reason = (f"this conversation's site requires a {rr.describe(reqs)} runner, and "
                       f"no runner that serves it is declared {rr.describe(reqs)}")
+        elif any(t.pk in pks for pks in by_unserving.values()):
+            kind = "config"
+            slug = t.acting_agent.slug
+            said = "; ".join(cannot_serve(r, slug) for r, pks in by_unserving.items()
+                             if t.pk in pks and cannot_serve(r, slug))
+            reason = (f"the runners that {what} report they cannot run '{slug}': {said} — "
+                      "set it up on that box and refresh the runner, or route the agent "
+                      "to a box that has it")
         elif t.pk in blocked_by_hold:
             kind = "config"
             reason = (f"the runners {what} are owned by people who are not admins of "

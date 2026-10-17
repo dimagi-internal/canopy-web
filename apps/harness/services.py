@@ -779,7 +779,7 @@ def heartbeat(
     code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None, profiles: int = 0,
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
-    envelope: int = 0, midturn: int = 0,
+    envelope: int = 0, midturn: int = 0, agents_unprepared: list[str] | None = None,
 ) -> Runner:
     """`profiles` is the profile-enforcement version the runner REPORTS it can
     honour (see `profile_q`). Written on every beat, and 0 from a runner that
@@ -801,7 +801,9 @@ def heartbeat(
     still read by older paths; replacing the whole dict would unwire both.
 
     `mailboxes_readable` follows the same None-is-not-[] rule: None leaves the
-    stored list (and its `mailboxes_checked_at`) alone.
+    stored list (and its `mailboxes_checked_at`) alone. So does
+    `agents_unprepared` (`capabilities["unprepared"]`, read by
+    `routing.cannot_serve`).
     """
     now = timezone.now()
     runner.last_heartbeat_at = now
@@ -826,6 +828,15 @@ def heartbeat(
         if cleaned != runner.capabilities.get("projects"):
             runner.capabilities = {**runner.capabilities, "projects": cleaned}
             fields.append("capabilities")
+    if agents_unprepared is not None:
+        from .routing import UNPREPARED
+
+        unprepared = sorted({s.strip() for s in agents_unprepared if s and s.strip()})
+        if unprepared != (runner.capabilities.get(UNPREPARED) or []) or (
+                UNPREPARED not in runner.capabilities):
+            runner.capabilities = {**runner.capabilities, UNPREPARED: unprepared}
+            if "capabilities" not in fields:
+                fields.append("capabilities")
     if health is not None:
         runner.health = {**health, "received_at": now.isoformat()}
         fields.append("health")
