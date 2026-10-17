@@ -80,6 +80,7 @@ from .schemas import (
     TurnGitHubTokenOut,
     RunnerIn,
     RunnerOut,
+    ScheduleAnnouncedOut,
     ScheduleFireIn,
     ScheduleOut,
     SessionBackfillIn,
@@ -2674,7 +2675,7 @@ def sync_schedules(request: HttpRequest, runner_id: uuid.UUID, limit: int = 200)
     return paginate(items, offset=0, limit=clamp_limit(limit))
 
 
-@router.post("/schedules/{schedule_id}/fire", response={201: TurnOut},
+@router.post("/schedules/{schedule_id}/fire", response={201: TurnOut, 202: ScheduleAnnouncedOut},
              summary="Report a due slot; the server materializes the turn")
 def fire_schedule_route(
     request: HttpRequest, schedule_id: int, runner_id: uuid.UUID, payload: ScheduleFireIn
@@ -2693,6 +2694,14 @@ def fire_schedule_route(
         turn, _ = services.fire_schedule(schedule, payload.slot)
     except services.OneOffSlotMismatch as exc:
         raise HttpError(409, str(exc)) from None
+    if turn is None:
+        # A work group's schedule announces a run in its Slack channel instead of
+        # queueing a turn; the turn comes once the group's lead confirms there.
+        from apps.huddles.models import HuddleGroupRun
+
+        run = HuddleGroupRun.objects.filter(group__schedule=schedule, slot=payload.slot).first()
+        return Status(202, ScheduleAnnouncedOut(announced=True, run_id=getattr(run, "pk", None),
+                                                status=getattr(run, "status", "")))
     return Status(201, turn)
 
 

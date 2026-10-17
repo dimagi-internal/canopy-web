@@ -706,6 +706,30 @@ def read_channel(*, installation, agent, inbound, user, ask: str) -> str:
     if allowance is None:
         raise IngestError(f"This channel isn't on `{agent.slug}`'s list of channels it may read. A workspace owner "
                           f"or admin can add it in canopy's Slack settings: {settings_url(agent.workspace_id)}")
+    row = _begin_read(agent=agent, installation=installation, allowance=allowance, user=user,
+                      channel_name=inbound.channel_name, purpose=ask or READ_WORD,
+                      pending={"inbound": {k: v for k, v in asdict(inbound).items() if k != "files"},
+                               "ask": ask, "by": user.pk})
+    _record(row, "read_channel", f"{_who(user)} asked {agent.slug} to read <#{channel_id}> since its last read "
+            f"(`{READ_WORD}`)" + (f": {ask}" if ask else ""), user=user.pk, ask=ask[:500],
+            allowance=str(allowance.pk), after=row.read_mark)
+    if row.read_mark and row.read_at:
+        by = f" (asked by <@{row.last_read_by_slack}>)" if row.last_read_by_slack else ""
+        since = f"everything posted since its last read here, {_slack_date(row.read_at.timestamp())}{by}"
+    else:
+        since = "everything in it — its first read here"
+    return f"`{agent.slug}` is reading this channel: {since}. It will answer in this thread."
+
+
+def _begin_read(*, agent, installation, allowance, user, channel_name: str, purpose: str,
+                pending: dict) -> SlackChannelIngest:
+    """Start (or continue) the allow-listed read of a channel for a person's ask.
+
+    The one place a read is started. Callers are both Slack clicks/commands by a
+    person: `read_channel` (`/<agent> read-channel`) and a work group lead's
+    Confirm (`start_group_read`). Reads everything since the agent's last read;
+    `pending` is handed back to `_deliver` once the read is done."""
+    channel_id = allowance.channel_id
     now = timezone.now()
     with transaction.atomic():
         row = (SlackChannelIngest.objects.select_for_update()
@@ -717,25 +741,36 @@ def read_channel(*, installation, agent, inbound, user, ask: str) -> str:
         if row is None:
             row = SlackChannelIngest.objects.create(
                 workspace_id=agent.workspace_id, installation=installation, agent=agent, channel_id=channel_id,
-                channel_name=allowance.channel_name or inbound.channel_name, follow=False, requested_by=user,
+                channel_name=allowance.channel_name or channel_name, follow=False, requested_by=user,
                 allowance=allowance, status=SlackChannelIngest.READING, decided_by=allowance.added_by,
                 decided_at=now)
         elif row.phase == SlackChannelIngest.IDLE:
             _start_follow_pass(row)            # only what is new since the last pass
-        row.purpose = (ask or READ_WORD)[:2000]
-        row.pending_ask = {"inbound": {k: v for k, v in asdict(inbound).items() if k != "files"},
-                           "ask": ask, "by": user.pk}
+        row.purpose = purpose[:2000]
+        row.pending_ask = pending
         row.next_attempt_at = now
         row.save()
-    _record(row, "read_channel", f"{_who(user)} asked {agent.slug} to read <#{channel_id}> since its last read "
-            f"(`{READ_WORD}`)" + (f": {ask}" if ask else ""), user=user.pk, ask=ask[:500],
-            allowance=str(allowance.pk), after=row.read_mark)
-    if row.read_mark and row.read_at:
-        by = f" (asked by <@{row.last_read_by_slack}>)" if row.last_read_by_slack else ""
-        since = f"everything posted since its last read here, {_slack_date(row.read_at.timestamp())}{by}"
-    else:
-        since = "everything in it — its first read here"
-    return f"`{agent.slug}` is reading this channel: {since}. It will answer in this thread."
+    return row
+
+
+def start_group_read(*, agent, installation, channel_id: str, user, run_id: int, purpose: str) -> SlackChannelIngest:
+    """A work group's lead pressed Confirm on its run's announcement, in the
+    channel (apps/huddles/groups.confirm): read the channel for the group's
+    leader agent. Only an allow-listed channel; `_deliver` hands the read to
+    `huddles.groups.deliver_read`. Raises IngestError to refuse.
+
+    Called ONLY from that click — never from the schedule, an agent, the API or
+    the web UI (Jonathan's rule: a channel is read only on a person's command in Slack)."""
+    allowance = allowance_for(agent, channel_id)
+    if allowance is None:
+        raise IngestError(f"This channel isn't on `{agent.slug}`'s list of channels it may read — "
+                          "re-save the work group in canopy to put it back.")
+    row = _begin_read(agent=agent, installation=installation, allowance=allowance, user=user,
+                      channel_name="", purpose=purpose, pending={"group_run": int(run_id), "by": user.pk})
+    _record(row, "read_channel", f"{_who(user)} confirmed a work group huddle: {agent.slug} reads <#{channel_id}> "
+            "since its last read", user=user.pk, group_run=int(run_id), allowance=str(allowance.pk),
+            after=row.read_mark)
+    return row
 
 
 def _slack_date(epoch: float) -> str:
@@ -766,6 +801,12 @@ def _deliver(ingest: SlackChannelIngest) -> None:
         pending = row.pending_ask
         row.pending_ask = {}
         row.save(update_fields=["pending_ask"])
+    if "group_run" in pending:
+        # A work group's confirmed read: the group takes it from here.
+        from apps.huddles import groups
+
+        groups.deliver_read(pending["group_run"], row.pk)
+        return
     row = SlackChannelIngest.objects.select_related("agent", "installation", "workspace", "decided_by").get(pk=row.pk)
     inbound = services.Inbound(**pending["inbound"])
     token = row.installation.bot_token

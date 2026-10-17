@@ -213,6 +213,7 @@ from apps.feedback.api import router as feedback_router  # noqa: E402
 from apps.storyboards.api import router as storyboards_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.huddles.api import router as huddles_router  # noqa: E402
+from apps.huddles.groups_api import router as huddle_groups_router  # noqa: E402
 from apps.threads.api import router as threads_router  # noqa: E402
 from apps.harness.api_schedules import router as schedules_router  # noqa: E402
 from apps.harness.api_investigations import router as investigations_router  # noqa: E402
@@ -299,6 +300,8 @@ api.add_router("/harness/failure-investigations", investigations_router)
 api.add_router("/runner-device-keys", device_keys_router)
 api.add_router("/huddles", huddles_router)
 api.add_router("/engagement", engagement_router)  # what people do with projects + huddles
+# Work groups: a lead, a Slack channel, agents, a cadence (apps/huddles/groups.py).
+api.add_router("/huddle-groups", huddle_groups_router)
 api.add_router("/threads", threads_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)

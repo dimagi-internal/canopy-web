@@ -8296,6 +8296,125 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/huddle-groups/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List work groups
+         * @description Work groups in your workspaces: a lead, a Slack channel, the agents that
+         *     work it, and its cadence.
+         */
+        readonly get: operations["list_huddle_groups"];
+        readonly put?: never;
+        /**
+         * Create a work group
+         * @description Owner or admin. Checks the lead is in the workspace AND the channel, and that
+         *     the leader agent may run every other agent; then puts the channel on the leader's
+         *     read allow-list, creates its schedule (`/canopy:huddle`, the group's cadence) and,
+         *     with one agent, the group's project. Reads nothing: each run is read only when
+         *     the lead presses Confirm on its announcement in Slack.
+         */
+        readonly post: operations["create_huddle_group"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/huddle-groups/runs/{run_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get one work group run, with its material
+         * @description One run: status, the read window and the channel material it read (members
+         *     of the group's workspace, and the leader agent's own login).
+         */
+        readonly get: operations["get_huddle_group_run"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/huddle-groups/runs/{run_id}/finished": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Report a work group run done
+         * @description The leader agent's own login only. Marks the run done and posts one line in
+         *     the announcement's thread pointing at the result — the content stays in canopy.
+         */
+        readonly post: operations["finish_huddle_group_run"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/huddle-groups/{slug}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get one work group */
+        readonly get: operations["get_huddle_group"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a work group
+         * @description Owner or admin. Takes the channel off the leader's read allow-list (unless
+         *     another group still uses it), deletes the group's schedule, and lapses any
+         *     announcement still waiting for a confirm.
+         */
+        readonly delete: operations["delete_huddle_group"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a work group
+         * @description Owner or admin. Sends only what changes; every check runs again (lead in the
+         *     workspace and the channel, leader may run the members).
+         */
+        readonly patch: operations["update_huddle_group"];
+        readonly trace?: never;
+    };
+    readonly "/api/huddle-groups/{slug}/runs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a work group's runs
+         * @description Newest first: status, the read window, the Slack post, the result (no material).
+         */
+        readonly get: operations["list_huddle_group_runs"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/threads/": {
         readonly parameters: {
             readonly query?: never;
@@ -23400,6 +23519,25 @@ export interface components {
             readonly emdash_task_id: string;
         };
         /**
+         * ScheduleAnnouncedOut
+         * @description A work group's schedule fired: canopy announced a run in the group's Slack
+         *     channel (apps/huddles) and queued no turn — the lead confirms there first.
+         */
+        readonly ScheduleAnnouncedOut: {
+            /**
+             * Announced
+             * @default true
+             */
+            readonly announced: boolean;
+            /** Run Id */
+            readonly run_id?: number | null;
+            /**
+             * Status
+             * @default
+             */
+            readonly status: string;
+        };
+        /**
          * ScheduleFireIn
          * @description The runner's report that a slot came due. The server re-derives nothing —
          *     but the slot is only honored as an idempotency anchor, never as a claim of
@@ -23953,6 +24091,278 @@ export interface components {
             /** Unanswered */
             readonly unanswered?: readonly components["schemas"]["EngagementProposalOut"][];
             readonly runs: components["schemas"]["EngagementRunsOut"];
+        };
+        /** WorkGroupOut */
+        readonly WorkGroupOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Topic
+             * @default
+             */
+            readonly topic: string;
+            /**
+             * Lead Email
+             * @default
+             */
+            readonly lead_email: string;
+            /**
+             * Lead Slack Id
+             * @default
+             */
+            readonly lead_slack_id: string;
+            /** Channel Id */
+            readonly channel_id: string;
+            /**
+             * Channel Name
+             * @default
+             */
+            readonly channel_name: string;
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
+            /** Leader Agent */
+            readonly leader_agent: string;
+            /** Mode */
+            readonly mode: string;
+            /**
+             * Cron
+             * @default
+             */
+            readonly cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            readonly timezone: string;
+            /**
+             * Next Runs
+             * @default []
+             */
+            readonly next_runs: readonly string[];
+            /** Schedule Id */
+            readonly schedule_id?: number | null;
+            readonly project?: components["schemas"]["WorkGroupProjectOut"] | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+            /**
+             * Last Run Status
+             * @default
+             */
+            readonly last_run_status: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Can Edit
+             * @default false
+             */
+            readonly can_edit: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** WorkGroupProjectOut */
+        readonly WorkGroupProjectOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Ref */
+            readonly ref: string;
+            /** Name */
+            readonly name: string;
+            /** Status */
+            readonly status: string;
+            /** Url */
+            readonly url: string;
+        };
+        /**
+         * WorkGroupIn
+         * @description A new work group. `channel` is `#name` or a channel id; `lead_email` the
+         *     lead's canopy email (they must be in the workspace AND the channel);
+         *     `leader_agent` is required with more than one agent and must be able to run
+         *     every other agent (its login an owner or admin of each).
+         */
+        readonly WorkGroupIn: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Topic
+             * @default
+             */
+            readonly topic: string;
+            /** Channel */
+            readonly channel: string;
+            /** Lead Email */
+            readonly lead_email: string;
+            /** Agents */
+            readonly agents: readonly string[];
+            /**
+             * Leader Agent
+             * @default
+             */
+            readonly leader_agent: string;
+            /** Cron */
+            readonly cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            readonly timezone: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+        };
+        /** WorkGroupRunOut */
+        readonly WorkGroupRunOut: {
+            /** Id */
+            readonly id: number;
+            /** Group */
+            readonly group: string;
+            /** Group Name */
+            readonly group_name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Slot
+             * Format: date-time
+             */
+            readonly slot: string;
+            /**
+             * Manual
+             * @default false
+             */
+            readonly manual: boolean;
+            /** Status */
+            readonly status: string;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /**
+             * Announce Ts
+             * @default
+             */
+            readonly announce_ts: string;
+            /**
+             * Slack Url
+             * @default
+             */
+            readonly slack_url: string;
+            /**
+             * Confirmed By Email
+             * @default
+             */
+            readonly confirmed_by_email: string;
+            /** Confirmed At */
+            readonly confirmed_at?: string | null;
+            /**
+             * Read Messages
+             * @default 0
+             */
+            readonly read_messages: number;
+            /**
+             * Read First Ts
+             * @default
+             */
+            readonly read_first_ts: string;
+            /**
+             * Read Last Ts
+             * @default
+             */
+            readonly read_last_ts: string;
+            /** Read Since */
+            readonly read_since?: string | null;
+            /**
+             * Material
+             * @default
+             */
+            readonly material: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Huddle Id
+             * @default
+             */
+            readonly huddle_id: string;
+            /**
+             * Result Url
+             * @default
+             */
+            readonly result_url: string;
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** WorkGroupRunFinishIn */
+        readonly WorkGroupRunFinishIn: {
+            /**
+             * Huddle Id
+             * @default
+             */
+            readonly huddle_id: string;
+            /**
+             * Result Url
+             * @default
+             */
+            readonly result_url: string;
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+        };
+        /** WorkGroupPatch */
+        readonly WorkGroupPatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Topic */
+            readonly topic?: string | null;
+            /** Channel */
+            readonly channel?: string | null;
+            /** Lead Email */
+            readonly lead_email?: string | null;
+            /** Agents */
+            readonly agents?: readonly string[] | null;
+            /** Leader Agent */
+            readonly leader_agent?: string | null;
+            /** Cron */
+            readonly cron?: string | null;
+            /** Timezone */
+            readonly timezone?: string | null;
+            /** Enabled */
+            readonly enabled?: boolean | null;
         };
         /** ThreadMessageOut */
         readonly ThreadMessageOut: {
@@ -36763,6 +37173,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["TurnOut"];
                 };
             };
+            /** @description Accepted */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ScheduleAnnouncedOut"];
+                };
+            };
         };
     };
     readonly start_runner_drill: {
@@ -37101,6 +37520,190 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EngagementSummaryOut"];
+                };
+            };
+        };
+    };
+    readonly list_huddle_groups: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["WorkGroupOut"][];
+                };
+            };
+        };
+    };
+    readonly create_huddle_group: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkGroupIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkGroupOut"];
+                };
+            };
+        };
+    };
+    readonly get_huddle_group_run: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly run_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkGroupRunOut"];
+                };
+            };
+        };
+    };
+    readonly finish_huddle_group_run: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly run_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkGroupRunFinishIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkGroupRunOut"];
+                };
+            };
+        };
+    };
+    readonly get_huddle_group: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkGroupOut"];
+                };
+            };
+        };
+    };
+    readonly delete_huddle_group: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_huddle_group: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkGroupPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkGroupOut"];
+                };
+            };
+        };
+    };
+    readonly list_huddle_group_runs: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["WorkGroupRunOut"][];
                 };
             };
         };

@@ -271,9 +271,8 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
             "deadline_at": (min(r1) + DEADLINE) if r1 else None,
             "cells": cells, "outputs": outputs,
             "projects": projects,
-            # The work group it ran for: filled by the work-groups layer from the
-            # anchor's `origin_ref` group run.
-            "group": None}
+            # The work group it ran for, from the anchor's `origin_ref` group run.
+            "group": group_ref(anchor, workspaces)}
 
 
 def projects_of(huddle_id: str, workspaces, *, user) -> list[dict]:
@@ -289,3 +288,22 @@ def projects_of(huddle_id: str, workspaces, *, user) -> list[dict]:
                     | Q(source_url__endswith=f"/huddles/{huddle_id}/"))
             .order_by("agent__slug", "pk"))
     return [proposals.card(p, user) for p in rows]
+
+
+def group_ref(anchor, workspaces) -> dict | None:
+    """The work group header, when the anchor's origin_ref names a group run
+    that belongs to one of `workspaces` (the caller's, in the huddle's tree)."""
+    from .models import HuddleGroupRun
+
+    run_id = _int(_ref(anchor).get("run") or _ref(anchor).get("group_run"))
+    if not run_id:
+        return None
+    r = (HuddleGroupRun.objects.select_related("group", "group__lead")
+         .filter(pk=run_id, group__workspace_id__in=list(workspaces)).first())
+    if r is None:
+        return None
+    g = r.group
+    return {"slug": g.slug, "name": g.name, "channel_name": g.channel_name,
+            "lead_email": getattr(g.lead, "email", "") or "", "run_id": r.pk,
+            "read": {"messages": r.read_messages, "first_ts": r.read_first_ts, "last_ts": r.read_last_ts,
+                     "since": r.read_since.isoformat() if r.read_since else ""}}

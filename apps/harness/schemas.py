@@ -1001,6 +1001,15 @@ class SchedulePreviewOut(Schema):
     next_runs: list[dt.datetime]
 
 
+class ScheduleAnnouncedOut(Schema):
+    """A work group's schedule fired: canopy announced a run in the group's Slack
+    channel (apps/huddles) and queued no turn — the lead confirms there first."""
+
+    announced: bool = True
+    run_id: int | None = None
+    status: str = ""
+
+
 class ScheduleFireIn(Schema):
     """The runner's report that a slot came due. The server re-derives nothing —
     but the slot is only honored as an idempotency anchor, never as a claim of

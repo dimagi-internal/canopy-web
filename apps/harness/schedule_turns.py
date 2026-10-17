@@ -67,11 +67,18 @@ def _schedule_initiator(schedule, *, manual: bool = False):
     return who.system(via=via, accountable=schedule.created_by)
 
 
+def group_of(schedule):
+    """The work group (apps/huddles) this schedule announces for, or None."""
+    from apps.huddles.models import HuddleGroup
+
+    return HuddleGroup.objects.filter(schedule_id=schedule.pk).first() if schedule.pk else None
+
+
 class OneOffSlotMismatch(Exception):
     """A runner reported a slot for a one-off schedule other than its one instant."""
 
 
-def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
+def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
     """Materialize `slot` as a queued Turn. Supersedes any still-open occurrence
     of the same schedule first — you only ever owe the newest.
 
@@ -82,6 +89,10 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
     itself in the same transaction, so it drops out of every runner's sync. Its
     stored cron repeats yearly; this guard is what makes that repetition inert
     even for a runner whose clock or anchor is wrong.
+
+    A WORK GROUP's schedule (apps/huddles) does not enqueue a turn: it announces
+    the run in the group's channel and returns (None, created). The turn comes
+    later, once the lead confirms and the channel has been read.
     """
     from .services import enqueue_turn  # services.py imports this module
 
@@ -90,6 +101,11 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
             f"schedule {schedule.id} is a one-off for {schedule.run_once_at.isoformat()}, "
             f"not {slot.isoformat()}"
         )
+    if group_of(schedule) is not None:
+        from apps.huddles import groups
+
+        _run, created = groups.announce(schedule, slot)
+        return None, created
     key = f"sched:{schedule.id}:{slot.isoformat()}"
     with transaction.atomic():
         if not Turn.objects.filter(idempotency_key=key).exists():
@@ -120,7 +136,7 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
     return turn, created
 
 
-def run_schedule_now(schedule, clicked_by=None) -> Turn:
+def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
     """Manual off-cycle trigger. Supersedes any still-open occurrence first,
     exactly as fire_schedule does — you only ever owe the newest, however it was
     launched. Run now is the designed remediation for an unfinished slot, so it
@@ -134,8 +150,17 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn:
     time). The manual flag lives in origin_ref rather than in origin because WHO
     fired it is not a different SOURCE: both route as scheduler work, which is
     the point of naming the source.
+
+    A work group's schedule announces now instead (no turn: returns None) —
+    pressing Run now never reads the channel; the lead's Confirm does.
     """
     from .services import enqueue_turn  # services.py imports this module
+
+    if group_of(schedule) is not None:
+        from apps.huddles import groups
+
+        groups.announce(schedule, timezone.now(), manual=True)
+        return None
 
     with transaction.atomic():
         supersede_open_turns(schedule, reason="superseded by a manual run")
@@ -224,7 +249,9 @@ def skip_late_scheduled_turns(*, now: dt.datetime | None = None) -> int:
         t for t in Turn.objects.filter(
             status=Turn.QUEUED, origin=Turn.ORIGIN_CANOPY_SCHEDULER
         ).only("id", "origin_ref", "status")
-        if not t.origin_ref.get("manual")
+        # A work group run's turn is queued when the lead confirms, hours after
+        # its slot by design — the slot dates the announcement, not the turn.
+        if not t.origin_ref.get("manual") and t.origin_ref.get("kind") != "huddle_group_run"
     ]
     if not queued:
         return 0
@@ -304,6 +331,11 @@ def _raise_schedule_nag(schedule, turn: Turn) -> None:
         return
     from apps.agents import services as agent_services
 
+    again = {"prompt": schedule.prompt, "origin_ref": {"schedule_id": schedule.id, "manual": True,
+                                                       "schedule_name": schedule.name}}
+    if (turn.origin_ref or {}).get("kind") == "huddle_group_run":
+        # Re-run the same work group run from its stored material — never a new read.
+        again = {"prompt": turn.prompt, "origin_ref": {**turn.origin_ref, "manual": True}}
     agent_services.create_tasks(schedule.agent, [{
         "ask_kind": "review",
         "title": f"Scheduled turn unattended: {schedule.name}",
@@ -316,10 +348,9 @@ def _raise_schedule_nag(schedule, turn: Turn) -> None:
             "schedule_id": schedule.id, "turn_id": str(turn.id), "kind": "schedule_nag",
         },
         "on_approve": [{
-            "prompt": schedule.prompt,
+            "prompt": again["prompt"],
             "origin": Turn.ORIGIN_CANOPY_SCHEDULER,
-            "origin_ref": {"schedule_id": schedule.id, "manual": True,
-                           "schedule_name": schedule.name},
+            "origin_ref": again["origin_ref"],
             "routing": schedule.routing,
         }],
         "idempotency_key": f"sched-nag:{schedule.id}:{turn.id}",

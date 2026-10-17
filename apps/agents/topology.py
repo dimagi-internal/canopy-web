@@ -81,6 +81,23 @@ def _edge(src: Agent, dst: Agent, admin_ids: set[int], viewer) -> dict:
     return out
 
 
+#: The edges that let one agent RUN another: its login owns it, owns its
+#: workspace, or is one of its admins — not the editor tier (manual only) and not
+#: a confined interface. What a work group's leader needs over every member.
+RUNS = frozenset({OWNER, WS_OWNER, ADMIN})
+
+
+def edge(src: Agent, dst: Agent, viewer=None) -> dict:
+    """One ordered pair's cell, exactly as `build` computes it."""
+    admin_ids = set(AgentAdmin.objects.filter(agent=dst).values_list("user_id", flat=True))
+    return _edge(src, dst, admin_ids, viewer)
+
+
+def can_run(src: Agent, dst: Agent) -> bool:
+    """Does `src`'s login hold an owner/admin edge over `dst`?"""
+    return src.pk == dst.pk or edge(src, dst)["basis"] in RUNS
+
+
 def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True) -> dict:
     tree = wsvc.subtree(root, visible)
     slugs = {ws.slug for ws, _ in tree}
