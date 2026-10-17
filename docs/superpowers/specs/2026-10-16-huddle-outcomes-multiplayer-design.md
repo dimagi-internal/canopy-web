@@ -1,6 +1,6 @@
 # Huddle outcomes as multi-player proposed projects
 
-**Date:** 2026-10-16 · **Status:** proposal · **Owner:** Jonathan (decisions), Ada (spec)
+**Date:** 2026-10-16 · **Status:** approved — see 2026-10-16-work-group-huddles-design.md · **Owner:** Jonathan (decisions), Ada (spec)
 
 ## Why
 
