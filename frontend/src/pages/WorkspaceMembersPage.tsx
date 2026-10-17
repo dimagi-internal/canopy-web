@@ -117,10 +117,9 @@ export function WorkspaceMembersPage(): JSX.Element | null {
     }
   }, [slug, navigate])
 
-  const systemByUser = useMemo(
-    () => new Map((systemAccounts ?? []).map((a) => [a.user_id, a])),
-    [systemAccounts],
-  )
+  // System accounts are members server-side but are listed and managed in
+  // their own section below, not among the people.
+  const people = useMemo(() => (members === null ? null : members.filter((m) => !m.system)), [members])
 
   const outstandingInvites = useMemo(() => (invites ?? []).filter(isInviteOutstanding), [invites])
   // Owners of a parent workspace own this one too (`inherited`). They count
@@ -222,28 +221,22 @@ export function WorkspaceMembersPage(): JSX.Element | null {
       {rowError && <div className="mb-4 text-sm text-destructive">{rowError}</div>}
 
       <div className="mb-8">
-        <WorkbenchSubHeader title="Members" count={members?.length} />
-        {members === null ? (
+        <WorkbenchSubHeader title="Members" count={people?.length} />
+        {people === null ? (
           <div className="h-24 animate-pulse rounded-lg bg-muted" />
         ) : (
           <PeopleTable
             actions={canManage}
-            rows={members.map((m): PersonRow => {
+            rows={people.map((m): PersonRow => {
               const isSoleOwner =
                 m.role === 'owner' && !m.inherited && directOwnerCount === 1 && !hasInheritedOwner
               // A row I may act on: below me (an owner may act on anyone).
               const manageable = !m.inherited && mayManageMember(myRole, m.role)
-              // A system account (an automated sender) is named, not addressed —
-              // its email is a synthetic one nobody can use — and never above editor.
-              const system = m.system ? systemByUser.get(m.user_id) : undefined
               return {
                 key: m.user_id,
-                name: m.system ? (system?.name ?? 'System account') : m.email,
-                detail: m.system ? 'System account — cannot sign in' : undefined,
+                name: m.email,
                 role: m.role,
-                options: m.system
-                  ? roleOptions(grantable.filter((r) => r === 'editor' || r === 'viewer'))
-                  : roleOptions(grantable),
+                options: roleOptions(grantable),
                 editable: manageable,
                 roleDisabled: isSoleOwner,
                 why: m.inherited
