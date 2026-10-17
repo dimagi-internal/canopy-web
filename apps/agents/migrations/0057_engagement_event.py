@@ -7,7 +7,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("agents", "0055_vault_zk"),
+        ("agents", "0056_zk_grant_notice"),
         ("workspaces", "0013_system_accounts"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
