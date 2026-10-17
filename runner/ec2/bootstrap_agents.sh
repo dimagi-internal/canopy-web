@@ -358,6 +358,14 @@ step3_agents() {
       FAILED_AGENTS+=("$slug")
     fi
   done
+  # What this box tried to set up and could not — read by cloud_runner.py and
+  # REPORTED on its heartbeat (`agents_unprepared`), so canopy-web stops handing
+  # it those agents' turns (routing.cannot_serve). Only a pass that clones writes
+  # it: the credentials-only pass attempts no clone and so has no verdict.
+  if (( ! CREDENTIALS_ONLY )); then
+    printf '%s\n' "${FAILED_AGENTS[@]}" | grep -v '^$' >"$AGENT_ROOT/.unprepared" 2>/dev/null \
+      || : >"$AGENT_ROOT/.unprepared" 2>/dev/null || true
+  fi
 }
 
 # ── Step 4: claude plugins ───────────────────────────────────────────────────────

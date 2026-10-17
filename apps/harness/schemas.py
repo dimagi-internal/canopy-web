@@ -404,6 +404,12 @@ class HeartbeatIn(Schema):
     # The doorbell rings only boxes whose list holds the address (or that never
     # reported one) — see apps/inbound/services.online_runners_for.
     mailboxes_readable: list[str] | None = None
+    # The agents this box TRIED to set up and could not (it has no clone of
+    # them). Same absent-is-not-empty rule: None = not reported (an older box,
+    # or one that has not bootstrapped yet) and leaves the stored list alone;
+    # [] = "every agent I tried is set up". The claim gives such a box none of
+    # those agents' turns (routing.cannot_serve).
+    agents_unprepared: list[str] | None = Field(default=None, max_length=500)
 
 
 class ResolveSessionIn(Schema):

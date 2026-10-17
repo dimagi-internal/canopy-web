@@ -1235,7 +1235,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "routable, open it as a project in emdash on that runner (or set "
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
-    for key in ("profiles", "envelope", "midturn"):
+    for key in ("profiles", "envelope", "midturn", "unprepared"):
         if key in payload.capabilities:
             # Reported, like `projects` — and here it is a SECURITY property: a hand
             # edit claiming a runner can confine a caller's session would route
@@ -1243,7 +1243,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             raise HttpError(422, f"`{key}` is reported by the runner on every heartbeat, "
                                  "not set by hand.")
     caps = dict(payload.capabilities)
-    for key in ("projects", "profiles", "envelope", "midturn"):
+    for key in ("projects", "profiles", "envelope", "midturn", "unprepared"):
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
     runner.capabilities = caps
@@ -1496,6 +1496,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         midturn=payload.midturn,
         health=payload.health.model_dump() if payload.health is not None else None,
         mailboxes_readable=payload.mailboxes_readable,
+        agents_unprepared=payload.agents_unprepared,
     )
 
 

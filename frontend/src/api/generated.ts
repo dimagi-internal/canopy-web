@@ -22687,6 +22687,8 @@ export interface components {
             readonly health?: components["schemas"]["RunnerHealthIn"] | null;
             /** Mailboxes Readable */
             readonly mailboxes_readable?: readonly string[] | null;
+            /** Agents Unprepared */
+            readonly agents_unprepared?: readonly string[] | null;
         };
         /** RunnerHealthIn */
         readonly RunnerHealthIn: {

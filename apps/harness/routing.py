@@ -76,6 +76,38 @@ class InheritedOrder:
     cannot_hold: list  # boxes whose owner is not one of the agent's admins
 
 
+#: `Runner.capabilities` key for the agents a box REPORTS it tried to set up and
+#: could not (no clone of the agent on the box): `HeartbeatIn.agents_unprepared`.
+UNPREPARED = "unprepared"
+
+
+def cannot_serve(runner: Runner, slug: str) -> str:
+    """Why this box, by its OWN report, cannot run agent `slug` — "" when it has
+    not said so. Two reports, each written only by the box itself:
+
+      - a laptop driving emdash names the emdash projects it has (`projects`), and
+        an agent's project is its slug. A laptop whose report lacks the slug fails
+        the turn at once (`_project_missing` on the runner), so handing it one is
+        claiming a turn to fail it (shayoni-win-cdp, fizzy, 2026-10-15). A box
+        that has never reported `projects` is UNKNOWN, not "has none".
+      - any box names the agents it tried to set up and could not
+        (`capabilities["unprepared"]`). A cloud box with no clone of the agent ran
+        its turn in a bare scratch dir, with none of its plugin or credentials,
+        and the turn ended without doing anything (cloud-ec2-2, fizzy, 2026-10-15).
+
+    A box can only refuse work for itself here, so a self-report is safe to trust
+    in this direction. Pure: reads the runner row, no queries."""
+    if not slug:
+        return ""
+    caps = runner.capabilities or {}
+    if (runner.kind == Runner.EMDASH and runner.engine == Runner.ENGINE_EMDASH
+            and "projects" in caps and slug not in runner.project_names()):
+        return f"{runner.name} has no emdash project '{slug}'"
+    if slug in (caps.get(UNPREPARED) or []):
+        return f"{runner.name} could not set '{slug}' up (no clone of it on the box)"
+    return ""
+
+
 def agents_following_runner(runner: Runner, among=None) -> set:
     """Agents that reach `runner` through an INHERITED order: no order of their
     own, and the order they follow lists it as usable for them. The claim's
@@ -253,7 +285,7 @@ def inherited_orders(agent_ids) -> dict:
 
 def assignment_rows_for(
     agent_id, origin: str, actor: str, defaults: dict, priorities: dict,
-    *, requires: frozenset = frozenset(),
+    *, requires: frozenset = frozenset(), serves: str = "",
 ) -> list:
     """THE ordered runner list for one (agent, source, actor) triple — what the
     availability cascade then walks. Pure: no queries, no clock.
@@ -267,6 +299,10 @@ def assignment_rows_for(
 
     `requires` is the conversation's runner requirements (`runner_requirements`):
     a runner lacking any of them is dropped BEFORE ranks are renumbered.
+
+    `serves` is the agent's slug: a runner that reports it cannot run that agent
+    (`cannot_serve`) is dropped the same way, so it neither claims a turn only to
+    fail it nor counts as a better-ranked blocker. Empty: not asked.
     """
     base = defaults.get(agent_id) or []
     exact = priorities.get((agent_id, origin, actor)) if actor else None
@@ -301,6 +337,12 @@ def assignment_rows_for(
         # AFTER the strict truncation, so a strict rule whose runners all lack the
         # flag leaves an empty list — the turn waits, it does not fall through.
         out = [r for r in out if rr.satisfies(r.flags, requires)]
+    if serves:
+        # The same FLOOR, after the strict truncation for the same reason: a strict
+        # rule whose every box reports it cannot run the agent leaves an empty list,
+        # and the turn waits (visibly: `unclaimable_queued_turns`), never falls
+        # through to boxes the rule exists to exclude.
+        out = [r for r in out if not cannot_serve(r, serves)]
     return list(enumerate(out))
 
 
@@ -330,7 +372,7 @@ def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
     """
     rows = assignment_rows_for(
         agent_id, turn.origin, actors.actor_of(turn), defaults, priorities,
-        requires=rr.requirements_of(turn),
+        requires=rr.requirements_of(turn), serves=routed_slug(turn, agent_id),
     )
     mine = next((rank for rank, r in rows if r.id == runner.id), None)
     if mine is None:
@@ -338,6 +380,16 @@ def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
     if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
         return True
     return not any(r.is_available for rank, r in rows if rank < mine)
+
+
+def routed_slug(turn: Turn, agent_id) -> str:
+    """The slug of `agent_id` — the agent whose list routes `turn` (its own, or
+    its chat's). Read off the rows the claim already select_related, no query."""
+    if turn.agent_id and turn.agent_id == agent_id:
+        return turn.agent.slug
+    if turn.chat_session_id and turn.chat_session.agent_id == agent_id:
+        return turn.chat_session.agent.slug
+    return ""
 
 
 def _assignment_allows(runner: Runner, turn: Turn, defaults: dict, priorities: dict, now) -> bool:

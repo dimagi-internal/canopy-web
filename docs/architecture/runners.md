@@ -57,8 +57,22 @@ a turn of this agent?" with the claim's own static gates and nothing else:
 4. the agent routes to it: an ENABLED `RunnerAssignment` row (its default list
    or any source/actor rule), or the workspace order it follows.
 
-Availability, the cascade and a turn's requirements decide WHICH of those boxes
-takes a given turn. They never decide whether a box runs the agent at all.
+Availability, the cascade, a turn's requirements and the box's own report
+(below) decide WHICH of those boxes takes a given turn. They never decide whether
+a box runs the agent at all — so a box that failed to set an agent up keeps it on
+its roster and retries at its next bootstrap.
+
+**A box never claims a turn of an agent it reports it cannot run**
+(`routing.cannot_serve`). Two self-reports: a laptop driving emdash whose reported
+`projects` lacks the agent's slug (never-reported = unknown, not empty), and any
+box naming the agent in `capabilities["unprepared"]` — the cloud runner's
+heartbeat `agents_unprepared`, the agents its bootstrap or lazy prepare tried and
+has no clone of. It is a FLOOR on the composed list in
+`routing.assignment_rows_for` (`serves=`), applied after strict truncation like
+`requires`: the box neither claims nor blocks a lower rank, a strict rule whose
+every box cannot run it waits, and `unclaimable_queued_turns` reports such a turn
+as `config`, quoting what each box said. A pin still lands (a drill exists to find
+this out).
 `agents_routed_to(runner)` is the same rule as a list. Three readers share it,
 and `tests/test_runner_serves_agents.py` holds it to `claim_next_turn` over every
 box and agent pair:
@@ -105,7 +119,8 @@ In order, each a hard stop:
    may ride into the running turn (`routing.may_ride`). Then the tenant gate.
 4. Per candidate: runner flags satisfy the turn's requirements (above the pin);
    `runner_may_hold_agent` (above the pin); then, unless pinned here, the
-   availability cascade for the agent / repo order / session agent.
+   availability cascade for the agent / repo order / session agent — over a list
+   with every box that reports it cannot run the agent removed (`cannot_serve`).
 5. Turn mode decided and stamped (`turn_mode.for_turn`), an admission `auto` rule
    may raise a standing manual to auto, then admission rejects
    (`apps/admission`, see `access.md` → "Admission rules"), then the conditional
