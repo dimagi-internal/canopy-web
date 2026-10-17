@@ -19,6 +19,8 @@ let home = FileManager.default.homeDirectoryForCurrentUser
 let canopyDir = home.appendingPathComponent(".canopy")
 let pauseFile = canopyDir.appendingPathComponent("PAUSED")
 let heartbeatFile = canopyDir.appendingPathComponent("heartbeat")
+// canopy's answer to the daemon's last heartbeat (canopy_runner/server_status.py).
+let serverStatusFile = canopyDir.appendingPathComponent("server-status.json")
 let configFile = canopyDir.appendingPathComponent("runner.json")
 let logFile = canopyDir.appendingPathComponent("runner.log")
 let launchLabel = "com.canopy.runner"
@@ -40,14 +42,17 @@ func baseURL() -> String {
 }
 
 // ── runner state (mirrors canopy_runner.menubar._runner_state) ────────────────────
+// Green means canopy is accepting this box, not merely that the loop is turning:
+// a revoked token kept the loop turning (and the tree green) for hours while the
+// server showed the runner offline and gave its work to other boxes.
 enum RunnerState: String {
-    case running, paused, stopped, stale
+    case running, paused, stopped, stale, rejected, unreachable
     var color: NSColor {
         switch self {
         case .running: return NSColor(srgbRed: 0.40, green: 0.71, blue: 0.52, alpha: 1)  // green
         case .paused:  return NSColor(srgbRed: 0.89, green: 0.69, blue: 0.28, alpha: 1)  // amber
-        case .stopped: return NSColor(srgbRed: 0.85, green: 0.35, blue: 0.32, alpha: 1)  // red
-        case .stale:   return NSColor(srgbRed: 0.90, green: 0.57, blue: 0.27, alpha: 1)  // orange
+        case .stopped, .rejected: return NSColor(srgbRed: 0.85, green: 0.35, blue: 0.32, alpha: 1)  // red
+        case .stale, .unreachable: return NSColor(srgbRed: 0.90, green: 0.57, blue: 0.27, alpha: 1)  // orange
         }
     }
     var label: String {
@@ -56,8 +61,54 @@ enum RunnerState: String {
         case .paused:  return "Paused"
         case .stopped: return "Stopped"
         case .stale:   return "Stale (no recent heartbeat)"
+        case .rejected: return "Offline — canopy is refusing this runner"
+        case .unreachable: return "Offline — can't reach canopy"
         }
     }
+}
+
+// What canopy said to the last heartbeat. Absent on a daemon too old to write it,
+// in which case the local loop is all we can go on.
+struct ServerStatus {
+    let ok: Bool
+    let at: Date
+    let lastOk: Date?
+    let httpStatus: Int?
+    let detail: String
+
+    static func load() -> ServerStatus? {
+        guard let data = try? Data(contentsOf: serverStatusFile),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ok = obj["ok"] as? Bool, let at = obj["at"] as? Double else { return nil }
+        return ServerStatus(
+            ok: ok, at: Date(timeIntervalSince1970: at),
+            lastOk: (obj["last_ok_at"] as? Double).map { Date(timeIntervalSince1970: $0) },
+            httpStatus: obj["status"] as? Int, detail: obj["detail"] as? String ?? "")
+    }
+
+    // A refusal canopy will repeat however often it is retried: the token is
+    // revoked or expired (401), or no longer allowed this runner (403/404).
+    var refusedByCanopy: Bool { !ok && [401, 403, 404].contains(httpStatus ?? 0) }
+
+    // One line saying what canopy last said and since when.
+    var summary: String {
+        let since = lastOk.map { "last accepted \(ago($0))" } ?? "never accepted since this file began"
+        if ok { return "canopy accepted the last heartbeat \(ago(at))" }
+        if refusedByCanopy {
+            let why = httpStatus == 401
+                ? "the runner's token was rejected (401) — mint a new one in canopy Settings → Tokens"
+                : "canopy refused it (\(httpStatus ?? 0))"
+            return "\(why); \(since)"
+        }
+        return "can't reach canopy; \(since)"
+    }
+}
+
+func ago(_ d: Date) -> String {
+    let s = max(0, Int(Date().timeIntervalSince(d)))
+    if s < 90 { return "\(s)s ago" }
+    if s < 5400 { return "\(s / 60) min ago" }
+    return "\(s / 3600) h ago"
 }
 
 @discardableResult
@@ -87,8 +138,16 @@ func heartbeatAgeSeconds() -> Int? {
 func currentState() -> RunnerState {
     if !daemonLoaded() { return .stopped }
     if FileManager.default.fileExists(atPath: pauseFile.path) { return .paused }
-    if let age = heartbeatAgeSeconds(), age < 120 { return .running }
-    return .stale
+    guard let age = heartbeatAgeSeconds(), age < 120 else { return .stale }
+    // The loop is turning; now ask what canopy made of it.
+    guard let server = ServerStatus.load(), Date().timeIntervalSince(server.at) < 120 else {
+        return .running
+    }
+    if server.ok { return .running }
+    if server.refusedByCanopy { return .rejected }
+    // A blip is not an outage: only orange once nothing has been accepted for 2 min.
+    if let lastOk = server.lastOk, Date().timeIntervalSince(lastOk) < 120 { return .running }
+    return .unreachable
 }
 
 // The runner CLI exactly as launchd runs it: ProgramArguments + EnvironmentVariables
@@ -314,7 +373,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let state = currentState()
         if let btn = statusItem.button, let tree = baseTree {
             btn.image = tinted(tree, state.color)
-            btn.toolTip = "Canopy Runner — \(state.label)"
+            var tip = "Canopy Runner — \(state.label)"
+            if state == .rejected || state == .unreachable, let server = ServerStatus.load() {
+                tip += "\n\(server.summary)"
+            }
+            btn.toolTip = tip
         }
         // Note: we do NOT assign statusItem.menu here — a permanent menu would swallow the
         // left-click we use to open the web panel. The menu is shown on demand (right-click).
@@ -326,7 +389,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let header = NSMenuItem(title: "Runner: \(state.label)", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
-        if let age = heartbeatAgeSeconds() {
+        if let server = ServerStatus.load() {
+            let line = NSMenuItem(title: "  \(server.summary)", action: nil, keyEquivalent: "")
+            line.isEnabled = false
+            menu.addItem(line)
+        } else if let age = heartbeatAgeSeconds() {
             let hb = NSMenuItem(title: "  last heartbeat \(age)s ago", action: nil, keyEquivalent: "")
             hb.isEnabled = false
             menu.addItem(hb)
