@@ -1321,6 +1321,11 @@ class DeviceProofRequiredOut(StrictModel):
     the request carried none that verified against an active key."""
 
     error: Literal["device_proof_required"]
+    #: `not_routed`: the proof is an approved box's, but that box does not run
+    #: this agent (no alert; fix the routing or stop asking). `no_valid_proof`:
+    #: no proof, or one no active key matches (the owner is alerted).
+    reason: Literal["not_routed", "no_valid_proof"] = "no_valid_proof"
+    detail: str = ""
 
 
 class AgentCredentialAlertOut(StrictModel):

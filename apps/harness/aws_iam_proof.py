@@ -225,15 +225,22 @@ def verify(raw: str, request, *, now: float | None = None) -> str:
     return canonical_role_arn(_call_sts(headers, body))
 
 
+def known_key(role_arn: str):
+    """The ACTIVE aws-iam device key for this role, whichever agents it serves."""
+    from .models import RunnerDeviceKey
+
+    return (RunnerDeviceKey.objects.select_related("runner")
+            .filter(jkt=role_jkt(role_arn), kind=RunnerDeviceKey.AWS_IAM,
+                    status=RunnerDeviceKey.ACTIVE).first())
+
+
 def active_key_for_agent(agent, role_arn: str):
     """The ACTIVE aws-iam device key for this role, if its runner serves `agent`."""
     from django.utils import timezone
 
     from .models import RunnerDeviceKey
 
-    key = (RunnerDeviceKey.objects.select_related("runner")
-           .filter(jkt=role_jkt(role_arn), kind=RunnerDeviceKey.AWS_IAM,
-                   status=RunnerDeviceKey.ACTIVE).first())
+    key = known_key(role_arn)
     if key is None or not device_keys.runner_serves_agent(key.runner, agent):
         return None
     RunnerDeviceKey.objects.filter(pk=key.pk).update(last_used_at=timezone.now())

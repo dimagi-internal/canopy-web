@@ -141,48 +141,60 @@ def verify_proof(request, *, now: float | None = None) -> str:
 
 
 def runner_serves_agent(runner, agent) -> bool:
-    """A runner this agent routes to (its own order or its workspace's), or one
-    owned by the agent's owner — the second covers the owner's own laptop when
-    they work on the agent by hand."""
-    from .models import Runner, RunnerAssignment
-    from .routing import inherited_orders
+    """May this box read `agent`'s secrets? Three ways, and only three:
+
+    - it RUNS the agent — `routing.runner_routes_agent`, the claim's own static
+      gates (enabled routing, enrollment, the hold check), so a box the vault
+      accepts is a box that could claim the agent's turns, and the reverse;
+    - it HOLDS a live turn of the agent right now — a pinned dispatch or a chat
+      bound to it claims there without routing, and that turn needs the secrets;
+    - it is the agent's OWNER'S OWN laptop (not a cloud box), for working on the
+      agent by hand.
+
+    A cloud box the owner also owns is not a reason on its own: it reads only what
+    it runs (canopy-web#1563)."""
+    from django.db.models import Q
+
+    from .models import Runner, Turn
+    from .routing import runner_routes_agent
 
     if runner.status == Runner.RETIRED:
         return False
-    if agent.owner_id and runner.owner_id == agent.owner_id:
+    if runner_routes_agent(runner, agent):
         return True
-    if RunnerAssignment.objects.filter(agent=agent, runner=runner).exists():
+    if (Turn.objects.filter(claimed_by=runner,
+                            status__in=(Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN))
+            .filter(Q(agent=agent) | Q(chat_session__agent=agent)).exists()):
         return True
-    inh = inherited_orders([agent.id]).get(agent.id)
-    return bool(inh) and any(r.pk == runner.pk for r in inh.runners)
+    return (runner.kind != Runner.CLOUD and bool(agent.owner_id)
+            and runner.owner_id == agent.owner_id)
 
 
 def agents_served(runner):
-    """Every agent `runner_serves_agent` holds for: the agents whose secrets this
-    box may read, so the only ones it should prepare. A box that also staged the
-    rest asked for a vault it could never open, and each refusal emailed that
-    agent's owner a device-proof alert (fizzy, 2026-10-17, canopy-web#1563)."""
-    from django.db.models import Q
+    """The agents this box should PREPARE: the ones it runs
+    (`routing.agents_routed_to`). Not the owner's-laptop or live-turn arms of
+    `runner_serves_agent`: those read secrets for one session or one turn, and a
+    box that staged more asked for vaults it would never use (fizzy, 2026-10-17)."""
+    from .routing import agents_routed_to
 
-    from apps.agents.models import Agent
+    return agents_routed_to(runner)
 
-    from .models import Runner
-    from .routing import agents_served_by
 
-    if runner.status == Runner.RETIRED:
-        return Agent.objects.none()
-    q = Q(id__in=list(agents_served_by(runner).values_list("id", flat=True)))
-    if runner.owner_id:
-        q |= Q(owner_id=runner.owner_id)
-    return Agent.objects.filter(q).distinct().order_by("slug")
+def known_key(jkt: str):
+    """The ACTIVE device key with this thumbprint, whichever agents it serves —
+    so a refusal can tell an approved box that does not run the agent from a
+    proof nobody approved."""
+    from .models import RunnerDeviceKey
+
+    return (RunnerDeviceKey.objects.select_related("runner")
+            .filter(jkt=jkt, status=RunnerDeviceKey.ACTIVE).first())
 
 
 def active_key_for_agent(agent, jkt: str):
     """The ACTIVE device key with this thumbprint, if its runner serves `agent`."""
     from .models import RunnerDeviceKey
 
-    key = (RunnerDeviceKey.objects.select_related("runner")
-           .filter(jkt=jkt, status=RunnerDeviceKey.ACTIVE).first())
+    key = known_key(jkt)
     if key is None or not runner_serves_agent(key.runner, agent):
         return None
     RunnerDeviceKey.objects.filter(pk=key.pk).update(last_used_at=timezone.now())

@@ -55,7 +55,7 @@ def fleet(client):
     agent = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=jj,
                                  runtime_secrets=["canopy-pat"],
                                  credential_source=Agent.CANOPY_WEB)
-    runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
+    runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE, workspace=ws,
                                    last_heartbeat_at=timezone.now(), capabilities={})
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
     client.force_login(jj)
@@ -214,7 +214,8 @@ def test_binding_on_and_no_proof_is_the_contract_401(fleet):
     _bind(fleet)
     res = _resolve(fleet)
     assert res.status_code == 401
-    assert res.json() == {"error": "device_proof_required"}
+    assert res.json() == {"error": "device_proof_required", "reason": "no_valid_proof",
+                          "detail": "no device proof"}
     assert "pat-value" not in res.content.decode()
 
 
@@ -300,13 +301,17 @@ def test_an_eddsa_proof_is_refused(fleet):
 
 
 def test_a_key_on_a_runner_the_agent_does_not_use_is_refused(fleet):
-    """Authorized runner = one the agent routes to OR owned by the agent's owner."""
+    """Authorized runner = one that runs the agent (`routing.runner_routes_agent`).
+    An approved box that does not is refused as `not_routed`, with no owner alert:
+    routing said no, not the key (fizzy, canopy-web#1563)."""
+    from apps.agents.models import AgentCredentialAlert
+
     _bind(fleet)
     other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
     WorkspaceMembership.objects.create(workspace=fleet["ws"], user=other,
                                        role=WorkspaceMembership.OWNER)
     theirs = Runner.objects.create(name="theirs", kind=Runner.CLOUD, owner=other,
-                                   status=Runner.ONLINE, capabilities={})
+                                   status=Runner.ONLINE, capabilities={}, workspace=fleet["ws"])
     key = ec.generate_private_key(ec.SECP256R1())
     c = Client()
     c.force_login(other)
@@ -316,7 +321,10 @@ def test_a_key_on_a_runner_the_agent_does_not_use_is_refused(fleet):
                          content_type="application/json",
                          HTTP_AUTHORIZATION=f"Bearer {_pat(other)}").json()
     assert c.post(f"/api/runner-device-keys/{body['id']}/approve").status_code == 200
-    assert _resolve(fleet, make_dpop_proof(key, "GET", HTU)).status_code == 401
+    res = _resolve(fleet, make_dpop_proof(key, "GET", HTU))
+    assert res.status_code == 401
+    assert res.json()["reason"] == "not_routed" and "theirs does not run eva" in res.json()["detail"]
+    assert not AgentCredentialAlert.objects.filter(agent=fleet["agent"], kind="device-proof").exists()
     # Route the agent to it and the same key is accepted.
     RunnerAssignment.objects.create(agent=fleet["agent"], runner=theirs, rank=1)
     assert _resolve(fleet, make_dpop_proof(key, "GET", HTU)).status_code == 200

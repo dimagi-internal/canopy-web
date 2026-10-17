@@ -101,16 +101,62 @@ def agents_following_runner(runner: Runner, among=None) -> set:
             if any(r.id == runner.id for r in inh.runners)}
 
 
-def agents_served_by(runner: Runner):
-    """Agents that route to `runner` by their own list or by following a
-    workspace order, by slug."""
-    from apps.agents.models import Agent
+# ---- which agents a box runs: ONE rule (canopy-web#1563) ----------------------
+#
+# "Could this box ever claim a turn of this agent?" — the claim's own STATIC gates,
+# with the clock and the queue taken out: the box is not retired, the agent is in
+# its tenant (enrolled AND its owner may run work there), its owner may hold the
+# agent, and the agent routes to it — an ENABLED assignment row (its default list
+# or any source/actor rule) or the workspace order it follows. Availability, the
+# cascade and a turn's own requirements decide WHICH box takes a given turn; they
+# do not decide whether a box runs the agent at all.
+#
+# The vault accepts a box's device proof by this rule (plus a box holding a live
+# turn of the agent, and the owner's own laptop: `device_keys.runner_serves_agent`),
+# and a box prepares exactly these agents (`GET /runners/{id}/agents`). Before it,
+# the vault counted disabled rows and ignored enrollment and the hold check, and a
+# box's refresh walked every agent its token could list — so a box that could
+# never claim fizzy asked for fizzy's vault every 30 minutes and its owner was
+# emailed each refusal (2026-10-17).
 
-    return (
-        Agent.objects.filter(Q(runner_assignments__runner=runner)
-                             | Q(id__in=agents_following_runner(runner)))
-        .select_related("owner").distinct().order_by("slug")
-    )
+def runner_routes_agent(runner: Runner, agent) -> bool:
+    """Could `runner` ever claim a turn of `agent`? See the block above."""
+    from apps.agents.services import runner_may_hold_agent
+
+    if runner.status == Runner.RETIRED or not runner.owner_id:
+        return False
+    if agent.workspace_id not in runner_tenant_slugs(runner):
+        return False
+    if not runner_may_hold_agent(runner, agent):
+        return False
+    if RunnerAssignment.objects.filter(agent=agent, runner=runner, enabled=True).exists():
+        return True
+    inh = inherited_orders([agent.id]).get(agent.id)
+    return bool(inh) and any(r.pk == runner.pk for r in inh.runners)
+
+
+def agents_routed_to(runner: Runner):
+    """Every agent `runner_routes_agent` holds for, by slug."""
+    from apps.agents.models import Agent
+    from apps.agents.services import runner_may_hold_agent
+
+    if runner.status == Runner.RETIRED or not runner.owner_id:
+        return Agent.objects.none()
+    tenant = runner_tenant_slugs(runner)
+    if not tenant:
+        return Agent.objects.none()
+    listed = set(RunnerAssignment.objects.filter(runner=runner, enabled=True)
+                 .values_list("agent_id", flat=True))
+    candidates = Agent.objects.filter(id__in=listed | agents_following_runner(runner),
+                                      workspace_id__in=tenant)
+    held = [a.id for a in candidates if runner_may_hold_agent(runner, a)]
+    return Agent.objects.filter(id__in=held).select_related("owner").order_by("slug")
+
+
+def agents_served_by(runner: Runner):
+    """The agents this box runs — `agents_routed_to`, the name the readiness
+    checks and the fleet view already import."""
+    return agents_routed_to(runner)
 
 
 def default_order_source(agent) -> str | None:

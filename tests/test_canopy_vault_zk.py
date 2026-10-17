@@ -107,7 +107,7 @@ def fleet(client):
     f.agent = Agent.objects.create(slug="eva", name="Eva", workspace=f.ws, owner=f.user,
                                    runtime_secrets=["canopy-pat", "kindora"],
                                    credential_source=Agent.CANOPY_WEB)
-    f.runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=f.user, status=Runner.ONLINE,
+    f.runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=f.user, status=Runner.ONLINE, workspace=f.ws,
                                      last_heartbeat_at=timezone.now(), capabilities={})
     RunnerAssignment.objects.create(agent=f.agent, runner=f.runner, rank=0)
     client.force_login(f.user)
@@ -496,7 +496,8 @@ def test_zk_resolve_needs_a_device_proof_even_without_device_binding(fleet):
     assert _enable(fleet).status_code == 200
     assert not Agent.objects.get(pk=fleet.agent.pk).require_device_binding
     res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
-    assert res.status_code == 401 and res.json() == {"error": "device_proof_required"}
+    assert res.status_code == 401 and res.json()["error"] == "device_proof_required"
+    assert res.json()["reason"] == "no_valid_proof"
 
 
 def test_a_device_without_a_wrap_gets_409_and_the_owner_an_alert(fleet):

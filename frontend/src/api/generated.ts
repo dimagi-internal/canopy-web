@@ -6739,11 +6739,12 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * The agents this runner serves: the ones whose secrets it may read
-         * @description Slugs, by the same rule a credential resolve checks a box's device proof
-         *     against (`device_keys.runner_serves_agent`). The box's refresh prepares only
-         *     these: listing every agent its token can see made it ask for vaults it may
-         *     not open, and each refusal emailed that agent's owner (canopy-web#1563).
+         * The agents this runner runs: the ones it should prepare
+         * @description Slugs of the agents this box RUNS (`routing.agents_routed_to`): the
+         *     claim's own static gates, so a box prepares exactly what it can be handed.
+         *     The box's refresh prepares only these: listing every agent its token could
+         *     see made it ask for vaults it may not open, and each refusal emailed that
+         *     agent's owner (canopy-web#1563).
          */
         readonly get: operations["runner_agents"];
         readonly put?: never;
@@ -17832,6 +17833,17 @@ export interface components {
              * @constant
              */
             readonly error: "device_proof_required";
+            /**
+             * Reason
+             * @default no_valid_proof
+             * @enum {string}
+             */
+            readonly reason: "not_routed" | "no_valid_proof";
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
         };
         /**
          * ZkWrapMissingOut
