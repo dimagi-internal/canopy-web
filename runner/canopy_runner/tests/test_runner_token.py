@@ -111,3 +111,35 @@ def test_a_401_on_the_runner_token_gets_a_fresh_one_and_retries_once(monkeypatch
 
 def test_a_plain_pat_client_is_unchanged():
     assert Client("https://canopy.test", "owner-pat").token == "owner-pat"
+
+
+def test_device_key_registration_uses_the_runner_token_once_it_has_one():
+    """A runner whose PAT is dead must still be able to re-register its key
+    (an ECDH change sends an active key back to pending)."""
+    from types import SimpleNamespace
+
+    from canopy_runner import device_key
+
+    cfg = SimpleNamespace(token="dead-pat", base_url="https://canopy.test", runner_id="r1")
+    assert device_key._child_env(cfg, "crt_1")["CANOPY_WEB_PAT"] == "crt_1"
+    assert device_key._child_env(cfg)["CANOPY_WEB_PAT"] == "dead-pat"
+
+
+def test_the_update_check_signs_in_with_the_device_key(monkeypatch, tmp_path):
+    """The updater asked with the PAT, so a dead PAT froze the runner on old code
+    forever ("unknown — nothing to do"): it could never install the fix."""
+    from canopy_runner import main as runner_main
+
+    seen = {}
+
+    def fake_status(cfg, client):
+        seen["bearer"] = client.token
+        return "current", "abc"
+
+    monkeypatch.setattr("canopy_runner.update.update_status", fake_status)
+    monkeypatch.setattr(runner_main.Config, "load",
+                        lambda p: type("C", (), {"base_url": "https://canopy.test",
+                                                 "token": "dead-pat", "runner_id": "r1"})())
+    monkeypatch.setattr(runner_main.RunnerCredential, "bearer", lambda self: "crt_9")
+    assert runner_main.update_check(tmp_path / "runner.json") == 0
+    assert seen["bearer"] == "crt_9"

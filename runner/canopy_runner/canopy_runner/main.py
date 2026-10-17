@@ -828,7 +828,7 @@ def update_check(cfg_path: Path) -> int:
     from . import update as update_mod
 
     cfg = Config.load(cfg_path)
-    client = Client(cfg.base_url, cfg.token)
+    client = Client(cfg.base_url, RunnerCredential.for_config(cfg))
     status, expected = update_mod.update_status(cfg, client)
     print(f"{status} {expected or '-'}")
     return 0
@@ -971,7 +971,7 @@ def runtime_cmd(args) -> int:
     written: the daemon adopts the value off its next heartbeat, within seconds,
     and only NEW sessions follow it."""
     cfg = Config.load(Path(args.config))
-    client = Client(cfg.base_url, cfg.token)
+    client = Client(cfg.base_url, RunnerCredential.for_config(cfg))
     if args.action == "set":
         if not args.engine:
             print("usage: canopy-runner runtime set emdash|claude-desktop", file=sys.stderr)
@@ -1006,7 +1006,7 @@ def close_sessions_cmd(args) -> int:
             print(f"{len(rows):4d}  total")
         return 0
     result = close_all.close_all(cfg, project=None if args.all else args.project, rows=rows)
-    client = Client(cfg.base_url, cfg.token)
+    client = Client(cfg.base_url, RunnerCredential.for_config(cfg))
     if result["closed"] or result["absent"]:
         try:
             close_all.report_closes(cfg, client)
@@ -1271,7 +1271,7 @@ def main() -> None:
     # registered for this runner; logs + notifies the approve URL while it is pending.
     # Background and fail-open — it never delays or stops the loop.
     from . import device_key as _device_key
-    _device_key.start(cfg)
+    _device_key.start(cfg, bearer=getattr(client, "token", ""))
 
     # Pause sentinel: the menu-bar app (or `touch ~/.canopy/PAUSED`) drops this file
     # to halt ALL token-spending work instantly without killing the process or fighting
