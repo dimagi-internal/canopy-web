@@ -17,6 +17,8 @@ import {
   memberInfo,
   openUserKey,
   openUserKey2skd,
+  openUserKeyRecovery,
+  sealUserKeyRecovery,
   parseSecretKeyCode,
   passphraseProblem,
   sealUserKey2skd,
@@ -53,6 +55,7 @@ const V = JSON.parse(raw) as {
     recovery_code: string
     user_key_seal_2skd: { alg: '2skd'; kdf: 'pbkdf2-sha256'; i: number; s: string; n: string; ct: string }
     secret_key_code: string
+    user_key_seal_recovery: { alg: 'recovery'; s: string; n: string; ct: string }
   }
 }
 const I = V.inputs
@@ -174,6 +177,15 @@ describe('zk v1 vectors', () => {
     await expect(openUserKey2skd(O.user_key_seal_2skd, I.user_id, 'wrong passphrase', sk)).rejects.toThrow()
     await expect(openUserKey2skd(O.user_key_seal_2skd, I.user_id, I.passphrase, new Uint8Array(16))).rejects.toThrow()
     await expect(openUserKey2skd(O.user_key_seal_2skd, '8', I.passphrase, sk)).rejects.toThrow()
+  })
+
+  it("the person's recovery-code seal (one code per person)", async () => {
+    const r = hexToBytes(I.recovery_secret_hex)
+    const seal = await sealUserKeyRecovery(hexToBytes(I.user_priv_scalar_hex), I.user_id, r, { salt, nonce })
+    expect(seal).toEqual(O.user_key_seal_recovery)
+    const opened = await openUserKeyRecovery(O.user_key_seal_recovery, I.user_id, parseRecoveryCode(O.recovery_code))
+    expect(bytesToHex(opened)).toBe(I.user_priv_scalar_hex)
+    await expect(openUserKeyRecovery(O.user_key_seal_recovery, '8', r)).rejects.toThrow()
   })
 
   it('passphrase strength floor', () => {

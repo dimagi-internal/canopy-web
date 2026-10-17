@@ -9,7 +9,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 const api = vi.hoisted(() => ({
   getKeyset: vi.fn(), putKeyset: vi.fn(), getZkState: vi.fn(), enableZk: vi.fn(), addZkWraps: vi.fn(),
-  putZkValues: vi.fn(), rotateZk: vi.fn(), disableZk: vi.fn(),
+  putZkValues: vi.fn(), rotateZk: vi.fn(),
 }))
 vi.mock('@/api/vault', () => api)
 const { revealAgentCredential } = vi.hoisted(() => ({ revealAgentCredential: vi.fn() }))
@@ -120,12 +120,26 @@ async function person() {
   return zk.generateKeyPair()
 }
 
+/** A keyset opened by one passkey touch (PRF), with puts reflected in later gets. */
+async function passkeyKeyset(me: Awaited<ReturnType<typeof person>>) {
+  const seal = await zk.sealUserKey(me.scalar, USER, 'cred-1', PRF_OUT)
+  const ks = keysetOut({ exists: true, public_jwk: me.publicJwk, seals: [seal],
+                         passkeys: [{ credential_id: 'cred-1', label: 'mac', prf_enabled: true, sealed: true }] })
+  api.getKeyset.mockResolvedValue(ks)
+  api.putKeyset.mockImplementation(async (b) => {
+    const next = keysetOut({ ...ks, ...b })
+    api.getKeyset.mockResolvedValue(next)
+    return next
+  })
+  prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: PRF_OUT })
+}
+
 describe('Turn on zero-knowledge', () => {
-  it('encrypts every value, wraps for me, the device and recovery, and shows the code before enabling', async () => {
+  it('gives the person ONE recovery code (not one per agent), then encrypts and wraps for me and the device', async () => {
     const me = await person()
     const device = await person()
     const deviceJkt = await zk.jkt(device.publicJwk)
-    api.getKeyset.mockResolvedValue(keysetOut({ exists: true, public_jwk: me.publicJwk }))
+    await passkeyKeyset(me)
     api.getZkState.mockResolvedValue({ agent: 'eva', agent_id: AGENT_ID, enabled: false, kv: 0, wraps: [], values: null,
       rotation_recommended: false,
       pending: [{ kind: 'device', target: 'dk1', public_jwk: device.publicJwk, ecdh_jkt: deviceJkt,
@@ -137,29 +151,48 @@ describe('Turn on zero-knowledge', () => {
     expect((await screen.findByTestId('zk-trust-caveat')).textContent).toBe(ZK_TRUST_CAVEAT)
     fireEvent.click(await screen.findByTestId('zk-enable'))
     const dialog = await screen.findByTestId('zk-recovery-code')
+    expect(dialog.textContent).toMatch(/every agent you hold/)
     const code = dialog.querySelector('code')!.textContent!
-    expect(api.enableZk).not.toHaveBeenCalled()  // not before the code is kept
+    expect(api.putKeyset).not.toHaveBeenCalled()  // not before the code is kept
+    expect(api.enableZk).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('zk-code-saved'))
     fireEvent.click(screen.getByTestId('zk-code-continue'))
     await waitFor(() => expect(api.enableZk).toHaveBeenCalled())
+    // The person's recovery seal opens their own key.
+    const rseal = api.putKeyset.mock.calls[0][0].seals.find((x: { alg: string }) => x.alg === 'recovery')
+    expect(Array.from(await zk.openUserKeyRecovery(rseal, USER, zk.parseRecoveryCode(code)))).toEqual(Array.from(me.scalar))
+    expect(prf.assertWithPrf).toHaveBeenCalledTimes(1)
     const body = api.enableZk.mock.calls[0][1]
     expect(body.kv).toBe(1)
-    expect(body.wraps.map((w: { kind: string }) => w.kind).sort()).toEqual(['device', 'member', 'recovery'])
-    const rec = body.wraps.find((w: { kind: string }) => w.kind === 'recovery').wrap
-    const vk = await zk.unwrapRecovery(rec, AGENT_ID, 1, zk.parseRecoveryCode(code))
+    expect(body.wraps.map((w: { kind: string }) => w.kind).sort()).toEqual(['device', 'member'])
+    const mw = body.wraps.find((w: { kind: string }) => w.kind === 'member')
+    const vk = await zk.unwrapEcdhEs(mw.wrap, me.privateKey, me.publicJwk, zk.memberInfo(AGENT_ID, 1, USER))
     expect(await zk.decryptValue(vk, AGENT_ID, 'canopy-pat', 1, body.values[0].value_zk)).toBe('canopy-pat-plain')
     const dw = body.wraps.find((w: { kind: string }) => w.kind === 'device')
     expect(dw.target).toBe('dk1')
     expect(Array.from(await zk.unwrapEcdhEs(dw.wrap, device.privateKey, device.publicJwk,
       zk.deviceInfo(AGENT_ID, 1, deviceJkt)))).toEqual(Array.from(vk))
-    const mw = body.wraps.find((w: { kind: string }) => w.kind === 'member')
-    expect(Array.from(await zk.unwrapEcdhEs(mw.wrap, me.privateKey, me.publicJwk,
-      zk.memberInfo(AGENT_ID, 1, USER)))).toEqual(Array.from(vk))
+  })
+
+  it('with a recovery code on file, shows no code at all', async () => {
+    const me = await person()
+    await passkeyKeyset(me)
+    const ks = await api.getKeyset()
+    api.getKeyset.mockResolvedValue(keysetOut({ ...ks, seals: [...ks.seals, { alg: 'recovery', s: 'x', n: 'y', ct: 'z' }] }))
+    api.getZkState.mockResolvedValue({ agent: 'eva', agent_id: AGENT_ID, enabled: false, kv: 0, wraps: [],
+      pending: [], rotation_recommended: false, values: null })
+    api.enableZk.mockResolvedValue({ agent: 'eva', agent_id: AGENT_ID, enabled: true, kv: 1, wraps: [], pending: [],
+      rotation_recommended: false, values: null })
+    render(<AgentZkSection slug="eva" storedNames={[]} canEdit />)
+    fireEvent.click(await screen.findByTestId('zk-enable'))
+    await waitFor(() => expect(api.enableZk).toHaveBeenCalled())
+    expect(screen.queryByTestId('zk-recovery-code')).toBeNull()
+    expect(api.enableZk.mock.calls[0][1].wraps.map((w: { kind: string }) => w.kind)).toEqual(['member'])
   })
 
   it('cancelling the recovery code changes nothing', async () => {
     const me = await person()
-    api.getKeyset.mockResolvedValue(keysetOut({ exists: true, public_jwk: me.publicJwk }))
+    await passkeyKeyset(me)
     api.getZkState.mockResolvedValue({ agent: 'eva', agent_id: AGENT_ID, enabled: false, kv: 0, wraps: [],
       pending: [], rotation_recommended: false, values: null })
     render(<AgentZkSection slug="eva" storedNames={[]} canEdit />)
@@ -168,6 +201,7 @@ describe('Turn on zero-knowledge', () => {
     fireEvent.click(screen.getByText('Cancel'))
     expect((await screen.findByTestId('zk-error')).textContent).toMatch(/nothing was changed/)
     expect(api.enableZk).not.toHaveBeenCalled()
+    expect(api.putKeyset).not.toHaveBeenCalled()
   })
 
   const offState = { agent: 'eva', agent_id: AGENT_ID, enabled: false, kv: 0, wraps: [],
@@ -182,16 +216,19 @@ describe('Turn on zero-knowledge', () => {
   }
 
   it('with no vault key, makes one with the same passkey touch and goes on — no detour', async () => {
-    api.getKeyset.mockResolvedValueOnce(keysetOut()).mockResolvedValueOnce(keysetOut())
-    api.putKeyset.mockImplementation(async (b) => keysetOut({ exists: true, ...b }))
+    api.getKeyset.mockResolvedValue(keysetOut())
+    api.putKeyset.mockImplementation(async (b) => {
+      const ks = keysetOut({ exists: true, ...b })
+      api.getKeyset.mockResolvedValue(ks)
+      return ks
+    })
     prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: PRF_OUT })
     api.getZkState.mockResolvedValue(offState)
     api.enableZk.mockResolvedValue(onState)
     render(<AgentZkSection slug="eva" storedNames={[]} canEdit />)
     fireEvent.click(await screen.findByTestId('zk-enable'))
-    await waitFor(() => expect(api.putKeyset).toHaveBeenCalled())
-    api.getKeyset.mockResolvedValue(keysetOut({ exists: true, ...api.putKeyset.mock.calls[0][0] }))
     await keepCodeAndContinue()
+    expect(api.putKeyset.mock.calls[1][0].seals.map((x: { alg: string }) => x.alg)).toEqual(['prf', 'recovery'])
     expect(prf.assertWithPrf).toHaveBeenCalledTimes(1)  // one touch: step-up, key and unlock
     const member = api.enableZk.mock.calls[0][1].wraps.find((w: { kind: string }) => w.kind === 'member')
     expect(member.target).toBe(USER)
@@ -214,7 +251,7 @@ describe('Turn on zero-knowledge', () => {
     api.enableZk.mockResolvedValue(onState)
     render(<AgentZkSection slug="eva" storedNames={[]} canEdit />)
     const go = await screen.findByTestId('zk-enable')
-    await waitFor(() => expect(go.textContent).toMatch(/^Upgrade your passkey and turn on/))
+    await waitFor(() => expect(go.textContent).toMatch(/^Upgrade your passkey and finish setup/))
     fireEvent.click(go)
     await keepCodeAndContinue()
     expect(passkeysApi.registerThisDevice).toHaveBeenCalledWith('Mac (Touch ID)', { upgrade: true })
@@ -323,7 +360,7 @@ describe('Born zero-knowledge (kv 0)', () => {
       rotation_recommended: false, values: null, sealed: [] })
     const unlock = async () => ({ userId: USER, privateKey: me.privateKey, publicJwk: me.publicJwk })
     render(<AgentZkSection slug="eva" storedNames={['kindora']} canEdit unlock={unlock} />)
-    expect((await screen.findByTestId('zk-born')).textContent).toMatch(/1 so far/)
+    expect((await screen.findByTestId('zk-born')).textContent).toMatch(/1 secret/)
     fireEvent.click(screen.getByTestId('zk-create-key'))
     await screen.findByTestId('zk-recovery-code')
     fireEvent.click(screen.getByTestId('zk-code-saved'))

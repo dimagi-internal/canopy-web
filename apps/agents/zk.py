@@ -112,9 +112,10 @@ MAX_SEALS = 20
 
 
 def check_seal(seal, what: str = "seal") -> dict:
-    """Either a passkey seal — {"alg": "prf", "cred": <b64u credential id>,
-    "s": 16, "n": 12, "ct": 48} — or a passphrase + Secret Key seal (§4b) —
-    {"alg": "2skd", "kdf": "pbkdf2-sha256", "i": 650000, "s", "n", "ct"}.
+    """A passkey seal — {"alg": "prf", "cred": <b64u credential id>,
+    "s": 16, "n": 12, "ct": 48} —, a passphrase + Secret Key seal (§4b) —
+    {"alg": "2skd", "kdf": "pbkdf2-sha256", "i": 650000, "s", "n", "ct"} — or the
+    person's recovery-code seal (§4c) — {"alg": "recovery", "s", "n", "ct"}.
     canopy-web never receives a passphrase, a Secret Key or a PRF output."""
     alg = seal.get("alg") if isinstance(seal, dict) else None
     if alg == "prf":
@@ -127,8 +128,12 @@ def check_seal(seal, what: str = "seal") -> dict:
             raise _shape(f"{what}: kdf must be 'pbkdf2-sha256'")
         if type(seal["i"]) is not int or seal["i"] != PBKDF2_ITERATIONS:
             raise _shape(f"{what}: i must be {PBKDF2_ITERATIONS}")
+    elif alg == "recovery":
+        # §4c: the person's ONE recovery code opens their key (and so every
+        # agent they hold) — instead of a recovery code per agent.
+        _keys(seal, {"alg", "s", "n", "ct"}, what)
     else:
-        raise _shape(f"{what}: alg must be 'prf' or '2skd'")
+        raise _shape(f"{what}: alg must be 'prf', '2skd' or 'recovery'")
     _exact(seal["s"], SALT_LEN, f"{what}.s")
     _exact(seal["n"], NONCE_LEN, f"{what}.n")
     _exact(seal["ct"], WRAPPED_LEN, f"{what}.ct")
@@ -236,10 +241,25 @@ def _caller_can_open(rows: list, user) -> bool:
     return False
 
 
+def has_recovery_seal(user_id) -> bool:
+    """The person keeps ONE recovery code for their vault key (§4c)."""
+    from apps.passkeys.models import UserVaultKeyset
+
+    ks = UserVaultKeyset.objects.filter(user_id=user_id).first()
+    return bool(ks) and any(s.get("alg") == "recovery" for s in ks.seals)
+
+
 def _check_full_set(agent, rows: list, user) -> None:
+    # A way back if every passkey is lost: the agent's own recovery wrap, or —
+    # the default since #person-recovery — a member wrap to someone whose vault
+    # key carries their personal recovery seal.
     recovery = [w for w in rows if w.kind == "recovery"]
-    if len(recovery) != 1:
-        raise ZkError(422, "zk_recovery_required", "exactly one recovery wrap is required")
+    if len(recovery) > 1:
+        raise ZkError(422, "zk_recovery_required", "at most one recovery wrap")
+    if not recovery and not any(w.kind == "member" and has_recovery_seal(w.user_id) for w in rows):
+        raise ZkError(422, "zk_recovery_required",
+                      "include a recovery wrap, or a member wrap to someone whose vault key "
+                      "has a recovery code")
     if not _caller_can_open(rows, user):
         raise ZkError(422, "zk_caller_wrap_required",
                       "include a wrap you can open: a member wrap to your own vault key, or a device "
@@ -431,35 +451,6 @@ def rotate(agent, *, new_kv: int, wraps: list, values: list, user) -> None:
         agent.save(update_fields=["zk_kv", "updated_at"])
 
 
-def disable(agent, *, values: list, user) -> None:
-    """Back to custodial storage: every value re-sealed from the plaintext the
-    browser decrypted, every wrap deleted, the flag off."""
-    from .models import AgentCredential, AgentVaultWrap
-
-    with transaction.atomic():
-        agent = _locked(agent)
-        _require_enabled(agent)
-        plain: dict[str, str] = {}
-        for i, v in enumerate(values):
-            name = (v.name or "").strip()
-            if not name or name in plain:
-                raise _shape(f"values[{i}]: a missing or repeated name")
-            if not (v.plaintext or "").strip():
-                raise _shape(f"values[{i}]: blank value for {name}")
-            plain[name] = v.plaintext.strip()
-        _require_coverage(agent, plain)
-        by = user if getattr(user, "is_authenticated", False) else None
-        for name, value in plain.items():
-            AgentCredential.objects.update_or_create(
-                agent=agent, name=name,
-                defaults={"value_enc": AgentCredential.seal(agent, name, value), "value_zk": "",
-                          "kv": None, "updated_by": by},
-            )
-        AgentVaultWrap.objects.filter(agent=agent).delete()
-        agent.zk_enabled, agent.zk_kv = False, 0
-        agent.save(update_fields=["zk_enabled", "zk_kv", "updated_at"])
-
-
 def forget_device_wraps(device_key) -> int:
     """A device's ECDH key changed: its wraps were to the old key (and bound to
     the old thumbprint), so they are useless — drop them; it shows as pending."""
@@ -603,6 +594,11 @@ def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
         raise _shape(f"at most {MAX_SEALS} seals")
     mine = set(Passkey.objects.filter(user=user).values_list("credential_id", flat=True))
     checked, creds = [], set()
+    algs = [s.get("alg") if isinstance(s, dict) else None for s in seals]
+    if algs.count("recovery") > 1:
+        raise _shape("at most one recovery seal")
+    if all(a == "recovery" for a in algs):
+        raise _shape("a recovery seal needs a passkey or passphrase seal beside it")
     for i, s in enumerate(seals):
         seal = check_seal(s, f"seals[{i}]")
         if seal["alg"] != "prf":

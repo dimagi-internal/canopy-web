@@ -4,8 +4,8 @@
  * (`@/api/vault`). Every secret here — the vault key VK, a person's private
  * scalar, a recovery secret, a decrypted value — lives only in local variables
  * of one call and is never sent anywhere; what goes to canopy-web is
- * ciphertext, wraps and seals (and, for "turn off" only, the plaintexts that
- * return to custodial storage).
+ * ciphertext, wraps and seals. There is no way back to custodial storage:
+ * zero-knowledge is the canopy-web vault's only mode (Jonathan, 2026-10-17).
  */
 import { revealAgentCredential } from '@/api/agents'
 import { approveRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
@@ -13,7 +13,6 @@ import { registerThisDevice, type PasskeyOut } from '@/api/passkeys'
 import { defaultLabel } from '@/auth/webauthn'
 import {
   addZkWraps,
-  disableZk,
   enableZk,
   getKeyset,
   getZkState,
@@ -41,6 +40,7 @@ import {
   memberInfo,
   openUserKey,
   openUserKey2skd,
+  openUserKeyRecovery,
   parseRecoveryCode,
   parseSecretKeyCode,
   passphraseProblem,
@@ -48,6 +48,7 @@ import {
   recoveryCode,
   sealUserKey,
   sealUserKey2skd,
+  sealUserKeyRecovery,
   secretKeyCode,
   unwrapEcdhEs,
   unwrapRecovery,
@@ -56,6 +57,7 @@ import {
   type AnySeal,
   type EcdhWrap,
   type PassphraseSeal,
+  type PersonRecoverySeal,
   type PublicJwk,
   type RecoveryWrap,
   type UserKeySeal,
@@ -68,6 +70,9 @@ export interface Unlocked {
   userId: string
   privateKey: CryptoKey
   publicJwk: Jwk
+  /** The private scalar, when this flow opened it — to add a seal (the
+   *  person's recovery code) without asking again. Never sent anywhere. */
+  scalar?: Uint8Array
 }
 
 // ---- the person's vault key -----------------------------------------------------------
@@ -123,7 +128,7 @@ async function openScalar(ks: VaultKeysetOut, prompt: UnlockPrompt): Promise<Uin
   if (choice.method === 'passkey') {
     const touch = await assertWithPrf(ks.prf_input, { allow: byPasskey.map((s) => s.cred) })
     const seal = byPasskey.find((s) => s.cred === touch.cred)
-    if (!seal) throw new Error('That passkey does not hold your vault key — use one marked "sealed".')
+    if (!seal) throw new Error('That passkey does not hold your vault key — use one marked ✓ under Settings → Security.')
     if (!touch.prf) throw new PrfUnsupportedError()
     return openUserKey(seal, ks.user_id, touch.prf)
   }
@@ -152,8 +157,8 @@ export async function stepUpAndUnlock(ks: VaultKeysetOut): Promise<Unlocked | nu
   const seal = byPasskey.find((s) => s.cred === touch.cred)
   if (!seal || !touch.prf) return null
   const pub = ks.public_jwk as Jwk
-  return { userId: ks.user_id, privateKey: await importPrivateScalar(await openUserKey(seal, ks.user_id, touch.prf), pub),
-           publicJwk: pub }
+  const scalar = await openUserKey(seal, ks.user_id, touch.prf)
+  return { userId: ks.user_id, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub, scalar }
 }
 
 /** Open the keyset — passkey or passphrase, as the person chooses. */
@@ -162,7 +167,7 @@ export async function unlockVaultKey(prompt: UnlockPrompt, ks?: VaultKeysetOut):
   if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Vault key).')
   const scalar = await openScalar(ks, prompt)
   const pub = ks.public_jwk as Jwk
-  return { userId: ks.user_id, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub }
+  return { userId: ks.user_id, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub, scalar }
 }
 
 /** Whether a passkey can plausibly hold the vault key here: the browser does
@@ -197,7 +202,89 @@ export async function upgradePasskey(label: string): Promise<PasskeyOut> {
 
 async function unlockedFrom(scalar: Uint8Array, userId: string, publicJwk: PublicJwk): Promise<Unlocked> {
   const pub = publicJwk as Jwk
-  return { userId, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub }
+  return { userId, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub, scalar }
+}
+
+// ---- the person's ONE recovery code (§4c) ---------------------------------------------------
+//
+// One code per person opens their key, and through it every agent they hold —
+// instead of a code per agent. It is a seal like the passkey's and the
+// passphrase's, made here from the open scalar; canopy-web never sees the code.
+
+const sealsOf = (ks: VaultKeysetOut) => (ks.seals ?? []) as unknown as AnySeal[]
+
+export function hasRecoveryCode(ks: VaultKeysetOut | null | undefined): boolean {
+  return Boolean(ks?.exists) && sealsOf(ks!).some((s) => s.alg === 'recovery')
+}
+
+/** A recovery code for the person, ready but not yet stored: show `code`
+ *  ONCE, then `commit` stores its seal (replacing any earlier one). */
+export interface PreparedRecovery {
+  code: string
+  commit: () => Promise<VaultKeysetOut>
+}
+
+export async function prepareRecoveryCode(me: Unlocked): Promise<PreparedRecovery> {
+  if (!me.scalar) throw new Error('Unlock your vault key again to make a recovery code.')
+  const r = randomBytes(32)
+  const seal = await sealUserKeyRecovery(me.scalar, me.userId, r)
+  return {
+    code: recoveryCode(r),
+    commit: async () => {
+      const ks = await getKeyset()
+      const keep = sealsOf(ks).filter((s) => s.alg !== 'recovery')
+      return putKeyset({ public_jwk: ks.public_jwk as Record<string, unknown>,
+                         seals: [...keep, seal] as unknown as Record<string, unknown>[] })
+    },
+  }
+}
+
+/** Before a flow that would hand out a per-agent code: make sure the person
+ *  has their ONE recovery code instead — shown via `confirm` (which resolves
+ *  once they kept it) and stored. A no-op when they already have one, or when
+ *  this unlock did not open the scalar (the flow then falls back to a code for
+ *  that agent). */
+export async function ensureRecoveryCode(me: Unlocked, confirm: (code: string) => Promise<void>): Promise<void> {
+  if (!me.scalar || hasRecoveryCode(await getKeyset())) return
+  const prepared = await prepareRecoveryCode(me)
+  await confirm(prepared.code)
+  await prepared.commit()
+}
+
+/**
+ * Lost every passkey (and the passphrase)? The recovery code opens the key;
+ * it is then sealed again — under a passkey touched now (which also steps up),
+ * or under a new passphrase + Secret Key (the caller must have stepped up, e.g.
+ * by registering a new passkey). Returns the Secret Key's code for a passphrase.
+ */
+export async function recoverVaultKey(code: string, how: { passkey: true } | { passphrase: string }):
+    Promise<{ keyset: VaultKeysetOut; secretKey?: string }> {
+  const ks = await getKeyset()
+  const seal = sealsOf(ks).find((s): s is PersonRecoverySeal => s.alg === 'recovery')
+  if (!ks.exists || !seal) throw new Error('You have no recovery code on file.')
+  let scalar: Uint8Array
+  try {
+    scalar = await openUserKeyRecovery(seal, ks.user_id, parseRecoveryCode(code))
+  } catch {
+    throw new Error('That recovery code does not open your vault key.')
+  }
+  const pub = ks.public_jwk as Record<string, unknown>
+  if ('passkey' in how) {
+    const touch = await assertWithPrf(ks.prf_input)
+    if (!touch.prf) throw new PrfUnsupportedError()
+    const added = await sealUserKey(scalar, ks.user_id, touch.cred, touch.prf)
+    const keep = sealsOf(ks).filter((s) => !(s.alg === 'prf' && s.cred === touch.cred))
+    return { keyset: await putKeyset({ public_jwk: pub, seals: [...keep, added] as unknown as Record<string, unknown>[] }) }
+  }
+  const problem = passphraseProblem(how.passphrase)
+  if (problem) throw new Error(problem)
+  const sk = randomBytes(16)
+  const added = await sealUserKey2skd(scalar, ks.user_id, how.passphrase, sk)
+  const keep = sealsOf(ks).filter((s) => s.alg !== '2skd')
+  const keyset = await putKeyset({ public_jwk: pub, seals: [...keep, added] as unknown as Record<string, unknown>[] })
+  const skCode = secretKeyCode(sk)
+  rememberSecretKey(ks.user_id, skCode)
+  return { keyset, secretKey: skCode }
 }
 
 /** Create the keyset with ONE passkey touch — which also steps up — and hand
@@ -381,7 +468,7 @@ async function freshRecovery(vk: Uint8Array, agentId: string, kv: number): Promi
 export async function turnOnZk(slug: string, storedNames: string[],
                                confirm: (code: string) => Promise<void>, unlock?: Unlock): Promise<ZkStateOut> {
   const ready = await prepareTurnOnZk(slug, storedNames, unlock)
-  await confirm(ready.code)
+  if (ready.code) await confirm(ready.code)
   return ready.commit()
 }
 
@@ -395,7 +482,8 @@ export interface PreparedZk {
   commit: () => Promise<ZkStateOut>
 }
 
-export async function prepareTurnOnZk(slug: string, storedNames: string[], unlock?: Unlock): Promise<PreparedZk> {
+export async function prepareTurnOnZk(slug: string, storedNames: string[], unlock?: Unlock,
+                                      opts: { personRecovery?: boolean } = {}): Promise<PreparedZk> {
   const ks = await getKeyset()
   if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Vault key).')
   // An agent born zero-knowledge (kv 0) has only sealed values and no vault
@@ -423,6 +511,11 @@ export async function prepareTurnOnZk(slug: string, storedNames: string[], unloc
   for (const p of state.pending) {
     const t = targetOf(p)
     if (t && !(t.kind === 'member' && t.target === ks.user_id)) wraps.push(await wrapTo(vk, state.agent_id, kv, t))
+  }
+  // The person's one recovery code covers this agent (their member wrap opens
+  // with it); only someone without one gets a code for this agent alone.
+  if (opts.personRecovery || hasRecoveryCode(ks)) {
+    return { slug, code: '', kv, commit: () => enableZk(slug, { kv, wraps, values }) }
   }
   const recovery = await freshRecovery(vk, state.agent_id, kv)
   wraps.push(recovery.wrap)
@@ -531,9 +624,11 @@ export async function rotateVaultKey(slug: string, confirm: (code: string) => Pr
     seen.add(`${target.kind}:${target.target}`)
     wraps.push(await wrapTo(vk, state.agent_id, kv, target))
   }
-  const recovery = await freshRecovery(vk, state.agent_id, kv)
-  wraps.push(recovery.wrap)
-  await confirm(recovery.code)
+  if (!hasRecoveryCode(await getKeyset())) {
+    const recovery = await freshRecovery(vk, state.agent_id, kv)
+    wraps.push(recovery.wrap)
+    await confirm(recovery.code)
+  }
   return rotateZk(slug, { new_kv: kv, wraps, values })
 }
 
@@ -553,19 +648,6 @@ export async function recoverWithCode(slug: string, code: string): Promise<ZkSta
   const wrap = await wrapTo(vk, state.agent_id, state.kv,
     { kind: 'member', target: ks.user_id, publicJwk: ks.public_jwk as Jwk, ecdhJkt: '' })
   return addZkWraps(slug, { kv: state.kv, wraps: [wrap] })
-}
-
-/** Turn off: decrypt every value here and hand the plaintexts back for
- *  custodial storage. */
-export async function turnOffZk(slug: string, unlock: Unlock): Promise<ZkStateOut> {
-  const state = await getZkState(slug, true)
-  const me = await unlock()
-  const vk = state.kv === 0 ? null : await openVk(state, me)
-  const values = []
-  for (const [name, stored] of Object.entries(state.values ?? {})) {
-    values.push({ name, plaintext: await openStored(state, vk, me, name, stored) })
-  }
-  return disableZk(slug, { values })
 }
 
 /**

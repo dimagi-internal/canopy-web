@@ -1,0 +1,236 @@
+import { useEffect, useState, type ReactNode } from 'react'
+import { Button } from 'canopy-ui/ui'
+import { getKeyset, type VaultKeysetOut } from '@/api/vault'
+import { registerThisDevice } from '@/api/passkeys'
+import { defaultLabel } from '@/auth/webauthn'
+import {
+  hasRecoveryCode,
+  prepareRecoveryCode,
+  recoverVaultKey,
+  unlockVaultKey,
+  type PreparedRecovery,
+} from '@/vault/operations'
+import { PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
+import { useUnlockPrompt } from '@/vault/UnlockPrompt'
+import { PasskeysPanel } from './PasskeysPanel'
+import { useHash } from '@/lib/useHash'
+import { EmergencyKit, VaultKeyPanel } from './VaultKeyPanel'
+import { ZkAgentsPanel } from './ZkAgentsPanel'
+
+/**
+ * Security — one card for everything that keeps agents' secrets safe
+ * (canopy-web#1550): You (how you confirm it's you, your recovery code),
+ * Your machines (approve or revoke), Your agents (where each stands). The old
+ * separate Passkeys / Device keys / Vault key / Zero-knowledge cards were one
+ * idea split four ways. Deep links still land: #passkeys, #vault-key,
+ * #device-keys, #your-agents.
+ */
+export function SecurityCard({ machines }: { machines: ReactNode }) {
+  return (
+    <div id="security" className="rounded-xl border border-border bg-card p-5 space-y-5" data-testid="settings-security">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground">Security</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Your agents&rsquo; secrets can be read only by you, people you let in, and machines you approve — not by
+          canopy-web.
+        </p>
+      </div>
+
+      <Row id="you" title="You">
+        <PasskeysPanel />
+        <RecoveryRow />
+      </Row>
+
+      <Row id="your-machines" title="Your machines">{machines}</Row>
+
+      <Row id="your-agents" title="Your agents">
+        <ZkAgentsPanel />
+      </Row>
+    </div>
+  )
+}
+
+function Row({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section id={id} className="space-y-2 border-t border-border pt-4 first-of-type:border-t-0 first-of-type:pt-0"
+             data-testid={`security-${id}`}>
+      <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>
+      {children}
+    </section>
+  )
+}
+
+/** Your one recovery code: whether you have it, making it, using it. */
+function RecoveryRow() {
+  const hash = useHash()
+  const { prompt, element } = useUnlockPrompt()
+  const [ks, setKs] = useState<VaultKeysetOut | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [made, setMade] = useState<PreparedRecovery | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [more, setMore] = useState(false)
+  const [recovering, setRecovering] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [newPass, setNewPass] = useState('')
+  const [kit, setKit] = useState<string | null>(null)
+
+  const load = () => getKeyset().then(setKs).catch(() => setKs(null))
+  useEffect(() => {
+    void load()
+  }, [])
+  useEffect(() => {
+    if (hash === '#vault-key') setMore(true)
+  }, [hash])
+
+  const fail = (e: unknown, fallback: string) =>
+    setError(e instanceof PrfUnsupportedError ? USE_A_PASSPHRASE
+      : e instanceof Error && e.name === 'NotAllowedError' ? 'The passkey prompt was dismissed.'
+        : e instanceof Error ? e.message : fallback)
+
+  const create = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      setSaved(false)
+      setMade(await prepareRecoveryCode(await unlockVaultKey(prompt)))
+    } catch (e) {
+      fail(e, 'Could not make a recovery code.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const keep = async () => {
+    if (!made) return
+    setBusy(true)
+    try {
+      setKs(await made.commit())
+      setMade(null)
+    } catch (e) {
+      fail(e, 'Could not save the recovery code.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Lost your passkey: a new passkey on this device, opened by the code. */
+  const recover = async (how: 'passkey' | 'passphrase') => {
+    setBusy(true)
+    setError('')
+    try {
+      if (how === 'passkey') {
+        // Registering proves it's you (the step-up), and the new passkey then holds the key.
+        await registerThisDevice(defaultLabel(), { upgrade: true })
+        setKs((await recoverVaultKey(typed, { passkey: true })).keyset)
+      } else {
+        const out = await recoverVaultKey(typed, { passphrase: newPass })
+        setKs(out.keyset)
+        setKit(out.secretKey ?? null)
+      }
+      setRecovering(false)
+      setTyped('')
+      setNewPass('')
+    } catch (e) {
+      fail(e, 'Could not recover.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const download = () => {
+    if (!made) return
+    const text = `Canopy recovery code\n\n${made.code}\n\nIf you lose your passkey and passphrase, this gets you back into every agent you hold. Keep it offline.\n`
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'canopy-recovery-code.txt'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  if (ks === null) return null
+  const exists = Boolean(ks.exists)
+  return (
+    <div className="space-y-2 text-sm" data-testid="security-recovery">
+      {!exists ? (
+        <p className="text-muted-foreground" data-testid="security-no-key">
+          Your vault key is made the first time you finish setting up an agent, with a recovery code to keep.
+        </p>
+      ) : hasRecoveryCode(ks) ? (
+        <p className="text-success" data-testid="security-recovery-ok">Recovery code saved ✓</p>
+      ) : !made && (
+        <div className="flex flex-wrap items-center gap-2" data-testid="security-recovery-missing">
+          <span className="text-warning">No recovery code yet.</span>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void create()} data-testid="security-recovery-create">
+            {busy ? 'Working…' : 'Create your recovery code'}
+          </Button>
+        </div>
+      )}
+
+      {made && (
+        <div role="dialog" aria-label="Recovery code" className="space-y-2 rounded-lg border border-warning/40 bg-warning/10 p-3"
+             data-testid="security-recovery-code">
+          <p className="font-medium text-foreground">Your recovery code — shown once</p>
+          <p className="text-muted-foreground">
+            If you lose your passkey and passphrase, this gets you back into every agent you hold. canopy-web does
+            not keep a copy — save it in your password manager.
+          </p>
+          <code className="block select-all break-all font-mono text-foreground">{made.code}</code>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={download}>Download</Button>
+            <label className="flex items-center gap-1 text-foreground">
+              <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} data-testid="security-recovery-saved" />
+              I have saved it
+            </label>
+            <Button size="sm" disabled={!saved || busy} onClick={() => void keep()} data-testid="security-recovery-keep">Done</Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setMade(null)}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {kit && <EmergencyKit secretKey={kit} email="" onDone={() => setKit(null)} />}
+
+      {exists && (
+        <div className="flex flex-wrap gap-3 text-xs">
+          <button type="button" className="text-primary hover:underline" onClick={() => setMore((v) => !v)}
+                  data-testid="security-more">
+            {more ? 'Fewer options' : 'More options'}
+          </button>
+          {hasRecoveryCode(ks) && (
+            <button type="button" className="text-primary hover:underline" onClick={() => setRecovering((v) => !v)}
+                    data-testid="security-recover">
+              Lost your passkey?
+            </button>
+          )}
+        </div>
+      )}
+
+      {recovering && (
+        <div className="space-y-2" data-testid="security-recover-form">
+          <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false}
+                 placeholder="Your recovery code" aria-label="Recovery code"
+                 className="min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground sm:min-h-0 sm:w-96" />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" disabled={busy || !typed.trim()} onClick={() => void recover('passkey')}
+                    data-testid="security-recover-passkey">
+              Use a new passkey on this device
+            </Button>
+            <span className="text-xs text-muted-foreground">or</span>
+            <input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)} autoComplete="new-password"
+                   placeholder="A new passphrase" aria-label="New passphrase"
+                   className="min-h-11 rounded-md border border-input bg-input px-2 py-1 text-sm text-foreground sm:min-h-0 sm:w-56" />
+            <Button size="sm" variant="outline" disabled={busy || !typed.trim() || !newPass}
+                    onClick={() => void recover('passphrase')} data-testid="security-recover-passphrase">
+              Use a new passphrase
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {more && <VaultKeyPanel embedded />}
+      {error && <p className="text-xs text-destructive" data-testid="security-error">{error}</p>}
+      {element}
+    </div>
+  )
+}

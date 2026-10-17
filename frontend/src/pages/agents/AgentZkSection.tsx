@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { getKeyset, getZkState, type ZkStateOut } from '@/api/vault'
 import { deletePasskey, listPasskeys } from '@/api/passkeys'
 import {
+  ensureRecoveryCode,
   grantPending,
+  hasRecoveryCode,
   vaultKeyForFlow,
   vaultKeyRoute,
   type KeysetPasskey,
   recoverWithCode,
   rotateVaultKey,
-  turnOffZk,
   turnOnZk,
   unlockVaultKey,
   type Unlock,
@@ -24,7 +25,9 @@ import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 // `@/vault/operations`; this section is its controls and its one-time
 // recovery-code dialog.
 
-/** The trust assumption that remains, stated where the switch is. */
+const KIND_LABEL: Record<string, string> = { device: 'machine', member: 'person', recovery: 'recovery code' }
+
+/** The trust assumption that remains, stated where the controls are. */
 export const ZK_TRUST_CAVEAT =
   'One trust assumption remains: this page runs JavaScript served by canopy-web. A compromised canopy-web could ' +
   'serve a page that captures the vault key when you unlock it here. The canopy CLI on your own machine does not ' +
@@ -36,13 +39,15 @@ function message(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback
 }
 
-function download(slug: string, code: string, kv: number) {
-  const text = `Canopy vault recovery code\nAgent: ${slug}\nVault key version: ${kv}\n\n${code}\n\n` +
-    'Anyone with this code and access to the agent can read its secrets. Keep it offline.\n'
+function download(slug: string, code: string, kv: number, person: boolean) {
+  const text = person
+    ? `Canopy recovery code\n\n${code}\n\nIf you lose your passkey and passphrase, this gets you back into every agent you hold. Keep it offline.\n`
+    : `Canopy recovery code\nAgent: ${slug}\nKey version: ${kv}\n\n${code}\n\n` +
+      'Anyone with this code and access to the agent can read its secrets. Keep it offline.\n'
   const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }))
   const a = document.createElement('a')
   a.href = url
-  a.download = `canopy-vault-recovery-${slug}-kv${kv}.txt`
+  a.download = person ? 'canopy-recovery-code.txt' : `canopy-vault-recovery-${slug}-kv${kv}.txt`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -80,7 +85,7 @@ export function AgentZkSection({
   const [askPassphrase, setAskPassphrase] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [code, setCode] = useState<{ code: string; kv: number } | null>(null)
+  const [code, setCode] = useState<{ code: string; kv: number; person: boolean } | null>(null)
   const [saved, setSaved] = useState(false)
   const [recovering, setRecovering] = useState(false)
   const [typed, setTyped] = useState('')
@@ -113,11 +118,11 @@ export function AgentZkSection({
   if (!canEdit || state === null) return null
 
   /** Show the recovery code ONCE; resolves when the person says they kept it. */
-  const confirmCode = (kv: number) => (c: string) =>
+  const confirmCode = (kv: number, person = false) => (c: string) =>
     new Promise<void>((resolve, reject) => {
       pendingConfirm.current = { resolve, reject }
       setSaved(false)
-      setCode({ code: c, kv })
+      setCode({ code: c, kv, person })
     })
 
   const closeCode = (ok: boolean) => {
@@ -146,7 +151,13 @@ export function AgentZkSection({
    *  (that touch also steps up), else by an inline passphrase. */
   const start = (label: string) => {
     if (hasKey !== false) {
-      void run(label, () => turnOnZk(slug, storedNames, confirmCode(1), unlock), true)
+      void run(label, async () => {
+        // No recovery code yet: unlock once, make the person's ONE code, then go on.
+        if (hasRecoveryCode(await getKeyset())) return turnOnZk(slug, storedNames, confirmCode(1), unlock)
+        const me = await unlock()
+        await ensureRecoveryCode(me, confirmCode(0, true))
+        return turnOnZk(slug, storedNames, confirmCode(1), async () => me)
+      }, true)
       return
     }
     if (vaultKeyRoute(passkeys, browserPrf) === 'passphrase') {
@@ -161,6 +172,7 @@ export function AgentZkSection({
       }
       setReplaced(got.replaced)
       setHasKey(true)
+      await ensureRecoveryCode(got.me, confirmCode(0, true))
       return turnOnZk(slug, storedNames, confirmCode(1), async () => got.me)
     }, true)
   }
@@ -185,13 +197,16 @@ export function AgentZkSection({
   const passphraseSetup = askPassphrase && (
     <PassphraseSetup
       note={USE_A_PASSPHRASE}
-      submitLabel={askPassphrase === 'create the vault key' ? 'Create the vault key' : 'Turn on zero-knowledge'}
+      submitLabel="Finish setup"
       onCancel={() => setAskPassphrase(null)}
       onReady={(me) => {
         const label = askPassphrase
         setAskPassphrase(null)
         setHasKey(true)
-        void run(label, () => turnOnZk(slug, storedNames, confirmCode(1), async () => me), true)
+        void run(label, async () => {
+          await ensureRecoveryCode(me, confirmCode(0, true))
+          return turnOnZk(slug, storedNames, confirmCode(1), async () => me)
+        }, true)
       }}
     />
   )
@@ -222,31 +237,26 @@ export function AgentZkSection({
   return (
     <section id="cred-zk" className="mb-6" data-testid="agent-zk">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Zero-knowledge
+        Who can read these secrets
       </h3>
       {replacedNotice}
 
       {!state.enabled ? (
         <div className="space-y-2 text-[12px]">
           <p className="text-muted-foreground">
-            Off: canopy-web encrypts these values at rest with a key it holds. On: they are encrypted in your browser
-            under a key only this agent&rsquo;s devices and admins hold, and canopy-web stores ciphertext it cannot
-            read.
+            These secrets were saved before canopy-web stopped keeping readable copies. Finish setup to lock them to
+            you and this agent&rsquo;s {pending.filter((p) => p.kind === 'device').length} approved machine(s), so
+            canopy-web can no longer read them.
           </p>
-          <p className="text-muted-foreground">
-            Turning it on reads each stored value once (your passkey), encrypts it here, and wraps the new vault
-            key for you, {pending.filter((p) => p.kind === 'device').length} approved device(s) with an ECDH key,
-            and a recovery code you keep.{hasKey === false && ' It also creates your own vault key, in the same step.'}
-          </p>
-          {askPassphrase === 'turn on zero-knowledge' ? passphraseSetup : (
+          {askPassphrase === 'finish setup' ? passphraseSetup : (
             <button
               type="button"
               disabled={busy !== null}
-              onClick={() => start('turn on zero-knowledge')}
+              onClick={() => start('finish setup')}
               className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
               data-testid="zk-enable"
             >
-              {busy ? 'Working…' : actionLabel('Turn on zero-knowledge')}
+              {busy ? 'Working…' : actionLabel('Finish setup')}
             </button>
           )}
         </div>
@@ -255,36 +265,35 @@ export function AgentZkSection({
         // that arrives is sealed to the owner and the agent's devices.
         <div className="space-y-2 text-[12px]" data-testid="zk-born">
           <p className="text-foreground">
-            Zero-knowledge from the start · no vault key yet. Values saved now are sealed to you and this agent&rsquo;s
-            approved devices{(state.sealed ?? []).length ? ` (${(state.sealed ?? []).length} so far)` : ''}; canopy-web
-            cannot read them.
+            Locked to you and this agent&rsquo;s approved machines
+            {(state.sealed ?? []).length ? ` (${(state.sealed ?? []).length} secret(s))` : ''}; canopy-web cannot read
+            them.
           </p>
           <p className="text-muted-foreground">
-            Create the vault key to finish: it re-encrypts them under one key, wraps it for you and each device, and
-            gives you a recovery code.
+            Finish setup so machines you approve later can read them too.
           </p>
-          {askPassphrase === 'create the vault key' ? passphraseSetup : (
+          {askPassphrase === 'finish setup' ? passphraseSetup : (
             <button
               type="button"
               disabled={busy !== null}
-              onClick={() => start('create the vault key')}
+              onClick={() => start('finish setup')}
               className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
               data-testid="zk-create-key"
             >
-              {busy ? 'Working…' : actionLabel('Create the vault key')}
+              {busy ? 'Working…' : actionLabel('Finish setup')}
             </button>
           )}
         </div>
       ) : (
         <div className="space-y-2 text-[12px]">
           <p className="text-foreground" data-testid="zk-on">
-            On · vault key version {state.kv}. canopy-web holds only ciphertext for this agent.
+            Ready · only the people and machines below can read these secrets; canopy-web cannot.
           </p>
           <table className="w-full text-[12px]" data-testid="zk-wraps">
             <thead>
               <tr className="text-left text-muted-foreground">
-                <th className="py-1 font-medium">Holds the vault key</th>
-                <th className="py-1 font-medium">As</th>
+                <th className="py-1 font-medium">Can read them</th>
+                <th className="py-1 font-medium" />
                 <th className="py-1 font-medium" />
               </tr>
             </thead>
@@ -292,9 +301,9 @@ export function AgentZkSection({
               {current.map((w) => (
                 <tr key={`${w.kind}:${w.target ?? ''}`}>
                   <td className="py-1.5 text-foreground">{w.kind === 'recovery' ? 'Recovery code' : w.label}</td>
-                  <td className="py-1.5 text-muted-foreground">{w.kind}</td>
+                  <td className="py-1.5 text-muted-foreground">{KIND_LABEL[w.kind] ?? w.kind}</td>
                   <td className="py-1.5 text-right">
-                    {!w.current && <span className="text-warning">no longer qualifies — rotate</span>}
+                    {!w.current && <span className="text-warning">no longer allowed — change the key</span>}
                   </td>
                 </tr>
               ))}
@@ -303,23 +312,21 @@ export function AgentZkSection({
                   <td className="py-1.5 text-foreground">
                     {p.kind === 'device' ? `${p.runner_name} · ${p.label || p.device_kind}` : p.email}
                   </td>
-                  <td className="py-1.5 text-muted-foreground">{p.kind}</td>
-                  <td className="py-1.5 text-right text-warning">pending</td>
+                  <td className="py-1.5 text-muted-foreground">{KIND_LABEL[p.kind] ?? p.kind}</td>
+                  <td className="py-1.5 text-right text-warning">waiting</td>
                 </tr>
               ))}
             </tbody>
           </table>
           {(state.sealed ?? []).length > 0 && (
             <p className="text-muted-foreground" data-testid="zk-sealed">
-              canopy-web sealed {(state.sealed ?? []).join(', ')} to this agent&rsquo;s devices and admins when it made
-              {(state.sealed ?? []).length === 1 ? ' it' : ' them'}. Granting re-encrypts{' '}
-              {(state.sealed ?? []).length === 1 ? 'it' : 'them'} under the vault key, so later devices can read
+              New: {(state.sealed ?? []).join(', ')}. Confirm once so machines you approve later can read
               {(state.sealed ?? []).length === 1 ? ' it' : ' them'} too.
             </p>
           )}
           {state.rotation_recommended && (
             <p className="text-warning" data-testid="zk-rotate-recommended">
-              A device or person who no longer qualifies still holds this vault key. Rotate to retire it.
+              A machine or person who is no longer allowed could still read these. Change the key to shut them out.
             </p>
           )}
           <div className="flex flex-wrap gap-2">
@@ -327,29 +334,20 @@ export function AgentZkSection({
               <button type="button" disabled={busy !== null} data-testid="zk-grant"
                       onClick={() => void run('grant access', () => grantPending(slug, unlock))}
                       className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">
-                {pending.length > 0 ? `Grant ${pending.length} pending` : 'Re-encrypt sealed values'}
+                {pending.length > 0 ? `Let ${pending.length} waiting in` : 'Confirm'}
               </button>
             )}
             <button type="button" disabled={busy !== null} data-testid="zk-rotate"
                     onClick={() => void run('rotate the vault key',
                       () => rotateVaultKey(slug, confirmCode(state.kv + 1), unlock), true)}
                     className="min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary disabled:opacity-40 sm:min-h-0">
-              Rotate vault key
+              Change the key
             </button>
-            <button type="button" disabled={busy !== null} data-testid="zk-recover"
+            {current.some((w) => w.kind === 'recovery') && <button type="button" disabled={busy !== null} data-testid="zk-recover"
                     onClick={() => setRecovering((v) => !v)}
                     className="min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary disabled:opacity-40 sm:min-h-0">
               Recover with code
-            </button>
-            <button type="button" disabled={busy !== null} data-testid="zk-disable"
-                    onClick={() => {
-                      if (window.confirm('Turn zero-knowledge off? Every value is decrypted here and handed back to canopy-web to hold.')) {
-                        void run('turn off zero-knowledge', () => turnOffZk(slug, unlock), true)
-                      }
-                    }}
-                    className="min-h-11 rounded-md px-3 py-1 text-[12px] text-destructive hover:bg-destructive/10 disabled:opacity-40 sm:min-h-0">
-              Turn off
-            </button>
+            </button>}
           </div>
           {recovering && (
             <form className="flex flex-wrap items-center gap-2" data-testid="zk-recover-form"
@@ -365,7 +363,7 @@ export function AgentZkSection({
                      className="min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground sm:min-h-0 sm:w-96" />
               <button type="submit" disabled={busy !== null || !typed.trim()}
                       className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">
-                Wrap it to me
+                Recover
               </button>
             </form>
           )}
@@ -376,16 +374,19 @@ export function AgentZkSection({
         <div role="dialog" aria-modal="true" aria-label="Recovery code"
              className="mt-3 space-y-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-[12px]"
              data-testid="zk-recovery-code">
-          <p className="font-medium text-foreground">Recovery code — shown once</p>
+          <p className="font-medium text-foreground">
+            {code.person ? 'Your recovery code — shown once' : 'Recovery code — shown once'}
+          </p>
           <p className="text-muted-foreground">
-            It opens this agent&rsquo;s vault key if every device and admin loses theirs. canopy-web does not keep a
-            copy. Download it or write it down before you continue.
+            {code.person
+              ? 'If you lose your passkey and passphrase, this gets you back into every agent you hold. canopy-web does not keep a copy — save it in your password manager.'
+              : 'It opens this agent\u2019s secrets if every machine and person loses access. canopy-web does not keep a copy. Save it before you continue.'}
           </p>
           <code className="block select-all break-all rounded border border-border bg-card px-2 py-1 font-mono text-[13px] text-foreground">
             {code.code}
           </code>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => download(slug, code.code, code.kv)}
+            <button type="button" onClick={() => download(slug, code.code, code.kv, code.person)}
                     className="min-h-11 rounded-md border border-input px-3 py-1 text-foreground hover:border-primary sm:min-h-0">
               Download
             </button>

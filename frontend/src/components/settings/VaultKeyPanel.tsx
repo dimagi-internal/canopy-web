@@ -15,17 +15,8 @@ import { browserSupportsPrf, PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vau
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { passphraseProblem } from '@/vault/zk'
 import { defaultLabel, webauthnSupported } from '@/auth/webauthn'
+import { useHash } from '@/lib/useHash'
 
-/** The URL hash, kept current — the full card opens at #vault-key. */
-function useHash(): string {
-  const [hash, setHash] = useState(() => window.location.hash)
-  useEffect(() => {
-    const on = () => setHash(window.location.hash)
-    window.addEventListener('hashchange', on)
-    return () => window.removeEventListener('hashchange', on)
-  }, [])
-  return hash
-}
 
 /**
  * Your vault key (Canopy Vault zero-knowledge, canopy-web#1550): a key pair made
@@ -83,7 +74,8 @@ export function EmergencyKit({ secretKey, email, onDone }: { secretKey: string; 
   )
 }
 
-export function VaultKeyPanel({ email = '', onlyWhenLinked = false }: { email?: string; onlyWhenLinked?: boolean }) {
+export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = false }:
+    { email?: string; onlyWhenLinked?: boolean; embedded?: boolean }) {
   const linked = useHash() === '#vault-key'
   const [ks, setKs] = useState<VaultKeysetOut | null>(null)
   const [busy, setBusy] = useState(false)
@@ -186,15 +178,17 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false }: { email?: 
   if (onlyWhenLinked && !linked && !kit) return null
 
   return (
-    <div id="vault-key"className="rounded-xl border border-border bg-card p-5 space-y-3" data-testid="settings-vault-key">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground">Vault key</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          For agents with zero-knowledge on: their secrets are encrypted in your browser, and canopy-web stores only
-          ciphertext. Your vault key is made here and kept sealed by your passkey and/or a passphrase with a Secret
-          Key; canopy-web cannot open it.
-        </p>
-      </div>
+    <div id="vault-key" className={embedded ? 'space-y-3' : 'rounded-xl border border-border bg-card p-5 space-y-3'}
+         data-testid="settings-vault-key">
+      {!embedded && (
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Your vault key</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            It unlocks your agents&rsquo; secrets in your browser. Your passkey or a passphrase opens it; canopy-web
+            cannot.
+          </p>
+        </div>
+      )}
 
       {kit && <EmergencyKit secretKey={kit} email={email} onDone={() => setKit(null)} />}
 
@@ -224,25 +218,22 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false }: { email?: 
             <thead>
               <tr className="text-left text-muted-foreground">
                 <th className="py-1 font-medium">Unlocks with</th>
-                <th className="py-1 font-medium">PRF</th>
-                <th className="py-1 font-medium">Holds your vault key</th>
+                <th className="py-1 font-medium" />
               </tr>
             </thead>
             <tbody>
               {(ks.passkeys ?? []).map((p) => (
                 <tr key={p.credential_id} className="border-t border-border" data-testid={`vault-passkey-${p.credential_id}`}>
                   <td className="py-1.5 text-foreground-secondary">Passkey · {p.label || 'passkey'}</td>
-                  <td className="py-1.5 text-muted-foreground">
-                    {p.prf_enabled === true ? 'supported' : p.prf_enabled === false ? 'not supported' : 'unknown'}
+                  <td className={`py-1.5 ${p.sealed ? 'text-success' : 'text-muted-foreground'}`}>
+                    {p.sealed ? '✓' : p.prf_enabled === false ? 'can\u2019t' : '—'}
                   </td>
-                  <td className={`py-1.5 ${p.sealed ? 'text-success' : 'text-muted-foreground'}`}>{p.sealed ? 'sealed' : '—'}</td>
                 </tr>
               ))}
               <tr className="border-t border-border" data-testid="vault-passphrase-row">
                 <td className="py-1.5 text-foreground-secondary">Passphrase + Secret Key</td>
-                <td className="py-1.5 text-muted-foreground">—</td>
                 <td className={`py-1.5 ${hasPassphrase ? 'text-success' : 'text-muted-foreground'}`}>
-                  {hasPassphrase ? 'sealed' : '—'}
+                  {hasPassphrase ? '✓' : '—'}
                 </td>
               </tr>
             </tbody>
@@ -260,7 +251,7 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false }: { email?: 
             </Button>
             <Button size="sm" variant="outline" disabled={busy} data-testid="vault-key-replace"
                     onClick={() => {
-                      if (window.confirm('Start a NEW vault key? Every zero-knowledge agent must grant you again (or you recover with its code).')) {
+                      if (window.confirm('Start a NEW vault key? Every agent must let you in again, and your recovery code stops working.')) {
                         void run(() => setUpVaultKey(true))
                       }
                     }}>

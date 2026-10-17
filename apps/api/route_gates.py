@@ -126,7 +126,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_agent_zk_values": ("agent-admin",),  # browser: + step-up; token allowed
     "add_agent_zk_wraps": ("agent-admin",),  # browser: + step-up; token allowed
     "rotate_agent_zk": ("agent-admin",),  # browser: + step-up; token allowed
-    "disable_agent_zk": ("agent-admin",),  # browser session + step-up only (plaintext comes back)
     "set_slack_enabled": ("agent-admin",),
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
@@ -784,7 +783,7 @@ SETTINGS: frozenset[str] = frozenset({
     "set_credential_source", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",
     "set_device_binding", "approve_runner_device_key", "revoke_runner_device_key",
     "set_pat_rotation", "rotate_pat_now",
-    "enable_agent_zk", "set_agent_zk_values", "add_agent_zk_wraps", "rotate_agent_zk", "disable_agent_zk",
+    "enable_agent_zk", "set_agent_zk_values", "add_agent_zk_wraps", "rotate_agent_zk",
     "set_agent_github", "delete_agent_github", "set_agent_salesforce", "delete_agent_salesforce",
     "set_slack_enabled", "set_turn_mode", "set_sender_trust", "delete_sender_trust",
     # agents: routing (handlers report before/after — apps/harness/routing_audit.py)

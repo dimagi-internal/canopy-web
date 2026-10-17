@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   getKeyset: vi.fn(), putKeyset: vi.fn(), getZkState: vi.fn(), enableZk: vi.fn(), addZkWraps: vi.fn(),
-  putZkValues: vi.fn(), rotateZk: vi.fn(), disableZk: vi.fn(),
+  putZkValues: vi.fn(), rotateZk: vi.fn(),
 }))
 vi.mock('@/api/vault', () => api)
 const { revealAgentCredential } = vi.hoisted(() => ({ revealAgentCredential: vi.fn() }))

@@ -79,8 +79,24 @@ def test_credential_source_defaults_to_1password_and_is_on_the_read_schemas(cs):
     assert listed["csbot"]["credential_source"] == "1password"
 
 
+def _vault_key(user):
+    import base64
+
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from apps.passkeys.models import UserVaultKeyset
+
+    n = ec.generate_private_key(ec.SECP256R1()).public_key().public_numbers()
+    b64 = lambda i: base64.urlsafe_b64encode(i.to_bytes(32, "big")).rstrip(b"=").decode()  # noqa: E731
+    UserVaultKeyset.objects.create(user=user, public_jwk={"kty": "EC", "crv": "P-256", "x": b64(n.x), "y": b64(n.y)},
+                                   seals=[])
+
+
 @pytest.mark.parametrize("who", ["owner", "admin"])
 def test_owner_or_admin_sets_the_credential_source(cs, who):
+    # Zero-knowledge is the canopy-web vault's only mode: the stored value is
+    # sealed to the agent's readers (here, its owner's vault key) on the move.
+    _vault_key(cs["owner"])
     res = _session(cs[who]).patch(
         "/api/agents/csbot/credential-source",
         data={"credential_source": "canopy-web"}, content_type="application/json",
@@ -89,6 +105,19 @@ def test_owner_or_admin_sets_the_credential_source(cs, who):
     assert res.json()["credential_source"] == "canopy-web"
     cs["agent"].refresh_from_db()
     assert cs["agent"].credential_source == "canopy-web"
+    assert cs["agent"].zk_enabled and cs["agent"].zk_kv == 0
+    row = cs["agent"].credentials.get(name="canopy-pat")
+    assert row.value_enc == "" and row.value_zk.startswith("zks1:")
+
+
+def test_moving_to_canopy_web_with_nobody_to_seal_to_is_refused(cs):
+    res = _session(cs["owner"]).patch(
+        "/api/agents/csbot/credential-source",
+        data={"credential_source": "canopy-web"}, content_type="application/json",
+    )
+    assert res.status_code == 409 and res.json()["error"] == "zk_no_recipients", res.content
+    cs["agent"].refresh_from_db()
+    assert cs["agent"].credential_source == "1password" and not cs["agent"].zk_enabled
 
 
 def test_an_editor_cannot_set_the_credential_source(cs):

@@ -44,6 +44,6 @@ describe('PasskeysPanel', () => {
     expect(screen.queryByTestId('passkey-register')).toBeNull()
     fireEvent.click(screen.getByTestId('passkey-add-another'))
     expect(screen.getByTestId('passkey-register')).toBeTruthy()
-    expect(screen.getByTestId('passkeys-vault-status').querySelector('a')!.getAttribute('href')).toBe('#vault-key')
+    expect(screen.queryByTestId('passkeys-vault-status')).toBeNull()  // no passphrase seal
   })
 })
