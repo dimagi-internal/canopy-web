@@ -378,6 +378,13 @@ the first login's account, warn = backup tokens only). Tests:
 `runner/ec2/tests/test_box_login.py`, `tests/test_runner_logins.py`,
 `tests/test_runner_mint.py`, `tests/test_runner_credential.py`.
 
+## How a runner signs in (keyless)
+
+- A paired box signs in **as itself**: it trades a fresh proof of its APPROVED device key (an EC2 box's instance role; a laptop's Secure Enclave/TPM key) for an hour-long `RunnerAccessToken` at `POST /api/runner-sessions/`, renews it before it runs out, and uses it for REST and its `ws/runner/<id>/` socket. Nothing long-lived lives on the box, and nothing in Settings → Tokens can cut a runner off.
+- The token opens the runner protocol only (`apps/harness/runner_auth.py`) and authenticates as `Runner.owner`, so every owner-scoped runner gate is unchanged. Revoking the device key (Settings → Security) stops the box at once — the socket re-checks its credential on every frame (`channels_auth.still_signed_in`).
+- A person's PAT (`CANOPY_TOKEN`) is only for pairing a new box and registering its key; the cloud runner falls back to it while no approved key can get a token (`runner/ec2/cloud_runner.py::_bearer`). An agent turn never inherits the box's credential — it acts with its own `CANOPY_WEB_PAT`.
+- Cloud runner: keyless. Laptop runner: still its owner's PAT until the canopy CLI's device-key signer is wired in.
+
 ## The runner software
 
 A runner is an installed package, never a checkout, and updates itself to what is deployed.

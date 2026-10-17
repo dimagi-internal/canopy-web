@@ -77,8 +77,11 @@ def _bearer_method(scope) -> str:
     """`pat` or `delegated` for the bearer token `_user_from_bearer` accepted."""
     raw = _header(scope, b"authorization")
     token_value = raw[7:].decode("latin1").strip() if raw else ""
+    from apps.harness.models import RunnerAccessToken
     from apps.tokens.models import DelegatedToken, PersonalToken
 
+    if token_value.startswith(RunnerAccessToken.PREFIX):
+        return "runner-key"
     if PersonalToken.lookup(token_value) is not None:
         return "pat"
     delegated = DelegatedToken.lookup(token_value)
@@ -93,7 +96,18 @@ def _user_from_bearer(scope):
     token_value = raw[7:].decode("latin1").strip()
     if not token_value:
         return None
+    from apps.harness.models import RunnerAccessToken
     from apps.tokens.models import DelegatedToken, PersonalToken
+
+    if token_value.startswith(RunnerAccessToken.PREFIX):
+        # A runner's own credential opens its own runner's control channel only
+        # (apps/harness/runner_auth.py) — any other socket is as if anonymous.
+        from apps.harness import runner_auth
+
+        rtok = RunnerAccessToken.lookup(token_value)
+        if rtok is None or not runner_auth.reaches_ws(scope.get("path", ""), rtok.runner_id):
+            return None
+        return rtok.runner.owner
 
     token = PersonalToken.lookup(token_value)
     if token is not None:
@@ -277,7 +291,7 @@ class RealtimeAuthMiddleware:
         # The acting site rides on the scope so the chat consumer can hold it to
         # the site's own agents, exactly as REST does.
         delegated_app = None
-        if user is not None and method not in ("session", "pat"):
+        if user is not None and method not in ("session", "pat", "runner-key"):
             from apps.tokens import delegation
 
             delegated_app = await _delegated_app(scope)

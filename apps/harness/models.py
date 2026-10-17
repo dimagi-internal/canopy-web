@@ -1262,6 +1262,78 @@ class RunnerDeviceKey(models.Model):
         return f"devicekey:{self.runner_id}:{self.jkt[:12]}:{self.status}"
 
 
+class RunnerAccessToken(models.Model):
+    """A runner's API credential, bought with its device key — never a person's PAT.
+
+    A box proves itself with an APPROVED `RunnerDeviceKey` (a DPoP proof from a key
+    it holds, or its EC2 instance role) at `POST /api/runner-sessions/`, and gets
+    one of these back: an hour long, bound to that runner, and good only on the
+    runner protocol (`runner_auth.reaches`). When it runs out the box proves itself
+    again. So nothing long-lived sits on the box to leak, and nothing a person
+    tidies up in Settings → Tokens can cut a runner off by accident — the way a
+    revoked PAT silently swallowed cloud-ec2-2's turns (2026-10-17). Revoking the
+    device key, retiring the runner or deactivating its owner kills every token
+    at once: `lookup` re-checks all three on each use.
+
+    It authenticates AS the runner's owner, because every runner gate is
+    owner-scoped (`Runner.owner`, `runner_may_hold_agent`); what it may reach is
+    narrowed by path, not by a second identity.
+    """
+
+    PREFIX = "crt_"
+    TTL = dt.timedelta(hours=1)
+
+    token_hash = models.CharField(max_length=64, unique=True)
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="access_tokens")
+    device_key = models.ForeignKey(RunnerDeviceKey, on_delete=models.CASCADE,
+                                   related_name="access_tokens")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["expires_at"])]
+
+    def __str__(self) -> str:
+        return f"runnertoken:{self.runner_id}:{self.expires_at:%Y-%m-%dT%H:%M}"
+
+    @classmethod
+    def mint(cls, device_key: RunnerDeviceKey) -> tuple[str, RunnerAccessToken]:
+        """A fresh token for the key's runner. The raw value is returned once."""
+        import hashlib
+        import secrets
+
+        raw = cls.PREFIX + secrets.token_urlsafe(32)
+        token = cls.objects.create(
+            token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            runner_id=device_key.runner_id, device_key=device_key,
+            expires_at=timezone.now() + cls.TTL)
+        # Tokens past their hour authenticate nothing; drop them as new ones arrive
+        # rather than letting a box's hourly refresh grow the table forever.
+        cls.objects.filter(runner_id=device_key.runner_id,
+                           expires_at__lt=timezone.now() - cls.TTL).delete()
+        return raw, token
+
+    @classmethod
+    def lookup(cls, raw: str) -> RunnerAccessToken | None:
+        """The live token for `raw`: unexpired, its device key still ACTIVE, its
+        runner not retired, its owner an active person. Else None."""
+        import hashlib
+
+        if not raw or not raw.startswith(cls.PREFIX):
+            return None
+        return (
+            cls.objects.select_related("runner__owner", "device_key")
+            .filter(token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+                    expires_at__gt=timezone.now(),
+                    device_key__status=RunnerDeviceKey.ACTIVE,
+                    runner__owner__is_active=True,
+                    runner__owner__system_account__isnull=True)
+            .exclude(runner__status=Runner.RETIRED)
+            .first()
+        )
+
+
 class RunnerFlag(models.Model):
     """One property a runner's OWNER vouches for (spec 2026-09-30-zdr-runners).
 

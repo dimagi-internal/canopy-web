@@ -57,6 +57,9 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``runner-holds-agent`` — ``services.caller_runs_agent`` /
   ``runner_may_hold_agent``.
 * ``contact`` — the ``/api/contact/`` surface, for contact principals.
+* ``device-proof`` — no session or token: a proof from an ACTIVE runner device key
+  (DPoP, or an EC2 instance role's signed STS call) bound to this request is the
+  authority (``apps/harness/api_runner_sessions.py``).
 * ``signed-link`` — a signed token in the URL is the authority (drill report,
   invite token, OAuth state).
 * ``beta-reviewer`` — ``apps/beta_requests/services.may_review``: a superuser or
@@ -85,7 +88,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
-    "hcp-grant",
+    "hcp-grant", "device-proof",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -220,6 +223,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_runner_credential": ("runner",),  # plaintext to the owner's token
     # --- apps/harness/api_device_keys.py (Canopy Vault device keys)
     "register_runner_device_key": ("runner-admin",),  # lands pending; approval is separate
+    "create_runner_session": ("device-proof",),  # anonymous door; an ACTIVE key's proof is the authority
     "list_runner_device_keys": ("runner-admin",),
     "approve_runner_device_key": ("runner-admin",),  # browser session only (+ passkey step-up)
     "revoke_runner_device_key": ("runner-admin",),
@@ -857,6 +861,8 @@ NOT_SETTINGS: dict[str, str] = {
     # a box registering its own key: lands `pending`, trusted only once a person
     # approves it (approve_runner_device_key, a setting)
     "register_runner_device_key": "runner-protocol",
+    # a box trading its approved device key's proof for an hour-long runner token
+    "create_runner_session": "ephemeral-credential",
     "refresh_mail_domain": "action",
     "reply_mail_thread": "conversation", "send_mail": "conversation", "set_mail_thread_state": "conversation",
     # content

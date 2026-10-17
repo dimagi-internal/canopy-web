@@ -8205,6 +8205,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/runner-sessions/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Exchange a runner's device-key proof for its API token
+         * @description Prove an approved device key (`X-Canopy-Aws-Proof` or `DPoP`, bound to
+         *     this URL) and get a runner token: `Authorization: Bearer` for the runner
+         *     protocol only, valid for an hour.
+         */
+        readonly post: operations["create_runner_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/huddles/": {
         readonly parameters: {
             readonly query?: never;
@@ -23737,6 +23759,39 @@ export interface components {
              */
             readonly proof: string;
         };
+        /**
+         * RunnerSessionOut
+         * @description A runner's own API credential: send it as `Authorization: Bearer`. It opens
+         *     the runner protocol only and runs out at `expires_at`; prove the device again
+         *     before then for the next one.
+         */
+        readonly RunnerSessionOut: {
+            /** Access Token */
+            readonly access_token: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /**
+             * Runner
+             * Format: uuid
+             */
+            readonly runner: string;
+        };
+        /**
+         * RunnerSessionIn
+         * @description Exchange a device-key proof for a runner token. The proof rides a header:
+         *     `X-Canopy-Aws-Proof` (an EC2 box's instance role) or `DPoP` (a key the box
+         *     holds), bound to this URL.
+         */
+        readonly RunnerSessionIn: {
+            /**
+             * Runner
+             * Format: uuid
+             */
+            readonly runner: string;
+        };
         /** HuddleSummaryOut */
         readonly HuddleSummaryOut: {
             /** Id */
@@ -37436,6 +37491,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerDeviceKeyOut"];
+                };
+            };
+        };
+    };
+    readonly create_runner_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerSessionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerSessionOut"];
                 };
             };
         };

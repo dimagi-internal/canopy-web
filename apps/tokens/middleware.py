@@ -55,6 +55,35 @@ class BearerTokenAuthMiddleware:
         user = getattr(request, "user", None)
         already_signed_in = user is not None and getattr(user, "is_authenticated", False)
 
+        # A runner's own credential (apps/harness/models.RunnerAccessToken), bought
+        # with its device key: it signs in as the runner's owner but opens only the
+        # runner protocol (apps/harness/runner_auth.reaches) — refused here, before
+        # any view, everywhere else.
+        from apps.harness.models import RunnerAccessToken
+
+        if raw.startswith(RunnerAccessToken.PREFIX):
+            from django.http import JsonResponse
+            from django.utils import timezone
+
+            from apps.harness import runner_auth
+
+            rtok = RunnerAccessToken.lookup(raw)
+            if rtok is None:
+                return JsonResponse({"detail": "runner token is not valid (expired, or its "
+                                     "device key was revoked)"}, status=401)
+            if not runner_auth.reaches(request.method, request.path_info, rtok.runner_id):
+                detail = "a runner token opens the runner protocol only"
+                return JsonResponse(
+                    {"type": "about:blank", "title": detail, "status": 403, "detail": detail},
+                    status=403, content_type="application/problem+json")
+            RunnerAccessToken.objects.filter(pk=rtok.pk).update(last_used_at=timezone.now())
+            request.user = rtok.runner.owner
+            request.runner_token = rtok
+            request.auth_method = "runner-key"
+            request.auth_credential = _credential("runner-key", rtok.pk, rtok.runner.name)
+            request._dont_enforce_csrf_checks = True
+            return None
+
         # An HCP service access token (apps/contacts/hcp_oauth.py): an app canopy
         # does not operate, acting under ONE person's grant. It is no canopy user,
         # so `request.user` stays anonymous, and it opens /api/hcp/v1/ and nothing

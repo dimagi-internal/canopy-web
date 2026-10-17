@@ -47,6 +47,7 @@ PUBLIC_PATH_PREFIXES = (
     # unrevoked app that has valid frame origins, and carries no data).
     "/embed/",
     "/api/auth/contact-token",   # auth=None — self-enforces by verifying a signed assertion
+    "/api/runner-sessions/",     # auth=None — self-enforces: an approved device key's proof (apps/harness/api_runner_sessions.py)
     # canopy's OAuth CLIENT identity — the metadata document whose URL is its
     # client_id, and the public client key it names. A host reads both before
     # it trusts a redemption, so they cannot sit behind a login; neither holds

@@ -2276,3 +2276,120 @@ def test_a_refused_token_stops_claiming_until_canopy_accepts_it_again(cloud_runn
     assert cloud_runner._api("GET", "/runners/r1/streams")[0] == 200
     cloud_runner._claim_and_run_once(object(), "r1")
     assert sent, "a token canopy accepts again must resume claiming"
+
+
+# ── keyless: the box signs in with its device key ───────────────────────────
+
+def _keyless(cloud_runner, monkeypatch, *, exchange):
+    monkeypatch.delenv("CANOPY_DEVICE_KEY", raising=False)  # conftest turns it off
+    monkeypatch.setattr(cloud_runner, "_RUNNER_ID", "r1")
+    monkeypatch.setattr(cloud_runner, "TOKEN", "owner-pat")
+    monkeypatch.setattr(cloud_runner, "_RUNNER_TOKEN",
+                        {"raw": "", "exp": 0.0, "failed_at": 0.0, "announced": False})
+    calls = []
+
+    def fake(rid):
+        calls.append(rid)
+        if exchange:
+            cloud_runner._RUNNER_TOKEN.update(raw=f"crt_{len(calls)}", exp=time.time() + 3600)
+        return exchange
+
+    monkeypatch.setattr(cloud_runner, "_exchange_device_proof", fake)
+    return calls
+
+
+def test_the_box_uses_its_own_token_not_the_pat(cloud_runner, monkeypatch):
+    calls = _keyless(cloud_runner, monkeypatch, exchange=True)
+    assert cloud_runner._bearer() == "crt_1"
+    assert cloud_runner._bearer() == "crt_1", "re-exchanged a token that is still fresh"
+    assert calls == ["r1"]
+
+
+def test_it_renews_before_the_hour_runs_out(cloud_runner, monkeypatch):
+    calls = _keyless(cloud_runner, monkeypatch, exchange=True)
+    cloud_runner._bearer()
+    cloud_runner._RUNNER_TOKEN["exp"] = time.time() + 120  # inside the renew window
+    assert cloud_runner._bearer() == "crt_2"
+    assert len(calls) == 2
+
+
+def test_an_unapproved_key_falls_back_to_the_pat_and_does_not_hammer(cloud_runner, monkeypatch):
+    calls = _keyless(cloud_runner, monkeypatch, exchange=False)
+    assert cloud_runner._bearer() == "owner-pat"
+    assert cloud_runner._bearer() == "owner-pat"
+    assert len(calls) == 1, "retried the exchange inside the back-off"
+
+
+def test_a_401_on_a_runner_token_gets_a_fresh_one_and_retries_once(cloud_runner, monkeypatch):
+    import io
+    import urllib.error
+
+    _keyless(cloud_runner, monkeypatch, exchange=True)
+    monkeypatch.setattr(cloud_runner, "BASE_URL", "https://canopy.test")
+    seen = []
+
+    class _Ok(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def urlopen(req, timeout=None):
+        seen.append(req.get_header("Authorization"))
+        if len(seen) == 1:
+            raise urllib.error.HTTPError(req.get_full_url(), 401, "x", {}, io.BytesIO(b"{}"))
+        return _Ok(b"{}")
+
+    monkeypatch.setattr(cloud_runner.urllib.request, "urlopen", urlopen)
+    assert cloud_runner._api("GET", "/runners/r1/streams")[0] == 200
+    assert seen == ["Bearer crt_1", "Bearer crt_2"]
+    assert not cloud_runner._token_refused()
+
+
+def test_an_agent_turn_never_gets_the_box_credential(cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setenv("CANOPY_TOKEN", "owner-pat")
+    monkeypatch.setattr(cloud_runner.pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+    (tmp_path / ".echo").mkdir()
+    (tmp_path / ".echo" / ".env").write_text("CANOPY_WEB_PAT=agent-pat\n")
+    env = cloud_runner._agent_env("echo")
+    assert "CANOPY_TOKEN" not in env
+    assert env["CANOPY_WEB_PAT"] == "agent-pat"
+
+
+def test_the_exchange_sends_only_the_device_proof(cloud_runner, monkeypatch):
+    """The contract canopy-web's POST /api/runner-sessions/ builds against:
+    the runner id in the body, the instance-role proof for THIS url, no bearer."""
+    import io
+
+    monkeypatch.setattr(cloud_runner, "BASE_URL", "https://canopy.test")
+    monkeypatch.setattr(cloud_runner, "_RUNNER_TOKEN",
+                        {"raw": "", "exp": 0.0, "failed_at": 0.0, "announced": False})
+    proved = []
+    monkeypatch.setattr(cloud_runner, "_aws_proof_headers",
+                        lambda url: proved.append(url) or {"X-Canopy-Aws-Proof": "p"})
+    sent = {}
+
+    class _Ok(io.BytesIO):
+        status = 201
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def urlopen(req, timeout=None):
+        sent.update(url=req.get_full_url(), body=json.loads(req.data),
+                    auth=req.get_header("Authorization"), proof=req.get_header("X-canopy-aws-proof"))
+        return _Ok(json.dumps({"access_token": "crt_x", "runner": "r1",
+                               "expires_at": "2099-01-01T00:00:00Z"}).encode())
+
+    monkeypatch.setattr(cloud_runner.urllib.request, "urlopen", urlopen)
+    assert cloud_runner._exchange_device_proof("r1") is True
+    assert proved == ["https://canopy.test/api/runner-sessions/"]
+    assert sent == {"url": "https://canopy.test/api/runner-sessions/", "body": {"runner": "r1"},
+                    "auth": None, "proof": "p"}
+    assert cloud_runner._RUNNER_TOKEN["raw"] == "crt_x"

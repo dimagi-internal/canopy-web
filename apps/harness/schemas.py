@@ -1558,6 +1558,22 @@ DeviceKeyKind = Literal["secure-enclave", "tpm", "software", "aws-iam"]
 DeviceKeyStatus = Literal["pending", "active", "revoked"]
 
 
+class RunnerSessionIn(Schema):
+    """Exchange a device-key proof for a runner token. The proof rides a header:
+    `X-Canopy-Aws-Proof` (an EC2 box's instance role) or `DPoP` (a key the box
+    holds), bound to this URL."""
+    runner: uuid.UUID
+
+
+class RunnerSessionOut(Schema):
+    """A runner's own API credential: send it as `Authorization: Bearer`. It opens
+    the runner protocol only and runs out at `expires_at`; prove the device again
+    before then for the next one."""
+    access_token: str
+    expires_at: dt.datetime
+    runner: uuid.UUID
+
+
 class RunnerDeviceKeyIn(Schema):
     """Register the PUBLIC half of a key the runner holds. Re-posting the same
     key (same RFC 7638 thumbprint) is idempotent.

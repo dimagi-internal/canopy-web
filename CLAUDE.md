@@ -114,6 +114,7 @@ Each is enforced or load-bearing across the codebase; the pointer says where.
 **Runners**
 - **A runner serves its OWNER's workspaces, never `Runner.workspace`.** The tenant gate is `routing.runner_tenant_slugs` (owner's `agent.work` ∩ `RunnerEnrollment` coverage), shared by claim and schedules; a NULL owner fails closed → `tests/test_claim_schedule_parity.py`, `docs/architecture/runners.md`
 - **A box runs an agent only if its owner is one of the agent's admins** (`agents.services.runner_may_hold_agent`) — claim, credential resolve, GitHub token, pins and routing writes all ask it. **No box holds a GitHub token**: a turn gets its agent owner's delegation, per turn, with no shared fallback (409 when absent; never for a confined turn). → `docs/architecture/runners.md`
+- **A runner signs in as itself, never with a person's PAT.** Its approved device key buys an hour-long `RunnerAccessToken` (`POST /api/runner-sessions/`) that opens the runner protocol only (`apps/harness/runner_auth.py`); a PAT is for pairing a new box. Don't widen `runner_auth` to non-runner routes or hand the box credential to an agent turn. → `tests/test_keyless_runner_auth.py`, `docs/architecture/runners.md`
 - **A WS control frame is a doorbell, never a mechanism.** Anything a runner must do (answer a menu, close a session) gets a durable row it drains on its poll tick (`RunnerBinding.pending_answer`/`close_requested`) — a frame to a dead channel vanishes while the runner still reads ONLINE. → `docs/architecture/blocked-agent-menus.md`
 
 **Chat**

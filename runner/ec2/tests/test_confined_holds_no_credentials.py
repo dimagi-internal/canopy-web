@@ -136,7 +136,8 @@ def test_a_full_profile_turn_is_unchanged(cr):
     assert env["GH_TOKEN"] == "owner-gh"                      # the owner's, per turn
     assert env["OP_SERVICE_ACCOUNT_TOKEN"] == "ops_agent"     # the agent's own key
     assert env["CANOPY_WEB_PAT"] == "cpat_agent"              # the agent's .env
-    assert env["CANOPY_TOKEN"] == "cpat_runner_owner"
+    # The box's own credential is never an agent's fallback identity.
+    assert "CANOPY_TOKEN" not in env
     assert env["CANOPY_CHAT_KEY"] == "ck_chat"
     assert "CANOPY_PROFILE" not in env
 
