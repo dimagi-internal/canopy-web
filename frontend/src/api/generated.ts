@@ -6731,6 +6731,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/agents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The agents this runner serves: the ones whose secrets it may read
+         * @description Slugs, by the same rule a credential resolve checks a box's device proof
+         *     against (`device_keys.runner_serves_agent`). The box's refresh prepares only
+         *     these: listing every agent its token can see made it ask for vaults it may
+         *     not open, and each refusal emailed that agent's owner (canopy-web#1563).
+         */
+        readonly get: operations["runner_agents"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/mint": {
         readonly parameters: {
             readonly query?: never;
@@ -35777,6 +35800,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["RunnerGitHubReadinessOut"][];
+                };
+            };
+        };
+    };
+    readonly runner_agents: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly string[];
                 };
             };
         };
