@@ -220,6 +220,11 @@ class RunnerOut(Schema):
     # canopy's canonical address. A runner still configured with an address
     # canopy has left reads it off its heartbeat reply and moves itself there.
     canonical_base_url: str | None = None
+    # Turns this runner reported running that a person asked to stop — set only
+    # on a heartbeat reply (services.cancel_requested_turn_ids), empty elsewhere.
+    # The durable half of a stop: the `cancel` frame is the doorbell, this is
+    # what reaches a runner whose socket missed it.
+    cancel_turn_ids: list[str] | None = None
 
     @staticmethod
     def resolve_health_checks(obj) -> dict[str, HealthCheck] | None:
@@ -256,6 +261,10 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_refresh_pending(obj) -> bool:
         return obj.refresh_pending()
+
+    @staticmethod
+    def resolve_cancel_turn_ids(obj) -> list[str] | None:
+        return list(getattr(obj, "cancel_turn_ids", None) or [])
 
     @staticmethod
     def resolve_canonical_base_url(obj) -> str:

@@ -718,6 +718,61 @@ def wake_due_runners(now: dt.datetime) -> set:
     return woken
 
 
+#: How long a runner may keep renewing a turn a person asked to stop. Long enough
+#: for a stop to land on a box whose socket is reconnecting (the heartbeat reply
+#: re-delivers it every beat), short enough that a runner which cannot stop a turn
+#: does not hold it — and the agent's one executing slot — indefinitely.
+CANCEL_GRACE_SECONDS = 300
+
+
+def _valid_turn_ids(ids) -> list[uuid.UUID]:
+    out = []
+    for raw in ids or []:
+        try:
+            out.append(uuid.UUID(str(raw)))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def cancel_requested_turn_ids(runner: Runner, active_turn_ids) -> list[str]:
+    """The turns this runner reports running that a person has asked to stop.
+
+    The DURABLE half of a stop. `cancel_turn` publishes `runner.cancel` down the
+    runner's socket, but a frame is a doorbell: a box on the REST fallback, or
+    whose socket is mid-reconnect, never hears it, and the turn ran to completion
+    (cloud-ec2-2, 2026-10-17). The `cancel_requested` ledger event is the record,
+    and every heartbeat reply now carries it back, so the stop lands within one
+    beat on every path. Both runner kinds read the same field.
+    """
+    ids = _valid_turn_ids(active_turn_ids)
+    if not ids:
+        return []
+    from .models import TurnEvent
+
+    executing = Turn.objects.filter(
+        pk__in=ids, claimed_by=runner,
+        status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
+    )
+    asked = TurnEvent.objects.filter(
+        turn__in=executing, kind="cancel_requested").values_list("turn_id", flat=True)
+    return sorted({str(t) for t in asked})
+
+
+def _cancel_overdue_ids(active_turn_ids, now) -> list[uuid.UUID]:
+    """Reported turns whose FIRST stop request is older than CANCEL_GRACE_SECONDS."""
+    from .models import TurnEvent
+
+    ids = _valid_turn_ids(active_turn_ids)
+    if not ids:
+        return []
+    cutoff = now - dt.timedelta(seconds=CANCEL_GRACE_SECONDS)
+    return list(
+        TurnEvent.objects.filter(turn_id__in=ids, kind="cancel_requested", ts__lt=cutoff)
+        .values_list("turn_id", flat=True).distinct()
+    )
+
+
 def heartbeat(
     runner: Runner, *, active_turn_ids: list[str], degraded: bool = False, note: str = "",
     ready: bool = True, ready_note: str = "", code_branch: str = "",
@@ -833,19 +888,31 @@ def heartbeat(
             groups.runner_group(runner.pk),
             {"type": "runner.update_available", "expected_sha": expected},
         )
+    # The stops this runner owes: reported turns a person asked to stop. Rides
+    # the reply (RunnerOut.cancel_turn_ids / the WS heartbeat.ack) so a stop
+    # reaches the box even when the `runner.cancel` frame did not — see
+    # `cancel_requested_turn_ids`.
+    runner.cancel_turn_ids = cancel_requested_turn_ids(runner, active_turn_ids)
     if active_turn_ids:
+        # A turn whose stop has gone unhonoured past the grace is NOT renewed: the
+        # runner owns the lease, but "owns" cannot mean "may hold a stopped turn
+        # forever by heartbeating it". The sweep then closes it CANCELLED (its
+        # cancel_requested rule), freeing the agent's one executing slot.
+        overdue = _cancel_overdue_ids(active_turn_ids, now)
         Turn.objects.filter(
             pk__in=active_turn_ids,
             claimed_by=runner,
             status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
-        ).update(lease_expires_at=now + dt.timedelta(seconds=DEFAULT_LEASE_SECONDS))
+        ).exclude(pk__in=overdue).update(
+            lease_expires_at=now + dt.timedelta(seconds=DEFAULT_LEASE_SECONDS))
         # A rider lives exactly as long as the turn it rode into: renewed with
         # it, so it can only be swept when that turn is.
         Turn.objects.filter(
             rides_turn_id__in=active_turn_ids,
             claimed_by=runner,
             status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
-        ).update(lease_expires_at=now + dt.timedelta(seconds=DEFAULT_LEASE_SECONDS))
+        ).exclude(rides_turn_id__in=overdue).update(
+            lease_expires_at=now + dt.timedelta(seconds=DEFAULT_LEASE_SECONDS))
     # The fleet's heartbeats are canopy's only clock (no celery, no beat), so the
     # delayed "your chat has gone quiet" pushes are drained here. Best-effort: a
     # push must never cost a runner its heartbeat.

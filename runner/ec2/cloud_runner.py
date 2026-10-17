@@ -796,7 +796,10 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
 
     def _loop() -> None:
         while not stop.wait(LEASE_HEARTBEAT_SECONDS):
-            _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body([turn_id]))
+            _, reply = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body([turn_id]))
+            # The reply names this turn if a person asked to stop it — the
+            # durable copy of the `cancel` frame, heard even with no socket.
+            honour_stops(reply)
 
     threading.Thread(target=_loop, daemon=True, name=f"lease-{turn_id[:8]}").start()
     return stop
@@ -1545,6 +1548,9 @@ def _announce_session(turn_id: str, cli_session_id: str) -> None:
     id. Never raises: bookkeeping must not cost the turn."""
     if not cli_session_id:
         return
+    # Remembered for a session-shaped stop (`stop_session`), confined or not.
+    with _STOP_LOCK:
+        _TURN_SESSIONS[turn_id] = cli_session_id
     with _SESSION_HOOKS_LOCK:
         hook = _SESSION_HOOKS.get(turn_id)
     if hook is None:
@@ -1698,6 +1704,10 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         _log(f"exec: acp (turn {turn_id[:8]}) in {workdir} session={session_id[:8]}")
 
         pending = agent.prompt(prompt)
+        if stop_requested(turn_id):
+            # The stop arrived while the session was starting, when there was
+            # no prompt yet to cancel.
+            agent.cancel()
         deadline = time.time() + ACP_TURN_TIMEOUT_SECONDS
         result = None
         while True:
@@ -1769,6 +1779,8 @@ def _content_text_of(update: dict) -> str:
 def _execute_once(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
                   resume_session_id=None) -> tuple[bool, str, str]:
     """The one place a turn picks an executor."""
+    if stop_requested(turn_id):
+        return False, "stopped before it started", ""
     if RUNNER_EXECUTOR == "acp":
         return run_acp(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
                        resume_session_id=resume_session_id)
@@ -1799,6 +1811,9 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
             resume_session_id=resume_session_id)
         attempted.append(_claude_cred_label())
+        if stop_requested(turn_id):
+            # A person stopped it: never fail over and run it again.
+            return ok, text, session_id
         capped, dead = _is_usage_cap(text), _is_auth_required(text)
         hint = _CAP_RESET_HINT.pop(turn_id, None)
         if capped and not ok:
@@ -1913,6 +1928,8 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         cmd, cwd=str(workdir), stdout=subprocess.PIPE, stderr=stderr_file, text=True,
         env=_agent_env(agent_slug),
     )
+    # Reachable by a stop from here on (`request_stop`).
+    _register_cli_proc(turn_id, proc)
     final_text = ""
     cli_session_id = ""
     ok = True
@@ -2155,7 +2172,8 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             tail = ""
         final_text = tail[-500:]
     if (resume_session_id and not _resume_retried and lines_seen == 0
-            and loop_error is None and proc.returncode != 0):
+            and loop_error is None and proc.returncode != 0
+            and not stop_requested(turn_id)):  # a stopped turn is not a failed resume
         # The CLI emitted NOTHING at all before exiting even though the
         # transcript file existed at start (already verified above) — some
         # other resume failure (a corrupt/incompatible file, a CLI version
@@ -3082,6 +3100,131 @@ def stop_turn(turn_id: str) -> bool:
     except Exception as exc:  # noqa: BLE001
         _log(f"stop turn={turn_id[:8]} failed: {exc}")
         return False
+
+
+# ── A person's stop ─────────────────────────────────────────────────────────
+#
+# canopy-web asks a runner to stop a turn three ways, and until 2026-10-17 this
+# runner heard none of them: a `cancel` frame (turn-shaped), a `session_interrupt`
+# frame (session-shaped) and — the durable one — `cancel_turn_ids` on every
+# heartbeat reply. The WS loop had no branch for either frame and nothing read
+# the reply, so `stop_turn` above existed and was never called: Ada stopped a
+# huddle turn on cloud-ec2-2 twice and it ran 23 more minutes, dispatching
+# rounds to Hal after each stop.
+#
+# All three now land on `request_stop`, from whichever thread heard them (the
+# WS thread, the REST loop, a turn's lease renewer). It must never block: it
+# records the stop, signals the executor, and returns. The turn's own worker
+# notices on its way out and finishes it CANCELLED.
+
+#: Turn ids a person asked to stop, and when the stop first arrived.
+_STOP_REQUESTED: dict[str, float] = {}
+_STOP_LOCK = threading.Lock()
+#: Turn id -> the live `claude -p` process (the cli executor's handle).
+_CLI_PROCS: dict = {}
+#: Turn id -> the CLI session id it drives, for a session-shaped stop.
+_TURN_SESSIONS: dict[str, str] = {}
+#: A stop re-delivered this long after the first one escalates: SIGKILL for
+#: `claude -p`, closing the adapter for ACP. Every heartbeat re-delivers a stop
+#: the server still sees running, so this is reached only by a turn that ignored
+#: the polite one.
+STOP_ESCALATE_SECONDS = float(os.environ.get("STOP_ESCALATE_SECONDS", "30"))
+
+
+def stop_requested(turn_id: str) -> bool:
+    with _STOP_LOCK:
+        return turn_id in _STOP_REQUESTED
+
+
+def _clear_stop(turn_id: str) -> None:
+    with _STOP_LOCK:
+        _STOP_REQUESTED.pop(turn_id, None)
+        _CLI_PROCS.pop(turn_id, None)
+        _TURN_SESSIONS.pop(turn_id, None)
+
+
+def _register_cli_proc(turn_id: str, proc) -> None:
+    """Make a `claude -p` process stoppable — and stop it at once if the stop
+    beat the spawn (it arrived while the worktree was still being prepared)."""
+    with _STOP_LOCK:
+        _CLI_PROCS[turn_id] = proc
+        early = turn_id in _STOP_REQUESTED
+    if early:
+        _signal_cli(turn_id, proc, escalate=False)
+
+
+def _signal_cli(turn_id: str, proc, *, escalate: bool) -> bool:
+    try:
+        if proc.poll() is not None:
+            return False
+        if escalate:
+            proc.kill()
+        else:
+            proc.terminate()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _log(f"stop turn={turn_id[:8]}: could not signal claude: {exc}")
+        return False
+
+
+def _close_acp_later(turn_id: str, agent) -> None:
+    """Close an ACP agent that ignored `session/cancel` — on its own thread,
+    because `close()` waits on the adapter and the caller may be the WS thread."""
+    def _close():
+        try:
+            agent.close()
+        except Exception as exc:  # noqa: BLE001
+            _log(f"stop turn={turn_id[:8]}: could not close the ACP agent: {exc}")
+    threading.Thread(target=_close, daemon=True, name=f"stop-{turn_id[:8]}").start()
+
+
+def request_stop(turn_id: str, why: str = "") -> bool:
+    """A person asked to stop this turn. True if it is running HERE.
+
+    Idempotent and cheap, because it is called again on every heartbeat until
+    the server sees the turn finish: the first call interrupts politely (ACP
+    `session/cancel`, SIGTERM to `claude -p`); one arriving STOP_ESCALATE_SECONDS
+    later escalates (close the adapter, SIGKILL). Never raises, never blocks.
+    """
+    turn_id = str(turn_id or "")
+    with _TURNS_LOCK:
+        if turn_id not in _IN_FLIGHT:
+            return False
+    now = time.time()
+    with _STOP_LOCK:
+        first_at = _STOP_REQUESTED.setdefault(turn_id, now)
+        proc = _CLI_PROCS.get(turn_id)
+    escalate = now - first_at >= STOP_ESCALATE_SECONDS
+    if first_at == now:
+        _log(f"stop requested for turn {turn_id[:8]}" + (f" ({why})" if why else ""))
+    agent = _acp_agent_for(turn_id)
+    if agent is not None:
+        if escalate:
+            _log(f"turn {turn_id[:8]} ignored its stop for {now - first_at:.0f}s; closing it")
+            _close_acp_later(turn_id, agent)
+        else:
+            stop_turn(turn_id)
+    if proc is not None:
+        _signal_cli(turn_id, proc, escalate=escalate)
+    return True
+
+
+def stop_session(session_key: str, why: str = "") -> list[str]:
+    """A session-shaped stop: stop whichever in-flight turn drives that CLI
+    session. Returns the turn ids it reached."""
+    if not session_key:
+        return []
+    with _STOP_LOCK:
+        hits = [tid for tid, sid in _TURN_SESSIONS.items() if sid == session_key]
+    return [tid for tid in hits if request_stop(tid, why or "session stop")]
+
+
+def honour_stops(reply) -> None:
+    """Act on `cancel_turn_ids` in a heartbeat reply (REST RunnerOut or WS ack)."""
+    if not isinstance(reply, dict):
+        return
+    for tid in reply.get("cancel_turn_ids") or []:
+        request_stop(str(tid), "heartbeat")
 
 
 #: The adapter's binary and package names. `find_adapter` in canopy_acp resolves
@@ -5811,6 +5954,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # socket at all, so that failure class is now structurally impossible
         # here rather than merely handled.
         finish = "done" if ok else "failed"
+        if not ok and stop_requested(turn_id):
+            # Stopped on request — CANCELLED, never FAILED: a failure starts a
+            # debugger turn and, sessionless, would be re-queued and run again.
+            # A turn that completed anyway stays DONE; the server notes the
+            # ignored stop on its own (services.finish_turn).
+            finish = "cancelled"
+            text = f"stopped on request — {text}" if text else "stopped on request"
         finish_body = {"status": finish, "result_note": text[:2000]}
         if cli_session_id:
             # The session this turn drove — the key its close-out report and the
@@ -5847,6 +5997,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     finally:
         with _TURNS_LOCK:
             _IN_FLIGHT.pop(turn_id, None)
+        _clear_stop(turn_id)
 
 
 def _start_turn(runner_id: str, turn: dict) -> bool:
@@ -5874,6 +6025,7 @@ def run_over_rest(runner_id: str) -> None:
         # their leases — with concurrency, reporting only the newest would let
         # the others expire mid-run.
         _, beat = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body(_in_flight_ids()))
+        honour_stops(beat)
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
         maybe_rebase((beat or {}).get("canonical_base_url", ""), runner_id)
         # Attached viewers are served on this path too — a runner that fell back
@@ -6085,6 +6237,7 @@ def run_over_ws(runner_id: str) -> bool:
             # what the REST paths reported, every 20 seconds.
             ack = _ws_request(ws, {"action": "heartbeat", **_heartbeat_body(_in_flight_ids())},
                               "heartbeat.ack", timeout=15)
+            honour_stops(ack)
             # This thread is the one that claims, so "idle" holds until the
             # restart; see maybe_self_refresh.
             maybe_self_refresh(bool((ack or {}).get("refresh_pending")))
@@ -6106,6 +6259,13 @@ def run_over_ws(runner_id: str) -> bool:
                     mtype = msg.get("type")
                     if mtype == "wake":
                         _drain(ws, runner_id)
+                    elif mtype == "cancel":
+                        # A person stopped a turn. Only signals the executor;
+                        # the turn's worker finishes it CANCELLED.
+                        request_stop(str(msg.get("turn_id") or ""), "cancel frame")
+                    elif mtype == "session_interrupt":
+                        # A stop aimed at a session: the turn driving it, if any.
+                        stop_session(str(msg.get("session_key") or ""), "session interrupt")
                     elif mtype == "check_inbox":
                         # Mark it due; the POLL thread does the read. Same split
                         # the laptop uses, for the same reason: a `gog` subprocess
