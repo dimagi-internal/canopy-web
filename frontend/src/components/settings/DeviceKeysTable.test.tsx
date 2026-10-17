@@ -10,8 +10,8 @@ const { approveRunnerDeviceKey, revokeRunnerDeviceKey } = vi.hoisted(() => ({
   revokeRunnerDeviceKey: vi.fn(),
 }))
 vi.mock('@/api/deviceKeys', () => ({ approveRunnerDeviceKey, revokeRunnerDeviceKey }))
-const { grantPending, approveAndGrant } = vi.hoisted(() => ({ grantPending: vi.fn(), approveAndGrant: vi.fn() }))
-vi.mock('@/vault/operations', () => ({ grantPending, approveAndGrant, unlockVaultKey: vi.fn() }))
+const { giveAccess, approveAndGrant } = vi.hoisted(() => ({ giveAccess: vi.fn(), approveAndGrant: vi.fn() }))
+vi.mock('@/vault/operations', () => ({ giveAccess, approveAndGrant, unlockVaultKey: vi.fn() }))
 
 const { DeviceKeysTable } = await import('./DeviceKeysTable')
 
@@ -36,7 +36,7 @@ describe('DeviceKeysTable', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...KEY, status: 'active' }))
     expect(approveAndGrant).toHaveBeenCalledWith('k1', ['eva'], expect.any(Function))
     expect(approveRunnerDeviceKey).not.toHaveBeenCalled()
-    expect(await screen.findByText(/Granted: eva/)).toBeTruthy()
+    expect(await screen.findByText(/this machine can now read eva/)).toBeTruthy()
     expect(screen.queryByTestId('device-key-zk-grant-button')).toBeNull()
   })
 
@@ -56,15 +56,26 @@ describe('DeviceKeysTable', () => {
     expect(approveRunnerDeviceKey).toHaveBeenCalledWith('k1')
   })
 
-  it('offers the vault-key grant right after approving, for zero-knowledge agents (canopy-web#1550)', async () => {
+  it('offers access right after approving, for agents the listing did not know about (canopy-web#1550)', async () => {
     approveRunnerDeviceKey.mockResolvedValue({ ...KEY, status: 'active', zk_pending_agents: ['eva'] })
-    grantPending.mockResolvedValue({})
+    giveAccess.mockResolvedValue({})
     render(<DeviceKeysTable keys={[KEY]} onChange={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     expect((await screen.findByTestId('device-key-zk-grant')).textContent).toContain('eva')
     fireEvent.click(screen.getByTestId('device-key-zk-grant-button'))
-    await waitFor(() => expect(grantPending).toHaveBeenCalledWith('eva', expect.any(Function)))
-    expect((await screen.findByText(/Granted: eva/))).toBeTruthy()
+    await waitFor(() => expect(giveAccess).toHaveBeenCalledWith('eva', expect.any(Function)))
+    expect((await screen.findByText(/this machine can now read eva/))).toBeTruthy()
+  })
+
+  it('an approved machine agents still wait on: one click gives it access', async () => {
+    giveAccess.mockResolvedValue({})
+    const onChange = vi.fn()
+    const k = { ...KEY, status: 'active' as const, zk_pending_agents: ['hal', 'eva'] }
+    render(<DeviceKeysTable keys={[k]} onChange={onChange} />)
+    fireEvent.click(screen.getByTestId('device-key-give-k1'))
+    await waitFor(() => expect(giveAccess).toHaveBeenCalledTimes(2))
+    expect(giveAccess.mock.calls.map((c) => c[0])).toEqual(['hal', 'eva'])
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...k, zk_pending_agents: [] }))
   })
 
   it('says a re-approval is an encryption key added, not a new box', () => {

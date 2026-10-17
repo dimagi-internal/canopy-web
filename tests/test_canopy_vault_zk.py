@@ -859,10 +859,26 @@ def test_a_pending_keys_listing_names_the_zk_agents_approving_it_will_need(fleet
     assert rows[str(key.pk)]["zk_pending_agents"] == ["eva"]
     # The already-wrapped active key needs nothing.
     assert rows[str(fleet.device.pk)]["zk_pending_agents"] == []
-    # An agent with no vault key yet has nothing to grant.
+    # An agent with no vault key yet and nothing stored has nothing to grant.
     Agent.objects.filter(pk=fleet.agent.pk).update(zk_kv=0)
+    AgentCredential.objects.filter(agent=fleet.agent).delete()
     rows = {r["id"]: r for r in fleet.client.get("/api/runner-device-keys/").json()}
     assert rows[str(key.pk)]["zk_pending_agents"] == []
+
+
+def test_approving_a_key_covers_a_born_agent_whose_sealed_values_it_cannot_read(fleet):
+    """kv 0: values sealed before this key existed are listed, so the approval
+    touch creates the vault key; a value already sealed to the key is not."""
+    sign, ecdh = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
+    key = _register(fleet, sign, ecdh)
+    Agent.objects.filter(pk=fleet.agent.pk).update(zk_enabled=True, zk_kv=0)
+    AgentCredential.objects.filter(agent=fleet.agent).delete()
+    old = zk_seal.seal_to("v", agent_id=str(fleet.agent.pk), name="kindora", kv=0,
+                          recipients=[("device", fleet.device.ecdh_jkt, fleet.device.ecdh_public_jwk)])
+    AgentCredential.objects.create(agent=fleet.agent, name="kindora", value_zk=old)
+    rows = {r["id"]: r for r in fleet.client.get("/api/runner-device-keys/").json()}
+    assert rows[str(key.pk)]["zk_pending_agents"] == ["eva"]
+    assert rows[str(fleet.device.pk)]["zk_pending_agents"] == []  # it can already read it
 
 
 # ---- telling vault-key holders a target is waiting (zk_notify) --------------------------

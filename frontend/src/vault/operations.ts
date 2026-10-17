@@ -576,6 +576,24 @@ export async function grantPending(slug: string, unlock: Unlock): Promise<ZkStat
   return out
 }
 
+/**
+ * Everything an agent needs from my key so every machine and person allowed
+ * to read it can: an agent born zero-knowledge (kv 0) gets its vault key now —
+ * its sealed values opened with my key and re-encrypted under it, no recovery
+ * code of its own (mine covers it) — then whoever is waiting is let in. Runs
+ * inside a passkey touch the person is already making (approving a machine),
+ * so no agent ever needs setting up by hand.
+ */
+export async function giveAccess(slug: string, unlock: Unlock): Promise<ZkStateOut> {
+  const state = await getZkState(slug, true)
+  if (state.enabled && state.kv === 0) {
+    const names = Object.keys(state.values ?? {})
+    const ready = await prepareTurnOnZk(slug, names, unlock, { personRecovery: true })
+    await ready.commit()
+  }
+  return grantPending(slug, unlock)
+}
+
 /** Encrypt one value under the current VK (Save on a ZK agent). */
 export async function setZkValue(slug: string, name: string, plaintext: string, unlock: Unlock) {
   const state = await getZkState(slug)
@@ -669,7 +687,7 @@ export async function approveAndGrant(keyId: string, agents: string[], prompt: U
   me = me ?? (await unlockVaultKey(prompt, ks))
   for (const slug of todo) {
     try {
-      await grantPending(slug, async () => me!)
+      await giveAccess(slug, async () => me!)
       granted.push(slug)
     } catch {
       failed.push(slug)

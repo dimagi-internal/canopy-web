@@ -136,6 +136,34 @@ describe('approve = wrap', () => {
       zk.deviceInfo(AGENT_ID, 1, device.jkt)))).toEqual(Array.from(vk))
   })
 
+  it('approving a machine also gives a born agent (kv 0) its vault key — same touch, no per-agent step', async () => {
+    const me = await principal(), device = await principal()
+    const prfOut = zk.randomBytes(32)
+    const seal = await zk.sealUserKey(me.scalar, USER, 'cred-1', prfOut)
+    api.getKeyset.mockResolvedValue({ user_id: USER, exists: true, public_jwk: me.publicJwk, prf_input: 'cHJm',
+                                      seals: [seal, { alg: 'recovery' }], passkeys: [] })
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: prfOut })
+    approveRunnerDeviceKey.mockResolvedValue({ id: 'dk1', status: 'active', zk_pending_agents: ['eva'] })
+    const stored = await zk.sealValue('kin', AGENT_ID, 'kindora', 0,
+      [{ kind: 'member', target: USER, publicJwk: me.publicJwk }])
+    const devicePending = { kind: 'device', target: 'dk1', public_jwk: device.publicJwk, ecdh_jkt: device.jkt }
+    api.getZkState.mockResolvedValueOnce(baseState({ kv: 0, values: { kindora: stored }, sealed: ['kindora'],
+      pending: [{ kind: 'member', target: USER, public_jwk: me.publicJwk }, devicePending] }))
+    api.getZkState.mockResolvedValueOnce(baseState({ kv: 0, values: { kindora: stored }, sealed: ['kindora'],
+      pending: [{ kind: 'member', target: USER, public_jwk: me.publicJwk }, devicePending] }))
+    api.enableZk.mockResolvedValue(baseState())
+    api.getZkState.mockResolvedValue(baseState())  // after: nothing waiting
+    const out = await ops.approveAndGrant('dk1', ['eva'], vi.fn())
+    expect(prf.assertWithPrf).toHaveBeenCalledTimes(1)
+    expect(out).toMatchObject({ granted: ['eva'], failed: [] })
+    const body = api.enableZk.mock.calls[0][1]
+    expect(body.wraps.map((w: { kind: string }) => w.kind).sort()).toEqual(['device', 'member'])  // no per-agent code
+    const dw = body.wraps.find((w: { kind: string }) => w.kind === 'device')
+    const vk = await zk.unwrapEcdhEs(dw.wrap, device.privateKey, device.publicJwk, zk.deviceInfo(AGENT_ID, 1, device.jkt))
+    expect(await zk.decryptValue(vk, AGENT_ID, 'kindora', 1, body.values[0].value_zk)).toBe('kin')
+    expect(revealAgentCredential).not.toHaveBeenCalled()
+  })
+
   it('a key no zero-knowledge agent waits on is just approved', async () => {
     approveRunnerDeviceKey.mockResolvedValue({ id: 'dk1', status: 'active', zk_pending_agents: [] })
     const out = await ops.approveAndGrant('dk1', [], vi.fn())

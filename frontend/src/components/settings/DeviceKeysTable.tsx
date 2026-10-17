@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { approveRunnerDeviceKey, revokeRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { relativeAge } from '@/lib/relativeAge'
-import { approveAndGrant, grantPending, unlockVaultKey } from '@/vault/operations'
+import { approveAndGrant, giveAccess, unlockVaultKey } from '@/vault/operations'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 // Runner device keys (Canopy Vault, canopy-web#1538): the public half of a key a
@@ -32,20 +32,23 @@ export function DeviceKeysTable({
   const [grant, setGrant] = useState<{ key: string; agents: string[]; done: string[] } | null>(null)
   const unlocker = useUnlockPrompt()
 
-  const grantAll = async () => {
-    if (!grant) return
+  const grantAll = async (g0 = grant) => {
+    if (!g0) return
+    setGrant(g0)
     setBusy('grant')
     setError(null)
     try {
       const unlock = () => unlockVaultKey(unlocker.prompt)
       let me: Awaited<ReturnType<typeof unlock>> | null = null
       const once = async () => (me = me ?? (await unlock()))
-      for (const slug of grant.agents.filter((a) => !grant.done.includes(a))) {
-        await grantPending(slug, once)
+      for (const slug of g0.agents.filter((a) => !g0.done.includes(a))) {
+        await giveAccess(slug, once)
         setGrant((g) => (g ? { ...g, done: [...g.done, slug] } : g))
       }
+      const row = keys.find((k) => k.id === g0.key)
+      if (row) onChange({ ...row, zk_pending_agents: [] })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not grant the vault key')
+      setError(e instanceof Error ? e.message : 'Could not give this machine access')
     } finally {
       setBusy(null)
     }
@@ -136,6 +139,19 @@ export function DeviceKeysTable({
               </td>
               <td className="py-1.5 text-muted-foreground">{k.last_used_at ? relativeAge(k.last_used_at) : '—'}</td>
               <td className="py-1.5 text-right">
+                {/* An approved machine that agents still wait on (approved
+                    before they existed, or by someone else): one touch lets it in. */}
+                {k.can_manage && k.status === 'active' && (k.zk_pending_agents ?? []).length > 0 && (
+                  <button
+                    type="button"
+                    data-testid={`device-key-give-${k.id}`}
+                    onClick={() => void grantAll({ key: k.id, agents: [...(k.zk_pending_agents ?? [])], done: [] })}
+                    disabled={busy !== null}
+                    className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
+                  >
+                    Give access
+                  </button>
+                )}
                 {k.can_manage && k.status === 'pending' && (
                   <button
                     type="button"
@@ -170,14 +186,14 @@ export function DeviceKeysTable({
              data-testid="device-key-zk-grant">
           <span className="text-foreground">
             {grant.done.length === grant.agents.length
-              ? `Granted: ${grant.agents.join(', ')} can now be read on this box.`
-              : `Zero-knowledge agents waiting on this key: ${grant.agents.join(', ')}.`}
+              ? `Done: this machine can now read ${grant.agents.join(', ')}.`
+              : `This machine is waiting to read ${grant.agents.join(', ')}.`}
           </span>
           {grant.done.length < grant.agents.length && (
             <button type="button" onClick={() => void grantAll()} disabled={busy !== null}
                     data-testid="device-key-zk-grant-button"
                     className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">
-              Grant the vault key
+              Give it access
             </button>
           )}
           <button type="button" onClick={() => setGrant(null)} className="text-muted-foreground hover:text-foreground">
