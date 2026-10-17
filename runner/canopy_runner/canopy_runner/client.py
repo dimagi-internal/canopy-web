@@ -52,9 +52,18 @@ class ClientError(Exception):
 
 
 class Client:
-    def __init__(self, base_url: str, token: str):
+    def __init__(self, base_url: str, token):
+        """`token`: the owner's PAT, or a `runner_token.RunnerCredential` — this
+        runner signing in with its device key, the PAT only as its fallback."""
         self.base_url = base_url.rstrip("/")
-        self.token = token
+        self._token = token
+
+    @property
+    def token(self) -> str:
+        """The bearer the next call sends."""
+        from .runner_token import bearer_of
+
+        return bearer_of(self._token)
 
     def _call(self, method: str, path: str, body: dict | None = None, *,
               retry: bool = True) -> tuple[int, dict | None]:
@@ -93,13 +102,14 @@ class Client:
                 time.sleep(delay)
 
     def _attempt(self, path: str, *, method: str, body: dict | None,
-                 label: str) -> tuple[int, dict | None]:
+                 label: str, _reauthed: bool = False) -> tuple[int, dict | None]:
         """One HTTP round trip. Classifies its own failure as transient or not so
         the retry policy above stays a policy and not a second parser of errors."""
         url = f"{self.base_url}/api{path}"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("Authorization", f"Bearer {self.token}")
+        bearer = self.token
+        req.add_header("Authorization", f"Bearer {bearer}")
         _identify(req)
         if data is not None:
             req.add_header("Content-Type", "application/json")
@@ -108,6 +118,13 @@ class Client:
                 status = resp.status
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
+            from .runner_token import PREFIX, RunnerCredential
+
+            # A runner token can die mid-hour (its device key revoked): get a fresh
+            # bearer — or fall back to the PAT — and send this call once more.
+            if (exc.code == 401 and not _reauthed and bearer.startswith(PREFIX)
+                    and isinstance(self._token, RunnerCredential) and self._token.drop()):
+                return self._attempt(path, method=method, body=body, label=label, _reauthed=True)
             # Checked before URLError — HTTPError subclasses it. A 5xx is the
             # server having a bad moment; a 4xx is us being wrong, and re-sending
             # it just spends the same error again.

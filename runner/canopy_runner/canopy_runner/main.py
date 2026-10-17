@@ -43,6 +43,7 @@ from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
 from .config import Config
+from .runner_token import RunnerCredential
 
 logger = logging.getLogger("canopy_runner")
 
@@ -1231,7 +1232,9 @@ def main() -> None:
         parser.error("--config is required")
     cfg = Config.load(Path(args.config))
     _provision_sidecar_or_warn()
-    client = Client(cfg.base_url, cfg.token)
+    # Signs in with this machine's device key; the PAT is only the fallback.
+    credential = RunnerCredential.for_config(cfg)
+    client = Client(cfg.base_url, credential)
     if getattr(args, "drain_one", False):
         print(drain_one(cfg, client))
         return
@@ -1303,7 +1306,7 @@ def main() -> None:
     # fallback and still owns heartbeat/claim/execute; off if websocket-client is absent.
     from .wake import WakeListener
 
-    waker = WakeListener(cfg.base_url, cfg.token, cfg.runner_id)
+    waker = WakeListener(cfg.base_url, credential, cfg.runner_id)
     waker.on_control = make_control_handler(cfg, waker, client)
     wake_on = waker.start()
     if wake_on:
