@@ -25,6 +25,14 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
     # Reporting a turn it holds (start/events/finish) and enqueueing an inbound
     # one. The views check the turn is this owner's or this box's ("runner").
     (frozenset({"GET", "POST"}), r"/api/harness/turns(/.*)?"),
+    # The owner's runner list — the updater's and the rebase check's one read.
+    (frozenset({"GET"}), r"/api/harness/runners"),
+    # Schedules: the laptop runner lists the ones due on it and fires a slot.
+    (frozenset({"GET"}), r"/api/harness/schedules"),
+    (frozenset({"POST"}), r"/api/harness/schedules/[^/]+/fire"),
+    # Its agents' mailboxes: which to watch, and the watch it armed (or why not).
+    (frozenset({"GET"}), r"/api/inbound/runner-mailboxes"),
+    (frozenset({"POST"}), r"/api/inbound/watch"),
     # Preparing its agents: the roster, one agent, its credentials.
     (frozenset({"GET"}), r"/api/agents"),
     (frozenset({"GET"}), rf"/api/agents/{_SLUG}"),

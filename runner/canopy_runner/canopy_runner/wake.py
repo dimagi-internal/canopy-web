@@ -16,6 +16,8 @@ import json
 import logging
 import threading
 
+from .runner_token import bearer_of
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,7 +27,7 @@ def ws_url(base_url: str, runner_id: str) -> str:
 
 
 class WakeListener:
-    def __init__(self, base_url: str, token: str, runner_id: str, *, recv_timeout: int = 30,
+    def __init__(self, base_url: str, token, runner_id: str, *, recv_timeout: int = 30,
                  on_control=None):
         self.event = threading.Event()
         self._url = ws_url(base_url, runner_id)
@@ -70,7 +72,7 @@ class WakeListener:
         while not self._stop.is_set():
             try:
                 ws = websocket.create_connection(
-                    self._url, header=[f"Authorization: Bearer {self._token}"],
+                    self._url, header=[f"Authorization: Bearer {bearer_of(self._token)}"],
                     timeout=self._recv_timeout,
                 )
             except Exception as exc:  # noqa: BLE001
