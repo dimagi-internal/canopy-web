@@ -42,6 +42,7 @@ KINDS = (USER, CONTACT, SYSTEM, AGENT, UNKNOWN)
 # each is worth is the access policy's call, per agent, not this module's.
 SESSION = "session"            # signed in to canopy in this very request
 PAT = "pat"                    # a personal access token (a machine acting as its owner)
+RUNNER_KEY = "runner-key"      # a runner's own token, bought with its approved device key
 DELEGATED = "delegated"        # a token minted FOR the user by an app (the widget)
 HOST_SIGNED = "host_signed"    # a connected site signed for its visitor; canopy resolved
                                # them to an existing account (a weaker claim — not "verified")

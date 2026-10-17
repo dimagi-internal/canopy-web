@@ -22,7 +22,9 @@ which field carries that id and why.
 
 Config comes from the environment (see runner/ec2/README.md):
   CANOPY_BASE_URL   e.g. https://canopy.dimagi.com
-  CANOPY_TOKEN      a canopy-web Personal Access Token (Bearer)
+  CANOPY_TOKEN      OPTIONAL once the box's device key is approved: a person's PAT,
+                    used only to pair a new box and register its device key. After
+                    that the box signs in as itself (`_bearer`, keyless).
   RUNNER_NAME       display name (default: this hostname)
   RUNNER_PROJECTS   comma-separated repo names this runner may drive (e.g. canopy-web)
   RUNNER_AGENTS     comma-separated agent slugs this runner may drive (e.g. echo,ada)
@@ -254,9 +256,92 @@ def _log(msg: str) -> None:
     print(f"[cloud-runner] {msg}", flush=True)
 
 
+# ── keyless: the box signs in as itself ─────────────────────────────────────
+# The box's API credential is a RunnerAccessToken canopy-web hands it for a fresh
+# proof of its APPROVED device key — this box's EC2 instance role
+# (`POST /api/runner-sessions/`, canopy-web apps/harness/api_runner_sessions.py).
+# It lasts an hour and opens the runner protocol only, so no long-lived secret
+# has to live on the box. CANOPY_TOKEN (a person's PAT) is only the fallback for
+# a box whose key is not approved yet — and the reason this exists: on
+# 2026-10-17 that PAT was revoked in a token cleanup and cloud-ec2-2 lost every
+# turn it claimed.
+_RUNNER_TOKEN = {"raw": "", "exp": 0.0, "failed_at": 0.0, "announced": False}
+_RUNNER_TOKEN_LOCK = threading.Lock()
+#: Get the next token this long before the current one runs out.
+RUNNER_TOKEN_RENEW_SECONDS = 600
+#: After a failed exchange, wait this long before trying again (the fallback, if
+#: any, is used meanwhile) — a pending key must not cost an STS round trip per call.
+RUNNER_TOKEN_RETRY_SECONDS = 60
+
+
+def _exchange_device_proof(runner_id: str) -> bool:
+    """Trade a fresh instance-role proof for a runner token. Never raises."""
+    url = f"{BASE_URL}/api/runner-sessions/"
+    headers = _aws_proof_headers(url)
+    if not headers:
+        return False
+    req = urllib.request.Request(url, data=json.dumps({"runner": runner_id}).encode(),
+                                 method="POST")
+    for name, value in headers.items():
+        req.add_header(name, value)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-Canopy-Client", "canopy-cloud-runner")
+    req.add_header("User-Agent", f"canopy-cloud-runner host={socket.gethostname()}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        _log(f"keyless: canopy-web refused the device proof ({exc.code}) — is this box's "
+             f"device key approved? (Settings → Security → Device keys)")
+        return False
+    except Exception as exc:  # noqa: BLE001
+        _log(f"keyless: could not reach canopy-web for a runner token ({exc})")
+        return False
+    raw = body.get("access_token") or ""
+    try:
+        exp = datetime.datetime.fromisoformat(
+            str(body.get("expires_at", "")).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        exp = time.time() + 3000
+    if not raw:
+        return False
+    _RUNNER_TOKEN.update(raw=raw, exp=exp)
+    if not _RUNNER_TOKEN["announced"]:
+        _RUNNER_TOKEN["announced"] = True
+        _log("keyless: signed in with this box's device key (no PAT in use)")
+    return True
+
+
+def _bearer() -> str:
+    """The credential for the next canopy-web call: this box's own runner token
+    while its device key can get one, else the CANOPY_TOKEN fallback."""
+    if _RUNNER_ID and os.environ.get("CANOPY_DEVICE_KEY", "1") != "0":
+        with _RUNNER_TOKEN_LOCK:
+            now = time.time()
+            if _RUNNER_TOKEN["raw"] and _RUNNER_TOKEN["exp"] - now > RUNNER_TOKEN_RENEW_SECONDS:
+                return _RUNNER_TOKEN["raw"]
+            if now - _RUNNER_TOKEN["failed_at"] > RUNNER_TOKEN_RETRY_SECONDS:
+                if _exchange_device_proof(_RUNNER_ID):
+                    return _RUNNER_TOKEN["raw"]
+                _RUNNER_TOKEN["failed_at"] = now
+            # An unexpired token is still good while the renewal is retried.
+            if _RUNNER_TOKEN["raw"] and _RUNNER_TOKEN["exp"] > now:
+                return _RUNNER_TOKEN["raw"]
+    return TOKEN
+
+
+def _drop_runner_token() -> bool:
+    """Forget the runner token after a 401 (its key was revoked, or the server
+    restarted its clock on it). True if there was one to drop."""
+    with _RUNNER_TOKEN_LOCK:
+        had = bool(_RUNNER_TOKEN["raw"])
+        _RUNNER_TOKEN.update(raw="", exp=0.0, failed_at=0.0)
+    return had
+
+
 def _api(method: str, path: str, body: dict | None = None, *,
          prefix: str = "/api/harness",
-         headers: dict | None = None) -> tuple[int, dict | None]:
+         headers: dict | None = None, _retried: bool = False) -> tuple[int, dict | None]:
     """Call canopy-web. `prefix` defaults to the harness router this runner lives
     on; pass another (e.g. `/api/events`) for the few cross-router calls."""
     url = f"{BASE_URL}{prefix}{path}"
@@ -265,7 +350,8 @@ def _api(method: str, path: str, body: dict | None = None, *,
     for name, value in (headers or {}).items():
         if value:
             req.add_header(name, value)
-    req.add_header("Authorization", f"Bearer {TOKEN}")
+    bearer = _bearer()
+    req.add_header("Authorization", f"Bearer {bearer}")
     req.add_header("Content-Type", "application/json")
     # Provenance (canopy-web apps/common/request_context.py): what canopy records
     # as the program behind anything this request creates.
@@ -280,6 +366,10 @@ def _api(method: str, path: str, body: dict | None = None, *,
         raw = exc.read()
         _log(f"{method} {path} -> {exc.code}: {raw[:300]!r}")
         if exc.code == 401:
+            if bearer.startswith("crt_") and not _retried and _drop_runner_token():
+                # A runner token can die mid-hour (its device key revoked): get
+                # a fresh one — or fall back — and try this call once more.
+                return _api(method, path, body, prefix=prefix, headers=headers, _retried=True)
             _note_token_refused()
         return exc.code, None
     except urllib.error.URLError as exc:
@@ -695,7 +785,7 @@ def maybe_rebase(advertised: str, runner_id: str) -> bool:
         return False
     try:
         req = urllib.request.Request(f"{target}/api/harness/runners/", method="GET")
-        req.add_header("Authorization", f"Bearer {TOKEN}")
+        req.add_header("Authorization", f"Bearer {_bearer()}")
         with urllib.request.urlopen(req, timeout=30) as resp:
             rows = json.loads(resp.read() or b"[]")
     except Exception as exc:  # noqa: BLE001
@@ -839,6 +929,10 @@ def pair_or_load() -> str:
     if STATE_FILE.exists():
         rid = json.loads(STATE_FILE.read_text()).get("runner_id")
         if rid:
+            # Known before the first call, so that call can already sign in as
+            # this box (`_bearer`) rather than needing a PAT.
+            global _RUNNER_ID
+            _RUNNER_ID = rid
             # Confirm it still exists (a heartbeat 404 means it was retired).
             # `projects` rides the heartbeat, not the PATCH below: the server
             # treats that key as REPORTED (spec 2026-07-28) and 422s a hand-written
@@ -1374,7 +1468,7 @@ def _agent_env(slug: str | None) -> dict:
     identity real rather than merely provisioned.
 
     Deliberately layered UNDER the runner's own environment for the few keys the
-    runner must control (CANOPY_BASE_URL, CANOPY_TOKEN as a fallback, PATH), and
+    runner must control (CANOPY_BASE_URL, PATH), and
     OVER it for everything else the agent declares. Parsing is intentionally
     minimal — `op inject` emits plain `KEY=value` lines; anything exotic (export
     prefixes, shell interpolation) is not part of the format and is skipped
@@ -1391,6 +1485,10 @@ def _agent_env(slug: str | None) -> dict:
         env.pop(key, None)
     if not slug:
         return {**env, **extra}
+    # Never the box's credential for an AGENT: it acts as itself (CANOPY_WEB_PAT
+    # from its ~/.<slug>/.env), and a turn that fell back to this process's
+    # CANOPY_TOKEN acted as the box's owner with their whole canopy.
+    env.pop("CANOPY_TOKEN", None)
     # WHICH agent this is, as a variable Claude Code will actually hand on. It
     # strips secret-looking variables (CANOPY_WEB_PAT among them) from the env it
     # gives a plugin's MCP `headersHelper`, and runs that helper from the plugin's
@@ -2433,7 +2531,7 @@ def _fetch_attachments(runner_id: str, turn: dict) -> tuple[list[pathlib.Path], 
                f"/attachments/{aid}/content")
         try:
             req = urllib.request.Request(url, method="GET")
-            req.add_header("Authorization", f"Bearer {TOKEN}")
+            req.add_header("Authorization", f"Bearer {_bearer()}")
             req.add_header("X-Canopy-Client", "canopy-cloud-runner")
             req.add_header("User-Agent", f"canopy-cloud-runner host={socket.gethostname()}")
             with urllib.request.urlopen(req, timeout=60) as resp:
@@ -3360,6 +3458,9 @@ def prepare_agent(slug: str) -> None:
     like the fleet bootstrap; the agent's readiness report says what it could do."""
     env = dict(os.environ)
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
+    # bootstrap_agents.sh and `canopy agent prepare --runner` read the agent
+    # roster and credentials AS THIS BOX: hand them its own token, not a PAT.
+    env["CANOPY_TOKEN"] = _bearer()
     try:
         rc, tail = _run_teed([_canopy_cli(), "agent", "prepare", "--runner", "--slug", slug],
                              env=env, timeout=900)
@@ -6248,7 +6349,7 @@ def run_over_ws(runner_id: str) -> bool:
     while not _stop:
         try:
             ws = websocket.create_connection(
-                url, header=[f"Authorization: Bearer {TOKEN}"], timeout=HEARTBEAT_SECONDS,
+                url, header=[f"Authorization: Bearer {_bearer()}"], timeout=HEARTBEAT_SECONDS,
             )
         except Exception as exc:
             if not connected_ever:
@@ -6357,8 +6458,9 @@ def run_over_ws(runner_id: str) -> bool:
 
 
 def main() -> None:
-    if not BASE_URL or not TOKEN:
-        _log("FATAL: CANOPY_BASE_URL and CANOPY_TOKEN are required")
+    if not BASE_URL or not (TOKEN or STATE_FILE.exists()):
+        # A paired box signs in with its device key; only pairing needs a PAT.
+        _log("FATAL: CANOPY_BASE_URL is required, and CANOPY_TOKEN until this box has paired")
         sys.exit(1)
     runner_id = pair_or_load()
     global _RUNNER_ID
