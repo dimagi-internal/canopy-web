@@ -53,11 +53,14 @@ def canopy_cli(home: Optional[Path] = None) -> Optional[str]:
     return None
 
 
-def _child_env(cfg) -> dict:
+def _child_env(cfg, bearer: str = "") -> dict:
     env = {k: v for k, v in os.environ.items()
            if k not in ("CANOPY_AGENT", "CANOPY_AGENT_SLUG", "CANOPY_TURN_ID",
                         "CANOPY_CALLER", "OP_SERVICE_ACCOUNT_TOKEN")}
-    env["CANOPY_WEB_PAT"] = cfg.token            # register as THIS runner's identity
+    # Register as THIS runner's identity: its own runner token once it has one
+    # (runner_token.RunnerCredential), else its owner's PAT — the only way a box
+    # with no approved key yet can register the key in the first place.
+    env["CANOPY_WEB_PAT"] = bearer or cfg.token
     env["CANOPY_WEB_API_URL"] = cfg.base_url.rstrip("/")
     return env
 
@@ -77,7 +80,7 @@ def _notify(title: str, text: str, runner: Runner) -> None:
 
 
 def enroll(cfg, *, runner: Runner = subprocess.run, home: Optional[Path] = None,
-           cli: Optional[str] = None) -> dict:
+           cli: Optional[str] = None, bearer: str = "") -> dict:
     """Run `canopy vault device --enroll` for this runner; returns its status (or
     {"error": …}). Logs the approve URL while pending; notifies once per key."""
     if os.environ.get("CANOPY_DEVICE_KEY", "1") == "0":
@@ -88,7 +91,7 @@ def enroll(cfg, *, runner: Runner = subprocess.run, home: Optional[Path] = None,
         return {"error": "no canopy CLI"}
     try:
         r = runner([cli, "vault", "device", "--enroll", "--runner", cfg.runner_id, "--json"],
-                   capture_output=True, text=True, timeout=TIMEOUT, env=_child_env(cfg),
+                   capture_output=True, text=True, timeout=TIMEOUT, env=_child_env(cfg, bearer),
                    cwd=str(home or Path.home()))
     except Exception as e:  # noqa: BLE001
         logger.warning("device key: enrollment did not run (%s)", e)
