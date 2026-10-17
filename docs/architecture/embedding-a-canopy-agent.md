@@ -74,16 +74,15 @@ refused with an explanation — a wildcard in particular would undo the entire
 framing protection. A trailing slash is accepted and trimmed, because that is
 what you get from an address bar.
 
-> **Why a signing key and not "vouch for our email domain".** This page used to
-> offer that: a checkbox letting whoever held the site's secret mint a token as
-> *any* canopy user in your domain. A static string that can speak for anybody
-> is the weakest possible credential, so the page no longer grants it. A signed
+> **Why a signing key and not "vouch for our email domain".** A checkbox letting
+> whoever held the site's secret mint a token as *any* canopy user in your domain
+> would make a static string that can speak for anybody — the weakest possible
+> credential — so the page does not offer one. A signed
 > statement names one visitor, expires in two minutes, works once, and cannot be
 > forged by canopy or by anyone who steals canopy's database — it holds only the
 > public half.
 
-> **Why not the Django admin?** It used to be the only way, and it is now
-> read-only. It is staff-only, so the person who wants to embed an agent could
+> **Why not the Django admin?** It is read-only for this. It is staff-only, so the person who wants to embed an agent could
 > not do it; there is no shell on a deployment to run the management commands
 > in either; and every field here fails closed and silently, so a bare form
 > produces a widget that never appears with nothing to say why. See §11 for
@@ -126,7 +125,7 @@ say which registration verifies your assertion. An agent belongs to exactly
 one workspace, and you already know which one you are mounting.
 
 Omitting it still works **while only one workspace has a live site by that
-name**, which is what every integration written before this sends. The moment
+name**, which is what an integration that omits it relies on. The moment
 a second workspace registers the same name, an agent-less mint gets a `409
 ambiguous_issuer` and an agent-less shell a 404 rather than a guess: picking
 one would route your visitor into a tenant you never meant. Send the agent and
@@ -816,8 +815,8 @@ inside what your site is for. It reaches:
 and within those, **only the agents your site offers** in the workspace that
 registered it. The same person's chats with any other agent, in that workspace
 or another, are a 404 to your token, exactly as to a stranger. Every other
-canopy route answers `403 not_delegable`. Until 2026-09-24 the token was the
-user's whole canopy account; it no longer is. If your integration needs a
+canopy route answers `403 not_delegable`; the token is never the user's whole
+canopy account. If your integration needs a
 route this does not cover, ask for it by name — it is a list in
 `apps/tokens/delegation.py`, deliberately.
 
@@ -911,10 +910,8 @@ never opened the widget, or use a token anywhere but your MCP server (`aud`).
 A token copied from a log is useless without canopy's DPoP key, and no runner
 ever holds either.
 
-(canopy used to plan the opposite direction: `act_on_behalf_of_caller`, a 120s
-assertion canopy signed about your visitor. It was never enabled and was
-deleted on 2026-09-26, because whoever held that key could sign for anyone at
-every connected site.)
+(canopy does not sign assertions about your visitor for you to trust: whoever
+held that key could sign for anyone at every connected site.)
 
 For **canopy's own MCP tools**, unchanged: a visitor who is not the agent's owner
 or an admin talks to a CONFINED session, which reaches canopy's MCP with a

@@ -69,12 +69,11 @@ agents, which is precisely what a division workspace exists to prevent.
 
 ## A read that names no workspace stays inside one organisation
 
-Owner decision (Jonathan, 2026-10-11): *"Workspaces should need to be specified — workspace
-confusion shouldn't be possible."* A second ROOT workspace (`marshellis`, a family) now sits
-beside the `dimagi` tree, and a caller in both — ada@, Jonathan — used to get the **union** of
-every membership from any flat `/api/…` list or MCP tool called without `workspace`, so family
-rows landed in Dimagi work. Writes were fixed on 2026-10-08 (canopy-web#1289,
-`creation_workspace`); reads follow the same principle.
+Workspaces must be specified; workspace confusion must not be possible. More than one ROOT
+workspace exists (a family workspace, `marshellis`, beside the `dimagi` tree), and a caller in
+both must never get the **union** of their memberships from a flat `/api/…` list or an MCP tool
+called without `workspace` — that would land one tree's rows in the other's work. Writes follow
+the same principle through `creation_workspace`.
 
 **The rule** (`services.read_scope`, reached through `request_workspace_slugs`):
 
@@ -138,9 +137,8 @@ organisation back together.
   routing, the per-user MCP agent-tool registry, and the realtime supervisor socket.
 
 Lists of huddles, threads and the shared-sessions feed take the same rule as every other list
-(they used to span the whole of the pin's tree, `tree_scope`, which reached UP from a pinned
-child; reconciled 2026-10-12): pinned to `dimagi` they cover `connect` too, pinned to `connect`
-they do not reach `dimagi`. Opening one by id still reads its own tree, as above.
+(not `tree_scope`, which reaches UP from a pinned child): pinned to `dimagi` they cover `connect`
+too, pinned to `connect` they do not reach `dimagi`. Opening one by id still reads its own tree, as above.
 
 The web client mirrors it (`frontend/src/api/workspaceRetry.ts`): a flat GET refused this way
 is answered from PINNED reads. On a tenant page it is retried pinned to the URL's `/w/<ws>/`. On
@@ -314,9 +312,9 @@ or a token could sign itself in.
 ### Leaving a workspace takes what it carried
 
 Every grant that hangs off membership is checked against **current** membership —
-including an agent's owner, who used to stay its admin (credentials, interface, transfer),
-keep an unconfined profile when messaging it, keep lending it a GitHub token and keep
-being pushed about it after being removed. And removal sweeps the rest
+including an agent's owner: once removed they are not its admin (credentials, interface,
+transfer), get no unconfined profile when messaging it, lend it no GitHub token and are not
+pushed about it. And removal sweeps the rest
 (`apps/workspaces/departure.py`): AgentAdmin, RunnerAdmin and chat participant rows in that
 workspace, lent GitHub tokens, their box on its agents' runner lists, and agent ownership
 (cleared, with a `warn` Event saying so); their open chat sockets there are closed. That is

@@ -16,10 +16,7 @@ In one line: the host issues an ID-JAG (`typ: oauth-id-jag+jwt`) for its own MCP
 server at arrival; canopy redeems it with the RFC 7523 jwt-bearer grant
 (`private_key_jwt` + DPoP) at the host's token endpoint, then calls the host's
 MCP as the visitor with `Authorization: DPoP` and a `Canopy-Actor` header. A host
-installs the SDK from a release tag:
-
-```
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.3.0#subdirectory=sdk/python
-```
+installs the SDK from a release tag; the current pin is in the SDK README's install
+section.
 
 Design: `docs/superpowers/specs/2026-09-26-embedded-caller-delegation-design.md`.

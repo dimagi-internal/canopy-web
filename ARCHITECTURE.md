@@ -32,7 +32,7 @@ the arrow's direction and enforce it in CI.
 | `harness` | **framework** | Agent-execution harness: runner registry, turn lifecycle + lease/claim, turn-event ledger (/api/harness). |
 | `huddles` | **framework** | A team of agents syncing in rounds, led by one of them (canopy `huddle`). **Stores nothing**: a read-only, DERIVED view (`/api/huddles`) over `harness` turns tagged `origin_ref.huddle` and `agents` tasks whose `source_url` is the huddle page. Agent-agnostic (any team, any huddle type); reuses `harness.api.visible_turns_qs` + `turn_access` so it can never show more than the turn routes do. |
 | `threads` | **framework** | Agent threads — a bounded, moderated conversation between named agents (canopy `thread`). Stores only the frame and its limits (`AgentThread`: participants, moderator, parent, context, `max_messages`, `deadline_at`, status, outcome); each MESSAGE is a `harness` turn tagged `origin_ref.kind == "thread_message"`, its words DERIVED from the speaker's reply block like `huddles`. The limits are enforced where a message turn is created (`threads/guard.py`, called from `harness.services.enqueue_turn` — a framework→framework import). Reads reuse `visible_turns_qs` + `turn_access`. |
-| `workspaces` | **framework** | Multi-tenancy: `Workspace` + members (owner/editor/viewer) + email invites (ported from ace-web, domain-agnostic — no Drive coupling). The tenant that owns agents + runs. Distinct from the retired co-authoring app that used to be `apps/workspace` (singular). |
+| `workspaces` | **framework** | Multi-tenancy: `Workspace` + members (owner/editor/viewer) + email invites (domain-agnostic — no Drive coupling). The tenant that owns agents + runs. |
 | `api` | **framework** (composition root) | The single NinjaAPI that wires every app's router. The one seam allowed to import all apps. |
 | `common` | **framework** | Shared infra: auth flow (allauth adapter, allowed domains), middleware, CSRF, request context/timing, email (SES), field encryption, Redis client. |
 | `timeline` | **framework** | Generic activity-log aggregation; reads other apps' events via a string registry (no hard product imports). |
@@ -84,8 +84,7 @@ The boundary holds everywhere except these documented, intentional places:
 - **Content** — fails if a framework file merely *names* a product module in a
   string literal (a lazy `import_module`, a registry path, product logic parked in
   a framework file). This is the gate that catches what the import-check is blind
-  to — e.g. the DDD run-id grammar that had been living in `apps/common/ddd.py`
-  and now sits in `apps/runs`. Seam #2 is the one allowlisted exception.
+  to — e.g. the DDD run-id grammar belongs in `apps/runs`, not a framework app. Seam #2 is the one allowlisted exception.
 
 It also fails if a **new** app isn't classified into a tier here, and if a
 carve-out names a file that no longer exists (a dead allowlist entry is a hole
