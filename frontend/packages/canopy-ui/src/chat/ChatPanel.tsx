@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import type { PeerDraft, SessionState, TypingVisibility } from "./protocol";
 import type { RenderMarkdown } from "./MessageItem";
@@ -145,7 +145,14 @@ export function ChatPanel({
   // with no banner of their own, which is exactly the embedded widget.
   const latestMessageAt =
     state.messages.length > 0 ? state.messages[state.messages.length - 1].created_at : null;
-  const notice = banner ? null : turnNotice(status, { latestMessageAt });
+  // A clock only while a turn is working: the quiet notice is about time passing
+  // with NOTHING arriving, so no frame would ever re-render it.
+  const now = useNow(status?.state === "working" ? 30_000 : null);
+  // A reply streaming in right now is something coming back, however old its row.
+  const notice = banner ? null : turnNotice(status, {
+    latestMessageAt: inFlightMessage ? new Date(now).toISOString() : latestMessageAt,
+    now,
+  });
 
   // Sticky-bottom scroll: dep changes on (a) new message arrival and (b)
   // streaming text growth on the last message. length-only (cheap) instead
@@ -283,4 +290,17 @@ export function ChatPanel({
     </div>
     </AppHostContext.Provider>
   );
+}
+
+
+/** `Date.now()`, re-read every `everyMs` — or frozen when `everyMs` is null. */
+function useNow(everyMs: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (everyMs == null) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), everyMs);
+    return () => clearInterval(id);
+  }, [everyMs]);
+  return now;
 }

@@ -156,6 +156,26 @@ def test_claimed_is_working_and_names_its_holder():
     assert not st.stuck
 
 
+def test_working_carries_when_it_was_taken_and_when_anything_last_came_back():
+    """A box that claims a turn and then goes silent drew "Thinking…" for as long
+    as its lease lived (2026-10-17). The facts ride the status; the client says
+    "nothing back for 6m" from them."""
+    claimed = dt.datetime(2026, 10, 17, 15, 45, tzinfo=dt.timezone.utc)
+    t = _turn(Turn.RUNNING, claimed=_Runner("cloud-ec2-2"))
+    t.claimed_at = claimed
+    st = ts.derive(t)
+    assert st.claimed_at == claimed and st.last_progress_at == claimed
+    later = claimed + dt.timedelta(minutes=2)
+    assert ts.derive(t, progress_at=later).last_progress_at == later
+
+
+def test_only_a_working_turn_carries_progress():
+    t = _turn(Turn.DONE, claimed=_Runner())
+    t.claimed_at = dt.datetime(2026, 10, 17, tzinfo=dt.timezone.utc)
+    st = ts.derive(t, progress_at=t.claimed_at)
+    assert st.claimed_at is None and st.last_progress_at is None
+
+
 def test_a_dead_holder_outranks_what_the_turn_says():
     """The turn still reads RUNNING — a dead runner cannot say otherwise. This
     is the whole reason the projection is not just `Turn.status`."""
@@ -279,6 +299,8 @@ def test_as_dict_is_flat_json_native_and_carries_the_derived_questions():
         "behind": None,
         "parked": False,
         "held_until": None,
+        "claimed_at": None,
+        "last_progress_at": None,
         "settled": False,
         "stuck": True,
     }

@@ -227,3 +227,45 @@ describe("turnNotice, when the conversation requires a runner flag", () => {
     expect(n?.text).toContain("ZDR");
   });
 });
+
+describe("turnNotice, when a working turn goes quiet", () => {
+  // 2026-10-17: a box whose token was revoked took four turns and could report
+  // nothing back; each read "Thinking on cloud-ec2-2…" until its lease ran out.
+  const claimed = "2026-10-17T15:45:00Z";
+  const at = (min: number) => Date.parse(claimed) + min * 60_000;
+  const working = (over: Partial<TurnStatus> = {}) =>
+    status({ state: "working", claimed_by: "cloud-ec2-2", runners: ["cloud-ec2-2"],
+             claimed_at: claimed, last_progress_at: claimed, ...over });
+
+  it("says nothing while it is still fresh", () => {
+    expect(turnNotice(working(), { now: at(4) })).toBeNull();
+  });
+
+  it("names the box and how long ago it took the turn when nothing came back", () => {
+    expect(turnNotice(working(), { now: at(6) })).toEqual({
+      tone: "warn",
+      text: "cloud-ec2-2 took this 6m ago and nothing has come back from it since.",
+      offer: null,
+    });
+  });
+
+  it("counts from the last thing that came back once something has", () => {
+    const st = working({ last_progress_at: "2026-10-17T15:50:00Z" });
+    expect(turnNotice(st, { now: at(9) })).toBeNull();
+    expect(turnNotice(st, { now: at(12) })?.text).toBe("Nothing new from cloud-ec2-2 for 7m.");
+  });
+
+  it("a message that streamed onto the screen counts as something coming back", () => {
+    expect(turnNotice(working(), { now: at(8), latestMessageAt: "2026-10-17T15:50:00Z" })).toBeNull();
+  });
+
+  it("never speaks over a dialog the agent is waiting on, or for an older server", () => {
+    expect(turnNotice(working({ menu_pending: true }), { now: at(30) })).toBeNull();
+    expect(turnNotice(working({ claimed_at: undefined }), { now: at(30) })).toBeNull();
+  });
+
+  it("reads hours as hours", () => {
+    expect(turnNotice(working(), { now: at(65) })?.text).toBe(
+      "cloud-ec2-2 took this 1h 5m ago and nothing has come back from it since.");
+  });
+});
