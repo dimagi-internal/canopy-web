@@ -1283,6 +1283,11 @@ def main() -> None:
     # because idle cycles are deliberately quiet (~15 min between lines), which would
     # otherwise show a healthy idle runner as "stale".
     hb_file = Path(args.config).with_name("heartbeat")
+    # ...and canopy's answer to each heartbeat, which is what the menu bar
+    # colours by: a turning loop whose token canopy refuses is not "running".
+    from . import server_status
+
+    server_status.configure(Path(args.config).with_name("server-status.json"))
 
     def _beat() -> None:
         try:
