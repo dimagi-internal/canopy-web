@@ -205,7 +205,15 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
 
   const host = document.createElement('div')
   host.setAttribute('data-canopy-widget', '')
-  if (!inline) host.style.zIndex = String(options.zIndex)
+  // z-index applies only to a POSITIONED element. Without `position` the value
+  // was ignored and the panel stacked at `auto`, under any z-indexed element on
+  // the host page (canopy's own sticky chat toolbar painted across it).
+  // `relative` makes the host a stacking context without moving the fixed
+  // panel and launcher, whose containing block stays the viewport.
+  if (!inline) {
+    host.style.position = 'relative'
+    host.style.zIndex = String(options.zIndex)
+  }
   const root = host.attachShadow({ mode: 'open' })
 
   const style = document.createElement('style')
