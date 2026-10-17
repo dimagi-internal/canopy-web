@@ -578,7 +578,10 @@ def deliver_read(run_id: int, ingest_id) -> None:
     since = run.read_since            # what the lead confirmed — the read is cut to it
     # Cut by the confirmed start alone, not the agent's read mark: a `read-channel`
     # in between moves that mark, and the group would silently skip what it read.
-    t = ingest_svc.transcript(row, oldest=since.timestamp() if since else 0.0)
+    # canopy's own posts (the announcement, "Confirmed by…", earlier runs' lines)
+    # are not what people said: leave them out of the material.
+    own = frozenset(u for u in (g.installation.bot_user_id,) if u)
+    t = ingest_svc.transcript(row, oldest=since.timestamp() if since else 0.0, skip_users=own)
     ingest_svc.mark_read(row, t["mark"])
     SlackChannelIngest.objects.filter(pk=row.pk).update(last_read_by_slack=(g.lead_slack_id or "")[:32])
     sched = g.schedule

@@ -381,6 +381,20 @@ def test_a_read_channel_in_between_does_not_hide_messages_from_the_group(group, 
     assert nxt.read_messages == 4 and "last word" in nxt.material
 
 
+def test_canopys_own_posts_are_not_material(group, slack, channel):
+    """2026-10-17 run 2: the only "message" read was canopy's own "Confirmed by…"."""
+    from tests.test_slack import BOT
+
+    channel.history.insert(0, {"ts": "1700000600.000000", "user": BOT, "bot_id": "B1",
+                               "text": ":white_check_mark: Confirmed by someone. canopy is reading this channel"})
+    run = _fire(group)
+    click(groups.CONFIRM, str(run.pk), user=ALICE, message_ts=run.announce_ts)
+    _run(SlackChannelIngest.objects.get())
+    run.refresh_from_db()
+    assert "canopy is reading this channel" not in run.material
+    assert run.read_messages == 6 and "last word" in run.material
+
+
 def test_unconfirmed_runs_lapse_after_a_day(group, slack):
     run = _fire(group)
     HuddleGroupRun.objects.filter(pk=run.pk).update(created_at=timezone.now() - timedelta(hours=25))
