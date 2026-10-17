@@ -407,6 +407,25 @@ def test_a_proven_box_read_without_a_turn_id_alerts(fleet, sts):
     assert len(_alerts("no-turn")) == 1
 
 
+def test_a_boxs_own_credential_refresh_is_expected(fleet):
+    """canopy-web#1563: cloud-ec2-2's runner-update timer refreshes every agent's
+    credentials every 30 min, outside any turn, and says so."""
+    res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
+                       HTTP_X_CANOPY_RUNNER=str(fleet["runner"].pk),
+                       HTTP_X_CANOPY_READ_PURPOSE="runner-refresh")
+    assert res.status_code == 200
+    assert _alerts("no-turn") == [] and mail.outbox == []
+    assert AgentCredentialRead.objects.filter(agent=fleet["agent"]).exists()  # still logged
+
+
+def test_a_refresh_purpose_without_a_named_box_is_not_an_exemption(fleet):
+    """The purpose only explains a box's read; it never turns an unnamed read into one."""
+    res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
+                       HTTP_X_CANOPY_READ_PURPOSE="runner-refresh")
+    assert res.status_code == 200
+    assert AgentCredentialRead.objects.filter(agent=fleet["agent"]).latest("pk").via == "admin"
+
+
 def test_an_owner_who_pairs_a_box_resolving_by_hand_is_expected(fleet):
     """canopy-web#1563: the owner pairs a runner the agent routes to, but this
     request names no box (no device proof, no X-Canopy-Runner) — it is their
