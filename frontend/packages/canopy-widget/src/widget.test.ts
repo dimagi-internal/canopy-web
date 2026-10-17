@@ -129,6 +129,12 @@ describe('mounting and the three display modes', () => {
     expect(() => widgetHarness({ mode: 'inline', target: '#nope' })).toThrow(/#nope/)
   })
 
+  it('positions its host so the z-index takes effect over a host page\'s own layers', () => {
+    const { host } = widgetHarness({ mode: 'overlay' })
+    expect(host.style.zIndex).toBe('2147483000')
+    expect(host.style.position).toBe('relative')
+  })
+
   it('puts its chrome in a shadow root so host CSS cannot deform it', () => {
     const { host } = widgetHarness()
     expect(host.shadowRoot).not.toBeNull()
