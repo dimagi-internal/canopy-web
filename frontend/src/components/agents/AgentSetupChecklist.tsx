@@ -48,30 +48,40 @@ export function AgentSetupChecklist({
         <span className="font-semibold text-foreground">Setup</span> —{' '}
         {left === 0 ? 'done.' : `${left} of ${steps.length} steps left.`} Ticks update when you come back to this tab.
       </p>
-      <ol className="divide-y divide-border">
-        {steps.map((step, i) => (
-          <li key={step.key} className="flex gap-3 px-4 py-3" data-step={step.key} data-status={step.status}>
-            <StatusIcon status={step.status} />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                <span className="text-[13px] font-semibold text-foreground">
-                  {i + 1}. {step.title}
-                </span>
-                {step.where !== 'web' && (
-                  <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <Terminal className="h-3 w-3" aria-hidden="true" />{' '}
-                    {step.where === 'claude-code' ? 'in Claude Code' : 'in a terminal'}
-                  </span>
-                )}
-              </div>
-              <p className="text-[12px] text-foreground-secondary">{step.detail}</p>
-              {step.status !== 'done' && step.command && <CopyCommand command={step.command} />}
-            </div>
-            {step.status !== 'done' && step.href && <StepLink href={step.href} label={step.action || 'Open'} />}
-          </li>
-        ))}
-      </ol>
+      <SetupSteps steps={steps} />
     </div>
+  )
+}
+
+/** The steps themselves — shared by the agent's own checklist and the workspace
+ *  health dashboard (`/w/:ws/health`), which gets the same steps from the server
+ *  for every agent in a tree. `canFix=false` keeps the detail and command but
+ *  drops the links: the viewer could not follow them. */
+export function SetupSteps({ steps, canFix = true }: { steps: readonly SetupStep[]; canFix?: boolean }): JSX.Element {
+  return (
+    <ol className="divide-y divide-border">
+      {steps.map((step, i) => (
+        <li key={step.key} className="flex gap-3 px-4 py-3" data-step={step.key} data-status={step.status}>
+          <StatusIcon status={step.status} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="text-[13px] font-semibold text-foreground">
+                {i + 1}. {step.title}
+              </span>
+              {step.where !== 'web' && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <Terminal className="h-3 w-3" aria-hidden="true" />{' '}
+                  {step.where === 'claude-code' ? 'in Claude Code' : 'in a terminal'}
+                </span>
+              )}
+            </div>
+            <p className="text-[12px] text-foreground-secondary">{step.detail}</p>
+            {step.status !== 'done' && step.command && <CopyCommand command={step.command} />}
+          </div>
+          {canFix && step.status !== 'done' && step.href && <StepLink href={step.href} label={step.action || 'Open'} />}
+        </li>
+      ))}
+    </ol>
   )
 }
 
@@ -88,7 +98,10 @@ function StepLink({ href, label }: { href: string; label: string }): JSX.Element
   )
 }
 
-function StatusIcon({ status }: { status: AgentSetupStepOut['status'] }): JSX.Element {
+/** A step as both the agent's `/setup` and the workspace `/health` serve it. */
+export type SetupStep = Pick<AgentSetupStepOut, 'key' | 'title' | 'status' | 'detail' | 'where' | 'href' | 'action' | 'command'>
+
+export function StatusIcon({ status }: { status: AgentSetupStepOut['status'] }): JSX.Element {
   const cls = 'mt-0.5 h-4 w-4 shrink-0'
   if (status === 'done') return <CheckCircle2 className={`${cls} text-success`} aria-label="done" />
   if (status === 'waiting') return <Clock className={`${cls} text-warning`} aria-label="waiting" />

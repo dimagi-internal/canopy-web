@@ -34,13 +34,6 @@ log = logging.getLogger(__name__)
 _EXPLICIT_PROJECT = re.compile(r"^(?:(?P<agent>[A-Za-z0-9_.-]{1,100})[/:])?(?P<ext>[A-Za-z0-9_.-]{1,64})$")
 
 
-def _turn_workspace(turn) -> str | None:
-    if turn.agent_id:
-        return turn.agent.workspace_id
-    if turn.chat_session_id:
-        return turn.chat_session.workspace_id
-    return turn.workspace_id
-
 
 def _explicit_project(ref: str, *, user, turn):
     from apps.agents.models import Agent, AgentProject
@@ -87,7 +80,7 @@ def resolve(request, *, session: str = "", turn: str = "", agent_project: str = 
         fields, _record = provenance.parent_fields(explicit or None)
         parent_turn = fields.get("parent_turn")
         parent_session = fields.get("parent_session")
-        if parent_turn is not None and _turn_workspace(parent_turn) in scope:
+        if parent_turn is not None and parent_turn.tenant_slug in scope:
             out["source_turn"] = parent_turn
         if parent_session is not None and parent_session.workspace_id in scope:
             out["source_session"] = parent_session

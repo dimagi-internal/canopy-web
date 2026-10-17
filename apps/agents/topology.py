@@ -99,19 +99,14 @@ def can_run(src: Agent, dst: Agent) -> bool:
 
 
 def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True) -> dict:
-    tree = wsvc.subtree(root, visible)
-    slugs = {ws.slug for ws, _ in tree}
-    agents = list(
-        Agent.objects.filter(workspace_id__in=slugs).select_related("user", "owner").order_by("name")
-    )
-    admins: dict[int, set[int]] = {}
-    for agent_id, user_id in AgentAdmin.objects.filter(agent__in=agents).values_list("agent_id", "user_id"):
-        admins.setdefault(agent_id, set()).add(user_id)
+    from .tree import agents_in_tree
 
-    by_ws: dict[str, list[Agent]] = {}
-    for a in agents:
-        by_ws.setdefault(a.workspace_id, []).append(a)
-    ordered = [a for ws, _ in tree for a in by_ws.get(ws.slug, [])]
+    tree = wsvc.subtree(root, visible)
+    ordered = agents_in_tree(tree, "user", "owner")
+
+    admins: dict[int, set[int]] = {}
+    for agent_id, user_id in AgentAdmin.objects.filter(agent__in=ordered).values_list("agent_id", "user_id"):
+        admins.setdefault(agent_id, set()).add(user_id)
 
     agent_rows = []
     for a in ordered:

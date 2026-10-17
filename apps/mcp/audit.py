@@ -60,9 +60,12 @@ def _write_audit_sync(
     *, user_id: int | None, tool: str, args_summary: str, ok: bool, error: str,
     workspace: str | None = None,
 ) -> None:
+    from django.contrib.auth import get_user_model
+
+    from apps.events import activity
     from apps.mcp.models import MCPAuditLog
 
-    MCPAuditLog.objects.create(
+    row = MCPAuditLog.objects.create(
         user_id=user_id,
         workspace_slug=_attributed_workspace(user_id, workspace),
         tool=tool,
@@ -70,6 +73,12 @@ def _write_audit_sync(
         ok=ok,
         error=(error or "")[:500],
     )
+    if row.workspace_slug:
+        # A call attributed to no workspace (a flat call by someone in several)
+        # has no tenant to count it in, so it is the audit log's alone.
+        actor = get_user_model().objects.filter(pk=user_id).first() if user_id else None
+        activity.emit(activity.MCP_CALL, workspace=row.workspace_slug, actor=actor, surface="mcp",
+                      ref=f"mcp{row.pk}", meta={"tool": tool, "ok": ok}, at=row.created_at)
 
 
 async def write_audit(

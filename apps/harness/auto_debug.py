@@ -137,13 +137,6 @@ def _agent_of(turn: Turn) -> str:
     return agent.slug if agent is not None else (turn.project or "")
 
 
-def _workspace_of(turn: Turn) -> str | None:
-    if turn.agent_id:
-        return turn.agent.workspace_id
-    if turn.chat_session_id:
-        return turn.chat_session.workspace_id
-    return turn.workspace_id
-
 
 def _note_for(turn: Turn) -> str:
     if turn.status == Turn.LOST:
@@ -216,7 +209,7 @@ def _on_turn_failed(turn: Turn) -> None:
     debugger = debugger_agent()
     if debugger is None:
         return
-    if not _in_tree(_workspace_of(turn), debugger.workspace_id):
+    if not _in_tree(turn.tenant_slug, debugger.workspace_id):
         return
 
     agent_slug = _agent_of(turn)
@@ -381,7 +374,7 @@ def turn_page_url(turn: Turn) -> str:
     no single-turn page: an agent turn lives on the agent's Turns tab, a chat
     turn in its chat, anything else in the fleet's /activity log."""
     base = _base_url()
-    ws = _workspace_of(turn)
+    ws = turn.tenant_slug
     if turn.chat_session_id and ws:
         return f"{base}/w/{ws}/chat/{turn.chat_session_id}"
     if turn.agent_id and ws:

@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from apps.agents.models import Agent
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
@@ -35,10 +34,12 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
     """The topology rooted at `root`: its subtree (the descendants `visible`
     admits), every agent in it with its routing, and every runner those agents
     route to or that lives in the tree."""
+    from apps.agents.tree import agents_in_tree
+
     tree = wsvc.subtree(root, visible)
     slugs = {ws.slug for ws, _ in tree}
 
-    agents = list(Agent.objects.filter(workspace_id__in=slugs).order_by("name"))
+    agents = agents_in_tree(tree)
     assignments = list(
         RunnerAssignment.objects.filter(agent__in=agents)
         .select_related("runner", "runner__owner")

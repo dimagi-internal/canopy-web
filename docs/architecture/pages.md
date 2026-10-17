@@ -213,6 +213,18 @@ Every browser-facing address canopy-web serves. The SPA route table is
   (tenant twin of root `/schedules`).
 - **`/activity`** — the fleet turn log scoped to this workspace.
 - **`/timeline`** — team activity feed across apps (link-out only).
+- **`/health`** — admin+ (`logs.read`, per descendant). What is not set up right
+  across this workspace and every one below it (`GET /api/workspaces/{slug}/health`,
+  `apps/agents/health.py`): every agent with its setup checklist (the SAME steps
+  as its Settings page), its vault state (canopy-web / moving / 1Password / none,
+  `apps/agents/vault_health.py`) and properties; every workspace's shared vault.
+  An agent's row opens its steps — linked when the viewer is its owner or an admin
+  (`can_fix`), else an email to the owner listing what is left. Renders, never decides.
+- **`/analytics`** — the second tab of Health (same gate). Turns, how they ended,
+  chats, messages, active people, tokens and cost per UTC day over 7/30/90 days,
+  where turns came from, per-agent and per-person tables
+  (`GET /api/workspaces/{slug}/analytics`, `apps/events/analytics.py`) —
+  see `docs/architecture/analytics.md`.
 - **`/shareouts`** (+ `/:period`, a permalink to one briefing) — dated
   teammate-facing work briefings posted by `/canopy:shareout`.
 - **`/walkthroughs`** — demos uploaded from `/canopy:walkthrough`.

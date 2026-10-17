@@ -516,3 +516,34 @@ export async function removeSystemSender(slug: string, accountId: number, sender
     throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to remove sender'))
   }
 }
+
+export type WorkspaceHealthOut = components['schemas']['WorkspaceHealthOut']
+export type AgentHealthOut = components['schemas']['AgentHealthOut']
+export type WorkspaceHealthNodeOut = components['schemas']['WorkspaceHealthNodeOut']
+
+export async function getWorkspaceHealth(slug: string): Promise<WorkspaceHealthOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/health', {
+    params: { path: { slug } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(
+      res.response.status, problemMessage(res.error, 'Failed to load workspace health'))
+  }
+  return res.data as unknown as WorkspaceHealthOut
+}
+
+export type WorkspaceAnalyticsOut = components['schemas']['WorkspaceAnalyticsOut']
+export type AnalyticsDayOut = components['schemas']['AnalyticsDayOut']
+
+export async function getWorkspaceAnalytics(
+  slug: string, opts: { days: number; tree: boolean },
+): Promise<WorkspaceAnalyticsOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/analytics', {
+    params: { path: { slug }, query: { days: opts.days, tree: opts.tree } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(
+      res.response.status, problemMessage(res.error, 'Failed to load analytics'))
+  }
+  return res.data as unknown as WorkspaceAnalyticsOut
+}

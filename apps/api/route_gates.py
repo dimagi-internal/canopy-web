@@ -736,6 +736,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "put_vault_keyset": ("self",),  # browser session + passkey step-up only
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
+    "workspace_health": ("logs.read",),  # same tree read; can_fix mirrors Agent.is_admin
+    "workspace_analytics": ("logs.read",),  # same tree read
 }
 
 #: Writes a VIEWER can make, each a decision rather than a default. A write

@@ -1,0 +1,98 @@
+"""THE way anything records an analytics fact: `emit`.
+
+One writer for `Activity`, so every producer stamps the same who / where / what /
+when and analytics is one indexed read (`apps/events/analytics.py`). A producer
+never builds an `Activity` row itself (`tests/test_activity_has_one_writer.py`).
+
+Recording a fact must never be able to undo the action it describes: `emit` runs
+in its own savepoint and swallows its own failure (logged), so a bad fact cannot
+poison the caller's transaction. Turn facts go through `for_turn`, which derives
+tenancy, agent and person from the turn exactly once.
+"""
+from __future__ import annotations
+
+import logging
+
+from django.db import transaction
+from django.utils import timezone
+
+from .models import Activity
+
+logger = logging.getLogger(__name__)
+
+#: The vocabulary. A new kind is added here first, so a reader of the table can
+#: see every kind that exists without grepping producers.
+TURN_ENQUEUED = "turn.enqueued"
+TURN_FINISHED = "turn.finished"
+CHAT_SESSION_CREATED = "chat.session.created"
+CHAT_MESSAGE = "chat.message"
+SETTING_CHANGED = "setting.changed"
+MCP_CALL = "mcp.call"
+KINDS = (TURN_ENQUEUED, TURN_FINISHED, CHAT_SESSION_CREATED, CHAT_MESSAGE, SETTING_CHANGED, MCP_CALL)
+
+
+def _actor_kind(actor, agent) -> str:
+    if actor is None:
+        return Activity.SYSTEM
+    # An agent acting with its own canopy login is the agent, not a person —
+    # per-person tables must not count Ada as an active user.
+    if agent is not None and agent.user_id == actor.pk:
+        return Activity.AGENT
+    return Activity.USER
+
+
+def emit(kind: str, *, workspace, actor=None, actor_kind: str = "", agent=None,
+         surface: str = "", ref: str = "", meta: dict | None = None, at=None,
+         dedupe: bool = False) -> Activity | None:
+    """Record one fact. `workspace` is a Workspace or its slug and is required —
+    a fact with no tenant is dropped (logged), never stored as visible-to-all.
+
+    `dedupe=True` skips the write when a fact of this kind already names `ref`;
+    the backfill uses it so a re-run never double-counts."""
+    if kind not in KINDS:
+        raise ValueError(f"unknown activity kind {kind!r}; add it to activity.KINDS")
+    slug = getattr(workspace, "slug", workspace)
+    if not slug:
+        logger.warning("activity %s dropped: no workspace (ref=%s)", kind, ref)
+        return None
+    actor = actor if getattr(actor, "is_authenticated", False) else None
+    try:
+        with transaction.atomic():
+            if dedupe and ref and Activity.objects.filter(kind=kind, ref=ref).exists():
+                return None
+            return Activity.objects.create(
+                workspace_id=slug, kind=kind, at=at or timezone.now(),
+                actor=actor, actor_kind=actor_kind or _actor_kind(actor, agent),
+                agent=agent, agent_slug=agent.slug if agent is not None else "",
+                surface=surface[:32], ref=str(ref)[:64], meta=meta or {},
+            )
+    except Exception:  # noqa: BLE001 — a fact is never worth a failed action
+        logger.exception("could not record activity %s (ref=%s)", kind, ref)
+        return None
+
+
+#: Turn origin -> the surface it arrived through, in the words the dashboard shows.
+_ORIGIN_SURFACE = {
+    "canopy_web_chat": "chat", "canopy_scheduler": "scheduler", "email": "email",
+    "slack": "slack", "ace_web": "ace-web", "api": "api",
+}
+
+
+def turn_actor(turn):
+    """The person a turn is for: who asked (`initiator_user`), else who enqueued it."""
+    return turn.initiator_user if turn.initiator_user_id else (
+        turn.enqueued_by if turn.enqueued_by_id else None)
+
+
+def for_turn(kind: str, turn, *, at=None, dedupe: bool = False, **meta) -> Activity | None:
+    """A turn fact: tenancy from `Turn.tenant_slug`, agent from `acting_agent`,
+    person from `turn_actor`, surface from the origin."""
+    agent = turn.acting_agent
+    actor = turn_actor(turn)
+    kind_of_actor = (Activity.CONTACT if turn.initiator_contact_id and actor is None
+                     else Activity.AGENT if turn.initiator_agent and actor is None
+                     else "")
+    return emit(kind, workspace=turn.tenant_slug, actor=actor, actor_kind=kind_of_actor,
+                agent=agent, surface=_ORIGIN_SURFACE.get(turn.origin, turn.origin),
+                ref=f"{turn.pk}", at=at, dedupe=dedupe,
+                meta={"status": turn.status, "origin": turn.origin, **meta})

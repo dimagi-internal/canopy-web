@@ -614,6 +614,9 @@ def enqueue_turn(
         if replay is not None:
             return replay, False
         raise
+    from apps.events import activity
+
+    activity.for_turn(activity.TURN_ENQUEUED, turn, at=turn.created_at)
     if origin == Turn.ORIGIN_EMAIL:
         _log_unproven_member(turn)
     if session is not None:
@@ -1129,6 +1132,9 @@ def finish_turn(
     if not updated:
         return turn
     append_events(turn, [{"kind": "status", "payload": {"status": status, "result_note": result_note}}])
+    from apps.events import activity
+
+    activity.for_turn(activity.TURN_FINISHED, turn, at=now)
     _finish_riders(turn)
     if stop_ignored:
         # SAY IT WHERE THE PERSON WHO PRESSED STOP IS LOOKING. A `status` event

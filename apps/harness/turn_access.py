@@ -31,13 +31,6 @@ REDACTED_FIELDS = {"prompt": "", "origin_ref": {}, "result_note": "", "share_tok
                    "provenance": {}}
 
 
-def _workspace_of(turn) -> str | None:
-    if turn.agent_id:
-        return turn.agent.workspace_id
-    if turn.chat_session_id:
-        return turn.chat_session.workspace_id
-    return turn.workspace_id
-
 
 def can_read_turn_content(user, turn, _memo: dict | None = None) -> bool:
     """`_memo` caches the per-workspace and per-agent answers across a list, so
@@ -60,7 +53,7 @@ def can_read_turn_content(user, turn, _memo: dict | None = None) -> bool:
             memo[key] = turn.claimed_by.owner_id == user.pk
         if memo[key]:
             return True
-    ws = _workspace_of(turn)
+    ws = turn.tenant_slug
     if ws:
         key = ("logs", ws)
         if key not in memo:
