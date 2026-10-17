@@ -88,6 +88,8 @@ describe('ProposedProjectCard', () => {
     fireEvent.change(screen.getByLabelText('Why you pass'), { target: { value: 'We have one' } })
     fireEvent.click(save)
     await waitFor(() => expect(backProject).toHaveBeenCalledWith(expect.anything(), 'passes', 'We have one'))
+    // The first save is still settling (its buttons are busy): click once it lets go.
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Back it' }) as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByRole('button', { name: 'Back it' }))
     await waitFor(() => expect(backProject).toHaveBeenCalledWith(expect.anything(), 'backs', ''))
   })
