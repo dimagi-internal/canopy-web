@@ -1916,3 +1916,18 @@ class ContributorPageOut(StrictModel):
     may_write: bool = Field(description="May the caller write this page (an agent with the person's "
                                         "permission, or the person themself)?")
     why_not: str = ""
+
+
+# ---- engagement: what people do with projects and huddles ---------------------
+
+
+class EngagementViewIn(StrictModel):
+    """The page a person opened: a project (its numeric `id`) OR a huddle."""
+
+    project: int | None = None
+    huddle_id: str = Field(default="", max_length=64)
+
+
+class EngagementViewOut(StrictModel):
+    #: False when this person's view of this object was already counted today (UTC).
+    recorded: bool

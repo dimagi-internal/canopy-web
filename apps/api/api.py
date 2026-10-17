@@ -218,6 +218,7 @@ from apps.harness.api_schedules import router as schedules_router  # noqa: E402
 from apps.harness.api_investigations import router as investigations_router  # noqa: E402
 from apps.harness.api_device_keys import router as device_keys_router  # noqa: E402
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
+from apps.agents.engagement_api import router as engagement_router  # noqa: E402
 from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
 from apps.canopy_sessions.app_views_api import router as app_views_router  # noqa: E402
@@ -294,6 +295,7 @@ api.add_router("/harness/failure-investigations", investigations_router)
 # Canopy Vault: hardware-bound runner keys behind the DPoP device proof (#1538).
 api.add_router("/runner-device-keys", device_keys_router)
 api.add_router("/huddles", huddles_router)
+api.add_router("/engagement", engagement_router)  # what people do with projects + huddles
 api.add_router("/threads", threads_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)

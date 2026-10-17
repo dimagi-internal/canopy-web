@@ -8157,6 +8157,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/engagement/view": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Record that you opened a project or a huddle
+         * @description Name exactly one of `project` (its numeric id) or `huddle_id`. Counted once
+         *     per person, per object, per UTC day — `recorded` is false for a repeat. 404
+         *     for anything the caller cannot see.
+         */
+        readonly post: operations["record_engagement_view"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/threads/": {
         readonly parameters: {
             readonly query?: never;
@@ -23403,6 +23425,24 @@ export interface components {
             /** Updated At */
             readonly updated_at?: string | null;
         };
+        /** EngagementViewOut */
+        readonly EngagementViewOut: {
+            /** Recorded */
+            readonly recorded: boolean;
+        };
+        /**
+         * EngagementViewIn
+         * @description The page a person opened: a project (its numeric `id`) OR a huddle.
+         */
+        readonly EngagementViewIn: {
+            /** Project */
+            readonly project?: number | null;
+            /**
+             * Huddle Id
+             * @default
+             */
+            readonly huddle_id: string;
+        };
         /** ThreadMessageOut */
         readonly ThreadMessageOut: {
             /** N */
@@ -36368,6 +36408,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HuddleOut"];
+                };
+            };
+        };
+    };
+    readonly record_engagement_view: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["EngagementViewIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EngagementViewOut"];
                 };
             };
         };
