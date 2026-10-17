@@ -2180,6 +2180,13 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     )
     read = list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)]
     runner = device_key.runner if device_key is not None else _caller_runner(request)
+    # A read is a BOX's only when this request names one: a device proof, or an
+    # `X-Canopy-Runner` the caller owns. Pairing a runner is a fact about the
+    # caller, not the request, so an owner who also pairs a box and resolves by
+    # hand from their own session is an admin read, not a box outside a turn
+    # (canopy-web#1563). Every `runner` caller is an admin already.
+    if via == "runner" and runner is None:
+        via = "admin"
     turn_id = request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120]
     try:
         services.record_credential_reads(
