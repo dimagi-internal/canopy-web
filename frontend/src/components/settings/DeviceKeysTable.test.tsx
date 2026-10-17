@@ -82,15 +82,11 @@ describe('DeviceKeysTable', () => {
     await waitFor(() => expect(revokeRunnerDeviceKey).toHaveBeenCalledWith('k1'))
   })
 
-  it('names an EC2 box by its instance role (canopy-web#1549)', () => {
-    render(
-      <DeviceKeysTable
-        keys={[{ ...KEY, kind: 'aws-iam', label: '', role_arn: 'arn:aws:iam::123456789012:role/canopy-runner' }]}
-        onChange={vi.fn()}
-      />,
-    )
-    expect(screen.getByText('123456789012:role/canopy-runner')).toBeTruthy()
-    expect(screen.getByText('aws-iam')).toBeTruthy()
+  it('keeps an EC2 box’s instance role on hover, not on the page (canopy-web#1549)', () => {
+    const arn = 'arn:aws:iam::123456789012:role/canopy-runner'
+    render(<DeviceKeysTable keys={[{ ...KEY, kind: 'aws-iam', label: '', role_arn: arn }]} onChange={vi.fn()} />)
+    expect(screen.getByText('aws-iam').getAttribute('title')).toBe(arn)
+    expect(screen.queryByText(/123456789012/)).toBeNull()
   })
 
   it('offers no actions on a key whose runner you do not manage', () => {

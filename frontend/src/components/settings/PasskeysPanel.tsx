@@ -109,7 +109,7 @@ export function PasskeysPanel() {
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-muted-foreground">
-              <th className="py-1 font-medium">Device</th>
+              <th className="py-1 font-medium">Passkey</th>
               <th className="py-1 font-medium">Added</th>
               <th className="py-1 font-medium">Last used</th>
               <th className="py-1 font-medium">Kind</th>

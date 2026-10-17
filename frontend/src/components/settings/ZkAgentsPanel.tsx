@@ -40,12 +40,35 @@ function statusOf(r: AgentRow): AgentStatus {
 
 function statusText(r: AgentRow): string {
   const s = statusOf(r)
-  if (s === 'ready') return 'Ready'
-  if (s === 'finish') return r.zk.enabled ? 'Waiting for your key' : 'Needs finishing'
+  if (s === 'ready') return 'Locked ✓'
+  if (s === 'finish') return 'Not locked yet'
   const machines = r.zk.pending.filter((p) => p.kind === 'device').map((p) => p.runner_name || 'a machine')
   const people = r.zk.pending.filter((p) => p.kind === 'member').map((p) => p.email || 'someone')
   const who = [...machines, ...people]
   return who.length ? `${who.join(', ')} waiting` : 'New secrets to confirm'
+}
+
+function names(rows: AgentRow[]): string {
+  const n = rows.map((r) => r.name)
+  return n.length <= 2 ? n.join(' and ') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`
+}
+
+/** What the one button does, in words: lock new agents, let waiting machines in, or both. */
+function lockText(todo: AgentRow[]): string {
+  const lock = todo.filter((r) => statusOf(r) === 'finish')
+  const admit = todo.filter((r) => statusOf(r) === 'waiting')
+  const parts: string[] = []
+  if (lock.length) {
+    parts.push(`Encrypts ${names(lock)}’s secrets with your key, so only you and the machines you approve can read them — canopy-web keeps only a locked copy.`)
+  }
+  if (admit.length) parts.push(`Gives the machines waiting on ${names(admit)} their copy of the key.`)
+  return parts.join(' ')
+}
+
+function buttonText(todo: AgentRow[]): string {
+  const lock = todo.filter((r) => statusOf(r) === 'finish')
+  if (lock.length) return `Lock ${names(lock)}’s secrets`
+  return `Let waiting machines in`
 }
 
 async function findAgents(): Promise<AgentRow[]> {
@@ -72,7 +95,7 @@ const STATUS_TONE: Record<AgentStatus, string> = {
   waiting: 'text-warning',
 }
 
-export function ZkAgentsPanel() {
+export function ZkAgentsPanel({ onChanged }: { onChanged?: () => void } = {}) {
   const { prompt, element } = useUnlockPrompt()
   const [rows, setRows] = useState<AgentRow[] | null>(null)
   const [busy, setBusy] = useState(false)
@@ -116,6 +139,7 @@ export function ZkAgentsPanel() {
       await grantPending(r.slug, async () => me)
     }
     await load()
+    onChanged?.() // the You row re-reads: a recovery code may have just been made
   }
 
   const start = async () => {
@@ -197,7 +221,7 @@ export function ZkAgentsPanel() {
           </div>
         </div>
       ) : todo.length > 0 && (askPassphrase ? (
-        <PassphraseSetup note={USE_A_PASSPHRASE} submitLabel="Finish setup"
+        <PassphraseSetup note={USE_A_PASSPHRASE} submitLabel={buttonText(todo)}
                          onCancel={() => setAskPassphrase(false)}
                          onReady={(me) => {
                            setAskPassphrase(false)
@@ -207,9 +231,14 @@ export function ZkAgentsPanel() {
                              .finally(() => setBusy(false))
                          }} />
       ) : (
-        <Button size="sm" disabled={busy} onClick={() => void start()} data-testid="zk-agents-start">
-          {busy ? 'Working…' : `Finish setup for ${todo.length === 1 ? todo[0].name : `${todo.length} agents`}`}
-        </Button>
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground" data-testid="zk-agents-explain">
+            {lockText(todo)} One tap of your passkey; the first time, you also get a recovery code to keep.
+          </p>
+          <Button size="sm" disabled={busy} onClick={() => void start()} data-testid="zk-agents-start">
+            {busy ? 'Working…' : buttonText(todo)}
+          </Button>
+        </div>
       ))}
       {error && <p className="text-sm text-destructive" data-testid="zk-agents-error">{error}</p>}
       {element}

@@ -98,7 +98,7 @@ export function DeviceKeysTable({
         <thead>
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
             <th className="py-1 font-medium">Runner</th>
-            <th className="py-1 font-medium">Key</th>
+            <th className="py-1 font-medium">Machine</th>
             <th className="py-1 font-medium">Status</th>
             <th className="py-1 font-medium">Last used</th>
             <th className="py-1" />
@@ -113,17 +113,11 @@ export function DeviceKeysTable({
             >
               <td className="py-1.5 text-foreground">{k.runner_name}</td>
               <td className="py-1.5">
-                <span className="text-foreground">{k.label || k.kind}</span>
-                {k.kind === 'aws-iam' && k.role_arn ? (
-                  // An EC2 box's instance role (canopy-web#1549): the role IS the key.
-                  <span className="ml-2 font-mono text-[11px] text-muted-foreground" title={k.role_arn}>
-                    {k.role_arn.replace(/^arn:aws:iam::/, '')}
-                  </span>
-                ) : (
-                  <span className="ml-2 font-mono text-[11px] text-muted-foreground" title={k.jkt}>
-                    {k.jkt.slice(0, 12)}…
-                  </span>
-                )}
+                {/* The key's id (an EC2 instance role, or a key thumbprint) is on
+                    hover: it tells one key from another, but nobody reads it. */}
+                <span className="text-foreground" title={k.kind === 'aws-iam' && k.role_arn ? k.role_arn : k.jkt}>
+                  {k.label || k.kind}
+                </span>
               </td>
               <td className="py-1.5">
                 <span className={`rounded border px-1.5 py-0.5 text-[11px] ${STATUS_TONE[k.status] ?? ''}`}>

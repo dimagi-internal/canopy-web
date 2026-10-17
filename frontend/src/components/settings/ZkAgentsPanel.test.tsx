@@ -43,13 +43,15 @@ describe('ZkAgentsPanel', () => {
   it('shows where each agent I administer stands — and no on/off switch', async () => {
     fleet()
     render(<ZkAgentsPanel />)
-    expect((await screen.findByTestId('zk-agent-status-hal')).textContent).toBe('Ready')
-    expect(screen.getByTestId('zk-agent-status-eva').textContent).toBe('Waiting for your key')
+    expect((await screen.findByTestId('zk-agent-status-hal')).textContent).toBe('Locked ✓')
+    expect(screen.getByTestId('zk-agent-status-eva').textContent).toBe('Not locked yet')
     expect(screen.getByTestId('zk-agent-status-ada').textContent).toBe('cloud-ec2-2 waiting')
     expect(screen.queryByTestId('zk-agent-ace')).toBeNull()
     expect(screen.queryByTestId('zk-agent-lex')).toBeNull()
     expect(screen.queryByText(/turn off|turn on|zero-knowledge/i)).toBeNull()
-    expect(screen.getByTestId('zk-agents-start').textContent).toBe('Finish setup for 2 agents')
+    // Says what it does: lock Eva, let the machine waiting on Ada in.
+    expect(screen.getByTestId('zk-agents-start').textContent).toBe('Lock Eva’s secrets')
+    expect(screen.getByTestId('zk-agents-explain').textContent).toMatch(/Encrypts Eva’s secrets.*machines waiting on Ada/)
   })
 
   it('says so when no agent keeps secrets here', async () => {

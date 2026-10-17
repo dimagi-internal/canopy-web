@@ -26,6 +26,7 @@ import { ZkAgentsPanel } from './ZkAgentsPanel'
  * #device-keys, #your-agents.
  */
 export function SecurityCard({ machines }: { machines: ReactNode }) {
+  const [youVersion, setYouVersion] = useState(0)
   return (
     <div id="security" className="rounded-xl border border-border bg-card p-5 space-y-5" data-testid="settings-security">
       <div>
@@ -38,13 +39,13 @@ export function SecurityCard({ machines }: { machines: ReactNode }) {
 
       <Row id="you" title="You">
         <PasskeysPanel />
-        <RecoveryRow />
+        <RecoveryRow key={youVersion} />
       </Row>
 
       <Row id="your-machines" title="Your machines">{machines}</Row>
 
       <Row id="your-agents" title="Your agents">
-        <ZkAgentsPanel />
+        <ZkAgentsPanel onChanged={() => setYouVersion((v) => v + 1)} />
       </Row>
     </div>
   )
