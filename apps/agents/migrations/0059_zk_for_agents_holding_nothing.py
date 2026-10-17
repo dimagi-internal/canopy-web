@@ -17,5 +17,5 @@ def forwards(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-    dependencies = [("agents", "0056_zk_grant_notice")]
+    dependencies = [("agents", "0058_project_proposals")]
     operations = [migrations.RunPython(forwards, migrations.RunPython.noop)]

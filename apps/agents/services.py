@@ -1274,7 +1274,7 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
 
     Zero-knowledge is the canopy-web vault's only mode (Jonathan, 2026-10-17):
     on a zero-knowledge agent — every agent created since, and every agent that
-    held nothing (migration 0057) — a value written in plaintext (`canopy vault
+    held nothing (migration 0059) — a value written in plaintext (`canopy vault
     import`, or one canopy-web made itself: `minted`, Connect Google mailbox,
     canopy-pat rotation) is sealed to every reader of the agent (`zks1`,
     `zk_seal.py`) and the plaintext forgotten. Only an older agent that already
