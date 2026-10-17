@@ -531,9 +531,10 @@ def _turns():
 
 
 def test_read_channel_reads_everything_then_only_what_is_new(allowed, channel, linked, hal, ws, slack):
-    slack.ts_seq = ["1700000801.000100", "1700000802.000100"]   # each command's own anchor message
+    # anchor 1, the note in its thread, anchor 2: each command gets its own thread
+    slack.ts_seq = ["1700000801.000100", "1700000801.500000", "1700000802.000100"]
     note = _read_channel("what's new?")
-    assert "is reading this channel (everything in it)" in note
+    assert "is reading this channel: everything in it — its first read here" in note
     row = SlackChannelIngest.objects.get()
     assert row.status == SlackChannelIngest.READING and row.allowance_id and row.pending_ask["ask"] == "what's new?"
     assert not _turns()                                           # nothing sent until the read is done
@@ -545,15 +546,20 @@ def test_read_channel_reads_everything_then_only_what_is_new(allowed, channel, l
     assert turn.prompt.rstrip().endswith("what's new?")
     assert f"Approved by: {_owner(ws).email} (allow-listed)" in turn.prompt
     assert row.read_mark and Event.objects.filter(kind="slack.ingest_read_channel").count() == 1
+    # The thread is told, in public, what was read.
+    told = [p["text"] for p in slack.said("chat.postMessage") if p.get("thread_ts") == "1700000801.000100"]
+    assert any("read 6 message(s)" in t and "the whole channel, its first read here" in t for t in told), told
 
     channel.history.insert(0, {"ts": "1700000600.000000", "user": BOB, "text": "brand new"})
     note = _read_channel("and now?")
-    assert "since its last read here" in note
+    assert "everything posted since its last read here, <!date^" in note and f"asked by <@{ALICE}>" in note
     _run(SlackChannelIngest.objects.get())
     second = _turns()[-1]
     assert second.pk != turn.pk
     assert "brand new" in second.prompt and "first ever message" not in second.prompt
     assert second.prompt.rstrip().endswith("and now?")
+    told = [p["text"] for p in slack.said("chat.postMessage") if p.get("thread_ts") == "1700000802.000100"]
+    assert any("read 1 message(s)" in t and "since its last read here, <!date^" in t for t in told), told
 
 
 def test_read_channel_needs_the_channel_on_the_list(channel, linked, hal, installation):

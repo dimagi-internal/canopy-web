@@ -238,6 +238,9 @@ class SlackChannelIngest(models.Model):
     #: agent everything since `read_mark` with the ask, in that message's thread,
     #: and clears this (`ingest.read_channel`, `_deliver`). Empty = nobody waiting.
     pending_ask = models.JSONField(default=dict, blank=True)
+    #: The Slack user whose `read-channel` was last handed to the agent (with
+    #: `read_at`, the when) — what the next one tells people it reads since.
+    last_read_by_slack = models.CharField(max_length=32, blank=True, default="")
 
     class Meta:
         indexes = [models.Index(fields=["status", "next_attempt_at"], name="slack_ingest_due")]

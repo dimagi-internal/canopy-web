@@ -730,8 +730,29 @@ def read_channel(*, installation, agent, inbound, user, ask: str) -> str:
     _record(row, "read_channel", f"{_who(user)} asked {agent.slug} to read <#{channel_id}> since its last read "
             f"(`{READ_WORD}`)" + (f": {ask}" if ask else ""), user=user.pk, ask=ask[:500],
             allowance=str(allowance.pk), after=row.read_mark)
-    since = "everything in it" if not row.read_mark else "everything since its last read here"
-    return f"`{agent.slug}` is reading this channel ({since}) and will answer in this thread."
+    if row.read_mark and row.read_at:
+        by = f" (asked by <@{row.last_read_by_slack}>)" if row.last_read_by_slack else ""
+        since = f"everything posted since its last read here, {_slack_date(row.read_at.timestamp())}{by}"
+    else:
+        since = "everything in it — its first read here"
+    return f"`{agent.slug}` is reading this channel: {since}. It will answer in this thread."
+
+
+def _slack_date(epoch: float) -> str:
+    """A time Slack shows in each reader's own timezone (UTC where it can't)."""
+    t = time.gmtime(epoch)
+    return f"<!date^{int(epoch)}^{{date_short_pretty}} at {{time}}|{time.strftime('%Y-%m-%d %H:%M', t)} UTC>"
+
+
+def _what_was_read(agent_slug: str, t: dict, prev_at) -> str:
+    """The public line in the thread: how much was read, spanning when, since when."""
+    since = f"since its last read here, {_slack_date(prev_at.timestamp())}" if prev_at else \
+        "the whole channel, its first read here"
+    if not t["messages"]:
+        return f":books: Nothing new in this channel {since}. `{agent_slug}` still answers your ask."
+    span = (f", posted {_slack_date(float(t['first_ts']))} → {_slack_date(float(t['last_ts']))}"
+            if t["first_ts"] else "")
+    return f":books: `{agent_slug}` read {t['messages']} message(s){span} — {since}."
 
 
 def _deliver(ingest: SlackChannelIngest) -> None:
@@ -752,10 +773,13 @@ def _deliver(ingest: SlackChannelIngest) -> None:
         _tell_thread(token, inbound, f":warning: canopy couldn't read this channel for `{row.agent.slug}`: "
                      f"{row.error or row.status}.")
         return
+    prev_at = row.read_at if row.read_mark else None
     t = transcript(row, after=row.read_mark)
     outcome = services.deliver_channel_read(inbound, row.agent, t["markdown"], pending.get("ask") or "")
     if outcome.status == services.SENT:
         mark_read(row, t["mark"])
+        SlackChannelIngest.objects.filter(pk=row.pk).update(last_read_by_slack=inbound.slack_user_id[:32])
+        _tell_thread(token, inbound, _what_was_read(row.agent.slug, t, prev_at))
     else:
         _tell_thread(token, inbound, outcome.message)
 
