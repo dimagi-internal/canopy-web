@@ -61,9 +61,13 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
             # the result back in the payload so a watcher does not have to
             # wait for a reload to see it.
             author = payload.get("author")
-        return [{"event": "chat.user_message",
-                 "data": {"message_id": mid, "turn_index": seq,
-                          "plaintext": text, "author": author}}]
+        data = {"message_id": mid, "turn_index": seq, "plaintext": text, "author": author}
+        # The transcript record's provenance (`canopy_transcript.record_flags`),
+        # as history rows carry it in `content["record"]` — so a compaction
+        # summary renders as one live, not as a line the human typed.
+        if isinstance(payload.get("record"), dict):
+            data["record"] = payload["record"]
+        return [{"event": "chat.user_message", "data": data}]
     if kind == "assistant":
         mid = resolve_message_id(seq)
         return [

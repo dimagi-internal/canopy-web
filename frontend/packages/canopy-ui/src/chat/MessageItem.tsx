@@ -42,6 +42,14 @@ function otherAuthorOf(
   return isMine(message.author, currentUserId, currentContactId) ? null : message.author;
 }
 
+/** A `user` row Claude Code wrote, not a person: the summary it leaves when it
+ *  compacts the conversation. The runner keeps the transcript record's own
+ *  flags on the row as `content.record` (`canopy_transcript.record_flags`). */
+function isCompactionSummary(message: Message): boolean {
+  const record = message.content?.record as Record<string, unknown> | undefined;
+  return message.role === "user" && Boolean(record?.compact_summary);
+}
+
 /** Count visible lines for the "▸ System context (N lines)" header. */
 function countLines(text: string): number {
   if (!text) return 0;
@@ -137,6 +145,20 @@ export function MessageItem({
       />
     );
   }
+  // Same treatment for a compaction summary: it sits on the human's side of the
+  // transcript, but nobody typed it — as a user bubble it read as the person
+  // pasting a wall of text.
+  if (isCompactionSummary(message)) {
+    return (
+      <SystemSeedRow
+        message={message}
+        forceOpen={forceToolOpen}
+        renderMarkdown={renderMarkdown}
+        label="Context compacted"
+        testId="compaction-summary-row"
+      />
+    );
+  }
 
   const otherAuthor = otherAuthorOf(message, currentUserId, currentContactId);
   // A teammate's line sits on the agent's side of the column, so it needs its
@@ -210,10 +232,14 @@ function SystemSeedRow({
   message,
   forceOpen,
   renderMarkdown,
+  label = "System context",
+  testId = "system-seed-row",
 }: {
   message: Message;
   forceOpen: boolean | undefined;
   renderMarkdown: RenderMarkdown;
+  label?: string;
+  testId?: string;
 }) {
   const text = message.plaintext;
   const lineCount = countLines(text);
@@ -221,13 +247,13 @@ function SystemSeedRow({
   return (
     <details
       className="group my-2 mr-auto max-w-[80%] rounded-2xl border border-border bg-muted/40 px-3 py-1.5 text-sm"
-      data-testid="system-seed-row"
+      data-testid={testId}
       {...(openProp !== undefined ? { open: openProp } : {})}
     >
       <summary className="flex cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-foreground select-none list-none [&::-webkit-details-marker]:hidden">
         <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
         <span className="text-xs font-medium uppercase tracking-wide">
-          System context
+          {label}
         </span>
         {lineCount > 0 && (
           <span className="text-xs text-muted-foreground/70">
