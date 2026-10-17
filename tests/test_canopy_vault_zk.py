@@ -886,3 +886,80 @@ def test_a_pending_keys_listing_names_the_zk_agents_approving_it_will_need(fleet
     Agent.objects.filter(pk=fleet.agent.pk).update(zk_kv=0)
     rows = {r["id"]: r for r in fleet.client.get("/api/runner-device-keys/").json()}
     assert rows[str(key.pk)]["zk_pending_agents"] == []
+
+
+# ---- telling vault-key holders a target is waiting (zk_notify) --------------------------
+
+def test_a_pending_device_notifies_each_holder_once_after_the_grace_then_clears(fleet, mailoutbox):
+    from apps.agents import zk_notify
+    from apps.agents.models import ZkGrantNotice
+
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    t0 = timezone.now()
+    # Inside the grace: an Approve usually grants in the same click — nobody is told.
+    assert zk_notify.sweep(t0) == 0
+    assert mailoutbox == []
+    notice = ZkGrantNotice.objects.get(agent=fleet.agent)
+    assert (notice.kind, notice.target, notice.kv) == ("device", str(fleet.device.pk), 1)
+    # Past it: the one holder (jj, member wrap at kv 1) is told, with the deep link.
+    assert zk_notify.sweep(t0 + zk_notify.GRACE) == 1
+    assert [m.to for m in mailoutbox] == [["jj@dimagi.com"]]
+    assert "/agents/eva/settings#cred-zk" in mailoutbox[0].body
+    assert "box" in mailoutbox[0].subject
+    # Once per target.
+    assert zk_notify.sweep(t0 + 2 * zk_notify.GRACE) == 0
+    assert len(mailoutbox) == 1
+    # Granted: the notice closes.
+    fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [device_wrap(fleet)]},
+                      content_type="application/json")
+    zk_notify.sweep(t0 + 3 * zk_notify.GRACE)
+    notice.refresh_from_db()
+    assert notice.cleared_at is not None
+
+
+def test_a_device_granted_within_the_grace_is_never_mentioned(fleet, mailoutbox):
+    from apps.agents import zk_notify
+
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    t0 = timezone.now()
+    zk_notify.sweep(t0)
+    fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [device_wrap(fleet)]},
+                      content_type="application/json")
+    assert zk_notify.sweep(t0 + zk_notify.GRACE) == 0
+    assert mailoutbox == []
+
+
+def test_a_new_admin_with_a_keyset_is_a_target_and_only_holders_are_told(fleet, mailoutbox):
+    from apps.agents import zk_notify
+
+    assert _enable(fleet).status_code == 200  # device wrapped too: nothing pending
+    other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.EDITOR)
+    _make_keyset(other, _add_passkey(other, "o-cred").credential_id)
+    AgentAdmin.objects.create(agent=fleet.agent, user=other, granted_by=fleet.user)
+    t0 = timezone.now()
+    zk_notify.sweep(t0)
+    assert zk_notify.sweep(t0 + zk_notify.GRACE) == 1
+    assert [m.to for m in mailoutbox] == [["jj@dimagi.com"]]  # not the new admin: they hold nothing yet
+    assert "o@dimagi.com" in mailoutbox[0].body
+
+
+def test_custodial_agents_are_not_swept(fleet, mailoutbox):
+    from apps.agents import zk_notify
+    from apps.agents.models import ZkGrantNotice
+
+    assert zk_notify.sweep(timezone.now() + zk_notify.GRACE) == 0
+    assert not ZkGrantNotice.objects.exists()
+
+
+def test_the_heartbeat_sweep_is_throttled_and_never_raises(fleet, monkeypatch):
+    from apps.agents import zk_notify
+
+    calls = []
+    monkeypatch.setattr(zk_notify, "sweep", lambda now=None: calls.append(now) or 0)
+    zk_notify.maybe_sweep()
+    zk_notify.maybe_sweep()
+    assert len(calls) == 1
+    cache.clear()
+    monkeypatch.setattr(zk_notify, "sweep", lambda now=None: 1 / 0)
+    zk_notify.maybe_sweep()  # swallowed
