@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getKeyset, getZkState, type ZkStateOut } from '@/api/vault'
-import { grantPending, recoverWithCode, rotateVaultKey, turnOffZk, turnOnZk, unlockVaultKey, type Unlock } from '@/vault/operations'
-import { PrfUnsupportedError, PRF_UNSUPPORTED } from '@/vault/prf'
+import { deletePasskey, listPasskeys } from '@/api/passkeys'
+import {
+  grantPending,
+  vaultKeyForFlow,
+  vaultKeyRoute,
+  type KeysetPasskey,
+  recoverWithCode,
+  rotateVaultKey,
+  turnOffZk,
+  turnOnZk,
+  unlockVaultKey,
+  type Unlock,
+} from '@/vault/operations'
+import { browserSupportsPrf, PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
+import { PassphraseSetup } from '@/vault/PassphraseSetup'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 // Zero-knowledge for this agent (Canopy Vault Phase 2, canopy-web#1550). With
@@ -18,7 +31,7 @@ export const ZK_TRUST_CAVEAT =
   'depend on that.'
 
 function message(e: unknown, fallback: string): string {
-  if (e instanceof PrfUnsupportedError) return PRF_UNSUPPORTED
+  if (e instanceof PrfUnsupportedError) return USE_A_PASSPHRASE
   if (e instanceof Error && e.name === 'NotAllowedError') return 'The passkey prompt was dismissed.'
   return e instanceof Error ? e.message : fallback
 }
@@ -59,6 +72,12 @@ export function AgentZkSection({
   const unlock: Unlock = unlockProp ?? (() => unlockVaultKey(own.prompt))
   const [state, setState] = useState<ZkStateOut | null>(null)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
+  const [passkeys, setPasskeys] = useState<KeysetPasskey[]>([])
+  /** Passkeys an upgrade just replaced — offered for deletion. */
+  const [replaced, setReplaced] = useState<KeysetPasskey[]>([])
+  const [browserPrf, setBrowserPrf] = useState<boolean | null>(null)
+  /** The action waiting on an inline passphrase setup (no PRF passkey). */
+  const [askPassphrase, setAskPassphrase] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [code, setCode] = useState<{ code: string; kv: number } | null>(null)
@@ -79,8 +98,13 @@ export function AgentZkSection({
       .then((s) => !cancelled && update(s))
       .catch(() => !cancelled && update(null))
     getKeyset()
-      .then((k) => !cancelled && setHasKey(k.exists))
+      .then((k) => {
+        if (cancelled) return
+        setHasKey(k.exists)
+        setPasskeys([...(k.passkeys ?? [])])
+      })
       .catch(() => !cancelled && setHasKey(false))
+    void browserSupportsPrf().then((v) => !cancelled && setBrowserPrf(v))
     return () => {
       cancelled = true
     }
@@ -117,6 +141,82 @@ export function AgentZkSection({
     }
   }
 
+  /** Turn on (or finish a born-zero-knowledge agent). A person with no vault
+   *  key gets one in the same step: by the passkey touch when it can hold one
+   *  (that touch also steps up), else by an inline passphrase. */
+  const start = (label: string) => {
+    if (hasKey !== false) {
+      void run(label, () => turnOnZk(slug, storedNames, confirmCode(1), unlock), true)
+      return
+    }
+    if (vaultKeyRoute(passkeys, browserPrf) === 'passphrase') {
+      setAskPassphrase(label)
+      return
+    }
+    void run(label, async () => {
+      const got = await vaultKeyForFlow(browserPrf, own.prompt)
+      if (!got) {
+        setAskPassphrase(label) // no passkey here can hold a vault key: a passphrase, no error
+        return state
+      }
+      setReplaced(got.replaced)
+      setHasKey(true)
+      return turnOnZk(slug, storedNames, confirmCode(1), async () => got.me)
+    }, true)
+  }
+
+  /** After an upgrade: offer to delete the passkeys it replaced. */
+  const removeReplaced = async () => {
+    setBusy('remove the old passkey')
+    setError(null)
+    try {
+      const mine = await listPasskeys()
+      for (const p of mine.filter((k) => replaced.some((r) => r.credential_id === k.credential_id))) {
+        await deletePasskey(p.id)
+      }
+      setReplaced([])
+    } catch (e) {
+      setError(message(e, 'Could not remove the old passkey'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const passphraseSetup = askPassphrase && (
+    <PassphraseSetup
+      note={USE_A_PASSPHRASE}
+      submitLabel={askPassphrase === 'create the vault key' ? 'Create the vault key' : 'Turn on zero-knowledge'}
+      onCancel={() => setAskPassphrase(null)}
+      onReady={(me) => {
+        const label = askPassphrase
+        setAskPassphrase(null)
+        setHasKey(true)
+        void run(label, () => turnOnZk(slug, storedNames, confirmCode(1), async () => me), true)
+      }}
+    />
+  )
+
+  /** "Upgrade your passkey" leads when that is the first thing the click does. */
+  const actionLabel = (base: string) =>
+    hasKey === false && vaultKeyRoute(passkeys, browserPrf) === 'upgrade'
+      ? `Upgrade your passkey and ${base.charAt(0).toLowerCase()}${base.slice(1)}`
+      : base
+
+  const replacedNotice = replaced.length > 0 && (
+    <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="zk-replaced-passkeys">
+      <span className="text-foreground-secondary">
+        Your new passkey holds the vault key. Remove the old one ({replaced.map((p) => p.label || 'passkey').join(', ')})?
+      </span>
+      <button type="button" disabled={busy !== null} onClick={() => void removeReplaced()}
+              className="text-destructive hover:underline disabled:opacity-40" data-testid="zk-remove-replaced">
+        Remove
+      </button>
+      <button type="button" onClick={() => setReplaced([])} className="text-muted-foreground hover:underline">
+        Keep it
+      </button>
+    </div>
+  )
+
   const pending = state.pending
   const current = state.wraps.filter((w) => w.kv === state.kv)
   return (
@@ -124,6 +224,7 @@ export function AgentZkSection({
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         Zero-knowledge
       </h3>
+      {replacedNotice}
 
       {!state.enabled ? (
         <div className="space-y-2 text-[12px]">
@@ -132,28 +233,21 @@ export function AgentZkSection({
             under a key only this agent&rsquo;s devices and admins hold, and canopy-web stores ciphertext it cannot
             read.
           </p>
-          {hasKey === false ? (
-            <p className="text-warning" data-testid="zk-needs-vault-key">
-              Set up your vault key first: <a className="underline" href="/settings#vault-key">Settings → Vault key</a>.
-              Agents you create after that start zero-knowledge.
-            </p>
-          ) : (
-            <>
-              <p className="text-muted-foreground">
-                Turning it on reads each stored value once (your passkey), encrypts it here, and wraps the new vault
-                key for you, {pending.filter((p) => p.kind === 'device').length} approved device(s) with an ECDH key,
-                and a recovery code you keep.
-              </p>
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => void run('turn on zero-knowledge', () => turnOnZk(slug, storedNames, confirmCode(1)), true)}
-                className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
-                data-testid="zk-enable"
-              >
-                {busy ? 'Working…' : 'Turn on zero-knowledge'}
-              </button>
-            </>
+          <p className="text-muted-foreground">
+            Turning it on reads each stored value once (your passkey), encrypts it here, and wraps the new vault
+            key for you, {pending.filter((p) => p.kind === 'device').length} approved device(s) with an ECDH key,
+            and a recovery code you keep.{hasKey === false && ' It also creates your own vault key, in the same step.'}
+          </p>
+          {askPassphrase === 'turn on zero-knowledge' ? passphraseSetup : (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => start('turn on zero-knowledge')}
+              className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
+              data-testid="zk-enable"
+            >
+              {busy ? 'Working…' : actionLabel('Turn on zero-knowledge')}
+            </button>
           )}
         </div>
       ) : state.kv === 0 ? (
@@ -169,16 +263,17 @@ export function AgentZkSection({
             Create the vault key to finish: it re-encrypts them under one key, wraps it for you and each device, and
             gives you a recovery code.
           </p>
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => void run('create the vault key',
-              () => turnOnZk(slug, storedNames, confirmCode(1), unlock), true)}
-            className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
-            data-testid="zk-create-key"
-          >
-            {busy ? 'Working…' : 'Create the vault key'}
-          </button>
+          {askPassphrase === 'create the vault key' ? passphraseSetup : (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => start('create the vault key')}
+              className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
+              data-testid="zk-create-key"
+            >
+              {busy ? 'Working…' : actionLabel('Create the vault key')}
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-2 text-[12px]">

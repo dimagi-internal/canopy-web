@@ -5311,6 +5311,9 @@ export interface paths {
          * Start registering a passkey for this device
          * @description Returns the options for navigator.credentials.create(). Browser session
          *     only; adding a SECOND passkey needs a fresh step-up with the first.
+         *     `?upgrade=true` replaces a passkey that cannot hold a vault key (no PRF):
+         *     it is left out of `excludeCredentials` so the passkey app will make the new
+         *     one for the same account.
          */
         readonly post: operations["begin_passkey_registration"];
         readonly delete?: never;
@@ -19953,6 +19956,8 @@ export interface components {
         readonly PasskeyOut: {
             /** Id */
             readonly id: number;
+            /** Credential Id */
+            readonly credential_id: string;
             /** Label */
             readonly label: string;
             /**
@@ -32939,7 +32944,9 @@ export interface operations {
     };
     readonly begin_passkey_registration: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly upgrade?: boolean;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;

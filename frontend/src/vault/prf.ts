@@ -26,6 +26,12 @@ export const PRF_UNSUPPORTED =
   'Windows Hello on a current Chrome or Edge, or a security key with hmac-secret on Chrome or Firefox — ' +
   'and try again.'
 
+/** What a person is told when their passkey can't hold the vault key — the
+ *  common case with a password-manager passkey, so plain words, not the
+ *  browser-support list above. */
+export const USE_A_PASSPHRASE =
+  "Your passkey app can't unlock a vault key, so use a passphrase — save it and the Secret Key in your password manager."
+
 /** Best-effort early hint (`PublicKeyCredential.getClientCapabilities`, where
  *  the browser has it). `null` = cannot tell until a passkey is used. */
 export async function browserSupportsPrf(): Promise<boolean | null> {

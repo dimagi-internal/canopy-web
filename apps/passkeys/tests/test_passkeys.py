@@ -83,6 +83,28 @@ def test_registration_options_are_bound_to_the_host_and_require_verification(bro
     assert opts["authenticatorSelection"]["userVerification"] == "required"
 
 
+def test_the_passkey_list_carries_each_credential_id(browser):
+    device = SoftAuthenticator()
+    assert _register(browser, device).json()["credential_id"] == device.id
+    assert [p["credential_id"] for p in browser.get("/api/passkeys/").json()] == [device.id]
+
+
+def test_an_upgrade_leaves_passkeys_without_prf_out_of_the_exclusions(browser, jj):
+    old, prf = SoftAuthenticator(), SoftAuthenticator()
+    assert _register(browser, old, label="old").status_code == 201
+    assert _step_up(browser, old).status_code == 200
+    assert _register(browser, prf, label="prf").status_code == 201
+    Passkey.objects.filter(credential_id=old.id).update(prf_enabled=None)
+    Passkey.objects.filter(credential_id=prf.id).update(prf_enabled=True)
+
+    def excluded(path):
+        return {d["id"] for d in _post(browser, path).json()["options"]["excludeCredentials"]}
+
+    assert excluded("/api/passkeys/register/begin") == {old.id, prf.id}
+    # The passkey app must be allowed to make the replacement for the same account.
+    assert excluded("/api/passkeys/register/begin?upgrade=true") == {prf.id}
+
+
 def test_a_registration_from_another_origin_is_refused(browser):
     r = _register(browser, SoftAuthenticator(origin="https://evil.example"))
     assert r.status_code == 400

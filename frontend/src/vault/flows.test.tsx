@@ -14,13 +14,16 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/vault', () => api)
 const { revealAgentCredential } = vi.hoisted(() => ({ revealAgentCredential: vi.fn() }))
 vi.mock('@/api/agents', () => ({ revealAgentCredential }))
+const passkeysApi = vi.hoisted(() => ({ registerThisDevice: vi.fn(), listPasskeys: vi.fn(), deletePasskey: vi.fn() }))
+vi.mock('@/api/passkeys', () => passkeysApi)
 const prf = vi.hoisted(() => ({ assertWithPrf: vi.fn(), browserSupportsPrf: vi.fn() }))
 vi.mock('@/vault/prf', async (orig) => ({ ...(await orig<typeof import('./prf')>()), ...prf }))
 
 const zk = await import('./zk')
 const { VaultKeyPanel } = await import('@/components/settings/VaultKeyPanel')
 const { AgentZkSection, ZK_TRUST_CAVEAT } = await import('@/pages/agents/AgentZkSection')
-const { PRF_UNSUPPORTED } = await import('./prf')
+const { USE_A_PASSPHRASE } = await import('./prf')
+const { vaultKeyRoute } = await import('./operations')
 
 const USER = '7'
 const AGENT_ID = '42'
@@ -69,12 +72,13 @@ describe('Set up vault key', () => {
     expect(Array.from(await zk.unwrapEcdhEs(wrap, priv, body.public_jwk, 'i'))).toEqual(Array(32).fill(1))
   })
 
-  it('says plainly when the passkey gives no PRF output', async () => {
+  it('moves to the passphrase, in plain words, when the passkey gives no PRF output', async () => {
     api.getKeyset.mockResolvedValue(keysetOut())
     prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: null })
     render(<VaultKeyPanel />)
     fireEvent.click(await screen.findByTestId('vault-key-setup'))
-    expect((await screen.findByTestId('vault-key-error')).textContent).toBe(PRF_UNSUPPORTED)
+    expect((await screen.findByTestId('vault-key-error')).textContent).toBe(USE_A_PASSPHRASE)
+    expect(screen.getByTestId('vault-passphrase-form')).toBeTruthy()
     expect(api.putKeyset).not.toHaveBeenCalled()
   })
 
@@ -166,12 +170,94 @@ describe('Turn on zero-knowledge', () => {
     expect(api.enableZk).not.toHaveBeenCalled()
   })
 
-  it('asks for a vault key first when the person has none', async () => {
-    api.getKeyset.mockResolvedValue(keysetOut())
-    api.getZkState.mockResolvedValue({ agent: 'eva', agent_id: AGENT_ID, enabled: false, kv: 0, wraps: [],
-      pending: [], rotation_recommended: false, values: null })
+  const offState = { agent: 'eva', agent_id: AGENT_ID, enabled: false, kv: 0, wraps: [],
+    pending: [], rotation_recommended: false, values: null }
+  const onState = { ...offState, enabled: true, kv: 1 }
+
+  async function keepCodeAndContinue() {
+    await screen.findByTestId('zk-recovery-code', {}, { timeout: 5000 })
+    fireEvent.click(screen.getByTestId('zk-code-saved'))
+    fireEvent.click(screen.getByTestId('zk-code-continue'))
+    await waitFor(() => expect(api.enableZk).toHaveBeenCalled())
+  }
+
+  it('with no vault key, makes one with the same passkey touch and goes on — no detour', async () => {
+    api.getKeyset.mockResolvedValueOnce(keysetOut()).mockResolvedValueOnce(keysetOut())
+    api.putKeyset.mockImplementation(async (b) => keysetOut({ exists: true, ...b }))
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: PRF_OUT })
+    api.getZkState.mockResolvedValue(offState)
+    api.enableZk.mockResolvedValue(onState)
     render(<AgentZkSection slug="eva" storedNames={[]} canEdit />)
-    expect(await screen.findByTestId('zk-needs-vault-key')).toBeTruthy()
+    fireEvent.click(await screen.findByTestId('zk-enable'))
+    await waitFor(() => expect(api.putKeyset).toHaveBeenCalled())
+    api.getKeyset.mockResolvedValue(keysetOut({ exists: true, ...api.putKeyset.mock.calls[0][0] }))
+    await keepCodeAndContinue()
+    expect(prf.assertWithPrf).toHaveBeenCalledTimes(1)  // one touch: step-up, key and unlock
+    const member = api.enableZk.mock.calls[0][1].wraps.find((w: { kind: string }) => w.kind === 'member')
+    expect(member.target).toBe(USER)
+  })
+
+  it('upgrades a passkey made before PRF, then uses the new one — and offers to remove the old', async () => {
+    const old = { credential_id: 'old', label: 'Mac (Touch ID)', prf_enabled: null, sealed: false }
+    api.getKeyset.mockResolvedValue(keysetOut({ passkeys: [old] }))
+    passkeysApi.registerThisDevice.mockImplementation(async () => {
+      api.getKeyset.mockResolvedValue(keysetOut({ passkeys: [old, { credential_id: 'new', label: old.label, prf_enabled: true, sealed: false }] }))
+      return { id: 2, credential_id: 'new', label: old.label, prf_enabled: true }
+    })
+    api.putKeyset.mockImplementation(async (b) => {
+      const ks = keysetOut({ exists: true, ...b })
+      api.getKeyset.mockResolvedValue(ks)
+      return ks
+    })
+    prf.assertWithPrf.mockResolvedValue({ cred: 'new', prf: PRF_OUT })
+    api.getZkState.mockResolvedValue(offState)
+    api.enableZk.mockResolvedValue(onState)
+    render(<AgentZkSection slug="eva" storedNames={[]} canEdit />)
+    const go = await screen.findByTestId('zk-enable')
+    await waitFor(() => expect(go.textContent).toMatch(/^Upgrade your passkey and turn on/))
+    fireEvent.click(go)
+    await keepCodeAndContinue()
+    expect(passkeysApi.registerThisDevice).toHaveBeenCalledWith('Mac (Touch ID)', { upgrade: true })
+    expect(prf.assertWithPrf.mock.calls[0][1]).toEqual({ allow: ['new'] })
+    passkeysApi.listPasskeys.mockResolvedValue([{ id: 1, credential_id: 'old' }, { id: 2, credential_id: 'new' }])
+    fireEvent.click(await screen.findByTestId('zk-remove-replaced'))
+    await waitFor(() => expect(passkeysApi.deletePasskey).toHaveBeenCalledWith(1))
+    expect(passkeysApi.deletePasskey).toHaveBeenCalledTimes(1)
+  })
+
+  it('goes straight to an inline passphrase, in plain words, when no passkey can hold a vault key', async () => {
+    prf.browserSupportsPrf.mockResolvedValue(false)
+    api.getKeyset.mockResolvedValue(keysetOut())
+    api.putKeyset.mockImplementation(async (b) => {
+      const ks = keysetOut({ exists: true, ...b })
+      api.getKeyset.mockResolvedValue(ks)
+      return ks
+    })
+    api.getZkState.mockResolvedValue(offState)
+    api.enableZk.mockResolvedValue(onState)
+    render(<AgentZkSection slug="eva" storedNames={[]} canEdit />)
+    await waitFor(() => expect(prf.browserSupportsPrf).toHaveBeenCalled())
+    fireEvent.click(await screen.findByTestId('zk-enable'))
+    expect((await screen.findByTestId('vault-passphrase-note')).textContent).toBe(USE_A_PASSPHRASE)
+    expect(prf.assertWithPrf).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('New vault passphrase'), { target: { value: 'orchid lantern 42 vapor' } })
+    fireEvent.change(screen.getByLabelText('Repeat the passphrase'), { target: { value: 'orchid lantern 42 vapor' } })
+    fireEvent.click(screen.getByTestId('vault-passphrase-setup-go'))
+    await screen.findByTestId('vault-secret-key', {}, { timeout: 5000 })
+    fireEvent.click(screen.getByTestId('vault-kit-saved'))
+    fireEvent.click(screen.getByTestId('vault-kit-done'))
+    await keepCodeAndContinue()
+    expect(api.putKeyset.mock.calls[0][0].seals[0].alg).toBe('2skd')
+  })
+})
+
+describe('vaultKeyRoute', () => {
+  it('passkey when one reported PRF; upgrade when none did yet; passphrase when all said no or the browser cannot', () => {
+    expect(vaultKeyRoute([{ prf_enabled: true }], null)).toBe('passkey')
+    expect(vaultKeyRoute([{ prf_enabled: null }], null)).toBe('upgrade')
+    expect(vaultKeyRoute([], null)).toBe('upgrade')
+    expect(vaultKeyRoute([{ prf_enabled: false }], null)).toBe('passphrase')
+    expect(vaultKeyRoute([{ prf_enabled: true }], false)).toBe('passphrase')
   })
 })
 
@@ -208,10 +294,10 @@ describe('Grant pending, unlocking with a passphrase', () => {
 })
 
 describe('Vault key card on Settings', () => {
-  it('stays hidden until a person has a key or was sent to set one up', async () => {
-    api.getKeyset.mockResolvedValue(keysetOut())
+  it('is not part of the default view — even with a key', async () => {
+    api.getKeyset.mockResolvedValue(keysetOut({ exists: true, public_jwk: { kty: 'EC' }, seals: [{ alg: 'prf' }] }))
     window.location.hash = ''
-    const { container } = render(<VaultKeyPanel onlyWhenNeeded />)
+    const { container } = render(<VaultKeyPanel onlyWhenLinked />)
     await waitFor(() => expect(api.getKeyset).toHaveBeenCalled())
     expect(container.querySelector('[data-testid="settings-vault-key"]')).toBeNull()
   })
@@ -219,15 +305,9 @@ describe('Vault key card on Settings', () => {
   it('shows when linked as #vault-key', async () => {
     api.getKeyset.mockResolvedValue(keysetOut())
     window.location.hash = '#vault-key'
-    render(<VaultKeyPanel onlyWhenNeeded />)
+    render(<VaultKeyPanel onlyWhenLinked />)
     expect(await screen.findByTestId('settings-vault-key')).toBeTruthy()
     window.location.hash = ''
-  })
-
-  it('shows once a key exists', async () => {
-    api.getKeyset.mockResolvedValue(keysetOut({ exists: true, public_jwk: { kty: 'EC' }, seals: [{ alg: 'prf' }] }))
-    render(<VaultKeyPanel onlyWhenNeeded />)
-    expect(await screen.findByTestId('settings-vault-key')).toBeTruthy()
   })
 })
 

@@ -2,15 +2,30 @@ import { useEffect, useState } from 'react'
 import { Button } from 'canopy-ui/ui'
 import { getKeyset, type VaultKeysetOut } from '@/api/vault'
 import {
+  createVaultKeyWithPasskey,
+  passkeyCanHoldVaultKey,
+  upgradePasskey,
+  vaultKeyRoute,
   addPassphraseToVaultKey,
   addPasskeyToVaultKey,
   setUpVaultKey,
   setUpVaultKeyWithPassphrase,
 } from '@/vault/operations'
-import { browserSupportsPrf, PrfUnsupportedError, PRF_UNSUPPORTED } from '@/vault/prf'
+import { browserSupportsPrf, PrfUnsupportedError, USE_A_PASSPHRASE } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { passphraseProblem } from '@/vault/zk'
-import { webauthnSupported } from '@/auth/webauthn'
+import { defaultLabel, webauthnSupported } from '@/auth/webauthn'
+
+/** The URL hash, kept current — the full card opens at #vault-key. */
+function useHash(): string {
+  const [hash, setHash] = useState(() => window.location.hash)
+  useEffect(() => {
+    const on = () => setHash(window.location.hash)
+    window.addEventListener('hashchange', on)
+    return () => window.removeEventListener('hashchange', on)
+  }, [])
+  return hash
+}
 
 /**
  * Your vault key (Canopy Vault zero-knowledge, canopy-web#1550): a key pair made
@@ -68,7 +83,8 @@ export function EmergencyKit({ secretKey, email, onDone }: { secretKey: string; 
   )
 }
 
-export function VaultKeyPanel({ email = '', onlyWhenNeeded = false }: { email?: string; onlyWhenNeeded?: boolean }) {
+export function VaultKeyPanel({ email = '', onlyWhenLinked = false }: { email?: string; onlyWhenLinked?: boolean }) {
+  const linked = useHash() === '#vault-key'
   const [ks, setKs] = useState<VaultKeysetOut | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -105,7 +121,10 @@ export function VaultKeyPanel({ email = '', onlyWhenNeeded = false }: { email?: 
         setKs(out)
       }
     } catch (e) {
-      if (e instanceof PrfUnsupportedError) setError(PRF_UNSUPPORTED)
+      if (e instanceof PrfUnsupportedError) {
+        setMode('passphrase')
+        setError(USE_A_PASSPHRASE)
+      }
       else if (e instanceof Error && e.name === 'NotAllowedError') setError('The passkey prompt was dismissed.')
       else setError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
@@ -113,7 +132,16 @@ export function VaultKeyPanel({ email = '', onlyWhenNeeded = false }: { email?: 
     }
   }
 
-  const passkeyOk = webauthnSupported() && prfHint !== false
+  const route = vaultKeyRoute(ks?.passkeys ?? [], prfHint)
+  const passkeyOk = webauthnSupported() && route !== 'passphrase'
+  /** One touch makes the key; a passkey without PRF is replaced first. */
+  const setUpWithPasskey = async () => {
+    if (passkeyCanHoldVaultKey(ks?.passkeys ?? [], prfHint)) return setUpVaultKey()
+    const old = (ks?.passkeys ?? []).find((p) => p.prf_enabled !== true)
+    const fresh = await upgradePasskey(old?.label || defaultLabel())
+    if (fresh.prf_enabled !== true) throw new PrfUnsupportedError()
+    return (await createVaultKeyWithPasskey(false, [fresh.credential_id])).keyset
+  }
   const sealsOf = (k: VaultKeysetOut) => ((k.seals ?? []) as { alg?: string }[]).map((s) => s.alg)
   const hasPassphrase = ks ? sealsOf(ks).includes('2skd') : false
   const unsealed = (ks?.passkeys ?? []).filter((p) => !p.sealed)
@@ -151,10 +179,11 @@ export function VaultKeyPanel({ email = '', onlyWhenNeeded = false }: { email?: 
     </form>
   )
 
-  // On Settings the card waits until it matters: a person who has no vault key
-  // and arrived without asking for one (an agent's zero-knowledge section links
-  // here as #vault-key) has nothing to do with it yet.
-  if (onlyWhenNeeded && !ks?.exists && !kit && window.location.hash !== '#vault-key') return null
+  // On Settings the card is not part of the default view: the vault key is
+  // created where it is needed (an agent's zero-knowledge section), and the
+  // Passkeys card says which passkey unlocks it. This full card — add a
+  // passphrase, add a passkey, start over — is reached at #vault-key.
+  if (onlyWhenLinked && !linked && !kit) return null
 
   return (
     <div id="vault-key"className="rounded-xl border border-border bg-card p-5 space-y-3" data-testid="settings-vault-key">
@@ -176,20 +205,18 @@ export function VaultKeyPanel({ email = '', onlyWhenNeeded = false }: { email?: 
           <p className="text-sm text-muted-foreground">Not set up yet. Choose how to protect it — you can add the other later.</p>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" disabled={busy || !passkeyOk || (ks.passkeys ?? []).length === 0}
-                    onClick={() => void run(() => setUpVaultKey())} data-testid="vault-key-setup">
-              {busy && mode === null ? 'Waiting for your passkey…' : 'Use my passkey (recommended)'}
+                    onClick={() => void run(setUpWithPasskey)} data-testid="vault-key-setup">
+              {busy && mode === null ? 'Waiting for your passkey…' : route === 'upgrade' ? 'Upgrade my passkey and use it' : 'Use my passkey (recommended)'}
             </Button>
             <Button size="sm" variant="outline" disabled={busy} onClick={() => setMode('passphrase')}
                     data-testid="vault-key-setup-passphrase">
               Use a passphrase
             </Button>
           </div>
-          {!passkeyOk ? (
-            <p className="text-xs text-muted-foreground" data-testid="vault-key-unsupported">{PRF_UNSUPPORTED} Or use a passphrase.</p>
-          ) : (ks.passkeys ?? []).length === 0 ? (
-            <p className="text-xs text-muted-foreground">A passkey seal needs a passkey registered above.</p>
-          ) : null}
-          {mode === 'passphrase' && passphraseForm}
+          {!passkeyOk && (ks.passkeys ?? []).length > 0 && (
+            <p className="text-xs text-muted-foreground" data-testid="vault-key-unsupported">{USE_A_PASSPHRASE}</p>
+          )}
+          {(mode === 'passphrase' || !passkeyOk) && passphraseForm}
         </div>
       ) : (
         <div className="space-y-2">

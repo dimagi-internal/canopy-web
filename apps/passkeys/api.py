@@ -31,7 +31,7 @@ router = Router(auth=session_auth, tags=["passkeys"])
 
 def _out(p: Passkey) -> PasskeyOut:
     return PasskeyOut(
-        id=p.pk, label=p.label, created_at=p.created_at, last_used_at=p.last_used_at,
+        id=p.pk, credential_id=p.credential_id, label=p.label, created_at=p.created_at, last_used_at=p.last_used_at,
         backed_up=p.backed_up, prf_enabled=p.prf_enabled,
     )
 
@@ -56,13 +56,16 @@ def list_passkeys(request: HttpRequest) -> list[PasskeyOut]:
 
 @router.post("/register/begin", response=PasskeyOptionsOut,
              summary="Start registering a passkey for this device")
-def begin_passkey_registration(request: HttpRequest) -> PasskeyOptionsOut:
+def begin_passkey_registration(request: HttpRequest, upgrade: bool = False) -> PasskeyOptionsOut:
     """Returns the options for navigator.credentials.create(). Browser session
-    only; adding a SECOND passkey needs a fresh step-up with the first."""
+    only; adding a SECOND passkey needs a fresh step-up with the first.
+    `?upgrade=true` replaces a passkey that cannot hold a vault key (no PRF):
+    it is left out of `excludeCredentials` so the passkey app will make the new
+    one for the same account."""
     stepup.require_browser(request, "registering a passkey")
     if Passkey.objects.filter(user=request.user).exists():
         stepup.require_recent_step_up(request)
-    return PasskeyOptionsOut(options=services.begin_registration(request))
+    return PasskeyOptionsOut(options=services.begin_registration(request, upgrade=upgrade))
 
 
 @router.post("/register/finish", response={201: PasskeyOut},
