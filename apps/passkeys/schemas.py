@@ -10,6 +10,9 @@ from apps.common.schemas import StrictModel
 
 class PasskeyOut(StrictModel):
     id: int
+    #: The WebAuthn credential id (base64url) — matches a vault keyset's
+    #: `passkeys[].credential_id`, so a page can say which passkey unlocks the vault.
+    credential_id: str
     label: str
     created_at: dt.datetime
     last_used_at: dt.datetime | None = None

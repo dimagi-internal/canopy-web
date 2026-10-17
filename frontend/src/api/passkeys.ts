@@ -34,8 +34,14 @@ export async function getStepUpStatus(): Promise<StepUpStatusOut> {
 }
 
 /** Register a passkey on THIS device (Touch ID, Windows Hello, a phone…). */
-export async function registerThisDevice(label: string): Promise<PasskeyOut> {
-  const begin = need(await apiV2.POST('/api/passkeys/register/begin'), 'Could not start registering a passkey')
+export async function registerThisDevice(label: string, opts: { upgrade?: boolean } = {}): Promise<PasskeyOut> {
+  // `upgrade`: replace a passkey that cannot hold a vault key (no PRF) — the
+  // server leaves it out of excludeCredentials so the passkey app makes the
+  // new one for the same account.
+  const begin = need(
+    await apiV2.POST('/api/passkeys/register/begin', { params: { query: { upgrade: opts.upgrade === true } } }),
+    'Could not start registering a passkey',
+  )
   const publicKey = toCreationOptions(begin.options as Record<string, unknown>)
   // Ask for the PRF extension (canopy-web#1550): the answer, `prf.enabled`,
   // says whether this passkey can seal a zero-knowledge vault key. Nothing is

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Button, Input } from 'canopy-ui/ui'
 import { deletePasskey, listPasskeys, registerThisDevice, type PasskeyOut } from '@/api/passkeys'
+import { getKeyset } from '@/api/vault'
 import { defaultLabel, webauthnSupported } from '@/auth/webauthn'
 import { relativeAge } from '@/lib/relativeAge'
 
@@ -18,6 +19,10 @@ export function PasskeysPanel() {
   const [label, setLabel] = useState(defaultLabel())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [adding, setAdding] = useState(false)
+  /** Credential ids whose passkey holds a seal of the vault key; null = no vault key. */
+  const [sealedBy, setSealedBy] = useState<Set<string> | null>(null)
+  const [hasPassphrase, setHasPassphrase] = useState(false)
   const supported = webauthnSupported()
 
   async function refresh() {
@@ -26,6 +31,13 @@ export function PasskeysPanel() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load passkeys.')
       setKeys([])
+    }
+    try {
+      const ks = await getKeyset()
+      setSealedBy(ks.exists ? new Set((ks.passkeys ?? []).filter((p) => p.sealed).map((p) => p.credential_id)) : null)
+      setHasPassphrase(((ks.seals ?? []) as { alg?: string }[]).some((s) => s.alg === '2skd'))
+    } catch {
+      setSealedBy(null) // the vault status is a nicety; the passkey list stands without it
     }
   }
 
@@ -39,6 +51,7 @@ export function PasskeysPanel() {
     setError('')
     try {
       await registerThisDevice(label.trim() || defaultLabel())
+      setAdding(false)
       await refresh()
     } catch (err) {
       setError(err instanceof Error && err.name !== 'NotAllowedError' ? err.message : 'The passkey prompt was dismissed.')
@@ -74,7 +87,12 @@ export function PasskeysPanel() {
 
       {!supported ? (
         <p className="text-sm text-destructive">This browser does not support passkeys.</p>
-      ) : (
+      ) : keys !== null && keys.length > 0 && !adding ? (
+        <button type="button" onClick={() => setAdding(true)} className="text-xs text-primary hover:underline"
+                data-testid="passkey-add-another">
+          Add another passkey
+        </button>
+      ) : keys === null ? null : (
         <form onSubmit={onRegister} className="flex flex-wrap items-end gap-2">
           <div className="min-w-[200px] flex-1">
             <label htmlFor="passkey-label" className="mb-1 block text-xs text-muted-foreground">
@@ -107,7 +125,12 @@ export function PasskeysPanel() {
           <tbody>
             {keys.map((k) => (
               <tr key={k.id} className="border-t border-border" data-testid={`passkey-${k.id}`}>
-                <td className="py-1.5 text-foreground-secondary">{k.label || 'passkey'}</td>
+                <td className="py-1.5 text-foreground-secondary">
+                  {k.label || 'passkey'}
+                  {sealedBy?.has(k.credential_id) && (
+                    <span className="ml-2 text-success" data-testid={`passkey-unlocks-vault-${k.id}`}>Unlocks your vault ✓</span>
+                  )}
+                </td>
                 <td className="py-1.5 text-muted-foreground">{k.created_at.slice(0, 10)}</td>
                 <td className="py-1.5 text-muted-foreground">{k.last_used_at ? relativeAge(k.last_used_at) : 'never'}</td>
                 <td className="py-1.5 text-muted-foreground">{k.backed_up ? 'synced' : 'this device only'}</td>
@@ -125,6 +148,12 @@ export function PasskeysPanel() {
             ))}
           </tbody>
         </table>
+      )}
+      {sealedBy !== null && (
+        <p className="text-xs text-muted-foreground" data-testid="passkeys-vault-status">
+          {hasPassphrase ? 'Your passphrase and Secret Key also unlock your vault. ' : ''}
+          <a href="#vault-key" className="underline">Manage your vault key</a>
+        </p>
       )}
     </div>
   )

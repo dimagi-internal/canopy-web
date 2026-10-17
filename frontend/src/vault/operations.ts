@@ -9,6 +9,8 @@
  */
 import { revealAgentCredential } from '@/api/agents'
 import { approveRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
+import { registerThisDevice, type PasskeyOut } from '@/api/passkeys'
+import { defaultLabel } from '@/auth/webauthn'
 import {
   addZkWraps,
   disableZk,
@@ -163,22 +165,67 @@ export async function unlockVaultKey(prompt: UnlockPrompt, ks?: VaultKeysetOut):
   return { userId: ks.user_id, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub }
 }
 
-/** Create the keyset sealed by the passkey the person touches (PRF). */
-export async function setUpVaultKey(replace = false): Promise<VaultKeysetOut> {
+/** Whether a passkey can plausibly hold the vault key here: the browser does
+ *  not rule PRF out and some passkey did not report it missing at
+ *  registration. Many passkey apps (1Password's extension among them) give no
+ *  PRF, and for those a passphrase is the way — so a page offers the passkey
+ *  route only when this is true, and still falls back if the touch says no. */
+export function passkeyCanHoldVaultKey(passkeys: readonly { prf_enabled?: boolean | null }[], browser: boolean | null): boolean {
+  return browser !== false && passkeys.some((p) => p.prf_enabled === true)
+}
+
+/** How a person without a vault key should get one:
+ *  - `passkey`: a passkey of theirs reported PRF — one touch makes the key;
+ *  - `upgrade`: none did, but a new passkey may (one registered before PRF was
+ *    asked for reports `null`, and a password manager such as 1Password then
+ *    made it without PRF) — register a replacement, then use it;
+ *  - `passphrase`: this browser has no PRF, or every passkey said no. */
+export type VaultKeyRoute = 'passkey' | 'upgrade' | 'passphrase'
+
+export function vaultKeyRoute(passkeys: readonly { prf_enabled?: boolean | null }[], browser: boolean | null): VaultKeyRoute {
+  if (passkeyCanHoldVaultKey(passkeys, browser)) return 'passkey'
+  if (browser === false) return 'passphrase'
+  return passkeys.length === 0 || passkeys.some((p) => p.prf_enabled !== false) ? 'upgrade' : 'passphrase'
+}
+
+/** Register a replacement passkey that can hold a vault key (same label as the
+ *  one it replaces). Returns it; its `prf_enabled` says whether it can. The
+ *  old passkey stays until the person deletes it. */
+export async function upgradePasskey(label: string): Promise<PasskeyOut> {
+  return registerThisDevice(label, { upgrade: true })
+}
+
+async function unlockedFrom(scalar: Uint8Array, userId: string, publicJwk: PublicJwk): Promise<Unlocked> {
+  const pub = publicJwk as Jwk
+  return { userId, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub }
+}
+
+/** Create the keyset with ONE passkey touch — which also steps up — and hand
+ *  it back unlocked, so the flow that needed it goes on without a second
+ *  prompt. Throws PrfUnsupportedError when the passkey gives no PRF. */
+export async function createVaultKeyWithPasskey(replace = false, allow?: string[]):
+    Promise<{ keyset: VaultKeysetOut; me: Unlocked }> {
   const ks = await getKeyset()
-  const touch = await assertWithPrf(ks.prf_input)
+  const prfCapable = (ks.passkeys ?? []).filter((p) => p.prf_enabled === true).map((p) => p.credential_id)
+  const touch = await assertWithPrf(ks.prf_input, { allow: allow ?? (prfCapable.length ? prfCapable : undefined) })
   if (!touch.prf) throw new PrfUnsupportedError()
   const pair = await generateKeyPair()
   const seal = await sealUserKey(pair.scalar, ks.user_id, touch.cred, touch.prf)
-  return putKeyset({ public_jwk: pair.publicJwk as unknown as Record<string, unknown>,
-                     seals: [seal as unknown as Record<string, unknown>], replace })
+  const keyset = await putKeyset({ public_jwk: pair.publicJwk as unknown as Record<string, unknown>,
+                                   seals: [seal as unknown as Record<string, unknown>], replace })
+  return { keyset, me: await unlockedFrom(pair.scalar, ks.user_id, pair.publicJwk) }
 }
 
-/** Create the keyset sealed by a passphrase + a new Secret Key. Returns the
- *  Secret Key's code to show ONCE (the Emergency Kit); it is also remembered
- *  in this browser. */
-export async function setUpVaultKeyWithPassphrase(passphrase: string, replace = false):
-    Promise<{ keyset: VaultKeysetOut; secretKey: string }> {
+/** Create the keyset sealed by the passkey the person touches (PRF). */
+export async function setUpVaultKey(replace = false): Promise<VaultKeysetOut> {
+  return (await createVaultKeyWithPasskey(replace)).keyset
+}
+
+/** Create the keyset sealed by a passphrase + a new Secret Key, unlocked. The
+ *  Secret Key's code is to show ONCE (the Emergency Kit); it is also
+ *  remembered in this browser. */
+export async function createVaultKeyWithPassphrase(passphrase: string, replace = false):
+    Promise<{ keyset: VaultKeysetOut; secretKey: string; me: Unlocked }> {
   const problem = passphraseProblem(passphrase)
   if (problem) throw new Error(problem)
   const ks = await getKeyset()
@@ -189,7 +236,14 @@ export async function setUpVaultKeyWithPassphrase(passphrase: string, replace = 
                                    seals: [seal as unknown as Record<string, unknown>], replace })
   const code = secretKeyCode(sk)
   rememberSecretKey(ks.user_id, code)
-  return { keyset, secretKey: code }
+  return { keyset, secretKey: code, me: await unlockedFrom(pair.scalar, ks.user_id, pair.publicJwk) }
+}
+
+/** Create the keyset sealed by a passphrase + a new Secret Key. */
+export async function setUpVaultKeyWithPassphrase(passphrase: string, replace = false):
+    Promise<{ keyset: VaultKeysetOut; secretKey: string }> {
+  const { keyset, secretKey } = await createVaultKeyWithPassphrase(passphrase, replace)
+  return { keyset, secretKey }
 }
 
 /** Seal the vault key for one more passkey: unlock, then touch the new one. */
@@ -326,6 +380,22 @@ async function freshRecovery(vk: Uint8Array, agentId: string, kv: number): Promi
  */
 export async function turnOnZk(slug: string, storedNames: string[],
                                confirm: (code: string) => Promise<void>, unlock?: Unlock): Promise<ZkStateOut> {
+  const ready = await prepareTurnOnZk(slug, storedNames, unlock)
+  await confirm(ready.code)
+  return ready.commit()
+}
+
+/** Everything turning ZK on needs, done but not yet sent: the recovery code
+ *  to show, and `commit` to enable once it has been kept. Several agents can be
+ *  prepared, their codes shown together, then committed. */
+export interface PreparedZk {
+  slug: string
+  code: string
+  kv: number
+  commit: () => Promise<ZkStateOut>
+}
+
+export async function prepareTurnOnZk(slug: string, storedNames: string[], unlock?: Unlock): Promise<PreparedZk> {
   const ks = await getKeyset()
   if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Vault key).')
   // An agent born zero-knowledge (kv 0) has only sealed values and no vault
@@ -335,7 +405,7 @@ export async function turnOnZk(slug: string, storedNames: string[],
   const kv = 1
   const vk = randomBytes(32)
   let me: Unlocked | null = null
-  const values = []
+  const values: { name: string; value_zk: string }[] = []
   for (const name of storedNames) {
     const stored = state.values?.[name]
     let plain: string
@@ -356,9 +426,44 @@ export async function turnOnZk(slug: string, storedNames: string[],
   }
   const recovery = await freshRecovery(vk, state.agent_id, kv)
   wraps.push(recovery.wrap)
-  await confirm(recovery.code)
-  return enableZk(slug, { kv, wraps, values })
+  return { slug, code: recovery.code, kv, commit: () => enableZk(slug, { kv, wraps, values }) }
 }
+
+/**
+ * The person's vault key, unlocked, for a flow that needs it — created on the
+ * spot when they have none, with as few touches as their passkeys allow:
+ * one PRF touch (which also steps up), or a replacement passkey first when
+ * theirs predates PRF. `null` when a passphrase setup is the only way left
+ * (the caller shows it inline). `replaced` lists passkeys an upgrade made
+ * redundant, for the caller to offer deleting.
+ */
+export async function vaultKeyForFlow(browser: boolean | null, prompt: UnlockPrompt):
+    Promise<{ me: Unlocked; replaced: KeysetPasskey[] } | null> {
+  const ks = await getKeyset()
+  if (ks.exists && ks.public_jwk) {
+    return { me: (await stepUpAndUnlock(ks)) ?? (await unlockVaultKey(prompt, ks)), replaced: [] }
+  }
+  const passkeys = ks.passkeys ?? []
+  const route = vaultKeyRoute(passkeys, browser)
+  if (route === 'passphrase') return null
+  let allow: string[] | undefined
+  let replaced: KeysetPasskey[] = []
+  if (route === 'upgrade') {
+    const old = passkeys.find((p) => p.prf_enabled !== true)
+    const fresh = await upgradePasskey(old?.label || defaultLabel())
+    if (fresh.prf_enabled !== true) return null
+    allow = [fresh.credential_id]
+    replaced = passkeys.filter((p) => p.prf_enabled !== true && p.credential_id !== fresh.credential_id)
+  }
+  try {
+    return { me: (await createVaultKeyWithPasskey(false, allow)).me, replaced }
+  } catch (e) {
+    if (e instanceof PrfUnsupportedError) return null
+    throw e
+  }
+}
+
+export type KeysetPasskey = NonNullable<VaultKeysetOut['passkeys']>[number]
 
 /** Grant: unwrap VK with my keyset, wrap it for every pending target. */
 export async function grantPending(slug: string, unlock: Unlock): Promise<ZkStateOut> {

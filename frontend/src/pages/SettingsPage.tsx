@@ -8,6 +8,7 @@ import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
 import { PasskeysPanel } from '@/components/settings/PasskeysPanel'
 import { VaultKeyPanel } from '@/components/settings/VaultKeyPanel'
+import { ZkAgentsPanel } from '@/components/settings/ZkAgentsPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 import { useMemoryVisible } from '@/auth/memoryRollout'
@@ -104,7 +105,9 @@ export function SettingsPage() {
 
       <PasskeysPanel />
 
-      <VaultKeyPanel onlyWhenNeeded />
+      <ZkAgentsPanel />
+
+      <VaultKeyPanel onlyWhenLinked />
 
       <GitHubPanel />
 
