@@ -51,7 +51,7 @@ export function SettingsPage() {
   // used. What a person does own is the runners they paired: RunnersPanel
   // points at where their Claude logins live.
   return (
-    <div className="space-y-5 max-w-xl">
+    <div className="mx-auto w-full max-w-6xl space-y-5">
       <div>
         <h1 className="text-lg font-semibold text-foreground">Settings</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">
@@ -66,6 +66,11 @@ export function SettingsPage() {
         )}
       </div>
 
+      {/* Security first and full width; the rest flow into two columns on a
+          wide screen and stack on a narrow one. */}
+      <SecurityCard machines={<DeviceKeysPanel />} />
+
+      <div className="gap-5 lg:columns-2 [&>*]:mb-5 [&>*]:break-inside-avoid">
       <RunnersPanel />
 
       <SessionWorkspacePanel />
@@ -99,14 +104,12 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <SecurityCard machines={<DeviceKeysPanel />} />
-
       <GitHubPanel />
 
       <ConnectedAppsPanel />
 
       <TokensPanel />
-
+      </div>
     </div>
   )
 }

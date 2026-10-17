@@ -49,7 +49,9 @@ function statusText(r: AgentRow): string {
 }
 
 async function findAgents(): Promise<AgentRow[]> {
-  const agents = (await listAgents({ limit: 200 })).items
+  // Only agents whose secrets live in this vault: a 1Password agent has nothing
+  // here to finish, even when you administer it (or administer everything).
+  const agents = (await listAgents({ limit: 200 })).items.filter((a) => a.credential_source === 'canopy-web')
   const rows = await Promise.all(agents.map(async (a): Promise<AgentRow | null> => {
     try {
       const zk = await getZkState(a.slug) // refuses unless you administer the agent
