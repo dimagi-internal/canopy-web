@@ -167,6 +167,17 @@ def test_a_dead_canopy_pat_stops_before_anything_is_written(tmp_path, canopy):
     assert not any("create-secret" in c or "deploy" in c for c in _calls(state))
 
 
+def test_an_existing_keyless_box_updates_with_a_dead_pat(tmp_path, canopy):
+    """A box that exists signs in with its device key (canopy-web#1594); its owner
+    revokes the PAT afterwards. That must not block every later update."""
+    canopy.handler.code = 401
+    state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "device key" in res.stdout
+    assert any("execute-change-set" in c for c in _calls(state))
+
+
 def test_an_update_that_touches_the_instance_is_refused(tmp_path, canopy):
     """The live stack after any template change: the default (no-arg) path."""
     state = _fake(tmp_path, stack_status="CREATE_COMPLETE", change_set=INSTANCE_CHANGE)
