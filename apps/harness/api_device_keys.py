@@ -250,20 +250,14 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
     nobody has to "finish setting up" an agent by hand."""
     if (key.status != RunnerDeviceKey.ACTIVE and not assume_active) or not key.ecdh_jkt:
         return []
-    from apps.agents.models import Agent, AgentCredential, AgentVaultWrap
-    from apps.agents.zk_seal import sealed_targets
+    from apps.agents import zk
+    from apps.agents.models import Agent
 
-    out = []
-    for agent in Agent.objects.filter(zk_enabled=True).select_related("workspace", "owner"):
-        if not (agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)):
-            continue
-        if agent.zk_kv == 0:
-            stored = AgentCredential.objects.filter(agent=agent).exclude(value_zk="").values_list("value_zk", flat=True)
-            if any(("device", key.ecdh_jkt) not in sealed_targets(v) for v in stored):
-                out.append(agent.slug)
-        elif not AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device", device_key=key).exists():
-            out.append(agent.slug)
-    return sorted(out)
+    return sorted(
+        agent.slug for agent in Agent.objects.filter(zk_enabled=True).select_related("workspace", "owner")
+        if agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)
+        and zk.device_waits(agent, key)
+    )
 
 
 @router.delete("/{key_id}", response=RunnerDeviceKeyOut, summary="Revoke a device key")

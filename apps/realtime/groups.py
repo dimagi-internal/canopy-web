@@ -66,13 +66,8 @@ def chat_user_group(user_id: int) -> str:
 
 
 def turn_workspace_slug(turn: Turn) -> str | None:
-    """The turn's tenant slug: from the agent (agent turns), the session (chat
-    turns), or the turn's own workspace FK (project turns). None when unset."""
-    if turn.agent_id:
-        return turn.agent.workspace_id  # workspace PK == slug
-    if turn.chat_session_id:
-        return turn.chat_session.workspace_id
-    return turn.workspace_id
+    """The turn's tenant slug (`Turn.tenant_slug`)."""
+    return turn.tenant_slug
 
 
 def user_can_read_turn(user, turn: Turn) -> bool:

@@ -77,6 +77,9 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { path: 'shareouts', label: 'Shareouts', tenant: true },
       { path: 'timeline', label: 'Timeline', tenant: true },
+      // Is everything set up right (agents, the vault) and how is it used,
+      // tree-wide. One entry; Analytics is the page's second tab.
+      { path: 'health', label: 'Health', tenant: true },
       // ONE entry for the workspace's configuration. Members, Slack and
       // Inbound were three of the four sections behind it; the fourth
       // (Connected sites) was in no menu at all, which is what a surface with

@@ -56,6 +56,8 @@ from .schemas import (
     RunnerOrderIn,
     RunnerOrderRowOut,
     RunnerTopologyOut,
+    WorkspaceAnalyticsOut,
+    WorkspaceHealthOut,
     SharedVaultIn,
     SharedVaultOut,
     SystemAccountCreateIn,
@@ -799,10 +801,45 @@ def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
     # down, so an admin of the root sees every division (`INHERITS_DOWN`).
     from apps.harness import topology
 
+    root, visible = _tree_reader(request, slug)
+    return RunnerTopologyOut(**topology.build(root, visible=visible))
+
+
+def _tree_reader(request: HttpRequest, slug: str):
+    """The topology/health read pattern: `logs.read` on the root, then each
+    descendant filtered by the same capability (owners and admins inherit down)."""
     m = _require(request.user, slug, perms.LOGS_READ)
-    return RunnerTopologyOut(**topology.build(
-        m.workspace, visible=lambda s: perms.can(request.user, s, perms.LOGS_READ),
-    ))
+    return m.workspace, (lambda s: perms.can(request.user, s, perms.LOGS_READ))
+
+
+@router.get("/{slug}/health", response=WorkspaceHealthOut,
+            summary="What is not set up right, across this workspace and every one below it")
+def workspace_health(request: HttpRequest, slug: str) -> WorkspaceHealthOut:
+    """Every agent in the tree with its setup checklist (the same steps as its own
+    Settings page and `agent_setup`), its vault state (canopy-web, moving, 1Password)
+    and properties; every workspace with its shared vault. Each step carries the link
+    that fixes it; `can_fix` says whether the viewer may follow it, else
+    `owner_email` is who to send it to. Admin and above."""
+    from apps.agents import health
+
+    root, visible = _tree_reader(request, slug)
+    return WorkspaceHealthOut(**health.build(root, request.user, visible))
+
+
+@router.get("/{slug}/analytics", response=WorkspaceAnalyticsOut,
+            summary="Turns, chats, messages, tokens, cost and people over time")
+def workspace_analytics(request: HttpRequest, slug: str, days: int = 30,
+                        tree: bool = True) -> WorkspaceAnalyticsOut:
+    """Daily series plus per-agent and per-person tables for the last `days` (1-365)
+    UTC days, over this workspace and, with `tree`, every one below it the caller
+    may read. Counts come from the analytics fact log, which retention does not
+    purge. Tokens and cost cover turns whose transcript reported them
+    (`totals.turns_with_usage`). Admin and above."""
+    from apps.events import analytics
+
+    root, visible = _tree_reader(request, slug)
+    slugs = [ws.slug for ws, _ in services.subtree(root, visible)] if tree else [root.slug]
+    return WorkspaceAnalyticsOut(**analytics.build(slugs, days=days))
 
 
 @router.get("/{slug}/runner-order", response=list[RunnerOrderRowOut],
@@ -894,11 +931,8 @@ def agent_topology(request: HttpRequest, slug: str) -> AgentTopologyOut:
     # Same gate and per-descendant filter as runner_topology.
     from apps.agents import topology
 
-    m = _require(request.user, slug, perms.LOGS_READ)
-    return AgentTopologyOut(**topology.build(
-        m.workspace, request.user,
-        visible=lambda s: perms.can(request.user, s, perms.LOGS_READ),
-    ))
+    root, visible = _tree_reader(request, slug)
+    return AgentTopologyOut(**topology.build(root, request.user, visible=visible))
 
 
 # --- Content retention (apps/retention) ---------------------------------------

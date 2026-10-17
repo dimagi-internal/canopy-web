@@ -1422,6 +1422,10 @@ def create_session(*, workspace, created_by=None, agent=None, project: str = "",
         )
         if created_by is not None:
             ensure_participant(session, created_by, SessionParticipant.OWNER)
+    from apps.events import activity
+
+    activity.emit(activity.CHAT_SESSION_CREATED, workspace=workspace, actor=created_by, agent=agent,
+                  surface="chat", ref=str(session.pk), at=session.created_at)
     return session
 
 
@@ -1953,6 +1957,27 @@ def _merge_origin_ref(extra: dict | None, *, thread_key: str, session: Session) 
 
 
 def send_message(
+    *, session: Session, text: str, user, client_id: str = "", placement: str | None = None,
+    origin: str | None = None, initiator=None, origin_ref: dict | None = None,
+    capability: str | None = None, parent=None,
+) -> tuple[Message, Turn]:
+    """`_send_message`, plus the `chat.message` analytics fact — once per send,
+    whichever of its two paths (ledger or transcript-sourced) carried it, and never
+    for a retried send that collapsed onto an existing turn."""
+    from apps.events import activity
+
+    message, turn = _send_message(
+        session=session, text=text, user=user, client_id=client_id, placement=placement,
+        origin=origin, initiator=initiator, origin_ref=origin_ref, capability=capability,
+        parent=parent,
+    )
+    if turn is not None:
+        activity.emit(activity.CHAT_MESSAGE, workspace=session.workspace_id, actor=user,
+                      agent=session.agent, surface=turn.origin, ref=str(turn.pk), dedupe=True)
+    return message, turn
+
+
+def _send_message(
     *, session: Session, text: str, user, client_id: str = "", placement: str | None = None,
     origin: str | None = None, initiator=None, origin_ref: dict | None = None,
     capability: str | None = None, parent=None,

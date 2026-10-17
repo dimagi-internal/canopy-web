@@ -429,3 +429,168 @@ class SystemAccountOut(StrictModel):
     created_at: dt.datetime
     created_by_email: str | None
     senders: list[SystemSenderOut]
+
+
+# ---- workspace health (apps/agents/health.py) --------------------------------
+
+
+class HealthStepOut(StrictModel):
+    key: str
+    title: str
+    status: Literal["done", "todo", "waiting", "optional"]
+    detail: str
+    where: Literal["web", "claude-code", "terminal"]
+    href: str = ""
+    action: str = ""
+    command: str = ""
+
+
+class VaultRefOut(StrictModel):
+    name: str
+    status: Literal["stored", "literal", "local", "1password", "missing"]
+
+
+class AgentVaultHealthOut(StrictModel):
+    source: str
+    # canopy-web: every declared secret is stored here. moving: on canopy-web with
+    # some still only in 1Password or nowhere. 1password: resolves through op.
+    # none: declares no secrets and has no vault.
+    state: Literal["canopy-web", "moving", "1password", "none"]
+    declared: int
+    refs: list[VaultRefOut]
+    stored: list[str]
+    in_1password: list[str]
+    missing: list[str]
+    op_vault: str
+    op_key_set: bool
+    zero_knowledge: bool
+    machines_waiting: list[str]
+
+
+class AgentHealthOut(StrictModel):
+    slug: str
+    name: str
+    workspace: str
+    owner_email: str
+    # The viewer may follow this agent's fix links (its owner or one of its admins).
+    can_fix: bool
+    email: str
+    repo_url: str
+    turn_mode: str
+    has_interface: bool
+    skills: int
+    schedules: int
+    created_at: dt.datetime
+    last_turn_at: dt.datetime | None = None
+    turns_30d: int
+    vault: AgentVaultHealthOut
+    steps: list[HealthStepOut]
+    # Steps neither done nor optional.
+    left: int
+
+
+class SharedVaultHealthOut(StrictModel):
+    vault: str
+    key_set: bool
+    inherited_from: str
+
+
+class WorkspaceHealthNodeOut(StrictModel):
+    slug: str
+    name: str
+    depth: int
+    parent: str
+    agents: int
+    shared_vault: SharedVaultHealthOut
+
+
+class HealthTotalsOut(StrictModel):
+    agents: int
+    set_up: int
+    needs_setup: int
+    vault_canopy_web: int
+    vault_moving: int
+    vault_1password: int
+    vault_none: int
+
+
+class WorkspaceHealthOut(StrictModel):
+    root: str
+    workspaces: list[WorkspaceHealthNodeOut]
+    agents: list[AgentHealthOut]
+    totals: HealthTotalsOut
+
+
+# ---- workspace analytics (apps/events/analytics.py) ---------------------------
+
+
+class AnalyticsTotalsOut(StrictModel):
+    turns: int
+    sessions: int
+    messages: int
+    active_users: int
+    active_agents: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    cost_usd: float
+    # Turns whose transcript reported usage; the rest are "not reported", not zero.
+    turns_with_usage: int
+
+
+class AnalyticsDayOut(StrictModel):
+    day: dt.date
+    turns: int
+    sessions: int
+    messages: int
+    active_users: int
+    done: int
+    failed: int
+    lost: int
+    cancelled: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cost_usd: float
+
+
+class AnalyticsAgentOut(StrictModel):
+    agent: str
+    turns: int
+    messages: int
+    sessions: int
+    failed: int
+    people: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+    last_at: dt.datetime | None = None
+
+
+class AnalyticsUserOut(StrictModel):
+    user_id: int
+    email: str
+    messages: int
+    turns: int
+    sessions: int
+    settings: int
+    mcp_calls: int
+    agents: int
+    active_days: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+    top_agents: list[str]
+    last_at: dt.datetime | None = None
+
+
+class WorkspaceAnalyticsOut(StrictModel):
+    days: int
+    since: dt.datetime
+    workspaces: list[str]
+    totals: AnalyticsTotalsOut
+    series: list[AnalyticsDayOut]
+    surfaces: dict[str, int]
+    agents: list[AnalyticsAgentOut]
+    users: list[AnalyticsUserOut]

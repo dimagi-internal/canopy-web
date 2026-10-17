@@ -80,6 +80,10 @@ def sweep_expired_leases() -> int:
         if updated:
             append_events(turn, [{"kind": "status", "payload": {"status": status, "reason": "lease_expired"}}])
             count += 1
+            from apps.events import activity
+
+            turn.status = status
+            activity.for_turn(activity.TURN_FINISHED, turn, at=now)
             # A LOST/CANCELLED turn is marked via a queryset update, bypassing
             # finish_turn — so the FAILED-drill hook there never fires and a
             # drill's RunnerDrill would otherwise strand as pending forever.

@@ -75,6 +75,43 @@ def _mailbox(agent: Agent, settings: str) -> dict:
 
 
 def _vault(agent: Agent, settings: str) -> dict:
+    """Where its secrets live — read from THE vault verdict (`vault_health`), so this
+    step and the workspace health dashboard cannot disagree. An agent resolving from
+    the canopy-web vault is judged by that vault (every declared secret stored, every
+    machine let in); one resolving from 1Password by its 1Password vault and key."""
+    from .vault_health import vault_health
+
+    if agent.credential_source == Agent.CANOPY_WEB:
+        return _canopy_vault(agent, settings, vault_health(agent))
+    return _op_vault(agent, settings)
+
+
+def _canopy_vault(agent: Agent, settings: str, vh: dict) -> dict:
+    title = "Give it a vault"
+    leftover = vh["in_1password"] + vh["missing"]
+    if leftover:
+        parts = []
+        if vh["in_1password"]:
+            parts.append(f"still only in 1Password: {', '.join(vh['in_1password'])}")
+        if vh["missing"]:
+            parts.append(f"not stored anywhere: {', '.join(vh['missing'])}")
+        return _step("vault", title, TODO,
+                     f"It reads its secrets from canopy-web, but {'; '.join(parts)}. Store each "
+                     "one here so its runners can read it.",
+                     href=f"{settings}#credentials", action="Add the missing secrets")
+    if vh["machines_waiting"]:
+        names = ", ".join(vh["machines_waiting"])
+        return _step("vault", title, WAITING,
+                     f"Its secrets are in canopy-web, but {names} cannot open them yet. One of its "
+                     "admins lets each machine in with a passkey touch.",
+                     href="/settings#your-agents", action="Give access")
+    return _step("vault", title, DONE,
+                 f"All {vh['declared']} declared secrets are in canopy-web." if vh["declared"] else
+                 "It reads secrets from canopy-web and declares none.",
+                 href=f"{settings}#credentials", action="See its secrets")
+
+
+def _op_vault(agent: Agent, settings: str) -> dict:
     """The agent's 1Password vault and the key a runner reads it with — and, once a box
     has used them, whether its secrets actually materialized (`env_ok`, the box's own
     `op inject`). Recorded-but-broken reads as todo with the box's reason: a key that is

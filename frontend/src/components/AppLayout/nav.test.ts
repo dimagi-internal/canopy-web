@@ -27,7 +27,7 @@ describe('NAV_GROUPS', () => {
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
     expect(labels.sort()).toEqual(
       [
-        'Activity', 'Agents', 'Chats', 'DDD', 'Get started', 'Guide', 'Huddles',
+        'Activity', 'Agents', 'Chats', 'DDD', 'Get started', 'Guide', 'Health', 'Huddles',
         'Schedule', 'Settings', 'Shareouts', 'Storyboards',
         'System', 'Timeline', 'Walkthroughs',
       ].sort(),

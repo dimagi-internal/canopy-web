@@ -233,6 +233,20 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Add a domain and see its DNS records', 'Route an address to an agent or a member', 'Re-check DNS', 'Change the daily send cap or lift a suspension'],
   },
   {
+    path: '/w/:workspace/health',
+    title: 'Health',
+    audience: 'Workspace admin or owner',
+    what: "What is not set up right, across this workspace and every one below it. Every agent in the tree with its owner, its setup checklist (the same steps its own Settings page shows: repository, GitHub identity, mailbox, vault, runner, first skill, first turn), where its secrets live — the canopy-web vault, moving (some still only in 1Password or stored nowhere), or 1Password — and its properties: last turn, turns in 30 days, skills, schedules, interface and turn mode. Every workspace with its shared 1Password vault and where it inherits it from. Open an agent for its steps and each declared secret's state; a step you may fix links to the control that does it, and one only its owner or an admin may fix offers an email to the owner with what is left and the links.",
+    actions: ['See which agents have setup steps left', 'See which agents still read secrets from 1Password', "Open an agent's steps and fix one", 'Email an owner what is left on their agent', 'Filter by name, owner or workspace'],
+  },
+  {
+    path: '/w/:workspace/analytics',
+    title: 'Analytics',
+    audience: 'Workspace admin or owner',
+    what: "How this workspace and the ones below it are used, over 7, 30 or 90 days: turns started and how they ended, chats opened, messages sent, active people, tokens and cost per day; where turns came from (chat, email, Slack, schedules, the API); and a table per agent and per person — turns, messages, chats, settings changed, MCP calls, the agents they use most, tokens and cost. Counts come from canopy's analytics log, which content retention never purges. Tokens and cost cover the turns whose run reported them.",
+    actions: ['Change the range', 'Include or leave out the workspaces below', 'See usage per agent', 'See what each person does'],
+  },
+  {
     path: '/w/:workspace/settings/topology',
     title: 'Fleet map',
     audience: 'Workspace admin or owner',

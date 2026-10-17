@@ -4445,9 +4445,9 @@ export interface paths {
         };
         /**
          * What is left before this agent can do its job
-         * @description The setup checklist, in order: repository, GitHub identity, mailbox, runner, its
-         *     first real skill (done in Claude Code — `command` starts that session), first turn.
-         *     Each step reads the same check the system runs for that thing.
+         * @description The setup checklist, in order: repository, GitHub identity, mailbox, vault, runner,
+         *     its first real skill (done in Claude Code — `command` starts that session), first
+         *     turn. Each step reads the same check the system runs for that thing.
          */
         readonly get: operations["agent_setup"];
         readonly put?: never;
@@ -6045,6 +6045,54 @@ export interface paths {
          *     agents route to or that lives in the tree. Admin and above.
          */
         readonly get: operations["runner_topology"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/health": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What is not set up right, across this workspace and every one below it
+         * @description Every agent in the tree with its setup checklist (the same steps as its own
+         *     Settings page and `agent_setup`), its vault state (canopy-web, moving, 1Password)
+         *     and properties; every workspace with its shared vault. Each step carries the link
+         *     that fixes it; `can_fix` says whether the viewer may follow it, else
+         *     `owner_email` is who to send it to. Admin and above.
+         */
+        readonly get: operations["workspace_health"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/analytics": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Turns, chats, messages, tokens, cost and people over time
+         * @description Daily series plus per-agent and per-person tables for the last `days` (1-365)
+         *     UTC days, over this workspace and, with `tree`, every one below it the caller
+         *     may read. Counts come from the analytics fact log, which retention does not
+         *     purge. Tokens and cost cover turns whose transcript reported them
+         *     (`totals.turns_with_usage`). Admin and above.
+         */
+        readonly get: operations["workspace_analytics"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -21107,6 +21155,301 @@ export interface components {
             /** Order From */
             readonly order_from?: string | null;
         };
+        /** AgentHealthOut */
+        readonly AgentHealthOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Owner Email */
+            readonly owner_email: string;
+            /** Can Fix */
+            readonly can_fix: boolean;
+            /** Email */
+            readonly email: string;
+            /** Repo Url */
+            readonly repo_url: string;
+            /** Turn Mode */
+            readonly turn_mode: string;
+            /** Has Interface */
+            readonly has_interface: boolean;
+            /** Skills */
+            readonly skills: number;
+            /** Schedules */
+            readonly schedules: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Last Turn At */
+            readonly last_turn_at?: string | null;
+            /** Turns 30D */
+            readonly turns_30d: number;
+            readonly vault: components["schemas"]["AgentVaultHealthOut"];
+            /** Steps */
+            readonly steps: readonly components["schemas"]["HealthStepOut"][];
+            /** Left */
+            readonly left: number;
+        };
+        /** AgentVaultHealthOut */
+        readonly AgentVaultHealthOut: {
+            /** Source */
+            readonly source: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "canopy-web" | "moving" | "1password" | "none";
+            /** Declared */
+            readonly declared: number;
+            /** Refs */
+            readonly refs: readonly components["schemas"]["VaultRefOut"][];
+            /** Stored */
+            readonly stored: readonly string[];
+            /** In 1Password */
+            readonly in_1password: readonly string[];
+            /** Missing */
+            readonly missing: readonly string[];
+            /** Op Vault */
+            readonly op_vault: string;
+            /** Op Key Set */
+            readonly op_key_set: boolean;
+            /** Zero Knowledge */
+            readonly zero_knowledge: boolean;
+            /** Machines Waiting */
+            readonly machines_waiting: readonly string[];
+        };
+        /** HealthStepOut */
+        readonly HealthStepOut: {
+            /** Key */
+            readonly key: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "done" | "todo" | "waiting" | "optional";
+            /** Detail */
+            readonly detail: string;
+            /**
+             * Where
+             * @enum {string}
+             */
+            readonly where: "web" | "claude-code" | "terminal";
+            /**
+             * Href
+             * @default
+             */
+            readonly href: string;
+            /**
+             * Action
+             * @default
+             */
+            readonly action: string;
+            /**
+             * Command
+             * @default
+             */
+            readonly command: string;
+        };
+        /** HealthTotalsOut */
+        readonly HealthTotalsOut: {
+            /** Agents */
+            readonly agents: number;
+            /** Set Up */
+            readonly set_up: number;
+            /** Needs Setup */
+            readonly needs_setup: number;
+            /** Vault Canopy Web */
+            readonly vault_canopy_web: number;
+            /** Vault Moving */
+            readonly vault_moving: number;
+            /** Vault 1Password */
+            readonly vault_1password: number;
+            /** Vault None */
+            readonly vault_none: number;
+        };
+        /** SharedVaultHealthOut */
+        readonly SharedVaultHealthOut: {
+            /** Vault */
+            readonly vault: string;
+            /** Key Set */
+            readonly key_set: boolean;
+            /** Inherited From */
+            readonly inherited_from: string;
+        };
+        /** VaultRefOut */
+        readonly VaultRefOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "stored" | "literal" | "local" | "1password" | "missing";
+        };
+        /** WorkspaceHealthNodeOut */
+        readonly WorkspaceHealthNodeOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Depth */
+            readonly depth: number;
+            /** Parent */
+            readonly parent: string;
+            /** Agents */
+            readonly agents: number;
+            readonly shared_vault: components["schemas"]["SharedVaultHealthOut"];
+        };
+        /** WorkspaceHealthOut */
+        readonly WorkspaceHealthOut: {
+            /** Root */
+            readonly root: string;
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["WorkspaceHealthNodeOut"][];
+            /** Agents */
+            readonly agents: readonly components["schemas"]["AgentHealthOut"][];
+            readonly totals: components["schemas"]["HealthTotalsOut"];
+        };
+        /** AnalyticsAgentOut */
+        readonly AnalyticsAgentOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Turns */
+            readonly turns: number;
+            /** Messages */
+            readonly messages: number;
+            /** Sessions */
+            readonly sessions: number;
+            /** Failed */
+            readonly failed: number;
+            /** People */
+            readonly people: number;
+            /** Input Tokens */
+            readonly input_tokens: number;
+            /** Output Tokens */
+            readonly output_tokens: number;
+            /** Cost Usd */
+            readonly cost_usd: number;
+            /** Last At */
+            readonly last_at?: string | null;
+        };
+        /** AnalyticsDayOut */
+        readonly AnalyticsDayOut: {
+            /**
+             * Day
+             * Format: date
+             */
+            readonly day: string;
+            /** Turns */
+            readonly turns: number;
+            /** Sessions */
+            readonly sessions: number;
+            /** Messages */
+            readonly messages: number;
+            /** Active Users */
+            readonly active_users: number;
+            /** Done */
+            readonly done: number;
+            /** Failed */
+            readonly failed: number;
+            /** Lost */
+            readonly lost: number;
+            /** Cancelled */
+            readonly cancelled: number;
+            /** Input Tokens */
+            readonly input_tokens: number;
+            /** Output Tokens */
+            readonly output_tokens: number;
+            /** Cache Read Tokens */
+            readonly cache_read_tokens: number;
+            /** Cost Usd */
+            readonly cost_usd: number;
+        };
+        /** AnalyticsTotalsOut */
+        readonly AnalyticsTotalsOut: {
+            /** Turns */
+            readonly turns: number;
+            /** Sessions */
+            readonly sessions: number;
+            /** Messages */
+            readonly messages: number;
+            /** Active Users */
+            readonly active_users: number;
+            /** Active Agents */
+            readonly active_agents: number;
+            /** Input Tokens */
+            readonly input_tokens: number;
+            /** Output Tokens */
+            readonly output_tokens: number;
+            /** Cache Read Tokens */
+            readonly cache_read_tokens: number;
+            /** Cache Creation Tokens */
+            readonly cache_creation_tokens: number;
+            /** Cost Usd */
+            readonly cost_usd: number;
+            /** Turns With Usage */
+            readonly turns_with_usage: number;
+        };
+        /** AnalyticsUserOut */
+        readonly AnalyticsUserOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Messages */
+            readonly messages: number;
+            /** Turns */
+            readonly turns: number;
+            /** Sessions */
+            readonly sessions: number;
+            /** Settings */
+            readonly settings: number;
+            /** Mcp Calls */
+            readonly mcp_calls: number;
+            /** Agents */
+            readonly agents: number;
+            /** Active Days */
+            readonly active_days: number;
+            /** Input Tokens */
+            readonly input_tokens: number;
+            /** Output Tokens */
+            readonly output_tokens: number;
+            /** Cost Usd */
+            readonly cost_usd: number;
+            /** Top Agents */
+            readonly top_agents: readonly string[];
+            /** Last At */
+            readonly last_at?: string | null;
+        };
+        /** WorkspaceAnalyticsOut */
+        readonly WorkspaceAnalyticsOut: {
+            /** Days */
+            readonly days: number;
+            /**
+             * Since
+             * Format: date-time
+             */
+            readonly since: string;
+            /** Workspaces */
+            readonly workspaces: readonly string[];
+            readonly totals: components["schemas"]["AnalyticsTotalsOut"];
+            /** Series */
+            readonly series: readonly components["schemas"]["AnalyticsDayOut"][];
+            /** Surfaces */
+            readonly surfaces: {
+                readonly [key: string]: number;
+            };
+            /** Agents */
+            readonly agents: readonly components["schemas"]["AnalyticsAgentOut"][];
+            /** Users */
+            readonly users: readonly components["schemas"]["AnalyticsUserOut"][];
+        };
         /**
          * RunnerOrderRowOut
          * @description One row of a workspace's ordered runner list — the order REPO turns (project
@@ -35041,6 +35384,53 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerTopologyOut"];
+                };
+            };
+        };
+    };
+    readonly workspace_health: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceHealthOut"];
+                };
+            };
+        };
+    };
+    readonly workspace_analytics: {
+        readonly parameters: {
+            readonly query?: {
+                readonly days?: number;
+                readonly tree?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceAnalyticsOut"];
                 };
             };
         };

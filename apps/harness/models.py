@@ -777,6 +777,18 @@ class Turn(models.Model):
             return self.chat_session.agent
         return None
 
+    @property
+    def tenant_slug(self) -> str | None:
+        """The workspace this turn belongs to: its agent's (agent turns), its chat's
+        (session turns), or its own FK (project turns, the one denormalized case).
+        None when unset. The one definition — the realtime fan-out, turn access,
+        auto-debug, artifact origin and analytics all ask this."""
+        if self.agent_id:
+            return self.agent.workspace_id  # workspace PK == slug
+        if self.chat_session_id:
+            return self.chat_session.workspace_id
+        return self.workspace_id
+
     def __str__(self) -> str:  # pragma: no cover
         return f"turn:{self.target}:{self.status}:{self.id.hex[:8]}"
 

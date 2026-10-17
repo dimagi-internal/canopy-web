@@ -153,6 +153,25 @@ def eligible_device_keys(agent) -> list:
                 .filter(status=RunnerDeviceKey.ACTIVE).exclude(ecdh_jkt=""))
 
 
+def device_waits(agent, key) -> bool:
+    """Is this active device key unable to read `agent`'s zero-knowledge values?
+
+    kv 0 (born zero-knowledge, no vault key yet): when any stored value was not
+    sealed to it. kv > 0: when it holds no wrap at the current kv. The one
+    predicate behind "Give access" on the approve flow
+    (`api_device_keys.zk_agents_waiting_on`) and the vault health of an agent
+    (`vault_health.machines_waiting`)."""
+    from .models import AgentCredential, AgentVaultWrap
+    from .zk_seal import sealed_targets
+
+    if not agent.zk_enabled or not key.ecdh_jkt:
+        return False
+    if agent.zk_kv == 0:
+        stored = AgentCredential.objects.filter(agent=agent).exclude(value_zk="").values_list("value_zk", flat=True)
+        return any(("device", key.ecdh_jkt) not in sealed_targets(v) for v in stored)
+    return not AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device", device_key=key).exists()
+
+
 def eligible_members(agent) -> list:
     """Every current agent admin with a vault keyset, as UserVaultKeyset rows."""
     from apps.passkeys.models import UserVaultKeyset

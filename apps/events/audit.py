@@ -134,7 +134,7 @@ def _record(request, op: str, kwargs: dict, notes: list) -> None:
     )
     workspace = next((n["workspace"] for n in changed if n["workspace"] is not None), None) \
         or _workspace_for(request, path_args)
-    SettingChange.objects.create(
+    row = SettingChange.objects.create(
         workspace=workspace,
         actor=user,
         actor_email=getattr(user, "email", "") or "",
@@ -152,6 +152,11 @@ def _record(request, op: str, kwargs: dict, notes: list) -> None:
         request={"path": path_args, "body": redact(body)},
         changes=[{"scope": n["scope"], "before": n["before"], "after": n["after"]} for n in changed],
     )
+    if workspace is not None:
+        from . import activity
+
+        activity.emit(activity.SETTING_CHANGED, workspace=workspace, actor=user,
+                      surface=row.via, ref=f"sc{row.pk}", meta={"operation": op}, at=row.created_at)
 
 
 def _verb(method: str) -> str:
