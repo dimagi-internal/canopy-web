@@ -75,3 +75,18 @@ def test_unencodable_mark_does_not_crash_a_cp1252_console():
     console.write("✗ the real error")
     console.flush()
     assert raw.getvalue() == b"\\u2717 the real error"
+
+
+def test_installer_logon_trigger_names_the_user():
+    """`New-ScheduledTaskTrigger -AtLogOn` with no `-User` means ANY user's logon,
+    which only an administrator may register — so a normal (non-elevated) install
+    failed at Register-ScheduledTask with "Access is denied" (2026-10-16). There is
+    no PowerShell in CI, so pin the script text: every AtLogOn trigger carries -User,
+    and the principal and trigger name the same account."""
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "install-runner.ps1").read_text()
+    lines = [l for l in script.splitlines() if not l.lstrip().startswith("#")]
+    triggers = [l for l in lines if "New-ScheduledTaskTrigger" in l and "-AtLogOn" in l]
+    assert triggers, "the runner task has an AtLogOn trigger"
+    assert all("-User $TASK_USER" in l for l in triggers), triggers
+    assert any("New-ScheduledTaskPrincipal -UserId $TASK_USER" in l for l in lines)
+    assert not any("$env:USERNAME" in l for l in lines if "ScheduledTask" in l)
