@@ -1893,7 +1893,9 @@ def list_closes(request: HttpRequest, runner_id: uuid.UUID):
     )
     return {"closes": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
-         "project": b.session.emdash_project, "close_error": b.close_error}
+         # The binding's own copy first: it survives the agent being deleted,
+         # which blanks the session's (derived from the agent's slug).
+         "project": b.emdash_project or b.session.emdash_project, "close_error": b.close_error}
         for b in bindings
     ]}
 

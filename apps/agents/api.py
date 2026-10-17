@@ -894,9 +894,15 @@ def delete_agent(request: HttpRequest, slug: str):
     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
     syncs, projects, schedules, task actions, runner assignments/drills), so
     this is a real delete rather than a soft flag — nothing is left dangling
-    and nothing blocks it.
+    and nothing blocks it. Its open chat sessions are closed first: the runner
+    deletes each emdash task, and an offline runner does so when it is back.
     """
+    from apps.canopy_sessions.services import close_agent_sessions
+
     agent = _agent_for_write(request, slug)
+    # Its sessions would otherwise outlive it: still listed, their emdash tasks
+    # still on the box. Closed first, while they can still be told apart by agent.
+    close_agent_sessions(agent)
     agent.delete()
     return Status(204, None)
 

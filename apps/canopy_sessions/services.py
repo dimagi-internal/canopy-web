@@ -2602,7 +2602,7 @@ def close_session(*, session: Session) -> str:
             "session_key": binding.session_key,
             # A DELETE aimed by name alone can remove another agent's same-named
             # session; the runner refuses one it cannot place in a project.
-            "project": session.emdash_project,
+            "project": binding.emdash_project or session.emdash_project,
         })
         return "closing"
 
@@ -2615,3 +2615,33 @@ def close_session(*, session: Session) -> str:
 
     transaction.on_commit(lambda: fire_sessions_closed([session.pk]))
     return "closed"
+
+
+def close_agent_sessions(agent) -> dict[str, int]:
+    """Close every open session of an agent that is about to be deleted.
+
+    Deleting an agent only SET_NULLs `Session.agent`, so without this its sessions
+    stay listed and their emdash tasks stay on the box, reported forever with no
+    agent behind them. Each goes through `close_session`, with one difference: a
+    session whose runner is offline gets its close recorded anyway
+    (`close_requested`, drained on the runner's next poll tick) instead of the
+    `unavailable` refusal — once the agent is gone there is nowhere left to retry
+    from. Returns a count per outcome.
+    """
+    counts: dict[str, int] = {}
+    open_sessions = (
+        Session.objects.filter(agent=agent).exclude(status=Session.ARCHIVED)
+        .select_related("runner_binding__runner")
+    )
+    for session in open_sessions:
+        outcome = close_session(session=session)
+        if outcome == "unavailable":
+            cancel_session_turns(session)
+            binding = session.runner_binding
+            binding.close_requested = True
+            binding.close_error = ""
+            binding.close_error_at = None
+            binding.save(update_fields=["close_requested", "close_error", "close_error_at"])
+            outcome = "queued"
+        counts[outcome] = counts.get(outcome, 0) + 1
+    return counts

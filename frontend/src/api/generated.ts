@@ -2945,7 +2945,8 @@ export interface paths {
          *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
          *     syncs, projects, schedules, task actions, runner assignments/drills), so
          *     this is a real delete rather than a soft flag — nothing is left dangling
-         *     and nothing blocks it.
+         *     and nothing blocks it. Its open chat sessions are closed first: the runner
+         *     deletes each emdash task, and an offline runner does so when it is back.
          */
         readonly delete: operations["delete_agent"];
         readonly options?: never;
