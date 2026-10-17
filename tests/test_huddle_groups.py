@@ -10,7 +10,7 @@ a pointer, not the output. And Jonathan's rule — no API or web path reads.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from django.utils import timezone
@@ -73,11 +73,21 @@ def group(channel, installation, hal_login, lead, owner):
     return HuddleGroup.objects.get(slug="champions")
 
 
-def _fire(group, slot=None):
+#: Before the fake channel's first message (tests/test_slack_channel_ingest.Channel).
+EPOCH = datetime(2023, 1, 1, tzinfo=UTC)
+
+
+def _fire(group, slot=None, since=EPOCH):
+    """Announce a run. `since` stands in for where it reads from (the fake channel
+    is from 2023, a real first run reads one cadence back); None keeps the real one."""
     slot = slot or timezone.now().replace(microsecond=0)
     turn, created = hsvc.fire_schedule(group.schedule, slot)
     assert turn is None
-    return HuddleGroupRun.objects.get(group=group, slot=slot)
+    run = HuddleGroupRun.objects.get(group=group, slot=slot)
+    if since is not None:
+        HuddleGroupRun.objects.filter(pk=run.pk).update(read_since=since)
+        run.refresh_from_db()
+    return run
 
 
 def _announced(slack):
@@ -322,6 +332,55 @@ def test_revoking_the_read_deletes_the_runs_copy_too(group, slack, channel):
     assert run.material == ""
 
 
+def test_the_read_covers_exactly_what_the_announcement_said(group, slack, channel):
+    """2026-10-17: the announcement said "since yesterday 7:44 PM" (dated from a
+    revoked read) and the Confirm read the whole channel. One start, both places."""
+    since = datetime.fromtimestamp(1700000350, tz=UTC)
+    run = _fire(group, since=None)
+    HuddleGroupRun.objects.filter(pk=run.pk).update(read_since=since)
+    run.refresh_from_db()
+    text = groups.announcement(run)[1][0]["text"]["text"]
+    assert "since <!date^1700000350^" in text
+    click(groups.CONFIRM, str(run.pk), user=ALICE, message_ts=run.announce_ts)
+    _run(SlackChannelIngest.objects.get())
+    run.refresh_from_db()
+    assert run.status == HuddleGroupRun.RUNNING and run.read_since == since
+    assert "first ever message" not in run.material and "middle" not in run.material
+    assert "last word" in run.material and "reply two" in run.material and run.read_messages == 4
+    oldest = [p.get("oldest") for m, p in channel.reads if m == "conversations.history"]
+    assert oldest and float(oldest[0]) == 1700000350
+    told = [p["text"] for p in slack.said("chat.postMessage") if p.get("thread_ts") == run.announce_ts]
+    assert any("read 4 message(s)" in t and "since <!date^1700000350^" in t and "as confirmed" in t
+               for t in told), told
+
+
+def test_a_first_run_reads_one_cadence_back_and_the_next_from_where_it_stopped(group, slack, channel):
+    slot = timezone.now().replace(microsecond=0)
+    first = _fire(group, slot=slot, since=None)
+    assert first.read_since == slot - timedelta(days=7)          # "0 9 * * 1": weekly
+    assert ingest.allowance_for(group.leader_agent, group.channel_id) is not None
+    HuddleGroupRun.objects.filter(pk=first.pk).update(read_last_ts="1700000500.000000")
+    nxt = _fire(group, slot=slot + timedelta(days=7), since=None)
+    assert nxt.read_since == datetime.fromtimestamp(1700000500, tz=UTC)
+
+
+def test_a_read_channel_in_between_does_not_hide_messages_from_the_group(group, slack, channel):
+    run = _fire(group)
+    click(groups.CONFIRM, str(run.pk), user=ALICE, message_ts=run.announce_ts)
+    row = SlackChannelIngest.objects.get()
+    _run(row)
+    run.refresh_from_db()
+    assert run.read_messages == 6
+    # Someone's read-channel advanced the agent's mark past everything; the next
+    # group run still reads what was posted since the group's own last read.
+    ingest.mark_read(row, 10**9)
+    nxt = _fire(group, slot=run.slot + timedelta(days=7), since=datetime.fromtimestamp(1700000350, tz=UTC))
+    click(groups.CONFIRM, str(nxt.pk), user=ALICE, message_ts=nxt.announce_ts)
+    _run(SlackChannelIngest.objects.get())
+    nxt.refresh_from_db()
+    assert nxt.read_messages == 4 and "last word" in nxt.material
+
+
 def test_unconfirmed_runs_lapse_after_a_day(group, slack):
     run = _fire(group)
     HuddleGroupRun.objects.filter(pk=run.pk).update(created_at=timezone.now() - timedelta(hours=25))
@@ -376,5 +435,5 @@ def test_a_huddle_run_for_a_group_carries_the_group_header(group, owner, hal):
     assert got["group"] == {"slug": "champions", "name": "AI Champions", "channel_name": "canopy-support",
                             "lead_email": "alice@dimagi.com", "run_id": run.pk,
                             "read": {"messages": 4, "first_ts": "1700000100.000000",
-                                     "last_ts": "1700000500.000000", "since": ""}}
+                                     "last_ts": "1700000500.000000", "since": EPOCH.isoformat()}}
     assert _link_client(owner).get("/api/huddles/h2").json()["group"] is None

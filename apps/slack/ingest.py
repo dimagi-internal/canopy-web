@@ -727,7 +727,7 @@ def read_channel(*, installation, agent, inbound, user, ask: str) -> str:
 
 
 def _begin_read(*, agent, installation, allowance, user, channel_name: str, purpose: str,
-                pending: dict) -> SlackChannelIngest:
+                pending: dict, oldest: float = 0.0) -> SlackChannelIngest:
     """Start (or continue) the allow-listed read of a channel for a person's ask.
 
     The one place a read is started. Callers are both Slack clicks/commands by a
@@ -748,7 +748,7 @@ def _begin_read(*, agent, installation, allowance, user, channel_name: str, purp
                 workspace_id=agent.workspace_id, installation=installation, agent=agent, channel_id=channel_id,
                 channel_name=allowance.channel_name or channel_name, follow=False, requested_by=user,
                 allowance=allowance, status=SlackChannelIngest.READING, decided_by=allowance.added_by,
-                decided_at=now)
+                decided_at=now, history_oldest=f"{oldest:.6f}" if oldest else "")
         elif row.phase == SlackChannelIngest.IDLE:
             _start_follow_pass(row)            # only what is new since the last pass
         row.purpose = purpose[:2000]
@@ -758,7 +758,8 @@ def _begin_read(*, agent, installation, allowance, user, channel_name: str, purp
     return row
 
 
-def start_group_read(*, agent, installation, channel_id: str, user, run_id: int, purpose: str) -> SlackChannelIngest:
+def start_group_read(*, agent, installation, channel_id: str, user, run_id: int, purpose: str,
+                     oldest=None) -> SlackChannelIngest:
     """A work group's lead pressed Confirm on its run's announcement, in the
     channel (apps/huddles/groups.confirm): read the channel for the group's
     leader agent. Only an allow-listed channel; `_deliver` hands the read to
@@ -771,7 +772,8 @@ def start_group_read(*, agent, installation, channel_id: str, user, run_id: int,
         raise IngestError(f"This channel isn't on `{agent.slug}`'s list of channels it may read — "
                           "re-save the work group in canopy to put it back.")
     row = _begin_read(agent=agent, installation=installation, allowance=allowance, user=user,
-                      channel_name="", purpose=purpose, pending={"group_run": int(run_id), "by": user.pk})
+                      channel_name="", purpose=purpose, pending={"group_run": int(run_id), "by": user.pk},
+                      oldest=oldest.timestamp() if oldest else 0.0)
     _record(row, "read_channel", f"{_who(user)} confirmed a work group huddle: {agent.slug} reads <#{channel_id}> "
             "since its last read", user=user.pk, group_run=int(run_id), allowance=str(allowance.pk),
             after=row.read_mark)
@@ -784,10 +786,15 @@ def _slack_date(epoch: float) -> str:
     return f"<!date^{int(epoch)}^{{date_short_pretty}} at {{time}}|{time.strftime('%Y-%m-%d %H:%M', t)} UTC>"
 
 
-def _what_was_read(agent_slug: str, t: dict, prev_at) -> str:
-    """The public line in the thread: how much was read, spanning when, since when."""
-    since = f"since its last read here, {_slack_date(prev_at.timestamp())}" if prev_at else \
-        "the whole channel, its first read here"
+def _what_was_read(agent_slug: str, t: dict, prev_at, *, as_confirmed: bool = False) -> str:
+    """The public line in the thread: how much was read, spanning when, since when.
+    `as_confirmed`: a work group run, whose `prev_at` is the start the lead confirmed."""
+    if as_confirmed and prev_at:
+        since = f"everything posted since {_slack_date(prev_at.timestamp())}, as confirmed"
+    elif prev_at:
+        since = f"since its last read here, {_slack_date(prev_at.timestamp())}"
+    else:
+        since = "the whole channel, its first read here"
     if not t["messages"]:
         return f":books: Nothing new in this channel {since}. `{agent_slug}` still answers your ask."
     span = (f", posted {_slack_date(float(t['first_ts']))} → {_slack_date(float(t['last_ts']))}"
@@ -847,7 +854,7 @@ def _when(ts: str) -> tuple[str, str]:
     return time.strftime("%Y-%m-%d", t), time.strftime("%H:%M", t)
 
 
-def transcript(ingest: SlackChannelIngest, *, after: int = 0) -> dict:
+def transcript(ingest: SlackChannelIngest, *, after: int = 0, oldest: float = 0.0) -> dict:
     """The channel as Markdown: one heading per UTC day, threads nested under their parent.
 
     `after` is a read mark (`SlackChannelIngest.read_mark`): only messages STORED
@@ -857,16 +864,24 @@ def transcript(ingest: SlackChannelIngest, *, after: int = 0) -> dict:
     ts watermark would skip it. A new reply whose thread started before the mark
     is shown under its (already-read) parent, so it is not read out of context.
 
+    `oldest` (a Slack ts) cuts it further to messages POSTED after it — a work
+    group run reads only what its lead confirmed — and an earlier thread parent
+    is then shown only if it, too, was posted after it.
+
     Returns {markdown, messages, total, after, mark, first_ts, last_ts}: `mark`
     is what to hand `mark_read` once the agent has kept the text."""
     names = ingest.names or {}
     lines = SlackIngestMessage.objects.filter(ingest=ingest)
     total = lines.count()
     rows = list((lines.filter(pk__gt=after) if after else lines).order_by("ts"))
+    if oldest:
+        rows = [r for r in rows if float(r.ts) > oldest]
     replies: dict[str, list[SlackIngestMessage]] = {}
     tops = []
     have = {r.ts for r in rows}
-    orphans = {r.thread_ts for r in rows if r.thread_ts and r.thread_ts not in have} if after else set()
+    orphans = {r.thread_ts for r in rows if r.thread_ts and r.thread_ts not in have} if (after or oldest) else set()
+    if oldest:
+        orphans = {ts for ts in orphans if float(ts) > oldest}
     earlier = {p.ts: p for p in lines.filter(ts__in=orphans)} if orphans else {}
     for r in rows:
         if r.thread_ts and (r.thread_ts in have or r.thread_ts in earlier):
@@ -900,7 +915,10 @@ def transcript(ingest: SlackChannelIngest, *, after: int = 0) -> dict:
     else:
         approver = "—"
     first_ts, last_ts = (rows[0].ts, rows[-1].ts) if rows else ("", "")
-    if not after:
+    if oldest:
+        d, c = _when(f"{oldest:.6f}")
+        count = f"- Posted since {d} {c} UTC: {len(rows)} message(s)"
+    elif not after:
         count = f"- Messages: {len(rows)}"
     elif rows:
         (d0, c0), (d1, c1) = _when(first_ts), _when(last_ts)
