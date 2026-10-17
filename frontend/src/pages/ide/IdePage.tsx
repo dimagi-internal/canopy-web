@@ -1,7 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { ChevronDown, Menu, MoreHorizontal } from 'lucide-react'
 import { WorkbenchRail, WorkbenchShell } from 'canopy-ui'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from 'canopy-ui/ui'
+import { setAppBarHidden, useAppBarHidden } from '@/components/AppLayout/appBarStore'
 import {
   archiveSession,
   closeSession,
@@ -54,10 +66,10 @@ const RAIL_MIN = 260
 const RAIL_MAX = 900
 const clampRail = (w: number) => Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, w)))
 
-type Prefs = { filters: Omit<IdeFilters, 'query'>; collapsed: string[]; railWidth: number; runnersOpen: boolean }
+type Prefs = { filters: Omit<IdeFilters, 'query'>; collapsed: string[]; railWidth: number; railHidden: boolean }
 
 function loadPrefs(): Prefs {
-  const fallback: Prefs = { filters: { ...DEFAULT_FILTERS }, collapsed: [], railWidth: RAIL_DEFAULT, runnersOpen: true }
+  const fallback: Prefs = { filters: { ...DEFAULT_FILTERS }, collapsed: [], railWidth: RAIL_DEFAULT, railHidden: false }
   try {
     const raw = window.localStorage.getItem(PREFS_KEY)
     if (!raw) return fallback
@@ -71,7 +83,7 @@ function loadPrefs(): Prefs {
       },
       collapsed: Array.isArray(p.collapsed) ? p.collapsed : [],
       railWidth: typeof p.railWidth === 'number' ? clampRail(p.railWidth) : RAIL_DEFAULT,
-      runnersOpen: p.runnersOpen !== false,
+      railHidden: p.railHidden === true,
     }
   } catch {
     return fallback
@@ -157,38 +169,6 @@ function ModeTag({ mode }: { mode: IdeMode }) {
   )
 }
 
-function Toggle({
-  on,
-  onClick,
-  children,
-  title,
-  testId,
-}: {
-  on: boolean
-  onClick: (e: MouseEvent<HTMLButtonElement>) => void
-  children: ReactNode
-  title?: string
-  testId?: string
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      title={title}
-      data-testid={testId}
-      onClick={onClick}
-      className={clsx(
-        'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[12px]',
-        on
-          ? 'border-primary/40 bg-primary/10 text-foreground'
-          : 'border-border text-muted-foreground line-through decoration-muted-foreground/50 hover:text-foreground-secondary',
-      )}
-    >
-      {children}
-    </button>
-  )
-}
-
 function runnerOnline(status: string | null): boolean {
   return status === 'online'
 }
@@ -207,7 +187,9 @@ export function IdePage() {
   const lastFetch = useRef(0)
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [railWidth, setRailWidth] = useState(initial.railWidth)
-  const [runnersOpen, setRunnersOpen] = useState(initial.runnersOpen)
+  const [railHidden, setRailHidden] = useState(initial.railHidden)
+  const appBarHidden = useAppBarHidden()
+  const searchRef = useRef<HTMLInputElement>(null)
   const [menu, setMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null)
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null)
   // Closes relayed to a runner, by session id → when asked. The row stays,
@@ -220,8 +202,8 @@ export function IdePage() {
 
   useEffect(() => {
     const { hiddenRunners, states, modes, archived } = filters
-    savePrefs({ filters: { hiddenRunners, states, modes, archived }, collapsed: [...collapsed], railWidth, runnersOpen })
-  }, [filters, collapsed, railWidth, runnersOpen])
+    savePrefs({ filters: { hiddenRunners, states, modes, archived }, collapsed: [...collapsed], railWidth, railHidden })
+  }, [filters, collapsed, railWidth, railHidden])
 
   const state = filters.archived ? 'all' : 'active'
   const refresh = useCallback(() => {
@@ -260,6 +242,26 @@ export function IdePage() {
   useEffect(() => {
     const t = window.setInterval(() => setNow(new Date()), 30_000)
     return () => window.clearInterval(t)
+  }, [])
+
+  // ⌘B / Ctrl-B hides the rail; "/" jumps to the filter box (not while typing).
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        setRailHidden((h) => !h)
+        return
+      }
+      const t = e.target as HTMLElement | null
+      const typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
+      if (e.key === '/' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        setRailHidden(false)
+        requestAnimationFrame(() => searchRef.current?.focus())
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   const ring = useCallback(() => {
@@ -422,113 +424,168 @@ export function IdePage() {
     }
   }
 
+  // Runners and modes switched off — the state filters show themselves above.
+  const hiddenCount =
+    filters.hiddenRunners.filter((k) => chips.some((c) => c.key === k)).length +
+    Object.values(filters.modes).filter((on) => !on).length
+
   const header = (
-    <div className="flex flex-col gap-2 px-3 py-2">
-      <div className="flex items-baseline gap-2">
-        <span className="text-sm font-semibold text-foreground">IDE</span>
-        <span className="text-[12px] text-muted-foreground" data-testid="ide-totals">
-          {shown.length} sessions · {totals.running} running · {totals.input} input · {totals.idle} idle
+    <div className="flex flex-col gap-1 px-2 py-1.5">
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setAppBarHidden(!appBarHidden)}
+          aria-pressed={appBarHidden}
+          title={appBarHidden ? 'Show the app bar' : 'Hide the app bar for more room'}
+          data-testid="ide-appbar-toggle"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <Menu className="h-3.5 w-3.5" aria-hidden />
+        </button>
+        <span className="text-[13px] font-semibold text-foreground">IDE</span>
+        <span className="text-[11px] tabular-nums text-muted-foreground" data-testid="ide-totals">
+          {shown.length}
         </span>
+        {/* The totals ARE the state filters: a count struck through is hidden. */}
+        <div className="flex min-w-0 items-center gap-0.5">
+          {(['running', 'input', 'idle'] as IdeState[]).map((k) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={filters.states[k]}
+              onClick={() => toggleState(k)}
+              data-testid={`ide-state-${k}`}
+              title={`${filters.states[k] ? 'Hide' : 'Show'} ${STATE_LABEL[k]} sessions`}
+              className={clsx(
+                'inline-flex items-center gap-1 rounded px-1 py-0.5 text-[11px] tabular-nums hover:bg-muted',
+                filters.states[k]
+                  ? 'text-foreground-secondary'
+                  : 'text-muted-foreground line-through decoration-muted-foreground/50',
+              )}
+            >
+              <StateDot state={k} />
+              {totals[k]} {STATE_LABEL[k]}
+            </button>
+          ))}
+        </div>
         {sessions.length >= LIST_LIMIT && (
           <span
-            className="text-[12px] text-warning"
+            className="text-[11px] text-warning"
             title={`The list returns at most ${LIST_LIMIT} sessions per organisation; older ones are not shown.`}
           >
-            capped at {LIST_LIMIT}
+            capped
           </span>
         )}
         <span
-          className={clsx('ml-auto text-[11px]', live ? 'text-success' : 'text-muted-foreground')}
+          aria-label={live ? 'live' : 'polling'}
+          className={clsx('ml-auto shrink-0 text-[11px]', live ? 'text-success' : 'text-muted-foreground')}
           title={live ? 'Updates as runners report' : `Live updates unavailable — polling every ${POLL_MS / 1000}s`}
         >
-          {live ? '● live' : '○ polling'}
+          {live ? '●' : '○'}
         </span>
       </div>
 
-      <div className="flex flex-col gap-1">
-        <button
-          type="button"
-          onClick={() => setRunnersOpen((o) => !o)}
-          aria-expanded={runnersOpen}
-          data-testid="ide-runners-toggle"
-          className="flex items-center gap-1 self-start text-[11px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
-        >
-          <span className="w-3 normal-case">{runnersOpen ? '▾' : '▸'}</span>
-          Runners
-          {/* Collapsed, still say whether any are switched off — a hidden filter
-              that silently narrows the list is the one thing worse than clutter. */}
-          {!runnersOpen && (
-            <span className="normal-case tracking-normal">
-              · {chips.filter((c) => !filters.hiddenRunners.includes(c.key)).length} of {chips.length} shown
-            </span>
-          )}
-        </button>
-        {runnersOpen && (
-          <div className="flex flex-wrap gap-1">
-            {chips.map((c) => (
-              <Toggle
-                key={c.key}
-                on={!filters.hiddenRunners.includes(c.key)}
-                onClick={(e) => (e.altKey ? soloRunner(c.key) : toggleRunner(c.key))}
-                testId={`ide-runner-${c.key}`}
-                title={`${[c.name, c.host, c.status].filter(Boolean).join(' · ')}\nAlt-click: show only this runner`}
-              >
-                {c.key !== NO_RUNNER && (
-                  <span
-                    aria-hidden
-                    className={clsx('h-1.5 w-1.5 rounded-full', runnerOnline(c.status) ? 'bg-success' : 'bg-muted-foreground/50')}
-                  />
-                )}
-                <span className="max-w-[140px] truncate">{c.name}</span>
-                <span className="text-muted-foreground">{c.count}</span>
-              </Toggle>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1">
-        {(['running', 'input', 'idle'] as IdeState[]).map((k) => (
-          <Toggle key={k} on={filters.states[k]} onClick={() => toggleState(k)} testId={`ide-state-${k}`}>
-            <StateDot state={k} />
-            {STATE_LABEL[k]}
-          </Toggle>
-        ))}
-        <span className="mx-1 h-3 w-px bg-border" />
-        {(['manual', 'auto', 'none'] as IdeMode[]).map((k) => (
-          <Toggle key={k} on={filters.modes[k]} onClick={() => toggleMode(k)} testId={`ide-mode-${k}`}>
-            {MODE_LABEL[k]}
-          </Toggle>
-        ))}
-        <span className="mx-1 h-3 w-px bg-border" />
-        <Toggle
-          on={filters.archived}
-          onClick={() => setFilters((f) => ({ ...f, archived: !f.archived }))}
-          testId="ide-archived"
-        >
-          archived
-        </Toggle>
-      </div>
-
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
         <input
           type="search"
           value={filters.query}
           onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
           placeholder="Filter by title, project or runner"
-          className="min-w-0 flex-1 rounded border border-input bg-background px-2 py-1 text-[13px] text-foreground placeholder:text-muted-foreground"
+          ref={searchRef}
+          data-testid="ide-search"
+          className="h-6 min-w-0 flex-1 rounded border border-input bg-background px-2 text-[12px] text-foreground placeholder:text-muted-foreground"
         />
-        <button
-          type="button"
-          onClick={() => setAllCollapsed(!allCollapsed)}
-          className="shrink-0 text-[12px] text-muted-foreground hover:text-foreground"
-        >
-          {allCollapsed ? 'Expand all' : 'Collapse all'}
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            data-testid="ide-filters"
+            className={clsx(
+              'flex h-6 shrink-0 items-center gap-1 rounded border px-1.5 text-[12px] hover:bg-muted',
+              hiddenCount || filters.archived
+                ? 'border-primary/40 bg-primary/10 text-foreground'
+                : 'border-border text-muted-foreground',
+            )}
+          >
+            {/* Say how much is filtered out even while the menu is shut — a
+                hidden filter that silently narrows the list is worse than clutter. */}
+            Filters{hiddenCount ? ` · ${hiddenCount} off` : ''}
+            {filters.archived ? ' · +archived' : ''}
+            <ChevronDown className="h-3 w-3 opacity-60" aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="max-h-[70vh] w-64 overflow-y-auto">
+            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">
+              Runners · Alt-click to show only one
+            </DropdownMenuLabel>
+            {chips.map((c) => (
+              <DropdownMenuCheckboxItem
+                key={c.key}
+                checked={!filters.hiddenRunners.includes(c.key)}
+                onClick={(e) => (e.altKey ? soloRunner(c.key) : toggleRunner(c.key))}
+                data-testid={`ide-runner-${c.key}`}
+                title={[c.name, c.host, c.status].filter(Boolean).join(' · ')}
+                className="text-[12px]"
+              >
+                {c.key !== NO_RUNNER && (
+                  <span
+                    aria-hidden
+                    className={clsx(
+                      'mr-1.5 h-1.5 w-1.5 shrink-0 rounded-full',
+                      runnerOnline(c.status) ? 'bg-success' : 'bg-muted-foreground/50',
+                    )}
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                <span className="ml-2 text-[11px] tabular-nums text-muted-foreground">{c.count}</span>
+              </DropdownMenuCheckboxItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">Mode</DropdownMenuLabel>
+            {(['manual', 'auto', 'none'] as IdeMode[]).map((k) => (
+              <DropdownMenuCheckboxItem
+                key={k}
+                checked={filters.modes[k]}
+                onClick={() => toggleMode(k)}
+                data-testid={`ide-mode-${k}`}
+                className="text-[12px]"
+              >
+                {MODE_LABEL[k]}
+              </DropdownMenuCheckboxItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuCheckboxItem
+              checked={filters.archived}
+              onClick={() => setFilters((f) => ({ ...f, archived: !f.archived }))}
+              data-testid="ide-archived"
+              className="text-[12px]"
+            >
+              Include archived
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label="More"
+            data-testid="ide-more"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem className="text-[12px]" onClick={() => setAllCollapsed(!allCollapsed)}>
+              {allCollapsed ? 'Expand all projects' : 'Collapse all projects'}
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-[12px]" onClick={() => setRailHidden(true)}>
+              Hide the session list
+              <DropdownMenuShortcut>⌘B</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-[12px]" onClick={() => setAppBarHidden(!appBarHidden)}>
+              {appBarHidden ? 'Show the app bar' : 'Hide the app bar'}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {note && (
         <div
-          className={clsx('flex items-start gap-2 text-[12px]', note.error ? 'text-destructive' : 'text-muted-foreground')}
+          className={clsx('flex items-start gap-2 text-[11px]', note.error ? 'text-destructive' : 'text-muted-foreground')}
           data-testid="ide-note"
         >
           <span className="min-w-0 flex-1">{note.text}</span>
@@ -542,6 +599,7 @@ export function IdePage() {
 
   return (
     <WorkbenchShell>
+      {!railHidden && (
       <div className="relative flex min-h-0 shrink-0" style={{ width: railWidth }} data-testid="ide-rail">
       <WorkbenchRail width="md:w-full" className="min-w-0 flex-1" header={header}>
         <div className="py-1 text-[13px]" onKeyDown={onTreeKey} data-testid="ide-tree">
@@ -644,9 +702,22 @@ export function IdePage() {
         className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-primary/30 active:bg-primary/40"
       />
       </div>
-      <div className="min-h-0 min-w-0 flex-1">
+      )}
+      {railHidden && (
+        <button
+          type="button"
+          onClick={() => setRailHidden(false)}
+          title="Show the session list (⌘B)"
+          aria-label="Show the session list"
+          data-testid="ide-rail-show"
+          className="flex w-5 shrink-0 items-start justify-center border-r border-border pt-2 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          ›
+        </button>
+      )}
+      <div className="ide-dense min-h-0 min-w-0 flex-1">
         {id ? (
-          <ChatPage key={id} onLeave={() => navigate('/ide', { replace: true })} />
+          <ChatPage key={id} compact onLeave={() => navigate('/ide', { replace: true })} />
         ) : (
           <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
             Pick a session on the left.

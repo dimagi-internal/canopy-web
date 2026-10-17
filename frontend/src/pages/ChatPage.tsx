@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { clsx } from 'clsx'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ChatPanel,
@@ -94,8 +95,9 @@ const BACKFILL_TIMEOUT_MS = 30_000
  * Also the right pane of /ide/:id, where `onLeave` replaces the page's own
  * navigation: a closed session drops back to the tree instead of out of /ide,
  * and a move between workspaces keeps the /ide URL (it names no workspace).
+ * `compact` is /ide's denser header: title, target and status on one line.
  */
-export function ChatPage({ onLeave }: { onLeave?: () => void } = {}) {
+export function ChatPage({ onLeave, compact = false }: { onLeave?: () => void; compact?: boolean } = {}) {
   const { id = '' } = useParams()
   const appHost = useMemo(() => appHostFor(id), [id])
   const navigate = useNavigate()
@@ -800,11 +802,21 @@ export function ChatPage({ onLeave }: { onLeave?: () => void } = {}) {
       {/* The header is for READING: the title and whether the agent is working.
           Actions live in ChatSessionMenu. Five buttons here once ran 145px past
           a phone screen and scrolled the whole page sideways. */}
-      <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-2">
-        <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold text-foreground">{title}</h1>
+      <div
+        className={clsx(
+          'flex items-center gap-2 border-b border-border bg-background',
+          compact ? 'px-3 py-1' : 'px-4 py-2',
+        )}
+      >
+        <div className={clsx('min-w-0', compact && 'flex items-baseline gap-1.5')}>
+          <h1 className={clsx('truncate font-semibold text-foreground', compact ? 'text-[13px]' : 'text-sm')}>
+            {title}
+          </h1>
           {targetLabel && (
-            <p className="truncate text-[11px] text-muted-foreground">{targetLabel}</p>
+            <p className="truncate text-[11px] text-muted-foreground">
+              {compact && '· '}
+              {targetLabel}
+            </p>
           )}
         </div>
         {/* Live agent activity beats the server's liveness fields when a hook has
