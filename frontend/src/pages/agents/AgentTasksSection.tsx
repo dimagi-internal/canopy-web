@@ -305,22 +305,34 @@ function ByProject({
     )
   }
 
+  const group = (p: ProjectOut) => {
+    const mine = tasks.filter((t) => t.project_ext_id === p.ext_id)
+    if (mine.length === 0 && p.ext_id !== selected) return null
+    return (
+      <section key={p.ext_id} data-testid={`project-${p.ext_id}`}>
+        <ProjectGroupHeader project={p} tasks={mine} slug={slug} onChanged={onChanged} />
+        {mine.length === 0 ? (
+          <p className="mt-2 text-[12px] text-muted-foreground">No tasks here.</p>
+        ) : (
+          cards(mine)
+        )}
+      </section>
+    )
+  }
+  // Proposed projects (each with its "Start this project?" card) wait on a
+  // person, so they get their own section above the work in flight.
+  const proposed = projects.filter((p) => p.status === 'proposed')
+  const shownProposed = proposed.map(group).filter(Boolean)
+
   return (
     <div className="space-y-6">
-      {projects.map((p) => {
-        const mine = tasks.filter((t) => t.project_ext_id === p.ext_id)
-        if (mine.length === 0 && p.ext_id !== selected) return null
-        return (
-          <section key={p.ext_id} data-testid={`project-${p.ext_id}`}>
-            <ProjectGroupHeader project={p} tasks={mine} slug={slug} onChanged={onChanged} />
-            {mine.length === 0 ? (
-              <p className="mt-2 text-[12px] text-muted-foreground">No tasks here.</p>
-            ) : (
-              cards(mine)
-            )}
-          </section>
-        )
-      })}
+      {shownProposed.length > 0 && (
+        <div className="space-y-6" data-testid="projects-proposed">
+          <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Proposed</h3>
+          {shownProposed}
+        </div>
+      )}
+      {projects.filter((p) => p.status !== 'proposed').map(group)}
 
       {loose.length > 0 && (
         <section data-testid="project-none">

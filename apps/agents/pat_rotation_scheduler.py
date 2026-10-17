@@ -10,6 +10,10 @@ in `tick_if_due` keeps N web tasks to about one tick per interval, and the agent
 row lock in `rotate` keeps two from rotating the same agent. Rotation is daily
 work at most, so a 15-minute tick is plenty; the overlap (24 h) is what keeps a
 late tick harmless. `manage.py rotate_canopy_pats` runs one tick by hand.
+
+The same clock archives proposed projects nobody took up in 14 days
+(`proposals.expire_stale`) — the agents app's one periodic loop, rather than a
+second loop for one cheap query.
 """
 from __future__ import annotations
 
@@ -28,9 +32,18 @@ def _tick(interval_s: float) -> None:
 
     from . import pat_rotation
 
+    from . import proposals
+
     close_old_connections()
     try:
-        pat_rotation.tick_if_due(interval_s)
+        try:
+            pat_rotation.tick_if_due(interval_s)
+        finally:
+            # Its own guard: a failed rotation must not keep stale proposals open.
+            try:
+                proposals.expire_stale()
+            except Exception:  # noqa: BLE001
+                logger.exception("proposed-project expiry failed")
     finally:
         close_old_connections()
 

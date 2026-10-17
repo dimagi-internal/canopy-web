@@ -2,6 +2,7 @@
 
 * `POST /view` — the view beacon the project page and the huddle page fire on
   load: one `viewed` event per person, per object, per UTC day.
+* `GET /summary` — what people actually did: the report Ada reads weekly.
 
 Every other event is recorded where its act happens (`engagement.record`); this
 router is only the acts that have no other route — opening a page.
@@ -15,9 +16,9 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 
 from . import engagement
-from .api import _visible_agent_workspace_ids
+from .api import _listed_agent_workspace_ids, _visible_agent_workspace_ids
 from .models import AgentProject
-from .schemas import EngagementViewIn, EngagementViewOut
+from .schemas import EngagementSummaryOut, EngagementViewIn, EngagementViewOut
 
 router = Router(auth=session_auth, tags=["engagement"])
 
@@ -59,3 +60,15 @@ def record_engagement_view(request: HttpRequest, payload: EngagementViewIn) -> d
         row = engagement.record("viewed", workspace=workspace, surface=surface, user=request.user,
                                 huddle_id=payload.huddle_id, dedupe_day=True)
     return {"recorded": row is not None}
+
+
+@router.get("/summary", response=EngagementSummaryOut,
+            summary="What people actually did with projects, huddles and work-group runs")
+def engagement_summary(request: HttpRequest, days: int = 14, group: str = "", agent: str = "") -> dict:
+    """Over the last `days` (default 14), in the workspaces you can list: event
+    counts by kind and surface; the unique people who did anything; for each
+    project proposed in the window, the time to its first human reaction, the time
+    to its decision, its backers and comments; the proposals nobody reacted to;
+    and work-group runs announced vs confirmed vs skipped vs expired, with the
+    median time to confirm. `group` (a work group slug) and `agent` narrow it."""
+    return engagement.summary(_listed_agent_workspace_ids(request), days=days, group=group, agent=agent)

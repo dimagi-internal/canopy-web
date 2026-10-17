@@ -1781,12 +1781,15 @@ def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetail
     # Built from the plain project shape: `project.tasks` is a manager, not a list.
     from . import participants
 
+    from . import proposals
+
     return AgentProjectDetailOut(
         **AgentProjectOut.model_validate(project).model_dump(),
         tasks=[AgentTaskOut.model_validate(t) for t in tasks],
         recent_turns=[_turn_brief(t) for t in turns],
         # Same gate as the rest of the project: members of the agent's workspace.
         participants=[ProjectParticipantOut(**p) for p in participants.of_project(project)],
+        proposal=(proposals.card(project, request.user) if proposals.is_proposal(project) else None),
     )
 
 
@@ -1890,6 +1893,30 @@ def patch_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskPatc
 #: viewer tier ("decide, read the board").
 _EDITOR_ACTIONS = frozenset({"nudge", "done"})
 
+#: Task actions on a project's task that count as a person engaging with the project.
+_ENGAGEMENT_OF_ACTION = {"approve": "approved", "decline": "declined", "reply": "commented"}
+
+
+def _engaged_with_project_task(request: HttpRequest, task, action: str) -> None:
+    """Record what a person just did to one of a project's tasks (`EngagementEvent`),
+    and make a person who replied a participant of the project. Never fails the
+    action: both writes are best-effort."""
+    from apps.contacts import services as contacts
+
+    from . import engagement, participants
+
+    kind = _ENGAGEMENT_OF_ACTION.get(action)
+    if kind is None:
+        return
+    engagement.record(kind, workspace=task.agent.workspace_id, surface=engagement.surface_of(request),
+                      user=request.user, project=task.project, task=task)
+    if action == "reply":
+        try:
+            person = contacts.person_for(user=request.user)
+            participants.ensure(task.project, person, source="reply")
+        except Exception:  # noqa: BLE001 — a participant is never worth a failed reply
+            logger.exception("could not add %s as a participant of %s", request.user.pk, task.project_id)
+
 
 @router.post("/{slug}/tasks/{ref}/actions", response=ActOut,
              summary="Act on a task: approve, decline, reply, nudge or done",)
@@ -1929,10 +1956,15 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
             by_agent_itself=_is_agent_itself(request, agent))
     except services.ClosedAskError as exc:
         raise HttpError(409, str(exc)) from exc
+    except PermissionError as exc:
+        # A proposed project's decision card, by someone who may not decide it.
+        raise HttpError(403, str(exc)) from exc
     except ValueError as exc:
         # An empty reply, or an `on_approve` spec that cannot run. `act` is
         # atomic: the ask is still open and the action can be retried.
         raise HttpError(422, str(exc)) from exc
+    if task.project_id is not None and not _is_agent_itself(request, agent):
+        _engaged_with_project_task(request, task, payload.action)
     return ActOut(task=AgentTaskOut.model_validate(task),
                   action=AgentTaskActionOut.model_validate(row),
                   turn_ids=[t.id for t in turns])

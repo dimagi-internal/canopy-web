@@ -94,6 +94,10 @@ def create_idea(request: HttpRequest, slug: str, ref: str, payload: IdeaIn) -> S
     except ValueError as exc:
         raise HttpError(422, str(exc)) from None
     told = idea_svc.notify(task, by_user=request.user)
+    from . import engagement
+
+    engagement.record("idea_added", workspace=agent.workspace_id, surface=engagement.surface_of(request),
+                      user=request.user, project=project, task=task)
     [out] = [i for i in idea_svc.of_project(project) if i["ext_id"] == task.ext_id]
     return Status(201, {"idea": out, "notified": told})
 

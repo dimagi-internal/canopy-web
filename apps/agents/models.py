@@ -855,8 +855,11 @@ class AgentProject(models.Model):
     slug (`repo_slug`); there is no repo registry to point at.
     """
 
-    ACTIVE, DONE, ARCHIVED = "active", "done", "archived"
-    STATUS_CHOICES = [(ACTIVE, "Active"), (DONE, "Done"), (ARCHIVED, "Archived")]
+    #: `proposed` — an agent proposed it (from a huddle, a chat, its own turn) and
+    #: nobody has started or declined it yet; its decision card ("Start this
+    #: project?") is how a person does either (`apps/agents/proposals.py`).
+    PROPOSED, ACTIVE, DONE, ARCHIVED = "proposed", "active", "done", "archived"
+    STATUS_CHOICES = [(PROPOSED, "Proposed"), (ACTIVE, "Active"), (DONE, "Done"), (ARCHIVED, "Archived")]
 
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="projects")
     #: Stable id the agent addresses it by, unique per agent — the same shape as
@@ -887,6 +890,13 @@ class AgentProject(models.Model):
 
     notes = models.TextField(blank=True, default="")
     links = models.JSONField(default=list, blank=True)
+    #: The page that proposed this project — a huddle, a thread — the same idea
+    #: as `AgentTask.source_url`. Indexed: a huddle page lists the projects whose
+    #: `source_url` is that page.
+    source_url = models.URLField(max_length=500, blank=True, default="", db_index=True)
+    #: When it was last proposed (or revised). A proposed project nobody starts or
+    #: declines within `proposals.EXPIRES_AFTER` of this is archived, not taken up.
+    proposed_at = models.DateTimeField(null=True, blank=True)
     #: The PEOPLE this work involves (fleet brain v1.1, canopy#804) — not the
     #: owner (one human who owns the outcome) but everyone canopy has seen take
     #: part: the subject of a fact filed against the project, or the human whose
@@ -968,12 +978,15 @@ class ProjectParticipant(models.Model):
     """
 
     FACT, TURN, MANUAL, SUMMARY, REVIEW = "fact", "turn", "manual", "summary", "review"
+    BACKING, REPLY = "backing", "reply"
     SOURCE_CHOICES = [
         (FACT, "A fact about them was filed against the project"),
         (TURN, "A conversation with them raised one of its tasks"),
         (MANUAL, "Added by a person"),
         (SUMMARY, "An agent wrote their contributor page from their own words"),
         (REVIEW, "They commented in a feedback round on one of its storyboards"),
+        (BACKING, "They backed (or passed on) the project"),
+        (REPLY, "They replied on one of its tasks"),
     ]
     ROLE_MAX = 80
 
@@ -1009,12 +1022,68 @@ class ProjectParticipant(models.Model):
         ordering = ["-created_at", "-pk"]
         constraints = [
             models.UniqueConstraint(fields=["project", "person"], name="one_participant_row_per_person"),
-            models.CheckConstraint(condition=models.Q(source__in=["fact", "turn", "manual", "summary", "review"]),
-                                   name="project_participant_source_known_v3"),
+            models.CheckConstraint(condition=models.Q(source__in=["fact", "turn", "manual", "summary", "review",
+                                                                  "backing", "reply"]),
+                                   name="project_participant_source_known_v4"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.project_id}<-{self.person_id} ({self.source})"
+
+
+class ProjectBacking(models.Model):
+    """Where one backer stands on a project — a person or an agent, never both.
+
+    Backing is a SIGNAL, not a gate (decision 4(b) of
+    `2026-10-16-huddle-outcomes-multiplayer-design.md`): starting a proposed
+    project is its decision card's, and no number of backers starts it. What
+    this row buys is that "Echo backs · Eva backs with changes: … · Shayoni
+    passes: …" is a row on the project, not a sentence in a huddle transcript.
+
+    One row per (project, person) and one per (project, agent): a backer changes
+    their stance by rewriting their row. A later revision of the project marks
+    every row `stale` — they backed the earlier version — and rewriting clears it.
+    Written only through `apps/agents/proposals.back`.
+    """
+
+    BACKS, BACKS_WITH_CHANGES, PASSES = "backs", "backs_with_changes", "passes"
+    STANCES = (BACKS, BACKS_WITH_CHANGES, PASSES)
+    LINE_MAX = 280
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="backings")
+    person = models.ForeignKey("contacts.Person", null=True, blank=True, on_delete=models.CASCADE,
+                               related_name="project_backings")
+    agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.CASCADE,
+                              related_name="project_backings")
+    stance = models.CharField(max_length=20, choices=[(s, s) for s in STANCES])
+    #: One line, required unless the stance is plain `backs`: what to change, or why not.
+    line = models.CharField(max_length=LINE_MAX, blank=True, default="")
+    #: Where it was given: `web`, `mcp`, `slack`, `email`, or `huddle` (a co-sign
+    #: `canopy huddle file` wrote from a member's round-3 answer).
+    source = models.CharField(max_length=8, default="web")
+    huddle_id = models.CharField(max_length=64, blank=True, default="")
+    stale = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "agents_project_backing"
+        ordering = ["created_at", "pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(models.Q(person__isnull=False, agent__isnull=True)
+                           | models.Q(person__isnull=True, agent__isnull=False)),
+                name="project_backing_one_backer"),
+            models.CheckConstraint(condition=models.Q(stance__in=["backs", "backs_with_changes", "passes"]),
+                                   name="project_backing_stance_known"),
+            models.UniqueConstraint(fields=["project", "person"], condition=models.Q(person__isnull=False),
+                                    name="one_backing_per_person"),
+            models.UniqueConstraint(fields=["project", "agent"], condition=models.Q(agent__isnull=False),
+                                    name="one_backing_per_agent"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project_id}<-{self.person_id or self.agent_id}: {self.stance}"
 
 
 class AgentTask(models.Model):

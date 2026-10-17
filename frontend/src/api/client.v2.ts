@@ -131,6 +131,8 @@ const WS_SCOPED_API_PREFIXES = [
   "/api/projects",
   // Huddles are derived from one tenant's turns; /w/:ws/huddles reads that tenant.
   "/api/huddles",
+  // What people do with that tenant's projects and huddles.
+  "/api/engagement",
 ];
 
 // A request header a caller sets to pin the tenant explicitly when the page it

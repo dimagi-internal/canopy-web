@@ -85,6 +85,12 @@ RETENTION_MANAGE = "retention.manage"
 #: running the workspace, and every change is written to the event log.
 ADMISSION_MANAGE = "admission.manage"
 
+#: Start or decline a PROPOSED project (its decision card, `apps/agents/
+#: proposals.py`) — the workspace's call, beside the project's own
+#: `owner_user`, who may too (decision 4(b), 2026-10-16). Backing it is any
+#: member's; deciding it is not.
+PROJECTS_DECIDE = "projects.decide"
+
 # --- owner: the keys --------------------------------------------------------------
 
 #: Delete the workspace, nest or detach it, the shared vault, the Slack app
@@ -106,6 +112,7 @@ MINIMUM_ROLE: dict[str, str] = {
     RUNNERS_ROUTE: _M.ADMIN,
     RETENTION_MANAGE: _M.ADMIN,
     ADMISSION_MANAGE: _M.ADMIN,
+    PROJECTS_DECIDE: _M.ADMIN,
     OWN: _M.OWNER,
 }
 

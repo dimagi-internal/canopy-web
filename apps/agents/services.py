@@ -564,7 +564,7 @@ def next_project_ext_id(agent: Agent) -> str:
 
 _PROJECT_FIELDS = ("name", "outcome", "status", "owner_note", "drive_folder_id",
                    "drive_folder_url", "repo_slug", "notes")
-_PROJECT_STATUS = {AgentProject.ACTIVE, AgentProject.DONE, AgentProject.ARCHIVED}
+_PROJECT_STATUS = {AgentProject.PROPOSED, AgentProject.ACTIVE, AgentProject.DONE, AgentProject.ARCHIVED}
 
 
 def _norm_project_status(value: str) -> str:
@@ -1058,6 +1058,8 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     """
     from apps.harness.dispatch import dispatch, enqueue_task_turn
 
+    from . import proposals
+
     if action not in _EFFECT:
         raise ValueError(f"action must be one of {'|'.join(_EFFECT)}, got {action!r}")
     comment = (comment or "").strip()
@@ -1080,6 +1082,9 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
                 and task.status == AgentTask.IN_PROGRESS):
             raise ClosedAskError(
                 f"{task.agent.slug}/{task.ext_id} is already in progress — nudge it instead")
+    # A proposed project's decision card: who may start or decline it is narrower
+    # than who may act on a card (decision 4(b)) — `proposals.before_act`.
+    proposals.before_act(task, action, by_user)
     if action == AgentTaskAction.NUDGE and task.status != AgentTask.IN_PROGRESS:
         # A suggested task is started by approving it; nudging it would start
         # work nobody approved. A finished one has nothing to nudge.
@@ -1126,6 +1131,7 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     elif runs_on_approve and turns:
         task.status = AgentTask.IN_PROGRESS  # the agent has the ball now
     task.save()
+    proposals.after_act(task, action, comment)  # a decision card starts or archives its project
 
     row.status = AgentTaskAction.PENDING if follow_up else AgentTaskAction.APPLIED
     row.applied_at = None if follow_up else (row.applied_at or timezone.now())

@@ -39,8 +39,11 @@ export function AgentProjectsSection(): JSX.Element {
 
   const fresh = data?.slug === agent.slug ? data : null
   const projects = fresh?.projects ?? []
+  // Proposed projects wait on a person's decision, so they get their own
+  // section above the work in flight rather than mixing into it.
+  const proposed = projects.filter((p) => p.status === 'proposed')
   const active = projects.filter((p) => p.status === 'active')
-  const finished = projects.filter((p) => p.status !== 'active')
+  const finished = projects.filter((p) => p.status !== 'active' && p.status !== 'proposed')
 
   return (
     <div className="max-w-4xl px-6 py-8">
@@ -60,6 +63,18 @@ export function AgentProjectsSection(): JSX.Element {
         </p>
       ) : (
         <>
+          {proposed.length > 0 && (
+            <section className="mb-6" data-testid="projects-proposed">
+              <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Proposed ({proposed.length})
+              </h3>
+              <div className="space-y-2">
+                {proposed.map((p) => (
+                  <ProjectRow key={p.ext_id} project={p} />
+                ))}
+              </div>
+            </section>
+          )}
           <div className="space-y-2">
             {active.map((p) => (
               <ProjectRow key={p.ext_id} project={p} />

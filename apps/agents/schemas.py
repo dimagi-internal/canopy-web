@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
@@ -846,7 +846,7 @@ class AgentProjectOut(StrictModel):
     ext_id: str
     name: str
     outcome: str
-    status: Literal["active", "done", "archived"]
+    status: Literal["proposed", "active", "done", "archived"]
     owner_note: str
     owner_email: str | None = None
     drive_folder_id: str
@@ -1083,11 +1083,130 @@ class ProjectParticipantOut(StrictModel):
     display_name: str
     email: str = ""
     role: str = Field(default="", description="Free text: the part they play. Blank when canopy linked them itself.")
-    source: Literal["fact", "turn", "manual", "summary", "review"] = Field(
+    source: Literal["fact", "turn", "manual", "summary", "review", "backing", "reply"] = Field(
         description="How canopy first learned it: a fact filed against the project, a conversation "
-                    "that raised one of its tasks, a person adding them, or an agent writing their "
-                    "contributor page.")
+                    "that raised one of its tasks, a person adding them, an agent writing their "
+                    "contributor page, a storyboard comment, backing it, or replying on one of its tasks.")
     since: dt.datetime
+
+
+# ---- proposed projects: the decision, the backings (apps/agents/proposals.py) ----
+
+BackingStance = Literal["backs", "backs_with_changes", "passes"]
+
+
+class ProjectBackerOut(StrictModel):
+    kind: Literal["person", "agent"]
+    #: The agent's slug when an agent backs; blank for a person.
+    agent: str = ""
+    person_id: int | None = None
+    name: str
+    email: str = ""
+
+
+class ProjectBackingOut(StrictModel):
+    backer: ProjectBackerOut
+    stance: BackingStance
+    line: str = ""
+    #: Where it was given: web, mcp, slack, email — or huddle, a co-sign a huddle filed.
+    source: str = "web"
+    huddle_id: str = ""
+    #: They backed an earlier version: the project has been revised since.
+    stale: bool = False
+    #: The reader's own backing.
+    mine: bool = False
+    updated_at: dt.datetime
+
+
+class ProjectBackingIn(StrictModel):
+    stance: BackingStance
+    #: One line, required unless the stance is `backs`: what to change, or why you pass.
+    line: str = Field(default="", max_length=280)
+
+
+class AgentBackingIn(ProjectBackingIn):
+    #: The huddle whose round-3 answer this co-sign records, if any.
+    huddle_id: str = Field(default="", max_length=64)
+
+
+class ProposalCommentOut(StrictModel):
+    """A reply on the decision card — the project's comment thread."""
+
+    by: str
+    by_agent: bool = False
+    comment: str
+    at: dt.datetime
+
+
+class ProposalPartnerOut(StrictModel):
+    """A partner's linked task, on the partner's own board."""
+
+    agent: str
+    ext_id: str
+    task_id: int
+    status: str
+    url: str
+
+
+class ProposedProjectOut(StrictModel):
+    """A proposed (or once-proposed) project as both the project page and the
+    huddle page render it: what it is, its decision and whether the reader may
+    make it, where people stand, what they said, and its partners."""
+
+    id: int
+    agent: str
+    workspace: str
+    ref: str
+    name: str
+    status: Literal["proposed", "active", "done", "archived"]
+    outcome: str
+    why: str = ""
+    plan: list[str] = Field(default_factory=list)
+    #: The project page (app-relative).
+    url: str
+    #: The page that proposed it — a huddle, a thread.
+    source_url: str = ""
+    proposed_at: dt.datetime | None = None
+    #: When it is archived as "not taken up" if nobody starts or declines it.
+    expires_at: dt.datetime | None = None
+    owner_email: str | None = None
+    #: The project's notes — where a decline's reason is kept.
+    notes: str = ""
+    #: The decision card ("Start this project?"): act on it with `POST …/tasks/{ref}/actions`.
+    decision_task: str | None = None
+    decision_task_id: int | None = None
+    decision_open: bool = False
+    #: The reader may approve or decline it (a workspace owner or admin, or the project's owner).
+    may_decide: bool = False
+    backings: list[ProjectBackingOut] = Field(default_factory=list)
+    comments: list[ProposalCommentOut] = Field(default_factory=list)
+    partners: list[ProposalPartnerOut] = Field(default_factory=list)
+
+
+class ProjectProposeIn(StrictModel):
+    """Create or revise a proposed project (`POST …/projects/propose/`)."""
+
+    name: str = Field(min_length=1, max_length=200)
+    #: What done looks like.
+    outcome: str = Field(min_length=1)
+    why: str = Field(min_length=1)
+    #: The plan's steps, in order — each becomes a `suggested` task in the project.
+    plan: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=20)
+    #: Agent slugs that would work with the lead; each gets a linked task on its own board.
+    partners: list[str] = Field(default_factory=list, max_length=10)
+    #: The page that proposed it — a huddle, a thread.
+    source_url: str = Field(default="", max_length=500)
+    owner_email: str = Field(default="", max_length=254)
+    #: Required to bring back a project of this name that was declined.
+    new_evidence: str = ""
+    #: The work group this came from (its slug), recorded on the `proposed` event.
+    group: str = Field(default="", max_length=64)
+
+
+class ProjectProposeOut(StrictModel):
+    #: False when an open proposed project of that name was revised instead.
+    created: bool
+    project: ProposedProjectOut
 
 
 class AgentProjectDetailOut(AgentProjectOut):
@@ -1097,6 +1216,9 @@ class AgentProjectDetailOut(AgentProjectOut):
     participants: list[ProjectParticipantOut] = Field(default_factory=list)
     #: The agent's latest turns that worked on any of those tasks.
     recent_turns: list[TurnBriefOut] = Field(default_factory=list)
+    #: Set when the project was proposed (it has a decision card): the card the
+    #: page renders, the same one the huddle page shows.
+    proposal: ProposedProjectOut | None = None
 
 
 # ---- shared ----
@@ -1824,7 +1946,7 @@ class ContributorBriefOut(StrictModel):
     id: int
     display_name: str
     role: str = ""
-    source: Literal["fact", "turn", "manual", "summary", "review", "idea"] = Field(
+    source: Literal["fact", "turn", "manual", "summary", "review", "backing", "reply", "idea"] = Field(
         description="How they joined (a participant row's source), or `idea`: not a participant, "
                     "but an idea's own evidence (its human why, or the turn that raised it) names them.")
     since: dt.datetime
@@ -1931,3 +2053,51 @@ class EngagementViewIn(StrictModel):
 class EngagementViewOut(StrictModel):
     #: False when this person's view of this object was already counted today (UTC).
     recorded: bool
+
+
+class EngagementCountOut(StrictModel):
+    kind: str
+    surface: str
+    n: int
+
+
+class EngagementPersonOut(StrictModel):
+    user_id: int
+    email: str = ""
+    #: Everything they did in the window.
+    events: int
+
+
+class EngagementProposalOut(StrictModel):
+    agent: str
+    ref: str
+    name: str
+    status: str
+    proposed_at: dt.datetime
+    #: Seconds from proposing to the first person backing, commenting or deciding; null when nobody did.
+    first_reaction_s: float | None = None
+    #: approved / declined / expired, or null while it is still open.
+    decision: str | None = None
+    decision_s: float | None = None
+    backers: int = 0
+    comments: int = 0
+
+
+class EngagementRunsOut(StrictModel):
+    announced: int = 0
+    confirmed: int = 0
+    skipped: int = 0
+    expired: int = 0
+    #: Median seconds from a run's announcement to its lead's Confirm.
+    median_confirm_s: float | None = None
+
+
+class EngagementSummaryOut(StrictModel):
+    since: dt.datetime
+    days: int
+    counts: list[EngagementCountOut] = Field(default_factory=list)
+    people: list[EngagementPersonOut] = Field(default_factory=list)
+    proposals: list[EngagementProposalOut] = Field(default_factory=list)
+    #: Proposed projects no person reacted to at all.
+    unanswered: list[EngagementProposalOut] = Field(default_factory=list)
+    runs: EngagementRunsOut
