@@ -81,7 +81,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/ide',
     title: 'IDE',
     audience: 'Someone running sessions on several runners or laptop logins (desktop)',
-    what: 'An emdash-style session viewer: a tree of emdash projects (repos and agents) with every session under it — whether it is running, waiting for input or idle, its runner, auto or manual mode, and how long since it last did anything — beside the open chat. Every filter is an on/off toggle: each runner, each state, each mode, archived. Spans every workspace, so it is not tenant-scoped. Built for a wide screen; on a phone use the Supervisor.',
+    what: 'An emdash-style session viewer: a tree of emdash projects (repos and agents) with every session under it — whether it is running, waiting for input or idle, its runner, auto or manual mode, and how long since it last did anything — beside the open chat. Every filter is an on/off toggle: the state counts at the top, and each runner, each mode and archived under Filters. The app bar and the session list can each be folded away for room. Spans every workspace, so it is not tenant-scoped. Built for a wide screen; on a phone use the Supervisor.',
     needsFirst: 'At least one session you can see.',
     actions: ['Switch runners on and off', 'Filter by state, mode or text', 'Open a session and reply or answer its question in place'],
   },

@@ -18,6 +18,7 @@ import { canopyPresenceRules } from '@/presence/routes'
 import { CanopyWidget } from '@/widget/CanopyWidget'
 import { isNavGroupActive, isNavItemActive, resolveNavGroups } from './nav'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
+import { useAppBarHidden } from './appBarStore'
 
 function UserMenu() {
   const auth = useAuth()
@@ -293,6 +294,8 @@ function AppShell() {
     // the composer must sit at the viewport bottom with the list scrolling
     // above it, not flow inside the padded max-w container.
     /\/chat\/[^/]+/.test(location.pathname)
+  // /ide can fold the app bar away for vertical room; its own ☰ brings it back.
+  const appBarHidden = useAppBarHidden() && location.pathname.startsWith('/ide')
 
   return (
     <div
@@ -301,6 +304,7 @@ function AppShell() {
         fullBleed ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-screen',
       )}
     >
+      {!appBarHidden && (
       <header className="shrink-0 border-b border-border bg-background relative">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           {isAuthed ? (
@@ -415,6 +419,7 @@ function AppShell() {
           </>
         )}
       </header>
+      )}
       {fullBleed ? (
         // DDD (and the narrative editor at /review) is a full-bleed workspace:
         // persistent left rail + wide main. The page owns its own scroll.

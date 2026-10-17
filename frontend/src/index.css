@@ -153,6 +153,15 @@
     }
 }
 
+/* /ide's density: one 13px scale for the chat it hosts. ChatPanel is a
+   published canopy-ui component, so the IDE scales it from outside rather than
+   changing it everywhere. Unlayered, so it beats Tailwind's utilities layer. */
+.ide-dense .text-sm,
+.ide-dense .text-base {
+  font-size: 13px;
+  line-height: 1.35rem;
+}
+
 @keyframes pulse-slow {
   0%, 100% {
     opacity: 1;
