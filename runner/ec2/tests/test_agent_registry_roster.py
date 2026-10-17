@@ -45,7 +45,7 @@ def _extract_function(name: str) -> str:
 
 
 def _fake_curl(tmp: pathlib.Path, *, slugs, repos, fail=False, garbage=False,
-               trees=None) -> pathlib.Path:
+               trees=None, served=None) -> pathlib.Path:
     state = tmp / "state"
     state.mkdir(exist_ok=True)
     (state / "list.json").write_text(json.dumps({"items": [{"slug": s} for s in slugs]}))
@@ -53,6 +53,9 @@ def _fake_curl(tmp: pathlib.Path, *, slugs, repos, fail=False, garbage=False,
     # `trees`: {workspace: [slugs]} — the token spans several tenant trees, so
     # the flat list answers 422 and each workspace must be named.
     (state / "trees.json").write_text(json.dumps(trees or {}))
+    # `served`: what `GET /api/harness/runners/{id}/agents` answers; None = an
+    # older canopy-web without the route (404, under curl -f).
+    (state / "served.json").write_text(json.dumps(served))
     curl = tmp / "bin" / "curl"
     curl.parent.mkdir(exist_ok=True)
     curl.write_text(f'''#!/usr/bin/env python3
@@ -64,6 +67,11 @@ url = next(a for a in sys.argv[1:] if a.startswith("http"))
 if {garbage!r}:
     print("<html>not json</html>"); raise SystemExit
 TREES = json.loads((STATE / "trees.json").read_text())
+if "/api/harness/runners/" in url and url.endswith("/agents"):
+    SERVED = json.loads((STATE / "served.json").read_text())
+    if SERVED is None:
+        sys.exit(22)
+    print(json.dumps(SERVED)); raise SystemExit
 if TREES and "/api/agents/?limit=" in url:
     sys.exit(22)                      # 422 workspace-required, under curl -f
 if TREES and url.endswith("/api/workspaces/"):
@@ -95,8 +103,9 @@ def _run(tmp: pathlib.Path, fn: str, call: str, *, env_extra=None, **curl_kw) ->
         "AGENT_REPO_ORG": "dimagi-internal",
     }
     env.update(env_extra or {})
-    # resolve_roster calls agent_registry, so inject both.
-    defs = "\n".join(_extract_function(n) for n in ("agent_registry", "resolve_roster"))
+    # resolve_roster calls agent_registry and served_agents, so inject all three.
+    defs = "\n".join(_extract_function(n)
+                     for n in ("agent_registry", "served_agents", "resolve_roster"))
     res = subprocess.run(
         ["bash", "-c", f"set -euo pipefail\n{defs}\n{call}"],
         capture_output=True, text=True, timeout=60, env=env,
@@ -177,6 +186,43 @@ def test_an_empty_registry_falls_back_rather_than_provisioning_nothing(tmp_path)
     that is indistinguishable from an outage and would strand the box."""
     out = _run(tmp_path, "resolve_roster", "resolve_roster", slugs=[], repos={})
     assert out == "ace,ada,echo,eva,hal"
+
+
+# --- only the agents this box serves (canopy-web#1563) --------------------------
+
+def _paired(tmp: pathlib.Path) -> dict:
+    state = tmp / "runner.json"
+    state.write_text(json.dumps({"runner_id": "6f1c"}))
+    return {"STATE_FILE": str(state)}
+
+
+def test_the_roster_is_only_the_agents_this_box_serves(tmp_path):
+    """fizzy routes to its owner's laptop. A box that still asked for its vault
+    was refused every 30 minutes, and every refusal emailed fizzy's owner."""
+    out = _run(tmp_path, "resolve_roster", "resolve_roster",
+               slugs=["ace", "eva", "fizzy", "hal"], repos={},
+               served=["ace", "eva", "hal"], env_extra=_paired(tmp_path))
+    assert out == "ace,eva,hal"
+
+
+@pytest.mark.parametrize("served,paired", [
+    (None, True),     # an older canopy-web: no such route
+    ([], True),       # an empty answer reads as unknown, like an empty registry
+    (["ace"], False),  # not paired yet: no runner id to ask about
+])
+def test_an_unknown_answer_keeps_the_whole_registry(tmp_path, served, paired):
+    out = _run(tmp_path, "resolve_roster", "resolve_roster",
+               slugs=["ace", "fizzy"], repos={}, served=served,
+               env_extra=_paired(tmp_path) if paired else
+               {"STATE_FILE": str(tmp_path / "absent.json")})
+    assert out == "ace,fizzy"
+
+
+def test_a_served_list_that_misses_the_registry_entirely_keeps_the_registry(tmp_path):
+    """No overlap is a disagreement, not an instruction to prepare nothing."""
+    out = _run(tmp_path, "resolve_roster", "resolve_roster",
+               slugs=["ace"], repos={}, served=["scout"], env_extra=_paired(tmp_path))
+    assert out == "ace"
 
 
 # --- the clone pointer ---------------------------------------------------------

@@ -142,8 +142,41 @@ for a in (items or []):
   printf '%s' "$out"
 }
 
+# ── Only the agents this box serves ────────────────────────────────────────────
+# The registry is every agent the box's TOKEN can list, which for an owner's token
+# is the whole fleet, other people's agents included. A box asked canopy-web for
+# each one's vault every 30 minutes; a zero-knowledge agent refuses a box it does
+# not route to, and each refusal emailed that agent's owner a device-proof alert
+# (fizzy, 2026-10-17, canopy-web#1563). canopy-web answers which agents this box
+# serves by the same rule it checks the proof against. Nothing (no runner id yet,
+# an older canopy-web, an error, an empty answer) means "unknown": the roster
+# stays the registry, as before.
+served_agents() {  # -> one slug per line, or nothing
+  local base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
+  local state="${STATE_FILE:-${HOME:-}/.canopy-cloud-runner.json}" rid
+  [[ -n "$base" && -n "$tok" && -r "$state" ]] || return 0
+  rid="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("runner_id") or "")' \
+         "$state" 2>/dev/null)" || rid=""
+  [[ -n "$rid" ]] || return 0
+  curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+       "${base%/}/api/harness/runners/${rid}/agents" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+if isinstance(d, list):
+    print("\n".join(s for s in d if isinstance(s, str) and s))
+' 2>/dev/null || true
+}
+
 resolve_roster() {  # -> comma-joined slugs; registry first, AGENT_SLUGS offline
   local reg; reg="$(agent_registry)"
+  local served; served="$(served_agents)"
+  if [[ -n "$reg" && -n "$served" ]]; then
+    reg="$(printf '%s\n' "$reg" | grep -Fxf <(printf '%s\n' "$served") || true)"
+    [[ -n "$reg" ]] || reg="$(agent_registry)"
+  fi
   local slugs
   slugs="$(printf '%s' "$reg" | cut -f1 | grep -v '^$' | paste -sd, - 2>/dev/null || true)"
   # An EMPTY registry is treated as "could not read", not as "provision nothing":

@@ -157,6 +157,26 @@ def runner_serves_agent(runner, agent) -> bool:
     return bool(inh) and any(r.pk == runner.pk for r in inh.runners)
 
 
+def agents_served(runner):
+    """Every agent `runner_serves_agent` holds for: the agents whose secrets this
+    box may read, so the only ones it should prepare. A box that also staged the
+    rest asked for a vault it could never open, and each refusal emailed that
+    agent's owner a device-proof alert (fizzy, 2026-10-17, canopy-web#1563)."""
+    from django.db.models import Q
+
+    from apps.agents.models import Agent
+
+    from .models import Runner
+    from .routing import agents_served_by
+
+    if runner.status == Runner.RETIRED:
+        return Agent.objects.none()
+    q = Q(id__in=list(agents_served_by(runner).values_list("id", flat=True)))
+    if runner.owner_id:
+        q |= Q(owner_id=runner.owner_id)
+    return Agent.objects.filter(q).distinct().order_by("slug")
+
+
 def active_key_for_agent(agent, jkt: str):
     """The ACTIVE device key with this thumbprint, if its runner serves `agent`."""
     from .models import RunnerDeviceKey

@@ -815,6 +815,19 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
     return out
 
 
+@router.get("/runners/{runner_id}/agents", response=list[str],
+            summary="The agents this runner serves: the ones whose secrets it may read")
+def runner_agents(request: HttpRequest, runner_id: uuid.UUID) -> list[str]:
+    """Slugs, by the same rule a credential resolve checks a box's device proof
+    against (`device_keys.runner_serves_agent`). The box's refresh prepares only
+    these: listing every agent its token can see made it ask for vaults it may
+    not open, and each refusal emailed that agent's owner (canopy-web#1563)."""
+    from . import device_keys
+
+    runner = _runner_or_404(request, runner_id)
+    return [a.slug for a in device_keys.agents_served(runner)]
+
+
 @router.post("/runners/{runner_id}/mint", response=RunnerMintOut,
              summary="Ask a runner to start a browser sign-in")
 def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
