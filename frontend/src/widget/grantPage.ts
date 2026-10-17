@@ -3,8 +3,9 @@
  * it decides whether the agent may act as you there.
  *
  * canopy-web is a host of its own MCP (`apps/tokens/self_host.py`): on a
- * registered page, the widget's token mint also gets canopy a short, read-only
- * grant to call canopy's own tools AS you. The server owns the registry —
+ * registered page, the widget's token mint also gets canopy a short grant to
+ * call canopy's own tools AS you — read-only, except /ide's close review, whose
+ * one write is a button you press in the panel. The server owns the registry —
  * `PAGE_SCOPES` there maps each key to its scopes, and a key it does not know
  * gets no grant. This only NAMES the page; it cannot widen anything, because
  * the scopes come from the server and the tools run with your own access.
@@ -16,6 +17,7 @@
 const RULES: Array<[RegExp, string]> = [
   [/^\/w\/[^/]+\/agents\/[^/]+\/tasks\/?$/, 'agent.tasks'],
   [/^\/w\/[^/]+\/agents\/[^/]+\/skills\/history\/?$/, 'agent.skill_history'],
+  [/^\/ide(\/[^/]+)?\/?$/, 'ide'],
 ]
 
 /** The grant page key for a router pathname, or '' for a page with none. */

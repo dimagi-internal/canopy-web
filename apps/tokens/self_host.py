@@ -80,12 +80,20 @@ from . import client_identity
 log = logging.getLogger(__name__)
 
 #: What each scope unlocks at canopy's own MCP — THE only place a delegated
-#: token's reach is decided. Read-only tools only: a scope that could write is a
-#: decision for a later version, taken on purpose.
+#: token's reach is decided. Read-only, except the scopes in `WRITABLE_SCOPES`.
 SCOPE_TOOLS: dict[str, tuple[str, ...]] = {
     "tasks:read": ("list_fleet_tasks",),
     "skills:read": ("skill_history", "skill_revision_diff"),
+    # /ide close review (spec 2026-10-16-ide-close-review-design.md). The one
+    # write, `close_proposed_sessions`, is app-only: the agent proposes, and only
+    # the review View's button — the person's click — closes.
+    "sessions:close": ("propose_session_closes", "close_proposed_sessions"),
 }
+
+#: The scopes that may write, each one decided on purpose. `sessions:close`:
+#: owner decision 2026-10-16 (the panel on /ide may close sessions the person
+#: confirms in the review View).
+WRITABLE_SCOPES: frozenset[str] = frozenset({"sessions:close"})
 
 #: Page key → the scopes a visitor on that page grants. Keys are what the
 #: widget sends (`frontend/src/widget/grantPage.ts` derives them from the
@@ -95,12 +103,13 @@ SCOPE_TOOLS: dict[str, tuple[str, ...]] = {
 PAGE_SCOPES: dict[str, tuple[str, ...]] = {
     "agent.tasks": ("tasks:read",),               # /w/:ws/agents/:slug/tasks — list_fleet_tasks
     "agent.skill_history": ("skills:read",),      # /w/:ws/agents/:slug/skills/history — skill_history
+    "ide": ("sessions:close",),                   # /ide, /ide/:id — page_reviewCloseCandidates
 }
 
 #: The SDK's key-mode registry over the two maps above. Built at import, so a
-#: page naming a scope canopy does not offer — or a scope that is not read-only
-#: — fails at startup rather than as a grant that silently carries nothing.
-PAGES = PageRegistry(PAGE_SCOPES, scope_tools=SCOPE_TOOLS)
+#: page naming a scope canopy does not offer — or a write scope not declared in
+#: `WRITABLE_SCOPES` — fails at startup rather than as a grant that silently carries nothing.
+PAGES = PageRegistry(PAGE_SCOPES, scope_tools=SCOPE_TOOLS, writable_scopes=WRITABLE_SCOPES)
 
 _lock = threading.Lock()
 _ephemeral: dict[str, object] = {}
@@ -391,7 +400,25 @@ def grant_for_visitor(app, user, page: str) -> bool:
         host_grants.record_outcome(app, ok=False, subject=subject, code="error", detail=type(exc).__name__)
         return False
     host_grants.record_outcome(app, ok=True, subject=subject, scope=grant.scope)
+    _index_views(app, scopes)
     return True
+
+
+def _index_views(app, scopes) -> None:
+    """Put this page's MCP Apps Views in the site's UI index now.
+
+    The index otherwise fills only from a gateway listing, and an owner's turn
+    never lists: it calls canopy's MCP on the agent's own login (path D). Its
+    first `propose_session_closes` would then render as a plain tool result.
+    The tools are canopy's own, so their `_meta` is known here without a call."""
+    from apps.mcp.tools.close_review import VIEW_TOOL_META
+
+    from . import mcp_apps
+
+    tools = [(name, meta) for scope in scopes for name in SCOPE_TOOLS.get(scope, ())
+             if (meta := VIEW_TOOL_META.get(name))]
+    if tools:
+        mcp_apps.record_tools(app.pk, tools)
 
 
 def _reset_for_tests() -> None:

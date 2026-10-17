@@ -366,8 +366,12 @@ def test_the_widget_names_exactly_the_pages_the_server_registers():
 
 
 def test_every_page_scope_is_a_scope_the_host_offers_and_is_read_only():
+    """Read-only, except a scope declared writable on purpose — and that one's
+    only write is a tool the model is never offered (app-only)."""
     for page, scopes in self_host.PAGE_SCOPES.items():
         assert scopes and set(scopes) <= set(self_host.SCOPE_TOOLS), page
-    tools = {t for ts in self_host.SCOPE_TOOLS.values() for t in ts}
+    assert self_host.WRITABLE_SCOPES == {"sessions:close"}
+    tools = {t for scope, ts in self_host.SCOPE_TOOLS.items()
+             if scope not in self_host.WRITABLE_SCOPES for t in ts}
     assert not {t for t in tools if t.startswith(("clear_", "dismiss_", "create_", "delete_",
                                                   "update_", "run_", "purge_"))}

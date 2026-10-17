@@ -116,8 +116,11 @@ caller via `get_access_token()`.
   user, `sub` = `delegated:<id>`, `auth_method: delegated`) — their own ACL —
   and `DelegatedScopeMiddleware` lists and allows only the tools their scopes
   map to (`self_host.SCOPE_TOOLS`: `tasks:read` → `list_fleet_tasks`, `skills:read` → `skill_history` +
-  `skill_revision_diff`); resources and prompts are closed to it. So a
-  member's delegated token reaches at most their own ACL ∩ a read-only scope.
+  `skill_revision_diff`, `sessions:close` → `propose_session_closes` + `close_proposed_sessions`);
+  prompts are closed to it, and resources too except the MCP Apps View of a
+  tool in its grant (`delegation._view_allowed`). So a member's delegated token
+  reaches at most their own ACL ∩ its page's scopes — read-only except
+  `self_host.WRITABLE_SCOPES` (`sessions:close`, whose one write is app-only).
   A DPoP request to a canopy that is not configured as a host is a 401.
 
 Auth is enforced inside the MCP app by the verifier; `config/asgi.py` adds only
@@ -176,6 +179,7 @@ server token — every tool must run as a person.
 | `site_call` | write, **caller-token only** | Call one host tool as the visitor, through canopy (`apps/tokens/host_gateway.py`): canopy attaches the visitor's host-issued token as `Authorization: DPoP` with a fresh proof per request (`htm`/`htu`/`ath`/`iat`/`jti`) and `Canopy-Actor: <agent>`. Re-checks site, capability `sites:`, grant freshness, resource, DPoP key and the effective tool set on every call. Audited per call; the token never appears in a result, error, log or audit row, and never reaches a runner. Added to a confined profile automatically for any capability with `sites:`. |
 | `current_page` | read | The page(s) the caller is looking at (`apps/mcp/tools/page.py`), narrowed to one chat when the request carries an `X-Canopy-Chat-Key`. Its siblings `read_page_state` / `list_page_actions` / `invoke_page_action` are generated routes. |
 | `page_<action>` | write, **dynamic** | Each open page's declared actions (`registerAction` in the host page) as tools, computed per caller by `PageActionProvider` (`apps/mcp/page_tools.py`); executed by the browser tab through `apps/canopy_sessions/page_actions.py`. Static tools take precedence, so a page cannot capture a canopy tool. |
+| `propose_session_closes` / `close_proposed_sessions` | read / write (app-only, rate-limited) | /ide close review (`apps/mcp/tools/close_review.py`, rule in `apps/canopy_sessions/close_review.py`). The agent proposes `[{session_id, quote, why}]`; the result carries the MCP Apps View `ui://canopy/ide/close-review`, which re-reads the rows as the viewer and whose Close button calls `close_proposed_sessions` — app-only, and refused to every credential but a person's host grant, so only a click closes. Closing is `services.close_session`, per session, after re-checking it is not running or waiting. |
 | `audit_session_noise` / `purge_session_noise` | read / write | Find and purge noise rows in the caller's chat sessions (`apps/mcp/tools/sessions.py`). |
 | `share_session_to_slack` | write (rate-limited) | Post a session-written summary into a Slack channel: `broadcast` (one post) or `bind` (the thread becomes the session's own, exactly as if Slack had started it). Sharing an already-bound session posts an update into its thread instead; `channel` is then optional. Resolves "this session" by `claude_session_id` → `RunnerBinding.transcript_id`, else emdash task + project, else `session_id`, always inside what the caller can see. Backs the canopy plugin's `/canopy:share-to-slack`; rules live in `apps/slack/share.py`. An agent names its own conversation with `turn_id` (its live turn — `access.own_turn_session`) and may then only update it or re-bind it in its own channel. Its undo, `detach_session_from_slack`, and the one-step move `start_new_slack_thread` are NOT hand-written: they are the generated tools of `POST /api/canopy-sessions/slack/detach` and `/slack/new-thread`. |
 

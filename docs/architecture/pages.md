@@ -313,8 +313,13 @@ Every browser-facing address canopy-web serves. The SPA route table is
   "stuck". Right-clicking a row offers the existing session routes (open in a
   new tab, copy link, stop, transfer to another runner, archive/unarchive,
   delete = close); the rail's right edge drags to resize (double-click
-  resets). Refetches when `ws/supervisor/` rings (any frame), polls every 15s
-  otherwise. Root because it spans workspaces; desktop only (phones use
+  resets). In the agent panel, "close the ones that are done" runs the close
+  review: the agent reads the visible sessions with their last replies (page
+  action `reviewCloseCandidates`, answered by this tab as you), proposes with
+  `propose_session_closes`, and the panel shows those rows with its quotes and
+  a Close button only you press (`useCloseReview.ts`; spec
+  `2026-10-16-ide-close-review-design.md`). Refetches when `ws/supervisor/`
+  rings (any frame), polls every 15s otherwise. Root because it spans workspaces; desktop only (phones use
   `/supervisor`). `frontend/src/pages/ide/`.
 - **`/activity`** — read-only fleet turn log: time, agent, origin, runner,
   status, client-side filters, inline event-ledger drill-down. "What did fire"

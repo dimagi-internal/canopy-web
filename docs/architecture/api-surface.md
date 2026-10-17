@@ -479,7 +479,7 @@ People a workspace knows who are not members; recording one grants nothing (`tes
 The host-facing contract is `docs/architecture/embedding-a-canopy-agent.md`; internals in `embedding-internals.md`.
 - `GET /api/embed/agents` — Agents the acting app may offer that the caller can also reach (app allowlist ∩ the viewer's memberships), each with its workspace.
 - `GET /api/embed/self` — Whether canopy's own frontend should mount the widget at all.
-- `POST /api/embed/token?page=` — canopy's own host-side token endpoint: a short-lived delegated token for the signed-in user (session-authenticated). For a `page` in `self_host.PAGE_SCOPES` (`agent.tasks`, `agent.skill_history`), when the self site's `host_issuer`/`host_mcp_resource` name this deployment, canopy also signs and redeems an ID-JAG for that page's read-only scopes; `host_grant` says whether it holds one.
+- `POST /api/embed/token?page=` — canopy's own host-side token endpoint: a short-lived delegated token for the signed-in user (session-authenticated). For a `page` in `self_host.PAGE_SCOPES` (`agent.tasks`, `agent.skill_history`, `ide`), when the self site's `host_issuer`/`host_mcp_resource` name this deployment, canopy also signs and redeems an ID-JAG for that page's scopes (read-only, except `ide`'s `sessions:close`); `host_grant` says whether it holds one.
 - `POST /api/embed/ws-ticket` — Single-use, short-lived ticket to open a chat socket with (`?ticket=`), standing for the presented delegated token; fetch one per connection.
 - `GET /api/embed/sessions/{session_id}/agent-memory` — Read-only agent-memory state for the widget (see People).
 

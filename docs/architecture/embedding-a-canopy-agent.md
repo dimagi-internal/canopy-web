@@ -1022,9 +1022,17 @@ with the SDK's own pieces (`apps/tokens/self_host.py`: `HostConfig`,
 |---|---|---|---|
 | `/w/:ws/agents/:slug/tasks` | `agent.tasks` | `tasks:read` | `list_fleet_tasks` |
 | `/w/:ws/agents/:slug/skills/history` | `agent.skill_history` | `skills:read` | `skill_history`, `skill_revision_diff` |
+| `/ide`, `/ide/:id` | `ide` | `sessions:close` | `propose_session_closes`, `close_proposed_sessions` (app-only) |
 
-All read-only. Each of those pages declares its selection with `usePageState`
-and that `backing_tool`, so the agent knows where to read the rows on screen.
+Read-only except `sessions:close`, writable on purpose (`self_host.WRITABLE_SCOPES`):
+its one write is app-only, so only a click in its View closes anything. Each
+page declares its selection with `usePageState` and a `backing_tool`, so the
+agent knows where to read the rows on screen — on /ide that is the page action
+`page_reviewCloseCandidates`, answered by the person's own tab, because an
+owner's turn runs on the agent's own login and reads none of their sessions.
+Minting on a page with a View also records that View in the site's UI index
+(`self_host._index_views`), since a turn on the agent's own login never lists
+through the gateway.
 What the grant reaches is its scope's tools, enforced by canopy's own MCP as the
 visitor.
 
