@@ -19,6 +19,7 @@ from apps.harness.models import Runner, Turn
 from apps.workspaces.services import user_workspace_slugs
 
 from . import groups
+from .channels_auth import still_signed_in
 
 
 def _valid_health(raw):
@@ -285,6 +286,11 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         })
 
     async def receive_json(self, content, **kwargs):
+        # Every frame, not just the handshake: a revoked token must stop claiming
+        # and must stop reading as a live box (channels_auth.still_signed_in).
+        if not await still_signed_in(self.scope):
+            await self.close(code=4001)
+            return
         action = content.get("action")
         if action == "claim":
             turn = await self._claim()

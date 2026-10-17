@@ -118,6 +118,49 @@ async def test_claim_over_ws_empty_when_nothing_queued():
     await comm.disconnect()
 
 
+# --- a revoked token stops the socket ----------------------------------------
+async def _connect_with_pat(runner_id, raw):
+    from channels.routing import URLRouter
+
+    from apps.realtime.channels_auth import RealtimeAuthMiddleware
+    from apps.realtime.routing import websocket_urlpatterns
+
+    app = RealtimeAuthMiddleware(URLRouter(websocket_urlpatterns))
+    return WebsocketCommunicator(app, f"/ws/runner/{runner_id}/",
+                                 headers=[(b"authorization", f"Bearer {raw}".encode())])
+
+
+async def test_revoking_the_pat_closes_the_socket_before_it_claims():
+    """2026-10-17: a revoked PAT kept claiming over its open socket while every
+    REST call failed, so each turn it took was lost. The next frame after the
+    revoke must be refused, and the queued turn left for a runner that can run it."""
+    from apps.tokens.models import PersonalToken
+
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+    raw, token = await database_sync_to_async(PersonalToken.create_for_user)(user=user, label="box")
+
+    @database_sync_to_async
+    def _enqueue():
+        return services.enqueue_turn(initiator=_BY_CANOPY, agent=agent, origin=Turn.ORIGIN_API,
+                                     idempotency_key="r1", prompt="hi")
+
+    comm = await _connect_with_pat(runner.id, raw)
+    connected, _ = await comm.connect()
+    assert connected is True
+    await comm.send_json_to({"action": "claim"})
+    assert (await comm.receive_json_from(timeout=2))["turn"] is None
+
+    await database_sync_to_async(PersonalToken.objects.filter(pk=token.pk).update)(
+        revoked_at=timezone.now())
+    turn, _created = await _enqueue()
+    assert await comm.receive_json_from(timeout=2) == {"type": "wake"}
+    await comm.send_json_to({"action": "claim"})
+    out = await comm.receive_output(timeout=2)
+    assert out == {"type": "websocket.close", "code": 4001}
+    turn = await database_sync_to_async(Turn.objects.get)(pk=turn.pk)
+    assert turn.status == Turn.QUEUED
+
+
 # --- run a whole turn over the socket (start/event/finish) -------------------
 async def test_run_turn_end_to_end_over_ws():
     user, ws, agent, runner = await database_sync_to_async(_setup)()

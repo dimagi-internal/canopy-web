@@ -97,11 +97,44 @@ def _user_from_bearer(scope):
 
     token = PersonalToken.lookup(token_value)
     if token is not None:
+        # A socket is a use too: a runner on its WS channel made no REST call
+        # for long stretches and its token read as idle.
+        from apps.tokens.models import client_label, note_used
+
+        note_used(token, client_label(
+            (_header(scope, b"user-agent") or b"").decode("latin1"),
+            (_header(scope, b"x-canopy-client") or b"").decode("latin1")))
         return token.user
     delegated = DelegatedToken.lookup(token_value)
     if delegated is not None and delegated.user.is_active:
         return delegated.user
     return None
+
+
+async def still_signed_in(scope) -> bool:
+    """Does the credential that opened this socket still sign it in, as the same
+    user? Re-resolved through the same door `RealtimeAuthMiddleware` used.
+
+    A socket is authenticated once, at the handshake, and then lives for hours.
+    Revoking the PAT behind it closed nothing: a runner whose token was revoked
+    kept claiming turns over its socket while every REST call it made (events,
+    transcript, finish) was refused, so each claimed turn vanished (2026-10-17,
+    cloud-ec2-2). A consumer that ACTS on a frame asks this first.
+
+    A scope the middleware never saw (no `auth_method`) has no credential to
+    re-check, and keeps the user it was given.
+    """
+    user = scope.get("user")
+    if not getattr(user, "is_authenticated", False):
+        return False
+    method = scope.get("auth_method")
+    if method is None:
+        return True
+    if method == "session":
+        again = await _user_from_session(scope)
+    else:
+        again = await _user_from_bearer(scope) or await _user_from_query_token(scope)
+    return again is not None and again.pk == user.pk
 
 
 @database_sync_to_async

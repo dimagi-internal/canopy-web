@@ -15,6 +15,8 @@ class PersonalTokenOut(StrictModel):
     label: str
     created_at: dt.datetime
     last_used_at: dt.datetime | None = None
+    last_used_client: str = ""
+    """What last used it: the caller's User-Agent (a runner sends its host)."""
     revoked_at: dt.datetime | None = None
     expires_at: dt.datetime | None = None
     """When the token stops authenticating; null means it never expires."""
