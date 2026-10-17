@@ -637,6 +637,11 @@ def run_once(cfg: Config, client: Client) -> str:
                 cfg.cdp_port, _cdp_down_ticks, cfg.cdp_port)
             _cdp_down_signalled = True
 
+    # The stops this box owes ride the heartbeat reply too — the durable copy of
+    # the `cancel` frame, which a socket that was reconnecting never delivered.
+    # Same set the frame feeds, so the executor/bridge acts on it the same way.
+    honour_stops(me)
+
     # The session runtime canopy-web wants (Supervisor → this runner → Session
     # runtime) rides the heartbeat response; adopting it here is the whole flip.
     desktop.observe(me)
@@ -1060,6 +1065,14 @@ def next_wait(cfg: Config, *, quiet_streak: int, wake_connected: bool) -> float:
     if not wake_connected or idle <= base or quiet_streak < max(cfg.idle_after_ticks, 1):
         return base
     return idle
+
+
+def honour_stops(reply) -> None:
+    """Feed `cancel_turn_ids` from a heartbeat reply into CANCELLED_TURNS — the
+    set the `cancel` frame feeds, so a stop the socket missed is acted on the
+    same way one tick later. A failed beat (None / non-dict) is not a stop."""
+    owed = reply.get("cancel_turn_ids") if isinstance(reply, dict) else None
+    CANCELLED_TURNS.update(str(t) for t in owed or [])
 
 
 def make_control_handler(cfg: Config, waker, client=None):

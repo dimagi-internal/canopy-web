@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Max, OuterRef, Subquery
+from django.db.models import Max, OuterRef, Q, Subquery
 from django.utils import timezone
 
 from apps.harness import provenance
@@ -2487,12 +2487,40 @@ def cancel_session_turns(session: Session, *, by: str = "") -> bool:
 
     Deliberately NOT `any(cancel_turn(t) for t in turns)`: any() short-circuits on
     the first truthy result and would skip every turn after it.
+
+    "On a session" means two things, and this used to see only the first:
+
+    * a CHAT turn names its session (`chat_session`);
+    * an AGENT or PROJECT turn names no session (the target is agent XOR project
+      XOR chat_session) — it is tied to one by the key its runner stamped on it
+      (`stamp_turn_session`), the same key the session's RunnerBinding carries.
+
+    On a laptop the second kind is terminal seconds after delivery, so missing it
+    cost nothing. On a CLOUD runner it stays RUNNING for the whole of the work —
+    and a stop that cannot see it found "nothing to cancel" and fell through to a
+    session interrupt the cloud runner never acted on (cloud-ec2-2, 2026-10-17:
+    stopped twice, closed once, ran 23 more minutes). Matched on the binding's
+    runner and the session's own target too, because a laptop's key is an emdash
+    task name and those are unique per project only.
     """
     from apps.harness import services as harness_services  # framework->framework; lazy
     from apps.harness.models import Turn
 
+    owned = Q(chat_session=session)
+    binding = getattr(session, "runner_binding", None)
+    if binding is not None and binding.runner_id is not None and binding.session_key:
+        bound = Q(session_key=binding.session_key, claimed_by_id=binding.runner_id,
+                  chat_session__isnull=True)
+        if session.agent_id:
+            bound &= Q(agent_id=session.agent_id)
+        elif session.project:
+            bound &= Q(agent__isnull=True, project=session.project)
+        else:
+            bound = None
+        if bound is not None:
+            owned |= bound
     cancelled = False
-    for turn in Turn.objects.filter(chat_session=session, status__in=list(Turn.NON_TERMINAL)):
+    for turn in Turn.objects.filter(owned, status__in=list(Turn.NON_TERMINAL)):
         if harness_services.cancel_turn(turn, by=by) is not None:
             cancelled = True
     return cancelled
@@ -2504,7 +2532,10 @@ def stop_session(session: Session, *, by: str = "") -> str:
 
     TURNS FIRST. A chat reply is owned by a live Turn: cancelling it records the
     intent, reaches a queued turn behind the running one, and lets the runner's
-    bridge interrupt and finish it.
+    bridge interrupt and finish it. So is ANY turn a cloud runner is executing —
+    agent and project turns included, found by the session key the runner stamped
+    on them (`cancel_session_turns`) — and the cloud runner stops its process and
+    finishes it CANCELLED.
 
     THEN THE SESSION. If no turn moved, the work is not turn-shaped — the normal
     state of an agent, board, scheduled or project turn, which goes terminal the
@@ -2556,9 +2587,11 @@ def close_session(*, session: Session) -> str:
     task and puts its name in the `archived:` closing signal on its next report;
     that is what retires the row.
 
-    UNREPORTED (a cloud session, a web chat that never bound): nothing exists on a
-    box. Cancel the turns so a queued one cannot wake it, archive, done — and it
-    sticks, because nothing will ever report it back.
+    UNREPORTED (a cloud session, a web chat that never bound): no emdash task exists
+    on a box, but a cloud turn may still be RUNNING there. Cancel the turns — that
+    stops a running cloud turn (its runner is told on the socket and on its next
+    heartbeat, and finishes it CANCELLED) and keeps a queued one from waking it —
+    then archive, done. It sticks, because nothing will ever report it back.
 
     A refusal is a returned reason, never a raise: a session can go stale between
     the phone rendering the list and a thumb reaching it, which is ordinary rather

@@ -290,7 +290,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             turn = await self._claim()
             await self.send_json({"type": "claim.result", "turn": turn})
         elif action == "heartbeat":
-            refresh = await self._heartbeat(content.get("active_turn_ids") or [], content)
+            refresh, cancel_ids = await self._heartbeat(content.get("active_turn_ids") or [], content)
             # The ack carries the durable refresh request back, the same thing the
             # REST reply's RunnerOut.refresh_pending says — this is the cloud
             # runner's primary beat, so it is the path that has to answer.
@@ -298,8 +298,12 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
 
             # And canopy's canonical address, so a runner on an address canopy
             # has left can move itself (RunnerOut.canonical_base_url).
+            # And the stops this runner owes (services.cancel_requested_turn_ids):
+            # the `cancel` frame is a doorbell a reconnecting socket can miss; this
+            # re-delivers it every beat until the turn is finished.
             await self.send_json({"type": "heartbeat.ack", "refresh_pending": bool(refresh),
-                                  "canonical_base_url": (settings.CANOPY_PUBLIC_BASE_URL or "").rstrip("/")})
+                                  "canonical_base_url": (settings.CANOPY_PUBLIC_BASE_URL or "").rstrip("/"),
+                                  "cancel_turn_ids": cancel_ids})
         elif action == "start":
             ok = await self._start(content.get("turn_id"), content.get("session_id") or "")
             await self.send_json({"type": "start.ack", "ok": ok})
@@ -391,7 +395,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
                 caps[key] = 0
         runner = Runner.objects.filter(pk=self._runner_pk).first()
         if runner is None:
-            return False
+            return False, []
         harness_services.heartbeat(
             runner,
             active_turn_ids=active_turn_ids,
@@ -402,7 +406,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             health=_valid_health(frame.get("health")),
             **caps,
         )
-        return runner.refresh_pending()
+        return runner.refresh_pending(), list(getattr(runner, "cancel_turn_ids", None) or [])
 
     def _turn_owned_sync(self, turn_id):
         """A turn THIS runner claimed — the only ones it may start/append/finish.

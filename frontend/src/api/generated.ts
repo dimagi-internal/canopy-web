@@ -22054,6 +22054,8 @@ export interface components {
             readonly refresh_pending?: boolean | null;
             /** Canonical Base Url */
             readonly canonical_base_url?: string | null;
+            /** Cancel Turn Ids */
+            readonly cancel_turn_ids?: readonly string[] | null;
         };
         /** RunnerIn */
         readonly RunnerIn: {
