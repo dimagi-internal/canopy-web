@@ -53,10 +53,10 @@ const RAIL_MIN = 260
 const RAIL_MAX = 900
 const clampRail = (w: number) => Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, w)))
 
-type Prefs = { filters: Omit<IdeFilters, 'query'>; collapsed: string[]; railWidth: number }
+type Prefs = { filters: Omit<IdeFilters, 'query'>; collapsed: string[]; railWidth: number; runnersOpen: boolean }
 
 function loadPrefs(): Prefs {
-  const fallback: Prefs = { filters: { ...DEFAULT_FILTERS }, collapsed: [], railWidth: RAIL_DEFAULT }
+  const fallback: Prefs = { filters: { ...DEFAULT_FILTERS }, collapsed: [], railWidth: RAIL_DEFAULT, runnersOpen: true }
   try {
     const raw = window.localStorage.getItem(PREFS_KEY)
     if (!raw) return fallback
@@ -70,6 +70,7 @@ function loadPrefs(): Prefs {
       },
       collapsed: Array.isArray(p.collapsed) ? p.collapsed : [],
       railWidth: typeof p.railWidth === 'number' ? clampRail(p.railWidth) : RAIL_DEFAULT,
+      runnersOpen: p.runnersOpen !== false,
     }
   } catch {
     return fallback
@@ -205,6 +206,7 @@ export function IdePage() {
   const lastFetch = useRef(0)
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [railWidth, setRailWidth] = useState(initial.railWidth)
+  const [runnersOpen, setRunnersOpen] = useState(initial.runnersOpen)
   const [menu, setMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null)
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null)
   // Closes relayed to a runner, by session id → when asked. The row stays,
@@ -217,8 +219,8 @@ export function IdePage() {
 
   useEffect(() => {
     const { hiddenRunners, states, modes, archived } = filters
-    savePrefs({ filters: { hiddenRunners, states, modes, archived }, collapsed: [...collapsed], railWidth })
-  }, [filters, collapsed, railWidth])
+    savePrefs({ filters: { hiddenRunners, states, modes, archived }, collapsed: [...collapsed], railWidth, runnersOpen })
+  }, [filters, collapsed, railWidth, runnersOpen])
 
   const state = filters.archived ? 'all' : 'active'
   const refresh = useCallback(() => {
@@ -441,27 +443,45 @@ export function IdePage() {
       </div>
 
       <div className="flex flex-col gap-1">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Runners</span>
-        <div className="flex flex-wrap gap-1">
-          {chips.map((c) => (
-            <Toggle
-              key={c.key}
-              on={!filters.hiddenRunners.includes(c.key)}
-              onClick={(e) => (e.altKey ? soloRunner(c.key) : toggleRunner(c.key))}
-              testId={`ide-runner-${c.key}`}
-              title={`${[c.name, c.host, c.status].filter(Boolean).join(' · ')}\nAlt-click: show only this runner`}
-            >
-              {c.key !== NO_RUNNER && (
-                <span
-                  aria-hidden
-                  className={clsx('h-1.5 w-1.5 rounded-full', runnerOnline(c.status) ? 'bg-success' : 'bg-muted-foreground/50')}
-                />
-              )}
-              <span className="max-w-[140px] truncate">{c.name}</span>
-              <span className="text-muted-foreground">{c.count}</span>
-            </Toggle>
-          ))}
-        </div>
+        <button
+          type="button"
+          onClick={() => setRunnersOpen((o) => !o)}
+          aria-expanded={runnersOpen}
+          data-testid="ide-runners-toggle"
+          className="flex items-center gap-1 self-start text-[11px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+        >
+          <span className="w-3 normal-case">{runnersOpen ? '▾' : '▸'}</span>
+          Runners
+          {/* Collapsed, still say whether any are switched off — a hidden filter
+              that silently narrows the list is the one thing worse than clutter. */}
+          {!runnersOpen && (
+            <span className="normal-case tracking-normal">
+              · {chips.filter((c) => !filters.hiddenRunners.includes(c.key)).length} of {chips.length} shown
+            </span>
+          )}
+        </button>
+        {runnersOpen && (
+          <div className="flex flex-wrap gap-1">
+            {chips.map((c) => (
+              <Toggle
+                key={c.key}
+                on={!filters.hiddenRunners.includes(c.key)}
+                onClick={(e) => (e.altKey ? soloRunner(c.key) : toggleRunner(c.key))}
+                testId={`ide-runner-${c.key}`}
+                title={`${[c.name, c.host, c.status].filter(Boolean).join(' · ')}\nAlt-click: show only this runner`}
+              >
+                {c.key !== NO_RUNNER && (
+                  <span
+                    aria-hidden
+                    className={clsx('h-1.5 w-1.5 rounded-full', runnerOnline(c.status) ? 'bg-success' : 'bg-muted-foreground/50')}
+                  />
+                )}
+                <span className="max-w-[140px] truncate">{c.name}</span>
+                <span className="text-muted-foreground">{c.count}</span>
+              </Toggle>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-1">
