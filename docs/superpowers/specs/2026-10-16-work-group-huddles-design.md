@@ -102,7 +102,7 @@ Layer 1 is not huddle code. Any project an agent proposes uses it: from a huddle
 | lead (User), lead_slack_id | **required**. The lead must be a member of the workspace AND of the Slack channel. This is checked at save and again at every announcement (`users.lookupByEmail` + `conversations.members`). A failed check is refused with a plain reason. |
 | installation, channel_id, channel_name | **required**. Saving the group puts the channel on the leader agent's read allow-list (`ingest.allow`, by the person saving). Deleting the group removes it. |
 | agents | ≥1 agent slug, each in the workspace tree |
-| leader_agent | **One agent:** that agent, single mode. **More than one:** required, and must have a huddle skill (e.g. ada). |
+| leader_agent | **One agent:** that agent, single mode. **More than one:** required, and can be ANY agent (Jonathan, 2026-10-16: "any agent can run a huddle if told to, and it would need to abide by all ACLs and requirements"). At save and again at every announcement, the leader must be able to run every other listed agent: its login holds an admin/owner edge over each one, the same edges `agent_topology` serves. A failed check is refused, naming the agents the leader cannot run. |
 | schedule (AgentSchedule, 1:1) | created and updated with the group, on `leader_agent`, with the group's cron and timezone |
 | project (AgentProject) | **Single mode:** created active on that agent. Its name is the group's name, its outcome is the topic, its owner is the lead, and the lead is a `manual` participant. **Multi mode:** null. |
 | enabled, created_by, created_at, updated_at | |
@@ -128,7 +128,7 @@ A workspace owner or admin may write a group; members may read groups.
    - stores `material` and the read window;
    - calls `mark_read`;
    - sets `last_read_by_slack` to the lead;
-   - enqueues the leader's turn. The prompt is the schedule's prompt plus ` --group-run <id>`. `origin_ref` is `{schedule_id, slot, schedule_name, kind: "huddle_group_run", group, run}`.
+   - enqueues the leader's turn. The schedule's prompt is the generic `/canopy:huddle`, the same for every leader and both modes, and the dispatch appends ` --group-run <id>`. `origin_ref` is `{schedule_id, slot, schedule_name, kind: "huddle_group_run", group, run}`.
    - posts the `:books:` read line in the announcement's thread, plus "started — follow it at <link>".
 4. **The leader's turn runs.**
    - **Multi mode:** the huddle engine runs with `--group-run` (layer 4). Its outputs are proposed projects (layer 1).
@@ -154,6 +154,10 @@ Each route is also an MCP tool.
 
 ## Layer 4 — the engine and the bindings
 
+- **canopy `/canopy:huddle [--group-run <id>]`:** a generic command. Any agent runs it under its own identity, repo, PAT, turn mode and send path, following `agent-core/huddle.md`.
+  - With `--group-run` and one agent, the agent works the group's project directly (single mode).
+  - With several agents, it leads the huddle.
+  - Nothing in the engine assumes the leader is Ada. A team binding such as `/ada:huddle` stays valid as a thin wrapper.
 - **canopy `huddle plan --group-run <id>`:**
   - Members are the group's agents. The leader leads, and is a member only if listed.
   - A brief is generated from the group (name, topic, lead) in place of a priorities file.
