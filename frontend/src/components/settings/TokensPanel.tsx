@@ -4,6 +4,7 @@ import { tokenStatus } from '@/api/tokenStatus'
 import { CopyBlock } from '@/components/CopyBlock'
 import { Button } from 'canopy-ui/ui'
 import { Input } from 'canopy-ui/ui'
+import { relativeAge } from '@/lib/relativeAge'
 
 /**
  * List / mint / revoke Personal Access Tokens.
@@ -26,6 +27,11 @@ export const LIFETIMES: ReadonlyArray<{ label: string; days: number | null }> = 
   { label: '180 days', days: null },
   { label: 'Never', days: 0 },
 ]
+/** Used within the last hour — something is probably still running on it. */
+export function recentlyUsed(t: PersonalToken, now = Date.now()): boolean {
+  return Boolean(t.last_used_at) && now - Date.parse(t.last_used_at!) < 60 * 60 * 1000
+}
+
 export function TokensPanel() {
   const [tokens, setTokens] = useState<PersonalToken[]>([])
   const [label, setLabel] = useState('')
@@ -64,7 +70,12 @@ export function TokensPanel() {
   }
 
   async function onRevoke(t: PersonalToken) {
-    if (!window.confirm(`Revoke "${t.label}"? Anything using it stops working immediately.`)) return
+    // A date alone let a cloud runner's token pass for an unused one and get
+    // revoked in a cleanup (2026-10-17): name what is on it before it goes.
+    const inUse = recentlyUsed(t)
+      ? `\n\nIt was used ${relativeAge(t.last_used_at!)}${t.last_used_client ? ` by ${t.last_used_client}` : ''} — that will stop.`
+      : ''
+    if (!window.confirm(`Revoke "${t.label}"? Anything using it stops working immediately.${inUse}`)) return
     if (await revokeToken(t.id)) await refresh()
     else setError('Could not revoke that token.')
   }
@@ -163,7 +174,14 @@ export function TokensPanel() {
                 <td className="py-1.5 text-foreground-secondary">{t.label}</td>
                 <td className="py-1.5 text-muted-foreground">{t.created_at.slice(0, 10)}</td>
                 <td className="py-1.5 text-muted-foreground">
-                  {t.last_used_at ? t.last_used_at.slice(0, 10) : 'never'}
+                  <span className={recentlyUsed(t) && !t.revoked_at ? 'text-foreground' : undefined}>
+                    {t.last_used_at ? relativeAge(t.last_used_at) : 'never'}
+                  </span>
+                  {t.last_used_client && (
+                    <div className="max-w-[28ch] truncate" title={t.last_used_client}>
+                      {t.last_used_client}
+                    </div>
+                  )}
                 </td>
                 <td className="py-1.5 text-muted-foreground">{tokenStatus(t)}</td>
                 <td className="py-1.5 text-right">

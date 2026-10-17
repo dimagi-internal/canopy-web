@@ -30,6 +30,7 @@ def _serialize(token: PersonalToken) -> dict:
         "label": token.label,
         "created_at": token.created_at,
         "last_used_at": token.last_used_at,
+        "last_used_client": token.last_used_client,
         "revoked_at": token.revoked_at,
         "expires_at": token.expires_at,
     }

@@ -29,7 +29,6 @@ import logging
 from collections.abc import Callable
 
 from django.http import HttpRequest, HttpResponse
-from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +80,19 @@ class BearerTokenAuthMiddleware:
             request._dont_enforce_csrf_checks = True
             return None
 
-        from apps.tokens.models import ContactToken, DelegatedToken, PersonalToken
+        from apps.tokens.models import (
+            ContactToken,
+            DelegatedToken,
+            PersonalToken,
+            client_label,
+            note_used,
+        )
 
         if not already_signed_in:
             token = PersonalToken.lookup(raw)
             if token is not None:
-                PersonalToken.objects.filter(pk=token.pk).update(last_used_at=timezone.now())
+                note_used(token, client_label(request.META.get("HTTP_USER_AGENT", ""),
+                                              request.META.get("HTTP_X_CANOPY_CLIENT", "")))
                 request.user = token.user
                 # How this request authenticated — the assurance a turn's
                 # initiator records (apps/harness/initiator.py). Absent means

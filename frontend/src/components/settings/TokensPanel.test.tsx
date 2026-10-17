@@ -95,3 +95,31 @@ describe('TokensPanel — lifetime', () => {
     expect(mintToken).toHaveBeenLastCalledWith('plugin', null)
   })
 })
+
+describe('TokensPanel — what is using a token', () => {
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  // 2026-10-17: a cloud runner's token showed only a date, read as unused, and
+  // was revoked in a cleanup — the box then lost every turn it claimed.
+  it('shows how recently and by what, and names it in the revoke confirm', async () => {
+    const used = new Date(Date.now() - 14_000).toISOString()
+    listTokens.mockResolvedValue([
+      { ...TOKEN, last_used_at: used, last_used_client: 'canopy-cloud-runner host=ip-172-31-41-219' },
+    ])
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    render(<TokensPanel />)
+    expect(await screen.findByText('canopy-cloud-runner host=ip-172-31-41-219')).toBeTruthy()
+    expect(screen.getByText(/s ago$/)).toBeTruthy()
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Revoke'))
+      await Promise.resolve()
+    })
+    expect(confirmSpy.mock.calls[0][0]).toMatch(/by canopy-cloud-runner host=ip-172-31-41-219 — that will stop/)
+    confirmSpy.mockRestore()
+  })
+})

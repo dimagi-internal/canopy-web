@@ -105,6 +105,23 @@ def test_updates_last_used_at_on_success():
 
 
 @pytest.mark.django_db
+def test_records_what_used_the_token():
+    """Last used alone read as "nothing uses this" for a cloud runner's token,
+    which was then revoked (2026-10-17). The client is shown beside it."""
+    user = User.objects.create_user(username="alice", email="alice@dimagi.com")
+    raw, token = PersonalToken.create_for_user(user=user, label="box")
+
+    rf = RequestFactory()
+    request = rf.get("/anything", HTTP_AUTHORIZATION=f"Bearer {raw}",
+                     HTTP_USER_AGENT="canopy-cloud-runner host=ip-172-31-41-219")
+    request.user = AnonymousUser()
+    BearerTokenAuthMiddleware(_noop_response)(request)
+
+    token.refresh_from_db()
+    assert token.last_used_client == "canopy-cloud-runner host=ip-172-31-41-219"
+
+
+@pytest.mark.django_db
 def test_non_bearer_header_is_ignored():
     rf = RequestFactory()
     request = rf.get("/anything", HTTP_AUTHORIZATION="Basic dXNlcjpwYXNz")

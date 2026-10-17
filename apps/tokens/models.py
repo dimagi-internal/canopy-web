@@ -40,6 +40,12 @@ class PersonalToken(models.Model):
     label = models.CharField(max_length=200)
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
+    #: WHAT last used it — the caller's User-Agent, or its X-Canopy-Client when it
+    #: sent no User-Agent ("canopy-cloud-runner host=ip-172-31-41-219"). Shown
+    #: beside Last used so a token a runner lives on cannot pass for an unused
+    #: one: a date alone got a cloud box's token revoked in a cleanup
+    #: (2026-10-17). Display only; never authorizes anything.
+    last_used_client = models.CharField(max_length=200, blank=True, default="")
     revoked_at = models.DateTimeField(null=True, blank=True)
     #: Set when an MCP client's OAuth login minted this token
     #: (`apps/tokens/mcp_oauth.py`). Such a token is short-lived, refreshed by
@@ -149,6 +155,17 @@ class PersonalToken(models.Model):
             .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
             .first()
         )
+
+
+def client_label(user_agent: str, canopy_client: str = "") -> str:
+    """What a request says it is, for `PersonalToken.last_used_client`."""
+    return ((user_agent or "").strip() or (canopy_client or "").strip())[:200]
+
+
+def note_used(token: PersonalToken, client: str) -> None:
+    """Stamp a token's last use — every door that authenticates with one."""
+    PersonalToken.objects.filter(pk=token.pk).update(
+        last_used_at=timezone.now(), last_used_client=client)
 
 
 def hash_secret(raw: str) -> str:

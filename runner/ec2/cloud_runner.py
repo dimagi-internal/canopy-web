@@ -274,14 +274,44 @@ def _api(method: str, path: str, body: dict | None = None, *,
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             raw = resp.read()
+            _note_token_accepted()
             return resp.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as exc:
         raw = exc.read()
         _log(f"{method} {path} -> {exc.code}: {raw[:300]!r}")
+        if exc.code == 401:
+            _note_token_refused()
         return exc.code, None
     except urllib.error.URLError as exc:
         _log(f"{method} {path} -> URLError {exc.reason}")
         return 0, None
+
+
+# canopy-web refusing this box's token (a 401 on any call). While it does, the
+# box must not CLAIM: a claim can still succeed over an already-open socket, and
+# then the turn's events, transcript and finish are all refused and the turn is
+# lost (2026-10-17: cloud-ec2-2 swallowed four after its PAT was revoked).
+# Cleared by the next accepted call, so replacing the token recovers on its own.
+_TOKEN_REFUSED_AT = 0.0
+
+
+def _note_token_refused() -> None:
+    global _TOKEN_REFUSED_AT
+    if not _TOKEN_REFUSED_AT:
+        _log("canopy-web REFUSED this box's token (401) — not claiming turns until "
+             "it is replaced (secret canopy/cloud-runner/canopy-pat, then restart)")
+    _TOKEN_REFUSED_AT = time.time()
+
+
+def _note_token_accepted() -> None:
+    global _TOKEN_REFUSED_AT
+    if _TOKEN_REFUSED_AT:
+        _log("canopy-web accepts this box's token again — claiming resumes")
+    _TOKEN_REFUSED_AT = 0.0
+
+
+def _token_refused() -> bool:
+    return bool(_TOKEN_REFUSED_AT)
 
 
 # ── code provenance + the busy marker (auto-update's two shared files) ──────
@@ -5969,8 +5999,12 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # what tells the server a FAILED turn did reach an agent, so it is
             # never re-run blind as "sessionless" (services.finish_turn).
             finish_body["session_key"] = cli_session_id
-        _api("POST", f"/turns/{turn_id}/finish", finish_body)
-        _log(f"finished turn {turn_id[:8]}: {finish}")
+        fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", finish_body)
+        if fstatus == 200:
+            _log(f"finished turn {turn_id[:8]}: {finish}")
+        else:
+            _log(f"COULD NOT FINISH turn {turn_id[:8]} ({finish} here; canopy-web said "
+                 f"{fstatus}) — it will sit EXECUTING until the lease sweep")
         if confined:
             # AFTER the finish, which writes result_note: a caller's turn hands its
             # `For <Agent>'s owner:` line to the note the owner reads, even when the
@@ -6037,7 +6071,8 @@ def run_over_rest(runner_id: str) -> None:
         _drain_mint(runner_id)
         _maybe_reread_credentials()
         _drain_inbox(runner_id)
-        if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS or not _memory_headroom_ok():
+        if (len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS or not _memory_headroom_ok()
+                or _token_refused()):
             time.sleep(POLL_SECONDS)
             continue
         status, turn = _api("POST", f"/runners/{runner_id}/claim")
@@ -6153,6 +6188,8 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
         return False
     if not _memory_headroom_ok():
         return False  # the poll tick retries; the queued turn waits, nothing is lost
+    if _token_refused():
+        return False  # it could never report back; leave it for a box that can
     res = _ws_request(ws, {"action": "claim"}, "claim.result")
     turn = res.get("turn") if res else None
     if not turn:

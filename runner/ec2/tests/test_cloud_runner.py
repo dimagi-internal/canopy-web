@@ -2240,3 +2240,39 @@ def test_the_ws_claim_is_skipped_without_headroom(cloud_runner, monkeypatch):
     monkeypatch.setattr(cloud_runner, "_ws_request", lambda *a, **k: sent.append(a) or {})
     assert cloud_runner._claim_and_run_once(object(), "r1") is False
     assert sent == [], "claimed a turn with no memory to run it in"
+
+
+def test_a_refused_token_stops_claiming_until_canopy_accepts_it_again(cloud_runner, monkeypatch):
+    """2026-10-17: cloud-ec2-2's PAT was revoked; its open socket still claimed,
+    and every turn it took was lost because events, transcript and finish all
+    got 401. A 401 on ANY call stops claiming; the next accepted call resumes it."""
+    import io
+    import urllib.error
+
+    _reset_turns(cloud_runner)
+    monkeypatch.setattr(cloud_runner, "BASE_URL", "https://canopy.test")
+    monkeypatch.setattr(cloud_runner, "_memory_headroom_ok", lambda: True)
+    sent = []
+    monkeypatch.setattr(cloud_runner, "_ws_request", lambda *a, **k: sent.append(a) or {})
+
+    def refused(req, timeout=None):
+        raise urllib.error.HTTPError(req.get_full_url(), 401, "Unauthorized", {}, io.BytesIO(b"{}"))
+
+    monkeypatch.setattr(cloud_runner.urllib.request, "urlopen", refused)
+    assert cloud_runner._api("GET", "/runners/r1/streams")[0] == 401
+    assert cloud_runner._claim_and_run_once(object(), "r1") is False
+    assert sent == [], "claimed a turn it could never report back on"
+
+    class _Ok(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(cloud_runner.urllib.request, "urlopen", lambda req, timeout=None: _Ok(b"{}"))
+    assert cloud_runner._api("GET", "/runners/r1/streams")[0] == 200
+    cloud_runner._claim_and_run_once(object(), "r1")
+    assert sent, "a token canopy accepts again must resume claiming"

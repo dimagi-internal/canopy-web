@@ -10752,6 +10752,11 @@ export interface components {
             readonly created_at: string;
             /** Last Used At */
             readonly last_used_at?: string | null;
+            /**
+             * Last Used Client
+             * @default
+             */
+            readonly last_used_client: string;
             /** Revoked At */
             readonly revoked_at?: string | null;
             /** Expires At */
@@ -10773,6 +10778,11 @@ export interface components {
             readonly created_at: string;
             /** Last Used At */
             readonly last_used_at?: string | null;
+            /**
+             * Last Used Client
+             * @default
+             */
+            readonly last_used_client: string;
             /** Revoked At */
             readonly revoked_at?: string | null;
             /** Expires At */
