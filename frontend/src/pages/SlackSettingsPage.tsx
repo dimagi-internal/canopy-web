@@ -272,9 +272,11 @@ export function SlackSettingsPage(): JSX.Element {
           <div className="rounded-lg border border-border bg-card p-4 text-[13px]" data-testid="slack-channel-allowlist">
             <h3 className="text-[13px] font-semibold text-foreground">Channels agents may read</h3>
             <p className="mt-1 text-[12px] text-muted-foreground">
-              Add a channel and the agent that may read it. When that agent asks, canopy reads the channel and posts
-              a note there saying so, with a button to stop it. Removing a channel stops its reads. Owners and admins
-              can change this list.
+              Add a channel and the agent that may read it. Nothing is read until someone types{' '}
+              <code>/&lt;agent&gt; read-channel &lt;ask&gt;</code> in that channel: canopy then reads everything since
+              the agent&apos;s last read there (all of it, the first time) and the agent answers in a thread. The agent
+              can&apos;t start a read itself. Removing a channel deletes what was read. Owners and admins can change
+              this list.
             </p>
             {config.channel_ingest.allowed.length === 0 ? (
               <p className="mt-1 text-[12px] text-muted-foreground">None yet.</p>
