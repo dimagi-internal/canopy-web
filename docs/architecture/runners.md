@@ -45,6 +45,43 @@ GitHub token (re-asked at issue, since an owner can be demoted mid-turn), pins,
 and every routing write. A teammate whose laptop should run an agent's work needs
 an admin grant on that agent. An agent's own canopy login is not a holder.
 
+## Which agents a box runs — one rule (canopy-web#1563)
+
+`routing.runner_routes_agent(runner, agent)` answers "could this box ever claim
+a turn of this agent?" with the claim's own static gates and nothing else:
+
+1. the box is not retired;
+2. the agent's workspace is in the box's tenant (`runner_tenant_slugs`: enrolled
+   there AND its owner may run work there);
+3. its owner may hold the agent (`runner_may_hold_agent`, above);
+4. the agent routes to it: an ENABLED `RunnerAssignment` row (its default list
+   or any source/actor rule), or the workspace order it follows.
+
+Availability, the cascade and a turn's requirements decide WHICH of those boxes
+takes a given turn. They never decide whether a box runs the agent at all.
+`agents_routed_to(runner)` is the same rule as a list. Three readers share it,
+and `tests/test_runner_serves_agents.py` holds it to `claim_next_turn` over every
+box and agent pair:
+
+| Reader | Uses |
+|---|---|
+| **The vault**: a resolve's device proof (`device_keys.runner_serves_agent`) | the rule, OR the box holds a live turn of the agent (a pinned dispatch, a bound chat), OR it is the agent owner's own LAPTOP working by hand. An owner's cloud box reads only what it runs. |
+| **The box's refresh**: `GET /runners/{id}/agents`, read by `bootstrap_agents.sh` | exactly the rule. A box prepares the agents it runs, not every agent its token can list. |
+| **Readiness and the fleet view** (`agents_served_by`) | exactly the rule. |
+
+A resolve refused because an APPROVED box does not run the agent is routing, not
+a misused token. The 401 says `reason: not_routed`, and it is recorded as an
+`agent.credentials.refused` event; the agent's owner is not emailed. A missing or
+unapproved proof is still a `device-proof` alert (`reason: no_valid_proof`).
+Before this, the vault counted disabled rows and ignored enrollment and the hold
+check, and the refresh walked the whole registry. So cloud-ec2-2, which never
+ran fizzy, asked for fizzy's vault every 30 minutes, and once fizzy became
+zero-knowledge, every refusal emailed its owner (2026-10-17).
+
+The refresh itself (`agent prepare --runner --credentials-only`, canopy#973)
+asks only for what that pass uses: the gog token (if declared) and the two vault
+keys. Each turn's claim refreshes the agent's full env, naming its turn.
+
 ## The claim (`claim.claim_next_turn`)
 
 In order, each a hard stop:
