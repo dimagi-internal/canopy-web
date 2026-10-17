@@ -92,12 +92,18 @@ export function SessionContextMenu({
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onDismiss()
     }
-    document.addEventListener('mousedown', away)
-    document.addEventListener('contextmenu', away)
-    document.addEventListener('keydown', key)
-    window.addEventListener('blur', onDismiss)
-    window.addEventListener('resize', onDismiss)
+    // Armed on the next tick: React flushes this effect while the opening
+    // contextmenu event is still bubbling, so a listener added now would see
+    // that same event reach `document` and close the menu it just opened.
+    const arm = window.setTimeout(() => {
+      document.addEventListener('mousedown', away)
+      document.addEventListener('contextmenu', away)
+      document.addEventListener('keydown', key)
+      window.addEventListener('blur', onDismiss)
+      window.addEventListener('resize', onDismiss)
+    }, 0)
     return () => {
+      window.clearTimeout(arm)
       document.removeEventListener('mousedown', away)
       document.removeEventListener('contextmenu', away)
       document.removeEventListener('keydown', key)
