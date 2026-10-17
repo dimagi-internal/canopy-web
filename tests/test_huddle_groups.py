@@ -15,7 +15,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from apps.agents.models import Agent, AgentAdmin, AgentProject
+from apps.agents.models import Agent, AgentAdmin, AgentProject, EngagementEvent
 from apps.events.models import Event
 from apps.harness import services as hsvc
 from apps.harness.models import AgentSchedule, Turn
@@ -157,6 +157,8 @@ def test_the_schedule_announces_and_queues_no_turn(group, slack, channel):
     assert not {"conversations.history", "conversations.replies"} & set(_reads(channel))
     group.schedule.refresh_from_db()
     assert group.schedule.last_slot == run.slot
+    (ev,) = EngagementEvent.objects.filter(kind="run_announced")
+    assert ev.group == "champions" and ev.meta["run"] == run.pk and ev.surface == "slack"
     # The same slot fired twice is one run, one post.
     hsvc.fire_schedule(group.schedule, run.slot)
     assert HuddleGroupRun.objects.count() == 1 and len(_announced(slack)) == 1
@@ -214,6 +216,8 @@ def test_skip_reads_nothing(group, slack, channel):
     (upd,) = slack.said("chat.update")
     assert f"Skipped by <@{ALICE}>" in upd["text"]
     assert not SlackChannelIngest.objects.exists()
+    (ev,) = EngagementEvent.objects.filter(kind="run_skipped")
+    assert ev.meta["run"] == run.pk and ev.user == group.lead
 
 
 def test_confirm_reads_for_the_leader_then_queues_its_turn(group, slack, channel, hal):
@@ -224,6 +228,7 @@ def test_confirm_reads_for_the_leader_then_queues_its_turn(group, slack, channel
     row = SlackChannelIngest.objects.get()
     assert row.agent == hal and row.pending_ask["group_run"] == run.pk
     assert not Turn.objects.exists()
+    assert EngagementEvent.objects.get(kind="run_confirmed").meta["run"] == run.pk
     _run(row)
     run.refresh_from_db()
     assert run.status == HuddleGroupRun.RUNNING
@@ -268,6 +273,7 @@ def test_unconfirmed_runs_lapse_after_a_day(group, slack):
     run.refresh_from_db()
     assert run.status == HuddleGroupRun.EXPIRED
     assert "lapsed" in slack.said("chat.update")[-1]["text"]
+    assert EngagementEvent.objects.get(kind="run_expired").meta["run"] == run.pk
     assert click(groups.CONFIRM, str(run.pk), user=ALICE, message_ts=run.announce_ts).status_code == 200
     assert not SlackChannelIngest.objects.exists()
 
