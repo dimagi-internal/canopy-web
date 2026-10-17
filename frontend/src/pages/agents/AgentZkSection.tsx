@@ -135,6 +135,7 @@ export function AgentZkSection({
           {hasKey === false ? (
             <p className="text-warning" data-testid="zk-needs-vault-key">
               Set up your vault key first: <a className="underline" href="/settings#vault-key">Settings → Vault key</a>.
+              Agents you create after that start zero-knowledge.
             </p>
           ) : (
             <>
@@ -154,6 +155,30 @@ export function AgentZkSection({
               </button>
             </>
           )}
+        </div>
+      ) : state.kv === 0 ? (
+        // Born zero-knowledge (canopy-web#1550): no vault key yet. Every value
+        // that arrives is sealed to the owner and the agent's devices.
+        <div className="space-y-2 text-[12px]" data-testid="zk-born">
+          <p className="text-foreground">
+            Zero-knowledge from the start · no vault key yet. Values saved now are sealed to you and this agent&rsquo;s
+            approved devices{(state.sealed ?? []).length ? ` (${(state.sealed ?? []).length} so far)` : ''}; canopy-web
+            cannot read them.
+          </p>
+          <p className="text-muted-foreground">
+            Create the vault key to finish: it re-encrypts them under one key, wraps it for you and each device, and
+            gives you a recovery code.
+          </p>
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => void run('create the vault key',
+              () => turnOnZk(slug, storedNames, confirmCode(1), unlock), true)}
+            className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
+            data-testid="zk-create-key"
+          >
+            {busy ? 'Working…' : 'Create the vault key'}
+          </button>
         </div>
       ) : (
         <div className="space-y-2 text-[12px]">
@@ -189,17 +214,25 @@ export function AgentZkSection({
               ))}
             </tbody>
           </table>
+          {(state.sealed ?? []).length > 0 && (
+            <p className="text-muted-foreground" data-testid="zk-sealed">
+              canopy-web sealed {(state.sealed ?? []).join(', ')} to this agent&rsquo;s devices and admins when it made
+              {(state.sealed ?? []).length === 1 ? ' it' : ' them'}. Granting re-encrypts{' '}
+              {(state.sealed ?? []).length === 1 ? 'it' : 'them'} under the vault key, so later devices can read
+              {(state.sealed ?? []).length === 1 ? ' it' : ' them'} too.
+            </p>
+          )}
           {state.rotation_recommended && (
             <p className="text-warning" data-testid="zk-rotate-recommended">
               A device or person who no longer qualifies still holds this vault key. Rotate to retire it.
             </p>
           )}
           <div className="flex flex-wrap gap-2">
-            {pending.length > 0 && (
+            {(pending.length > 0 || (state.sealed ?? []).length > 0) && (
               <button type="button" disabled={busy !== null} data-testid="zk-grant"
                       onClick={() => void run('grant access', () => grantPending(slug, unlock))}
                       className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">
-                Grant {pending.length} pending
+                {pending.length > 0 ? `Grant ${pending.length} pending` : 'Re-encrypt sealed values'}
               </button>
             )}
             <button type="button" disabled={busy !== null} data-testid="zk-rotate"

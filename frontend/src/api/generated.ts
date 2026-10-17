@@ -17404,6 +17404,11 @@ export interface components {
             readonly values?: {
                 readonly [key: string]: string;
             } | null;
+            /**
+             * Sealed
+             * @default []
+             */
+            readonly sealed: readonly string[];
         };
         /**
          * ZkTargetOut
@@ -17524,6 +17529,8 @@ export interface components {
             readonly name: string;
             /** Value Zk */
             readonly value_zk: string;
+            /** Expect */
+            readonly expect?: string | null;
         };
         /**
          * ZkWrapIn

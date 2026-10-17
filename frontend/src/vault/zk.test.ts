@@ -30,6 +30,9 @@ import {
   unwrapRecovery,
   wrapEcdhEs,
   wrapRecovery,
+  openSealedValue,
+  sealValue,
+  valueDigest,
   type Ephemeral,
 } from './zk'
 
@@ -72,6 +75,26 @@ async function keyFromScalar(hex: string): Promise<Ephemeral> {
 }
 
 describe('zk v1 vectors', () => {
+  it('sealed value (zks1): byte for byte, opened by the device and by the member', async () => {
+    const [e3, e4] = [await keyFromScalar(I.ephemeral_seal_device_scalar_hex),
+                      await keyFromScalar(I.ephemeral_seal_member_scalar_hex)]
+    const got = await sealValue(I.sealed_plaintext, I.agent_id, I.sealed_name, I.kv,
+      [{ kind: 'device', target: I.device_jkt, publicJwk: I.device_pub_jwk },
+       { kind: 'member', target: I.user_id, publicJwk: I.user_pub_jwk }],
+      { ephemerals: [e3, e4], nonces: [nonce, hexToBytes(I.seal_member_nonce_hex)] })
+    expect(got).toBe((O as unknown as { sealed_value: string }).sealed_value)
+    const device = await keyFromScalar(I.device_priv_scalar_hex)
+    const user = await keyFromScalar(I.user_priv_scalar_hex)
+    expect(await openSealedValue(got, I.agent_id, I.sealed_name, 'device', I.device_jkt, device.privateKey))
+      .toBe(I.sealed_plaintext)
+    expect(await openSealedValue(got, I.agent_id, I.sealed_name, 'member', I.user_id, user.privateKey))
+      .toBe(I.sealed_plaintext)
+    await expect(openSealedValue(got, '43', I.sealed_name, 'member', I.user_id, user.privateKey)).rejects.toThrow()
+    await expect(openSealedValue(got, I.agent_id, I.sealed_name, 'member', I.user_id, device.privateKey)).rejects.toThrow()
+    expect(await valueDigest('')).toBe('')
+    expect(await valueDigest('zk1:x')).toMatch(/^[0-9a-f]{64}$/)
+  })
+
   it('value: zk1 AES-GCM bound to agent, name and kv', async () => {
     const got = await encryptValue(vk, I.agent_id, I.value_name, I.kv, I.value_plaintext, { nonce })
     expect(got).toBe(O.value)

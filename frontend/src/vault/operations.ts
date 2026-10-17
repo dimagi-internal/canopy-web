@@ -8,6 +8,7 @@
  * return to custodial storage).
  */
 import { revealAgentCredential } from '@/api/agents'
+import { approveRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import {
   addZkWraps,
   disableZk,
@@ -29,6 +30,11 @@ import {
   deviceInfo,
   encryptValue,
   generateKeyPair,
+  isSealed,
+  openSealedValue,
+  sealValue,
+  valueDigest,
+  type Recipient,
   importPrivateScalar,
   memberInfo,
   openUserKey,
@@ -134,6 +140,20 @@ async function openScalar(ks: VaultKeysetOut, prompt: UnlockPrompt): Promise<Uin
   throw new Error('That passphrase and Secret Key do not open your vault key.')
 }
 
+/** The ONE passkey touch that both steps up (the server's five-minute window)
+ *  and opens the keyset through PRF — or null when the keyset has no passkey
+ *  seal (the caller then steps up as usual and asks for the passphrase). */
+export async function stepUpAndUnlock(ks: VaultKeysetOut): Promise<Unlocked | null> {
+  const byPasskey = prfSeals(ks)
+  if (!ks.exists || !ks.public_jwk || !byPasskey.length) return null
+  const touch = await assertWithPrf(ks.prf_input, { allow: byPasskey.map((s) => s.cred) })
+  const seal = byPasskey.find((s) => s.cred === touch.cred)
+  if (!seal || !touch.prf) return null
+  const pub = ks.public_jwk as Jwk
+  return { userId: ks.user_id, privateKey: await importPrivateScalar(await openUserKey(seal, ks.user_id, touch.prf), pub),
+           publicJwk: pub }
+}
+
 /** Open the keyset — passkey or passphrase, as the person chooses. */
 export async function unlockVaultKey(prompt: UnlockPrompt, ks?: VaultKeysetOut): Promise<Unlocked> {
   ks = ks ?? (await getKeyset())
@@ -232,6 +252,58 @@ async function openVk(state: ZkStateOut, me: Unlocked): Promise<Uint8Array> {
     memberInfo(state.agent_id, state.kv, me.userId))
 }
 
+/** Every principal that should read the agent now — what a `zks1` value is
+ *  sealed to (a device by its ECDH key's thumbprint, a person by user id). */
+function recipientsOf(state: ZkStateOut): Recipient[] {
+  const out = new Map<string, Recipient>()
+  for (const t of [...state.wraps.filter((w) => w.kv === state.kv && w.current), ...state.pending]) {
+    const tg = targetOf(t)
+    if (!tg) continue
+    const target = tg.kind === 'device' ? tg.ecdhJkt : tg.target
+    if (target) out.set(`${tg.kind}:${target}`, { kind: tg.kind, target, publicJwk: tg.publicJwk })
+  }
+  return [...out.values()]
+}
+
+/** A stored value's plaintext: `zk1` under VK, or `zks1` sealed to me. */
+async function openStored(state: ZkStateOut, vk: Uint8Array | null, me: Unlocked, name: string,
+                          stored: string): Promise<string> {
+  if (isSealed(stored)) return openSealedValue(stored, state.agent_id, name, 'member', me.userId, me.privateKey)
+  if (!vk) throw new Error(`${name} needs the vault key, which this agent does not have yet.`)
+  return decryptValue(vk, state.agent_id, name, state.kv, stored)
+}
+
+/**
+ * Settle: re-encrypt every value canopy-web sealed to recipients (`zks1` — a
+ * Gmail token, a rotated canopy-pat) as an ordinary `zk1` value under VK, so
+ * devices approved after it was minted can read it too. Compare-and-swap: a
+ * value minted again meanwhile is left for the next settle. Best effort —
+ * returns how many it settled; never throws.
+ */
+export async function settleSealed(slug: string, vk: Uint8Array, me: Unlocked): Promise<number> {
+  try {
+    const state = await getZkState(slug, true)
+    if (state.kv === 0) return 0
+    const values = []
+    for (const [name, stored] of Object.entries(state.values ?? {})) {
+      if (!isSealed(stored)) continue
+      try {
+        const plain = await openSealedValue(stored, state.agent_id, name, 'member', me.userId, me.privateKey)
+        values.push({ name, value_zk: await encryptValue(vk, state.agent_id, name, state.kv, plain),
+                      expect: await valueDigest(stored) })
+      } catch {
+        // sealed before I could read it: a device holding it settles it
+      }
+    }
+    if (!values.length) return 0
+    await putZkValues(slug, { kv: state.kv, values })
+    return values.length
+  } catch {
+    // zk_value_changed (minted again meanwhile) or any hiccup: the next touch settles it
+    return 0
+  }
+}
+
 export interface RecoveryOut {
   /** Shown ONCE: the only copy anywhere. */
   code: string
@@ -253,16 +325,27 @@ async function freshRecovery(vk: Uint8Array, agentId: string, kv: number): Promi
  * and only then call enable.
  */
 export async function turnOnZk(slug: string, storedNames: string[],
-                               confirm: (code: string) => Promise<void>): Promise<ZkStateOut> {
+                               confirm: (code: string) => Promise<void>, unlock?: Unlock): Promise<ZkStateOut> {
   const ks = await getKeyset()
   if (!ks.exists || !ks.public_jwk) throw new Error('Set up your vault key first (Settings → Vault key).')
-  const state = await getZkState(slug)
-  if (state.enabled) throw new Error('Zero-knowledge is already on for this agent.')
+  // An agent born zero-knowledge (kv 0) has only sealed values and no vault
+  // key yet: this creates it, opening each sealed value with my keyset.
+  const state = await getZkState(slug, true)
+  if (state.enabled && state.kv !== 0) throw new Error('Zero-knowledge is already on for this agent.')
   const kv = 1
   const vk = randomBytes(32)
+  let me: Unlocked | null = null
   const values = []
   for (const name of storedNames) {
-    const plain = await revealAgentCredential(slug, name)
+    const stored = state.values?.[name]
+    let plain: string
+    if (stored && isSealed(stored)) {
+      if (!unlock) throw new Error('Unlock your vault key to open the sealed values.')
+      me = me ?? (await unlock())
+      plain = await openSealedValue(stored, state.agent_id, name, 'member', me.userId, me.privateKey)
+    } else {
+      plain = await revealAgentCredential(slug, name)
+    }
     values.push({ name, value_zk: await encryptValue(vk, state.agent_id, name, kv, plain) })
   }
   const wraps: ZkWrapIn[] = [await wrapTo(vk, state.agent_id, kv,
@@ -281,15 +364,28 @@ export async function turnOnZk(slug: string, storedNames: string[],
 export async function grantPending(slug: string, unlock: Unlock): Promise<ZkStateOut> {
   const state = await getZkState(slug)
   const targets = state.pending.map(targetOf).filter((t): t is Target => t !== null)
-  if (!targets.length) return state
-  const vk = await openVk(state, await unlock())
-  const wraps = await Promise.all(targets.map((t) => wrapTo(vk, state.agent_id, state.kv, t)))
-  return addZkWraps(slug, { kv: state.kv, wraps })
+  const sealed = state.sealed ?? []
+  if (state.kv === 0 || (!targets.length && !sealed.length)) return state
+  const me = await unlock()
+  const vk = await openVk(state, me)
+  let out = state
+  if (targets.length) {
+    const wraps = await Promise.all(targets.map((t) => wrapTo(vk, state.agent_id, state.kv, t)))
+    out = await addZkWraps(slug, { kv: state.kv, wraps })
+  }
+  // The same unlock settles what canopy-web sealed, so the newly granted can read it.
+  if (sealed.length && (await settleSealed(slug, vk, me))) out = await getZkState(slug)
+  return out
 }
 
 /** Encrypt one value under the current VK (Save on a ZK agent). */
 export async function setZkValue(slug: string, name: string, plaintext: string, unlock: Unlock) {
   const state = await getZkState(slug)
+  if (state.kv === 0) {
+    // No vault key yet (born zero-knowledge): seal it to every recipient here.
+    return putZkValues(slug, { kv: 0,
+      values: [{ name, value_zk: await sealValue(plaintext, state.agent_id, name, 0, recipientsOf(state)) }] })
+  }
   const vk = await openVk(state, await unlock())
   return putZkValues(slug, { kv: state.kv,
     values: [{ name, value_zk: await encryptValue(vk, state.agent_id, name, state.kv, plaintext) }] })
@@ -300,7 +396,9 @@ export async function revealZkValue(slug: string, name: string, unlock: Unlock):
   const state = await getZkState(slug, true)
   const stored = state.values?.[name]
   if (!stored) throw new Error(`No value is stored for ${name}`)
-  return decryptValue(await openVk(state, await unlock()), state.agent_id, name, state.kv, stored)
+  const me = await unlock()
+  if (isSealed(stored)) return openStored(state, null, me, name, stored)
+  return decryptValue(await openVk(state, me), state.agent_id, name, state.kv, stored)
 }
 
 /**
@@ -311,12 +409,13 @@ export async function revealZkValue(slug: string, name: string, unlock: Unlock):
 export async function rotateVaultKey(slug: string, confirm: (code: string) => Promise<void>,
                                      unlock: Unlock): Promise<ZkStateOut> {
   const state = await getZkState(slug, true)
-  const oldVk = await openVk(state, await unlock())
+  const me = await unlock()
+  const oldVk = await openVk(state, me)
   const kv = state.kv + 1
   const vk = randomBytes(32)
   const values = []
   for (const [name, stored] of Object.entries(state.values ?? {})) {
-    const plain = await decryptValue(oldVk, state.agent_id, name, state.kv, stored)
+    const plain = await openStored(state, oldVk, me, name, stored)
     values.push({ name, value_zk: await encryptValue(vk, state.agent_id, name, kv, plain) })
   }
   const seen = new Set<string>()
@@ -355,12 +454,41 @@ export async function recoverWithCode(slug: string, code: string): Promise<ZkSta
  *  custodial storage. */
 export async function turnOffZk(slug: string, unlock: Unlock): Promise<ZkStateOut> {
   const state = await getZkState(slug, true)
-  const vk = await openVk(state, await unlock())
+  const me = await unlock()
+  const vk = state.kv === 0 ? null : await openVk(state, me)
   const values = []
   for (const [name, stored] of Object.entries(state.values ?? {})) {
-    values.push({ name, plaintext: await decryptValue(vk, state.agent_id, name, state.kv, stored) })
+    values.push({ name, plaintext: await openStored(state, vk, me, name, stored) })
   }
   return disableZk(slug, { values })
+}
+
+/**
+ * Approve a device key AND hand it every zero-knowledge vault key it will need
+ * (`agents`, from the key's listing) — in ONE passkey touch: the assertion
+ * that steps up for the approval also yields the PRF output that opens my
+ * keyset. A keyset sealed only by a passphrase steps up as usual and then asks
+ * for the passphrase (`prompt`). Returns the approved key and the agents
+ * granted; an agent that fails to grant is left for the Grant button.
+ */
+export async function approveAndGrant(keyId: string, agents: string[], prompt: UnlockPrompt):
+    Promise<{ key: RunnerDeviceKeyOut; granted: string[]; failed: string[] }> {
+  const ks = agents.length ? await getKeyset() : null
+  let me: Unlocked | null = ks ? await stepUpAndUnlock(ks) : null
+  const key = await approveRunnerDeviceKey(keyId)
+  const granted: string[] = [], failed: string[] = []
+  const todo = key.zk_pending_agents ?? agents
+  if (!todo.length || !ks?.exists) return { key, granted, failed: [...todo] }
+  me = me ?? (await unlockVaultKey(prompt, ks))
+  for (const slug of todo) {
+    try {
+      await grantPending(slug, async () => me!)
+      granted.push(slug)
+    } catch {
+      failed.push(slug)
+    }
+  }
+  return { key, granted, failed }
 }
 
 export type { PublicJwk }

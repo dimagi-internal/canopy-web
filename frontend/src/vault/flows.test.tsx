@@ -230,3 +230,26 @@ describe('Vault key card on Settings', () => {
     expect(await screen.findByTestId('settings-vault-key')).toBeTruthy()
   })
 })
+
+describe('Born zero-knowledge (kv 0)', () => {
+  it('offers to create the vault key, and creating it settles the sealed values', async () => {
+    const me = await person()
+    const stored = await zk.sealValue('kin', AGENT_ID, 'kindora', 0, [{ kind: 'member', target: USER, publicJwk: me.publicJwk }])
+    api.getKeyset.mockResolvedValue(keysetOut({ exists: true, public_jwk: me.publicJwk }))
+    api.getZkState.mockResolvedValue({ agent: 'eva', agent_id: AGENT_ID, enabled: true, kv: 0, wraps: [],
+      pending: [{ kind: 'member', target: USER, public_jwk: me.publicJwk }], rotation_recommended: false,
+      values: { kindora: stored }, sealed: ['kindora'] })
+    api.enableZk.mockResolvedValue({ agent: 'eva', agent_id: AGENT_ID, enabled: true, kv: 1, wraps: [], pending: [],
+      rotation_recommended: false, values: null, sealed: [] })
+    const unlock = async () => ({ userId: USER, privateKey: me.privateKey, publicJwk: me.publicJwk })
+    render(<AgentZkSection slug="eva" storedNames={['kindora']} canEdit unlock={unlock} />)
+    expect((await screen.findByTestId('zk-born')).textContent).toMatch(/1 so far/)
+    fireEvent.click(screen.getByTestId('zk-create-key'))
+    await screen.findByTestId('zk-recovery-code')
+    fireEvent.click(screen.getByTestId('zk-code-saved'))
+    fireEvent.click(screen.getByTestId('zk-code-continue'))
+    await waitFor(() => expect(api.enableZk).toHaveBeenCalled())
+    expect(revealAgentCredential).not.toHaveBeenCalled()
+    expect(api.enableZk.mock.calls[0][1].values[0].value_zk.startsWith('zk1:')).toBe(true)
+  })
+})

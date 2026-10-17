@@ -1996,12 +1996,15 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     from .models import ZeroKnowledgeValue
+    from .zk import ZkError
 
     try:
         services.set_agent_credentials(agent, payload.values, user=request.user)
     except ZeroKnowledgeValue as exc:
         raise ProblemError(409, "Zero-knowledge agent", type_=TYPE_CONFLICT, detail=str(exc),
                            members={"error": "zk_enabled"}) from exc
+    except ZkError as exc:  # born zero-knowledge, but nobody to seal to yet
+        raise _zk_problem(exc) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
     return services.agent_credential_status(agent)
@@ -2147,7 +2150,9 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
         from . import zk
 
         values, zk_wrap = zk.resolve_payload(agent, device_key, wanted)
-        if zk_wrap is None:
+        # `zks1` values (server-minted, sealed to each device) open with the
+        # device's own key; only `zk1` values need its vault-key wrap.
+        if zk_wrap is None and zk.needs_wrap(values):
             zk.device_wrap_missing(agent, request, device_key)
             return JsonResponse({"error": "zk_wrap_missing", "kv": agent.zk_kv,
                                  "device_key": str(device_key.pk)}, status=409)
@@ -2611,12 +2616,19 @@ def agent_device_keys(request: HttpRequest, slug: str):
     says whether the caller may approve or revoke each (the runner's owner or
     an admin of it)."""
     from apps.harness import device_keys
-    from apps.harness.api_device_keys import key_out
+    from apps.harness.api_device_keys import zk_agents_waiting_on, key_out
+    from apps.harness.models import RunnerDeviceKey
     from apps.harness.runners import can_administer_runner
 
     agent = _agent_for_admin(request, slug)
-    return [key_out(k, can_manage=can_administer_runner(request.user, k.runner))
-            for k in device_keys.keys_for_agent(agent)]
+    out = []
+    for k in device_keys.keys_for_agent(agent):
+        row = key_out(k, can_manage=can_administer_runner(request.user, k.runner))
+        if row.can_manage and k.status == RunnerDeviceKey.PENDING:
+            # Approving it will also wrap these (one passkey touch, canopy-web#1550).
+            row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=True)
+        out.append(row)
+    return out
 
 
 @router.get("/{slug}/credential-alerts", response=list[AgentCredentialAlertOut],

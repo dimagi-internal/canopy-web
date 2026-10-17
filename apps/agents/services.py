@@ -68,9 +68,22 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
         if value is not None:
             defaults[field] = value
     agent, _ = Agent.objects.update_or_create(
-        slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace, "owner": owner}
+        slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace, "owner": owner,
+                                                            **born_zk_fields(owner)}
     )
     return agent
+
+
+def born_zk_fields(owner) -> dict:
+    """A new agent starts zero-knowledge when its owner has a vault key
+    (canopy-web#1550): `zk_enabled` at kv 0 — no vault key yet, so every value
+    that arrives is sealed to the owner and the agent's devices (`zks1`) until
+    the owner creates the vault key. Without a vault key it starts custodial."""
+    from apps.passkeys.models import UserVaultKeyset
+
+    if owner is None or not UserVaultKeyset.objects.filter(user=owner).exists():
+        return {}
+    return {"zk_enabled": True, "zk_kv": 0}
 
 
 def list_agents() -> list[Agent]:
@@ -1218,7 +1231,7 @@ SOURCE_CANOPY_WEB_ZK = "canopy-web-zk"
 SOURCE_UNSET = "unset"
 
 
-def set_agent_credentials(agent, values: dict[str, str], *, user=None) -> int:
+def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: bool = False) -> int:
     """Upsert named secrets. NON-CLOBBERING: a ref absent from `values` is left
     alone, so a single-field edit can never wipe the rest (the same rule
     RunnerCredentialIn follows, for the same reason).
@@ -1226,19 +1239,43 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None) -> int:
     Rejects a blank value rather than storing one: "" is how a UI says "I did not
     type anything", and storing it makes a declared ref read as SET while
     resolving to nothing — the worst of both.
+
+    `minted`: canopy-web made this value itself (Connect Google mailbox, canopy-pat
+    rotation). For a zero-knowledge agent it is then sealed to every recipient
+    (`zks1`, `zk_seal.py`) instead of refused — as is any write to an agent born
+    zero-knowledge that has no vault key yet (kv 0), where nothing else could
+    encrypt it.
     """
     from apps.agents.models import AgentCredential, ZeroKnowledgeValue
 
-    if agent.zk_enabled:
+    blank = sorted(k for k, v in values.items() if not (v or "").strip())
+    if agent.zk_enabled and not (minted or agent.zk_kv == 0):
         # A plaintext write would sit beside ciphertext canopy-web cannot read
         # (canopy-web#1550): values of a zero-knowledge agent are encrypted by a
         # member, and arrive through PUT /vault/zk/values.
         raise ZeroKnowledgeValue(
             f"{agent.slug} is zero-knowledge: encrypt values under its vault key and "
             f"PUT /api/agents/{agent.slug}/vault/zk/values (the browser and `canopy vault zk set` do)")
-    blank = sorted(k for k, v in values.items() if not (v or "").strip())
     if blank:
         raise ValueError(f"blank value for: {', '.join(blank)}")
+
+    by = user if getattr(user, "is_authenticated", False) else None
+    if agent.zk_enabled:
+        from django.db import transaction
+
+        from . import zk, zk_seal
+
+        # Under the agent row lock, like every ZK write: a settle's
+        # compare-and-swap (`expect`) must see this write or come after it.
+        with transaction.atomic():
+            agent = zk._locked(agent)
+            sealed = {name.strip(): zk_seal.seal_for_agent(agent, name.strip(), value.strip())
+                      for name, value in values.items()}
+            for name, value_zk in sealed.items():
+                AgentCredential.objects.update_or_create(
+                    agent=agent, name=name,
+                    defaults={"value_zk": value_zk, "kv": agent.zk_kv, "value_enc": "", "updated_by": by})
+        return len(sealed)
 
     written = 0
     for name, value in values.items():

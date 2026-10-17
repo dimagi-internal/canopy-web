@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { approveRunnerDeviceKey, revokeRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { relativeAge } from '@/lib/relativeAge'
-import { grantPending, unlockVaultKey } from '@/vault/operations'
+import { approveAndGrant, grantPending, unlockVaultKey } from '@/vault/operations'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 // Runner device keys (Canopy Vault, canopy-web#1538): the public half of a key a
@@ -58,6 +58,25 @@ export function DeviceKeysTable({
       const next = await fn(id)
       onChange(next)
       if (next.zk_pending_agents?.length) setGrant({ key: id, agents: [...next.zk_pending_agents], done: [] })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Approve = wrap (canopy-web#1550): a key that zero-knowledge agents will
+  // wait on is approved and handed their vault keys in ONE passkey touch.
+  const approve = async (k: RunnerDeviceKeyOut) => {
+    const agents = k.zk_pending_agents ?? []
+    if (!agents.length) return act(k.id, approveRunnerDeviceKey)
+    setBusy(k.id)
+    setError(null)
+    try {
+      const out = await approveAndGrant(k.id, [...agents], unlocker.prompt)
+      onChange(out.key)
+      if (out.failed.length) setGrant({ key: k.id, agents: [...out.granted, ...out.failed], done: out.granted })
+      else if (out.granted.length) setGrant({ key: k.id, agents: out.granted, done: out.granted })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed')
     } finally {
@@ -126,7 +145,7 @@ export function DeviceKeysTable({
                 {k.can_manage && k.status === 'pending' && (
                   <button
                     type="button"
-                    onClick={() => void act(k.id, approveRunnerDeviceKey)}
+                    onClick={() => void approve(k)}
                     disabled={busy !== null}
                     className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
                   >
@@ -173,6 +192,7 @@ export function DeviceKeysTable({
           {unlocker.element}
         </div>
       )}
+      {!grant && unlocker.element}
       {error && (
         <p className="mt-2 text-[12px] text-destructive" data-testid="device-keys-error">
           {error}
