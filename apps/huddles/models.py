@@ -49,6 +49,10 @@ class HuddleGroup(models.Model):
     project = models.ForeignKey("agents.AgentProject", null=True, blank=True,
                                 on_delete=models.SET_NULL, related_name="huddle_groups")
     enabled = models.BooleanField(default=True)
+    #: True when saving this group is what put `channel_id` on the leader's reading
+    #: list. An entry that was already there (an admin allow-listed the channel
+    #: themselves) is reused and never removed when the group goes away.
+    added_allowance = models.BooleanField(default=False)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                    on_delete=models.SET_NULL, related_name="huddle_groups_created")
     created_at = models.DateTimeField(auto_now_add=True)

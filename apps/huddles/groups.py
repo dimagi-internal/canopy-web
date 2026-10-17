@@ -240,22 +240,31 @@ def save(*, workspace, by, data: dict, group: HuddleGroup | None = None) -> Hudd
     enabled = bool(pick("enabled", group.enabled if group else True))
 
     with transaction.atomic():
-        old = (group.leader_agent, group.channel_id) if group else None
+        old = (group.leader_agent, group.channel_id, group.added_allowance) if group else None
         if group is None:
             group = HuddleGroup(workspace=workspace, slug=slug, created_by=by)
         group.name, group.topic, group.lead, group.lead_slack_id = name, topic, lead, lead_slack
         group.installation, group.channel_id, group.channel_name = link.installation, channel_id, channel_name
         group.agents = [m.slug for m in members]
         group.leader_agent, group.enabled = leader, enabled
+        moved = old is None or old[:2] != (leader, channel_id)
+        if ingest_svc.allowance_for(leader, channel_id) is None:
+            # Only a missing entry is added. One already there was put on the list by
+            # someone allowed to (often the leader's own admin), so it is reused as is:
+            # re-adding it would overwrite who added it, and is refused outright when
+            # the agent itself saves the group.
+            try:
+                ingest_svc.allow(workspace=leader.workspace, agent=leader, channel=channel_id, follow=False,
+                                 note=f"work group {name}", by=by)
+            except ingest_svc.IngestError as e:
+                raise GroupError(str(e), e.status) from e
+            group.added_allowance = True
+        elif moved:
+            group.added_allowance = False
         group.save()
         _save_schedule(group, cron=cron, tz=tz, by=by)
-        try:
-            ingest_svc.allow(workspace=leader.workspace, agent=leader, channel=channel_id, follow=False,
-                             note=f"work group {name}", by=by)
-        except ingest_svc.IngestError as e:
-            raise GroupError(str(e), e.status) from e
-        if old and old != (leader, channel_id):
-            _release_channel(old[0], old[1], by=by, keep=group)
+        if old and moved:
+            _release_channel(old[0], old[1], by=by, keep=group, owned=old[2])
         if group.single:
             _ensure_project(group, leader, lead)
         elif group.project_id:
@@ -305,12 +314,21 @@ def _ensure_project(group: HuddleGroup, agent: Agent, lead) -> None:
         logger.exception("could not add the lead as a participant")
 
 
-def _release_channel(agent: Agent, channel_id: str, *, by, keep: HuddleGroup | None = None) -> None:
-    """Take the channel off `agent`'s reading list, unless another group still needs it."""
+def _release_channel(agent: Agent, channel_id: str, *, by, keep: HuddleGroup | None = None,
+                     owned: bool = True) -> None:
+    """Take the channel off `agent`'s reading list — only when a group put it there
+    (`owned`) and no other group still needs it. When another group does, it inherits
+    the entry, so the last group to go still removes it."""
+    if not owned:
+        return
     others = HuddleGroup.objects.filter(leader_agent=agent, channel_id=channel_id)
     if keep is not None:
         others = others.exclude(pk=keep.pk)
-    if others.exists():
+    heir = others.order_by("pk").first()
+    if heir is not None:
+        if not heir.added_allowance:
+            heir.added_allowance = True
+            heir.save(update_fields=["added_allowance", "updated_at"])
         return
     entry = ingest_svc.allowance_for(agent, channel_id)
     if entry is not None:
@@ -321,7 +339,7 @@ def delete(group: HuddleGroup, *, by) -> None:
     from apps.harness import services as hsvc
 
     with transaction.atomic():
-        _release_channel(group.leader_agent, group.channel_id, by=by, keep=group)
+        _release_channel(group.leader_agent, group.channel_id, by=by, keep=group, owned=group.added_allowance)
         for run in group.runs.filter(status=HuddleGroupRun.AWAITING_CONFIRM):
             _settle(run, f":wastebasket: The *{group.name}* work group was deleted. Nothing was read.")
         if group.schedule is not None:

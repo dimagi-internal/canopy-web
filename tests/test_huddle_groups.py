@@ -144,6 +144,50 @@ def test_deleting_a_group_takes_the_channel_off_the_list(group, hal, owner):
     assert not AgentSchedule.objects.exists() and not HuddleGroup.objects.exists()
 
 
+def _admin(ws, user):
+    from apps.workspaces.models import WorkspaceMembership
+    WorkspaceMembership.objects.filter(workspace=ws, user=user).update(role=WorkspaceMembership.ADMIN)
+    return user
+
+
+def test_an_agent_saves_a_group_on_the_channel_its_admin_already_allow_listed(
+        channel, installation, hal, hal_login, lead, owner, ws):
+    """Jonathan allow-listed #canopy-support for Ada, then Ada's own save was refused
+    ("can't allow-list a channel for itself"): the entry already there is reused."""
+    ingest.allow(workspace=ws, agent=hal, channel=CHAN, follow=False, note="", by=owner)
+    _admin(ws, hal_login)
+    resp = _create(hal_login)
+    assert resp.status_code == 201, resp.content
+    entry = ingest.allowance_for(hal, CHAN)
+    assert entry.added_by == owner and entry.note == ""
+    assert HuddleGroup.objects.get().added_allowance is False
+
+
+def test_an_agent_still_cant_put_a_new_channel_on_its_own_list(channel, installation, hal, hal_login, lead, ws):
+    _admin(ws, hal_login)
+    resp = _create(hal_login)
+    assert resp.status_code == 403 and "can't allow-list a channel for itself" in resp.json()["detail"]
+    assert ingest.allowance_for(hal, CHAN) is None and not HuddleGroup.objects.exists()
+
+
+def test_deleting_a_group_keeps_an_entry_it_did_not_add(channel, installation, hal, hal_login, lead, owner, ws):
+    ingest.allow(workspace=ws, agent=hal, channel=CHAN, follow=False, note="", by=owner)
+    assert _create(owner).status_code == 201
+    assert _link_client(owner).delete("/api/huddle-groups/champions").status_code == 204
+    assert ingest.allowance_for(hal, CHAN) is not None
+
+
+def test_the_last_group_on_a_channel_removes_the_entry_the_first_one_added(group, hal, owner):
+    assert group.added_allowance is True
+    assert _create(owner, slug="second", name="Second").status_code == 201
+    assert HuddleGroup.objects.get(slug="second").added_allowance is False
+    assert _link_client(owner).delete("/api/huddle-groups/champions").status_code == 204
+    assert ingest.allowance_for(hal, CHAN) is not None
+    assert HuddleGroup.objects.get(slug="second").added_allowance is True
+    assert _link_client(owner).delete("/api/huddle-groups/second").status_code == 204
+    assert ingest.allowance_for(hal, CHAN) is None
+
+
 # ---- the announcement ----------------------------------------------------------------
 
 def test_the_schedule_announces_and_queues_no_turn(group, slack, channel):
