@@ -90,7 +90,21 @@ for pair in "canopy/cloud-runner/canopy-pat|./secrets.sh canopy <file>   (a cano
     || die "missing secret '$s' — stage it: $fix"
 done
 
-# The PAT must still authenticate, or the box pairs with nothing and sits there.
+STACK_STATUS=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
+  --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NONE")
+case "$STACK_STATUS" in
+  ROLLBACK_COMPLETE|ROLLBACK_FAILED|DELETE_FAILED)
+    die "stack $STACK is $STACK_STATUS and cannot be updated — ./down.sh --stack $STACK --keep-runner, then re-run" ;;
+  *_IN_PROGRESS)
+    die "stack $STACK is $STACK_STATUS — wait for it to settle" ;;
+esac
+echo ">> stack status: $STACK_STATUS"
+
+# A NEW box pairs with this PAT, so it must still authenticate or the box pairs with
+# nothing and sits there. A box that already exists signs in with its device key
+# (keyless, canopy-web#1594) and never needs it — its owner revokes the PAT once the
+# box is keyless, so a dead PAT on an update is the expected state, not an error.
+# The secret itself must still EXIST: canopy-fetch-env reads it on every start.
 PAT_CODE=$("${AWS[@]}" secretsmanager get-secret-value --secret-id canopy/cloud-runner/canopy-pat \
   --query SecretString --output text | python3 -c "
 import sys, urllib.request, urllib.error
@@ -103,8 +117,11 @@ except urllib.error.HTTPError as e:
 except Exception:
     print(0)
 ")
-[[ "$PAT_CODE" == "200" ]] \
-  || die "canopy/cloud-runner/canopy-pat does not authenticate against $BASE_URL (HTTP $PAT_CODE) — mint a new PAT and: ./secrets.sh canopy <file>"
+if [[ "$PAT_CODE" != "200" ]]; then
+  [[ "$STACK_STATUS" == "NONE" ]] \
+    && die "canopy/cloud-runner/canopy-pat does not authenticate against $BASE_URL (HTTP $PAT_CODE) — a new box pairs with it: mint a short-lived PAT and: ./secrets.sh canopy <file>"
+  echo "   note: canopy-pat does not authenticate (HTTP $PAT_CODE) — fine for an existing box, which signs in with its device key"
+fi
 
 [[ -f "$HOME/.claude/canopy/workbench-token" ]] \
   || echo "   WARN: no ~/.claude/canopy/workbench-token — wire.sh and down.sh need it (/canopy:canopy-web-pat-mint)"
@@ -122,15 +139,6 @@ if [[ -n "$(git status --porcelain -- "${SHA_PATHS[@]}" 2>/dev/null)" && "$ALLOW
   die "uncommitted changes to ${SHA_PATHS[*]} — the seed would not be the code its stamp names. Commit them, or pass --allow-dirty."
 fi
 
-STACK_STATUS=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
-  --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NONE")
-case "$STACK_STATUS" in
-  ROLLBACK_COMPLETE|ROLLBACK_FAILED|DELETE_FAILED)
-    die "stack $STACK is $STACK_STATUS and cannot be updated — ./down.sh --stack $STACK --keep-runner, then re-run" ;;
-  *_IN_PROGRESS)
-    die "stack $STACK is $STACK_STATUS — wait for it to settle" ;;
-esac
-echo ">> stack status: $STACK_STATUS"
 
 MYIP=$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')
 echo ">> SSH allowed from ${MYIP}/32"

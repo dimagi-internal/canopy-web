@@ -96,7 +96,7 @@ every box. `up.sh`/`wire.sh` check each before writing anything and print the fi
 | prerequisite | checked by | fix |
 |---|---|---|
 | AWS SSO session for `labs` | `up.sh`, `down.sh` | `aws sso login --profile labs` |
-| `canopy/cloud-runner/canopy-pat` exists **and authenticates** | `up.sh` | mint a canopy-web PAT, `./secrets.sh canopy <file>` |
+| `canopy/cloud-runner/canopy-pat` exists (and authenticates, for a NEW box) | `up.sh` | mint a short-lived canopy-web PAT, `./secrets.sh canopy <file>` |
 | `canopy/cloud-runner/claude-oauth-token` (build fallback — must exist, may be old) | `up.sh` | set once: `claude setup-token` as the subscription account, `./secrets.sh claude <file>`; read only when no live runner has logins to copy |
 | a live Claude login on some cloud runner (what new boxes copy) | `wire.sh` (prints its source) | `/supervisor` → Runners → the box → Claude login (a human `claude setup-token` per subscription) |
 | `canopy/cloud-runner/gog-keyring-password` | `up.sh` | any strong password, `./secrets.sh gog <file>` |
@@ -486,7 +486,7 @@ runner (or wait for its next bootstrap) and read `GET /api/agents/<slug>/readine
 The imported file is never left on disk (`shred -u`, falling back to `rm -f`).
 
 ## Secrets (in Secrets Manager, under `canopy/cloud-runner/`)
-- `canopy/cloud-runner/canopy-pat` — a canopy-web PAT (the runner pairs + claims as this user). **Required** — `up.sh` refuses to deploy without it.
+- `canopy/cloud-runner/canopy-pat` — a canopy-web PAT a NEW box pairs and registers its device key with. Once the key is approved the box signs in as itself (keyless, `docs/architecture/runners.md`) and the PAT can be revoked; the secret must still exist (the boot script reads it). `up.sh` refuses a dead PAT only when creating a stack.
 - `canopy/cloud-runner/claude-oauth-token` — the Claude **build fallback**: a long-lived, non-rotating `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN`). Must exist (`up.sh` checks), but is intentionally rarely used: a box runs on its credential bundle from the runner page, which `wire.sh` copies from a live runner, and this is read only when there is none — so an old or capped value here is expected. **Do not copy ace-web's live OAuth blob** — its refresh tokens rotate on every use, so a second consumer gets invalidated (verified: it 401s / can't refresh).
 - ~~`canopy/cloud-runner/op-service-account-token`~~ — **gone.** `wire.sh` no longer reads it, the credential bundle no longer carries it, and `RunnerCredential` no longer stores it. A box-wide 1Password key lived in the runner's environment, which every turn inherits: one credential that reads EVERY agent's vault, handed to each of them. Agent secrets are read with the per-agent and per-tenant keys canopy-web issues (see "Where secrets live"). The Secrets Manager entry can be deleted; nothing reads it.
 
