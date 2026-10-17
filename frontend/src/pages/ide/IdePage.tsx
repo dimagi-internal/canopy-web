@@ -17,6 +17,7 @@ import { ChatPage } from '@/pages/ChatPage'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { SessionContextMenu, type IdeAction } from './SessionContextMenu'
+import { useCloseReview } from './useCloseReview'
 import {
   DEFAULT_FILTERS,
   NO_RUNNER,
@@ -297,6 +298,8 @@ export function IdePage() {
 
   const tree = useMemo(() => buildTree(sessions, filters), [sessions, filters])
   const shown = useMemo(() => tree.flatMap((f) => f.sessions), [tree])
+  // The agent panel's close review reads what is on screen, as you.
+  useCloseReview(shown, state)
   const totals = useMemo(() => {
     const t: Record<IdeState, number> = { running: 0, input: 0, idle: 0 }
     for (const f of tree) for (const k of Object.keys(t) as IdeState[]) t[k] += f.counts[k]

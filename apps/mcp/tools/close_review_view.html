@@ -1,0 +1,285 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Close review</title>
+<!--
+  /ide close review — an MCP Apps View (SEP-1865) served as ui://canopy/ide/close-review.
+  Spec: docs/superpowers/specs/2026-10-16-ide-close-review-design.md.
+
+  Self-contained: the sandbox gives it no network and no storage, so everything
+  goes through the host bridge (postMessage JSON-RPC to the parent proxy).
+  Rows are canopy's: on mount it re-calls propose_session_closes AS THE VIEWER,
+  so they are current and read with the viewer's own access; the agent's
+  original result is only the first paint. Close calls close_proposed_sessions,
+  an app-only tool the model is never offered.
+-->
+<style>
+  :root {
+    --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --border: rgba(0,0,0,.12);
+    --row: rgba(0,0,0,.03); --accent: #c2410c; --accent-fg: #fff;
+    --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+  }
+  :root[data-theme="dark"] {
+    --bg: #1c1917; --fg: #fafaf9; --muted: #a8a29e; --border: rgba(255,255,255,.12);
+    --row: rgba(255,255,255,.04); --accent: #ea580c; --accent-fg: #fff;
+    --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+  .wrap { padding: 8px 10px 10px; }
+  .head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .head b { font-size: 13px; }
+  .head .sub { color: var(--muted); font-size: 11px; }
+  .head .all { margin-left: auto; font-size: 11px; color: var(--muted); background: none;
+    border: 0; cursor: pointer; text-decoration: underline; padding: 0; }
+  .row { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin-bottom: 4px; }
+  .row.blocked { opacity: .55; }
+  .row.done { opacity: .6; }
+  .top { display: flex; gap: 8px; align-items: flex-start; }
+  .top input { margin: 2px 0 0; }
+  .main { min-width: 0; flex: 1; }
+  .title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 8px; color: var(--muted); font-size: 11px; margin-top: 1px; }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 3px; margin-right: 3px;
+    vertical-align: 1px; background: var(--muted); }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--bad); }
+  .badge { border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+  .quote { margin: 4px 0 0; padding: 3px 6px; border-left: 2px solid var(--accent);
+    background: var(--row); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .why { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .reason { color: var(--warn); font-size: 11px; margin-top: 2px; }
+  .outcome { font-size: 11px; margin-top: 2px; }
+  .outcome.ok { color: var(--ok); } .outcome.bad { color: var(--bad); }
+  .toggle { background: none; border: 0; color: var(--muted); font-size: 11px; cursor: pointer;
+    padding: 0; margin-top: 3px; text-decoration: underline; }
+  .reply { margin-top: 4px; padding: 6px; background: var(--row); border-radius: 4px; font-size: 12px;
+    white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; }
+  .bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .bar .note { color: var(--muted); font-size: 11px; flex: 1; }
+  .close { background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 6px;
+    padding: 6px 12px; font: 500 13px system-ui, sans-serif; cursor: pointer; }
+  .close:disabled { opacity: .45; cursor: default; }
+  .empty { color: var(--muted); padding: 6px 0; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="empty">Loading the review…</div></div>
+<script>
+(function () {
+  "use strict";
+  var state = {
+    proposals: [], rows: [], proposed: 0, canAct: false, ticked: {}, open: {},
+    outcomes: null, busy: false, error: ""
+  };
+  var nextId = 1, pending = {};
+
+  function send(msg) { window.parent.postMessage(msg, "*"); }
+  function request(method, params) {
+    var id = "r" + (nextId++);
+    return new Promise(function (resolve, reject) {
+      pending[id] = { resolve: resolve, reject: reject };
+      send({ jsonrpc: "2.0", id: id, method: method, params: params || {} });
+    });
+  }
+  function notify(method, params) { send({ jsonrpc: "2.0", method: method, params: params || {} }); }
+
+  function parseResult(result) {
+    if (!result) return null;
+    if (result.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
+    var blocks = Array.isArray(result.content) ? result.content : [];
+    for (var i = 0; i < blocks.length; i++) {
+      try {
+        var data = JSON.parse(blocks[i] && blocks[i].text || "");
+        if (data && typeof data === "object") return data;
+      } catch (e) { /* not JSON */ }
+    }
+    return null;
+  }
+
+  function setRows(data) {
+    if (!data || !Array.isArray(data.rows)) return;
+    var said = {};
+    state.proposals.forEach(function (p) { if (p && p.session_id) said[String(p.session_id)] = p; });
+    state.rows = data.rows.map(function (r) {
+      var p = said[r.id] || {};
+      return Object.assign({}, r, { quote: r.quote || p.quote || "", why: r.why || p.why || "" });
+    });
+    if (typeof data.proposed === "number") state.proposed = data.proposed;
+    var ticked = {};
+    state.rows.forEach(function (r) { if (!r.blocked) ticked[r.id] = true; });
+    state.ticked = ticked;
+  }
+
+  function age(iso) {
+    var t = Date.parse(iso); if (isNaN(t)) return "";
+    var m = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (m < 60) return m + "m"; var h = Math.round(m / 60);
+    if (h < 48) return h + "h"; return Math.round(h / 24) + "d";
+  }
+  function stateOf(r) { return r.running ? "running" : r.waiting_on_you ? "waiting on you" : "idle"; }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag); if (cls) e.className = cls;
+    if (text != null) e.textContent = text; return e;
+  }
+
+  function render() {
+    var root = document.getElementById("app");
+    root.textContent = "";
+    var head = el("div", "head");
+    head.appendChild(el("b", null, "Proposed to close"));
+    var hidden = Math.max(0, state.proposed - state.rows.length);
+    head.appendChild(el("span", "sub", state.rows.length + " session" + (state.rows.length === 1 ? "" : "s") +
+      (hidden ? " · " + hidden + " you cannot see" : "")));
+    if (!state.outcomes && state.rows.some(function (r) { return !r.blocked; })) {
+      var all = el("button", "all", "Untick all");
+      all.onclick = function () { state.ticked = {}; render(); };
+      head.appendChild(all);
+    }
+    root.appendChild(head);
+
+    if (!state.rows.length) {
+      root.appendChild(el("div", "empty", state.error || "Nothing to review."));
+      resize(); return;
+    }
+    var outcomeOf = {};
+    (state.outcomes || []).forEach(function (o) { outcomeOf[o.id] = o; });
+
+    state.rows.forEach(function (r) {
+      var o = outcomeOf[r.id];
+      var row = el("div", "row" + (r.blocked ? " blocked" : "") + (o ? " done" : ""));
+      var top = el("div", "top");
+      var box = document.createElement("input");
+      box.type = "checkbox"; box.checked = !!state.ticked[r.id];
+      box.disabled = !!r.blocked || !!state.outcomes || !state.canAct || state.busy;
+      box.setAttribute("aria-label", "Close " + r.title);
+      box.onchange = function () { state.ticked[r.id] = box.checked; render(); };
+      top.appendChild(box);
+      var main = el("div", "main");
+      var title = el("div", "title", r.title); title.title = r.title; main.appendChild(title);
+      var meta = el("div", "meta");
+      if (r.project) meta.appendChild(el("span", null, r.project));
+      if (r.runner) {
+        var run = el("span"); var dot = el("span", "dot " + (r.runner_status === "online" ? "on" : "off"));
+        run.appendChild(dot); run.appendChild(document.createTextNode(r.runner)); meta.appendChild(run);
+      } else meta.appendChild(el("span", null, "no runner"));
+      meta.appendChild(el("span", "badge", stateOf(r)));
+      if (r.mode) meta.appendChild(el("span", null, r.mode));
+      meta.appendChild(el("span", null, age(r.last_activity_at)));
+      main.appendChild(meta);
+      if (r.quote) main.appendChild(el("div", "quote", "“" + r.quote + "”"));
+      if (r.why) main.appendChild(el("div", "why", r.why));
+      if (r.blocked) main.appendChild(el("div", "reason", "Can’t close: " + r.blocked));
+      if (o) {
+        var good = o.outcome === "closed" || o.outcome === "closing";
+        main.appendChild(el("div", "outcome " + (good ? "ok" : "bad"),
+          o.outcome === "closed" ? "Closed" : o.outcome === "closing" ? "Closing — its runner deletes the task"
+            : "Not closed: " + (o.reason || o.outcome.replace(/_/g, " "))));
+      }
+      if (r.last_reply) {
+        var t = el("button", "toggle", state.open[r.id] ? "Hide last reply" : "Show last reply");
+        t.onclick = function () { state.open[r.id] = !state.open[r.id]; render(); };
+        main.appendChild(t);
+        if (state.open[r.id]) main.appendChild(el("div", "reply", r.last_reply));
+      }
+      top.appendChild(main); row.appendChild(top); root.appendChild(row);
+    });
+
+    var bar = el("div", "bar");
+    var n = Object.keys(state.ticked).filter(function (k) { return state.ticked[k]; }).length;
+    var note = !state.canAct ? "You can view this review but not act in it."
+      : state.outcomes ? "Done." : state.error || "Closing deletes each session’s emdash task.";
+    bar.appendChild(el("span", "note", note));
+    if (!state.outcomes) {
+      var btn = el("button", "close", state.busy ? "Closing…" : "Close " + n);
+      btn.disabled = !state.canAct || state.busy || n === 0;
+      btn.onclick = closeTicked;
+      bar.appendChild(btn);
+    }
+    root.appendChild(bar);
+    resize();
+  }
+
+  function closeTicked() {
+    var ids = Object.keys(state.ticked).filter(function (k) { return state.ticked[k]; });
+    if (!ids.length) return;
+    state.busy = true; state.error = ""; render();
+    request("tools/call", { name: "close_proposed_sessions", arguments: { session_ids: ids } })
+      .then(function (res) {
+        var data = parseResult(res);
+        if (res && res.isError || !data || !Array.isArray(data.results)) throw new Error(
+          (res && res.content && res.content[0] && res.content[0].text) || "the close did not answer");
+        state.outcomes = data.results;
+        var lines = data.results.map(function (o) { return "- " + (o.title || o.id) + ": " + o.outcome +
+          (o.reason ? " (" + o.reason + ")" : ""); });
+        return request("ui/update-model-context", { content: [{ type: "text", text:
+          "The person closed sessions from your close review (" + data.closed + " of " + ids.length + "):\n" +
+          lines.join("\n") }] }).catch(function () { /* the closes stand either way */ });
+      })
+      .catch(function (e) { state.error = "Close failed: " + (e && e.message || e); })
+      .then(function () { state.busy = false; render(); });
+  }
+
+  var lastHeight = 0;
+  function resize() {
+    var h = Math.ceil(document.documentElement.scrollHeight);
+    if (h !== lastHeight) { lastHeight = h; notify("ui/notifications/size-changed", { height: h }); }
+  }
+
+  window.addEventListener("message", function (ev) {
+    if (ev.source !== window.parent) return;
+    var msg = ev.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id != null && pending[msg.id]) {
+      var p = pending[msg.id]; delete pending[msg.id];
+      if (msg.error) p.reject(new Error(msg.error.message || "request failed")); else p.resolve(msg.result);
+      return;
+    }
+    if (msg.method === "ui/notifications/tool-input") {
+      var args = msg.params && msg.params.arguments || {};
+      state.proposals = Array.isArray(args.proposals) ? args.proposals : [];
+      state.proposed = state.proposals.length;
+    } else if (msg.method === "ui/notifications/tool-result") {
+      setRows(parseResult(msg.params));
+      render();
+      refresh();
+    } else if (msg.method === "ui/notifications/host-context-changed") {
+      applyTheme(msg.params || {});
+    }
+  });
+
+  function applyTheme(ctx) {
+    if (ctx.theme) document.documentElement.setAttribute("data-theme", ctx.theme === "dark" ? "dark" : "light");
+  }
+
+  // Re-read as the viewer: the agent's own result may hold none of the rows (an
+  // agent's login reads none of a person's sessions) or be hours old.
+  function refresh() {
+    if (!state.canAct || !state.proposals.length) { render(); return; }
+    request("tools/call", { name: "propose_session_closes", arguments: { proposals: state.proposals } })
+      .then(function (res) {
+        var data = parseResult(res);
+        if (res && !res.isError && data) setRows(data);
+      })
+      .catch(function () { /* keep the agent's rows */ })
+      .then(render);
+  }
+
+  request("ui/initialize", {
+    protocolVersion: "2026-01-26",
+    appInfo: { name: "canopy-close-review", version: "1" },
+    appCapabilities: {}
+  }).then(function (res) {
+    state.canAct = !!(res && res.hostCapabilities && res.hostCapabilities.serverTools);
+    applyTheme(res && res.hostContext || {});
+    notify("ui/notifications/initialized");
+  }).catch(function (e) {
+    state.error = "The panel did not start this review: " + (e && e.message || e);
+    render();
+  });
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(document.documentElement);
+})();
+</script>
+</body>
+</html>

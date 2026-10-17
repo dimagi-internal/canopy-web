@@ -17,10 +17,11 @@ one of canopy's pages. Three pieces, each the SDK's, wired here:
   tool applies the visitor's own ACL — the same service functions a PAT reaches.
 * ``DelegatedScopeMiddleware`` — only the tools the token's scopes map to
   (``self_host.SCOPE_TOOLS``) exist for it: listing and calling are both
-  filtered, and resources and prompts are closed to it entirely.
+  filtered; prompts are closed to it, and resources too except the MCP Apps
+  View of a tool inside its grant (``_view_allowed``).
 
 So a member's delegated token reaches at most the intersection of their own
-ACL and a read-only scope — never more than their own PAT would.
+ACL and its page's scopes — never more than their own PAT would.
 """
 from __future__ import annotations
 
@@ -107,6 +108,16 @@ def _allowed(name: str, claims: dict) -> bool:
     return name in set(claims.get("allowed_tools") or [])
 
 
+def _view_allowed(uri: str, claims: dict) -> bool:
+    """A delegated token reads exactly the MCP Apps Views of tools in its grant:
+    a View is how such a tool is shown, so the grant that may call the tool may
+    fetch its page. Every other resource stays closed to it."""
+    from apps.mcp.tools.close_review import VIEW_TOOLS
+
+    tool = VIEW_TOOLS.get(uri)
+    return tool is not None and _allowed(tool, claims)
+
+
 class DelegatedScopeMiddleware(Middleware):
     """A delegated token sees and calls only its scopes' tools, and nothing else."""
 
@@ -124,9 +135,10 @@ class DelegatedScopeMiddleware(Middleware):
         return await call_next(context)
 
     async def on_list_resources(self, context: MiddlewareContext, call_next):
-        if _delegated_claims() is not None:
-            return []
-        return await call_next(context)
+        claims = _delegated_claims()
+        if claims is None:
+            return await call_next(context)
+        return [r for r in await call_next(context) if _view_allowed(str(r.uri), claims)]
 
     async def on_list_resource_templates(self, context: MiddlewareContext, call_next):
         if _delegated_claims() is not None:
@@ -134,7 +146,8 @@ class DelegatedScopeMiddleware(Middleware):
         return await call_next(context)
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
-        if _delegated_claims() is not None:
+        claims = _delegated_claims()
+        if claims is not None and not _view_allowed(str(context.message.uri), claims):
             raise ResourceError("resources are not within this grant")
         return await call_next(context)
 
