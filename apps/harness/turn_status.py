@@ -136,6 +136,14 @@ class TurnStatus:
     #: its own; None means only a person resuming one will run it.
     parked: bool = False
     held_until: datetime | None = None
+    #: For WORKING: when its runner took it, and when anything last came back from
+    #: it (a ledger event — reply text, a tool call — or the claim itself). Facts,
+    #: not a verdict: the client says "nothing back from cloud-ec2-2 for 6m" once
+    #: it has been quiet a while, because a box that claimed a turn and then went
+    #: silent drew "Thinking…" for as long as its lease lived (2026-10-17: its
+    #: token was revoked, so every report it made was refused).
+    claimed_at: datetime | None = None
+    last_progress_at: datetime | None = None
 
     @property
     def settled(self) -> bool:
@@ -170,6 +178,8 @@ class TurnStatus:
             "behind": self.behind,
             "parked": self.parked,
             "held_until": self.held_until.isoformat() if self.held_until else None,
+            "claimed_at": self.claimed_at.isoformat() if self.claimed_at else None,
+            "last_progress_at": self.last_progress_at.isoformat() if self.last_progress_at else None,
             "settled": self.settled,
             "stuck": self.stuck,
         }
@@ -205,7 +215,8 @@ def movable_lost(turn: Turn) -> bool:
                                         created_at__gt=turn.created_at).exists())
 
 
-def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) -> TurnStatus:
+def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
+           progress_at: datetime | None = None) -> TurnStatus:
     """The state, from facts already in hand.
 
     Pure: every input is injected, so a channel that already paid for `reach`
@@ -225,6 +236,7 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
     if agent_slug is None and turn.agent_id:
         agent_slug = turn.agent.slug
     claimed_by = turn.claimed_by.name if turn.claimed_by_id else None
+    claimed_at = getattr(turn, "claimed_at", None)
 
     pinned = False
     behind = None
@@ -285,6 +297,9 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
         behind=behind,
         parked=state == WAITING_RUNNER and getattr(reach, "kind", None) == harness.PARKED,
         held_until=getattr(reach, "held_until", None) if state == WAITING_RUNNER else None,
+        claimed_at=claimed_at if state == WORKING else None,
+        last_progress_at=(max(t for t in (claimed_at, progress_at) if t is not None)
+                          if state == WORKING and (claimed_at or progress_at) else None),
     )
 
 
@@ -343,4 +358,9 @@ def resolve(turn: Turn) -> TurnStatus:
     menu = False
     if turn.chat_session_id:
         menu = pending_menu(turn.chat_session) is not None
-    return derive(turn, reach=reach, cloud=cloud, menu_pending=menu)
+    progress = None
+    if turn.status in (Turn.CLAIMED, Turn.RUNNING):
+        from django.db.models import Max
+
+        progress = turn.events.aggregate(at=Max("ts"))["at"]
+    return derive(turn, reach=reach, cloud=cloud, menu_pending=menu, progress_at=progress)

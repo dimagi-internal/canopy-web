@@ -244,6 +244,11 @@ export interface TurnStatus {
    *  (some runner would take it without one) — so render it as the reason.
    *  Absent on an older server. */
   requires?: string[];
+  /** For `working`: when its runner took it, and when anything last came back
+   *  from it (reply text, a tool call — or the claim itself). ISO. Absent on an
+   *  older server. */
+  claimed_at?: string | null;
+  last_progress_at?: string | null;
   /** Nothing more will happen without someone asking for it. */
   settled: boolean;
   /** Nothing is moving and only a person can change that. The one question a

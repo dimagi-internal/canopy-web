@@ -25,6 +25,7 @@ is `apps/canopy_sessions/access.py` (see `docs/architecture/tenancy.md`).
   session socket, drawn by `canopy-ui/chat/turnStatus.ts`
   (`frontend/packages/canopy-ui/src/chat/turnStatus.ts`). The embedded widget gets
   it because it mounts the same `ChatPanel`.
+- **A quiet `working` turn says so.** The status carries `claimed_at` and `last_progress_at` (the claim, or the newest ledger event) for `working`; after `QUIET_AFTER_MS` (5 min) with nothing back — counting messages on screen and a reply still streaming — the chat kit replaces silence with a fact: "cloud-ec2-2 took this 6m ago and nothing has come back from it since." No verdict ("stuck"); it never speaks over a pending dialog.
 - **Every channel reacts to the same three events:** enqueue
   (`harness.signals.turn_status_changed` — enqueue appends no `status` event, and
   it is the moment someone is watching), a `status` event row, and the throttled

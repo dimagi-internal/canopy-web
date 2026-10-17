@@ -116,11 +116,55 @@ function formatWhen(iso: string): string {
     : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+/** How long a working turn may say nothing before the kit says so. Long enough
+ *  that a model thinking through a hard step is not called out; short enough
+ *  that a box which took the turn and went silent is not "Thinking…" for the
+ *  rest of its lease. */
+export const QUIET_AFTER_MS = 5 * 60 * 1000;
+
+/** "6m" / "1h 5m" — a wait, not a timestamp. */
+function waited(ms: number): string {
+  const mins = Math.max(1, Math.round(ms / 60000));
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  return mins % 60 ? `${h}h ${mins % 60}m` : `${h}h`;
+}
+
+/**
+ * A working turn nothing has come back from in a while — in facts, not a verdict:
+ * who took it, and for how long it has been quiet. On 2026-10-17 a box whose
+ * token had been revoked claimed four turns and could report nothing; each one
+ * read "Thinking on cloud-ec2-2…" until its lease ran out.
+ *
+ * "Back" is the newer of the server's `last_progress_at` (a ledger event) and the
+ * newest message on screen, so a transcript row that streamed in counts too.
+ */
+function quietNotice(status: TurnStatus, latestMessageAt: string | null | undefined,
+                     now: number): TurnNotice | null {
+  if (status.state !== "working" || status.menu_pending || !status.claimed_at) return null;
+  const claimed = Date.parse(status.claimed_at);
+  if (Number.isNaN(claimed)) return null;
+  let back = status.last_progress_at ? Date.parse(status.last_progress_at) : claimed;
+  const seen = latestMessageAt ? Date.parse(latestMessageAt) : NaN;
+  if (!Number.isNaN(seen) && seen > back) back = seen;
+  if (now - back < QUIET_AFTER_MS) return null;
+  const who = status.claimed_by ?? "its runner";
+  return {
+    tone: "warn",
+    text: back <= claimed
+      ? `${who} took this ${waited(now - claimed)} ago and nothing has come back from it since.`
+      : `Nothing new from ${who} for ${waited(now - back)}.`,
+    offer: null,
+  };
+}
+
 export function turnNotice(
   status?: TurnStatus | null,
-  { latestMessageAt }: { latestMessageAt?: string | null } = {},
+  { latestMessageAt, now = Date.now() }: { latestMessageAt?: string | null; now?: number } = {},
 ): TurnNotice | null {
   if (!status) return null;
+  const quiet = quietNotice(status, latestMessageAt, now);
+  if (quiet) return quiet;
   if (status.settled && status.finished_at && latestMessageAt
       && Date.parse(latestMessageAt) > Date.parse(status.finished_at)) {
     return null;
