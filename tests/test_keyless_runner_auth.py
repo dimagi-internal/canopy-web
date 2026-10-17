@@ -184,3 +184,26 @@ async def test_the_token_opens_its_own_runner_socket_and_closes_when_the_key_is_
         status=RunnerDeviceKey.REVOKED)
     await comm.send_json_to({"action": "claim"})
     assert await comm.receive_output(timeout=2) == {"type": "websocket.close", "code": 4001}
+
+
+@pytest.mark.parametrize("method,path,ok", [
+    # Every route the laptop runner calls (runner/canopy_runner/client.py) …
+    ("GET", "/api/harness/runners/", True),
+    ("GET", "/api/harness/schedules/", True),
+    ("POST", "/api/harness/schedules/abc/fire", True),
+    ("GET", "/api/inbound/runner-mailboxes", True),
+    ("POST", "/api/inbound/watch/", True),
+    ("PUT", "/api/harness/runners/{rid}/engine", True),
+    ("POST", "/api/w/connect/harness/turns/x/finish", True),   # tenant URL, flattened
+    ("POST", "/canopy/api/harness/runners/{rid}/heartbeat", True),  # the old address
+    # … and nothing beyond the protocol.
+    ("POST", "/api/harness/schedules/", False),
+    ("DELETE", "/api/harness/schedules/abc", False),
+    ("POST", "/api/inbound/runner-mailboxes", False),
+    ("GET", "/api/sessions/", False),
+])
+def test_runner_auth_covers_the_laptop_runners_calls_and_no_more(method, path, ok):
+    from apps.harness import runner_auth
+
+    rid = "11111111-2222-3333-4444-555555555555"
+    assert runner_auth.reaches(method, path.format(rid=rid), rid) is ok
