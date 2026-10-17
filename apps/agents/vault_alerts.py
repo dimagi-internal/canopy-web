@@ -17,6 +17,8 @@ request: an email and a Web Push, each linking to the agent's Credentials.
   are a box (should be inside a turn) and an admin resolving by hand for their
   own Claude Code session (`via == "admin"`, canopy#850 — expected without a
   turn, and alerting on it would email the owner about themselves hourly).
+  A box that names itself AND sends `X-Canopy-Read-Purpose: runner-refresh` is
+  its own scheduled credential refresh, also expected without a turn.
 * `undeclared-ref` — a read that asks for, or is handed, a ref the agent's
   runtime.yaml does not declare.
 * `burst` — more than CANOPY_VAULT_READ_BURST_LIMIT resolves (default 50) of one
@@ -47,6 +49,9 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 DEBOUNCE = dt.timedelta(hours=1)
+#: `X-Canopy-Read-Purpose` a box sends when it refreshes an agent's credentials
+#: outside a turn (canopy `agent prepare --runner`).
+REFRESH_PURPOSE = "runner-refresh"
 BURST_WINDOW_S = 300
 
 
@@ -72,7 +77,14 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
         from . import services
 
         user = request.user
-        if not turn_id and via == "runner":
+        # A box's own credential refresh (the runner-update timer, bootstrap) runs
+        # outside any turn by design and says so. It cannot hide a misuse the turn
+        # id would have caught: a turn id is not checked against a live turn either,
+        # so this alert only ever catches an honest caller nobody expected
+        # (canopy-web#1563). The read is still logged; the other checks still run.
+        refresh = (runner is not None
+                   and request.META.get("HTTP_X_CANOPY_READ_PURPOSE", "") == REFRESH_PURPOSE)
+        if not turn_id and via == "runner" and not refresh:
             box = f" on {runner.name}" if runner is not None else ""
             raised.append(raise_alert(
                 agent, "no-turn", user=user, runner=runner,
