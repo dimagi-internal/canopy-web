@@ -231,7 +231,7 @@ being asked in the UI. The agent never asks the person to grant or flip anything
 
 **The widget.** canopy's own widget, signed in as the person, gets the real
 prompt (`surface=widget`, `modality=canopy-widget`). A site's widget acting for
-its visitor is not the person (#1383): it shows "Not granted to <agent> yet —
+its visitor is not the person: it shows "Not granted to <agent> yet —
 grant it in canopy" with a link, and its token cannot reach the grant route, so
 a host can never grant on a visitor's behalf.
 
@@ -308,7 +308,7 @@ no connect-labs change was needed. Migration `tokens/0031` trusts the live
   that keeping it longer is separate, and that they can see, download and take it
   back here. "Also let agents use what they've learned" is unticked. Allowing sets
   their policy (record available + on by default; use available only if ticked) and
-  issues the per-agent SESSION grant (#1389), `grant.issued` modality
+  issues the per-agent SESSION grant, `grant.issued` modality
   `canopy-embed-trusted-email` with `site=<name>` in the detail; actor
   `contact:<pk>` (type `user` — the person's own act). Then the chat page's own
   toggles and grant/keep prompts work for them through the contact routes;
@@ -317,8 +317,8 @@ no connect-labs change was needed. Migration `tokens/0031` trusts the live
   `HCP_SERVICE_AUDIENCE=internal`): "What canopy knows" lists their grants (take
   back), their entries (remove — a soft delete), downloads everything (entries +
   audit log), and "Stop remembering me" turns both features off without deleting.
-- **The old site-keyed person** the contact pointed at before opting in is left in
-  place: no contact could hold a grant before this, so it holds nothing HCP.
+- **The site-keyed person** the contact pointed at before opting in is left in
+  place and holds nothing HCP.
 - **Not done:** correcting an entry's wording from the panel (remove + tell the agent
   again does it); a superuser toggle in the UI (API only — the frontend has no
   superuser signal to gate it on).
