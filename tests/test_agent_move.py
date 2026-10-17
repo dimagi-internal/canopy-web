@@ -270,6 +270,7 @@ _NOT_THE_AGENTS = {
     "shareouts.Shareout": "a workspace's briefing, produced by the agent for that workspace",
     "beta_requests.BetaRequest": "`user_agent` is a browser string, not an agent",
     "events.SettingChange": "`user_agent` is a browser string; audit stays where it happened",
+    "agents.EngagementEvent": "what people did, recorded in the workspace they did it in; telemetry stays there",
 }
 
 

@@ -1412,3 +1412,53 @@ class SenderTrust(models.Model):
 
         return (cls.objects.filter(agent_id=agent_id, email=(email or "").strip().lower(),
                                    expires_at__gt=timezone.now()).first())
+
+
+class EngagementEvent(models.Model):
+    """One thing a person (or an agent) did to a project or a huddle — append-only.
+
+    It exists to LEARN what works in multi-player mode (spec
+    `2026-10-16-work-group-huddles-design.md` §7): does anyone open a proposed
+    project, back it, comment on it, decide it — and through which surface. Ada
+    reads `GET /api/engagement/summary` weekly and tells Jonathan in plain words
+    what people actually do. So the table records acts, never content: `meta` is
+    for small facts about the act (a stance, a reason's length), not the words.
+
+    Written ONLY through `apps/agents/engagement.record`, which validates `kind`
+    and `surface` and never lets a failed write break the caller's main path.
+
+    `group` is a work group's SLUG, not a foreign key: the group model lives in
+    `apps/huddles` and a row about a run must outlive the group it was about.
+    `huddle_id` is a string for the same reason — a huddle is derived, not stored.
+    """
+
+    KINDS = ("viewed", "backed", "commented", "approved", "declined", "idea_added",
+             "run_announced", "run_confirmed", "run_skipped", "run_expired", "proposed", "expired")
+    SURFACES = ("web", "slack", "email", "mcp")
+
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="engagement_events")
+    kind = models.CharField(max_length=16, choices=[(k, k) for k in KINDS])
+    surface = models.CharField(max_length=8, choices=[(s, s) for s in SURFACES], default="web")
+    #: Who did it: a person, an agent, or (machinery — an expiry) neither.
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                             on_delete=models.SET_NULL, related_name="engagement_events")
+    agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL,
+                              related_name="engagement_events")
+    #: What it was done to. SET_NULL: the record of an act outlives its object.
+    project = models.ForeignKey(AgentProject, null=True, blank=True, on_delete=models.SET_NULL,
+                                related_name="engagement_events")
+    task = models.ForeignKey(AgentTask, null=True, blank=True, on_delete=models.SET_NULL,
+                             related_name="engagement_events")
+    huddle_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    group = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    at = models.DateTimeField(auto_now_add=True, db_index=True)
+    meta = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "agents_engagement_event"
+        ordering = ["-at", "-pk"]
+        indexes = [models.Index(fields=["workspace", "at"]), models.Index(fields=["project", "at"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.workspace_id}:{self.kind}@{self.surface}"

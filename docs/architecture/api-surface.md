@@ -437,6 +437,10 @@ A huddle is agents syncing in rounds, led by one of them (canopy `huddle`; spec 
 - `GET /api/huddles/?agent=&limit=50` — Huddles you can see, newest first; `agent` keeps those it led or joined. Each: type, team, leader, members, `rounds_dispatched`, `finished`, `outcome_count`.
 - `GET /api/huddles/{huddle_id}` — A cell per (member, round), latest attempt only, plus `outputs` (tasks, live status) and `deadline_at` (earliest round-1 dispatch + 90 min). Prompts, parsed blocks and the leader's `summary` only where `turn_access.can_read_turn_content` allows, else `content_hidden: true`. A block naming another huddle/round is ignored with `reply_error`. The shapes are a contract with `canopy huddle await/status/resume`.
 
+### Engagement (`apps/agents/engagement_api.py`, mounted at `/api/engagement`) — what people do
+One append-only `EngagementEvent` table for every project and huddle (spec `docs/superpowers/specs/2026-10-16-work-group-huddles-design.md` §7): `(workspace, kind, surface, user, agent, project, task, huddle_id, group, at, meta)`. `kind` ∈ viewed, backed, commented, approved, declined, idea_added, run_announced, run_confirmed, run_skipped, run_expired, proposed, expired; `surface` ∈ web, slack, email, mcp. Written only by `apps/agents/engagement.record` (unknown kind/surface raises; a DB failure is logged, never raised to the caller).
+- `POST /api/engagement/view` — `{project: <id>} | {huddle_id}`: the view beacon the project and huddle pages fire. Once per person, per object, per UTC day (`recorded: false` on a repeat); 404 for anything the caller cannot see.
+
 ### Timeline (`apps/timeline`)
 - `GET /api/timeline/` — Team activity timeline: cursor-paginated aggregation over other apps via a string registry; link-out only. Spec: `docs/superpowers/specs/2026-06-19-team-activity-timeline-design.md`.
 

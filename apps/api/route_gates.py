@@ -275,6 +275,8 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/huddles/api.py: a derived view over the same visible turns as harness_list_turns
     "list_huddles": ("member", "session-acl"),  # anchors via visible_turns_qs; summary carries no content
     "get_huddle": ("member", "session-acl", "turn-content"),  # prompt/reply/digest only with turn-content
+    # --- apps/agents/engagement_api.py: what people do with projects + huddles
+    "record_engagement_view": ("member",),  # the project's agent workspace / the huddle's visible anchor
     # --- apps/threads/api.py: bounded agent->agent conversations; messages are tagged turns
     "open_thread": ("agent.work",),  # editor in the moderator agent's workspace
     "list_threads": ("member",),  # threads in the caller's workspaces; no message content
@@ -735,6 +737,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "add_person_fact": "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, attributed, visible to its subject and retractable by them",
     "refresh_mail_domain": "re-checks DNS and SES verification and caches the answer; changes no configuration",
     "edit_storyboard_decision": "a member's ruling on a demo-set default is the reader-tier act the decision log exists for; it is attributed and undoable (owner decision 2026-10-15)",
+    "record_engagement_view": "records only that the caller opened a page they can already read, once a day; changes nothing",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
 }
 
@@ -844,6 +847,7 @@ NOT_SETTINGS: dict[str, str] = {
     "create_sync": "content", "delete_sync": "content", "replace_skills": "content",
     "sync_skill_history": "content", "create_tasks": "content", "patch_task": "content",
     "create_idea": "content",  # an idea is a task with kind=idea
+    "record_engagement_view": "telemetry",  # the engagement view beacon
     "check_scaffold_repo": "action",  # POST only to keep a token out of the URL; writes nothing
     "create_channel_ingest": "request",  # asks the channel; the approval click is the grant
     "mark_channel_ingest_read": "action",  # moves the agent's own read position; grants nothing
