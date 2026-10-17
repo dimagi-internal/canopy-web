@@ -201,6 +201,9 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
                   // had it (an optimistic send knows its own author) and the
                   // frame is silent, but let the frame win otherwise.
                   author: frame.data.author ?? m.author ?? null,
+                  ...(frame.data.record
+                    ? { content: { ...m.content, record: frame.data.record } }
+                    : {}),
                   // The agent read it, so a pending or unconfirmed row is sent.
                   ...(m.role === "user" ? { status: "complete" as const, error_detail: null } : {}),
                 }
@@ -216,9 +219,11 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         // `client_id` (when the caller has one — an HTTP send) lets
         // `QueuedRows.hideClientIds` recognise the server's queued-turn
         // projection as THIS row rather than a duplicate.
-        content: frame.data.client_id
-          ? { text: frame.data.plaintext, client_id: frame.data.client_id }
-          : { text: frame.data.plaintext },
+        content: {
+          text: frame.data.plaintext,
+          ...(frame.data.client_id ? { client_id: frame.data.client_id } : {}),
+          ...(frame.data.record ? { record: frame.data.record } : {}),
+        },
         plaintext: frame.data.plaintext,
         status: "complete",
         error_detail: null,

@@ -283,7 +283,8 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 # carries no user beyond the runner's own login, so canopy's
                 # only chance to say WHO typed this is this metadata, on this
                 # frame, once.
-                metadata=_meta(turn_index=data.get("turn_index"), author=data.get("author")),
+                metadata=_meta(turn_index=data.get("turn_index"), author=data.get("author"),
+                               record=data.get("record")),
             )
         ]
 

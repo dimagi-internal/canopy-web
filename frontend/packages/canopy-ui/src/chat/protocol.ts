@@ -356,7 +356,7 @@ export type WsEvent =
   // this row to the server's queued-turn projection, and a contact's or
   // widget's own send rendered twice: once as their bubble, once as a "queued"
   // placeholder for the same send.
-  | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string; author?: MessageAuthor | null; client_id?: string } }
+  | { event: "chat.user_message"; data: { message_id: string; turn_index: number; plaintext: string; author?: MessageAuthor | null; client_id?: string; record?: Record<string, unknown> } }
   | { event: "chat.delta"; data: { message_id: string; text: string } }
   // `turn_index` is the row's transcript ordinal — the same key the persisted
   // Message carries, so a live tool row sorts into exactly the position it will

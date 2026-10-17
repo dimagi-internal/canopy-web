@@ -95,6 +95,18 @@ def test_a_user_event_becomes_a_client_frame():
     assert frames[0]["data"]["turn_index"] == 64
 
 
+def test_a_user_event_carries_its_record_provenance():
+    """A compaction summary is a `user` record nobody typed; its flags ride the
+    live frame, as they ride a history row's `content["record"]`, so the client
+    can tell it from a person's line without a reload."""
+    frames = turn_event_to_frames(
+        {"kind": "user", "seq": 7, "payload": {"text": "This session is being continued…",
+                                               "record": {"compact_summary": True}}},
+        _rid,
+    )
+    assert frames[0]["data"]["record"] == {"compact_summary": True}
+
+
 def test_an_activity_event_becomes_a_status_frame():
     """Turn boundaries answer "is the agent working right now" — which nothing
     else could. Between a prompt and the first tool call, Claude is thinking and

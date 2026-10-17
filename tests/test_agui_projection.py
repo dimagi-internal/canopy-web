@@ -150,6 +150,17 @@ def test_a_user_message_carries_its_author():
     assert event.metadata["canopy"]["author"] == {"name": "Jon", "user_id": 7}
 
 
+def test_a_user_message_carries_its_record_provenance():
+    [event] = agui.project(
+        {"event": "chat.user_message",
+         "data": {"message_id": "u1", "plaintext": "summary",
+                  "record": {"compact_summary": True}}},
+        thread_id="t1",
+    )
+
+    assert event.metadata["canopy"]["record"] == {"compact_summary": True}
+
+
 def test_a_user_message_with_no_author_carries_no_author_key():
     [event] = agui.project(
         {"event": "chat.user_message", "data": {"message_id": "u1", "plaintext": "hello"}},

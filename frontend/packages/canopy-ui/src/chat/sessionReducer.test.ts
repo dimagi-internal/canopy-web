@@ -551,6 +551,15 @@ describe("sessionReducer — a web send arriving twice", () => {
     expect(next.messages).toHaveLength(10)
   })
 
+  it("keeps the record's provenance, so a compaction summary is known live", () => {
+    const next = sessionReducer(makeState(), {
+      event: "chat.user_message",
+      data: { message_id: "9", turn_index: 9, plaintext: "This session is being continued…",
+              record: { compact_summary: true } },
+    } as WsEvent)
+    expect(next.messages[0].content.record).toEqual({ compact_summary: true })
+  })
+
   it("an empty-text frame never collapses onto another empty row", () => {
     const seeded = makeState({
       messages: [makeMessage({ id: "1", turn_index: 1, role: "user", plaintext: "" })],

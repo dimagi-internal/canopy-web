@@ -122,6 +122,9 @@ export function fromAgui(frame: AguiFrame): WsEvent[] {
             // canopy's only chance to say (spec 2026-09-26). Absent when the
             // server sent none (an agent/scheduled/email turn's own send).
             author: m.author as MessageAuthor | undefined,
+            // The transcript record's provenance — the `content.record` a
+            // history row carries — so a compaction summary is known live.
+            ...(m.record ? { record: m.record as Record<string, unknown> } : {}),
           },
         },
       ];
