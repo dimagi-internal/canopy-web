@@ -580,6 +580,37 @@ class AgentVaultWrap(models.Model):
         return f"{self.agent_id}:kv{self.kv}:{self.kind}"
 
 
+class ZkGrantNotice(models.Model):
+    """A wrap target the agent's vault key has not reached yet, and whether the
+    people who hold that key were told (canopy-web#1550; `apps/agents/zk_notify.py`).
+
+    One row per (agent, kind, target, kv): seen first at `first_seen_at`, told
+    at most once (`notified_at`), closed (`cleared_at`) once the target is
+    wrapped or stops qualifying. A target that needs a grant again at a later kv
+    gets a new row."""
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="zk_grant_notices")
+    kind = models.CharField(max_length=10)  # "device" | "member"
+    #: The RunnerDeviceKey pk or the user id, as `zk.pending_targets` names it.
+    target = models.CharField(max_length=64)
+    kv = models.PositiveIntegerField()
+    label = models.CharField(max_length=300, blank=True, default="")
+    first_seen_at = models.DateTimeField()
+    notified_at = models.DateTimeField(null=True, blank=True)
+    #: What the notification did: {"emailed": [...], "pushed": n, ...}.
+    notified = models.JSONField(default=dict, blank=True)
+    cleared_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-first_seen_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["agent", "kind", "target", "kv"], name="one_zk_grant_notice_per_target"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.agent_id}:kv{self.kv}:{self.kind}:{self.target}"
+
+
 class AgentPatRotation(models.Model):
     """One automatic (or on-demand) rotation of an agent's `canopy-pat`
     (Canopy Vault Phase 1b, canopy-web#1549; `apps/agents/pat_rotation.py`).
