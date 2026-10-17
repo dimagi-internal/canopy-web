@@ -854,7 +854,8 @@ def _when(ts: str) -> tuple[str, str]:
     return time.strftime("%Y-%m-%d", t), time.strftime("%H:%M", t)
 
 
-def transcript(ingest: SlackChannelIngest, *, after: int = 0, oldest: float = 0.0) -> dict:
+def transcript(ingest: SlackChannelIngest, *, after: int = 0, oldest: float = 0.0,
+               skip_users: frozenset[str] = frozenset()) -> dict:
     """The channel as Markdown: one heading per UTC day, threads nested under their parent.
 
     `after` is a read mark (`SlackChannelIngest.read_mark`): only messages STORED
@@ -866,7 +867,8 @@ def transcript(ingest: SlackChannelIngest, *, after: int = 0, oldest: float = 0.
 
     `oldest` (a Slack ts) cuts it further to messages POSTED after it — a work
     group run reads only what its lead confirmed — and an earlier thread parent
-    is then shown only if it, too, was posted after it.
+    is then shown only if it, too, was posted after it. `skip_users` leaves out
+    messages by those Slack users (a work group skips canopy's own posts).
 
     Returns {markdown, messages, total, after, mark, first_ts, last_ts}: `mark`
     is what to hand `mark_read` once the agent has kept the text."""
@@ -876,6 +878,8 @@ def transcript(ingest: SlackChannelIngest, *, after: int = 0, oldest: float = 0.
     rows = list((lines.filter(pk__gt=after) if after else lines).order_by("ts"))
     if oldest:
         rows = [r for r in rows if float(r.ts) > oldest]
+    if skip_users:
+        rows = [r for r in rows if r.user not in skip_users]
     replies: dict[str, list[SlackIngestMessage]] = {}
     tops = []
     have = {r.ts for r in rows}
