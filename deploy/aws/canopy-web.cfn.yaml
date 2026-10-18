@@ -518,11 +518,15 @@ Resources:
             # hcp-service.md § Retrieval; nothing is sent until the project's
             # cache is verified disabled. `manage.py hcp_embed` then fills every
             # vector at once (searches also fill them as they go).
+            # Set up 2026-10-18 in GCP project canopy-494811 (number 270508200508):
+            # caching disabled, a service account holding only predict + read the
+            # cache setting, and a federation pool only canopy-web-task-role can
+            # use. Not secrets. Off until the model below is set.
             - { Name: HCP_EMBEDDINGS_MODEL, Value: "" }
-            - { Name: HCP_VERTEX_PROJECT, Value: "" }
+            - { Name: HCP_VERTEX_PROJECT, Value: canopy-494811 }
             - { Name: HCP_VERTEX_LOCATION, Value: us-central1 }
-            - { Name: HCP_VERTEX_WIF_AUDIENCE, Value: "" }
-            - { Name: HCP_VERTEX_SERVICE_ACCOUNT, Value: "" }
+            - { Name: HCP_VERTEX_WIF_AUDIENCE, Value: "//iam.googleapis.com/projects/270508200508/locations/global/workloadIdentityPools/canopy-aws/providers/canopy-web" }
+            - { Name: HCP_VERTEX_SERVICE_ACCOUNT, Value: canopy-memory-embeddings@canopy-494811.iam.gserviceaccount.com }
             - { Name: AWS_REGION, Value: !Ref "AWS::Region" }
             - { Name: PORT, Value: !Ref ContainerPort }
             # Google Drive root folder for walkthrough storage. Not a secret
