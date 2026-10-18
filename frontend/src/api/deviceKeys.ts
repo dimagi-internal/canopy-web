@@ -106,7 +106,10 @@ export async function setCredentialSource(slug: string, source: '1password' | 'c
 
 /** Make the agent's canopy login and store it in its Canopy vault. The token is never returned. */
 export async function giveCanopyLogin(slug: string): Promise<AgentCanopyLoginOut> {
-  const res = await apiV2.POST('/api/agents/{slug}/canopy-login', { params: { path: { slug } }, body: {} })
+  const res = await apiV2.POST('/api/agents/{slug}/canopy-login', {
+    params: { path: { slug } },
+    body: { email: '', label: '' },
+  })
   if (res.error !== undefined || res.data === undefined) problem(res, 'giveCanopyLogin')
   return res.data as AgentCanopyLoginOut
 }

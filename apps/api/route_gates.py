@@ -107,6 +107,8 @@ GATES: dict[str, tuple[str, ...]] = {
     # + members.manage to CREATE the agent's login, own for one that has signed in
     # (services.mint_agent_canopy_token / agents/agent_login.py)
     "mint_agent_canopy_token": ("agent-admin",),
+    # The same mint, stored sealed and never returned. Browser: + passkey step-up.
+    "give_agent_canopy_login": ("agent-admin",),
     "transfer_owner": ("agent-owner",),  # leaving it ownerless needs OWN
     "get_interface": ("member",),
     "publish_interface": ("agent-admin",),
@@ -809,7 +811,7 @@ SETTINGS: frozenset[str] = frozenset({
     "share_mail_domain", "unshare_mail_domain",
     # agents: identity, ownership, access, integrations, credentials
     "upsert_agent", "move_agent", "delete_agent", "transfer_owner", "link_canopy_user", "mint_agent_canopy_token",
-    "grant_admin", "revoke_admin",
+    "give_agent_canopy_login", "grant_admin", "revoke_admin",
     "publish_interface", "unpublish_interface",
     "set_credential_source", "set_repository", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",
     "set_device_binding", "approve_runner_device_key", "revoke_runner_device_key",
