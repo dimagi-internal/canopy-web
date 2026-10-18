@@ -256,7 +256,7 @@ export function PeopleMePage() {
   const conflicted = allFacts.filter((f) => f.status === 'conflicted')
   const settled = allFacts.filter((f) => f.status !== 'conflicted')
   const shown = settled.filter((f) => source === 'all' || sourceOf(f).mine === (source === 'you'))
-  const { orgs, personal } = groupByPlace(shown)
+  const { orgs, unplaced } = groupByPlace(shown)
   const activity = audit.slice(0, activityShown)
 
   const factRow = (f: PersonFactDetail) => {
@@ -406,32 +406,25 @@ export function PeopleMePage() {
         <div className="mt-4 space-y-4">
           {orgs.map((o) => (
             <div key={o.org} className="rounded-xl border border-border bg-card px-4 pt-3 pb-2">
-              <PlaceHeading
-                title={o.name}
-                note={o.places.length > 1 ? `${o.places.length} workspaces` : ''}
-                readers={access.filter((a) => o.places.some((p) => reads(a, p.workspace)))}
-              />
+              <h3 className="text-sm font-semibold text-foreground">
+                {o.name}
+                {o.places.length > 1 ? (
+                  <span className="ml-2 font-normal text-muted-foreground">{o.places.length} workspaces</span>
+                ) : null}
+              </h3>
               {o.places.map((p) => (
-                <div key={p.workspace} className="mt-2">
-                  {(o.places.length > 1 || p.name !== o.name) && (
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{p.name}</div>
-                  )}
+                <div key={p.workspace} className="mt-3">
+                  <WorkspaceHeading name={p.name} readers={access.filter((a) => reads(a, p.workspace))} />
                   <ul className="divide-y divide-border">{p.facts.map(factRow)}</ul>
                   {enabled && <AddLine onAdd={onAdd} workspace={p.workspace} label={`Add to ${p.name}`} />}
                 </div>
               ))}
             </div>
           ))}
-          {(enabled || personal.facts.length > 0) && (
-            <PersonalCard
-              place={personal}
-              readers={access.filter((a) => reads(a, null))}
-              enabled={enabled}
-              onAdd={onAdd}
-              row={factRow}
-            />
+          {unplaced.facts.length > 0 && (
+            <UnplacedCard place={unplaced} readers={access.filter((a) => reads(a, null))} row={factRow} />
           )}
-          {orgs.length === 0 && personal.facts.length === 0 && !enabled && (
+          {orgs.length === 0 && unplaced.facts.length === 0 && (
             <p className="text-sm text-muted-foreground">Nothing is remembered about you.</p>
           )}
         </div>
@@ -454,6 +447,7 @@ export function PeopleMePage() {
                 (e) => e.eventType === 'preference.read' && eventSentence(e, names).who === a.name,
               )
               const reach = a.grants.map((g) => g.canopy.reach).find(Boolean)
+              const now = Array.from(new Set(a.grants.flatMap((g) => g.canopy.reach_names ?? [])))
               return (
                 <li
                   key={a.key}
@@ -477,11 +471,14 @@ export function PeopleMePage() {
                       {busyGrant === a.key ? 'Taking back…' : 'Take back'}
                     </button>
                   </div>
+                  {reach && (
+                    <div className="text-xs">
+                      <div className="text-foreground">Reads {reach}</div>
+                      {now.length > 0 && <div className="mt-0.5 text-muted-foreground">Right now: {now.join(', ')}</div>}
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span>
-                      {reach ? `Reaches ${reach}. ` : ''}
-                      {lastByThem ? `Last read ${relTime(lastByThem.timestamp)}.` : 'Hasn’t read anything yet.'}
-                    </span>
+                    <span>{lastByThem ? `Last read ${relTime(lastByThem.timestamp)}.` : 'Hasn’t read anything yet.'}</span>
                     <a
                       href="#remembered"
                       onClick={() => {
@@ -728,39 +725,36 @@ function PlaceHeading({ title, note, readers, empty }: { title: string; note: st
   )
 }
 
-type OnAdd = (category: string, text: string, workspace: string | null) => Promise<boolean>
+/** A workspace's name with who reads what is in it, right now — per workspace,
+ *  because agents' reach differs workspace by workspace (a collection can hold one). */
+function WorkspaceHeading({ name, readers }: { name: string; readers: AgentAccess[] }) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{name}</span>
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <Eye className="h-3 w-3" />
+        {readers.length ? `Read by ${readers.map((a) => a.name).join(', ')}` : 'No agent reads this right now'}
+      </span>
+    </div>
+  )
+}
 
-/** Your personal memory: entries in no workspace. An agent's default reach is its
- *  organisation, so it reads these only through a collection that includes
- *  Personal. The page states that mechanism and who reads it now; it does not
- *  promise what kind of agent will or won't (canopy doesn't classify agents). */
-function PersonalCard({
-  place,
-  readers,
-  enabled,
-  onAdd,
-  row,
-}: {
-  place: Place
-  readers: AgentAccess[]
-  enabled: boolean
-  onAdd: OnAdd
-  row: (f: PersonFactDetail) => ReactNode
-}) {
+type OnAdd =(category: string, text: string, workspace: string | null) => Promise<boolean>
+
+/** Entries in no workspace: written by you before a workspace was required, or by
+ *  an outside app (canopy files an app's writes in none, so they reach no
+ *  workspace's agents). Shown only when there are some; each entry says who wrote
+ *  it. An agent reads them only through a collection holding "No workspace". */
+function UnplacedCard({ place, readers, row }: { place: Place; readers: AgentAccess[]; row: (f: PersonFactDetail) => ReactNode }) {
   return (
     <div className="flex flex-col rounded-xl border border-dashed border-border px-4 pt-3 pb-2">
       <PlaceHeading
-        title="Personal"
-        note="not in any workspace"
+        title="Not in any workspace"
+        note="written by you without a workspace, or by an outside app"
         readers={readers}
-        empty="No agent reads this. An agent can only through a collection that includes Personal."
+        empty="No agent reads these. One can only through a collection that includes “No workspace”."
       />
-      {place.facts.length === 0 ? (
-        <p className="py-2.5 text-sm text-muted-foreground/70">Nothing yet.</p>
-      ) : (
-        <ul className="divide-y divide-border">{place.facts.map(row)}</ul>
-      )}
-      {enabled && <AddLine onAdd={onAdd} workspace={null} label="Add to Personal" />}
+      <ul className="divide-y divide-border">{place.facts.map(row)}</ul>
     </div>
   )
 }
@@ -783,8 +777,8 @@ function CategorySelect({ value, onChange }: { value: string; onChange: (v: stri
 }
 
 /** "Tell agents something about you" — one line at the top of your memory, with
- *  WHERE it goes as part of the sentence: a workspace you belong to (its agents
- *  read it) or Personal. Workspaces are grouped under their organisation. */
+ *  WHERE it goes as part of the sentence: a workspace you belong to, grouped under
+ *  its organisation. Someone in no workspace saves without one (the API's default). */
 function Composer({ onAdd, workspaces, preferred }: { onAdd: OnAdd; workspaces: WorkspaceOut[]; preferred: string | null }) {
   const [text, setText] = useState('')
   const [category, setCategory] = useState<string>(MY_CATEGORIES[0].value)
@@ -816,28 +810,29 @@ function Composer({ onAdd, workspaces, preferred }: { onAdd: OnAdd; workspaces: 
       />
       <div className="flex flex-wrap items-center gap-2">
         <CategorySelect value={category} onChange={setCategory} />
-        <label className="flex items-center gap-1 text-xs text-muted-foreground">
-          in
-          <select
-            aria-label="Where it goes"
-            value={target}
-            onChange={(e) => setWhere(e.target.value)}
-            className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
-          >
-            {orgs.map((root) => (
-              <optgroup key={root} label={named(root)}>
-                {workspaces
-                  .filter((w) => w.root === root)
-                  .map((w) => (
-                    <option key={w.slug} value={w.slug}>
-                      {w.display_name}
-                    </option>
-                  ))}
-              </optgroup>
-            ))}
-            <option value="">Personal (no workspace)</option>
-          </select>
-        </label>
+        {workspaces.length > 0 && (
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            in
+            <select
+              aria-label="Where it goes"
+              value={target}
+              onChange={(e) => setWhere(e.target.value)}
+              className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+            >
+              {orgs.map((root) => (
+                <optgroup key={root} label={named(root)}>
+                  {workspaces
+                    .filter((w) => w.root === root)
+                    .map((w) => (
+                      <option key={w.slug} value={w.slug}>
+                        {w.display_name}
+                      </option>
+                    ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+        )}
         <button
           type="submit"
           disabled={saving || !text.trim()}

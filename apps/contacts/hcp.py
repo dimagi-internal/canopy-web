@@ -1114,14 +1114,24 @@ def _display_name(slug: str) -> str:
 
 
 def source_label(source: str) -> str:
-    """How a person reads one source: "your personal memory", "your Connect
-    memory", "your Dimagi memory (all divisions)"."""
+    """How a person reads one source, saying only what it resolves to: "Connect",
+    "all of Dimagi (every workspace in it, including new ones)" — a tree is
+    expanded when read — and "entries in no workspace" (what you or an outside app
+    wrote without one)."""
     if source == PERSONAL_SOURCE:
-        return "your personal memory"
+        return "entries in no workspace"
     kind, _, slug = source.partition(":")
     if kind == "tree":
-        return f"your {_display_name(slug)} memory (all divisions)"
-    return f"your {_display_name(slug)} memory"
+        return f"all of {_display_name(slug)} (every workspace in it, including new ones)"
+    return _display_name(slug)
+
+
+def reach_names(grant: PersonGrant) -> list[str]:
+    """What a grant reads RIGHT NOW, as workspace names, sorted ("No workspace"
+    for entries in none) — the resolved form of `reach_label`."""
+    slugs = reach_of(grant)
+    names = sorted(_display_name(s) for s in slugs if s is not None)
+    return names + (["No workspace"] if None in slugs else [])
 
 
 def reach_label(sources) -> str:
@@ -1337,6 +1347,7 @@ def grant_dict(grant: PersonGrant) -> dict:
                    # personal entries), so a page can show WHICH entries it sees
                    # without re-deriving the tree.
                    "reaches": sorted(reach_of(grant), key=lambda s: (s is not None, s or "")),
+                   "reach_names": reach_names(grant),
                    # The person's memory collection it uses (None = the agent's default).
                    "collection": ({"id": grant.collection_id, "name": grant.collection.name}
                                   if grant.collection_id else None),

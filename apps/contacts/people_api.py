@@ -508,16 +508,18 @@ def _collections(person: Person) -> dict:
 
     return {"collections": [hcp_collections.collection_dict(c)
                             for c in MemoryCollection.objects.filter(person=person)],
-            "contexts": [{"source": s, "label": hcp.source_label(s)}
+            "contexts": [{"source": s, "label": hcp_collections.context_label(s),
+                          "group": hcp_collections.context_group(s)}
                          for s in hcp_collections.contexts(person)]}
 
 
 @router.get("/me/memory-collections/", response=MemoryCollectionsOut,
             summary="Your memory collections")
 def list_my_memory_collections(request: HttpRequest) -> dict:
-    """The collections you made — named sets of contexts (an organisation you
-    belong to, your personal memory) you can point an agent at — which agents
-    use each, and the contexts you can choose from. Only you see these."""
+    """The collections you made — named sets of contexts (all of an organisation,
+    one workspace, entries in no workspace) you can point an agent at, resolved
+    when read — which agents use each, and the contexts you can choose from.
+    Only you see these."""
     return _collections(_the_person_themself(request))
 
 
