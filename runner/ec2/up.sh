@@ -241,6 +241,18 @@ PY
   fi
 fi
 
+# The box's zero-knowledge ECDH key lives in KMS, in its own stack (ecdh-kms.cfn.yaml):
+# only this runner's instance role may derive with it. A separate stack because an
+# update to the runner stack re-resolves the AMI and REPLACES the instance — adding a
+# key must never do that. Idempotent; the box adopts the key on its next start.
+ROLE_NAME=$("${AWS[@]}" cloudformation describe-stack-resource --stack-name "$STACK" \
+  --logical-resource-id RunnerRole --query 'StackResourceDetail.PhysicalResourceId' --output text)
+ROLE_ARN=$("${AWS[@]}" iam get-role --role-name "$ROLE_NAME" --query Role.Arn --output text)
+echo ">> ECDH key stack ${STACK}-ecdh (role $ROLE_NAME)"
+"${AWS[@]}" cloudformation deploy \
+  --stack-name "${STACK}-ecdh" --template-file ecdh-kms.cfn.yaml \
+  --parameter-overrides "RunnerRoleArn=$ROLE_ARN" --no-fail-on-empty-changeset
+
 echo ">> outputs"
 OUT=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
   --query 'Stacks[0].Outputs' --output json)

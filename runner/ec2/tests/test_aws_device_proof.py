@@ -228,7 +228,9 @@ def test_enrollment_sends_the_ecdh_key_canopy_made(cloud_runner, monkeypatch, tm
 
 @pytest.mark.parametrize("rc,out,want", [
     (0, json.dumps({"kind": "software", "jkt": "J", "jwk": ECDH_JWK, "created": True}),
-     {"jwk": ECDH_JWK, "jkt": "J"}),
+     {"jwk": ECDH_JWK, "jkt": "J", "kind": "software"}),
+    (0, json.dumps({"kind": "aws-kms", "jkt": "K", "jwk": ECDH_JWK, "created": True}),
+     {"jwk": ECDH_JWK, "jkt": "K", "kind": "aws-kms"}),                # the KMS key
     (2, "", {}),                                                   # an older canopy: no flag
     (0, json.dumps({"jwk": {**ECDH_JWK, "d": "PRIVATE"}}), {}),    # never a private member
     (0, "not json", {}),

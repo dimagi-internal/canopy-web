@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  A canopy cloud runner's zero-knowledge ECDH key (canopy-web#1550) — its own small
+  stack beside the runner's, so adding or rotating it never touches the instance (a
+  runner-stack update re-resolves the AMI parameter and REPLACES the box). up.sh deploys
+  it as <runner stack>-ecdh after the runner stack; down.sh deletes it first.
+
+Parameters:
+  RunnerRoleArn:
+    Type: String
+    Description: The runner stack's RunnerRole ARN — the only principal that may derive.
+
+Resources:
+  # The box's zero-knowledge ECDH key (canopy-web#1550): the key a ZK agent's
+  # vault key is wrapped to. A Mac keeps it in its Secure Enclave; an EC2 box
+  # has none, so it lives here — P-256 KEY_AGREEMENT, and ONLY this runner's
+  # instance role may derive with it (canopy src/orchestrator/device_key_kms.py
+  # finds it by the alias below). The account root may administer the key but
+  # not derive: kms:DeriveSharedSecret is deliberately absent from its grant.
+  EcdhKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub '${AWS::StackName} zero-knowledge vault ECDH key (canopy-web#1550)'
+      KeySpec: ECC_NIST_P256
+      KeyUsage: KEY_AGREEMENT
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AccountAdministersButCannotDerive
+            Effect: Allow
+            Principal: { AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root' }
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+            Resource: '*'
+          - Sid: OnlyThisRunnerDerives
+            Effect: Allow
+            Principal: { AWS: !Ref RunnerRoleArn }
+            Action:
+              - kms:DeriveSharedSecret
+              - kms:GetPublicKey
+            Resource: '*'
+      Tags:
+        - { Key: purpose, Value: canopy-cloud-runner }
+
+  EcdhKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      # The box finds its key by its instance role's NAME (from IMDS), so the alias
+      # is that name: the last path segment of the role ARN.
+      AliasName: !Sub
+        - 'alias/canopy-runner-ecdh/${RoleName}'
+        - RoleName: !Select [1, !Split ['/', !Ref RunnerRoleArn]]
+      TargetKeyId: !Ref EcdhKey
+
+Outputs:
+  EcdhKeyArn:
+    Value: !GetAtt EcdhKey.Arn
+  EcdhKeyAlias:
+    Value: !Ref EcdhKeyAlias

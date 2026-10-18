@@ -121,6 +121,14 @@ if [[ "$PURGE" == "1" ]]; then
 fi
 
 # ── 1. the stack ─────────────────────────────────────────────────────────────────
+# Its ECDH key stack first (up.sh made it; it names the runner's role). The KMS key is
+# scheduled for deletion by CloudFormation — vault keys wrapped to it die with the box,
+# which is right: a new box gets a new key and is approved (and re-granted) afresh.
+if "${AWS[@]}" cloudformation describe-stacks --stack-name "${STACK}-ecdh" >/dev/null 2>&1; then
+  echo ">> deleting ECDH key stack ${STACK}-ecdh"
+  "${AWS[@]}" cloudformation delete-stack --stack-name "${STACK}-ecdh"
+  "${AWS[@]}" cloudformation wait stack-delete-complete --stack-name "${STACK}-ecdh"
+fi
 if "${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" >/dev/null 2>&1; then
   echo ">> deleting stack $STACK"
   "${AWS[@]}" cloudformation delete-stack --stack-name "$STACK"
