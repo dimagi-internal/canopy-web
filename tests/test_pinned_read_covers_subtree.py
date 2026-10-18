@@ -114,12 +114,26 @@ def test_a_pinned_read_never_crosses_roots(world):
     assert wsvc.read_scope(world["both"], "marshellis") == {"marshellis", "kids"}
 
 
-def test_by_id_stays_exactly_the_pin(world):
-    """By-id gates are unchanged: a pinned by-slug read reaches the pin only."""
+def test_by_id_covers_what_the_pinned_list_shows(world):
+    """2026-10-17: a by-slug gate spans what the pinned LIST spans, so a row the
+    dimagi list shows (echo, in connect) opens under the dimagi pin too."""
     c = _client(world["both"])
     assert c.get("/api/w/connect/agents/echo/").status_code == 200
-    assert c.get("/api/w/dimagi/agents/echo/").status_code == 404
-    assert wsvc.member_scope(world["both"], "dimagi") == {"dimagi"}
+    assert c.get("/api/w/dimagi/agents/echo/").status_code == 200
+    assert wsvc.member_scope(world["both"], "dimagi") == {"dimagi", "connect"}
+    # An owner of the parent is in the child by inheritance, as for lists.
+    assert _client(world["org_owner"]).get("/api/w/dimagi/agents/echo/").status_code == 200
+
+
+def test_by_id_never_reaches_past_the_callers_memberships(world):
+    # In dimagi only: connect's agent stays a 404 under the dimagi pin.
+    assert _client(world["dimagi_only"]).get("/api/w/dimagi/agents/echo/").status_code == 404
+    assert wsvc.member_scope(world["dimagi_only"], "dimagi") == {"dimagi"}
+    # A pinned child never reaches up to its parent.
+    assert _client(world["both"]).get("/api/w/connect/agents/hal/").status_code == 404
+    assert wsvc.member_scope(world["both"], "connect") == {"connect"}
+    # Never across roots.
+    assert _client(world["both"]).get("/api/w/dimagi/agents/nanny/").status_code == 404
 
 
 # -- writes --------------------------------------------------------------------
