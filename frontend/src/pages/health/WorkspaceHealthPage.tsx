@@ -112,15 +112,19 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
           <span>Open a row for each step and its fix.</span>
         </p>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-agents">
+          <table className="w-full min-w-[1080px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-agents">
             <thead className="text-left text-muted-foreground">
               <tr>
                 <th className="py-1 font-medium">Agent</th><th className="font-medium">Setup</th>
                 <th className="font-medium">Vault</th><th className="font-medium">Owner</th>
                 <th className="font-medium">Workspace</th><th className="font-medium">Last turn</th>
-                <th className="font-medium text-right">Turns, 30 days</th><th className="font-medium text-right">Skills</th>
-                <th className="font-medium text-right">Schedules</th><th className="font-medium">Interface</th>
-                <th className="font-medium">Mode</th>
+                <th className="font-medium text-right">Turns, 30 days</th>
+                <th className="font-medium text-right">Projects</th>
+                <th className="font-medium text-right" title="Suggested or in progress">Open tasks</th>
+                <th className="font-medium text-right" title="Open tasks with an unanswered ask, or parked on a person">Waiting on people</th>
+                <th className="font-medium text-right">Skills</th><th className="font-medium text-right">Schedules</th>
+                <th className="font-medium" title="What people other than its admins may ask it to do (its published interface)">Who can use it</th>
+                <th className="font-medium" title="manual: its turns stop for a person's approval before acting or sending. auto: they run through.">Turn mode</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -149,13 +153,26 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                     <td className="font-mono text-foreground-secondary">{a.workspace}</td>
                     <td className="text-foreground-secondary">{a.last_turn_at ? relativeTime(a.last_turn_at, now) : 'never'}</td>
                     <td className="text-right tabular-nums">{a.turns_30d}</td>
+                    <td className="text-right tabular-nums">
+                      <CountLink n={a.projects} to={`/w/${a.workspace}/agents/${a.slug}`} label="projects" />
+                    </td>
+                    <td className="text-right tabular-nums">
+                      <CountLink n={a.open_tasks} to={`/w/${a.workspace}/agents/${a.slug}/tasks`} label="open tasks" />
+                    </td>
+                    <td className="text-right tabular-nums">{a.waiting_tasks}</td>
                     <td className="text-right tabular-nums">{a.skills}</td>
                     <td className="text-right tabular-nums">{a.schedules}</td>
-                    <td className="text-foreground-secondary">{a.has_interface ? 'published' : 'none'}</td>
-                    <td className="text-foreground-secondary">{a.turn_mode}</td>
+                    <td className="whitespace-nowrap text-foreground-secondary">
+                      {a.has_interface
+                        ? `Admins + ${a.capabilities} capabilit${a.capabilities === 1 ? 'y' : 'ies'}`
+                        : 'Admins only'}
+                    </td>
+                    <td className="whitespace-nowrap text-foreground-secondary">
+                      {a.turn_mode === 'manual' ? 'Manual · asks first' : a.turn_mode === 'auto' ? 'Auto' : a.turn_mode}
+                    </td>
                   </tr>
                   {open === a.slug && (
-                    <tr><td colSpan={11} className="bg-muted/30 p-3"><AgentDetail agent={a} /></td></tr>
+                    <tr><td colSpan={14} className="bg-muted/30 p-3"><AgentDetail agent={a} /></td></tr>
                   )}
                 </Fragment>
               ))}
@@ -165,6 +182,16 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
         </div>
       </section>
     </div>
+  )
+}
+
+/** A count that opens the agent's page for it; a zero is just a zero. The click
+ *  must not also toggle the row open. */
+function CountLink({ n, to, label }: { n: number; to: string; label: string }): JSX.Element {
+  if (!n) return <span className="text-muted-foreground">0</span>
+  return (
+    <Link to={to} onClick={(e) => e.stopPropagation()} aria-label={`${n} ${label}`}
+          className="text-primary hover:underline">{n}</Link>
   )
 }
 

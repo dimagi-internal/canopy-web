@@ -971,7 +971,7 @@ class AgentProject(models.Model):
         cached = getattr(self, "_open_task_count", None)
         if cached is not None:
             return cached
-        return self.tasks.filter(status__in=[AgentTask.SUGGESTED, AgentTask.IN_PROGRESS]).count()
+        return self.tasks.filter(status__in=AgentTask.LIVE_STATUSES).count()
 
     @property
     def waiting_task_count(self) -> int:
@@ -1137,6 +1137,8 @@ class AgentTask(models.Model):
     # No "To do" (the agent would just do it) and no "Blocked" column — "waiting
     # on a person" is expressed by `assigned` being a human, shown as an overlay.
     SUGGESTED, IN_PROGRESS, DONE, DECLINED = "suggested", "in_progress", "done", "declined"
+    #: An OPEN task — the one definition every count of "open tasks" uses.
+    LIVE_STATUSES = (SUGGESTED, IN_PROGRESS)
     STATUS_CHOICES = [
         (SUGGESTED, "Suggested"),
         (IN_PROGRESS, "In progress"),

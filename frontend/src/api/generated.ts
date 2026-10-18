@@ -22076,10 +22076,18 @@ export interface components {
             readonly turn_mode: string;
             /** Has Interface */
             readonly has_interface: boolean;
+            /** Capabilities */
+            readonly capabilities: number;
             /** Skills */
             readonly skills: number;
             /** Schedules */
             readonly schedules: number;
+            /** Projects */
+            readonly projects: number;
+            /** Open Tasks */
+            readonly open_tasks: number;
+            /** Waiting Tasks */
+            readonly waiting_tasks: number;
             /**
              * Created At
              * Format: date-time

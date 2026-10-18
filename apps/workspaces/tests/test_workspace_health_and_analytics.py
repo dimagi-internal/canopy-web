@@ -321,3 +321,21 @@ def test_an_agents_login_and_a_system_account_are_not_people(tree):
     # Facts recorded before the login was known to be an agent's are fixed by the backfill.
     Activity.objects.update(actor_kind="user")
     assert activity.reclassify() == 2
+
+
+def test_health_counts_projects_open_tasks_and_waits_like_the_agent_pages(tree):
+    from apps.agents.models import AgentProject, AgentTask
+
+    hal = tree["hal"]
+    AgentProject.objects.create(agent=hal, ext_id="P1", name="Live")
+    AgentProject.objects.create(agent=hal, ext_id="P2", name="Shelved", status=AgentProject.ARCHIVED)
+    AgentTask.objects.create(agent=hal, ext_id="T1", title="open", status=AgentTask.IN_PROGRESS)
+    AgentTask.objects.create(agent=hal, ext_id="T2", title="parked", status=AgentTask.SUGGESTED,
+                             waiting_on_user=tree["builder"])
+    AgentTask.objects.create(agent=hal, ext_id="T3", title="done", status=AgentTask.DONE,
+                             waiting_on_user=tree["builder"])
+    hal.interface = {"capabilities": {"ask": {"callers": ["member"]}}}
+    hal.save(update_fields=["interface"])
+    row = next(a for a in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["agents"] if a["slug"] == "hal")
+    assert (row["projects"], row["open_tasks"], row["waiting_tasks"]) == (1, 2, 1)
+    assert (row["has_interface"], row["capabilities"]) == (True, 1)

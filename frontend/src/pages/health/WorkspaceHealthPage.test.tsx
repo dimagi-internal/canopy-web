@@ -12,7 +12,8 @@ const step = (key: string, status: 'done' | 'todo', href = '') => ({
 function agent(slug: string, over: Partial<AgentHealthOut> = {}): AgentHealthOut {
   return {
     slug, name: slug.toUpperCase(), workspace: 'connect', owner_email: `${slug}@x.org`, can_fix: true, email: '',
-    repo_url: '', turn_mode: 'manual', has_interface: false, skills: 2, schedules: 0, created_at: '2026-10-01T00:00:00Z',
+    repo_url: '', turn_mode: 'manual', has_interface: false, capabilities: 0, skills: 2, schedules: 0,
+    projects: 1, open_tasks: 3, waiting_tasks: 1, created_at: '2026-10-01T00:00:00Z',
     last_turn_at: null, turns_30d: 0, left: 1,
     vault: { source: 'canopy-web', state: 'moving', declared: 2, refs: [{ name: 'gh', status: 'stored' }, { name: 'old', status: '1password' }],
       stored: ['gh'], in_1password: ['old'], missing: [], op_vault: '', op_key_set: false, zero_knowledge: true, machines_waiting: [] },
@@ -57,6 +58,14 @@ describe('WorkspaceHealthPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Not on canopy-web vault' }))
     expect(screen.queryByText('ADA')).toBeNull()
     expect(screen.getByText('HAL')).toBeTruthy()
+  })
+
+  it('links an agent’s projects and open tasks, and says who can use it in words', async () => {
+    renderPage()
+    expect((await screen.findAllByRole('link', { name: '3 open tasks' }))[0].getAttribute('href')).toBe('/w/connect/agents/hal/tasks')
+    expect(screen.getAllByRole('link', { name: '1 projects' })[0].getAttribute('href')).toBe('/w/connect/agents/hal')
+    expect(screen.getAllByText('Admins only').length).toBe(3)
+    expect(screen.getAllByText('Manual · asks first').length).toBe(3)
   })
 
   it('links the fix when the viewer may make it, and offers the owner an email when not', async () => {

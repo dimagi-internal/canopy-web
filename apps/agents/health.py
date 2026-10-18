@@ -51,8 +51,12 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict) -> dict:
         "repo_url": agent.repo_url,
         "turn_mode": agent.turn_mode,
         "has_interface": iface_mod.published(agent.interface or {}),
+        "capabilities": len((agent.interface or {}).get("capabilities") or {}),
         "skills": c.get("skills", 0),
         "schedules": c.get("schedules", 0),
+        "projects": c.get("projects", 0),
+        "open_tasks": c.get("open_tasks", 0),
+        "waiting_tasks": c.get("waiting_tasks", 0),
         "created_at": agent.created_at,
         "last_turn_at": last.get("last_at"),
         "turns_30d": last.get("n", 0),
@@ -63,12 +67,23 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict) -> dict:
 
 
 def _counts(agents: list[Agent]) -> dict[int, dict]:
-    out: dict[int, dict] = {}
-    for rel, key in (("skills", "skills"), ("schedules", "schedules")):
-        for row in (Agent.objects.filter(pk__in=[a.pk for a in agents]).order_by()
-                    .annotate(n=Count(rel)).values("pk", "n")):
-            out.setdefault(row["pk"], {})[key] = row["n"]
-    return out
+    """Per agent, in one query: skills, schedules, active projects, open tasks
+    (`AgentTask.LIVE_STATUSES`) and open tasks waiting on a person
+    (`services.waiting_q`) — the definitions the agent's own pages count with."""
+    from django.db.models import Q
+
+    from .models import AgentProject, AgentTask
+    from .services import waiting_q
+
+    rows = (Agent.objects.filter(pk__in=[a.pk for a in agents]).order_by()
+            .annotate(skills_n=Count("skills", distinct=True),
+                      schedules_n=Count("schedules", distinct=True),
+                      projects_n=Count("projects", filter=Q(projects__status=AgentProject.ACTIVE), distinct=True),
+                      open_n=Count("tasks", filter=Q(tasks__status__in=AgentTask.LIVE_STATUSES), distinct=True),
+                      waiting_n=Count("tasks", filter=waiting_q("tasks__"), distinct=True))
+            .values("pk", "skills_n", "schedules_n", "projects_n", "open_n", "waiting_n"))
+    return {r["pk"]: {"skills": r["skills_n"], "schedules": r["schedules_n"], "projects": r["projects_n"],
+                      "open_tasks": r["open_n"], "waiting_tasks": r["waiting_n"]} for r in rows}
 
 
 def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True) -> dict:
