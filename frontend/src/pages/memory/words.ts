@@ -69,13 +69,6 @@ export function endedOf(g: HcpGrant): string {
   return when ? `Ended ${when} with its conversation` : 'Ended with its conversation'
 }
 
-/** The categories a grant reaches, as labels, de-duplicated: scopes look like
- *  `hcp:read:general_preferences:…` and the middle is the category. */
-export function grantCategories(g: HcpGrant): string[] {
-  const cats = new Set(g.scopes.map((s) => s.split(':').slice(1, -1).join(':')).filter(Boolean))
-  return Array.from(cats).map((c) => categoryLabel(c.split(':').pop()))
-}
-
 /** One row per agent you currently allow: several active grants to one agent
  *  (e.g. kept, plus a conversation one) collapse into one card. */
 export interface AgentAccess {
@@ -177,15 +170,46 @@ export function readsByEntry(audit: HcpAuditEvent[], names: Map<string, string>)
   return out
 }
 
-/** Your entries by category, in the order MY_CATEGORIES lists them, any others last. */
-export function groupFacts(facts: PersonFactDetail[]): { category: string; label: string; facts: PersonFactDetail[] }[] {
-  const order = MY_CATEGORIES.map((c) => c.value as string)
-  const by = new Map<string, PersonFactDetail[]>(order.map((c) => [c, []]))
+/** Where your entries live, which is what decides who reads them: each
+ *  organisation with its workspaces, then your personal entries. */
+export interface Place {
+  /** A workspace slug, or null for your personal entries. */
+  workspace: string | null
+  name: string
+  facts: PersonFactDetail[]
+}
+
+export interface OrgPlaces {
+  org: string
+  name: string
+  places: Place[]
+}
+
+export function groupByPlace(facts: PersonFactDetail[]): { orgs: OrgPlaces[]; personal: Place } {
+  const orgs = new Map<string, OrgPlaces>()
+  const personal: Place = { workspace: null, name: 'Personal', facts: [] }
   for (const f of facts) {
-    const c = f.category || 'other'
-    by.set(c, [...(by.get(c) ?? []), f])
+    if (!f.workspace) {
+      personal.facts.push(f)
+      continue
+    }
+    const key = f.org ?? f.workspace
+    const org = orgs.get(key) ?? { org: key, name: f.org_name || key, places: [] }
+    let place = org.places.find((p) => p.workspace === f.workspace)
+    if (!place) {
+      place = { workspace: f.workspace, name: f.workspace_name || f.workspace, facts: [] }
+      org.places.push(place)
+    }
+    place.facts.push(f)
+    orgs.set(key, org)
   }
-  return Array.from(by.entries()).map(([category, list]) => ({ category, label: categoryLabel(category), facts: list }))
+  return { orgs: Array.from(orgs.values()), personal }
+}
+
+/** Does an agent you allow read entries in `workspace` (null = personal)? Canopy
+ *  says which workspaces a grant reaches; nothing is derived here. */
+export function reads(a: AgentAccess, workspace: string | null): boolean {
+  return a.grants.some((g) => (g.canopy.reaches ?? []).includes(workspace))
 }
 
 /** Day headings for the activity list: "Today", "Yesterday", "Mon, Oct 12". */

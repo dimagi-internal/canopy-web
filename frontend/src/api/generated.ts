@@ -26943,6 +26943,23 @@ export interface components {
              */
             readonly workspace?: string | null;
             /**
+             * Workspace Name
+             * @description That workspace's display name.
+             * @default
+             */
+            readonly workspace_name: string;
+            /**
+             * Org
+             * @description The organisation (top of the workspace tree) it lives in; null for a personal entry.
+             */
+            readonly org?: string | null;
+            /**
+             * Org Name
+             * @description The organisation's display name.
+             * @default
+             */
+            readonly org_name: string;
+            /**
              * Asserted By
              * @description The agent slug or the person's email that asserted it.
              * @default

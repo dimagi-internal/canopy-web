@@ -36,6 +36,10 @@ class PersonFactDetailOut(PersonFactOut):
 
     workspace: str | None = Field(default=None, description="The workspace it was written in; "
                                                             "null for a personal entry.")
+    workspace_name: str = Field(default="", description="That workspace's display name.")
+    org: str | None = Field(default=None, description="The organisation (top of the workspace tree) "
+                                                      "it lives in; null for a personal entry.")
+    org_name: str = Field(default="", description="The organisation's display name.")
     asserted_by: str = Field(default="", description="The agent slug or the person's email that asserted it.")
     source_turn_id: str | None = None
     learned_by: str = Field(default="", description="The agent's name, when an agent recorded it.")

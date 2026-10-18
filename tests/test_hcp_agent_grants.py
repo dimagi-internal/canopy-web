@@ -322,6 +322,8 @@ def test_an_agent_in_another_division_reads_org_wide_but_not_personal(org):
     assert '"tree:dimagi"' in issued.detail
     assert "reach=only your Dimagi memory (all divisions)" in issued.detail
     assert hcp.grant_dict(g)["canopy"]["reach"] == "your Dimagi memory (all divisions)"
+    # The same reach as data, for the page to mark what this agent sees: the tree, never personal.
+    assert hcp.grant_dict(g)["canopy"]["reaches"] == ["connect", "dimagi", "strategy"]
     listed = _as(org["lili"]).get("/api/hcp/v1/grants").json()["grants"]
     assert listed[0]["restrictions"] == g.restrictions
     assert _found(org["hal"], turn) == ["KC metrics lead."]          # Connect's; not personal

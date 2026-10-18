@@ -99,6 +99,8 @@ export interface HcpGrant {
     modality: string
     /** An agent's grant: the part of your memory it reaches, in words (HCP 4.1.5.1). */
     reach?: string
+    /** The same reach as data: the workspaces it reads, `null` = your personal entries. */
+    reaches?: (string | null)[]
     /** The memory collection it uses; null = the agent's default (its organisation). */
     collection?: { id: number; name: string } | null
     /** The OAuth client the grant was issued to, when it was one (HCP service). */
@@ -233,10 +235,12 @@ export const MY_CATEGORIES = [
   { value: 'coordination_context', label: 'How to coordinate with me' },
 ] as const
 
-/** Add a PERSONAL entry — yours, in no workspace. No agent in a workspace reads a
- *  personal entry; you do, and any client you authorize does. */
-export async function addMyEntry(category: string, preference: string): Promise<void> {
+/** Add an entry of your own to a workspace you belong to (agents whose reach
+ *  covers it read it), or with `workspace` null to your personal memory, which
+ *  no work agent reads unless you add it to a collection that agent uses. */
+export async function addMyEntry(category: string, preference: string, workspace: string | null = null): Promise<void> {
   const { error } = await apiV2.POST('/api/hcp/v1/preferences/add', {
+    params: { query: workspace ? { workspace } : {} },
     body: {
       category,
       preference,
