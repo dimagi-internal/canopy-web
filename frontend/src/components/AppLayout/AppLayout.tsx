@@ -16,7 +16,7 @@ import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
 import { CanopyWidget } from '@/widget/CanopyWidget'
-import { isNavGroupActive, isNavItemActive, resolveNavGroups } from './nav'
+import { isNavGroupActive, isNavItemActive, resolveNavGroups, switchWorkspacePath } from './nav'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { useAppBarHidden } from './appBarStore'
 
@@ -133,6 +133,7 @@ function UserMenu() {
 function WorkspaceSwitcher() {
   const { workspaces, active } = useWorkspace()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   // TWO independent decisions, which is the entire point of this component.
   // Whether to show a SWITCHER depends on having something to switch between.
   // Whether to show CREATE does not depend on anything. Conflating them is what
@@ -150,7 +151,7 @@ function WorkspaceSwitcher() {
         className="min-h-11 max-w-40 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground sm:min-h-0"
         value={active ?? ''}
         onChange={(e) =>
-          navigate(e.target.value === NEW_WORKSPACE ? '/new-workspace' : `/w/${e.target.value}/agents`)
+          navigate(e.target.value === NEW_WORKSPACE ? '/new-workspace' : switchWorkspacePath(pathname, e.target.value))
         }
       >
         {/* Plain names, tree ORDER only: a division follows its parent, but carries
