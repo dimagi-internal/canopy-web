@@ -544,6 +544,16 @@ class WorkspaceHealthNodeOut(StrictModel):
     shared_vault: SharedVaultHealthOut
 
 
+class HealthRunnerOut(TopologyRunnerOut):
+    # When the box last sent its usage report (`events.usage`).
+    usage_reported_at: dt.datetime | None = None
+    # Its local sessions in known repos canopy has no record of (a count; the list
+    # is its admins' alone: GET /api/harness/runners/{id}/missing-sessions).
+    missing_sessions: int = 0
+    # The viewer may check for and send up its missing sessions.
+    can_administer: bool = False
+
+
 class HealthTotalsOut(StrictModel):
     agents: int
     set_up: int
@@ -561,8 +571,8 @@ class WorkspaceHealthOut(StrictModel):
     workspaces: list[WorkspaceHealthNodeOut]
     agents: list[AgentHealthOut]
     # The runners the tree's agents route to, or that live in it — the runner
-    # topology's own rows.
-    runners: list[TopologyRunnerOut]
+    # topology's own rows, plus each box's usage report.
+    runners: list[HealthRunnerOut]
     totals: HealthTotalsOut
 
 
@@ -581,9 +591,8 @@ class AnalyticsTotalsOut(StrictModel):
     output_tokens: int
     cache_read_tokens: int
     cache_creation_tokens: int
-    # Turns (or typed messages' answers) whose tokens were seen; the rest are "not
-    # reported", not zero.
-    turns_with_usage: int
+    # Claude Code sessions whose boxes reported their tokens (`events.usage`).
+    sessions_with_usage: int
 
 
 class AnalyticsDayOut(StrictModel):

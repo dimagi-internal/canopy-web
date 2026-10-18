@@ -52,6 +52,12 @@ from .schemas import (
     PauseIn,
     RecordSessionIn,
     ReportSessionsIn,
+    MissingSessionsOut,
+    SendUpIn,
+    SendUpOut,
+    UsageReportIn,
+    UsageReportOut,
+    UsageScopeOut,
     ResolveSessionIn,
     ResolveSessionOut,
     RunnerCapabilitiesIn,
@@ -1510,6 +1516,75 @@ def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
     # on, the same class of operation as setting its credentials.
     runner = _runner_admin_or_404(request, runner_id)
     return services.request_refresh(runner)
+
+
+@router.get("/runners/{runner_id}/usage-scope", response=UsageScopeOut)
+def runner_usage_scope(request: HttpRequest, runner_id: uuid.UUID):
+    """The repos this box scans for its usage report (its declared projects and the
+    agents it serves), and whether a person asked for a full rescan."""
+    from apps.events import usage
+
+    runner = _runner_or_404(request, runner_id)
+    return UsageScopeOut(repos=usage.scope(runner), full=runner.usage_scan_requested_at is not None)
+
+
+@router.post("/runners/{runner_id}/usage", response=UsageReportOut)
+def post_runner_usage(request: HttpRequest, runner_id: uuid.UUID, payload: UsageReportIn):
+    """The box's usage report: per Claude Code session, per UTC day, tokens and a
+    little identity — never content. Each session's days replace what was held.
+    Matched to canopy's own record of each session; one that matches nothing is
+    kept as missing, visible only to the box's admins."""
+    from apps.events import usage
+
+    runner = _runner_or_404(request, runner_id)
+    return UsageReportOut(**usage.record(runner, [s.model_dump() for s in payload.sessions], full=payload.full))
+
+
+@router.post("/runners/{runner_id}/usage-scan", response=MissingSessionsOut)
+def request_usage_scan(request: HttpRequest, runner_id: uuid.UUID):
+    """Check for missing sessions: ask the box for a FULL rescan of its transcripts
+    (a durable ask it reads off `usage-scope` within a minute or so); the result
+    arrives as its next report. The runner's admins."""
+    from django.utils import timezone
+
+    runner = _runner_admin_or_404(request, runner_id)
+    Runner.objects.filter(pk=runner.pk).update(usage_scan_requested_at=timezone.now())
+    runner.refresh_from_db()
+    return _missing_sessions(runner)
+
+
+@router.get("/runners/{runner_id}/missing-sessions", response=MissingSessionsOut)
+def list_missing_sessions(request: HttpRequest, runner_id: uuid.UUID):
+    """Sessions in known repos this box has on disk and canopy has no record of,
+    newest first, each with where sending it up would file it. The runner's
+    admins only: titles of a person's local sessions are theirs."""
+    return _missing_sessions(_runner_admin_or_404(request, runner_id))
+
+
+@router.post("/runners/{runner_id}/missing-sessions", response=SendUpOut)
+def send_up_missing_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: SendUpIn):
+    """Send the chosen missing sessions up: each is filed as a session (where the
+    report sweep files this box's sessions) and its transcript is requested from
+    the box; its usage counts from then on. The runner's admins."""
+    from apps.events import usage
+
+    runner = _runner_admin_or_404(request, runner_id)
+    return SendUpOut(sessions=usage.send_up(runner, payload.claude_sessions))
+
+
+def _missing_sessions(runner) -> MissingSessionsOut:
+    from apps.events import usage
+
+    from .services import session_home
+
+    rows = []
+    for r in usage.missing(runner):
+        agent, _project, ws = session_home(runner, r["repo"])
+        rows.append({**r, "files_in": getattr(ws, "slug", "") or "", "agent": agent.slug if agent else ""})
+    return MissingSessionsOut(
+        runner=runner.name, usage_reported_at=runner.usage_reported_at,
+        usage_scan_requested_at=runner.usage_scan_requested_at, usage_scanned_at=runner.usage_scanned_at,
+        sessions=rows)
 
 
 @router.post("/runners/{runner_id}/claim", response={200: ClaimedTurnOut, 204: None})

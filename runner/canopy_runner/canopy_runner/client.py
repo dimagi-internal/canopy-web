@@ -371,6 +371,17 @@ class Client:
         _, payload = self._call("GET", f"/runners/{runner_id}/backfills")
         return (payload or {}).get("backfills", [])
 
+    def usage_scope(self, runner_id: str) -> dict:
+        """{"repos": [...], "full": bool} — what the usage report scans, and whether a
+        person asked for a full rescan (canopy-web `events.usage.scope`)."""
+        _, payload = self._call("GET", f"/runners/{runner_id}/usage-scope")
+        return payload or {}
+
+    def post_usage(self, runner_id: str, sessions: list[dict], *, full: bool = False) -> dict:
+        """One chunk of the usage report: per session, per UTC day, tokens — no content."""
+        _, payload = self._call("POST", f"/runners/{runner_id}/usage", {"sessions": sessions, "full": full})
+        return payload or {}
+
     def post_session_backfill(self, runner_id: str, session_id: str, messages: list[dict],
                               final: bool = True, transcript_id: str = "") -> None:
         """Ship a chunk of a session's transcript for the server to write as Message

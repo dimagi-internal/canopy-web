@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 
 from . import chat_bridge, chat_pump, close, desktop, emdash, hooks, inbox_due, mailbox_probe, sessions
-from . import activity, session_interrupt, streams
+from . import activity, session_interrupt, streams, usage_report
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -705,6 +705,7 @@ def _report_sweep(cfg: Config, client: Client) -> None:
     _step("menu answers", streams.drain_menu_answers, cfg, client)
     _step("closes", streams.drain_closes, cfg, client)
     _step("backfills", streams.drain_backfills, cfg, client)
+    _step("usage report", usage_report.maybe_report, cfg, client)
 
 
 def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:

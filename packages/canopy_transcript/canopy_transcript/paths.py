@@ -226,3 +226,25 @@ def emdash_task_candidates(task: str) -> list[str]:
     if stripped and stripped != task:
         out.append(stripped)
     return out
+
+
+#: A session key that names a Claude Code session directly — a local session sent
+#: up from Health → Runners (canopy-web `events.usage.send_up`): `claude:<uuid>`.
+CLAUDE_SESSION_PREFIX = "claude:"
+
+
+def transcript_for_session_id(session_id: str, *, claude_home: Path) -> Path | None:
+    """The transcript a Claude session id names, wherever its project dir is."""
+    if not session_id or "/" in session_id:
+        return None
+    hits = sorted(claude_home.glob(f"*/{glob.escape(session_id)}.jsonl"))
+    return hits[0] if hits else None
+
+
+def transcript_for_key(session_key: str, *, claude_home: Path) -> Path | None:
+    """The transcript of a `claude:<uuid>` session key, or None for any other key —
+    both runners ask this first, so a sent-up session streams and backfills with no
+    other change."""
+    if not session_key.startswith(CLAUDE_SESSION_PREFIX):
+        return None
+    return transcript_for_session_id(session_key[len(CLAUDE_SESSION_PREFIX):], claude_home=claude_home)

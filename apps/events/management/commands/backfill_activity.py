@@ -1,12 +1,12 @@
-"""Seed the analytics fact log and per-turn usage from the history that still exists.
+"""Seed the analytics fact log from the history that still exists.
 
-    manage.py backfill_activity [--days 365] [--no-usage]
+    manage.py backfill_activity [--days 365]
 
 Idempotent: every fact carries the `ref` its live producer uses (a turn, session,
 setting change or MCP call id), and a (kind, ref) already present is skipped — so a
 re-run, or a run after the live producers are deployed, never double-counts.
-Usage is re-derived per turn (`usage.record_for_turn`, an upsert) from transcripts
-retention has not purged yet; run it before they go. Facts recorded as a person
+Tokens are not here: each box reports them from its own transcripts
+(`events.usage`). Facts recorded as a person
 whose login turns out to be an agent's or a system account's are reclassified.
 """
 from __future__ import annotations
@@ -16,20 +16,19 @@ import datetime as dt
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.events import activity, usage
+from apps.events import activity
 from apps.events.models import Activity, SettingChange
 
 
 class Command(BaseCommand):
-    help = "Backfill Activity facts and TurnUsage from existing turns, chats, audits and transcripts."
+    help = "Backfill Activity facts from existing turns, chats, setting changes and MCP calls."
 
     def add_arguments(self, parser):
         parser.add_argument("--days", type=int, default=365)
-        parser.add_argument("--no-usage", action="store_true")
 
-    def handle(self, *args, days: int, no_usage: bool, **opts):
+    def handle(self, *args, days: int, **opts):
         from apps.canopy_sessions.models import Session
-        from apps.harness.models import Turn, TurnTranscript
+        from apps.harness.models import Turn
         from apps.mcp.models import MCPAuditLog
 
         since = timezone.now() - dt.timedelta(days=days)
@@ -83,26 +82,17 @@ class Command(BaseCommand):
                 activity.MCP_CALL, workspace=m.workspace_slug, actor=m.user, surface="mcp",
                 ref=ref, meta={"tool": m.tool, "ok": m.ok}, at=m.created_at))
 
-        derived = 0
-        if not no_usage:
-            for tt in (TurnTranscript.objects.filter(turn__created_at__gte=since)
-                       .select_related("turn", "turn__agent", "turn__chat_session")
-                       .defer("raw_jsonl_gz").iterator(chunk_size=50)):
-                derived += usage.record_for_turn(tt.turn)
-
         reclassified = activity.reclassify()
         repos = self._fill_repositories(since)
         for kind, n in written.items():
             self.stdout.write(f"{kind}: {n} written")
-        self.stdout.write(f"turn usage derived: {derived}")
         self.stdout.write(f"facts reclassified as an agent or system: {reclassified}")
-        self.stdout.write(f"facts and usage rows given their repository: {repos}")
+        self.stdout.write(f"facts given their repository: {repos}")
 
     def _fill_repositories(self, since) -> int:
-        """Name the repository on facts and usage recorded before facts carried one:
-        repo turns, and sessions no agent runs (`activity.repo_of`)."""
+        """Name the repository on facts recorded before facts carried one: repo
+        turns, and sessions no agent runs (`activity.repo_of`)."""
         from apps.canopy_sessions.models import Session
-        from apps.events.models import TurnUsage
         from apps.harness.models import Turn
 
         n = 0
@@ -111,8 +101,6 @@ class Command(BaseCommand):
             repo = activity.repo_of(turn=t)
             if repo:
                 n += Activity.objects.filter(ref=str(t.pk), project="").update(project=repo)
-                n += TurnUsage.objects.filter(turn_ref=str(t.pk), project="").update(project=repo)
         for s in Session.objects.filter(agent__isnull=True).exclude(project="").iterator(chunk_size=500):
             n += Activity.objects.filter(kind=activity.CHAT_SESSION_CREATED, ref=str(s.pk), project="").update(project=s.project)
-            n += TurnUsage.objects.filter(turn_ref__startswith=f"chat:{s.pk.hex}:", project="").update(project=s.project)
         return n

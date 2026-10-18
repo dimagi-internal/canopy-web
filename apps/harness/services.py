@@ -1143,9 +1143,6 @@ def finish_turn(
     from apps.events import activity
 
     activity.for_turn(activity.TURN_FINISHED, turn, at=now)
-    from apps.events import usage as turn_usage
-
-    transaction.on_commit(lambda: turn_usage.record_for_turn(turn))
     _finish_riders(turn)
     if stop_ignored:
         # SAY IT WHERE THE PERSON WHO PRESSED STOP IS LOOKING. A `status` event
@@ -1761,6 +1758,21 @@ def _agent_for_project(project: str):
     return Agent.objects.select_related("workspace").filter(slug=project).first()
 
 
+def session_home(runner, project: str, fallback=None):
+    """(agent, project, workspace) a NEW agent-less session this box reports is filed
+    under: the agent the project names, in its workspace (`_agent_for_project`);
+    else the project, in the runner owner's default (`canopy_sessions.filing`),
+    else `fallback` (the runner's workspace). The one rule, for the report sweep and
+    a missing session sent up from Health (`events.usage.send_up`)."""
+    owner = _agent_for_project(project)
+    if owner is not None:
+        # A session targets an agent XOR a project (chat_session_not_agent_and_project).
+        return owner, "", owner.workspace
+    from apps.canopy_sessions.filing import filing_workspace
+
+    return None, project, filing_workspace(runner, fallback if fallback is not None else runner.workspace)
+
+
 def fire_sessions_closed(session_ids: list) -> None:
     from apps.canopy_sessions.models import Session
     from apps.harness.signals import sessions_closed
@@ -1857,19 +1869,9 @@ def replace_reported_sessions(
     # an unchanged menu would re-render the buttons under a thumb.
     menu_changes: list[tuple] = []
     new_asks: list[tuple] = []
-    # Where a NEW agent-less session is filed: the runner owner's default session
-    # workspace while it still applies, else the runner's own (`workspace`).
-    # Resolved lazily and at most once — the steady-state report creates nothing,
-    # and this runs from every box every ~10s. Never consulted for an EXISTING
+    # Where a NEW session is filed is `session_home` — consulted only when one is
+    # created (the steady-state report creates nothing), never for an EXISTING
     # session, which is what keeps a session someone moved where they put it.
-    filed_in: list = []
-
-    def _filing_workspace():
-        if not filed_in:
-            from apps.canopy_sessions.filing import filing_workspace
-
-            filed_in.append(filing_workspace(runner, workspace))
-        return filed_in[0]
 
     # The loop takes select_for_update locks, which Django REJECTS outside a
     # transaction — "select_for_update cannot be used outside of a transaction".
@@ -1930,7 +1932,7 @@ def replace_reported_sessions(
                 # not the runner. A runner is a machine serving several agents
                 # across tenants, so "whose work is this" is a question its own
                 # workspace cannot answer.
-                owner = _agent_for_project(project)
+                owner, filed_project, home = session_home(runner, project, workspace)
                 session = Session.objects.create(
                     agent=owner,
                     # A session targets an agent XOR a project
@@ -1941,10 +1943,10 @@ def replace_reported_sessions(
                     # transcript by is byte-identical either way — which is also
                     # why RunnerBinding.emdash_project, the key the 10s report
                     # loop reuses on, does not move.
-                    project=("" if owner else project),
+                    project=filed_project,
                     # An agent's project follows the agent; anything else is
                     # filed per the runner owner's default (canopy_sessions.filing).
-                    workspace=(owner.workspace if owner else _filing_workspace()),
+                    workspace=home,
                     origin=Session.ORIGIN_RUNNER,
                     title=s.emdash_task,
                 )

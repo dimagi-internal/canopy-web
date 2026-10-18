@@ -264,6 +264,11 @@ GATES: dict[str, tuple[str, ...]] = {
     "release_fleet_hold": ("superuser",),
     "runner_heartbeat": ("runner",),
     "refresh_runner": ("runner-admin",),
+    "runner_usage_scope": ("runner",),
+    "post_runner_usage": ("runner",),
+    "request_usage_scan": ("runner-admin",),
+    "list_missing_sessions": ("runner-admin",),
+    "send_up_missing_sessions": ("runner-admin",),
     "claim_turn": ("runner",),
     "resolve_session": ("runner", "member"),  # + membership of the agent / project workspace
     "record_session": ("runner", "member"),
@@ -962,6 +967,7 @@ NOT_SETTINGS: dict[str, str] = {
     "post_runner_mint_url": "runner-protocol", "report_runner_logins": "runner-protocol", "record_session": "runner-protocol",
     "resolve_session": "runner-protocol", "post_session_backfill": "runner-protocol",
     "post_session_stream": "runner-protocol", "report_sessions": "runner-protocol",
+    "post_runner_usage": "runner-protocol", "request_usage_scan": "action", "send_up_missing_sessions": "action",
     "post_sign_in_request": "runner-protocol", "turn_github_token": "runner-protocol",
     "report_drill": "runner-protocol",
     # action

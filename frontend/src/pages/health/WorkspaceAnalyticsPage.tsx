@@ -64,7 +64,7 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         <Stat label="Tokens read from cache" value={compact(t.cache_read_tokens)}
               hint={`${compact(t.cache_creation_tokens)} written to cache`} />
         <Stat label="Input · output tokens" value={`${compact(t.input_tokens)} · ${compact(t.output_tokens)}`}
-              hint={t.turns_with_usage ? `from ${compact(t.turns_with_usage)} turns and answers` : 'none reported yet'} />
+              hint={t.sessions_with_usage ? `from ${compact(t.sessions_with_usage)} sessions` : 'none reported yet'} />
       </section>
 
       <section aria-label="Over time" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

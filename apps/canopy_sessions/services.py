@@ -1128,19 +1128,6 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
             act.context(row.get("cwd"), row.get("git_branch"))
         session_activity.fold_rows(act, ((m.role, m.plaintext, m.content) for m in fresh))
         session_activity.store(locked, act)
-        # A re-shipped row we already hold is skipped — except for the tokens it
-        # now carries and the stored copy lacks (`canopy_transcript.record_usage`):
-        # history streamed before runners sent usage gets it from a backfill
-        # (`manage.py request_usage_backfill`) without being rewritten.
-        filled = _fill_usage(locked, {i: c["usage"] for (i, _r, _t, c, _a, _h) in prepared
-                                      if i in held and isinstance(c, dict) and c.get("usage")})
-        spent = filled + [m.turn_index for m in fresh if "usage" in (m.content or {})]
-        if spent:
-            # Tokens the answer spent, credited to the message it answers once
-            # these rows are durable.
-            from apps.events import usage as turn_usage
-
-            transaction.on_commit(lambda: turn_usage.record_for_chat(locked, spent))
         if not fresh:
             return 0
         # `ignore_conflicts` is belt-and-braces on top of the row lock above (which
@@ -1148,18 +1135,6 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
         # skipped row rather than a failed batch.
         Message.objects.bulk_create(fresh, batch_size=500, ignore_conflicts=True)
         return len(fresh)
-
-
-def _fill_usage(session, usage_by_index: dict) -> list[int]:
-    """Add `usage` to held rows that lack it; returns their indices."""
-    if not usage_by_index:
-        return []
-    rows = list(Message.objects.filter(session=session, turn_index__in=list(usage_by_index))
-                .exclude(content__has_key="usage"))
-    for m in rows:
-        m.content = {**(m.content or {}), "usage": usage_by_index[m.turn_index]}
-    Message.objects.bulk_update(rows, ["content"], batch_size=500)
-    return [m.turn_index for m in rows]
 
 
 def _marker_identity(author: dict) -> tuple[int | None, int | None]:

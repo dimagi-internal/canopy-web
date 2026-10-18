@@ -7,6 +7,7 @@ import { getWorkspaceHealth, type AgentHealthOut, type WorkspaceHealthOut } from
 import { relativeTime } from '@/components/activity/turnLog'
 import { SetupSteps, StatusIcon } from '@/components/agents/AgentSetupChecklist'
 import { AdminOnly, HealthViews } from './HealthViews'
+import { MissingSessions } from './MissingSessions'
 import { useTreeRead } from './useTreeRead'
 
 // WORKSPACE HEALTH: what is not set up right, across this workspace and every one
@@ -209,6 +210,7 @@ type RunnerRow = WorkspaceHealthOut['runners'][number]
  *  states only: what it reports, never a verdict. */
 function Runners({ runners, workspace }: { runners: readonly RunnerRow[]; workspace: string }): JSX.Element {
   const now = new Date()
+  const [open, setOpen] = useState<string | null>(null)
   return (
     <section aria-label="Runners" className="overflow-x-auto">
       <div className="mb-2 flex items-baseline justify-between gap-2">
@@ -222,11 +224,13 @@ function Runners({ runners, workspace }: { runners: readonly RunnerRow[]; worksp
           <tr><th className="py-1 font-medium">Runner</th><th className="font-medium">Kind</th><th className="font-medium">Owner</th>
             <th className="font-medium">Status</th><th className="font-medium" title="Running the code the deployed server expects">Code</th>
             <th className="font-medium">Its own checks</th><th className="font-medium text-right">Agents</th>
+            <th className="font-medium" title="Sessions in repos canopy knows that this box has and canopy does not">Missing sessions</th>
             <th className="font-medium">Last heartbeat</th></tr>
         </thead>
         <tbody className="divide-y divide-border">
           {runners.map((r) => (
-            <tr key={r.id} data-runner={r.name}>
+            <Fragment key={r.id}>
+            <tr data-runner={r.name}>
               <td className="py-1.5">
                 <span className="font-mono text-foreground">{r.name}</span>
                 {!r.in_tree && <span className="ml-1 text-muted-foreground" title="Homed outside this tree">· elsewhere</span>}
@@ -251,8 +255,21 @@ function Runners({ runners, workspace }: { runners: readonly RunnerRow[]; worksp
                 ))}
               </td>
               <td className="text-right tabular-nums">{r.agent_count}</td>
+              <td className="whitespace-nowrap">
+                {r.can_administer
+                  ? <button type="button" onClick={() => setOpen(open === r.id ? null : r.id)}
+                            aria-expanded={open === r.id} className="text-primary hover:underline">
+                      {r.missing_sessions ? `${r.missing_sessions} — review` : 'check'}
+                    </button>
+                  : <span className="tabular-nums text-foreground-secondary">{r.missing_sessions}</span>}
+                {!r.usage_reported_at && <span className="text-muted-foreground" title="This box has not sent a usage report yet"> · no report</span>}
+              </td>
               <td className="text-foreground-secondary">{r.last_heartbeat_at ? relativeTime(r.last_heartbeat_at, now) : 'never'}</td>
             </tr>
+            {open === r.id && (
+              <tr><td colSpan={9} className="bg-muted/30 p-3"><MissingSessions runnerId={r.id} /></td></tr>
+            )}
+            </Fragment>
           ))}
         </tbody>
       </table>

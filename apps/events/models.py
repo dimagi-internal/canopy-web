@@ -250,51 +250,63 @@ class Activity(models.Model):
         return f"activity:{self.kind}:{self.pk}"
 
 
-class TurnUsage(models.Model):
-    """Tokens one turn (or one typed message's answer) spent, from whichever record
-    of its model calls exists (`apps/events/usage.py`).
+class SessionUsage(models.Model):
+    """What one Claude Code session spent on one UTC day, as its box reported it —
+    THE token record (`apps/events/usage.py`).
 
-    Its own row, not columns on `Turn`, and not cascaded from the transcript:
-    retention purges transcripts, and this is the part of them analytics needs to
-    keep. It carries its own workspace/agent/person so it outlives the turn.
+    Every box scans its own transcripts in the repos canopy names for it and posts
+    per-session, per-day totals; no content. Matched on write to canopy's own record
+    of that Claude session (a binding's `transcript_id`, a turn's `session_key` or
+    `cli_session_id`) and attributed from it. A session that matches nothing is
+    MISSING: no workspace, visible only to the box's admins until they send it up
+    (Health → Runners). NULL workspace never widens visibility — analytics reads
+    only rows that have one.
     """
 
-    turn = models.OneToOneField(
-        "harness.Turn", on_delete=models.SET_NULL, null=True, blank=True, related_name="usage",
+    runner = models.ForeignKey(
+        "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="session_usage",
     )
-    turn_ref = models.CharField(max_length=64, unique=True)
+    claude_session = models.CharField(max_length=64)
+    day = models.DateField()
+    repo = models.CharField(max_length=100, blank=True, default="")
+    """The known repo the session's working directory belongs to, as the box saw it."""
+    title = models.CharField(max_length=200, blank=True, default="")
+    first_at = models.DateTimeField(null=True, blank=True)
+    last_at = models.DateTimeField(null=True, blank=True)
+
+    input_tokens = models.BigIntegerField(default=0)
+    output_tokens = models.BigIntegerField(default=0)
+    cache_read_tokens = models.BigIntegerField(default=0)
+    cache_creation_tokens = models.BigIntegerField(default=0)
+    messages = models.PositiveIntegerField(default=0)
+    model = models.CharField(max_length=100, blank=True, default="")
+
+    # ---- attribution, from canopy's own record of the session ------------------
     workspace = models.ForeignKey(
-        "workspaces.Workspace", on_delete=models.CASCADE, related_name="turn_usage",
+        "workspaces.Workspace", on_delete=models.CASCADE, null=True, blank=True, related_name="session_usage",
+    )
+    session = models.ForeignKey(
+        "canopy_sessions.Session", on_delete=models.SET_NULL, null=True, blank=True, related_name="usage",
     )
     agent = models.ForeignKey(
-        "agents.Agent", on_delete=models.SET_NULL, null=True, blank=True, related_name="turn_usage",
+        "agents.Agent", on_delete=models.SET_NULL, null=True, blank=True, related_name="session_usage",
     )
     agent_slug = models.CharField(max_length=64, blank=True, default="")
     project = models.CharField(max_length=100, blank=True, default="")
     """The repository, for work that is not an agent's (`activity.repo_of`)."""
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name="turn_usage",
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="session_usage",
     )
-    """Who asked for the turn (`Turn.initiator_user`, else `enqueued_by`)."""
-
-    at = models.DateTimeField()
-    """When the turn finished (else when it was created) — the day it counts on."""
-
-    model = models.CharField(max_length=100, blank=True, default="")
-    input_tokens = models.BigIntegerField(default=0)
-    output_tokens = models.BigIntegerField(default=0)
-    cache_read_tokens = models.BigIntegerField(default=0)
-    cache_creation_tokens = models.BigIntegerField(default=0)
-    runs = models.PositiveIntegerField(default=0)
-    """How many `result` records were summed — a turn that failed over down the
-    credential cascade runs `claude -p` more than once."""
+    reported_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["claude_session", "day"], name="uniq_session_usage_day"),
+        ]
         indexes = [
-            models.Index(fields=["workspace", "at"]),
-            models.Index(fields=["user", "at"]),
+            models.Index(fields=["workspace", "day"]),
+            models.Index(fields=["runner", "workspace"]),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
-        return f"turn-usage:{self.turn_ref}"
+        return f"session-usage:{self.claude_session}:{self.day}"
