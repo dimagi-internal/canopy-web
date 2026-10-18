@@ -32,9 +32,7 @@ request to canopy's OWN URLs would reach are answered by `loopback_get` /
 `loopback_post`, which `outbound.py` and `jwks.py` consult before going out. The
 same functions serve the public views, so this is not a second implementation
 of anything — it is the same handler without the round trip through the load
-balancer. (Which matters on labs: canopy is served under `/canopy`, so the
-RFC 8414 location for its issuer, `/.well-known/oauth-authorization-server/canopy`,
-sits at the ROOT of a host the ALB routes to connect-labs.) The gateway's MCP
+balancer. The gateway's MCP
 call is still real HTTP to `{base}/api/mcp/`, through the real gate.
 
 **Pages, and why the browser names one.** canopy's pages are a single-page app:
@@ -46,10 +44,9 @@ that matters is decided here: an unregistered key gets
 no grant; a registered one gets the scopes this registry says, never scopes the
 browser sent; every scope is read-only; the tools run as the visitor, so they
 reach no more than the visitor's own ACL already does. A browser that names the
-wrong page picks among read-only views of its own data, nothing more. (The
-gateway used to narrow each call again to the page's declared `backing_tool`;
-it no longer does. Page state is written by that same browser, so the narrowing
-never bounded a page that lies — the read-only scopes above do.)
+wrong page picks among read-only views of its own data, nothing more. Don't
+narrow each call to the page's declared `backing_tool`: page state is written by
+that same browser, so it cannot bound a page that lies — the read-only scopes do.
 
 **Probed like any other host.** `/oauth/probe` is the SDK's `ProbeHandler` for
 canopy's own client only: a real ID-JAG for the dedicated `canopy-probe` user
