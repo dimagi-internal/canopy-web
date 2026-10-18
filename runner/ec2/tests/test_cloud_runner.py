@@ -2393,3 +2393,77 @@ def test_the_exchange_sends_only_the_device_proof(cloud_runner, monkeypatch):
     assert sent == {"url": "https://canopy.test/api/runner-sessions/", "body": {"runner": "r1"},
                     "auth": None, "proof": "p"}
     assert cloud_runner._RUNNER_TOKEN["raw"] == "crt_x"
+
+
+# ── the agent bootstrap runs as this box, on a token canopy-web accepts ───────
+# 2026-10-18: bootstrap_agents.sh ran with the service env's CANOPY_TOKEN (a revoked
+# PAT), so every agent's readiness report 401'd; and at 02:28 a bootstrap ran inside
+# a 16-minute refusal of the box's token, failing every agent's prepare at once.
+
+def test_the_bootstrap_hands_prepare_this_boxs_own_token(cloud_runner, monkeypatch, tmp_path):
+    _keyless(cloud_runner, monkeypatch, exchange=True)
+    src = tmp_path / "src"
+    script = src / "runner" / "ec2" / "bootstrap_agents.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("exit 0\n")
+    monkeypatch.setattr(cloud_runner, "RUNNER_SRC_DIR", str(src))
+    monkeypatch.setattr(cloud_runner, "sync_runner_src", lambda: True)
+    monkeypatch.setenv("CANOPY_TOKEN", "owner-pat")
+    seen = {}
+    monkeypatch.setattr(cloud_runner, "_run_teed",
+                        lambda cmd, env, timeout: (seen.update(env) or (0, [])))
+    cloud_runner._run_bootstrap()
+    assert seen["CANOPY_TOKEN"] == "crt_1", "prepare must post its report as the box, not a PAT"
+
+
+def test_a_token_too_close_to_expiry_for_the_bootstrap_is_renewed_first(cloud_runner, monkeypatch):
+    calls = _keyless(cloud_runner, monkeypatch, exchange=True)
+    cloud_runner._bearer()
+    cloud_runner._RUNNER_TOKEN["exp"] = time.time() + 700  # fine for a call, not for 15 min
+    assert cloud_runner._bearer() == "crt_1"
+    assert cloud_runner._bearer(min_life=cloud_runner.BOOTSTRAP_TIMEOUT_SECONDS) == "crt_2"
+    assert len(calls) == 2
+
+
+def _bootstrap_world(cloud_runner, monkeypatch, accepted):
+    """`accepted`: what each successive token probe answers."""
+    answers = list(accepted)
+    runs = []
+    monkeypatch.setattr(cloud_runner, "_RUNNER_ID", "r1")
+    monkeypatch.setattr(cloud_runner, "_signed_in", lambda: answers.pop(0) if answers else True)
+    monkeypatch.setattr(cloud_runner, "_run_bootstrap", lambda: runs.append(1))
+    monkeypatch.setattr(cloud_runner, "_github_readiness", lambda: None)
+    monkeypatch.setattr(cloud_runner, "_install_repo_worktree_shim", lambda: None)
+    monkeypatch.setattr(cloud_runner, "_guard_shared_clone", lambda p: None)
+    monkeypatch.setattr(cloud_runner.time, "sleep", lambda s: None)
+    return runs, answers
+
+
+def test_the_bootstrap_waits_for_an_accepted_token(cloud_runner, monkeypatch):
+    runs, answers = _bootstrap_world(cloud_runner, monkeypatch,
+                                     [False, False, True, True])
+    cloud_runner.bootstrap_agent_fleet()
+    assert runs == [1] and answers == [], "ran prepare before canopy-web took the token"
+
+
+def test_a_refusal_during_the_bootstrap_runs_it_again_once_accepted(cloud_runner, monkeypatch):
+    # accepted before; refused right after (the pass ran inside the refusal); then back.
+    runs, answers = _bootstrap_world(cloud_runner, monkeypatch, [True, False, False, True])
+    cloud_runner.bootstrap_agent_fleet()
+    assert runs == [1, 1]
+    assert answers == []
+
+
+def test_a_refusal_that_never_ends_does_not_hold_the_box_forever(cloud_runner, monkeypatch):
+    runs, _ = _bootstrap_world(cloud_runner, monkeypatch, [False] * 10_000)
+    clock = iter(range(0, 10**9, 60))
+    monkeypatch.setattr(cloud_runner.time, "monotonic", lambda: next(clock))
+    cloud_runner.bootstrap_agent_fleet()
+    assert runs == [1], "a bootstrap that cannot authenticate still runs once, as before"
+
+
+def test_signed_in_reads_a_refusal_not_a_blip(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "_RUNNER_ID", "r1")
+    for status, want in ((200, True), (401, False), (403, False), (502, True), (0, True)):
+        monkeypatch.setattr(cloud_runner, "_api", lambda *a, _s=status, **k: (_s, None))
+        assert cloud_runner._signed_in() is want, status
