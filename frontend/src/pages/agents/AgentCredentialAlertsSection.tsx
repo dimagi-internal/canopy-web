@@ -7,6 +7,7 @@ import { relativeAge } from '@/lib/relativeAge'
 
 export const ALERT_LABEL: Record<AgentCredentialAlertOut['kind'], string> = {
   'no-turn': 'Read outside a turn',
+  'no-turn-check': 'Verification check outside a turn',
   'undeclared-ref': 'Undeclared ref',
   burst: 'Burst of reads',
   'device-proof': 'Device proof refused',

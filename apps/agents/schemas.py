@@ -1333,7 +1333,7 @@ class AgentCredentialAlertOut(StrictModel):
     most one per kind per hour; `occurrences` counts repeats inside it."""
 
     id: int
-    kind: Literal["no-turn", "undeclared-ref", "burst", "device-proof", "zk-wrap-missing"]
+    kind: Literal["no-turn", "no-turn-check", "undeclared-ref", "burst", "device-proof", "zk-wrap-missing"]
     detail: str = ""
     refs: list[str] = []
     user_email: str = ""

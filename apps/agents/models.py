@@ -496,8 +496,13 @@ class AgentCredentialAlert(models.Model):
 
     NO_TURN, UNDECLARED, BURST, DEVICE_PROOF = "no-turn", "undeclared-ref", "burst", "device-proof"
     ZK_WRAP_MISSING = "zk-wrap-missing"
+    #: A NO_TURN read whose caller labelled it a verification check. Its own kind so
+    #: the hourly debounce of one never swallows the other: a labelled check cannot
+    #: use up the hour's alert for an unlabelled read after it.
+    NO_TURN_CHECK = "no-turn-check"
     KIND_CHOICES = [
         (NO_TURN, "Read outside a turn, not by an owner or admin"),
+        (NO_TURN_CHECK, "Read outside a turn, labelled as a verification check"),
         (UNDECLARED, "Read of a ref the agent does not declare"),
         (BURST, "Burst of reads"),
         (DEVICE_PROOF, "Resolve refused: bad or missing device proof"),

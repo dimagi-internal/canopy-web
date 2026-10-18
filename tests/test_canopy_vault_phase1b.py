@@ -418,6 +418,30 @@ def test_a_boxs_own_credential_refresh_is_expected(fleet):
     assert AgentCredentialRead.objects.filter(agent=fleet["agent"]).exists()  # still logged
 
 
+def test_a_verification_check_still_alerts_but_says_it_is_one(fleet):
+    """`canopy agent prepare --check` labels its reads. The label is self-reported
+    (a stolen token could send it), so the read still alerts — worded as the check."""
+    res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
+                       HTTP_X_CANOPY_RUNNER=str(fleet["runner"].pk),
+                       HTTP_X_CANOPY_READ_PURPOSE="check: vault laptop check (by hal@box)")
+    assert res.status_code == 200
+    assert _alerts("no-turn") == []
+    [alert] = _alerts("no-turn-check")
+    assert "labelled as a verification check: vault laptop check (by hal@box)" in alert.detail
+    body = mail.outbox[0].body
+    assert "verification check" in body and "not proof" in body and "revoke its token" in body
+
+
+def test_a_labelled_check_does_not_use_up_the_hours_real_alert(fleet):
+    """Its own kind: a check first must not debounce an unlabelled read after it."""
+    Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
+                 HTTP_X_CANOPY_RUNNER=str(fleet["runner"].pk),
+                 HTTP_X_CANOPY_READ_PURPOSE="check: anything")
+    assert _resolve_as_box(fleet).status_code == 200
+    assert len(_alerts("no-turn-check")) == 1 and len(_alerts("no-turn")) == 1
+    assert len(mail.outbox) == 2
+
+
 def test_a_refresh_purpose_without_a_named_box_is_not_an_exemption(fleet):
     """The purpose only explains a box's read; it never turns an unnamed read into one."""
     res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
