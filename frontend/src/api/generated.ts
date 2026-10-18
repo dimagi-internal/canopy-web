@@ -8421,8 +8421,9 @@ export interface paths {
         readonly put?: never;
         /**
          * Approve a pending device key (browser session + passkey step-up)
-         * @description `pending` → `active`. A revoked key cannot be revived (409); approving an
-         *     active key is a no-op.
+         * @description `pending` → `active`, and its ECDH key approved with it; on an active key
+         *     whose new ECDH key waits, approves just that. A revoked key cannot be
+         *     revived (409); approving a fully approved key is a no-op.
          */
         readonly post: operations["approve_runner_device_key"];
         readonly delete?: never;
