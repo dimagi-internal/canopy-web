@@ -446,9 +446,9 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         # An address on one of the workspace's canopy-hosted domains needs no sign-in:
         # give it its mailbox route now, so mail to it is the agent's turn from the first
         # message. Anything else (a Google address) is signed in later, as before.
-        from apps.mail import domains as mail_domains
+        from . import mailbox
 
-        mail_domains.ensure_agent_route(agent, by=request.user)
+        mailbox.ensure_route(agent, by=request.user)
     # No `ensure_member` here any more, and it is not an omission: since the
     # role gate above, every path that reaches this line has already required
     # editor-or-owner in `agent.workspace` — on a create, on an edit, and in the
@@ -2139,9 +2139,9 @@ def agent_credential_status(request: HttpRequest, slug: str):
 def _mailbox_backend(agent) -> str:
     """"ses" when the agent's address is canopy-hosted (nothing to sign in; `canopy email`
     goes through canopy-web), "google" for any other address, "" with none."""
-    from apps.mail import domains as mail_domains
+    from . import mailbox
 
-    kind = mail_domains.agent_mailbox(agent)["kind"]
+    kind = mailbox.describe(agent)["kind"]
     return {"hosted": "ses", "google": "google"}.get(kind, "")
 
 

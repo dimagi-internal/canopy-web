@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -11,6 +11,7 @@ const domain = {
   id: 1, name: 'marshellis.com', status: 'pending', receiving: false, mx_provider: 'Zoho',
   suspended_reason: '', daily_send_cap: 200, can_manage: true,
   owned: true, owner_workspace: 'marshellis', can_share: false, shares: [] as { workspace: string; daily_send_cap: number }[],
+  sign_in: false, can_set_sign_in: true, mx_points_at_google: false,
   records: [
     { purpose: 'spf', type: 'TXT', name: 'marshellis.com',
       value: 'v=spf1 include:zohomail.com include:amazonses.com -all', priority: null, ok: false, found: [] },
@@ -28,6 +29,7 @@ vi.mock('@/api/mail', async (orig) => ({
   deleteMailRoute: vi.fn(async () => undefined),
   removeMailDomain: vi.fn(async () => undefined),
   shareMailDomain: vi.fn(async () => domain),
+  updateMailDomain: vi.fn(async () => domain),
 }))
 vi.mock('@/api/agents', () => ({ listAgents: vi.fn(async () => ({ items: [{ slug: 'hal', name: 'Hal', workspace: 'marshellis' }] })) }))
 vi.mock('@/api/workspaces', async (orig) => ({
@@ -69,6 +71,21 @@ describe('WorkspaceEmailPage', () => {
     })
     renderPage()
     expect(await screen.findByText(/Only one SPF record may exist/)).toBeTruthy()
+  })
+  it('lets an owner turn on Google sign-in for a verified domain', async () => {
+    vi.mocked(mail.updateMailDomain).mockResolvedValueOnce({ ...domain, sign_in: true })
+    renderPage()
+    const box = (await screen.findByTestId('mail-sign-in')).querySelector('input') as HTMLInputElement
+    fireEvent.click(box)
+    await waitFor(() => expect(mail.updateMailDomain).toHaveBeenCalledWith('marshellis', domain.id, { sign_in: true }))
+  })
+  it('warns when the MX points at Google', async () => {
+    vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
+      enabled: true, can_manage: true,
+      items: [{ ...domain, receiving: false, mx_provider: 'Google', mx_points_at_google: true }],
+    })
+    renderPage()
+    expect((await screen.findByTestId('mail-mx-elsewhere')).textContent).toMatch(/goes to Gmail, not here/)
   })
   it('forwards only to a chosen member, never a typed email', async () => {
     renderPage()

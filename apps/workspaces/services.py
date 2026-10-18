@@ -1235,15 +1235,25 @@ def sign_in_domain_workspace(email: str):
     Signing in still grants nothing: the person can only ask to join, approved by an admin
     or at the workspace's auto-approve role. The caller must already have checked the email
     is PROVIDER-verified (`CustomSocialAccountAdapter`)."""
-    from apps.mail.models import MailDomain
-
     domain = _email_domain(email)
     if not domain:
         return None
-    for d in MailDomain.objects.filter(name=domain).select_related("workspace"):
-        if d.routes_live and domain in [str(x).lower() for x in (d.workspace.access_request_domains or [])]:
-            return d.workspace
+    for owner_of in _VERIFIED_DOMAIN_OWNERS:
+        ws = owner_of(domain)
+        if ws is not None and domain in [str(x).lower() for x in (ws.access_request_domains or [])]:
+            return ws
     return None
+
+
+#: Callables `domain -> Workspace | None` naming the workspace that has PROVED control of a
+#: domain (a verified canopy-hosted mail domain). Registered by `apps.mail` from its
+#: AppConfig.ready — framework code cannot import the product app (ARCHITECTURE.md).
+_VERIFIED_DOMAIN_OWNERS: list = []
+
+
+def register_verified_domain_owner(fn) -> None:
+    if fn not in _VERIFIED_DOMAIN_OWNERS:
+        _VERIFIED_DOMAIN_OWNERS.append(fn)
 
 
 def can_create_workspace(user) -> bool:

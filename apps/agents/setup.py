@@ -59,11 +59,10 @@ def _mailbox(agent: Agent, settings: str) -> dict:
     if not agent.email:
         return _step("mailbox", "Connect its mailbox", OPTIONAL,
                      "No mailbox set. Email is optional; add one later if it should send or read mail.")
-    from apps.mail import domains as mail_domains
-
+    from . import mailbox
     from .models import AgentBootstrapReport
 
-    box = mail_domains.agent_mailbox(agent)
+    box = mailbox.describe(agent)
     if box["kind"] == "hosted":
         # Canopy-hosted: nothing to sign in. Mail to the address is the agent's turn once
         # its route exists and the domain is verified; the workspace email page is where

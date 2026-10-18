@@ -348,6 +348,22 @@ def ensure_agent_route(agent, *, by) -> str:
     return "created"
 
 
+class MailboxProvider:
+    """`apps.agents.mailbox`'s provider: hosted mail is this app's."""
+
+    def describe(self, agent) -> dict:
+        return agent_mailbox(agent)
+
+    def ensure_route(self, agent, *, by) -> str:
+        return ensure_agent_route(agent, by=by)
+
+
+def verified_domain_owner(domain: str):
+    """The workspace whose VERIFIED mail domain `domain` is, or None (sign-in seam)."""
+    d = MailDomain.objects.filter(name=domain.lower()).select_related("workspace").first()
+    return d.workspace if d is not None and d.routes_live else None
+
+
 def set_share(domain: MailDomain, workspace, *, daily_send_cap: int | None = None, by=None) -> MailDomainShare:
     # A grant on the domain's own workspace is how its sub-workspaces get it: the owner
     # needs no grant itself (share_for answers None for it), its descendants find this one.
