@@ -1192,7 +1192,7 @@ def next_task_ext_id(agent: Agent) -> str:
 
 
 #: Statuses a task is still LIVE in. A done or declined card waits on nobody.
-LIVE_STATUSES = [AgentTask.SUGGESTED, AgentTask.IN_PROGRESS]
+LIVE_STATUSES = list(AgentTask.LIVE_STATUSES)
 
 
 def waiting_q(prefix: str = ""):

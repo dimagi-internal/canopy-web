@@ -476,10 +476,21 @@ class AgentHealthOut(StrictModel):
     can_fix: bool
     email: str
     repo_url: str
+    # manual: its turns stop for a person's approval before acting or sending;
+    # auto: they run through. (A routing rule can set a turn's mode itself.)
     turn_mode: str
+    # Whether it publishes an interface: what people other than its admins may
+    # ask it to do. False = only its admins (and editors) can use it.
     has_interface: bool
+    # How many capabilities that interface offers.
+    capabilities: int
     skills: int
     schedules: int
+    # Active projects; open tasks (suggested or in progress); open tasks waiting
+    # on a person (an unanswered ask, or parked on someone).
+    projects: int
+    open_tasks: int
+    waiting_tasks: int
     created_at: dt.datetime
     last_turn_at: dt.datetime | None = None
     turns_30d: int
