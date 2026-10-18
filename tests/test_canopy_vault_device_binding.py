@@ -340,6 +340,51 @@ def test_the_owners_own_laptop_counts_without_a_route(fleet):
     assert _resolve(fleet, make_dpop_proof(key, "GET", HTU)).status_code == 200
 
 
+def _laptop(fleet, owner):
+    laptop = Runner.objects.create(name=f"{owner.username}-laptop", kind=Runner.EMDASH,
+                                   owner=owner, status=Runner.ONLINE, capabilities={},
+                                   workspace=fleet["ws"])
+    key = ec.generate_private_key(ec.SECP256R1())
+    return laptop, key
+
+
+def test_the_owner_opening_a_session_on_their_own_laptop_raises_no_alert(fleet):
+    """2026-10-18: a ZK agent always needs a device proof, so every emdash session
+    the owner opened named the laptop and read as "a box outside a turn" — an email
+    each time. Their own token from their own approved laptop is them."""
+    from apps.agents.models import AgentCredentialAlert
+
+    _bind(fleet)
+    laptop, key = _laptop(fleet, fleet["user"])
+    _approve(fleet, _register(fleet, key=key, runner=laptop).json()["id"])
+    assert _resolve(fleet, make_dpop_proof(key, "GET", HTU)).status_code == 200
+    assert not AgentCredentialAlert.objects.filter(kind="no-turn").exists()
+    read = AgentCredentialRead.objects.filter(agent=fleet["agent"]).latest("pk")
+    assert read.via == "admin" and read.runner_id == laptop.pk  # still names the laptop
+
+
+def test_someone_elses_laptop_reading_outside_a_turn_still_alerts(fleet):
+    from apps.agents.models import AgentCredentialAlert
+
+    _bind(fleet)
+    other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet["ws"], user=other,
+                                       role=WorkspaceMembership.OWNER)
+    laptop, key = _laptop(fleet, other)
+    RunnerAssignment.objects.create(agent=fleet["agent"], runner=laptop, rank=1)
+    c = Client()
+    c.force_login(other)
+    grant_step_up(c)
+    body = Client().post("/api/runner-device-keys/",
+                         data={"runner": str(laptop.pk), "public_jwk": _jwk(key), "kind": "software"},
+                         content_type="application/json",
+                         HTTP_AUTHORIZATION=f"Bearer {_pat(other)}").json()
+    assert c.post(f"/api/runner-device-keys/{body['id']}/approve").status_code == 200
+    # The OWNER's token, but the proof is a laptop the owner does not own.
+    assert _resolve(fleet, make_dpop_proof(key, "GET", HTU)).status_code == 200
+    assert AgentCredentialAlert.objects.filter(kind="no-turn").count() == 1
+
+
 # ---- the agent setting, read log and agent views --------------------------------------
 
 def test_device_binding_is_admin_settable_and_shown(fleet):

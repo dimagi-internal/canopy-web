@@ -18,7 +18,9 @@ request: an email and a Web Push, each linking to the agent's Credentials.
   own Claude Code session (`via == "admin"`, canopy#850 — expected without a
   turn, and alerting on it would email the owner about themselves hourly).
   A box that names itself AND sends `X-Canopy-Read-Purpose: runner-refresh` is
-  its own scheduled credential refresh, also expected without a turn.
+  its own scheduled credential refresh, also expected without a turn. The owner's
+  own token proved by their own laptop's device key is the owner opening a
+  session there — an `admin` read, not a box (2026-10-18).
 * `undeclared-ref` — a read that asks for, or is handed, a ref the agent's
   runtime.yaml does not declare.
 * `burst` — more than CANOPY_VAULT_READ_BURST_LIMIT resolves (default 50) of one

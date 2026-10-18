@@ -2341,6 +2341,15 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     # (canopy-web#1563). Every `runner` caller is an admin already.
     if via == "runner" and runner is None:
         via = "admin"
+    # The owner at their OWN laptop: their own token (not the box's runner token),
+    # proved by that laptop's approved device key. A zero-knowledge agent always
+    # needs the proof, so without this every emdash session the owner opened read
+    # as "a box outside a turn" and emailed them about themselves (2026-10-18).
+    # The read log still names the laptop. A cloud box, a bare X-Canopy-Runner, a
+    # runner token, or someone else's laptop is still the box reading.
+    if (via == "runner" and rtok is None and device_key is not None
+            and runner.kind == runner.EMDASH and runner.owner_id == request.user.pk):
+        via = "admin"
     turn_id = request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120]
     try:
         services.record_credential_reads(
