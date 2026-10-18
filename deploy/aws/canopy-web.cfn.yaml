@@ -513,11 +513,16 @@ Resources:
             - { Name: HCP_PEOPLE, Value: "jjackson@dimagi.com" }
             - { Name: HCP_CONTACT_OPT_IN, Value: "false" }
             # Memory search by meaning (apps/contacts/embeddings.py). Empty = off
-            # (lexical only). To turn on: the task role's memory-embeddings policy
-            # deployed, the model enabled in Bedrock model access, then set e.g.
-            # cohere.embed-multilingual-v3 here and deploy; `manage.py hcp_embed`
-            # fills every vector at once (searches also fill them as they go).
+            # (lexical only). Vertex (vertex/gemini-embedding-001) needs the four
+            # HCP_VERTEX_* values from the GCP setup in docs/architecture/
+            # hcp-service.md § Retrieval; nothing is sent until the project's
+            # cache is verified disabled. `manage.py hcp_embed` then fills every
+            # vector at once (searches also fill them as they go).
             - { Name: HCP_EMBEDDINGS_MODEL, Value: "" }
+            - { Name: HCP_VERTEX_PROJECT, Value: "" }
+            - { Name: HCP_VERTEX_LOCATION, Value: us-central1 }
+            - { Name: HCP_VERTEX_WIF_AUDIENCE, Value: "" }
+            - { Name: HCP_VERTEX_SERVICE_ACCOUNT, Value: "" }
             - { Name: AWS_REGION, Value: !Ref "AWS::Region" }
             - { Name: PORT, Value: !Ref ContainerPort }
             # Google Drive root folder for walkthrough storage. Not a secret

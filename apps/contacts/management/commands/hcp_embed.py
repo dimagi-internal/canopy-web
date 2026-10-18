@@ -25,6 +25,10 @@ class Command(BaseCommand):
         if not embeddings.enabled():
             raise CommandError("embeddings are off: set HCP_EMBEDDINGS_MODEL")
         model = embeddings.model()
+        ok, why = embeddings.retention_ok(force=True)
+        self.stdout.write(f"retention: {why}")
+        if not ok:
+            raise CommandError(f"not sending memory text to {model}: {why}")
         todo = (hcp.servable(PersonFact.objects.all()).exclude(embedding_model=model)
                 .select_related("project").order_by("pk"))
         total = todo.count()

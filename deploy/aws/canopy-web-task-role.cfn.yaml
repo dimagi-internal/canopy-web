@@ -122,6 +122,12 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/cohere.embed-*
                   - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-*
+              # Read-only: canopy sends nothing until it has confirmed the account
+              # logs no model invocations (embeddings.retention_ok). Takes no resource.
+              - Sid: EmbeddingRetentionCheck
+                Effect: Allow
+                Action: bedrock:GetModelInvocationLoggingConfiguration
+                Resource: '*'
       Tags:
         - {Key: owner, Value: canopy-web}
         - {Key: managed-by, Value: cloudformation}
