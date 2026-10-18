@@ -186,8 +186,13 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   (`/participants`, the chat header's People control).
 - Every door calls it: REST, the chat socket, attachments, bulk reset, MCP, Slack share, push
   recipients. **Opening a chat is never a grant** — the socket must not auto-join anyone;
-  participation comes only from creating, being shared, or joining a Slack thread you can
-  already read.
+  participation comes only from creating, being shared, joining a Slack thread you can
+  already read, or being in the conversation a session was dispatched from.
+- **A dispatched session inherits its parent's people.** A session created with a parent
+  (`X-Canopy-Parent-Session`/`-Turn`, or a payload `parent`) that its creator can read gets
+  the parent's participants who are members of its workspace — owner becomes editor, a
+  viewer stays a viewer (`services._inherit_participants`). An agent starting work for the
+  person it is talking to therefore never hides that work from them.
 - `tests/test_session_acl.py` asserts every door gives the same answer for every (person,
   session shape), and fails on a `SessionParticipant` writer outside its allowlist.
 - Where a session is filed and moving it: `roles.md` → "Which workspace a session lives in".
