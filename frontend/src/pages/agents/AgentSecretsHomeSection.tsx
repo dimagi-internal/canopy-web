@@ -21,7 +21,9 @@ import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 type Source = '1password' | 'canopy-web'
 
-const LOGIN_REF = 'canopy-pat'
+// The agent's own canopy login: stored under the variable name its code reads
+// (`apps/agents/pat_rotation.py::CANOPY_PAT_REF`).
+const LOGIN_REF = 'CANOPY_WEB_PAT'
 
 export function AgentSecretsHomeSection({
   slug,

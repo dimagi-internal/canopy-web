@@ -53,7 +53,7 @@ describe('AgentSecretsHomeSection', () => {
 
   it('shows a stored, renewing login as done', async () => {
     dk.getPatRotation.mockResolvedValue({ enabled: true, period_days: 30, history: [] })
-    render(<AgentSecretsHomeSection slug="scout" credentialSource="canopy-web" storedNames={['canopy-pat']} canEdit />)
+    render(<AgentSecretsHomeSection slug="scout" credentialSource="canopy-web" storedNames={['CANOPY_WEB_PAT']} canEdit />)
     expect((await screen.findByTestId('canopy-login-ok')).textContent).toMatch(/Stored ✓.*renews itself every 30 days/)
     await waitFor(() => expect(screen.queryByTestId('canopy-login-give')).toBeNull())
   })

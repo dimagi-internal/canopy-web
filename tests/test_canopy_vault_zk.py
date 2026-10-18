@@ -105,7 +105,7 @@ def fleet(client):
     f.ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=f.user)
     WorkspaceMembership.objects.create(workspace=f.ws, user=f.user, role=WorkspaceMembership.OWNER)
     f.agent = Agent.objects.create(slug="eva", name="Eva", workspace=f.ws, owner=f.user,
-                                   runtime_secrets=["canopy-pat", "kindora"],
+                                   runtime_secrets=["CANOPY_WEB_PAT", "kindora"],
                                    credential_source=Agent.CANOPY_WEB)
     f.runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=f.user, status=Runner.ONLINE, workspace=f.ws,
                                      last_heartbeat_at=timezone.now(), capabilities={})
@@ -113,7 +113,7 @@ def fleet(client):
     client.force_login(f.user)
     grant_step_up(client)
     f.client = client
-    client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "pat-value",
+    client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "pat-value",
                                                                "kindora": "kin-value"}},
                content_type="application/json")
     f.pat = _pat(f.user)
@@ -171,7 +171,7 @@ def zk_values(f, plain: dict, kv=1, vk=None) -> list[dict]:
             for n, v in plain.items()]
 
 
-PLAIN = {"canopy-pat": "pat-value", "kindora": "kin-value"}
+PLAIN = {"CANOPY_WEB_PAT": "pat-value", "kindora": "kin-value"}
 
 
 def _enable(f, *, wraps=None, values=None, kv=1, client=None, **headers):
@@ -373,11 +373,11 @@ def test_enable_refuses_a_bad_wrap_set(fleet, wraps, code):
     res = _enable(fleet, wraps=wraps(fleet))
     assert res.status_code == 422 and res.json()["error"] == code, res.content
     assert not Agent.objects.get(pk=fleet.agent.pk).zk_enabled
-    assert AgentCredential.objects.get(name="canopy-pat").plaintext() == "pat-value"
+    assert AgentCredential.objects.get(name="CANOPY_WEB_PAT").plaintext() == "pat-value"
 
 
 def test_enable_needs_every_stored_value(fleet):
-    res = _enable(fleet, values=zk_values(fleet, {"canopy-pat": "pat-value"}))
+    res = _enable(fleet, values=zk_values(fleet, {"CANOPY_WEB_PAT": "pat-value"}))
     assert res.status_code == 422 and res.json()["error"] == "zk_values_incomplete"
     assert "kindora" in res.json()["detail"]
 
@@ -459,16 +459,16 @@ def test_only_an_admin_reaches_the_zk_routes(fleet):
 
 def test_reveal_refuses_and_a_plaintext_write_is_sealed_on_a_zk_agent(fleet):
     assert _enable(fleet).status_code == 200
-    res = fleet.client.post("/api/agents/eva/credentials/canopy-pat/reveal")
+    res = fleet.client.post("/api/agents/eva/credentials/CANOPY_WEB_PAT/reveal")
     assert res.status_code == 409 and res.json()["error"] == "zk_enabled"
     # Zero-knowledge is the only mode: `canopy vault import` writes in plaintext
     # and canopy-web seals the value to the agent's readers, keeping no copy.
-    res = fleet.client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "x"}},
+    res = fleet.client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "x"}},
                            content_type="application/json")
     assert res.status_code == 200, res.content
-    row = AgentCredential.objects.get(name="canopy-pat")
+    row = AgentCredential.objects.get(name="CANOPY_WEB_PAT")
     assert row.value_enc == "" and row.value_zk.startswith("zks1:") and row.kv == 1
-    assert ref.open_sealed_value(row.value_zk, _aid(fleet), "canopy-pat", "member", str(fleet.user.pk),
+    assert ref.open_sealed_value(row.value_zk, _aid(fleet), "CANOPY_WEB_PAT", "member", str(fleet.user.pk),
                                  fleet.member_priv) == "x"
 
 
@@ -513,7 +513,7 @@ def test_a_device_without_a_wrap_gets_409_and_the_owner_an_alert(fleet):
 def test_a_custodial_resolve_says_zk_false(fleet):
     body = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet.pat}").json()
     assert body["zk"] is False and body["kv"] is None and body["wrap"] is None
-    assert body["values"]["canopy-pat"] == "pat-value"
+    assert body["values"]["CANOPY_WEB_PAT"] == "pat-value"
 
 
 # ---- values, grants ---------------------------------------------------------------------------
@@ -772,7 +772,7 @@ def test_server_seal_opens_with_the_reference_for_device_and_member(fleet):
 
 
 def test_resolve_hands_a_sealed_value_to_a_device_without_a_wrap(fleet):
-    Agent.objects.filter(pk=fleet.agent.pk).update(runtime_secrets=["canopy-pat", "kindora", "gog-token"])
+    Agent.objects.filter(pk=fleet.agent.pk).update(runtime_secrets=["CANOPY_WEB_PAT", "kindora", "gog-token"])
     assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
     services.set_agent_credentials(_agent(fleet), {"gog-token": "tok"}, minted=True)
     # Only sealed values asked for: no vault key needed, no 409.
@@ -788,19 +788,19 @@ def test_resolve_hands_a_sealed_value_to_a_device_without_a_wrap(fleet):
 
 def test_state_names_sealed_values_and_a_settle_is_compare_and_swap(fleet):
     assert _enable(fleet).status_code == 200
-    services.set_agent_credentials(_agent(fleet), {"canopy-pat": "minted"}, minted=True)
+    services.set_agent_credentials(_agent(fleet), {"CANOPY_WEB_PAT": "minted"}, minted=True)
     state = fleet.client.get(f"{ZK}?values=true").json()
-    assert state["sealed"] == ["canopy-pat"]
-    read = state["values"]["canopy-pat"]
-    settled = zk_values(fleet, {"canopy-pat": "minted"})[0]
+    assert state["sealed"] == ["CANOPY_WEB_PAT"]
+    read = state["values"]["CANOPY_WEB_PAT"]
+    settled = zk_values(fleet, {"CANOPY_WEB_PAT": "minted"})[0]
     stale = {**settled, "expect": hashlib.sha256(b"something else").hexdigest()}
     res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": [stale]}, content_type="application/json")
     assert res.status_code == 409 and res.json()["error"] == "zk_value_changed"
-    assert _stored("canopy-pat") == read
+    assert _stored("CANOPY_WEB_PAT") == read
     ok = {**settled, "expect": zk.value_digest(read)}
     res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": [ok]}, content_type="application/json")
     assert res.status_code == 200, res.content
-    assert _stored("canopy-pat").startswith("zk1:")
+    assert _stored("CANOPY_WEB_PAT").startswith("zk1:")
     assert fleet.client.get(ZK).json()["sealed"] == []
 
 
@@ -816,9 +816,9 @@ def test_expect_empty_means_no_value_stored(fleet):
 
 def test_enable_and_rotate_refuse_an_unsettled_value(fleet):
     assert _enable(fleet).status_code == 200
-    services.set_agent_credentials(_agent(fleet), {"canopy-pat": "minted"}, minted=True)
+    services.set_agent_credentials(_agent(fleet), {"CANOPY_WEB_PAT": "minted"}, minted=True)
     body = {"new_kv": 2, "wraps": [member_wrap(fleet, kv=2), device_wrap(fleet, kv=2), recovery_wrap(fleet, kv=2)],
-            "values": [{"name": "canopy-pat", "value_zk": _stored("canopy-pat")},
+            "values": [{"name": "CANOPY_WEB_PAT", "value_zk": _stored("CANOPY_WEB_PAT")},
                        *zk_values(fleet, {"kindora": "kin-value"}, kv=2)]}
     res = fleet.client.post(f"{ZK}/rotate", data=body, content_type="application/json")
     assert res.status_code == 422
@@ -889,7 +889,7 @@ def test_pat_rotation_seals_the_new_token_and_retires_the_one_it_minted(fleet):
     assert pat_rotation.enable_refusal(_agent(fleet), fleet.user) is None
     first = pat_rotation.rotate(_agent(fleet), trigger="manual", actor=fleet.user)
     assert first.status == AgentPatRotation.ROTATED and first.old_token is None
-    raw = ref.open_sealed_value(_stored("canopy-pat"), _aid(fleet), "canopy-pat", "device",
+    raw = ref.open_sealed_value(_stored("CANOPY_WEB_PAT"), _aid(fleet), "CANOPY_WEB_PAT", "device",
                                 fleet.device.ecdh_jkt, fleet.ecdh)
     assert hashlib.sha256(raw.encode()).hexdigest() == first.new_token.token_hash
     second = pat_rotation.rotate(_agent(fleet), trigger="manual", actor=fleet.user)
@@ -1079,7 +1079,7 @@ def test_custodial_agents_are_listed_never_converted(fleet):
     from apps.agents.management.commands.list_custodial_vault_agents import custodial_vault_agents
 
     rows = custodial_vault_agents()
-    assert [r["slug"] for r in rows] == ["eva"] and rows[0]["custodial_values"] == ["canopy-pat", "kindora"]
+    assert [r["slug"] for r in rows] == ["eva"] and rows[0]["custodial_values"] == ["CANOPY_WEB_PAT", "kindora"]
     out = StringIO()
     call_command("list_custodial_vault_agents", stdout=out)
     assert "eva" in out.getvalue() and "kin-value" not in out.getvalue()

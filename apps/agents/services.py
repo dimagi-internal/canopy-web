@@ -258,7 +258,7 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
 
 def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
     """The agent's canopy login in one step, for an agent on the canopy-web vault: mint
-    its token (`mint_agent_canopy_token`), store it as its `canopy-pat` sealed to whoever
+    its token (`mint_agent_canopy_token`), store it as its login (`pat_rotation.CANOPY_PAT_REF`) sealed to whoever
     may read the agent (`minted=True` → zks1), and turn on automatic rotation. The raw
     token never leaves this function — the browser button that calls it has no use for
     it, and a response that carried it would put a live login in a page's memory.

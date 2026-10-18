@@ -86,7 +86,7 @@ def test_one_click_stores_the_login_sealed_and_never_returns_it(owner, agent):
     assert resp.status_code == 201, resp.content
     body = resp.json()
     assert "raw" not in body and body["user_email"] == "scout@marshellis.com" and body["created_user"]
-    cred = AgentCredential.objects.get(agent=agent, name="canopy-pat")
+    cred = AgentCredential.objects.get(agent=agent, name="CANOPY_WEB_PAT")
     assert cred.value_zk.startswith("zks1:")  # sealed to the owner — canopy-web cannot read it
     agent.refresh_from_db()
     assert agent.pat_rotation_enabled and agent.pat_rotation_enabled_by == owner
@@ -98,7 +98,7 @@ def test_it_refuses_before_minting_when_nobody_could_open_it(owner, agent):
     assert resp.status_code == 409 and "set up your key" in resp.json()["detail"]
     agent.refresh_from_db()
     assert agent.user is None  # no login made, no token minted
-    assert not AgentCredential.objects.filter(agent=agent, name="canopy-pat").exists()
+    assert not AgentCredential.objects.filter(agent=agent, name="CANOPY_WEB_PAT").exists()
 
 
 def test_a_1password_agent_is_pointed_at_its_vault(owner, agent):
@@ -134,3 +134,21 @@ def test_switching_where_secrets_live_needs_a_fresh_passkey(owner, agent):
     assert c.patch(url, {"credential_source": "1password"}, content_type="application/json").status_code == 200
     agent.refresh_from_db()
     assert agent.credential_source == Agent.ONEPASSWORD
+
+
+def test_the_login_is_stored_under_the_variable_its_code_reads():
+    """A runner writes each canopy-web value out as the environment variable of its
+    own name, and an agent reads its login from CANOPY_WEB_PAT. So that is the name
+    the login lives under — `canopy-pat` (the 1Password item) would be dropped on
+    the way, and an agent already storing CANOPY_WEB_PAT had its login reported
+    missing."""
+    from apps.agents.pat_rotation import CANOPY_PAT_REF
+
+    assert CANOPY_PAT_REF == "CANOPY_WEB_PAT"
+    owner = a_member()
+    agent = Agent.objects.create(slug="vaulted", name="Vaulted", workspace=a_workspace(owner=owner),
+                                 owner=owner, credential_source=Agent.CANOPY_WEB,
+                                 runtime_secrets=["CANOPY_WEB_PAT"])
+    AgentCredential.objects.create(agent=agent, name="CANOPY_WEB_PAT")
+    step = next(s for s in setup.setup_steps(agent) if s["key"] == "canopy_login")
+    assert step["status"] == setup.DONE

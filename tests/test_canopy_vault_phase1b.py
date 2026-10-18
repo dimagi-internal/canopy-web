@@ -127,7 +127,7 @@ def fleet(client):
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=jj,
-                                 runtime_secrets=["canopy-pat", "gog-token"],
+                                 runtime_secrets=["CANOPY_WEB_PAT", "gog-token"],
                                  credential_source=Agent.CANOPY_WEB)
     runner = Runner.objects.create(name="ec2-box", kind=Runner.CLOUD, owner=jj, workspace=ws,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
@@ -135,7 +135,7 @@ def fleet(client):
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
     client.force_login(jj)
     grant_step_up(client)
-    client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "pat-value"}},
+    client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "pat-value"}},
                content_type="application/json")
     mail.outbox.clear()
     return {"client": client, "agent": agent, "runner": runner, "user": jj, "ws": ws,
@@ -253,8 +253,8 @@ def test_a_valid_aws_proof_resolves_and_names_the_runner(fleet, sts):
     _active_role(fleet, sts)
     res = _resolve(fleet, _proof())
     assert res.status_code == 200, res.content
-    assert res.json()["values"]["canopy-pat"] == "pat-value"
-    assert AgentCredentialRead.objects.get(name="canopy-pat").runner_id == fleet["runner"].pk
+    assert res.json()["values"]["CANOPY_WEB_PAT"] == "pat-value"
+    assert AgentCredentialRead.objects.get(name="CANOPY_WEB_PAT").runner_id == fleet["runner"].pk
     assert RunnerDeviceKey.objects.get().last_used_at is not None
     assert all(c["url"] == "https://sts.amazonaws.com/" for c in sts.calls)
 
@@ -279,7 +279,7 @@ def test_the_runner_halfs_exact_shape_is_accepted(fleet, sts):
 def test_the_htu_may_carry_the_refs_query(fleet, sts):
     _bind(fleet)
     _active_role(fleet, sts)
-    res = _resolve(fleet, _proof(HTU + "?refs=canopy-pat"), path=RESOLVE + "?refs=canopy-pat")
+    res = _resolve(fleet, _proof(HTU + "?refs=CANOPY_WEB_PAT"), path=RESOLVE + "?refs=CANOPY_WEB_PAT")
     assert res.status_code == 200
 
 
@@ -395,7 +395,7 @@ def _resolve_as_box(fleet, turn=""):
 def test_a_box_read_without_a_turn_id_alerts(fleet):
     assert _resolve_as_box(fleet).status_code == 200
     [alert] = _alerts("no-turn")
-    assert alert.refs == ["canopy-pat"] and alert.runner_id == fleet["runner"].pk
+    assert alert.refs == ["CANOPY_WEB_PAT"] and alert.runner_id == fleet["runner"].pk
     assert _alerts() == [alert]
     body = mail.outbox[0].body
     assert "stolen or misused runner token" in body and "revoke its token" in body
@@ -473,7 +473,7 @@ def test_an_admin_resolving_by_hand_without_a_turn_is_expected(fleet):
 
 
 def test_asking_for_an_undeclared_ref_alerts(fleet):
-    res = _resolve(fleet, path=RESOLVE + "?refs=canopy-pat,aws-root-key")
+    res = _resolve(fleet, path=RESOLVE + "?refs=CANOPY_WEB_PAT,aws-root-key")
     assert res.status_code == 200 and "aws-root-key" not in res.json()["values"]
     [alert] = _alerts("undeclared-ref")
     assert alert.refs == ["aws-root-key"]
@@ -487,7 +487,7 @@ def test_an_unscoped_read_of_a_stored_orphan_alerts(fleet):
 
 
 def test_naming_a_resolve_extra_is_not_undeclared(fleet):
-    _resolve(fleet, path=RESOLVE + "?refs=canopy-pat,github_token")
+    _resolve(fleet, path=RESOLVE + "?refs=CANOPY_WEB_PAT,github_token")
     assert _alerts("undeclared-ref") == []
 
 
@@ -538,14 +538,14 @@ def agent_login(fleet):
                                        role=WorkspaceMembership.EDITOR)
     Agent.objects.filter(pk=fleet["agent"].pk).update(user=login)
     raw, token = PersonalToken.create_for_user(user=login, label="eva agent", ttl_days=0)
-    fleet["client"].put("/api/agents/eva/credentials", data={"values": {"canopy-pat": raw}},
+    fleet["client"].put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": raw}},
                         content_type="application/json")
     fleet["agent"].refresh_from_db()
     return {"login": login, "raw": raw, "token": token}
 
 
 def _stored_pat(agent) -> str:
-    return AgentCredential.objects.get(agent=agent, name="canopy-pat").plaintext()
+    return AgentCredential.objects.get(agent=agent, name="CANOPY_WEB_PAT").plaintext()
 
 
 def test_turning_rotation_on_is_an_audited_admin_setting(fleet, agent_login):
@@ -620,7 +620,7 @@ def test_a_due_rotation_mints_writes_overlaps_then_revokes(fleet, agent_login):
 
 def test_rotation_never_revokes_a_token_that_is_not_the_agents(fleet, agent_login):
     """The stored canopy-pat is a PERSON's token: replace it, leave theirs alone."""
-    fleet["client"].put("/api/agents/eva/credentials", data={"values": {"canopy-pat": fleet["pat"]}},
+    fleet["client"].put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": fleet["pat"]}},
                         content_type="application/json")
     row = pat_rotation.rotate(fleet["agent"], trigger="manual", actor=fleet["user"])
     assert row.old_token_id is None and row.revoke_after is None
@@ -632,7 +632,7 @@ def test_a_refused_rotation_is_recorded_and_backs_off(fleet, agent_login):
     Agent.objects.filter(pk=fleet["agent"].pk).update(
         pat_rotation_enabled=True, pat_rotation_enabled_by=fleet["user"],
         pat_rotated_at=timezone.now() - dt.timedelta(days=31))
-    AgentCredential.objects.filter(name="canopy-pat").delete()
+    AgentCredential.objects.filter(name="CANOPY_WEB_PAT").delete()
     assert pat_rotation.tick()["failed"] == 1
     assert AgentPatRotation.objects.get().status == "failed"
     assert pat_rotation.tick()["failed"] == 0  # not retried every tick

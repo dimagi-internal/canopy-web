@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { getPatRotation, rotatePatNow, setPatRotation, type PatRotationOut } from '@/api/deviceKeys'
 import { relativeAge } from '@/lib/relativeAge'
 
-// Automatic rotation of the agent's own canopy-pat (Canopy Vault, canopy-web#1549).
+// Automatic rotation of the agent's own canopy login (Canopy Vault, canopy-web#1549).
 // canopy-web issued that token, so it can replace it on a schedule without anyone
-// typing anything: a new token goes into `canopy-pat`, runners pick it up at their
+// typing anything: a new token goes into `CANOPY_WEB_PAT`, runners pick it up at their
 // next `cred sync`, and the old one keeps working for 24 h before it is revoked.
 
 export function AgentPatRotationSection({ slug, canEdit }: { slug: string; canEdit: boolean }) {
@@ -49,7 +49,7 @@ export function AgentPatRotationSection({ slug, canEdit }: { slug: string; canEd
   return (
     <section id="cred-pat-rotation" className="mb-6" data-testid="agent-pat-rotation">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        canopy-pat rotation
+        Canopy login rotation
       </h3>
       <div className="flex flex-wrap items-center gap-2 text-[12px] text-foreground">
         <label className="flex items-center gap-2">
@@ -58,7 +58,7 @@ export function AgentPatRotationSection({ slug, canEdit }: { slug: string; canEd
             checked={state.enabled}
             disabled={busy || !validDays}
             onChange={() => void run(() => setPatRotation(slug, !state.enabled, days))}
-            aria-label="Rotate this agent's canopy-pat automatically"
+            aria-label="Rotate this agent's canopy login automatically"
             data-testid="pat-rotation-enabled"
           />
           Rotate automatically every
@@ -82,7 +82,7 @@ export function AgentPatRotationSection({ slug, canEdit }: { slug: string; canEd
         <button
           type="button"
           onClick={() => {
-            if (window.confirm('Rotate the canopy-pat now? The old token keeps working for 24 hours.')) {
+            if (window.confirm('Rotate its canopy login now? The old token keeps working for 24 hours.')) {
               void run(() => rotatePatNow(slug))
             }
           }}
