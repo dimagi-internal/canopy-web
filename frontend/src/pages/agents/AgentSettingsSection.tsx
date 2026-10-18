@@ -8,6 +8,7 @@ import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
 import { AgentRepositoryControl } from '@/components/agents/AgentRepositoryControl'
 import { AgentRouting } from '@/components/agents/AgentRouting'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
+import { AgentMailboxControl } from '@/components/agents/AgentMailboxControl'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
 import { AgentSetupChecklist } from '@/components/agents/AgentSetupChecklist'
@@ -154,6 +155,14 @@ export function AgentSettingsSection() {
             description={`Whether people can talk to ${agent.name} from the connected Slack.`}
           >
             <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
+          </Setting>
+          <Setting
+            title="Email"
+            who={admins}
+            canEdit={isAdmin}
+            description={`The address ${agent.name} sends and reads mail as.`}
+          >
+            <AgentMailboxControl slug={agent.slug} workspace={agent.workspace ?? ''} canEdit={isAdmin} />
           </Setting>
         </div>
       </Section>

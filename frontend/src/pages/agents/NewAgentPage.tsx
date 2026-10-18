@@ -13,6 +13,7 @@ import {
 } from '@/api/agentCreation'
 import { setAgentGitHub } from '@/api/agents'
 import { GitHubTokenSteps } from '@/components/agents/GitHubTokenSteps'
+import { mailboxHint, useHostedDomains } from '@/components/agents/hostedMail'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
@@ -43,6 +44,7 @@ export function NewAgentPage(): JSX.Element {
   const [slugEdited, setSlugEdited] = useState(false)
   const [mandate, setMandate] = useState('')
   const [mailbox, setMailbox] = useState('')
+  const hostedDomains = useHostedDomains(workspace)
   const [stakeholders, setStakeholders] = useState('')
   const [owner, setOwnerState] = useState(rememberedOwner)
   const setOwner = (o: string) => {
@@ -170,8 +172,9 @@ export function NewAgentPage(): JSX.Element {
             placeholder="Find good first issues for new contributors."
           />
         </Field>
-        <Field label="Mailbox (optional)" hint="An address it sends and reads mail as. You sign it in with Google later.">
-          <Input value={mailbox} onChange={(e) => setMailbox(e.target.value)} placeholder="scout@example.org" />
+        <Field label="Mailbox (optional)" hint={mailboxHint(mailbox, hostedDomains)}>
+          <Input value={mailbox} onChange={(e) => setMailbox(e.target.value)}
+            placeholder={`${effectiveSlug || 'scout'}@${hostedDomains[0] ?? 'example.org'}`} />
         </Field>
         <Field label="Who it serves (optional)">
           <Input value={stakeholders} onChange={(e) => setStakeholders(e.target.value)} placeholder="the contributor team" />

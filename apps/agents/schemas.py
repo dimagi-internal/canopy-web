@@ -1578,6 +1578,9 @@ class AgentCredentialsResolveOut(StrictModel):
     # agent shares its repo, and deriving the address from the repo or the slug
     # would point two instances at one inbox (canopy-web#984).
     mailbox: str = ""
+    # Where that mailbox lives: "ses" = canopy-hosted (no Gmail sign-in; mail goes through
+    # canopy-web), "google" = a Google mailbox the box signs in with gog, "" = none.
+    mailbox_backend: str = ""
     # Zero-knowledge (canopy-web#1550). When `zk`, `values` hold `zk1:`
     # ciphertext under the agent's vault key at version `kv`, and `wrap` is that
     # key wrapped to the proving device's ECDH key (docs/vault/zk-v1/). A value

@@ -1219,7 +1219,41 @@ def email_admitted_outside_domain(email: str) -> bool:
         return False
     if WorkspaceMembership.objects.filter(user__email__iexact=email).exists():
         return True
-    return pending_invite_for_email(email) is not None
+    if pending_invite_for_email(email) is not None:
+        return True
+    return sign_in_domain_workspace(email) is not None
+
+
+def sign_in_domain_workspace(email: str):
+    """The workspace that lets people at `email`'s domain sign in, or None: the domain is on
+    its `access_request_domains` AND is one of its VERIFIED canopy-hosted mail domains.
+
+    The second half is the proof of control. A domain on the request list alone was never a
+    login grant (anyone can make a Google account at gmail.com), but a workspace whose DKIM
+    records verified for the domain controls its DNS, so it decides who holds addresses
+    there — e.g. a family's or a team's free Google Workspace logins (Jonathan, 2026-10-18).
+    Signing in still grants nothing: the person can only ask to join, approved by an admin
+    or at the workspace's auto-approve role. The caller must already have checked the email
+    is PROVIDER-verified (`CustomSocialAccountAdapter`)."""
+    domain = _email_domain(email)
+    if not domain:
+        return None
+    for owner_of in _VERIFIED_DOMAIN_OWNERS:
+        ws = owner_of(domain)
+        if ws is not None and domain in [str(x).lower() for x in (ws.access_request_domains or [])]:
+            return ws
+    return None
+
+
+#: Callables `domain -> Workspace | None` naming the workspace that has PROVED control of a
+#: domain (a verified canopy-hosted mail domain). Registered by `apps.mail` from its
+#: AppConfig.ready — framework code cannot import the product app (ARCHITECTURE.md).
+_VERIFIED_DOMAIN_OWNERS: list = []
+
+
+def register_verified_domain_owner(fn) -> None:
+    if fn not in _VERIFIED_DOMAIN_OWNERS:
+        _VERIFIED_DOMAIN_OWNERS.append(fn)
 
 
 def can_create_workspace(user) -> bool:

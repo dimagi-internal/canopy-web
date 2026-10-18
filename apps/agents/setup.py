@@ -59,7 +59,28 @@ def _mailbox(agent: Agent, settings: str) -> dict:
     if not agent.email:
         return _step("mailbox", "Connect its mailbox", OPTIONAL,
                      "No mailbox set. Email is optional; add one later if it should send or read mail.")
+    from . import mailbox
     from .models import AgentBootstrapReport
+
+    box = mailbox.describe(agent)
+    if box["kind"] == "hosted":
+        # Canopy-hosted: nothing to sign in. Mail to the address is the agent's turn once
+        # its route exists and the domain is verified; the workspace email page is where
+        # either gets fixed.
+        email_page = f"/w/{agent.workspace_id}/settings/email"
+        if box["live"]:
+            return _step("mailbox", "Connect its mailbox", DONE,
+                         f"{agent.email} is canopy-hosted email — nothing to sign in. Mail to it "
+                         "becomes this agent's turn.", href=email_page, action="Email settings")
+        if box["route"] == "taken":
+            why = f"{agent.email} already goes somewhere else; route it to this agent"
+        elif not box["verified"]:
+            why = f"{box['domain']} is still waiting for its DNS records"
+        else:
+            why = f"{agent.email} has no mailbox route yet"
+        return _step("mailbox", "Connect its mailbox", TODO,
+                     f"Canopy-hosted email: {why} on the workspace email page.",
+                     href=email_page, action="Email settings")
 
     # Done when canopy-web holds the token (Connect Google mailbox) OR a box has proved the
     # mailbox works for turns — the box's verdict is the system's own check. Before this,

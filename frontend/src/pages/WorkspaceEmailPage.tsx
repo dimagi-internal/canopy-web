@@ -165,9 +165,29 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
       </div>
 
       {owned && !domain.receiving && domain.mx_provider && (
-        <p className="text-[12px] text-warning">
-          {`${domain.mx_provider} currently receives mail for this domain — switching MX moves all of it here.`}
+        <p className="text-[12px] text-warning" data-testid="mail-mx-elsewhere">
+          {domain.mx_points_at_google
+            ? `This domain's MX points at Google, so its mail goes to Gmail, not here. Google Workspace sign-in and Drive work without Gmail — keep the MX record below (canopy) and the agents' mail stays here.`
+            : `${domain.mx_provider} currently receives mail for this domain — switching MX moves all of it here.`}
         </p>
+      )}
+      {owned && (domain.can_set_sign_in || domain.sign_in) && (
+        <label className="flex items-start gap-2 text-[12px] text-foreground" data-testid="mail-sign-in">
+          <input type="checkbox" className="mt-0.5" checked={domain.sign_in}
+            disabled={busy || !domain.can_set_sign_in}
+            onChange={(e) => {
+              const on = e.target.checked
+              void run(async () => onChange(await updateMailDomain(workspace, domain.id, { sign_in: on })),
+                'Could not change who may sign in')
+            }} />
+          <span>
+            People with a Google account @{domain.name} (e.g. free Google Workspace logins) can sign in and ask to
+            join this workspace.
+            <span className="block text-muted-foreground">
+              They are let in at the workspace&rsquo;s auto-approve role, or an admin approves each one.
+            </span>
+          </span>
+        </label>
       )}
       {spfMany && (
         <p className="text-[12px] text-warning">

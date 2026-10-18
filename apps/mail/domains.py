@@ -289,6 +289,81 @@ def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: st
     return route
 
 
+def hosted_domain_for(address: str, workspace) -> MailDomain | None:
+    """The workspace's canopy-hosted domain `address` is on (its own, or one shared with
+    it), or None — an address elsewhere (Gmail, Google Workspace mail) is not ours to route."""
+    _, _, host = (address or "").strip().lower().rpartition("@")
+    if not host:
+        return None
+    return next((d for d in usable_domains(workspace) if d.name == host), None)
+
+
+def agent_mailbox(agent) -> dict:
+    """Where `agent.email` lives, for every surface that would otherwise assume Gmail:
+    `{"kind": "hosted", "address", "domain", "live", "route"}` when it is a canopy-hosted
+    address (live = the agent route exists, is enabled and its domain is verified),
+    `{"kind": "google", "address"}` for anything else, `{"kind": "none"}` with no email."""
+    if not agent.email:
+        return {"kind": "none"}
+    address = agent.email.strip().lower()
+    domain = hosted_domain_for(address, agent.workspace)
+    if domain is None:
+        return {"kind": "google", "address": address}
+    local = address.rpartition("@")[0]
+    route = MailRoute.objects.filter(domain=domain, local_part=local).select_related("agent").first()
+    mine = route is not None and route.kind == MailRoute.AGENT and route.agent_id == agent.pk
+    return {"kind": "hosted", "address": address, "domain": domain.name,
+            "verified": domain.routes_live,
+            "live": bool(mine and route.enabled and domain.routes_live and route_is_live(route)),
+            "route": "mine" if mine else ("taken" if route is not None else "none")}
+
+
+def ensure_agent_route(agent, *, by) -> str:
+    """Give an agent whose address is on a canopy-hosted domain its mailbox route, so mail to
+    it becomes its email turn with no further step. Returns what happened: "created",
+    "exists", "taken" (that address already routes somewhere else — never replaced),
+    "needs-admin", "not-hosted", or "none". Safe to call on every save; never raises.
+
+    `by` must be able to change the workspace's mail routes (the same INTEGRATIONS gate
+    as the email page): an unrouted address falls to the catch-all, so letting anyone who
+    can register an agent claim one would let an editor read mail meant for someone else."""
+    from apps.workspaces import permissions as perms
+
+    box = agent_mailbox(agent)
+    if box["kind"] != "hosted":
+        return "none" if box["kind"] == "none" else "not-hosted"
+    if box["route"] == "mine":
+        return "exists"
+    if box["route"] == "taken":
+        return "taken"
+    if by is None or not perms.can(by, agent.workspace, perms.INTEGRATIONS):
+        return "needs-admin"
+    domain = hosted_domain_for(box["address"], agent.workspace)
+    try:
+        save_route(domain, local_part=box["address"].rpartition("@")[0], kind=MailRoute.AGENT,
+                   agent_slug=agent.slug, workspace=agent.workspace)
+    except DomainError as exc:
+        log.info("no mailbox route for %s: %s", agent.slug, exc)
+        return "taken"
+    return "created"
+
+
+class MailboxProvider:
+    """`apps.agents.mailbox`'s provider: hosted mail is this app's."""
+
+    def describe(self, agent) -> dict:
+        return agent_mailbox(agent)
+
+    def ensure_route(self, agent, *, by) -> str:
+        return ensure_agent_route(agent, by=by)
+
+
+def verified_domain_owner(domain: str):
+    """The workspace whose VERIFIED mail domain `domain` is, or None (sign-in seam)."""
+    d = MailDomain.objects.filter(name=domain.lower()).select_related("workspace").first()
+    return d.workspace if d is not None and d.routes_live else None
+
+
 def set_share(domain: MailDomain, workspace, *, daily_send_cap: int | None = None, by=None) -> MailDomainShare:
     # A grant on the domain's own workspace is how its sub-workspaces get it: the owner
     # needs no grant itself (share_for answers None for it), its descendants find this one.

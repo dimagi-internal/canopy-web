@@ -11,6 +11,7 @@ export type MailRouteIn = components['schemas']['MailRouteIn']
 export type MailThreadOut = components['schemas']['MailThreadOut']
 export type MailThreadListOut = components['schemas']['MailThreadListOut']
 export type MailMessageOut = components['schemas']['MailMessageOut']
+export type AgentMailboxOut = components['schemas']['AgentMailboxOut']
 
 // Same shape as InboundApiError: callers branch on the status (403 non-admin,
 // 409 domain taken elsewhere, 422 reserved domain / reserved local part).
@@ -46,7 +47,7 @@ export async function refreshMailDomain(workspace: string, domainId: number): Pr
 }
 
 export async function updateMailDomain(workspace: string, domainId: number,
-  body: { daily_send_cap?: number; unsuspend?: boolean }): Promise<MailDomainOut> {
+  body: { daily_send_cap?: number; unsuspend?: boolean; sign_in?: boolean }): Promise<MailDomainOut> {
   const res = await apiV2.PATCH('/api/mail/domains/{workspace}/{domain_id}', {
     params: { path: { workspace, domain_id: domainId } }, body: { unsuspend: false, ...body } })
   if (!res.response.ok) fail(res, 'Failed to update the domain')
@@ -109,4 +110,18 @@ export async function fetchMailThread(workspace: string, threadId: string): Prom
   })
   if (!res.response.ok) fail(res, 'Failed to load mail thread')
   return res.data as MailThreadOut
+}
+
+/** Where an agent's address lives: canopy-hosted (nothing to sign in), Google, or none. */
+export async function getAgentMailbox(slug: string): Promise<AgentMailboxOut> {
+  const res = await apiV2.GET('/api/mail/agents/{slug}/mailbox', { params: { path: { slug } } })
+  if (!res.response.ok) fail(res, 'Could not read the agent\'s mailbox')
+  return res.data as AgentMailboxOut
+}
+
+/** Give an agent an address; on a canopy-hosted domain it is routed in the same step. */
+export async function setAgentMailbox(slug: string, address: string): Promise<AgentMailboxOut> {
+  const res = await apiV2.PUT('/api/mail/agents/{slug}/mailbox', { params: { path: { slug } }, body: { address } })
+  if (!res.response.ok) fail(res, 'Could not save the address')
+  return res.data as AgentMailboxOut
 }

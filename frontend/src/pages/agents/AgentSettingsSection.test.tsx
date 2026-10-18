@@ -20,6 +20,7 @@ vi.mock('@/components/agents/AgentRouting', () => ({ AgentRouting: () => <div>ro
 vi.mock('@/components/agents/AgentOwnerControl', () => ({ AgentOwnerControl: () => <div>owner-control</div> }))
 vi.mock('@/components/agents/AgentAccessRoster', () => ({ AgentAccessRoster: () => <div>access-roster</div> }))
 vi.mock('@/components/agents/AgentInterfaceView', () => ({ AgentInterfaceView: () => <div>interface-view</div> }))
+vi.mock('@/components/agents/AgentMailboxControl', () => ({ AgentMailboxControl: () => <div>mailbox-control</div> }))
 vi.mock('@/pages/agents/AgentVaultSection', () => ({ AgentVaultSection: () => null }))
 vi.mock('@/pages/agents/AgentDeviceKeysSection', () => ({ AgentDeviceKeysSection: () => null }))
 vi.mock('@/components/agents/AgentSetupChecklist', () => ({ AgentSetupChecklist: () => null }))
@@ -64,13 +65,14 @@ describe('AgentSettingsSection', () => {
     expect(where('People and roles', 'People')).toBeTruthy()
     expect(where('Who can reach it', 'Callers')).toBeTruthy()
     expect(where('Who can reach it', 'Slack')).toBeTruthy()
+    expect(where('Who can reach it', 'Email')).toBeTruthy()
     // Turn mode and runners are one table now: a rule can set both.
     expect(where('How it runs', 'Routing')).toBeTruthy()
 
     // Who may change each one is said to someone who cannot (this viewer is
     // not an admin), not discovered by an error.
     expect(within(screen.getByRole('region', { name: 'Who can reach it' }))
-      .getAllByText("Only Hal's admins can change this.")).toHaveLength(2)
+      .getAllByText("Only Hal's admins can change this.")).toHaveLength(3)
 
     const credentials = screen.getByRole('region', { name: 'Credentials' })
     expect(await within(credentials).findByTestId('cred-CANOPY_PAT')).toBeTruthy()

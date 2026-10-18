@@ -45,6 +45,12 @@ class MailDomainOut(Schema):
     owner_workspace: str = ""
     can_share: bool = False
     shares: list[MailDomainShareOut] = []
+    sign_in: bool = False
+    """People with a verified Google account at this domain may sign in and ask to join
+    the workspace (Google Workspace logins on a domain whose mail canopy hosts)."""
+    can_set_sign_in: bool = False
+    mx_points_at_google: bool = False
+    """Its MX goes to Google: mail for it would reach Google, not canopy — a warning."""
 
 
 class MailDomainListOut(Schema):
@@ -60,6 +66,9 @@ class MailDomainIn(Schema):
 class MailDomainPatchIn(Schema):
     daily_send_cap: int | None = None
     unsuspend: bool = False
+    sign_in: bool | None = None
+    """Owner only, verified domains only: let Google accounts @this domain sign in and
+    ask to join (they are approved at the workspace's auto-approve role, if any)."""
 
 
 class MailDomainShareIn(Schema):
@@ -144,3 +153,24 @@ class MailResolveOut(Schema):
     backend: str
     workspace: str
     agent: str
+
+
+class AgentMailboxOut(Schema):
+    """Where an agent's address lives. `kind`: hosted (canopy-hosted, nothing to sign in),
+    google (signed in with Google), none. For hosted: `live` = mail to it is the agent's turn
+    now; `route` = mine | taken | none; `verified` = the domain's DNS checks out."""
+
+    kind: str
+    address: str = ""
+    domain: str = ""
+    verified: bool = False
+    live: bool = False
+    route: str = ""
+    hosted_domains: list[str] = []
+    """The canopy-hosted domains this agent's workspace may give it an address on."""
+    can_route: bool = False
+    """Whether the caller may create the mailbox route (workspace admin or owner)."""
+
+
+class AgentMailboxIn(Schema):
+    address: str

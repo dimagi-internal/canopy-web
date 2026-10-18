@@ -28,6 +28,8 @@ from apps.workspaces.models import Workspace
 from . import agent_mail, domains, inbound, reputation, ses, sns
 from .models import MailDomain, MailMessage, MailRoute, MailThread
 from .schemas import (
+    AgentMailboxIn,
+    AgentMailboxOut,
     MailDomainIn,
     MailDomainShareIn,
     MailDomainListOut,
@@ -108,7 +110,10 @@ def _domain_out(d: MailDomain, user, ws=None) -> dict:
            "routes": [_route_out(r) for r in routes],
            "can_manage": perms.can(user, ws, perms.INTEGRATIONS),
            "owned": owned, "owner_workspace": d.workspace_id,
-           "can_share": owned and user.is_superuser, "shares": []}
+           "can_share": owned and user.is_superuser, "shares": [],
+           "sign_in": owned and d.name in [str(x).lower() for x in (ws.access_request_domains or [])],
+           "can_set_sign_in": owned and d.routes_live and perms.can(user, ws, perms.OWN),
+           "mx_points_at_google": "google" in (d.mx_provider or "").lower()}
     if user.is_superuser:
         out["shares"] = [{"workspace": s.workspace_id, "daily_send_cap": s.daily_send_cap}
                          for s in d.shares.all()]
@@ -181,10 +186,33 @@ def update_mail_domain(request: HttpRequest, workspace: str, domain_id: int,
     # Only the fields this request changes: a concurrent auto-suspension must not be undone.
     if fields:
         d.save(update_fields=fields)
+    if payload.sign_in is not None:
+        _set_sign_in(request.user, ws, d, payload.sign_in)
     d.refresh_from_db()
     audit.note_change(scope=f"mail.domain:{d.name}", before=before,
                       after={"daily_send_cap": d.daily_send_cap, "status": d.status})
     return _domain_out(d, request.user)
+
+
+def _set_sign_in(user, ws, d: MailDomain, on: bool) -> None:
+    """Add or remove `d` from the workspace's `access_request_domains` — the list of email
+    domains whose people may sign in (if outside the global allowlist) and ask to join.
+
+    That list is never client input in general (anyone could name gmail.com); a VERIFIED
+    mail domain is the exception, because DKIM verification is proof the workspace controls
+    the domain's DNS, so it controls who holds addresses there. Owner only — it decides who
+    can get in."""
+    if not perms.can(user, ws, perms.OWN):
+        raise HttpError(403, "only a workspace owner can change who may sign in")
+    if on and not d.routes_live:
+        raise HttpError(409, "the domain's DNS records must verify first")
+    current = [str(x).lower() for x in (ws.access_request_domains or [])]
+    after = sorted(set(current) | {d.name}) if on else [x for x in current if x != d.name]
+    if after != current:
+        audit.note_change(scope=f"workspace:{ws.slug}/access_request_domains",
+                          before=current, after=after, workspace=ws)
+        ws.access_request_domains = after
+        ws.save(update_fields=["access_request_domains", "updated_at"])
 
 
 @router.delete("/domains/{workspace}/{domain_id}", response={204: None},
@@ -349,6 +377,43 @@ def resolve_mail_address(request: HttpRequest, address: str) -> dict:
             or route.workspace_id not in wsvc.user_workspace_slugs(request.user)):
         raise HttpError(404, "not an SES mailbox")
     return {"backend": "ses", "workspace": route.workspace_id, "agent": route.agent.slug}
+
+
+def _mailbox_out(request: HttpRequest, agent) -> dict:
+    from apps.workspaces import permissions as wperms
+
+    return {**domains.agent_mailbox(agent),
+            "hosted_domains": [d.name for d in domains.usable_domains(agent.workspace)],
+            "can_route": wperms.can(request.user, agent.workspace, wperms.INTEGRATIONS)}
+
+
+@router.get("/agents/{slug}/mailbox", response=AgentMailboxOut,
+            summary="Where an agent's address lives: canopy-hosted, Google, or none")
+def get_agent_mailbox(request: HttpRequest, slug: str) -> dict:
+    from apps.agents.api import _get_agent_or_404
+
+    return _mailbox_out(request, _get_agent_or_404(request, slug))
+
+
+@router.put("/agents/{slug}/mailbox", response=AgentMailboxOut,
+            summary="Give an agent an address; on a canopy-hosted domain it is routed at once")
+def set_agent_mailbox(request: HttpRequest, slug: str, payload: AgentMailboxIn) -> dict:
+    """Set the agent's address (owner or agent admin). An address on one of the workspace's
+    hosted domains gets its mailbox route in the same step when the caller may change the
+    workspace's routes; one that already goes elsewhere is never taken over."""
+    from apps.agents.api import _agent_for_admin
+
+    agent = _agent_for_admin(request, slug)
+    address = (payload.address or "").strip().lower()
+    if address and ("@" not in address or address.startswith("@") or address.endswith("@")):
+        raise HttpError(422, "that is not an email address")
+    before = agent.email
+    agent.email = address
+    agent.save(update_fields=["email"])
+    audit.note_change(scope=f"agent:{agent.slug}/email", before=before, after=address,
+                      workspace=agent.workspace)
+    domains.ensure_agent_route(agent, by=request.user)
+    return _mailbox_out(request, agent)
 
 
 @router.get("/threads/{workspace}", response=MailThreadListOut, summary="List mail threads")

@@ -27,6 +27,7 @@ import { PrfUnsupportedError, PRF_UNSUPPORTED } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { getCredentialAlerts, type AgentCredentialAlertOut } from '@/api/deviceKeys'
 import { WorkbenchSkeleton } from 'canopy-ui'
+import { getAgentMailbox, type AgentMailboxOut } from '@/api/mail'
 
 // "What is stopping this agent from running" — a question that on 2026-09-05
 // cost an SSH to a box and a `gog auth list`. ACE's mailbox had been dead since
@@ -109,6 +110,13 @@ export function AgentCredentialsPanel({
   const [onVault] = useState(() => report('vault'))
   const [onGitHub] = useState(() => report('github'))
   const [onSalesforce] = useState(() => report('salesforce'))
+  // A canopy-hosted address has no Google mailbox to connect (apps/mail): it must not
+  // imply a gog-token, nor read "Not connected" for something that needs nothing.
+  const [mailBox, setMailBox] = useState<AgentMailboxOut | null>(null)
+  useEffect(() => {
+    if (!agent.email?.trim()) return
+    getAgentMailbox(agent.slug).then(setMailBox).catch(() => undefined)
+  }, [agent.slug, agent.email])
   // Zero-knowledge (canopy-web#1550): when on, Save and Reveal encrypt and
   // decrypt HERE under the agent's vault key, unlocked with the person's own
   // vault key (passkey or passphrase) — canopy-web never sees the value.
@@ -223,9 +231,10 @@ export function AgentCredentialsPanel({
   }
 
   // An agent with a mailbox needs `gog-token` whether or not a runtime.yaml says so.
-  const implied = agent.email?.trim() ? [GOG_TOKEN_REF] : []
+  const hosted = mailBox?.kind === 'hosted'
+  const implied = agent.email?.trim() && !hosted ? [GOG_TOKEN_REF] : []
   const sec = sections(rows, implied)
-  const hasMailbox = declaresMailbox(rows, agent.email)
+  const hasMailbox = declaresMailbox(rows, hosted ? null : agent.email)
   const gog = rows.find((r) => r.name === GOG_TOKEN_REF)
   const mailbox: CredStatus = gog?.set
     ? { label: 'Connected', tone: 'success' }
@@ -242,7 +251,10 @@ export function AgentCredentialsPanel({
       : { key: 'vault', name: '1Password vault', href: '#cred-vault', s: status.vault },
     { key: 'github', name: 'GitHub', href: '#cred-github', s: status.github },
     ...(status.salesforce ? [{ key: 'salesforce', name: 'Salesforce', href: '#cred-salesforce', s: status.salesforce }] : []),
-    ...(hasMailbox ? [{ key: 'mailbox', name: 'Google mailbox', s: mailbox }] : []),
+    ...(hosted ? [{ key: 'email', name: 'Email', href: '#reach', s: mailBox?.live
+      ? { label: 'Canopy-hosted', tone: 'success' } as CredStatus
+      : { label: 'Canopy-hosted, not routed', tone: 'warning' } as CredStatus }] : []),
+    ...(hasMailbox ? [{ key: 'mailbox', name: hosted ? 'Google sign-in (Drive)' : 'Google mailbox', s: mailbox }] : []),
   ]
 
   // One row, used for anything this page actually manages. The vault-resolved
