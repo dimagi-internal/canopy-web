@@ -268,13 +268,15 @@ def find_menu(text: str) -> Menu | None:
             checked = box.group(1) != " "
             label = box.group(2).strip()
         # Options are consecutive from 1; anything else is prose that happens to
-        # be numbered.
-        if not options and number != 1:
+        # be numbered. Every "1." starts the run over: a live dialog is the LAST
+        # thing on screen, so the last run is the dialog. Keeping the first run
+        # let an agent's own "1. … / 2. …" above the dialog swallow the dialog's
+        # 3, 4, 5 and drop its 1 and 2 — a menu with no tab strip, which refused
+        # a multi-question answer as unmodelled (bednet, 2026-10-17).
+        if number == 1:
+            options, selected, first_option_line = [], None, i
+        elif not options or number != options[-1].number + 1:
             continue
-        if options and number != options[-1].number + 1:
-            continue
-        if not options:
-            first_option_line = i
         options.append(Option(number, label, checked))
         if CURSOR in line:
             selected = number

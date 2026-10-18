@@ -748,3 +748,48 @@ def test_a_question_cached_with_its_gutter_still_matches():
                     "just to call /unpause. How should the unpause be scheduled?")
 
     assert question_index(Shown, GUTTER_DECLARED) == 0
+
+
+# Captured 2026-10-17 from an ACE session (bednet): the agent's own numbered list
+# sits above a two-question AskUserQuestion. Keeping the FIRST "1." run made the
+# prose list the menu, dropped the tab strip, and refused the answer.
+PROSE_LIST_ABOVE_TABBED_ASK = """\
+  - With no local AVD on that box, the emulator backend defaults to lease, which is what we want.
+
+  Blockers:
+  1. ACE setup failed on the runner. Its last readiness report (19:30Z) says bin/ace-setup failed and lists a Nova follow-up: Phase 3 needs
+     NOVA_API_KEY. Without that key the app build in Phase 3 can't run. The report shows only the first line of the setup output, so I can't
+     see the actual error from here.
+  2. The runner is on ACE 0.13.2036. That's before today's fixes, and its runner code is also behind the expected commit. A runner refresh
+     re-runs its bootstrap, which updates the plugin and re-runs ACE setup, so it may clear blocker 1 too.
+
+  Also, on the cloud box, any deploy-type action is gated on your approval, since this session runs in manual mode.
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Runner  ☐ Photo/GPS  ✔ Submit  →
+
+│ Refresh the cloud-ec2-2 runner now (re-runs its bootstrap: updates ACE to 0.13.2040, re-runs ace-setup), then re-check readiness before 
+│ dispatching?
+
+❯ 1. Refresh, then re-check (Recommended)
+     Ask the runner to refresh at its next idle moment; I re-read agent readiness. If ace-setup still fails / Nova key still missing, I stop 
+     and show you the gap before dispatching anything.
+  2. Dispatch as-is
+     Send /ace:run to cloud-ec2-2 now; Phase 3 will likely fail on Nova auth.
+  3. Hold
+     Don't touch the runner yet.
+  4. Type something.
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+"""
+
+
+def test_a_numbered_list_above_the_dialog_does_not_become_its_options():
+    m = find_menu(PROSE_LIST_ABOVE_TABBED_ASK)
+    assert m is not None
+    assert [o.label for o in m.options][:3] == [
+        "Refresh, then re-check (Recommended)", "Dispatch as-is", "Hold"]
+    assert m.selected == 1
+    assert m.tabs == ["Runner", "Photo/GPS", "Submit"]
+    assert m.question.startswith("Refresh the cloud-ec2-2 runner now")
