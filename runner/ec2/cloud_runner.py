@@ -334,13 +334,17 @@ def _share_runner_token(raw: str, exp: float) -> None:
         _log(f"warn: could not share the runner token with the updater ({exc})")
 
 
-def _bearer() -> str:
+def _bearer(min_life: float = RUNNER_TOKEN_RENEW_SECONDS) -> str:
     """The credential for the next canopy-web call: this box's own runner token
-    while its device key can get one, else the CANOPY_TOKEN fallback."""
+    while its device key can get one, else the CANOPY_TOKEN fallback.
+
+    `min_life`: how long the token must still be good for, or a fresh one is got.
+    A child process handed the token (bootstrap, prepare) cannot renew it itself,
+    so it asks for one that outlives the child."""
     if _RUNNER_ID and os.environ.get("CANOPY_DEVICE_KEY", "1") != "0":
         with _RUNNER_TOKEN_LOCK:
             now = time.time()
-            if _RUNNER_TOKEN["raw"] and _RUNNER_TOKEN["exp"] - now > RUNNER_TOKEN_RENEW_SECONDS:
+            if _RUNNER_TOKEN["raw"] and _RUNNER_TOKEN["exp"] - now > min_life:
                 return _RUNNER_TOKEN["raw"]
             if now - _RUNNER_TOKEN["failed_at"] > RUNNER_TOKEN_RETRY_SECONDS:
                 if _exchange_device_proof(_RUNNER_ID):
@@ -3464,6 +3468,45 @@ def _install_acp_adapter() -> None:
              "the ACP executor will fall back to claude -p")
 
 
+#: The whole agent bootstrap (bootstrap_agents.sh) may take this long.
+BOOTSTRAP_TIMEOUT_SECONDS = 900
+#: How long the bootstrap waits for canopy-web to accept this box's token before it
+#: goes ahead anyway (a refusal a person must fix — a revoked key — would otherwise
+#: hold the box forever), and how often it asks meanwhile.
+BOOTSTRAP_AUTH_WAIT_SECONDS = int(os.environ.get("BOOTSTRAP_AUTH_WAIT_SECONDS", "1800"))
+BOOTSTRAP_AUTH_POLL_SECONDS = 30
+
+
+def _signed_in() -> bool:
+    """Does canopy-web accept this box's token right now? One cheap runner-protocol
+    read (`_api` already retries a 401 once with a fresh runner token). Anything but
+    a refusal — a network blip, a 5xx — is not a reason to hold the bootstrap."""
+    if not _RUNNER_ID:
+        return True
+    status, _ = _api("GET", f"/runners/{_RUNNER_ID}/agents")
+    return status not in (401, 403)
+
+
+def _await_signed_in(why: str, *, max_wait: float | None = None,
+                     poll: float | None = None) -> bool:
+    """Block until canopy-web accepts this box's token, or `max_wait` passes. True
+    when accepted. Logs once on entering the wait and once on leaving it."""
+    max_wait = BOOTSTRAP_AUTH_WAIT_SECONDS if max_wait is None else max_wait
+    poll = BOOTSTRAP_AUTH_POLL_SECONDS if poll is None else poll
+    if _signed_in():
+        return True
+    _log(f"canopy-web refuses this box's token — waiting up to {int(max_wait // 60)} min "
+         f"for it {why} (a device key waiting on approval, or a deploy in progress)")
+    deadline = time.monotonic() + max_wait
+    while not _stop and time.monotonic() < deadline:
+        time.sleep(poll)
+        if _signed_in():
+            _log(f"canopy-web accepts this box's token — going on {why}")
+            return True
+    _log(f"canopy-web still refuses this box's token — going on {why} anyway")
+    return False
+
+
 def bootstrap_agent_fleet() -> None:
     """Clone/pull canopy-web to CANOPY_WEB_REPO_DIR and run its
     runner/ec2/bootstrap_agents.sh — the agent-fleet provisioning step
@@ -3489,7 +3532,21 @@ def bootstrap_agent_fleet() -> None:
     """
     global _BOOTSTRAPPED_AT, _HEALTH_SLOW_AT
     try:
+        # Every agent's prepare reads its credentials and posts its report as this
+        # box, so a bootstrap run while canopy-web refuses the box's token fails for
+        # the WHOLE fleet at once (2026-10-18 02:28: 16 minutes refused, and every
+        # agent's prepare inside it). Wait for a token canopy-web accepts first; and
+        # if it was refused DURING the pass, run the pass again once it is back.
+        _await_signed_in("before the agent bootstrap")
         _run_bootstrap()
+        if not _signed_in():
+            _log("canopy-web refused this box's token during the agent bootstrap — "
+                 "every agent's prepare may have failed; re-running it once the token is "
+                 "accepted again")
+            _set_check("bootstrap", "warn", "canopy-web refused this box's token during the "
+                       "agent bootstrap; waiting to re-run it")
+            if _await_signed_in("to re-run the agent bootstrap"):
+                _run_bootstrap()
         _github_readiness()
         _install_repo_worktree_shim()
         _guard_shared_clone(pathlib.Path(CANOPY_WEB_REPO_DIR))
@@ -3519,7 +3576,7 @@ def prepare_agent(slug: str) -> None:
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
     # bootstrap_agents.sh and `canopy agent prepare --runner` read the agent
     # roster and credentials AS THIS BOX: hand them its own token, not a PAT.
-    env["CANOPY_TOKEN"] = _bearer()
+    env["CANOPY_TOKEN"] = _bearer(min_life=900)
     try:
         rc, tail = _run_teed([_canopy_cli(), "agent", "prepare", "--runner", "--slug", slug],
                              env=env, timeout=900)
@@ -3647,15 +3704,16 @@ def _run_bootstrap() -> None:
     env = dict(os.environ)
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
     # The roster read and every `canopy agent prepare` it runs act AS THIS BOX, as
-    # prepare_agent's do. Inheriting os.environ handed them runner.env's PAT, which
-    # was revoked on 2026-10-17: the roster came back empty and the box fell back to
-    # AGENT_SLUGS, so an agent added since was never prepared at bootstrap.
-    bearer = _bearer()
+    # prepare_agent's do — including each agent's readiness report, a WRITE that
+    # canopy does not retry as the box. Inheriting os.environ handed them
+    # runner.env's PAT, revoked on 2026-10-17: the roster came back empty and every
+    # report 401'd. The child cannot renew the token, so it gets one that outlives it.
+    bearer = _bearer(min_life=BOOTSTRAP_TIMEOUT_SECONDS)
     if bearer:
         env["CANOPY_TOKEN"] = bearer
     _log(f"running {script}")
     try:
-        rc, tail = _run_teed(["bash", str(script)], env=env, timeout=900)
+        rc, tail = _run_teed(["bash", str(script)], env=env, timeout=BOOTSTRAP_TIMEOUT_SECONDS)
         _log(f"bootstrap_agents.sh exited {rc}")
         # The last lines carry the reason. "exited 1" alone still sent someone
         # to journald on 2026-09-22 (`line 1024: ace: unbound variable`), which
@@ -6534,10 +6592,14 @@ def main() -> None:
     _RUNNER_ID = runner_id
     # Canopy Vault: register this box's instance role as its device key (background,
     # fail-open; logs the approve URL while pending). canopy-web#1549.
-    start_aws_device_key_enrollment(runner_id)
+    enrollment = start_aws_device_key_enrollment(runner_id)
     _retire_shared_github_credentials()
     if not fetch_and_stage_credential(runner_id):
         return  # stopped before a credential was provisioned
+    # Registering the key can change what canopy-web will accept from this box (a
+    # new key waits on a person): settle that BEFORE the bootstrap checks the token,
+    # not halfway through it, as on 2026-10-18 02:28.
+    enrollment.join(timeout=60)
     bootstrap_agent_fleet()
     # Prefer the WS control channel; fall back to REST polling if it can't be used.
     if not run_over_ws(runner_id):
