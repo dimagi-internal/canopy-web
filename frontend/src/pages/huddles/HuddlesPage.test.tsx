@@ -9,12 +9,14 @@ const row = {
 }
 const listHuddles = vi.fn(async () => [row])
 vi.mock('@/api/huddles', () => ({ listHuddles, getHuddle: vi.fn() }))
-vi.mock('@/api/huddleGroups', () => ({
-  listHuddleGroups: vi.fn(async () => []), createHuddleGroup: vi.fn(), updateHuddleGroup: vi.fn(),
-}))
-vi.mock('@/api/agents', () => ({ listAgents: vi.fn(async () => ({ items: [] })) }))
-vi.mock('@/api/workspaces', () => ({ listMembers: vi.fn(async () => []) }))
-vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceRole: () => 'viewer' }))
+const checkin = {
+  id: 4, name: 'Weekly check-in', workspace: 'connect', agent: 'ada', format: 'huddle', agents: ['ada', 'hal'],
+  cron: '0 9 * * 2', timezone: 'America/Denver', channel_id: 'C1', channel_name: 'canopy-support',
+  lead_email: 'jj@dimagi.com', enabled: true, url: '/w/connect/agents/ada/projects/P7',
+  project: { agent: 'ada', ref: 'P7', name: 'Canopy support', url: '/w/connect/agents/ada/projects/P7' },
+}
+const listCheckins = vi.fn(async () => [checkin])
+vi.mock('@/api/checkins', () => ({ listCheckins }))
 const { HuddlesPage } = await import('./HuddlesPage')
 afterEach(cleanup)
 
@@ -31,4 +33,12 @@ it('says what a huddle is when there are none', async () => {
   render(<MemoryRouter initialEntries={['/w/connect/huddles']}>
     <Routes><Route path="/w/:workspace/huddles" element={<HuddlesPage />} /></Routes></MemoryRouter>)
   expect(await screen.findByText(/no huddles yet/i)).toBeTruthy()
+})
+
+it('lists check-ins as links to their projects, where each one lives', async () => {
+  render(<MemoryRouter initialEntries={['/w/connect/huddles']}>
+    <Routes><Route path="/w/:workspace/huddles" element={<HuddlesPage />} /></Routes></MemoryRouter>)
+  const link = await screen.findByRole('link', { name: /Canopy support/ })
+  expect(link.getAttribute('href')).toBe('/w/connect/agents/ada/projects/P7#project-checkins')
+  expect(screen.getByText(/#canopy-support/)).toBeTruthy()
 })

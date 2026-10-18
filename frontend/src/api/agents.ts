@@ -791,6 +791,8 @@ export async function deleteAgent(slug: string): Promise<void> {
 // projects whose agents may live in another one of the caller's.
 
 export type ProposedProjectOut = Schemas['ProposedProjectOut']
+/** A check-in's proposed task: Start / Decline are the task's own approve / decline. */
+export type ProposedTaskOut = Schemas['ProposedTaskOut']
 export type ProjectBackingOut = Schemas['ProjectBackingOut']
 export type BackingStance = Schemas['ProjectBackingIn']['stance']
 
@@ -830,6 +832,40 @@ export async function unbackProject(p: Pick<ProposedProjectOut, 'agent' | 'works
     ...pin(p.workspace),
   })
   if (res.error !== undefined) unwrap(res, 'unbackProject')
+}
+
+/** Start (approve) / decline / reply on a check-in's proposed task (`actOnTask`, pinned). */
+export async function actOnTaskProposal(
+  t: Pick<ProposedTaskOut, 'agent' | 'workspace' | 'ref'>,
+  action: 'approve' | 'decline' | 'reply',
+  comment = '',
+): Promise<ActResult> {
+  const res = await apiV2.POST('/api/agents/{slug}/tasks/{ref}/actions', {
+    params: { path: { slug: t.agent, ref: t.ref } },
+    ...pin(t.workspace),
+    body: { action, comment },
+  })
+  return unwrap(res, 'actOnTaskProposal') as ActResult
+}
+
+type TaskKey = Pick<ProposedTaskOut, 'agent' | 'workspace' | 'ref' | 'project_ref'>
+
+/** Say where you stand on a proposed task, as yourself (replaces your earlier stance). */
+export async function backTask(t: TaskKey, stance: BackingStance, line = ''): Promise<ProjectBackingOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/projects/{ref}/tasks/{task}/backings/me/', {
+    params: { path: { slug: t.agent, ref: t.project_ref, task: t.ref } },
+    ...pin(t.workspace),
+    body: { stance, line },
+  })
+  return unwrap(res, 'backTask') as ProjectBackingOut
+}
+
+export async function unbackTask(t: TaskKey): Promise<void> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/projects/{ref}/tasks/{task}/backings/me/', {
+    params: { path: { slug: t.agent, ref: t.project_ref, task: t.ref } },
+    ...pin(t.workspace),
+  })
+  if (res.error !== undefined) unwrap(res, 'unbackTask')
 }
 
 /** The view beacon: once per person, per object, per UTC day (server-side). */

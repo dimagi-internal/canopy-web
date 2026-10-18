@@ -902,6 +902,11 @@ class AgentProject(models.Model):
     #: When it was last proposed (or revised). A proposed project nobody starts or
     #: declines within `proposals.EXPIRES_AFTER` of this is archived, not taken up.
     proposed_at = models.DateTimeField(null=True, blank=True)
+    #: The task this project grew out of — a check-in's proposed task that turned
+    #: out to be a project's worth of work (`projects/propose/ from_task`). The
+    #: task shows "spawned → this project"; this one shows "from <task> in <project>".
+    spawned_from = models.ForeignKey("agents.AgentTask", null=True, blank=True, on_delete=models.SET_NULL,
+                                     related_name="spawned_projects")
     #: The PEOPLE this work involves (fleet brain v1.1, canopy#804) — not the
     #: owner (one human who owns the outcome) but everyone canopy has seen take
     #: part: the subject of a fact filed against the project, or the human whose
@@ -941,6 +946,18 @@ class AgentProject(models.Model):
     @property
     def owner_email(self) -> str | None:
         return self.owner_user.email if self.owner_user_id else None
+
+    @property
+    def spawned_from_ref(self) -> dict | None:
+        """The task this project grew out of, as the page links it (None for most)."""
+        if not self.spawned_from_id:
+            return None
+        t = self.spawned_from
+        return {"agent": t.agent.slug, "ref": t.ext_id, "title": t.title, "status": t.status,
+                "project_ref": t.project.ext_id if t.project_id else "",
+                "project_name": t.project.name if t.project_id else "",
+                "url": (f"/w/{t.agent.workspace_id}/agents/{t.agent.slug}/projects/{t.project.ext_id}"
+                        if t.project_id else f"/w/{t.agent.workspace_id}/agents/{t.agent.slug}/tasks")}
 
     @property
     def task_count(self) -> int:
@@ -983,7 +1000,7 @@ class ProjectParticipant(models.Model):
     """
 
     FACT, TURN, MANUAL, SUMMARY, REVIEW = "fact", "turn", "manual", "summary", "review"
-    BACKING, REPLY = "backing", "reply"
+    BACKING, REPLY, CHECKIN = "backing", "reply", "checkin"
     SOURCE_CHOICES = [
         (FACT, "A fact about them was filed against the project"),
         (TURN, "A conversation with them raised one of its tasks"),
@@ -992,6 +1009,7 @@ class ProjectParticipant(models.Model):
         (REVIEW, "They commented in a feedback round on one of its storyboards"),
         (BACKING, "They backed (or passed on) the project"),
         (REPLY, "They replied on one of its tasks"),
+        (CHECKIN, "They take part in one of its check-ins"),
     ]
     ROLE_MAX = 80
 
@@ -1028,8 +1046,8 @@ class ProjectParticipant(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["project", "person"], name="one_participant_row_per_person"),
             models.CheckConstraint(condition=models.Q(source__in=["fact", "turn", "manual", "summary", "review",
-                                                                  "backing", "reply"]),
-                                   name="project_participant_source_known_v4"),
+                                                                  "backing", "reply", "checkin"]),
+                                   name="project_participant_source_known_v5"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
@@ -1045,7 +1063,11 @@ class ProjectBacking(models.Model):
     this row buys is that "Echo backs · Eva backs with changes: … · Shayoni
     passes: …" is a row on the project, not a sentence in a huddle transcript.
 
-    One row per (project, person) and one per (project, agent): a backer changes
+    A row is on a project OR on a task (a check-in's proposed task, spec
+    2026-10-17-project-check-ins-design.md §3), never both: one backing table.
+
+    One row per (project, person) and one per (project, agent) — and the same per
+    task: a backer changes
     their stance by rewriting their row. A later revision of the project marks
     every row `stale` — they backed the earlier version — and rewriting clears it.
     Written only through `apps/agents/proposals.back`.
@@ -1055,7 +1077,10 @@ class ProjectBacking(models.Model):
     STANCES = (BACKS, BACKS_WITH_CHANGES, PASSES)
     LINE_MAX = 280
 
-    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="backings")
+    project = models.ForeignKey(AgentProject, null=True, blank=True, on_delete=models.CASCADE,
+                                related_name="backings")
+    task = models.ForeignKey("agents.AgentTask", null=True, blank=True, on_delete=models.CASCADE,
+                             related_name="backings")
     person = models.ForeignKey("contacts.Person", null=True, blank=True, on_delete=models.CASCADE,
                                related_name="project_backings")
     agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.CASCADE,
@@ -1079,16 +1104,26 @@ class ProjectBacking(models.Model):
                 condition=(models.Q(person__isnull=False, agent__isnull=True)
                            | models.Q(person__isnull=True, agent__isnull=False)),
                 name="project_backing_one_backer"),
+            models.CheckConstraint(
+                condition=(models.Q(project__isnull=False, task__isnull=True)
+                           | models.Q(project__isnull=True, task__isnull=False)),
+                name="project_backing_one_subject"),
             models.CheckConstraint(condition=models.Q(stance__in=["backs", "backs_with_changes", "passes"]),
                                    name="project_backing_stance_known"),
             models.UniqueConstraint(fields=["project", "person"], condition=models.Q(person__isnull=False),
                                     name="one_backing_per_person"),
             models.UniqueConstraint(fields=["project", "agent"], condition=models.Q(agent__isnull=False),
                                     name="one_backing_per_agent"),
+            models.UniqueConstraint(fields=["task", "person"],
+                                    condition=models.Q(person__isnull=False, task__isnull=False),
+                                    name="one_task_backing_per_person"),
+            models.UniqueConstraint(fields=["task", "agent"],
+                                    condition=models.Q(agent__isnull=False, task__isnull=False),
+                                    name="one_task_backing_per_agent"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
-        return f"{self.project_id}<-{self.person_id or self.agent_id}: {self.stance}"
+        return f"{self.project_id or self.task_id}<-{self.person_id or self.agent_id}: {self.stance}"
 
 
 class AgentTask(models.Model):
@@ -1501,8 +1536,9 @@ class EngagementEvent(models.Model):
     Written ONLY through `apps/agents/engagement.record`, which validates `kind`
     and `surface` and never lets a failed write break the caller's main path.
 
-    `group` is a work group's SLUG, not a foreign key: the group model lives in
-    `apps/huddles` and a row about a run must outlive the group it was about.
+    `checkin` is a project check-in's id, as a string, not a foreign key: the
+    model lives in `apps/huddles` and a row about a run must outlive the
+    check-in it was about.
     `huddle_id` is a string for the same reason — a huddle is derived, not stored.
     """
 
@@ -1525,7 +1561,7 @@ class EngagementEvent(models.Model):
     task = models.ForeignKey(AgentTask, null=True, blank=True, on_delete=models.SET_NULL,
                              related_name="engagement_events")
     huddle_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
-    group = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    checkin = models.CharField(max_length=64, blank=True, default="", db_index=True)
     at = models.DateTimeField(auto_now_add=True, db_index=True)
     meta = models.JSONField(default=dict, blank=True)
 

@@ -137,12 +137,20 @@ it('lists outputs under their idea, with live status in plain words', async () =
   expect(screen.getByRole('link', { name: /on Eva's board/ }).getAttribute('href')).toBe('/w/connect/agents/eva/work')
 })
 
-it('renders a work-group huddle\'s proposed projects with the shared card, not the loose tasks', async () => {
+it('renders a check-in huddle\'s proposals with the shared card, and links back to the project', async () => {
   current = {
     ...huddle, outputs: [],
-    group: { slug: 'champions-a', name: 'Champions A', channel_name: 'ai-champions-a',
-             lead_email: 'shayoni@dimagi.com', run_id: 3,
-             read: { messages: 12, first_ts: '', last_ts: '', since: '' } },
+    checkin: { id: 4, name: 'Weekly check-in', channel_name: 'ai-champions-a', lead_email: 'shayoni@dimagi.com',
+               run_id: 3, read: { messages: 12, first_ts: '', last_ts: '', since: '' },
+               project: { agent: 'eva', ref: 'P2', name: 'AI Champions', status: 'active',
+                          url: '/w/connect/agents/eva/projects/P2', workspace: 'connect' } },
+    tasks: [{
+      id: 5, agent: 'eva', workspace: 'connect', ref: 'T12', title: 'Write the FAQ', status: 'suggested', why: 'Asked weekly.',
+      done_when: 'Pinned.', plan: [], project_ref: 'P2', project_name: 'AI Champions',
+      project_url: '/w/connect/agents/eva/projects/P2', url: '/w/connect/agents/eva/projects/P2', source_url: '',
+      checkin: 4, run: 3, huddle_id: 'work-fleet-20261006', proposed_at: null, expires_at: null, notes: '',
+      decision_open: true, may_decide: false, backings: [], comments: [], partners: [], spawned: [],
+    }],
     projects: [{
       id: 1, agent: 'eva', workspace: 'connect', ref: 'P7', name: 'Prompt library', status: 'proposed',
       outcome: 'Twenty tested prompts.', why: 'Rewritten weekly.', plan: [], url: '/w/connect/agents/eva/projects/P7',
@@ -152,8 +160,10 @@ it('renders a work-group huddle\'s proposed projects with the shared card, not t
   }
   renderAt()
   expect(await screen.findByRole('article', { name: 'Proposed project: Prompt library' })).toBeTruthy()
-  const line = document.querySelector('[data-group="champions-a"]')
+  expect(screen.getByRole('article', { name: 'Proposed task: Write the FAQ' })).toBeTruthy()
+  const line = document.querySelector('[data-checkin="Weekly check-in"]')
   expect(line?.textContent).toContain('#ai-champions-a')
   expect(line?.textContent).toContain('read 12 messages')
+  expect(screen.getByRole('link', { name: 'AI Champions' }).getAttribute('href')).toBe('/w/connect/agents/eva/projects/P2')
   expect(screen.queryByText('What was decided')).toBeNull()
 })

@@ -241,8 +241,8 @@ def test_the_summary_reports_reactions_decisions_and_runs(world):
     _back(world["viewer"], "backs")
     _act(world["owner"], proposals.decision_card(project).ext_id, "approve")
     _propose(world, name="Unloved")
-    engagement.record("run_announced", workspace="connect", surface="slack", group="g", meta={"run": 7})
-    engagement.record("run_confirmed", workspace="connect", surface="slack", group="g",
+    engagement.record("run_announced", workspace="connect", surface="slack", checkin="9", meta={"run": 7})
+    engagement.record("run_confirmed", workspace="connect", surface="slack", checkin="9",
                       user=world["owner"], meta={"run": 7})
     out = _client(world["owner"]).get("/api/w/connect/engagement/summary?days=14").json()
     by_name = {p["name"]: p for p in out["proposals"]}
@@ -253,7 +253,7 @@ def test_the_summary_reports_reactions_decisions_and_runs(world):
     assert out["runs"]["median_confirm_s"] is not None
     assert {p["email"] for p in out["people"]} == {"jj@dimagi.com", "sophie@dimagi.com"}
     assert {"kind": "backed", "surface": "web", "n": 1} in out["counts"]
-    only_g = _client(world["owner"]).get("/api/w/connect/engagement/summary?group=g").json()
+    only_g = _client(world["owner"]).get("/api/w/connect/engagement/summary?checkin=9").json()
     assert only_g["proposals"] == [] and only_g["runs"]["confirmed"] == 1
 
 
@@ -267,4 +267,4 @@ def test_the_huddle_page_lists_its_proposed_projects_as_cards(world):
     [card] = h["projects"]
     assert card["name"] == "Prompt library" and card["may_decide"] is True
     assert card["backings"][0]["stance"] == "backs"
-    assert h["outputs"] == [] and h["group"] is None and h["outcome_count"] == 1
+    assert h["outputs"] == [] and h["checkin"] is None and h["outcome_count"] == 1

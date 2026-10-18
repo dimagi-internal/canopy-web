@@ -273,8 +273,6 @@ _NOT_THE_AGENTS = {
     "agents.EngagementEvent": "what people did, recorded in the workspace they did it in; telemetry stays there",
     "events.Activity": "an analytics fact, counted in the workspace it happened in; telemetry stays there",
     "events.TurnUsage": "what a turn spent, counted in the workspace it ran in; telemetry stays there",
-    "huddles.HuddleGroup": "a work group is its workspace's (lead, channel); the agents it names are "
-                           "re-checked at every announcement, and a leader that moved out fails it",
 }
 
 

@@ -213,7 +213,9 @@ from apps.feedback.api import router as feedback_router  # noqa: E402
 from apps.storyboards.api import router as storyboards_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.huddles.api import router as huddles_router  # noqa: E402
-from apps.huddles.groups_api import router as huddle_groups_router  # noqa: E402
+from apps.huddles.checkins_api import legacy_router as huddle_groups_legacy_router  # noqa: E402
+from apps.huddles.checkins_api import project_router as checkins_project_router  # noqa: E402
+from apps.huddles.checkins_api import router as checkins_router  # noqa: E402
 from apps.threads.api import router as threads_router  # noqa: E402
 from apps.harness.api_schedules import router as schedules_router  # noqa: E402
 from apps.harness.api_investigations import router as investigations_router  # noqa: E402
@@ -267,6 +269,7 @@ api.add_router("/sessions", sessions_router)
 # apps.api.tenancy.WorkspaceResolveMiddleware, which also sets request.workspace_slug.
 # Before the agents router: `…/projects/propose/` must not be read as a project ref.
 api.add_router("/agents", proposals_router)  # proposed projects + backings (layer 1, 2026-10-16)
+api.add_router("/agents", checkins_project_router)  # a project's check-ins + its timeline (2026-10-17)
 api.add_router("/agents", agents_router)
 # A2A Agent Card discovery — public in the login middleware; each route
 # self-enforces (apps/agents/a2a_api.py).
@@ -302,8 +305,10 @@ api.add_router("/runner-device-keys", device_keys_router)
 api.add_router("/runner-sessions", runner_sessions_router)
 api.add_router("/huddles", huddles_router)
 api.add_router("/engagement", engagement_router)  # what people do with projects + huddles
-# Work groups: a lead, a Slack channel, agents, a cadence (apps/huddles/groups.py).
-api.add_router("/huddle-groups", huddle_groups_router)
+# Project check-ins across projects, and their runs (apps/huddles/checkins.py).
+api.add_router("/checkins", checkins_router)
+# The two work-group run routes an un-updated engine still calls — one release only.
+api.add_router("/huddle-groups", huddle_groups_legacy_router)
 api.add_router("/threads", threads_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)

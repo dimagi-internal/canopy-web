@@ -447,11 +447,11 @@ def revoke(ingest: SlackChannelIngest, *, user=None, slack_user_id: str = "") ->
             revoked_at=timezone.now(), next_attempt_at=None)
         if moved:
             SlackIngestMessage.objects.filter(ingest=ingest).delete()
-            # "Deleted what it had read" includes the copy a work group run kept
-            # (apps/huddles/groups.deliver_read) for its leader's turn.
-            from apps.huddles.models import HuddleGroupRun
+            # "Deleted what it had read" includes the copy a check-in run kept
+            # (apps/huddles/checkins.deliver_read) for its agent's turn.
+            from apps.huddles.models import CheckinRun
 
-            HuddleGroupRun.objects.filter(ingest=ingest).update(material="")
+            CheckinRun.objects.filter(ingest=ingest).update(material="")
     ingest.refresh_from_db()
     if moved:
         who = f"<@{slack_user_id}>" if slack_user_id else _who(user)
@@ -731,7 +731,7 @@ def _begin_read(*, agent, installation, allowance, user, channel_name: str, purp
     """Start (or continue) the allow-listed read of a channel for a person's ask.
 
     The one place a read is started. Callers are both Slack clicks/commands by a
-    person: `read_channel` (`/<agent> read-channel`) and a work group lead's
+    person: `read_channel` (`/<agent> read-channel`) and a project check-in lead's
     Confirm (`start_group_read`). Reads everything since the agent's last read;
     `pending` is handed back to `_deliver` once the read is done."""
     channel_id = allowance.channel_id
@@ -760,22 +760,22 @@ def _begin_read(*, agent, installation, allowance, user, channel_name: str, purp
 
 def start_group_read(*, agent, installation, channel_id: str, user, run_id: int, purpose: str,
                      oldest=None) -> SlackChannelIngest:
-    """A work group's lead pressed Confirm on its run's announcement, in the
-    channel (apps/huddles/groups.confirm): read the channel for the group's
-    leader agent. Only an allow-listed channel; `_deliver` hands the read to
-    `huddles.groups.deliver_read`. Raises IngestError to refuse.
+    """A project check-in's lead pressed Confirm on its run's announcement, in the
+    channel (apps/huddles/checkins.click): read the channel for the project's
+    agent. Only an allow-listed channel; `_deliver` hands the read to
+    `huddles.checkins.deliver_read`. Raises IngestError to refuse.
 
     Called ONLY from that click — never from the schedule, an agent, the API or
     the web UI (Jonathan's rule: a channel is read only on a person's command in Slack)."""
     allowance = allowance_for(agent, channel_id)
     if allowance is None:
         raise IngestError(f"This channel isn't on `{agent.slug}`'s list of channels it may read — "
-                          "re-save the work group in canopy to put it back.")
+                          "re-save the check-in in canopy to put it back.")
     row = _begin_read(agent=agent, installation=installation, allowance=allowance, user=user,
-                      channel_name="", purpose=purpose, pending={"group_run": int(run_id), "by": user.pk},
+                      channel_name="", purpose=purpose, pending={"checkin_run": int(run_id), "by": user.pk},
                       oldest=oldest.timestamp() if oldest else 0.0)
-    _record(row, "read_channel", f"{_who(user)} confirmed a work group huddle: {agent.slug} reads <#{channel_id}> "
-            "since its last read", user=user.pk, group_run=int(run_id), allowance=str(allowance.pk),
+    _record(row, "read_channel", f"{_who(user)} confirmed a check-in: {agent.slug} reads <#{channel_id}> "
+            "since its last read", user=user.pk, checkin_run=int(run_id), allowance=str(allowance.pk),
             after=row.read_mark)
     return row
 
@@ -788,7 +788,7 @@ def _slack_date(epoch: float) -> str:
 
 def _what_was_read(agent_slug: str, t: dict, prev_at, *, as_confirmed: bool = False) -> str:
     """The public line in the thread: how much was read, spanning when, since when.
-    `as_confirmed`: a work group run, whose `prev_at` is the start the lead confirmed."""
+    `as_confirmed`: a check-in run, whose `prev_at` is the start the lead confirmed."""
     if as_confirmed and prev_at:
         since = f"everything posted since {_slack_date(prev_at.timestamp())}, as confirmed"
     elif prev_at:
@@ -813,11 +813,12 @@ def _deliver(ingest: SlackChannelIngest) -> None:
         pending = row.pending_ask
         row.pending_ask = {}
         row.save(update_fields=["pending_ask"])
-    if "group_run" in pending:
-        # A work group's confirmed read: the group takes it from here.
-        from apps.huddles import groups
+    if "checkin_run" in pending or "group_run" in pending:
+        # A check-in's confirmed read: the check-in takes it from here. (`group_run`
+        # is a read confirmed before work groups became check-ins; the run kept its id.)
+        from apps.huddles import checkins
 
-        groups.deliver_read(pending["group_run"], row.pk)
+        checkins.deliver_read(pending.get("checkin_run") or pending["group_run"], row.pk)
         return
     row = SlackChannelIngest.objects.select_related("agent", "installation", "workspace", "decided_by").get(pk=row.pk)
     inbound = services.Inbound(**pending["inbound"])
@@ -866,9 +867,9 @@ def transcript(ingest: SlackChannelIngest, *, after: int = 0, oldest: float = 0.
     is shown under its (already-read) parent, so it is not read out of context.
 
     `oldest` (a Slack ts) cuts it further to messages POSTED after it — a work
-    group run reads only what its lead confirmed — and an earlier thread parent
+    check-in run reads only what its lead confirmed — and an earlier thread parent
     is then shown only if it, too, was posted after it. `skip_users` leaves out
-    messages by those Slack users (a work group skips canopy's own posts).
+    messages by those Slack users (a check-in skips canopy's own posts).
 
     Returns {markdown, messages, total, after, mark, first_ts, last_ts}: `mark`
     is what to hand `mark_read` once the agent has kept the text."""

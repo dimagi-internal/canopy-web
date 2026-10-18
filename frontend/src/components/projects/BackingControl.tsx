@@ -1,18 +1,12 @@
 import { useState, type JSX } from 'react'
 
-import {
-  AgentApiError,
-  backProject,
-  unbackProject,
-  type BackingStance,
-  type ProjectBackingOut,
-  type ProposedProjectOut,
-} from '@/api/agents'
+import { AgentApiError, type BackingStance, type ProjectBackingOut } from '@/api/agents'
 
 import { STANCE_WORDS } from './stance'
 
-// SAY WHERE YOU STAND — any member, as themself. Backing is a signal, never a
-// gate: it starts nothing (that is the decision card's). "Back it" is one
+// SAY WHERE YOU STAND — any member, as themself, on a proposed project or a
+// proposed task (the caller wires `save` / `withdraw` to the right routes).
+// Backing is a signal, never a gate: it starts nothing (that is the decision's). "Back it" is one
 // click; "with changes" and "pass" take one line saying what or why, because a
 // bare "no" teaches the agent nothing.
 
@@ -23,11 +17,15 @@ const CHOICES: { stance: BackingStance; label: string }[] = [
 ]
 
 export function BackingControl({
-  project,
+  save,
+  withdraw,
   mine,
   onChanged,
 }: {
-  project: Pick<ProposedProjectOut, 'agent' | 'workspace' | 'ref'>
+  /** Record the reader's stance (replacing their earlier one). */
+  save: (stance: BackingStance, line: string) => Promise<unknown>
+  /** Withdraw the reader's own backing. */
+  withdraw: () => Promise<unknown>
   /** The reader's own backing, if they gave one. */
   mine: ProjectBackingOut | undefined
   onChanged: () => void
@@ -51,7 +49,7 @@ export function BackingControl({
       )
       .finally(() => setBusy(false))
   }
-  const send = (stance: BackingStance) => run(backProject(project, stance, line.trim()))
+  const send = (stance: BackingStance) => run(save(stance, line.trim()))
 
   return (
     <div className="space-y-2" data-backing-control>
@@ -80,7 +78,7 @@ export function BackingControl({
           <button
             type="button"
             disabled={busy}
-            onClick={() => run(unbackProject(project))}
+            onClick={() => run(withdraw())}
             className="min-h-11 px-1 text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-50 sm:min-h-0"
           >
             Withdraw

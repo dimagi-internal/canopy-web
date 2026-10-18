@@ -835,6 +835,22 @@ class AgentProjectPatch(StrictModel):
     repo_slug: str | None = Field(default=None, max_length=100)
     notes: str | None = None
     links: list[AgentTaskLink] | None = None
+    #: The task this project grew out of, as `<agent>/<task ext_id>` ("ada/T41");
+    #: `""` clears it. Same agent's or another visible agent's task.
+    spawned_from: str | None = Field(default=None, max_length=130)
+
+
+class SpawnedFromOut(StrictModel):
+    """The task a project grew out of: "from <task> in <project>"."""
+
+    agent: str
+    ref: str
+    title: str
+    status: str
+    project_ref: str = ""
+    project_name: str = ""
+    #: The page to open: the task's project, else its agent's board.
+    url: str
 
 
 class AgentProjectOut(StrictModel):
@@ -858,6 +874,9 @@ class AgentProjectOut(StrictModel):
     open_task_count: int = 0
     #: Live tasks with an open ask or parked on a person (`services.waiting_q`).
     waiting_task_count: int = 0
+    #: The task this project grew out of, if it did.
+    spawned_from: SpawnedFromOut | None = Field(
+        default=None, validation_alias=AliasChoices("spawned_from_ref", "spawned_from"))
     created_at: dt.datetime
     updated_at: dt.datetime
 
@@ -1172,6 +1191,8 @@ class ProposedProjectOut(StrictModel):
     owner_email: str | None = None
     #: The project's notes — where a decline's reason is kept.
     notes: str = ""
+    #: The task it grew out of ("from <task> in <project>"), if it did.
+    spawned_from: SpawnedFromOut | None = None
     #: The decision card ("Start this project?"): act on it with `POST …/tasks/{ref}/actions`.
     decision_task: str | None = None
     decision_task_id: int | None = None
@@ -1199,7 +1220,12 @@ class ProjectProposeIn(StrictModel):
     owner_email: str = Field(default="", max_length=254)
     #: Required to bring back a project of this name that was declined.
     new_evidence: str = ""
-    #: The work group this came from (its slug), recorded on the `proposed` event.
+    #: The task this project grows out of, as `<agent>/<task ext_id>` — a check-in's
+    #: proposed task that turned out to be a project's worth of work.
+    from_task: str = Field(default="", max_length=130)
+    #: The check-in this came from (its id), recorded on the `proposed` event.
+    checkin: str = Field(default="", max_length=64)
+    #: Deprecated (work groups are gone): accepted and ignored for one release.
     group: str = Field(default="", max_length=64)
 
 
@@ -1207,6 +1233,82 @@ class ProjectProposeOut(StrictModel):
     #: False when an open proposed project of that name was revised instead.
     created: bool
     project: ProposedProjectOut
+
+
+class SpawnedProjectOut(StrictModel):
+    """A project a task grew into: "spawned → <project>"."""
+
+    agent: str
+    ref: str
+    name: str
+    status: str
+    url: str
+
+
+class ProposedTaskOut(StrictModel):
+    """A check-in's proposed task as both the project page and the huddle page
+    render it: what it is, its decision (Start = approve, Decline = decline, the
+    task's own actions) and whether the reader may make it, where people stand,
+    what they said, its partners and any project it spawned."""
+
+    id: int
+    agent: str
+    workspace: str
+    #: The task's `ext_id` — act on it with `POST /api/agents/{agent}/tasks/{ref}/actions`.
+    ref: str
+    title: str
+    status: Literal["suggested", "in_progress", "done", "declined"]
+    why: str = ""
+    done_when: str = ""
+    plan: list[str] = Field(default_factory=list)
+    project_ref: str = ""
+    project_name: str = ""
+    project_url: str = ""
+    #: The page to open it on (its project's, app-relative).
+    url: str
+    #: The page that proposed it — a huddle.
+    source_url: str = ""
+    checkin: int | None = None
+    run: int | None = None
+    huddle_id: str = ""
+    proposed_at: dt.datetime | None = None
+    #: When it is declined as "not taken up" if nobody starts or declines it.
+    expires_at: dt.datetime | None = None
+    #: The task's notes — where a decline's reason is kept.
+    notes: str = ""
+    decision_open: bool = False
+    #: The reader may start or decline it (the project's owner, the check-in's
+    #: lead, or a workspace owner or admin).
+    may_decide: bool = False
+    backings: list[ProjectBackingOut] = Field(default_factory=list)
+    comments: list[ProposalCommentOut] = Field(default_factory=list)
+    partners: list[ProposalPartnerOut] = Field(default_factory=list)
+    spawned: list[SpawnedProjectOut] = Field(default_factory=list)
+
+
+class TaskProposeIn(StrictModel):
+    """Create or revise a proposed task in a project (`POST …/projects/{ref}/tasks/propose/`)."""
+
+    title: str = Field(min_length=1, max_length=300)
+    why: str = Field(min_length=1)
+    #: What done looks like.
+    done_when: str = Field(min_length=1)
+    #: The plan's steps, in order — each becomes a `suggested` child task.
+    plan: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=20)
+    #: Agent slugs that would work with the project's agent; each gets a linked task on its own board.
+    partners: list[str] = Field(default_factory=list, max_length=10)
+    #: The page that proposed it — a huddle.
+    source_url: str = Field(default="", max_length=500)
+    #: The check-in run it came from (its id), if any — it must be this project's.
+    run: int | None = None
+    #: Required to bring back a title that was declined in this project.
+    new_evidence: str = ""
+
+
+class TaskProposeOut(StrictModel):
+    #: False when an open proposed task of that title was revised instead.
+    created: bool
+    task: ProposedTaskOut
 
 
 class AgentProjectDetailOut(AgentProjectOut):
@@ -1219,6 +1321,9 @@ class AgentProjectDetailOut(AgentProjectOut):
     #: Set when the project was proposed (it has a decision card): the card the
     #: page renders, the same one the huddle page shows.
     proposal: ProposedProjectOut | None = None
+    #: The tasks its check-ins proposed that wait for Start or Decline, each as
+    #: the huddle page shows it.
+    proposed_tasks: list[ProposedTaskOut] = Field(default_factory=list)
 
 
 # ---- shared ----
@@ -2077,6 +2182,8 @@ class EngagementProposalOut(StrictModel):
     decision_s: float | None = None
     backers: int = 0
     comments: int = 0
+    #: For a proposed task: its project's ext_id.
+    project: str = ""
 
 
 class EngagementRunsOut(StrictModel):
@@ -2096,4 +2203,7 @@ class EngagementSummaryOut(StrictModel):
     proposals: list[EngagementProposalOut] = Field(default_factory=list)
     #: Proposed projects no person reacted to at all.
     unanswered: list[EngagementProposalOut] = Field(default_factory=list)
+    #: Tasks a check-in proposed in the window — `ref` is the task's, `project` its project's.
+    task_proposals: list[EngagementProposalOut] = Field(default_factory=list)
+    unanswered_tasks: list[EngagementProposalOut] = Field(default_factory=list)
     runs: EngagementRunsOut

@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { listHuddles, type HuddleSummary } from '@/api/huddles'
 import { HuddleList } from './HuddleList'
-import { WorkGroups } from './WorkGroups'
+import { CheckinsNav } from './CheckinsNav'
 
 /**
  * Every huddle in this workspace, newest first. A huddle is a team of agents
@@ -33,7 +33,7 @@ export function HuddlesPage() {
           The fleet syncing as a team — what each agent is on, and the work they agree to push forward
         </p>
       </header>
-      <WorkGroups workspace={workspace} />
+      <CheckinsNav workspace={workspace} />
       <h2 className="mb-3 text-lg font-semibold">Recent huddles</h2>
       {error && <p className="text-sm text-destructive">Couldn’t load huddles: {error}</p>}
       {!error && rows === null && <WorkbenchSkeleton />}

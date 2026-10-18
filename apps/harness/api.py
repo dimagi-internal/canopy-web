@@ -2710,11 +2710,12 @@ def fire_schedule_route(
     except services.OneOffSlotMismatch as exc:
         raise HttpError(409, str(exc)) from None
     if turn is None:
-        # A work group's schedule announces a run in its Slack channel instead of
-        # queueing a turn; the turn comes once the group's lead confirms there.
-        from apps.huddles.models import HuddleGroupRun
+        # A project check-in's schedule makes a run instead: with a channel it is
+        # announced there and the turn comes once the lead confirms; without one
+        # the check-in queued the turn itself (the run reads "running").
+        from apps.huddles.models import CheckinRun
 
-        run = HuddleGroupRun.objects.filter(group__schedule=schedule, slot=payload.slot).first()
+        run = CheckinRun.objects.filter(checkin__schedule=schedule, slot=payload.slot).first()
         return Status(202, ScheduleAnnouncedOut(announced=True, run_id=getattr(run, "pk", None),
                                                 status=getattr(run, "status", "")))
     return Status(201, turn)

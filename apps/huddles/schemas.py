@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from apps.agents.schemas import ProposedProjectOut
+from pydantic import Field
+
+from apps.agents.schemas import ProposedProjectOut, ProposedTaskOut, SpawnedProjectOut
 from apps.common.schemas import StrictModel
 
 
@@ -54,26 +56,37 @@ class HuddleOutputOut(StrictModel):
     updated_at: dt.datetime | None = None
 
 
-class HuddleGroupReadOut(StrictModel):
-    """What a work-group run read from its channel before the huddle."""
+class HuddleCheckinReadOut(StrictModel):
+    """What a check-in run read from its channel before the huddle."""
 
     messages: int = 0
     first_ts: str = ""
     last_ts: str = ""
-    #: The read started after this (the group's last read), blank for a first read.
+    #: The read started after this (the check-in's last read), blank for none.
     since: str = ""
 
 
-class HuddleGroupOut(StrictModel):
-    """The work group a huddle ran for, when its anchor's `origin_ref` carries a
-    group run (filled by the work-groups layer; null otherwise)."""
-
-    slug: str
+class CheckinProjectOut(StrictModel):
+    agent: str
+    ref: str
     name: str
+    status: str = ""
+    #: The project's page (app-relative) — where a check-in's record lives.
+    url: str
+    workspace: str = ""
+
+
+class HuddleCheckinOut(StrictModel):
+    """The check-in a huddle ran for, when its anchor's `origin_ref` carries a
+    check-in run (null otherwise): the header links back to the project."""
+
+    id: int | None = None
+    name: str
+    project: CheckinProjectOut
     channel_name: str = ""
     lead_email: str = ""
     run_id: int | None = None
-    read: HuddleGroupReadOut | None = None
+    read: HuddleCheckinReadOut | None = None
 
 
 class HuddleOut(HuddleSummaryOut):
@@ -88,86 +101,99 @@ class HuddleOut(HuddleSummaryOut):
     # The projects it proposed (their `source_url` is this huddle's page), each as
     # the project page shows it — people back, comment and decide right here.
     projects: list[ProposedProjectOut] = []
-    group: HuddleGroupOut | None = None
+    # The tasks it proposed in its check-in's project, each as the project page shows it.
+    tasks: list[ProposedTaskOut] = []
+    checkin: HuddleCheckinOut | None = None
 
 
-# ── Work groups (apps/huddles/groups.py) ─────────────────────────────────────
+# ── Project check-ins (apps/huddles/checkins.py) ─────────────────────────────
 
 
-class WorkGroupIn(StrictModel):
-    """A new work group. `channel` is `#name` or a channel id; `lead_email` the
-    lead's canopy email (they must be in the workspace AND the channel);
-    `leader_agent` is required with more than one agent and must be able to run
-    every other agent (its login an owner or admin of each)."""
+class CheckinIn(StrictModel):
+    """A new check-in on a project. `lead_email` is the lead's canopy email (a
+    member of the project's workspace — and, with a channel, of the channel).
+    `channel` is `#name` or a channel id, or blank for none (then nothing is
+    read and no announcement is posted: the schedule queues the turn directly).
+    `agents` always includes the project's agent (added when missing); every
+    other one must be an agent the project's agent can run."""
 
-    slug: str
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     topic: str = ""
-    channel: str
     lead_email: str
-    agents: list[str]
-    leader_agent: str = ""
+    channel: str = ""
+    agents: list[str] = []
     cron: str
     timezone: str = "UTC"
     enabled: bool = True
 
 
-class WorkGroupPatch(StrictModel):
-    name: str | None = None
+class CheckinPatch(StrictModel):
+    name: str | None = Field(default=None, max_length=200)
     topic: str | None = None
-    channel: str | None = None
     lead_email: str | None = None
+    #: `""` takes the channel off; absent leaves it.
+    channel: str | None = None
     agents: list[str] | None = None
-    leader_agent: str | None = None
     cron: str | None = None
     timezone: str | None = None
     enabled: bool | None = None
 
 
-class WorkGroupProjectOut(StrictModel):
-    agent: str
-    ref: str
+class CheckinOut(StrictModel):
+    id: int
     name: str
-    status: str
-    url: str
-
-
-class WorkGroupOut(StrictModel):
-    slug: str
+    project: CheckinProjectOut
     workspace: str
-    name: str
+    #: The brief the meeting works from (blank: the project's outcome).
     topic: str = ""
     lead_email: str = ""
     lead_slack_id: str = ""
-    channel_id: str
+    channel_id: str = ""
     channel_name: str = ""
+    #: Agent slugs; the project's agent first.
     agents: list[str] = []
-    leader_agent: str
-    #: "single" (one agent works the group's project) or "multi" (the leader runs a huddle).
-    mode: str
+    #: The project's agent — it runs every occurrence.
+    agent: str
+    #: "solo" (the project's agent works it) or "huddle" (it leads the others).
+    format: str
     cron: str = ""
     timezone: str = "UTC"
     next_runs: list[dt.datetime] = []
     schedule_id: int | None = None
-    project: WorkGroupProjectOut | None = None
     enabled: bool = True
+    added_allowance: bool = False
     last_run_status: str = ""
+    #: The work group this was before (its slug), for the old /huddles/groups/<slug> link.
+    legacy_slug: str = ""
+    #: The project's page, where the check-in lives.
     url: str
     can_edit: bool = False
     created_at: dt.datetime
     updated_at: dt.datetime
 
 
-class WorkGroupRunOut(StrictModel):
+class CheckinParticipantsOut(StrictModel):
+    agents: list[str] = []
+    lead_email: str = ""
+
+
+class CheckinRunOut(StrictModel):
     id: int
-    group: str
-    group_name: str
+    #: The check-in's id — null once the check-in was deleted (the run stays).
+    checkin: int | None = None
+    checkin_name: str = ""
+    project: CheckinProjectOut
     workspace: str
     slot: dt.datetime
     manual: bool = False
     #: awaiting_confirm → reading → running → done; or skipped / expired / failed.
     status: str
     note: str = ""
+    #: Who took part, as it was when the run was made.
+    participants: CheckinParticipantsOut
+    #: Blank: a check-in without a channel (nothing was read).
+    channel_id: str = ""
+    channel_name: str = ""
     announce_ts: str = ""
     slack_url: str = ""
     confirmed_by_email: str = ""
@@ -176,17 +202,49 @@ class WorkGroupRunOut(StrictModel):
     read_first_ts: str = ""
     read_last_ts: str = ""
     read_since: dt.datetime | None = None
-    #: The channel as read (quoted material). Only on GET /huddle-groups/runs/{id}.
+    #: The channel as read (quoted material). Only on GET /checkins/runs/{id}.
     material: str = ""
     turn_id: str = ""
     huddle_id: str = ""
+    #: The huddle's page (app-relative), when the run was a huddle.
+    huddle_url: str = ""
     result_url: str = ""
     summary: str = ""
+    tasks_proposed: int = 0
     finished_at: dt.datetime | None = None
     created_at: dt.datetime
 
 
-class WorkGroupRunFinishIn(StrictModel):
+class CheckinRunTaskOut(StrictModel):
+    """A task a run proposed, with its live status and any project it spawned."""
+
+    agent: str
+    ref: str
+    title: str
+    status: str
+    url: str
+    spawned: list[SpawnedProjectOut] = []
+
+
+class CheckinTimelineRunOut(CheckinRunOut):
+    """One run on the project's timeline: what it proposed, live."""
+
+    tasks: list[CheckinRunTaskOut] = []
+    #: Projects its huddle proposed (before check-ins proposed tasks), linked by `huddle_id`.
+    projects: list[SpawnedProjectOut] = []
+
+
+class CheckinRunFinishIn(StrictModel):
     huddle_id: str = ""
     result_url: str = ""
     summary: str = ""
+    #: How many tasks it proposed in the project; counted from the tasks filed with `run` when absent.
+    tasks_proposed: int | None = Field(default=None, ge=0)
+
+
+class LegacyGroupRunOut(CheckinRunOut):
+    """`/api/huddle-groups/runs/{id}` — kept for one release so an engine that
+    has not moved to check-ins still reads and finishes its run."""
+
+    group: str = ""
+    group_name: str = ""

@@ -32,6 +32,7 @@ from apps.workspaces import services as wsvc
 from . import delegations, services
 from . import skill_history as history
 from .schemas import (
+    ProposedTaskOut,
     AgentMoveIn,
     AgentMoveOut,
     AgentScaffoldIn,
@@ -1801,6 +1802,8 @@ def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetail
         # Same gate as the rest of the project: members of the agent's workspace.
         participants=[ProjectParticipantOut(**p) for p in participants.of_project(project)],
         proposal=(proposals.card(project, request.user) if proposals.is_proposal(project) else None),
+        proposed_tasks=[ProposedTaskOut(**proposals.task_card(t, request.user))
+                        for t in proposals.proposed_tasks_of(project).filter(status="suggested")],
     )
 
 
@@ -1813,6 +1816,11 @@ def patch_project(request: HttpRequest, slug: str, ref: str,
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump()
                          for link in data["links"]]
+    if "spawned_from" in data:
+        from .proposals_api import resolve_task_ref
+
+        ref_ = (data.pop("spawned_from") or "").strip()
+        project.spawned_from = resolve_task_ref(request, ref_) if ref_ else None
     try:
         project = services.patch_project(project, data)
     except services.UnknownPersonError as exc:
