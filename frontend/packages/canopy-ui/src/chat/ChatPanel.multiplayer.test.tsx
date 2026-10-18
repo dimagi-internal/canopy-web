@@ -116,8 +116,46 @@ describe("multiplayer composer", () => {
       messages: [mine],
       queued: [{ turn_id: "t", client_id: "abc", author: null, text: "please help", sent_at: "", state: "queued" }],
     })} />);
-    expect(screen.queryByTestId("queued-row")).toBeNull();
+    expect(screen.getAllByTestId("queued-row")).toHaveLength(1);
     expect(screen.getAllByText("please help")).toHaveLength(1);
+  });
+
+  it("draws queued sends in the order they were sent, mine included", () => {
+    // The first send's optimistic row is gone (the panel remounted), so only
+    // the server's queue knows it; the second still has its own row. That row
+    // used to render as a sent bubble ABOVE the first one's queued row.
+    const second = {
+      id: "transient:2", turn_index: 9, role: "user" as const,
+      content: { text: "second", client_id: "c2" }, plaintext: "second",
+      status: "complete" as const, error_detail: null, started_at: null,
+      completed_at: null, created_at: "",
+    };
+    const me = { name: "Alice A", user_id: 1 };
+    render(<ChatPanel {...props} state={state({
+      messages: [second],
+      queued: [
+        { turn_id: "t1", client_id: "c1", author: me, text: "first", sent_at: "", state: "queued" },
+        { turn_id: "t2", client_id: "c2", author: me, text: "second", sent_at: "", state: "queued" },
+      ],
+    })} />);
+    const rows = screen.getAllByTestId("queued-row");
+    expect(rows.map((r) => r.textContent)).toEqual(["Youqueuedfirst", "Youqueuedsecond"]);
+    expect(screen.getAllByText("second")).toHaveLength(1);
+  });
+
+  it("keeps my bubble for a send already on its way to the agent", () => {
+    const mine = {
+      id: "transient:1", turn_index: 1, role: "user" as const,
+      content: { text: "go", client_id: "c1" }, plaintext: "go",
+      status: "complete" as const, error_detail: null, started_at: null,
+      completed_at: null, created_at: "",
+    };
+    render(<ChatPanel {...props} state={state({
+      messages: [mine],
+      queued: [{ turn_id: "t1", client_id: "c1", author: { name: "Alice A", user_id: 1 }, text: "go", sent_at: "", state: "delivering" }],
+    })} />);
+    expect(screen.queryByTestId("queued-row")).toBeNull();
+    expect(screen.getAllByText("go")).toHaveLength(1);
   });
 
   it("labels someone else's message with their name, not mine", () => {
