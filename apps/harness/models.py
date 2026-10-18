@@ -369,6 +369,17 @@ class Runner(models.Model):
         return self.live_status == Runner.ONLINE and self.ready
 
     @property
+    def remedy(self) -> str:
+        """What a person does about this box being degraded or not ready, when
+        its own note names a known cause; "" otherwise (the note is shown either
+        way). Health, Topology, the supervisor and the menu bar all read this."""
+        note = f"{self.status_note} {self.ready_note}"
+        if "CDP unreachable" in note:
+            return ('Emdash is running without its debug port. On that machine, open '
+                    '"Emdash CDP" (Spotlight), which reopens Emdash with it.')
+        return ""
+
+    @property
     def is_reachable(self) -> bool:
         """Is the daemon still THERE — a weaker question than `is_available`.
 

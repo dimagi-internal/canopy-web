@@ -122,6 +122,9 @@ class RunnerOut(Schema):
     status_note: str
     ready: bool
     ready_note: str
+    # What to do about a degraded / not-ready box when the note names a known
+    # cause (`Runner.remedy`); "" otherwise. The menu bar shows it.
+    remedy: str = ""
     # Served alongside `status` (which already reads "paused" via live_status)
     # because the two answer different questions: `status` says the box is not
     # taking work, these say a HUMAN decided that and why. A client that only

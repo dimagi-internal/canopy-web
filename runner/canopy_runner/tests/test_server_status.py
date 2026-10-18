@@ -36,6 +36,19 @@ def test_an_accepted_heartbeat_is_recorded(monkeypatch, status_file):
     assert doc["last_ok_at"] == doc["at"]
 
 
+def test_canopys_verdict_on_the_box_is_recorded_for_the_menu_bar(monkeypatch, status_file):
+    """Accepted is not healthy: a degraded box's heartbeat is accepted too, and the
+    menu bar must show what canopy says (the same row Health shows)."""
+    _client(monkeypatch, {"status": "degraded", "ready": False,
+                          "status_note": "emdash CDP unreachable on :9223 — not claiming",
+                          "ready_note": "emdash CDP unreachable on :9223",
+                          "remedy": 'open "Emdash CDP"'}).heartbeat("r1", [])
+    doc = json.loads(status_file.read_text())
+    assert doc["ok"] is True and doc["runner_status"] == "degraded" and doc["ready"] is False
+    assert doc["note"] == "emdash CDP unreachable on :9223 — not claiming · emdash CDP unreachable on :9223"
+    assert doc["remedy"] == 'open "Emdash CDP"'
+
+
 def test_a_revoked_token_is_recorded_with_its_status_and_last_good_beat(monkeypatch, status_file):
     _client(monkeypatch, {}).heartbeat("r1", [])
     good = json.loads(status_file.read_text())["at"]

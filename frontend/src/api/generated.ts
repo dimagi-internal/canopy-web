@@ -23687,6 +23687,11 @@ export interface components {
             readonly ready: boolean;
             /** Ready Note */
             readonly ready_note: string;
+            /**
+             * Remedy
+             * @default
+             */
+            readonly remedy: string;
             /** Paused */
             readonly paused: boolean;
             /** Paused Note */
