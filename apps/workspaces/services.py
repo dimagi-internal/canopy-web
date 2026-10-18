@@ -465,9 +465,15 @@ def member_scope(user, pinned: str | None = None) -> set[str]:
     """Every workspace `user` may act within, never refused — for a BY-ID gate
     (`obj.workspace_id in member_scope(...)`) and for system paths that are not
     a read of tenant data (routing, runners, the workspace switcher). Pinned →
-    that workspace."""
+    that workspace and the caller's workspaces below it (`pinned_read_scope`),
+    the same span a pinned LIST has — so a row a pinned list shows is always one
+    the by-id gate admits. Before 2026-10-17 it was exactly the pin: pinned to
+    `dimagi`, `/api/w/dimagi/agents/hal` 404'd though `dimagi`'s agent list showed
+    hal (in `connect`), and a `dimagi`-pinned write couldn't name a `connect` task.
+    Never wider than unpinned (still only the caller's memberships); a bulk write
+    stays `write_scope`, exactly the pin, and each object's role check is its own."""
     if pinned:
-        return {pinned}
+        return pinned_read_scope(user, pinned)
     if user is None or not getattr(user, "is_authenticated", False):
         return set()
     return user_workspace_slugs(user)
