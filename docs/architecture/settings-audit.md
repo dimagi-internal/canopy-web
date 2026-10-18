@@ -29,7 +29,7 @@ that is in neither list, or in both. When unsure, classify it as a setting.
 - The web UI, the `canopy` CLI, scripts and MCP tools all reach a setting through the
   same routes. An MCP tool is the route, called in-process (`docs/architecture/mcp-surface.md`).
   So `via` is the only thing that differs: `ui` for a browser session, `mcp`, `cli`
-  when `X-Canopy-Client` says canopy-cli, `api` for any other token, and `runner`.
+  when `X-Canopy-Client` says canopy-cli, `api` for any other token, `runner`, and `unknown` when no credential type is known.
   The credential is verified. `client` and `user_agent` are only what the caller
   claimed.
 - Nothing is recorded for a refused write (an `HttpError`, or a 4xx/5xx `Status`).
@@ -53,7 +53,8 @@ as the MCP call log. A workspace admin (`logs.read`) sees every change in that
 workspace, and anyone sees the changes they made themselves. A person's own settings
 belong to no workspace (`workspace` is NULL) and are readable only by that person.
 NULL never widens who can read a row. Filters: `operation` (prefix, e.g. `set_agent`),
-`target` (substring: an agent slug, an address), `actor` (email), `since_minutes`.
+`target` (substring: an agent slug, an address), `actor` (exact email), `since_minutes`, `limit`
+(default 100, at most 500), newest first.
 
 The rows are append-only. No route edits or deletes them.
 

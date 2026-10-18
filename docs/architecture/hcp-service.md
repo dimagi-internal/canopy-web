@@ -152,12 +152,13 @@ export, revoke) refuse it, and `GET /v1/grants` returns only its own grant.
 `Retry-After`, published in discovery (3.4.5). The person is never limited, least
 of all on revocation.
 
-**MCP stays first-party.** The four HCP MCP tools are canopy's agents'. An OAuth
+**MCP stays first-party.** The five HCP MCP tools (search, add, get, update, delete)
+are canopy's agents'; the manifest lists four of them, leaving out get. An OAuth
 client uses the REST transport. The spec requires one transport fully implemented,
 not both per client. The manifest says `authorizationScheme: first-party`, and
 discovery lists `transports_for_oauth_clients: ["rest"]`. Opening MCP to OAuth
 clients would need the MCP endpoint to accept `hcpat_` tokens confined to those
-four tools.
+tools.
 
 **Discovery claims `HCP-v1-Core`, not Interop.** The OAuth half of Interop is
 met. Known Core MUST gaps remain, listed in the document's
@@ -172,6 +173,48 @@ their context is exactly the escalation to rule out.
 **Account without a workspace.** Any account that can sign in can already reach
 `/people/me`, and can add, correct and export entries there without being
 in any workspace. First run points a workspace-less person to it.
+
+## The person's record/use switches
+
+Two features, **record** ("Agents may learn about me") and **use** ("Agents may use
+what they've learned"), each with a canopy-level `available` + `default`
+(`Person.hcp_*_available` / `hcp_*_default`, `PUT /api/people/me/agent-memory/`
+`{record?: {available?, default?}, use?: {…}}`) and a per-session override
+(`SessionAgentMemory`, `PUT /api/people/me/sessions/{id}/agent-memory/`
+`{record?, use?}` = `on|off|inherit`). Effective for a turn = available AND (that
+turn's session's override, else default); a turn with no chat session uses the
+defaults; a session never turns on what is not available (403). Everything starts
+unavailable; Jonathan is record available + on by default, use not available
+(migration `contacts/0019`).
+
+- **record gates WRITES:** HCP add/create/update/delete, the legacy
+  `POST /api/people/{id}/facts/` by an agent's login, and the envelope's `record` hint.
+- **use gates READS:** HCP search/get, and the facts and `recall` in the envelope's
+  `person` block.
+- **Switch, then grant.** A refused operation is `scope-denied`: first the switch
+  (`hcp_api._principal(need=)` → `hcp.require(person, need, turn)`), then the agent's
+  grant (`hcp.NOT_GRANTED`, next section). With nothing granted for what is on, the
+  block has `grant: null`.
+- **The envelope's block** always carries `hcp: {record, use, available: {record, use},
+  session, agent, granted: {record, use}, awaiting_grant}` — `record`/`use` are the
+  switch AND this agent's grant; `awaiting_grant` lists features on in this session the
+  person has not granted this agent yet (the UI asks, never the agent). An envelope read
+  is logged only when a read is actually granted.
+- **Record-only** builds a model of the person that no agent sees yet. Without `use` an
+  agent cannot search before adding, so duplicates and contradictions are left to HCP's
+  conflict quarantine.
+- **Nothing is deleted when anything goes off.** The person's own access (page, export,
+  audit) never changes.
+- **Only the person changes them** — the canopy level as themself, a session's override
+  only for a session they created (`created_by`; anyone else 404) — never an agent's
+  login, a caller token, a system account or an admin; the routes are off MCP.
+- **Each change is its own audit event:** `agentRecord|agentUse.enabled|disabled`
+  (available), `.defaultOn|defaultOff` (default), and `sessionRecord|sessionUse.
+  on|off|inherit` (a session's override) — canopy's own types, beyond the spec's
+  required set.
+- **Coverage** (`access.md` § "Project participants, coverage, and contact notes")
+  counts only people who make record available; a session may still turn it off, and
+  coverage does not see that.
 
 ## canopy's own agents: grants per agent, only by the person's act
 

@@ -32,8 +32,10 @@ its own login is `agent`, not a person.
 ## Shipping a change to the shared transcript core
 
 `packages/canopy_transcript` (and `canopy_cron`, `runner/canopy_acp`) run on the
-boxes. They are in the runner code-sha paths (`provenance.CODE_PATHS`, the
-installers, `update_runner.sh`, `up.sh`, `deploy-labs.yml`), so a change marks
+boxes. They are in the runner code-sha paths — `canopy_transcript` and
+`canopy_cron` in the laptop runner's (`provenance.CODE_PATHS`, the installers,
+`deploy-labs.yml`), `canopy_transcript` and `runner/canopy_acp` in the cloud
+runner's (`update_runner.sh`, `up.sh`, `deploy-labs.yml`) — so a change marks
 every box stale and the auto-updater ships it after the next deploy.
 
 ## History

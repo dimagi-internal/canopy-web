@@ -12,7 +12,7 @@ There are five tiers. Each contains the one below it.
 | **Link reader** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
 | **Viewer** | workspace member, `viewer` | Interact with an agent through what its published interface offers members (none published → nothing): chat, answer a blocked question, approve or decline a task, read the board. Read the turns you started. Cannot change what an agent *is*, or anything else. |
 | **Editor** | workspace member, `editor` | Create and edit agents, run turns (the agent's whole profile, **always `manual`** unless you are its admin), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
-| **Admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection). Holds no keys. |
+| **Admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection); the default runner order, retention, admission rules, and starting or declining a proposed project. Holds no keys. |
 | **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace. |
 
 The membership roles are a total order — `WorkspaceMembership.ROLE_RANK`
@@ -170,58 +170,28 @@ allowlist entry gives a **302** to sign-in; an **`/api/`** path gives a JSON **4
 inert for the whole suite, so without `@override_settings(REQUIRE_AUTH=True)` an allowlist
 entry could be deleted with CI still green.
 
+Beside `PUBLIC_PATH_PREFIXES`, the login middleware's artifact exemptions (`LoginRequiredMiddleware`) are
+the scoped viewers (`_SCOPED_VIEWER`), the per-artifact read APIs (`_is_artifact_api`) and
+the retired flat addresses (`_is_flat_artifact`, which serve only the "links now include the
+workspace" 404). The API layer enforces the share token underneath; which pages these are:
+[pages.md § Scoped public viewers](pages.md#scoped-public-viewers-anonymous-with-a-token).
+
 ## How you get into a workspace
 
-Four ways (the full account, in the access glossary's words, is
-`docs/architecture/access.md` → "Getting into a workspace"):
-
-- **An invite.** An admin or owner creates one at `/w/:workspace/settings/members`, at a
-  role they choose (viewer unless they pick otherwise, never above what they may grant);
-  canopy emails the `/invite/:token` link and accepting grants exactly that role (never
-  lowering one you already hold).
-- **An approved access request.** If a workspace lists your login email's domain in
-  `access_request_domains`, you may ask to be invited: `GET /api/workspaces/requestable`
-  tells you which, `POST /api/workspaces/{slug}/access-requests` asks. Every admin and
-  owner (owners of a parent workspace included) is emailed a link to the request's page,
-  where one of them approves at a role they may grant, or denies; you are emailed either
-  way. A workspace owner may set `auto_approve_role` (viewer or editor) to approve every
-  request on the spot — `dimagi` is set to editor while it bootstraps; every other
-  workspace is off. Auto-approved requests are ordinary request records and still email
-  every admin and owner, who can change the role or remove the person.
-- **An agent's own login.** An agent acts in canopy as its own user (`Agent.user`). When
-  it has none, `POST /api/agents/{slug}/canopy-token` (run by `canopy agent vault`)
-  creates one: a brand-new, password-less user from the agent's mailbox address, made an
-  editor and linked to that one agent. Only a workspace admin or owner may — the people
-  who could invite it — and an address that is already a canopy user is refused, never
-  adopted (`apps/agents/agent_login.py`). Moving the agent (`POST /api/agents/{slug}/move`)
-  brings that login into the destination as an editor on the same bar: only when the mover
-  holds `members.manage` there; otherwise the move reports it and adds nobody.
-- **Creating one.** Subject to `services.can_create_workspace`: an *invite-admitted* user
-  holding no membership may not create a workspace, because otherwise invite-admission
-  becomes transitively delegable — create a workspace, mint invites, and each new invitee
-  clears the login gate too. `/api/me/` reports `can_create_workspace` so the UI never
-  offers a button that 403s.
-
-There is no fourth way. A connected site's visitor is a **contact**, never a member
-(`WorkspaceMembership.provisioned_by_app` is provenance on old rows only), and there is no
-self-join or domain auto-join: `access_request_domains` (`workspaces/0012`) means "may ask",
-never "may join".
+Every door — invite, approved access request, creating a workspace, and an agent's own
+login — is described once in [access.md § Getting into a workspace](access.md#getting-into-a-workspace).
 
 `apps/workspaces/tests/test_access_requests.py` asserts the only code that can create a
 `WorkspaceMembership` is `services._grant` (invite acceptance + request approval),
-`services.ensure_member` (the default-workspace bootstrap) and workspace creation, so a
-fourth door cannot appear quietly; `tests/test_no_implicit_enrolment.py` pins the same for
-`ensure_member` callers.
+`services.ensure_member` (the default-workspace bootstrap and the agent-login door) and
+workspace creation, so a new door cannot appear quietly; `tests/test_no_implicit_enrolment.py`
+pins the same for `ensure_member` callers.
 
 **Never grant membership as a side effect.** Not of a visibility check, and not of a write:
 a create resolves its workspace through `wsvc.creation_workspace`, which only ever returns a
 tenant the caller is already in and refuses with 422 when there is none. Calling
 `ensure_member` from a create path would let an invite-admitted user become an editor of the
 org default by posting one row; `tests/test_no_implicit_enrolment.py` pins it.
-
-A request cannot be used to probe tenants: a workspace whose domains do not match yours and
-a workspace that does not exist return the **same 404**. Approval is upgrade-only, like an
-invite, so it never demotes an existing member.
 
 **A member who is not a person: system accounts.** An admin can also create a *system
 account*, an automated sender such as CloudWatch alarm mail. It joins as an editor (or
@@ -246,23 +216,12 @@ recur and the routes that deliberately sit off the ladder.
   `AgentAdmin`, each a CURRENT member. Credentials, the vault pointer, the interface, the
   Google mailbox mint, moving the agent to another workspace.
 
-**A box holds an agent only if its owner is one of the agent's admins** (or the agent's own
-login) — `agents.services.runner_may_hold_agent`. Claiming an agent turn, resolving its
-credentials, the per-turn GitHub token, pinning a turn to a box (which also needs the pinner
-to be an agent admin or that runner's admin — `access.may_pin_runner`), and every routing write
-(runner list, source rules, actor routes) all ask it. Don't let a runner-assignment row be
-the trust boundary: the editor tier writes those rows, and a box that may claim an agent can
-resolve its secrets, vault keys and the owner's GitHub token. A teammate whose own laptop runs
-an agent's work therefore needs an admin grant on that agent.
-
-**A box serves only the workspaces it is enrolled in, and every workspace below one of them**
-(`RunnerEnrollment`; a division created later is covered too, separate roots never
-are) — and only while its owner holds `agent.work` (editor and above) in each: the two intersect in
-`harness.routing.runner_tenant_slugs`, so enrollment narrows what membership allows and never
-widens it. Pairing enrolls a box in its pairing workspace only; a new membership enrolls
-nothing; leaving a workspace drops the enrollment. The owner or a runner administrator manages
-the list (`/api/harness/runners/{id}/workspaces`). This is what keeps a separate root (a family
-workspace) off the Dimagi boxes, and a family box off Dimagi's work, although one person owns both.
+**A box holds an agent only if its owner is one of the agent's admins**
+(`agents.services.runner_may_hold_agent`) — don't let a runner-assignment row be the trust
+boundary: editors write those rows. **A box serves only its owner's workspaces it is enrolled
+in** (`harness.routing.runner_tenant_slugs`). Both rules, and everything that asks them:
+[runners.md § Which workspaces a runner serves](runners.md#which-workspaces-a-runner-serves-the-tenant-gate)
+and [§ Which agents a box may hold](runners.md#which-agents-a-box-may-hold).
 
 **Only the box that claimed a turn reports on it** — start, finish, ledger events, transcript
 lines (`harness.api._reporting_turn_or_404`). An unclaimed turn takes the editor tier.
@@ -276,8 +235,8 @@ Lists blank the content and set `content_hidden`; detail routes and the live tur
 Deliberately off the ladder:
 
 - **`POST /{slug}/tasks/{ref}/actions` branches on `action`.** `approve`, `decline` and
-  `reply` answer a task already on the board (the User tier); `dispatch` and `done` reshape or
-  queue work and take `AGENT_WORK` (`_EDITOR_ACTIONS`). `tests/test_agent_acl_gates.py`
+  `reply` answer a task already on the board (the User tier); `nudge` and `done` reshape or
+  start work and take `AGENT_WORK` (`_EDITOR_ACTIONS`). `tests/test_agent_acl_gates.py`
   asserts the two tiers partition `AgentTaskAction.ACTION_CHOICES`. Creating a task (which may
   carry `on_approve`) takes `AGENT_WORK` too — or the agent's own login — because approving it
   (the User tier) runs the prompt.
@@ -297,19 +256,10 @@ Deliberately off the ladder:
 
 ### A token can do whatever its person can
 
-A personal access token, or an MCP client signed in through OAuth (every REST route is an
-MCP tool), acts as its user with exactly that user's role — no more, and no less. There
-are no web-app-only actions: inviting, changing roles, an agent's interface, credentials
-and admins, the shared vault, Slack configuration all work over MCP for someone whose role
-allows them. Don't add browser-only gates for administration: they would protect against a
-leaked token by taking from the MCP exactly the administration it is most useful for. The
-deliberate exceptions: `create_token` is not an MCP tool (it would put a fresh raw PAT into a
-chat transcript; mint tokens in the web app or with `/canopy:canopy-web-pat-mint`), and an
-action that reveals or re-keys a secret needs a passkey step-up a token can never hold
-(`apps/passkeys/stepup.py`) — passkeys, the vault keyset, revealing a zero-knowledge value,
-approving a device key. Each such route decides whether a token is refused or let through
-without the step-up (a PAT writing a credential from `canopy vault import` is let through). The MCP sign-in consent page itself still requires a person,
-or a token could sign itself in.
+A PAT, or an MCP client signed in through OAuth, acts as its user with exactly that user's
+role — there are no web-app-only actions. The rule and its two exceptions (`create_token`,
+and passkey step-up routes) are in [mcp-surface.md](mcp-surface.md) (the "Exposure is the
+default" paragraph).
 
 ### Leaving a workspace takes what it carried
 

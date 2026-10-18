@@ -1,19 +1,13 @@
-"""The admin can no longer manage embedding apps — on purpose.
+"""The Django admin cannot manage embedding apps — on purpose.
 
-This file used to assert the opposite: that creating an `AppCredential` through
-the Django admin minted a working credential. That was the only route there
-was, and it was the wrong one twice over. Operationally the admin is staff-only,
-so the person who wants to embed an agent cannot do it, and there is nowhere to
-run the equivalent management command either (`EnableExecuteCommand` is off on
-the service, the database is VPC-internal). Conceptually, connecting a site is
-something a person does, not a row an administrator edits — and every field
-here fails closed and silently, so a bare form produces a widget that never
-appears with no way to find out why.
+The admin is staff-only, so the person who wants to embed an agent could not
+use it; and connecting a site is something a person does, not a row an
+administrator edits — every field here fails closed and silently, so a bare
+form produces a widget that never appears with no way to find out why.
 
-`/w/{workspace}/connected-apps` is the surface now (`tests/test_connected_apps.py`).
-The admin stays registered because inspecting a row is genuinely useful when
-something is broken, and stays read-only so it cannot drift back into being the
-management path — which is exactly how it became one.
+`/w/{workspace}/settings/connected-apps` is the surface (`tests/test_connected_apps.py`).
+The admin stays registered because inspecting a row is useful when something
+is broken, and read-only so it cannot become the management path.
 """
 
 import pytest

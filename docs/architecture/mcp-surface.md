@@ -27,7 +27,14 @@ tool is exactly as powerful as the caller's token already is against REST, so
 the refusal belongs in the route. There are **no web-app-only actions** —
 invites, roles, an agent's interface, credentials and admins, vaults and Slack
 config all work over MCP under the caller's role. Don't add browser-only gates;
-they take from MCP the administration it is most useful for.
+they take from MCP the administration it is most useful for. Two deliberate
+exceptions: `create_token` is not a tool (it would put a fresh raw PAT into a
+chat transcript — mint tokens in the web app or with
+`/canopy:canopy-web-pat-mint`), and a browser action that reveals or changes a
+secret needs a passkey step-up a token can never hold (`apps/passkeys/stepup.py`;
+each such route says in `api-surface.md` whether a token is refused or let
+through). The OAuth consent page itself still needs a person, or a token could
+sign itself in.
 
 **No agent tools.** This server is canopy the PRODUCT — board, sessions, turns,
 runners, schedules, mail, every REST route, page actions. It does not offer
@@ -115,8 +122,8 @@ caller via `get_access_token()`.
   plain bearer is a 401). Tools run AS the visitor (`user_id` = their canopy
   user, `sub` = `delegated:<id>`, `auth_method: delegated`) — their own ACL —
   and `DelegatedScopeMiddleware` lists and allows only the tools their scopes
-  map to (`self_host.SCOPE_TOOLS`: `tasks:read` → `list_fleet_tasks`, `skills:read` → `skill_history` +
-  `skill_revision_diff`, `sessions:close` → `propose_session_closes` + `close_proposed_sessions`);
+  map to (`self_host.SCOPE_TOOLS`; the page → scope → tool table is in
+  [embedding-a-canopy-agent.md §11](embedding-a-canopy-agent.md#canopy-web-as-a-host-of-its-own-mcp-agents-act-as-you-on-canopys-pages));
   prompts are closed to it, and resources too except the MCP Apps View of a
   tool in its grant (`delegation._view_allowed`). So a member's delegated token
   reaches at most their own ACL ∩ its page's scopes — read-only except
@@ -146,7 +153,8 @@ server token — every tool must run as a person.
 * **Tenant.** Every tool takes an optional `workspace`; the call goes to
   `/api/w/{workspace}/…` (membership checked by `WorkspaceResolveMiddleware`).
   Omitted, the call goes to the flat route exactly as a PAT caller's would —
-  reads span every workspace you belong to. A route that already names
+  scoped by the read rule in [roles.md § A read that names no workspace stays
+  inside one organisation](roles.md#a-read-that-names-no-workspace-stays-inside-one-organisation). A route that already names
   `{workspace}` in its path keeps its own argument.
 * **Identity.** The caller from the MCP access token (`user_id` +
   `auth_method`); a token with no canopy user is refused. The request counts as
@@ -173,7 +181,7 @@ server token — every tool must run as a person.
 
 | Tool | Kind | Purpose |
 |---|---|---|
-| *(caller tokens)* | auth | A CONFINED session authenticates with a `cct_…` caller token (`apps/harness/caller_tokens.py`), minted per confined turn at claim and bound to its conversation — never the runner owner's PAT. The canopy plugin's `headersHelper` sends it from the session's profile. It resolves to the conversation's CURRENT turn: tools run as that turn's asker (their own ACL; **no canopy user** for an outside contact) and `TurnScopeMiddleware` (`apps/mcp/turn_scope.py`) lists and allows only the canopy tools the capability names (`mcp__*canopy-web__<tool>` → `<tool>`) — `agent ∩ caller`. `who_is_asking` answers only about the token's own conversation. Expired, long-finished, or a conversation whose current turn is not confined → the token authenticates nothing. A **scoped** caller token (`CallerToken.scoped`) is the full-profile variant, minted for a turn asked by someone who is not the agent's owner, an admin or canopy (a `full:` rule, an editor): no capability to filter by, so every tool exists, but each still runs as the conversation's current asker — turn content, chat sessions and transcripts are read by THEIR ACL, never the runner owner's. It serves only full turns; a confined token never does. |
+| *(caller tokens)* | auth | A CONFINED turn's session reaches this server with a `cct_…` caller token, never the runner owner's PAT: tools run as the conversation's current asker and `TurnScopeMiddleware` lists only the tools its capability names. A **scoped** caller token is the full-profile variant for a colleague's full turn — every tool, each run as the asker. Minting, lifetime and the rules: [access.md § How confinement is enforced](access.md#how-confinement-is-enforced). |
 | `who_is_asking` | read | The caller envelope for a turn (`apps/harness/caller_context.py`): who asked, `verified` (about THIS message — a spoof of a once-verified address is not verified), `relationship` to the agent (owner/admin/member/contact/system; `caller` is read as `contact`), and the workspace's contact profile (`notes`, `attributes`, this-message vs best grade, `is_blocked`). The same document the claiming runner writes to `~/.canopy/caller/<turn_id>.json`; this is the mid-turn re-read, so a contact blocked or re-annotated since the claim shows as such. Gated like the REST twin `GET /api/harness/turns/{id}/caller-context`: tenant membership, unknown ⇒ "turn not found". |
 | `site_tools` | read, **caller-token only** | The tools of the Connected site the visitor is on that this turn may use (host grant contract v1): what the host lists AS THE VISITOR for their grant, narrowed by the capability's `ceiling` only when the owner set one (the page's `backing_tool` is a hint to the agent, not a filter). The turn is read from the caller token, never an argument. Refused — never a fallback to the agent's own credential — when the visitor holds no unexpired grant ("I need you back on the page"). |
 | `site_call` | write, **caller-token only** | Call one host tool as the visitor, through canopy (`apps/tokens/host_gateway.py`): canopy attaches the visitor's host-issued token as `Authorization: DPoP` with a fresh proof per request (`htm`/`htu`/`ath`/`iat`/`jti`) and `Canopy-Actor: <agent>`. Re-checks site, capability `sites:`, grant freshness, resource, DPoP key and the effective tool set on every call. Audited per call; the token never appears in a result, error, log or audit row, and never reaches a runner. Added to a confined profile automatically for any capability with `sites:`. |
@@ -188,13 +196,15 @@ server token — every tool must run as a person.
 Streamable HTTP requires the MCP app's lifespan to run (session
 management). The Django bare ASGI app has no lifespan, so the app is a
 Starlette router that mounts the MCP app under `/api/mcp` and the Django
-app at `/`, with `lifespan=mcp_app.lifespan`:
+app at `/`, with a lifespan that runs the MCP app's (plus the capability sweep,
+Slack ingest and canopy-pat rotation schedulers) for the life of the process:
 
 ```python
 mcp_app = build_http_app()  # mcp.http_app(path="/", transport="streamable-http")
 application = Starlette(
-    routes=[Mount("/api/mcp", app=dpop_gate(mcp_app)), Mount("/", app=django_asgi_app)],
-    lifespan=mcp_app.lifespan,
+    middleware=[Middleware(_McpWithoutSlash)],  # bare /api/mcp → /api/mcp/
+    routes=[Mount("/api/mcp", app=dpop_gate(mcp_app)), Mount("/", app=django_with_ws)],
+    lifespan=_lifespan,  # async with mcp_app.lifespan(app): … schedulers …
 )
 ```
 

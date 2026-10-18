@@ -2,8 +2,8 @@
 
 Date: 2026-10-15 · Status: approved by the owner 2026-10-15 (open questions answered; see "Owner decisions") · Owner: Jonathan Jackson
 
-Plans: `docs/superpowers/plans/2026-10-15-storyboard-decision-rows.md` (B) and
-`docs/superpowers/plans/2026-10-15-storyboard-feedback-rounds.md` (C, plus the
+Plans: `docs/archive/plans/2026-10-15-storyboard-decision-rows.md` (B) and
+`docs/archive/plans/2026-10-15-storyboard-feedback-rounds.md` (C, plus the
 plugin-side changes).
 
 ## Problem

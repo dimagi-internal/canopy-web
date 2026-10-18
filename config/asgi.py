@@ -3,7 +3,7 @@ ASGI config for canopy-web project.
 
 It exposes the ASGI callable as a module-level variable named ``application``.
 
-The FastMCP 3.x Streamable-HTTP server (apps/mcp) is mounted at /api/mcp/.
+The FastMCP Streamable-HTTP server (apps/mcp) is mounted at /api/mcp/.
 Auth is enforced INSIDE the MCP app via FastMCP MultiAuth (per-user PAT +
 optional OAuth) — there is no hand-rolled gate here anymore.
 

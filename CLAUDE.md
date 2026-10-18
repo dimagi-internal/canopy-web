@@ -6,11 +6,11 @@ Collaborative web workspace for the canopy agent ecosystem — first-class AI ag
 
 ## Architecture
 
-- **Backend:** Django 5 ASGI + uvicorn, Django Ninja 1.x + Pydantic v2, PostgreSQL (shared labs RDS, `canopy_web` DB). OpenAPI 3.1 at `/api/openapi.json` (Scalar at `/api/docs/`, Redoc at `/api/redoc/`). Errors are RFC 7807 `application/problem+json`. Frontend types are generated from the schema into `frontend/src/api/generated.ts` and consumed via `openapi-fetch`.
+- **Backend:** Django 6 ASGI + uvicorn, Django Ninja 1.x + Pydantic v2, PostgreSQL (shared labs RDS, `canopy_web` DB). OpenAPI 3.1 at `/api/openapi.json` (Scalar at `/api/docs/`, Redoc at `/api/redoc/`). Errors are RFC 7807 `application/problem+json`. Frontend types are generated from the schema into `frontend/src/api/generated.ts` and consumed via `openapi-fetch`.
 - **Frontend:** React 19 + Vite + Tailwind CSS 4 + shadcn/ui; shared kit in `frontend/packages/canopy-ui`.
 - **AI:** canopy-web makes **no model calls of its own**. Every agent turn, chat reply and review runs on a **runner**, under that box's Claude login (`/supervisor` → Runners).
 - **MCP:** `apps/mcp/` (FastMCP, Streamable HTTP, mounted at `/api/mcp/` in `config/asgi.py`) exposes every REST route as a tool, run in-process as the caller (OAuth or PAT) → `docs/architecture/mcp-surface.md`.
-- **Framework/product boundary:** framework apps (`agents`, `agent_runs`, `workspaces`, `api`, `common`, `timeline`, `tokens`, `session_sharing`, `issues`, `mcp`, `system`, `realtime`, `canopy_sessions`, `events`, `inbound`, `slack`, `retention`, `admission`) must never import product apps (`walkthroughs`, `reviews`, `shareouts`, `runs`; `projects` is a migrations-only stub); product imports framework freely. A new app must be tiered. → `tests/test_architecture_boundary.py`, `ARCHITECTURE.md`
+- **Framework/product boundary:** framework apps never import product apps; product imports framework freely. Every app's tier is in `ARCHITECTURE.md` and in `FRAMEWORK`/`PRODUCT` in `tests/test_architecture_boundary.py` — a new app must be tiered in both.
 - **Deployment:** one container (Django serves SPA + API + MCP) on AWS ECS Fargate in the shared labs account, at `https://canopy.dimagi.com/`. Merging does NOT deploy: `gh workflow run "Deploy to Labs (AWS)" --ref main` (main only; migrations run automatically; CloudFormation owns the task def + service — never `ecs update-service` by hand).
 - The old address `labs.connect.dimagi.com/canopy/` still serves machine traffic (API, WS, OAuth, health) in place and 302s browser pages to canopy.dimagi.com — don't turn machine paths into redirects; docs must name the new address (`tests/test_old_address_in_docs.py`).
 - **IAM:** canopy-web's deploy role must trust the IMMUTABLE OIDC subject `repo:dimagi-internal@272902307/canopy-web@1193139337:ref:refs/heads/main` (name-based silently fails); never attach `SecretsManagerReadWrite` to the shared task-execution role. → `docs/architecture/deploy.md`
@@ -60,18 +60,19 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 **Tenant-scoped (`/w/:workspace/…`):**
 - (index) → `agents` — the workspace's agents
 - `agents/new` — create an agent: pushes the factory scaffold into an empty repo the person made, with their fine-grained token (which then becomes its GitHub identity), registers it, lands on its Settings setup checklist (persona + first skill are handed to Claude Code)
-- `agents/:slug` — agent workspace: Projects (landing), Project, Tasks, Turns, Schedules, Huddles, Skills (+ History), Settings
+- `agents/:slug` — agent workspace: Projects (landing), Project, Tasks, Turns, Schedules, Huddles, Mail, Skills (+ History), Capabilities, Settings
 - `agents/:slug/projects/:ref` is a project's ONE page, for teammates and editors alike (`projects/:agent/:ref` redirects there); an idea is a task with `kind: "idea"` (never inferred) carrying a person's words, its work as subtasks
 - `settings/<section>` — workspace settings: members, access-requests, slack, inbound, email, connected-apps, secrets, retention, admission-rules, topology (fleet map + runners/agents tables)
 - `chat`, `chat/:id` — your chat sessions; live multiplayer chat with an agent
 - `huddles` (+ `/:id`), `threads/:id` — agent huddles; a bounded agent-to-agent thread
 - `schedules`, `activity`, `timeline` — schedule calendar, turn log, team activity feed
+- `health`, `analytics` — what is not set up right across the workspace; turns, outcomes and usage (`docs/architecture/analytics.md`)
 - `shareouts` (+ `/:period`), `walkthroughs`, `storyboards`, `ddd` (+ `/:narrative/:runId`) — briefings, demos, storyboard index, DDD operator console
 - `marketplace.json`, `plugins/…` — retired (410); the agent catalog is `/plugins/marketplace.json` (root, below)
 - Public with a token (the only `/w/` pages anonymous visitors reach, `apps/common/middleware.py::_SCOPED_VIEWER`): `walkthrough/:id` (+ `/content`), `review/:id`, `share/:token`, `storyboard/:slug`, `narrative/:slug?b=`, `ddd-release/:narrative/:runId`
 
 **Root:**
-- `/` — public product site (Astro, `site/`, `config/public_site.py`) for everyone; `/app` — the door into the app (`LOGIN_REDIRECT_URL`); `/about` — public explainer
+- `/` — public product site (Astro, `site/`, `config/public_site.py`) for everyone; `/app` — the door into the app (`LOGIN_REDIRECT_URL`); `/about` — public explainer; `/get-started` — public: how to use a canopy agent in your own Claude Code
 - `/supervisor` — cross-fleet Feed, Waiting on you, Sessions, Agents, Runners (phone PWA + menubar)
 - `/ide` (+ `/:id`) — desktop session IDE: project tree of every session (state, runner, mode, age) beside the open chat
 - `/activity`, `/schedules` — turn log and schedules across your workspaces
@@ -87,8 +88,8 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 Every route with its behaviour: **`docs/architecture/api-surface.md`**; machine-readable: `/api/openapi.json`.
 
 - All routes are Django Ninja on the single `NinjaAPI` in `apps/api/api.py`; request/response models live in `apps/<app>/schemas.py`, routes in `apps/<app>/api.py`.
-- The canonical tenant URL is `/api/w/{ws}/…` (`apps/api/tenancy.py::WorkspaceResolveMiddleware` gates membership, strips the prefix, reroutes to the flat mount); flat `/api/…` routes resolve to the caller's workspace.
-- Bare Django views (session/cookie/redirect work, Range streaming) are matched in `config/urls.py` before the Ninja catch-all: `/api/csrf/`, `/api/debug/mint-session/`, `/auth/cli/authorize/`, `/health/`, and `/w/<ws>/walkthrough/<id>/content` (`apps/walkthroughs/streaming.py`, the only `StreamingHttpResponse`).
+- The canonical tenant URL is `/api/w/{ws}/…` (`apps/api/tenancy.py::WorkspaceResolveMiddleware` gates membership, strips the prefix, reroutes to the flat mount); a flat `/api/…` list spans the caller's workspaces only within one tenant tree (else 422 `workspace-required`) → `docs/architecture/roles.md` § A read that names no workspace stays inside one organisation.
+- Bare Django views (session/cookie/redirect work, Range streaming) are matched in `config/urls.py` before the Ninja catch-all: `/api/csrf/`, `/api/debug/mint-session/`, `/auth/cli/authorize/`, `/health/`, and `/w/<ws>/walkthrough/<id>/content` (`apps/walkthroughs/streaming.py`, the only Range-streaming view); OAuth/HCP/Slack/embed endpoints are bare views too (`/oauth/…`, `/api/hcp/oauth/…`, `/api/slack/…`, `/embed/…`).
 
 ## Invariants
 
@@ -141,6 +142,6 @@ Each is enforced or load-bearing across the codebase; the pointer says where.
 - Workspace email domains (`apps/mail`: SES receive/send, routes, forwarding, agent mail turns, the `canopy-web-mail` stack, rip-out list) → `docs/architecture/mail.md`; setup → `docs/runbooks/mail-domain-onboarding.md`
 - Pages and what each does → `docs/architecture/pages.md`. Every API route → `docs/architecture/api-surface.md`. The plugin marketplace → `docs/architecture/plugin-marketplace.md`
 - Connecting a system (operator side) → `docs/runbooks/connecting-a-system.md`; Gmail push → `docs/runbooks/gmail-push-provisioning.md`; the mobile loop against real emdash → `docs/runbooks/mobile-loop-real-emdash.md`
-- Product design + glossary → `docs/designs/canopy-web-design.md`; deferred work → `TODOS.md`
+- Glossary (the nouns and the one rule) → `docs/architecture/access.md`; deferred work → `TODOS.md`
 
 Design specs (`docs/superpowers/specs/`, dated) are the design record — why something was built the way it was. Topic docs link the relevant ones; read them only to dig. Executed plans are archived under `docs/archive/plans/`.

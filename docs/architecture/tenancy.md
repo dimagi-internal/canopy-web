@@ -10,7 +10,7 @@ What each *role* may do is not here: the glossary and the agent-turn rule are in
 [`access.md`](access.md), and enforcement per surface (the permission table, nesting, read
 scope, runner enrollment, session filing/moving, product ACL shapes) is in
 [`roles.md`](roles.md). The MCP surface's auth is in [`mcp-surface.md`](mcp-surface.md);
-the host-grant chain is in [`host-grant-contract.md`](host-grant-contract.md).
+the host-grant chain is in [`sdk/python/README.md` § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1).
 
 ## The tenant: `Workspace`
 
@@ -70,19 +70,10 @@ key outside that file — that pair is the signature of an access decision.
 
 ## Runners and tenancy
 
-- A runner's tenant is derived from the human who **paired** it, never `Runner.workspace`:
-  `apps/harness/routing.py::runner_tenant_slugs` (the owner's workspaces where they hold
-  `AGENT_WORK`, intersected with the box's enrollments — `roles.md`). One box serves a fleet
-  spanning workspaces, so scoping by the one-workspace FK would strand every agent in another
-  workspace with turns queued forever.
-- `Runner.owner` is server-assigned from `request.user` at pairing (not attacker-controlled,
-  unlike the `capabilities` hint); a NULL owner fails closed (empty set).
-- Claim (`apps/harness/claim.py::claim_next_turn`) and schedules
-  (`apps/harness/api.py::_runner_schedule_qs`) both call `runner_tenant_slugs` +
-  `routing.agent_tenant_q`; `tests/test_claim_schedule_parity.py` asserts "schedules this
-  runner may fire" equals "turns it may claim".
-- The `capabilities` hint is intersected with the tenant gate for **project and session**
-  turns only; agent turns route by `RunnerAssignment` (and `runner_may_hold_agent`).
+A runner's tenant is its pairing owner's workspaces it is enrolled in, never
+`Runner.workspace` (`apps/harness/routing.py::runner_tenant_slugs`; a NULL owner fails closed) —
+the rule, its claim/schedule parity test and the routing hint:
+[runners.md § Which workspaces a runner serves](runners.md#which-workspaces-a-runner-serves-the-tenant-gate).
 
 ## An agent row is an instance; its definition is the repo
 
@@ -159,7 +150,7 @@ failure again.
   (`apps/tokens/host_gateway.py`). No runner holds it; an expired grant is a refusal, never a
   fallback to the agent's credential. canopy's client identity is the CIMD at
   `/oauth/client.json` + `/oauth/jwks.json` (keys `CANOPY_OAUTH_CLIENT_KEY` /
-  `CANOPY_OAUTH_DPOP_KEY`). Contract: `host-grant-contract.md` → `sdk/python/README.md`.
+  `CANOPY_OAUTH_DPOP_KEY`). Contract: [`sdk/python/README.md` § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1).
 - Guarded by `tests/test_contact_surface_is_bounded.py`.
 
 ## Contacts (`apps/contacts/`): a person canopy knows who is not a member
@@ -172,8 +163,9 @@ failure again.
 - Per-tenant by design: the same human known to two workspaces is two contacts; merging would
   leak one tenant's dealings into another.
 - **Email identity is an assertion.** `From:` is forgeable, so `apps/contacts/email_auth.py`
-  grades the receiver's `Authentication-Results`: `dmarc` > `dkim` > `spf` > `none` (graded,
-  not boolean). Only OUR receiver's header is read, selected by `authserv-id`; an unknown or
+  grades the receiver's `Authentication-Results`: `dmarc` (or `dkim_aligned`, a DKIM
+  signature by the `From:` domain itself) > `dkim` > `spf` > `none` (graded, not boolean).
+  Only OUR receiver's header is read, selected by `authserv-id`; an unknown or
   absent one fails closed. `dmarc=pass` proves the domain, not the human.
 - Grades are a high-water mark (a forwarded message must not downgrade a correspondent), with
   the latest grade kept beside it so a drop stays visible.
@@ -193,7 +185,9 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
 - Acting needs participant role owner/editor; a `viewer` reads; sharing is the owner's
   (`/participants`, the chat header's People control).
 - Every door calls it: REST, the chat socket, attachments, bulk reset, MCP, Slack share, push
-  recipients. **Opening a chat is never a grant** — the socket must not auto-join anyone.
+  recipients. **Opening a chat is never a grant** — the socket must not auto-join anyone;
+  participation comes only from creating, being shared, or joining a Slack thread you can
+  already read.
 - `tests/test_session_acl.py` asserts every door gives the same answer for every (person,
   session shape), and fails on a `SessionParticipant` writer outside its allowlist.
 - Where a session is filed and moving it: `roles.md` → "Which workspace a session lives in".
@@ -212,12 +206,9 @@ Two visibilities: `private` (signed-in workspace members) and `link`.
   VIEW url is routed to sign-in rather than shown a bare error.
 - `PATCH /api/ddd/narratives/{slug}/visibility/` cascades to every artifact and review under a
   narrative.
-- **Login middleware allowlist** (`apps/common/middleware.py`): the scoped viewers
-  `/w/<ws>/{walkthrough,review,share,storyboard,narrative,ddd-release}/…` (`_SCOPED_VIEWER`;
-  the trailing slash keeps the plural list pages behind the gate), the per-artifact read APIs
-  (`_is_artifact_api`), and the retired flat addresses (`_is_flat_artifact` — they serve only
-  the "links now include the workspace" 404). The API layer enforces the token underneath.
-  Every other `/w/` path is the authenticated tenant shell.
+- **Login middleware allowlist:** anonymous visitors reach only the scoped viewers, the
+  per-artifact read APIs and the flat-artifact 404; every other `/w/` path is the
+  authenticated tenant shell. Enforcement: [roles.md § The first tier has no account at all](roles.md#the-first-tier-has-no-account-at-all).
 - **Uploaded HTML is always sandboxed (opaque origin).** `/w/<ws>/walkthrough/<id>/content`
   sends `Content-Security-Policy: sandbox allow-scripts allow-popups
   allow-popups-to-escape-sandbox allow-downloads` + `nosniff` for every non-video walkthrough

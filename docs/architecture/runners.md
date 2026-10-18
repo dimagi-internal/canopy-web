@@ -24,12 +24,17 @@ construction (`tests/test_claim_schedule_parity.py`). It is the INTERSECTION of:
   QUEUED forever. A NULL owner fails closed (empty set).
 - **the workspaces the box is ENROLLED in, plus every workspace below them**
   (`RunnerEnrollment`, `routing.covered_slugs`). Pairing enrolls only the
-  workspace paired into; joining a workspace never enrolls existing boxes; a
-  separate root is never covered. Managed by the owner or a runner admin at
+  workspace paired into; joining a workspace never enrolls existing boxes; leaving
+  one drops the owner's boxes' enrollment there (`apps/workspaces/departure.py`); a
+  division created later is covered; a separate root never is — which keeps a family
+  workspace's box off Dimagi's work and Dimagi's boxes off the family's, though one
+  person owns both. Managed by the owner or a runner admin at
   `/api/harness/runners/{id}/workspaces` (`tests/test_runner_enrollment.py`).
 
 `capabilities` (agents, projects) is a caller-supplied routing HINT declared by
-the box; it is intersected with the tenant gate, never a substitute for it.
+the box; it is intersected with the tenant gate for **project and session** turns,
+never a substitute for it — agent turns route by `RunnerAssignment` (and
+`runner_may_hold_agent`).
 Agent turns are tenant-gated through `routing.agent_tenant_q` (no NULL-workspace
 leg — always AND it with `agent__isnull=False`), repo turns through
 `Turn.workspace`, session turns through `chat_session.workspace`.
@@ -41,9 +46,12 @@ the runner's OWNER is one of the agent's admins (`Agent.is_admin`: the owner, a
 workspace owner, or an `AgentAdmin`). A box running an agent holds its prompt,
 its caller's token, its secrets and its owner's GitHub identity, so this gates
 claim (agent turns AND chats with the agent), credential resolve, the per-turn
-GitHub token (re-asked at issue, since an owner can be demoted mid-turn), pins,
-and every routing write. A teammate whose laptop should run an agent's work needs
-an admin grant on that agent. An agent's own canopy login is not a holder.
+GitHub token (re-asked at issue, since an owner can be demoted mid-turn), pins
+(which also need the pinner to be an agent admin or that runner's admin —
+`access.may_pin_runner`), and every routing write (runner list, source rules, actor
+routes). Don't let a runner-assignment row be the trust boundary: the editor tier
+writes those rows. A teammate whose laptop should run an agent's work needs an admin
+grant on that agent. An agent's own canopy login is not a holder.
 
 ## Which agents a box runs — one rule
 
@@ -313,8 +321,8 @@ as lender (`delegations.set_salesforce`).
 
 A public GitHub App (`canopy-agents`) authorized per user (user-to-server flow).
 It is canopy-web's OWN server-side GitHub access as a person — skill history
-(`apps/agents/skill_history.py`) and plugin archives (`apps/plugins/services.py`,
-after the delegation) call `access_token_for(user)`; no route hands it to a runner.
+(`apps/agents/skill_history.py`, as the agent's owner) and the installation list
+call `access_token_for(user)`; no route hands it to a runner.
 
 - `GitHubConnection` stores the refresh token and current 8-hour access token,
   Fernet-encrypted. The access token is reused until `ACCESS_TOKEN_MARGIN` (5 min)
@@ -407,9 +415,9 @@ A runner is an installed package, never a checkout, and updates itself to what i
 
 **Auto-update (both kinds).** A separate job — `com.canopy.runner.updater` (launchd, every 30 min; `--no-auto-update` to skip) on a laptop, `runner/ec2/update_runner.sh` (systemd timer) on a cloud box — installs the **deployed** `expected_code_sha` for that runner kind, never `origin/main`; defers while a turn is in flight (`~/.canopy/in-flight`); and is read-only against the control plane (`canopy-runner update-check` → `current|stale|busy|unknown`, never a heartbeat). A heartbeat reporting a differing sha gets a `runner.update_available` frame that kicks the updater, so the timer is only the fallback. Laptop log: `~/.canopy/updater.log`; bootout the updater before testing a branch on a box. The cloud box installs via `git show <sha>:runner/ec2/cloud_runner.py` from its on-box clone; Secrets Manager is a first-boot seed only; override with `canopy-runner-update --ref <ref>`. Spec: `docs/superpowers/specs/2026-07-30-cloud-runner-auto-update-design.md`.
 
-**Code provenance.** `code_sha` is the last commit touching that runner kind's own source (`runner/canopy_runner/…` or `runner/ec2/`), not repo HEAD. The server holds `RUNNER_CODE_SHA` / `RUNNER_CLOUD_CODE_SHA` (computed by the deploy workflow, `fetch-depth: 0`); `RunnerOut.expected_code_sha` serves the one matching the row's `kind`, and `/supervisor` alerts only when both sides are non-empty and differ (empty = unknown).
+**Code provenance.** `code_sha` is the last commit touching that runner kind's own source paths, not repo HEAD — laptop: the runner package and its scripts, the menu-bar app, the device key, brand assets and the in-repo `canopy_cron`/`canopy_transcript` packages; cloud: `cloud_runner.py`, `bootstrap_agents.sh`, `update_runner.sh`, `canopy_transcript` and `canopy_acp` (both lists in `.github/workflows/deploy-labs.yml`). The server holds `RUNNER_CODE_SHA` / `RUNNER_CLOUD_CODE_SHA` (computed by the deploy workflow, `fetch-depth: 0`); `RunnerOut.expected_code_sha` serves the one matching the row's `kind`, and `/supervisor` alerts only when both sides are non-empty and differ (empty = unknown).
 
-**The cloud runner** (`runner/ec2/cloud_runner.py`) polls claim every 15s and drains the queue, executes via `claude -p` (or ACP with `RUNNER_EXECUTOR=acp`, default off), declares repos via `RUNNER_PROJECTS`, and runs the stream/backfill contract on a 3s clock. A cloud box learns of an agent only by bootstrapping, so registering one (or changing its repo) requests a refresh on the cloud boxes that will take its turns (`apps/agents/setup.py::request_setup`); until that box posts the agent's bootstrap report, the agent's setup checklist shows its runner step as waiting. And if a turn for an agent the box has no clone of arrives first, the box bootstraps before running it (`cloud_runner._ensure_agent_clone`, once per agent per `LAZY_BOOTSTRAP_RETRY`) rather than running it in a bare scratch dir. `bootstrap_agents.sh` provisions the agent fleet (clones each `dimagi-internal/<slug>` into `/opt/agents`, installs the canopy plugin, `op inject`s env, maps gog OAuth clients); it runs from `main()` after the credential is staged and is not `set -e`, so one agent's failure does not stop the rest. Spec: `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
+**The cloud runner** (`runner/ec2/cloud_runner.py`) polls claim every 15s and drains the queue, executes via `claude -p` (or ACP with `RUNNER_EXECUTOR=acp`, default off), declares repos via `RUNNER_PROJECTS`, and runs the stream/backfill contract on a 3s clock. A cloud box learns of an agent only by bootstrapping, so registering one (or changing its repo) requests a refresh on the cloud boxes that will take its turns (`apps/agents/setup.py::request_setup`); until that box posts the agent's bootstrap report, the agent's setup checklist shows its runner step as waiting. And if a turn for an agent the box has no clone of arrives first, the box bootstraps before running it (`cloud_runner._ensure_agent_clone`, once per agent per `LAZY_BOOTSTRAP_RETRY`) rather than running it in a bare scratch dir. `bootstrap_agents.sh` does the box's half (tooling, gog's file keyring, the canopy plugin + CLI) and then runs `canopy agent prepare --runner` per agent (clones `dimagi-internal/<slug>` into `/opt/agents`, env, plugins, Gmail, a readiness report); it runs from `main()` after the credential is staged and is not `set -e`, so one agent's failure does not stop the rest. Spec: `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
 
 ## Runner readiness (the not-ready marker)
 

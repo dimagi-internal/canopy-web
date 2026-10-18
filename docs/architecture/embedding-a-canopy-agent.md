@@ -81,20 +81,20 @@ what you get from an address bar.
 > public half.
 
 > **Why not the Django admin?** It is read-only for this. It is staff-only, so the person who wants to embed an agent could
-> not do it; there is no shell on a deployment to run the management commands
-> in either; and every field here fails closed and silently, so a bare form
+> not do it; the management commands need a shell in the live container (ECS
+> Exec, a labs admin login); and every field here fails closed and silently, so a bare form
 > produces a widget that never appears with nothing to say why. See §11 for
 > canopy's own pages, where the whole thing is one button.
 
-**Alternatively, by command** (local or scripted setup only — a deployment has
-no shell to run these in, since `EnableExecuteCommand` is off on the service and
-the database is VPC-internal). Signing keys are set on the page:
+**Alternatively, by command** (local or scripted setup — on a deployment they
+run only over ECS Exec, which needs a labs admin login, and the database is
+VPC-internal). Signing keys are set on the page:
 
 ```bash
-uv run python manage.py create_app_credential --name connect-labs
-uv run python manage.py grant_app_frame_origin --name connect-labs \
+uv run python manage.py create_app_credential --workspace connect --name connect-labs
+uv run python manage.py grant_app_frame_origin --workspace connect --name connect-labs \
     --origin https://labs.connect.dimagi.com
-uv run python manage.py grant_app_frame_origin --name connect-labs \
+uv run python manage.py grant_app_frame_origin --workspace connect --name connect-labs \
     --origin http://localhost:8000
 uv run python manage.py grant_app_agent --workspace connect --name connect-labs --agent labs-helper
 uv run python manage.py grant_app_agent --workspace connect --name connect-labs --list
@@ -844,31 +844,18 @@ conformance checks you can run against your deployment. canopy-web's CI runs its
 host half against canopy's real redemption code, so it cannot drift from what
 canopy accepts.
 
-1. **Arrival.** In the same server-to-server call that signs the visitor
-   assertion (§3), also sign an ID-JAG for YOUR OWN MCP server and send it as
-   `id_jag` beside `assertion` to `/api/auth/contact-token`: header
-   `typ: oauth-id-jag+jwt`, signed with the same key; `iss` = `aud` = your OAuth
-   issuer; `sub` = the same `sub` as the assertion; `client_id` = canopy's
-   client id (`{canopy base}/oauth/client.json`); `resource` = your MCP URL;
-   `scope` = what THIS PAGE offers, decided by your server from its own route
-   registry (never from the browser); `exp` ≤ 300s; a unique `jti`. An
-   unregistered page gets no `id_jag`.
-2. **Redeem.** canopy verifies it, discovers your token endpoint from
-   `{issuer}/.well-known/oauth-authorization-server` (checking `issuer`), and
-   POSTs `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with a
-   `private_key_jwt` client assertion (verify it against the JWKS named by
-   canopy's metadata document, `{canopy base}/oauth/jwks.json`), a DPoP proof
-   and `resource`. You answer `{"access_token", "token_type": "DPoP",
-   "expires_in": ≤900, "scope"}` — no refresh token — bound to the proof's key
-   (`cnf.jkt`), to the visitor (`sub`), to canopy (`client_id`), with
-   `act: {"sub": <canopy client_id>}`.
-3. **Use.** In that visitor's turn the agent does not call your MCP server
-   directly. It calls canopy's own `site_tools` / `site_call`, and canopy-web
-   attaches the token as `Authorization: DPoP <token>` with a fresh `DPoP` proof
-   per request (`htm`, `htu`, `ath`, `iat`, `jti`) and an informational
-   `Canopy-Actor: <agent slug>` header. Verify the proof, run the tool as `sub`,
-   and allow only what the token's scope maps to. Tokens without `cnf` (your
-   ordinary OAuth sign-ins, PATs) are unaffected.
+In three steps — every claim, lifetime, header and refusal is in
+[the SDK README § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1):
+
+1. **Arrival.** Beside `assertion` (§3), send `id_jag` — an ID-JAG (`typ: oauth-id-jag+jwt`)
+   for your own MCP server, scoped by your server to what THIS page offers.
+2. **Redeem.** canopy (client id `{canopy base}/oauth/client.json`, keys at
+   `{canopy base}/oauth/jwks.json`) redeems it at your token endpoint with
+   `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `private_key_jwt` and DPoP;
+   you answer a short-lived, DPoP-bound access token for the visitor — no refresh token.
+3. **Use.** canopy's `site_tools` / `site_call` call your MCP with `Authorization: DPoP <token>`,
+   a fresh proof and an informational `Canopy-Actor` header; run the tool as `sub`, within the
+   token's scopes.
 
 **What canopy adds on its side.** In your site's Connected-site row
 (`/w/<workspace>/settings/connected-apps`), set your **sign-in issuer** and **MCP
