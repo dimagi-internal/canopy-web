@@ -60,15 +60,15 @@ def test_the_token_stages_an_agent_its_box_serves(fleet, sts):  # noqa: F811 —
 
     res = _get(RESOLVE, raw, HTTP_X_CANOPY_AWS_PROOF=_proof(HTU), HTTP_X_CANOPY_TURN_ID="t-1")
     assert res.status_code == 200, res.content
-    assert res.json()["values"]["canopy-pat"] == "pat-value"
-    assert AgentCredentialRead.objects.get(name="canopy-pat").runner_id == fleet["runner"].pk
+    assert res.json()["values"]["CANOPY_WEB_PAT"] == "pat-value"
+    assert AgentCredentialRead.objects.get(name="CANOPY_WEB_PAT").runner_id == fleet["runner"].pk
 
 
 def test_the_token_reads_nothing_its_box_does_not_serve(fleet, sts):  # noqa: F811 — fixtures
     """The owner administers Ada too, but this box does not run her."""
     _active_role(fleet, sts)
     Agent.objects.create(slug="ada", name="Ada", workspace=fleet["ws"], owner=fleet["user"],
-                         runtime_secrets=["canopy-pat"], credential_source=Agent.CANOPY_WEB)
+                         runtime_secrets=["CANOPY_WEB_PAT"], credential_source=Agent.CANOPY_WEB)
     raw = _runner_token(fleet)
 
     acc = _get("/api/agents/ada/credentials/access", raw)

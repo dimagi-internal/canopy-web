@@ -243,7 +243,7 @@ export function AgentCredentialsPanel({
       : { label: 'Not connected', tone: 'destructive' }
 
   const onCanopy = source === 'canopy-web'
-  const hasLogin = rows.some((r) => r.name === 'canopy-pat' && r.set)
+  const hasLogin = rows.some((r) => r.name === 'CANOPY_WEB_PAT' && r.set)
   const statusRows: { key: string; name: string; href?: string; s: CredStatus | undefined }[] = [
     onCanopy
       ? { key: 'vault', name: 'Canopy vault', href: '#canopy-login',

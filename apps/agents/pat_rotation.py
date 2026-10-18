@@ -1,13 +1,13 @@
-"""Automatic rotation of an agent's own `canopy-pat` (Canopy Vault Phase 1b,
+"""Automatic rotation of an agent's own canopy login (`CANOPY_PAT_REF`; Canopy Vault Phase 1b,
 canopy-web#1549).
 
-The `canopy-pat` is the one secret canopy-web issues itself, so it is the one it
+Its login is the one secret canopy-web issues itself, so it is the one it
 can rotate without anyone typing anything. An owner or admin opts an agent in
 (PATCH /api/agents/{slug}/pat-rotation, default every 30 days); then, when due:
 
 1. mint a new PersonalToken for the agent's own login (`Agent.user`), with the
    same never-expiring lifetime `mint_agent_canopy_token` gives it;
-2. write it to the agent's `canopy-pat` AgentCredential — a runner picks it up
+2. write it to the agent's login AgentCredential — a runner picks it up
    at its next `canopy cred sync`, because the values' fingerprint it keeps in
    `~/.<slug>/.env.stamp` changes (canopy-web keeps no separate
    `content_version`: the value IS the version);
@@ -17,7 +17,7 @@ can rotate without anyone typing anything. An owner or admin opts an agent in
 
 Only a token the stored value actually IS — a live PersonalToken of the agent's
 own login, found by hashing the value — is ever shortened or revoked; if the
-`canopy-pat` holds something else (a person's token, a typo), it is replaced
+stored login holds something else (a person's token, a typo), it is replaced
 and the other token is left alone.
 
 The impersonation guard of `services.mint_agent_canopy_token` is re-checked at
@@ -44,7 +44,13 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-CANOPY_PAT_REF = "canopy-pat"
+#: The name an agent's own canopy login is stored under in canopy-web's vault. A
+#: runner writes each stored value out as the environment variable OF THAT NAME
+#: (`canopy cred sync`, which never reads runtime.yaml's `env:`), and an agent's
+#: code reads its login from `CANOPY_WEB_PAT` — so that is the name, not the
+#: 1Password item name `canopy-pat` (`.env.tpl`: CANOPY_WEB_PAT=op://…/canopy-pat/…),
+#: which is not even a valid variable name and would be dropped on the way.
+CANOPY_PAT_REF = "CANOPY_WEB_PAT"
 OVERLAP = dt.timedelta(hours=24)
 MIN_DAYS, MAX_DAYS = 1, 365
 TICK_CACHE_KEY = "canopy-pat-rotation:tick"
