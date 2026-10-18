@@ -117,3 +117,52 @@ def test_a_drain_that_succeeds_clears_a_held_failure(monkeypatch):
                       {"session_key": "u", "project": "hal", "close_error": ""}])
     streams.drain_closes(_cfg(), client)
     assert client.posted == [[{"session_key": "t", "project": "hal", "ok": True, "error": ""}]]
+
+
+# ── one close from the web arrives twice ──────────────────────────────────────
+# The control frame and the poll tick's `close_requested` both close the same
+# task. The second ran alongside the first, missed the row the first was
+# deleting, and reported a failure for a close that then succeeded — the IDE
+# showed "A delete was not confirmed by its runner" for a session that closed.
+
+def test_the_poll_tick_leaves_a_close_the_frame_is_running(monkeypatch):
+    called = []
+    monkeypatch.setattr(close, "close_session", lambda key, **k: called.append(key))
+    monkeypatch.setattr(close, "_IN_FLIGHT", {"t"})
+    client = _Client([{"session_key": "t", "project": "hal", "close_error": ""}])
+    streams.drain_closes(_cfg(), client)
+    assert called == [] and client.posted == []
+
+
+def test_the_poll_tick_leaves_a_close_awaiting_its_report(monkeypatch):
+    called = []
+    monkeypatch.setattr(close, "close_session", lambda key, **k: called.append(key))
+    monkeypatch.setattr(close.sessions, "_PENDING_CLOSED", {"t"})
+    client = _Client([{"session_key": "t", "project": "hal", "close_error": ""}])
+    streams.drain_closes(_cfg(), client)
+    assert called == [] and client.posted == []
+
+
+def test_a_second_close_of_the_same_task_does_not_start(monkeypatch):
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+    deletes = []
+
+    def slow_resolve(db, key, project):
+        deletes.append(key)
+        entered.set()
+        release.wait(5)
+        return types.SimpleNamespace(reason=session_target.ABSENT, ok=False, project="")
+
+    monkeypatch.setattr(close.session_target, "resolve", slow_resolve)
+    monkeypatch.setattr(close.sessions, "_PENDING_CLOSED", set())
+    first = threading.Thread(target=close.close_session, args=("t",), kwargs={"project": "hal"})
+    first.start()
+    assert entered.wait(5)
+    assert close.close_session("t", project="hal") == close.IN_FLIGHT
+    release.set()
+    first.join(5)
+    assert deletes == ["t"]
+    assert not close.settled_or_in_flight("u")
+    assert close.settled_or_in_flight("t")  # closed, its report not yet sent

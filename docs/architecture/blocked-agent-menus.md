@@ -65,7 +65,7 @@ The composer refuses to send while a **parsed dialog** is up — the TUI draws t
 A WS frame published while the control channel is down lands in a Channels group with no consumer and is discarded, while the runner keeps heartbeating over REST and reads `ONLINE` — no keystroke and no refusal. So anything that must happen gets a **durable record the runner drains on its poll tick**, beside `/streams` and `/backfills`:
 
 - `RunnerBinding.pending_answer` → `runner/canopy_runner/canopy_runner/streams.py::drain_menu_answers`
-- `RunnerBinding.close_requested` → `streams.drain_closes`; a close that fails (here or from the menu bar's "Close sessions") is reported back (`POST …/close-results` → `RunnerBinding.close_error`) and shown in Supervisor as "Close failed: <reason>" with a Retry
+- `RunnerBinding.close_requested` → `streams.drain_closes`; a close that fails (here or from the menu bar's "Close sessions") is reported back (`POST …/close-results` → `RunnerBinding.close_error`) and shown in Supervisor as "Close failed: <reason>" with a Retry. The drain skips a task the frame is closing right now or has closed and not yet reported (`close.settled_or_in_flight`), and `close.close_session` refuses a second concurrent close of one task — two deletes at once made the loser report a failure for a close that succeeded
 
 The WS frame is only the fast path; a dropped channel costs one tick, not the action. `pending_answer` carries an `id` the runner echoes back when it reports the outcome (`apps/harness/api.py` retires it only on a matching id), because applying an answer twice is a second keystroke into a session that has moved on. If the report fails, the answer stays set: pressing late is safe (see re-read below), pressing twice is not.
 

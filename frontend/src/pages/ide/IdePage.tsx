@@ -25,7 +25,8 @@ import {
 } from '@/api/chat'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { listAgents, type AgentOut } from '@/api/agents'
-import { NewChatMenu } from '@/components/chat/NewChatMenu'
+import { NewChatMenu, type NewChatTarget } from '@/components/chat/NewChatMenu'
+import { repoChoices } from '@/components/chat/runnerEligibility'
 import { wsUrl } from '@/lib/wsUrl'
 import { ChatPage } from '@/pages/ChatPage'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
@@ -155,6 +156,8 @@ function useDoorbell(ring: () => void): boolean {
 
 type RunnerChip = { key: string; name: string; status: string | null; host: string; count: number }
 
+const UNCONFIRMED_DELETE = 'A delete was not confirmed by its runner — try again, or delete it in emdash.'
+
 const STATE_LABEL: Record<IdeState, string> = { running: 'running', input: 'input', idle: 'idle' }
 const MODE_LABEL: Record<IdeMode, string> = { manual: 'manual', auto: 'auto', none: 'no turn' }
 
@@ -220,6 +223,9 @@ export function IdePage() {
   useEffect(() => {
     closingRef.current = closing
   }, [closing])
+  // Deletes the list has called unconfirmed, still watched: one that lands
+  // after all takes its error back rather than leaving it standing.
+  const unconfirmed = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const { hiddenRunners, states, modes, archived } = filters
@@ -243,7 +249,15 @@ export function IdePage() {
           const settled = settleClosing(closingRef.current, s.value, Date.now())
           setClosing(settled.pending)
           if (settled.stuck.length || settled.failed.length) {
-            setNote({ text: 'A delete was not confirmed by its runner — try again, or delete it in emdash.', error: true })
+            for (const sid of [...settled.stuck, ...settled.failed]) unconfirmed.current.add(sid)
+            setNote({ text: UNCONFIRMED_DELETE, error: true })
+          }
+        }
+        if (unconfirmed.current.size) {
+          const active = new Set(s.value.filter((x) => x.status === 'active').map((x) => x.id))
+          if ([...unconfirmed.current].every((sid) => !active.has(sid))) {
+            unconfirmed.current.clear()
+            setNote((n) => (n?.text === UNCONFIRMED_DELETE ? { text: 'Deleted', error: false } : n))
           }
         }
       } else {
@@ -337,6 +351,19 @@ export function IdePage() {
   }, [runners, sessions, filters.archived])
 
   const tree = useMemo(() => buildTree(sessions, filters), [sessions, filters])
+  // What each folder's + starts a session with: the agent of that name, else a
+  // repo some online runner holds. A folder with neither gets no +.
+  const repos = useMemo(() => repoChoices(runners), [runners])
+  const folderTarget = (key: string, isAgent: boolean): NewChatTarget | null => {
+    const agent = isAgent ? agents.find((a) => a.slug === key) : undefined
+    if (agent) return { kind: 'agent', agent }
+    const project = repos.find((r) => r.slug === key)
+    return project ? { kind: 'project', project } : null
+  }
+  const onCreated = (s: ChatSession) => {
+    void refresh()
+    navigate(`/ide/${s.id}`)
+  }
   const shown = useMemo(() => tree.flatMap((f) => f.sessions), [tree])
   const links = useMemo(() => childLinks(sessions, filters), [sessions, filters])
   // A session opened here that the list does not hold yet — a fork just made
@@ -553,10 +580,7 @@ export function IdePage() {
           label="New session"
           className="ml-auto h-6 shrink-0 px-1.5 text-[12px]"
           onError={(message) => setNote({ text: message, error: true })}
-          onCreated={(s) => {
-            void refresh()
-            navigate(`/ide/${s.id}`)
-          }}
+          onCreated={onCreated}
         />
         <span
           aria-label={live ? 'live' : 'polling'}
@@ -692,13 +716,15 @@ export function IdePage() {
           )}
           {tree.map((folder) => {
             const open = !collapsed.has(folder.key)
+            const target = folderTarget(folder.key, folder.isAgent)
             return (
               <div key={folder.key || '(none)'}>
+                <div className="flex items-center pr-2 hover:bg-muted">
                 <button
                   type="button"
                   onClick={() => toggleFolder(folder.key)}
                   aria-expanded={open}
-                  className="flex w-full items-center gap-1.5 px-2 py-1 text-left font-semibold text-foreground-secondary hover:bg-muted"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-2 text-left font-semibold text-foreground-secondary"
                 >
                   <span className="w-3 text-muted-foreground">{open ? '▾' : '▸'}</span>
                   <span className="truncate">{folder.key || 'No project'}</span>
@@ -719,6 +745,19 @@ export function IdePage() {
                     <span title="sessions shown">{folder.sessions.length}</span>
                   </span>
                 </button>
+                {target && (
+                  <NewChatMenu
+                    agents={agents}
+                    runners={runners}
+                    target={target}
+                    label=""
+                    title={`New session with ${folder.key}`}
+                    className="ml-1.5 h-5 w-5 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+                    onError={(message) => setNote({ text: message, error: true })}
+                    onCreated={onCreated}
+                  />
+                )}
+                </div>
                 {open &&
                   folder.sessions.map((s) => {
                     const st = sessionState(s)

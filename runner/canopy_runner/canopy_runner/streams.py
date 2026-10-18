@@ -197,6 +197,11 @@ def drain_closes(cfg: Config, client: Client) -> None:
             continue
         project = c.get("project") or ""
         held = c.get("close_error") or ""
+        # The control frame got here first: it is deleting the task now, or has
+        # and the next report retires the request. A second attempt would only
+        # race it and report the loser's "failure" (close.settled_or_in_flight).
+        if close_mod.settled_or_in_flight(session_key):
+            continue
         try:
             close_mod.close_session(session_key, project=project,
                                     cdp_port=cfg.cdp_port, emdash_db=cfg.emdash_db, cfg=cfg)
