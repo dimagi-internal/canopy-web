@@ -3257,8 +3257,8 @@ export interface paths {
          *
          *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
          *     syncs, projects, schedules, task actions, runner assignments/drills), so
-         *     this is a real delete rather than a soft flag — nothing is left dangling
-         *     and nothing blocks it. Its open chat sessions are closed first: the runner
+         *     this is a real delete rather than a soft flag — nothing is left dangling.
+         *     One thing blocks it: a workspace project the agent stewards (409). Its open chat sessions are closed first: the runner
          *     deletes each emdash task, and an offline runner does so when it is back.
          */
         readonly delete: operations["delete_agent"];
@@ -5816,7 +5816,8 @@ export interface paths {
         };
         /**
          * Projects across every agent you can see
-         * @description Active by default; `status=` (empty for all) and `repo_slug=` narrow it.
+         * @description Active by default; `status=` (empty for all), `repo_slug=` and `scope=`
+         *     (`agent` or `workspace`) narrow it.
          */
         readonly get: operations["list_fleet_projects"];
         readonly put?: never;
@@ -5825,6 +5826,46 @@ export interface paths {
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Workspace projects in every workspace you can see
+         * @description Owned by a workspace rather than one agent, each with a steward agent that
+         *     keeps it current. `status=` narrows; default all.
+         */
+        readonly get: operations["list_workspace_projects"];
+        readonly put?: never;
+        /** Create a workspace project, owned by the steward's workspace */
+        readonly post: operations["create_workspace_project"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get a workspace project: fields, every agent's tasks in it, recent turns */
+        readonly get: operations["get_workspace_project"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /** Update a workspace project (including handing it to another steward) */
+        readonly patch: operations["patch_workspace_project"];
         readonly trace?: never;
     };
     readonly "/api/workspaces/": {
@@ -18064,6 +18105,29 @@ export interface components {
              * @default
              */
             readonly workspace: string;
+            /**
+             * Scope
+             * @default agent
+             * @enum {string}
+             */
+            readonly scope: "agent" | "workspace";
+            /**
+             * Handle
+             * @default
+             */
+            readonly handle: string;
+            /** Steward Slug */
+            readonly steward_slug?: string | null;
+            /**
+             * Address
+             * @default
+             */
+            readonly address: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -18197,6 +18261,29 @@ export interface components {
              * @default
              */
             readonly workspace: string;
+            /**
+             * Scope
+             * @default agent
+             * @enum {string}
+             */
+            readonly scope: "agent" | "workspace";
+            /**
+             * Handle
+             * @default
+             */
+            readonly handle: string;
+            /** Steward Slug */
+            readonly steward_slug?: string | null;
+            /**
+             * Address
+             * @default
+             */
+            readonly address: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -18276,6 +18363,8 @@ export interface components {
             readonly project_ext_id?: string | null;
             /** Project Name */
             readonly project_name?: string | null;
+            /** Project Address */
+            readonly project_address?: string | null;
             /** Parent Ext Id */
             readonly parent_ext_id?: string | null;
             /**
@@ -18489,6 +18578,10 @@ export interface components {
             readonly links?: readonly components["schemas"]["AgentTaskLink"][] | null;
             /** Spawned From */
             readonly spawned_from?: string | null;
+            /** Handle */
+            readonly handle?: string | null;
+            /** Steward */
+            readonly steward?: string | null;
         };
         /**
          * AgentTaskIn
@@ -18754,6 +18847,8 @@ export interface components {
             readonly project_ext_id?: string | null;
             /** Project Name */
             readonly project_name?: string | null;
+            /** Project Address */
+            readonly project_address?: string | null;
             /** Parent Ext Id */
             readonly parent_ext_id?: string | null;
             /**
@@ -21835,6 +21930,65 @@ export interface components {
              * @default false
              */
             readonly replace: boolean;
+        };
+        /**
+         * WorkspaceProjectIn
+         * @description Create a workspace project directly: owned by the steward's workspace.
+         */
+        readonly WorkspaceProjectIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Ext Id
+             * @default
+             */
+            readonly ext_id: string;
+            /**
+             * Outcome
+             * @default
+             */
+            readonly outcome: string;
+            /**
+             * Status
+             * @default active
+             */
+            readonly status: string;
+            /**
+             * Owner Note
+             * @default
+             */
+            readonly owner_note: string;
+            /**
+             * Owner Email
+             * @default
+             */
+            readonly owner_email: string;
+            /**
+             * Drive Folder Id
+             * @default
+             */
+            readonly drive_folder_id: string;
+            /**
+             * Drive Folder Url
+             * @default
+             */
+            readonly drive_folder_url: string;
+            /**
+             * Repo Slug
+             * @default
+             */
+            readonly repo_slug: string;
+            /**
+             * Notes
+             * @default
+             */
+            readonly notes: string;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][];
+            /** Handle */
+            readonly handle: string;
+            /** Steward */
+            readonly steward: string;
         };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
@@ -36572,6 +36726,7 @@ export interface operations {
             readonly query?: {
                 readonly status?: string;
                 readonly repo_slug?: string;
+                readonly scope?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -36586,6 +36741,102 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentProjectOut"][];
+                };
+            };
+        };
+    };
+    readonly list_workspace_projects: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentProjectOut"][];
+                };
+            };
+        };
+    };
+    readonly create_workspace_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["WorkspaceProjectIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly get_workspace_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentProjectDetailOut"];
+                };
+            };
+        };
+    };
+    readonly patch_workspace_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentProjectPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentProjectOut"];
                 };
             };
         };

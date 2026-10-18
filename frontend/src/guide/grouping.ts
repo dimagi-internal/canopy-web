@@ -42,6 +42,8 @@ const NAV_HOME: Record<string, string> = {
   '/w/:workspace/threads/:id': '/w/:workspace/huddles/:id',
   // The Health page's second tab.
   '/w/:workspace/analytics': '/w/:workspace/health',
+  // Listed on the Agents page, above the agents.
+  '/w/:workspace/projects/:handle': '/w/:workspace/agents',
 }
 
 /**

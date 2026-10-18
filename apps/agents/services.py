@@ -606,13 +606,97 @@ def list_projects(agent: Agent, status: str = "") -> list:
 
 def get_project(agent: Agent, ref: str):
     """By `ext_id` ("P3") or by numeric id — the CLI and the board name projects
-    differently, and a caller should not have to know which it holds."""
+    differently, and a caller should not have to know which it holds.
+
+    Also a WORKSPACE project of the agent's workspace, by handle ("givewell-kb")
+    or address ("dimagi/givewell-kb"): any agent in the workspace may file a
+    task into one, which is most of what makes it the workspace's."""
     ref = str(ref)
     qs = agent.projects.select_related("owner_user")
     project = qs.filter(ext_id__iexact=ref).first()
     if project is None and ref.isdigit():
         project = qs.filter(pk=int(ref)).first()
+    if project is None:
+        ws, _, handle = ref.rpartition("/")
+        if not ws or ws == agent.workspace_id:
+            project = get_workspace_project(agent.workspace_id, handle)
     return project
+
+
+class ProjectScopeError(ValueError):
+    """A workspace-project write that cannot be done, with its HTTP status."""
+
+    def __init__(self, message: str, status: int = 422):
+        super().__init__(message)
+        self.status = status
+
+
+def get_workspace_project(workspace_slug: str, handle: str):
+    return (AgentProject.objects.select_related("agent", "owner_user")
+            .filter(scope=AgentProject.WORKSPACE_SCOPE, owner_workspace_id=workspace_slug,
+                    handle__iexact=(handle or "").strip()).first())
+
+
+def workspace_projects(workspace_slugs, status: str = "") -> list:
+    qs = (AgentProject.objects.select_related("agent", "owner_user")
+          .filter(scope=AgentProject.WORKSPACE_SCOPE, owner_workspace_id__in=list(workspace_slugs)))
+    if status:
+        qs = qs.filter(status=status)
+    return list(qs.order_by("owner_workspace_id", "handle"))
+
+
+def promote_project(project: AgentProject, handle: str) -> AgentProject:
+    """Make an agent project the workspace's, with its agent as steward. Its
+    ext_id, tasks, Drive folder and history are untouched; it gains an address."""
+    import re
+
+    from django.db import IntegrityError, transaction
+
+    handle = (handle or "").strip().lower()
+    if not re.match(AgentProject.HANDLE_RE, handle):
+        raise ProjectScopeError("handle must be 3-60 characters of a-z, 0-9 and '-', "
+                                "starting and ending with a letter or digit")
+    if project.is_workspace_project:
+        if project.handle == handle:
+            return project
+        raise ProjectScopeError(f"already the workspace project '{project.address}'; "
+                                "renaming a handle would break every caller that names it", 409)
+    project.scope = AgentProject.WORKSPACE_SCOPE
+    project.owner_workspace_id = project.agent.workspace_id
+    project.handle = handle
+    try:
+        with transaction.atomic():
+            project.save(update_fields=["scope", "owner_workspace", "handle", "updated_at"])
+    except IntegrityError:
+        raise ProjectScopeError(f"'{project.agent.workspace_id}/{handle}' is already taken", 409) from None
+    return project
+
+
+def set_steward(project: AgentProject, steward: Agent) -> AgentProject:
+    """Hand a workspace project to another agent of the same workspace.
+
+    The address (`<workspace>/<handle>`) is the identity, so callers notice
+    nothing. The ext_id is the old steward's numbering, so it is re-issued from
+    the new steward's counter if it would collide there. Tasks stay on the
+    boards of the agents that own them."""
+    if not project.is_workspace_project:
+        raise ProjectScopeError("only a workspace project has a steward; promote it first")
+    if steward.workspace_id != project.owner_workspace_id:
+        raise ProjectScopeError(f"the steward must be an agent of '{project.owner_workspace_id}'")
+    if steward.pk == project.agent_id:
+        return project
+    if steward.projects.filter(ext_id__iexact=project.ext_id).exists():
+        project.ext_id = next_project_ext_id(steward)
+    project.agent = steward
+    project.save(update_fields=["agent", "ext_id", "updated_at"])
+    return project
+
+
+def stewarded_workspace_projects(agent: Agent) -> list[str]:
+    """Addresses of the workspace projects `agent` stewards — what blocks moving
+    or deleting it: either would carry the workspace's project away, or delete it."""
+    return [p.address for p in agent.projects.filter(scope=AgentProject.WORKSPACE_SCOPE)
+            .select_related("agent")]
 
 
 def next_project_ext_id(agent: Agent) -> str:
@@ -670,8 +754,10 @@ def project_task_counts(agent: Agent) -> dict:
     """
     from django.db.models import Count, Q
 
+    # Tasks IN this agent's projects, whoever owns them: a workspace project it
+    # stewards collects other agents' tasks too.
     rows = (
-        AgentTask.objects.filter(agent=agent, project__isnull=False)
+        AgentTask.objects.filter(project__agent=agent)
         .values("project_id")
         .annotate(
             total=Count("id"),

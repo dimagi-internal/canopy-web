@@ -43,6 +43,7 @@ import { SessionsPage } from './pages/SessionsPage'
 import { PeopleMePage } from './pages/PeopleMePage'
 import { HcpClientsPage } from './pages/HcpClientsPage'
 import { AgentsPage } from './pages/AgentsPage'
+import { WorkspaceProjectRedirect } from './pages/projects/WorkspaceProjects'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import SessionSharePage from './pages/SessionSharePage'
 import DddReleasePage from './pages/DddReleasePage'
@@ -340,6 +341,7 @@ export const routeTable: RouteObject[] = [
       // The old team-view address (hal T82) — a second page about the same
       // project, outside the agent console. A project has one page now; links
       // already sent land on it.
+      { path: '/w/:workspace/projects/:handle', element: <WorkspaceProjectRedirect /> },
       { path: '/w/:workspace/projects/:agent/:ref', element: <ProjectPageRedirect /> },
       { path: '/w/:workspace/projects/:agent/:ref/people/:person', element: <ProjectPageRedirect /> },
       { path: '/w/:workspace/schedules', element: <SchedulesPage /> },

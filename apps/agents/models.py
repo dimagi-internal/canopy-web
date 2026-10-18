@@ -849,10 +849,17 @@ class AgentProject(models.Model):
     can list "everything in flight" across agents by reading Drive. So the folder
     stays exactly where it is and this row points AT it.
 
-    **Per agent, deliberately** (Jonathan, 2026-09-19). Two agents working the
-    same initiative have a project each, as they have a Drive folder each, and
-    share files across them when they want to. A single shared project would have
-    to own a folder that the Drive layout gives no place to.
+    **Two scopes.** An AGENT project (the default) is a piece of that agent's
+    work with an end; two agents on one initiative have a project each, as they
+    have a Drive folder each. A WORKSPACE project is a standing resource many
+    agents share — a funder knowledge base, say — that outlives every task
+    citing it. It is owned by the workspace (`owner_workspace`), addressed by a
+    `handle` unique there (`dimagi/givewell-kb`), and `agent` is its STEWARD:
+    the one agent that keeps it current, whose Drive folder holds its files.
+    The steward can change without the project's address changing, any agent
+    in the workspace can file tasks into it, and an agent cannot be moved or
+    deleted out from under a workspace project it stewards
+    (`services.set_steward`, `move.py`, `api.delete_agent`).
 
     This is canopy's one project system (the pre-agentic workbench registry of
     repos was retired 2026-10-06). A project is a piece of work with an end —
@@ -866,7 +873,20 @@ class AgentProject(models.Model):
     PROPOSED, ACTIVE, DONE, ARCHIVED = "proposed", "active", "done", "archived"
     STATUS_CHOICES = [(PROPOSED, "Proposed"), (ACTIVE, "Active"), (DONE, "Done"), (ARCHIVED, "Archived")]
 
+    AGENT_SCOPE, WORKSPACE_SCOPE = "agent", "workspace"
+    SCOPE_CHOICES = [(AGENT_SCOPE, "Agent project"), (WORKSPACE_SCOPE, "Workspace project")]
+    HANDLE_RE = r"^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$"
+
+    #: The owning agent of an agent project; the STEWARD of a workspace project.
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="projects")
+    scope = models.CharField(max_length=16, choices=SCOPE_CHOICES, default=AGENT_SCOPE)
+    #: Set exactly when `scope` is workspace: the workspace that owns it. Always
+    #: the steward's workspace (`services.set_steward` keeps them equal).
+    owner_workspace = models.ForeignKey("workspaces.Workspace", null=True, blank=True,
+                                        on_delete=models.CASCADE, related_name="workspace_projects")
+    #: A workspace project's address, unique in its workspace ("givewell-kb").
+    #: Blank for agent projects, which are addressed `<agent>/<ext_id>`.
+    handle = models.CharField(max_length=60, blank=True, default="")
     #: Stable id the agent addresses it by, unique per agent — the same shape as
     #: `AgentTask.ext_id` ("P1", "P2"), so the CLI can name a project without
     #: guessing at database ids.
@@ -923,6 +943,15 @@ class AgentProject(models.Model):
         ordering = ["status", "-updated_at"]
         constraints = [
             models.UniqueConstraint(fields=["agent", "ext_id"], name="agent_project_ext_id_unique"),
+            models.UniqueConstraint(fields=["owner_workspace", "handle"],
+                                    condition=models.Q(scope="workspace"),
+                                    name="workspace_project_handle_unique"),
+            # owner + handle exactly when it is a workspace project, never half of one
+            models.CheckConstraint(
+                condition=(models.Q(scope="agent", owner_workspace__isnull=True, handle="")
+                           | (models.Q(scope="workspace", owner_workspace__isnull=False)
+                              & ~models.Q(handle=""))),
+                name="project_scope_fields_agree"),
         ]
         indexes = [models.Index(fields=["agent", "status"])]
 
@@ -938,10 +967,32 @@ class AgentProject(models.Model):
 
     @property
     def workspace(self) -> str:
-        """The workspace this row lives in — its agent's. A list pinned to a
-        parent workspace also carries its children's rows, and the UI badges
-        the ones from elsewhere."""
-        return self.agent.workspace_id
+        """The workspace this row lives in — the owner of a workspace project,
+        else its agent's. A list pinned to a parent workspace also carries its
+        children's rows, and the UI badges the ones from elsewhere."""
+        return self.owner_workspace_id or self.agent.workspace_id
+
+    @property
+    def is_workspace_project(self) -> bool:
+        return self.scope == self.WORKSPACE_SCOPE
+
+    @property
+    def steward_slug(self) -> str | None:
+        """The agent that keeps a workspace project current (None for an agent project)."""
+        return self.agent.slug if self.is_workspace_project else None
+
+    @property
+    def address(self) -> str:
+        """How every caller names it: `<workspace>/<handle>`, else `<agent>/<ext_id>`."""
+        if self.is_workspace_project:
+            return f"{self.owner_workspace_id}/{self.handle}"
+        return f"{self.agent.slug}/{self.ext_id}"
+
+    @property
+    def url(self) -> str:
+        if self.is_workspace_project:
+            return f"/w/{self.owner_workspace_id}/projects/{self.handle}"
+        return f"/w/{self.agent.workspace_id}/agents/{self.agent.slug}/projects/{self.ext_id}"
 
     @property
     def owner_email(self) -> str | None:
@@ -956,8 +1007,8 @@ class AgentProject(models.Model):
         return {"agent": t.agent.slug, "ref": t.ext_id, "title": t.title, "status": t.status,
                 "project_ref": t.project.ext_id if t.project_id else "",
                 "project_name": t.project.name if t.project_id else "",
-                "url": (f"/w/{t.agent.workspace_id}/agents/{t.agent.slug}/projects/{t.project.ext_id}"
-                        if t.project_id else f"/w/{t.agent.workspace_id}/agents/{t.agent.slug}/tasks")}
+                # the project's own page: a workspace project's task may be another agent's
+                "url": (t.project.url if t.project_id else f"/w/{t.agent.workspace_id}/agents/{t.agent.slug}/tasks")}
 
     @property
     def task_count(self) -> int:
@@ -1293,6 +1344,13 @@ class AgentTask(models.Model):
     @property
     def project_name(self) -> str | None:
         return self.project.name if self.project_id else None
+
+    @property
+    def project_address(self) -> str | None:
+        """`<workspace>/<handle>` for a workspace project (whose ext_id is its
+        steward's numbering, ambiguous on another agent's board), else
+        `<agent>/<ext_id>`."""
+        return self.project.address if self.project_id else None
 
     @property
     def parent_ext_id(self) -> str | None:

@@ -11,6 +11,7 @@ import { CheckinsPanel, CheckinTimeline } from '@/pages/agents/ProjectCheckins'
 import { ProjectOverview } from '@/pages/agents/ProjectOverview'
 import { ProjectStatusOptions, StatusChip } from '@/pages/agents/projectParts'
 import { Section } from '@/pages/agents/sectionLayout'
+import { WorkspaceProjectLine } from '@/pages/projects/WorkspaceProjects'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
@@ -162,6 +163,7 @@ export function AgentProjectPage(): JSX.Element {
           </span>
         )}
       </div>
+      <WorkspaceProjectLine project={detail} />
       {statusError && <p className="mt-2 text-[12px] text-destructive">{statusError}</p>}
     </>
   )
@@ -267,7 +269,7 @@ export function AgentProjectPage(): JSX.Element {
         <>
           <Section
             id="project-tasks"
-            title={`${who}'s work`}
+            title={detail.scope === 'workspace' ? 'The work' : `${who}'s work`}
             description={`What ${who} is doing on this project, open first. The ideas themselves are listed above.`}
           >
             {tasks.length === 0 ? (

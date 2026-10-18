@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { WorkspaceBadge } from '@/components/WorkspaceBadge'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { agentHref } from './agentHref'
+import { WorkspaceProjectsSection } from './projects/WorkspaceProjects'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
@@ -142,6 +143,8 @@ export function AgentsPage() {
           </Link>
         )}
       </div>
+
+      {workspace && <WorkspaceProjectsSection workspace={workspace} />}
 
       {error && (
         <div className="flex items-center justify-center h-48 text-destructive text-sm">{error}</div>
