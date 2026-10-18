@@ -140,8 +140,11 @@ class AgentGrantIn(StrictModel):
 
 
 class MemoryContextOut(StrictModel):
-    source: str = Field(description="personal | tree:<organisation>")
-    label: str
+    source: str = Field(description="tree:<organisation> (all of it, as it is when read) | "
+                                    "workspace:<slug> | personal (entries in no workspace).")
+    label: str = Field(description='A short name: "All of Dimagi", "Connect", "No workspace".')
+    group: str = Field(default="", description="The organisation it sits under, by name; "
+                                               "empty for no workspace.")
 
 
 class MemoryCollectionUserOut(StrictModel):
@@ -170,7 +173,8 @@ class MemoryCollectionsOut(StrictModel):
 
 class MemoryCollectionIn(StrictModel):
     name: str
-    sources: list[str] = Field(description="personal and/or tree:<organisation> (see contexts).")
+    sources: list[str] = Field(description="Any of the contexts: tree:<organisation>, "
+                                           "workspace:<slug>, personal.")
 
 
 class MemoryCollectionUpdateIn(StrictModel):

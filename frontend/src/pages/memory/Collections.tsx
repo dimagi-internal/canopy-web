@@ -10,6 +10,8 @@ import {
 } from '../../api/people'
 import type { HcpGrant, MemoryCollections } from '../../api/people'
 
+type Context = NonNullable<MemoryCollections['contexts']>[number]
+
 /** Run a change; if canopy says it lets agents reach more, ask, then resend with
  *  the grants it named (HCP 4.1.5.1 — widening is only ever the person's act). */
 async function withConfirm(run: (confirm?: string[]) => Promise<unknown>): Promise<boolean> {
@@ -24,8 +26,8 @@ async function withConfirm(run: (confirm?: string[]) => Promise<unknown>): Promi
   }
 }
 
-/** What an agent you keep allowing reads: its own organisation (the default), or
- *  one of your collections. Sits on the agent's card, where the question is asked. */
+/** What an agent you keep allowing reads: all of its own organisation (the
+ *  default), or one of your collections. Sits on the agent's card. */
 export function AgentReadsPicker({
   grant,
   data,
@@ -40,7 +42,7 @@ export function AgentReadsPicker({
   return (
     <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
       <Layers className="h-3.5 w-3.5" />
-      Reads
+      Use
       <select
         aria-label={`What ${grant.client.name} reads`}
         disabled={disabled}
@@ -51,10 +53,10 @@ export function AgentReadsPicker({
         }}
         className="rounded-md border border-border bg-background px-1.5 py-0.5 text-xs text-foreground"
       >
-        <option value="">its organisation (default)</option>
+        <option value="">all of its organisation (default)</option>
         {(data?.collections ?? []).map((c) => (
           <option key={c.id} value={c.id}>
-            {c.name}
+            collection: {c.name}
           </option>
         ))}
       </select>
@@ -62,9 +64,65 @@ export function AgentReadsPicker({
   )
 }
 
-/** Your collections: named bundles of memory (an organisation's, your personal)
- *  you can hand an agent instead of its default. Each shows what it holds and
- *  who uses it; ticking a context in or out is the whole edit. */
+/** The contexts a collection can hold, as chips grouped by organisation: "All of
+ *  Dimagi" (resolved when read, so it takes in workspaces added later), then each
+ *  workspace on its own. With "All of" on, its workspaces show as included. */
+function ContextChips({
+  contexts,
+  selected,
+  disabled,
+  onToggle,
+}: {
+  contexts: Context[]
+  selected: string[]
+  disabled: boolean
+  onToggle: (source: string) => void
+}) {
+  const groups = Array.from(new Set(contexts.map((c) => c.group ?? '')))
+  return (
+    <div className="space-y-2">
+      {groups.map((group) => {
+        const inGroup = contexts.filter((c) => (c.group ?? '') === group)
+        const whole = inGroup.find((c) => c.source.startsWith('tree:'))
+        const wholeOn = whole ? selected.includes(whole.source) : false
+        return (
+          <div key={group || 'none'} className="flex flex-wrap items-center gap-1.5">
+            {inGroup.map((ctx) => {
+              const covered = wholeOn && ctx.source.startsWith('workspace:')
+              const on = covered || selected.includes(ctx.source)
+              return (
+                <label
+                  key={ctx.source}
+                  title={covered ? `Included in ${whole?.label}` : undefined}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors ${
+                    covered
+                      ? 'cursor-default border-primary/20 text-primary/60'
+                      : on
+                        ? 'cursor-pointer border-primary/50 bg-primary/10 text-primary'
+                        : 'cursor-pointer border-border text-muted-foreground hover:text-foreground'
+                  } ${ctx.source.startsWith('tree:') ? 'font-medium' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={on}
+                    disabled={disabled || covered}
+                    onChange={() => onToggle(ctx.source)}
+                  />
+                  {ctx.label}
+                </label>
+              )
+            })}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Your collections: a named choice of workspaces (or all of an organisation) you
+ *  can hand an agent instead of its default. Each shows what it holds and who uses
+ *  it; ticking a chip in or out is the whole edit. */
 export function CollectionsPanel({
   data,
   busy,
@@ -77,13 +135,10 @@ export function CollectionsPanel({
   const [name, setName] = useState('')
   const [picked, setPicked] = useState<string[]>([])
   const [adding, setAdding] = useState(false)
-  const contexts = data?.contexts ?? []
+  const contexts = (data?.contexts ?? []) as Context[]
   const collections = data?.collections ?? []
-
-  const chip = (on: boolean) =>
-    `inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors ${
-      on ? 'border-primary/50 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
-    }`
+  const toggle = (list: string[], source: string) =>
+    list.includes(source) ? list.filter((s) => s !== source) : [...list, source]
 
   return (
     <div className="mt-6">
@@ -96,11 +151,12 @@ export function CollectionsPanel({
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        A collection bundles memory you can hand an agent instead of its default — say, Dimagi plus your personal memory.
+        A collection is a set of workspaces you can give an agent instead of its default. It is worked out each time the
+        agent reads: &ldquo;All of&rdquo; an organisation includes workspaces added to it later.
       </p>
       {collections.length === 0 && !adding ? (
         <p className="mt-2 rounded-xl border border-dashed border-border px-4 py-4 text-center text-xs text-muted-foreground">
-          No collections yet. An agent you allow reads its own organisation&apos;s memory.
+          No collections yet. An agent you allow reads all of its own organisation.
         </p>
       ) : (
         <ul className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -121,30 +177,20 @@ export function CollectionsPanel({
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {contexts.map((ctx) => {
-                  const on = c.sources.includes(ctx.source)
-                  return (
-                    <label key={ctx.source} className={chip(on)}>
-                      <input
-                        type="checkbox"
-                        className="sr-only"
-                        checked={on}
-                        disabled={busy}
-                        onChange={() => {
-                          const next = on ? c.sources.filter((s) => s !== ctx.source) : [...c.sources, ctx.source]
-                          act(() => withConfirm((conf) => updateMyCollection(c.id, { sources: next }, conf)))
-                        }}
-                      />
-                      {ctx.label}
-                    </label>
-                  )
-                })}
+              <div className="mt-2">
+                <ContextChips
+                  contexts={contexts}
+                  selected={c.sources as string[]}
+                  disabled={busy}
+                  onToggle={(source) =>
+                    act(() => withConfirm((conf) => updateMyCollection(c.id, { sources: toggle(c.sources as string[], source) }, conf)))
+                  }
+                />
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
                 {(c.used_by ?? []).length > 0
                   ? `Used by ${Array.from(new Set((c.used_by ?? []).map((u) => u.name))).join(', ')}`
-                  : 'No agent uses it yet — pick it on an agent above.'}
+                  : 'No agent uses it.'}
               </p>
             </li>
           ))}
@@ -169,27 +215,12 @@ export function CollectionsPanel({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Escape' && setAdding(false)}
-                  placeholder="Name, e.g. Work + personal"
+                  placeholder="Name, e.g. Connect only"
                   maxLength={80}
                   className="w-full rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
                 />
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {contexts.map((ctx) => {
-                    const on = picked.includes(ctx.source)
-                    return (
-                      <label key={ctx.source} className={chip(on)}>
-                        <input
-                          type="checkbox"
-                          className="sr-only"
-                          checked={on}
-                          onChange={() =>
-                            setPicked((p) => (on ? p.filter((s) => s !== ctx.source) : [...p, ctx.source]))
-                          }
-                        />
-                        {ctx.label}
-                      </label>
-                    )
-                  })}
+                <div className="mt-2">
+                  <ContextChips contexts={contexts} selected={picked} disabled={false} onToggle={(s) => setPicked((p) => toggle(p, s))} />
                 </div>
                 <div className="mt-3 flex justify-end gap-2">
                   <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setAdding(false)}>

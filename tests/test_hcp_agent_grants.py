@@ -311,7 +311,7 @@ def test_an_agent_in_another_division_reads_org_wide_but_not_personal(org):
     session = _session(org["lili"], org["hal"])
     turn = _turn(org["hal"], org["lili"], session, "t1")
     shown = _as(org["lili"]).get(f"/api/people/me/sessions/{session.pk}/agent-memory/").json()
-    assert shown["reach"] == "your Dimagi memory (all divisions)"   # shown before the act
+    assert shown["reach"] == "all of Dimagi (every workspace in it, including new ones)"   # shown before the act
     assert shown["org"] == "Dimagi"
     assert _grant(org["lili"], session, ["use"], "session").status_code == 200
     g = _live(org["person"])
@@ -320,8 +320,10 @@ def test_an_agent_in_another_division_reads_org_wide_but_not_personal(org):
                               for s in g.scopes]
     (issued,) = _issued(org["person"])
     assert '"tree:dimagi"' in issued.detail
-    assert "reach=only your Dimagi memory (all divisions)" in issued.detail
-    assert hcp.grant_dict(g)["canopy"]["reach"] == "your Dimagi memory (all divisions)"
+    assert "reach=only all of Dimagi (every workspace in it, including new ones)" in issued.detail
+    assert hcp.grant_dict(g)["canopy"]["reach"] == "all of Dimagi (every workspace in it, including new ones)"
+    # ...and resolved now, as names.
+    assert hcp.grant_dict(g)["canopy"]["reach_names"] == ["Connect", "Dimagi", "Strategy"]
     # The same reach as data, for the page to mark what this agent sees: the tree, never personal.
     assert hcp.grant_dict(g)["canopy"]["reaches"] == ["connect", "dimagi", "strategy"]
     listed = _as(org["lili"]).get("/api/hcp/v1/grants").json()["grants"]
@@ -329,7 +331,7 @@ def test_an_agent_in_another_division_reads_org_wide_but_not_personal(org):
     assert _found(org["hal"], turn) == ["KC metrics lead."]          # Connect's; not personal
     block = caller_context.build(turn)["person"]
     assert [f["statement"] for f in block["facts"]] == ["KC metrics lead."]
-    assert block["grant"]["reach"] == "your Dimagi memory (all divisions)"
+    assert block["grant"]["reach"] == "all of Dimagi (every workspace in it, including new ones)"
 
 
 def test_the_person_cannot_pick_a_reach_in_the_prompt(org):
@@ -340,6 +342,21 @@ def test_the_person_cannot_pick_a_reach_in_the_prompt(org):
     assert not PersonGrant.objects.filter(person=org["person"]).exists()
 
 
+def test_a_collection_of_one_workspace_narrows_an_agent_to_it(org):
+    """Collections are built from workspaces too, not only whole organisations:
+    pointing an agent at one narrows it at once (no confirmation owed)."""
+    session = _session(org["lili"], org["hal"])
+    assert _grant(org["lili"], session, ["use"], "session").status_code == 200
+    assert _grant(org["lili"], session, ["use"], "always").status_code == 200
+    kept = _live(org["person"], grant_type="persistent")
+    c = _collection(org["lili"], "Just Connect", ["workspace:connect"])
+    assert c["reach"] == "Connect"
+    assert _point(org["lili"], kept, c["id"]).status_code == 200
+    kept.refresh_from_db()
+    assert hcp.reach_of(kept) == {"connect"}
+    assert hcp.grant_dict(kept)["canopy"]["reach_names"] == ["Connect"]
+
+
 def test_personal_is_reached_only_through_a_collection_with_confirmation(org):
     session = _session(org["lili"], org["hal"])
     turn = _turn(org["hal"], org["lili"], session, "t1")
@@ -347,13 +364,18 @@ def test_personal_is_reached_only_through_a_collection_with_confirmation(org):
     assert _grant(org["lili"], session, ["use"], "always").status_code == 200
     kept = _live(org["person"], grant_type="persistent")
     listed = _as(org["lili"]).get("/api/people/me/memory-collections/").json()
-    assert {c["source"] for c in listed["contexts"]} == {"personal", "tree:dimagi"}
+    # Per organisation, the whole of it and then each workspace; entries in no workspace last.
+    assert [(c["source"], c["label"], c["group"]) for c in listed["contexts"]] == [
+        ("tree:dimagi", "All of Dimagi", "Dimagi"),
+        ("workspace:connect", "Connect", "Dimagi"),
+        ("personal", "No workspace", ""),
+    ]
     c = _collection(org["lili"], "Work and me", ["tree:dimagi", "personal"])
     before = len(_issued(org["person"]))
     r = _point(org["lili"], kept, c["id"])                         # a widening, unconfirmed
     assert r.status_code == 409
     body = r.json()["extras"]
-    assert body["agents"] == ["Hal"] and "your personal memory" in body["adds"]
+    assert body["agents"] == ["Hal"] and "entries in no workspace" in body["adds"]
     assert len(body["confirm_widening"]) == 2                        # the kept grant and the session's
     assert _found(org["hal"], turn) == ["KC metrics lead."]          # nothing changed
     assert _point(org["lili"], kept, c["id"], body["confirm_widening"]).status_code == 200
@@ -380,7 +402,7 @@ def test_editing_a_collection_needs_confirmation_to_widen_and_narrows_at_once(or
     url = f"/api/people/me/memory-collections/{c['id']}/"
     r = _json(_as(org["lili"]), "put", url, {"sources": ["tree:dimagi", "personal"]})
     assert r.status_code == 409 and r.json()["extras"]["agents"] == ["Hal"]
-    assert "this will also let Hal use your personal memory" in r.json()["detail"]
+    assert "this will also let Hal use entries in no workspace" in r.json()["detail"]
     assert _found(org["hal"], turn) == ["KC metrics lead."]
     before = len(_issued(org["person"]))
     r = _json(_as(org["lili"]), "put", url, {"sources": ["tree:dimagi", "personal"],
@@ -415,7 +437,7 @@ def test_another_organisations_agent_never_reaches_dimagis_memory(org):
     session = _session(org["lili"], org["zed"])
     turn = _turn(org["zed"], org["lili"], session, "t1")
     shown = _as(org["lili"]).get(f"/api/people/me/sessions/{session.pk}/agent-memory/").json()
-    assert shown["reach"] == "your Acme memory (all divisions)"
+    assert shown["reach"] == "all of Acme (every workspace in it, including new ones)"
     assert _grant(org["lili"], session, ["use"], "session").status_code == 200
     g = _live(org["person"])
     assert hcp.named_sources(g) == ["tree:acme"]

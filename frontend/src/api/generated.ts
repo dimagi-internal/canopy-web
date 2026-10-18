@@ -10277,9 +10277,10 @@ export interface paths {
         };
         /**
          * Your memory collections
-         * @description The collections you made — named sets of contexts (an organisation you
-         *     belong to, your personal memory) you can point an agent at — which agents
-         *     use each, and the contexts you can choose from. Only you see these.
+         * @description The collections you made — named sets of contexts (all of an organisation,
+         *     one workspace, entries in no workspace) you can point an agent at, resolved
+         *     when read — which agents use each, and the contexts you can choose from.
+         *     Only you see these.
          */
         readonly get: operations["list_my_memory_collections"];
         readonly put?: never;
@@ -27600,11 +27601,20 @@ export interface components {
         readonly MemoryContextOut: {
             /**
              * Source
-             * @description personal | tree:<organisation>
+             * @description tree:<organisation> (all of it, as it is when read) | workspace:<slug> | personal (entries in no workspace).
              */
             readonly source: string;
-            /** Label */
+            /**
+             * Label
+             * @description A short name: "All of Dimagi", "Connect", "No workspace".
+             */
             readonly label: string;
+            /**
+             * Group
+             * @description The organisation it sits under, by name; empty for no workspace.
+             * @default
+             */
+            readonly group: string;
         };
         /** MemoryCollectionIn */
         readonly MemoryCollectionIn: {
@@ -27612,7 +27622,7 @@ export interface components {
             readonly name: string;
             /**
              * Sources
-             * @description personal and/or tree:<organisation> (see contexts).
+             * @description Any of the contexts: tree:<organisation>, workspace:<slug>, personal.
              */
             readonly sources: readonly string[];
         };

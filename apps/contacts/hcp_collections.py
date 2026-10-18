@@ -49,8 +49,11 @@ def _and(names: list[str]) -> str:
 
 
 def contexts(person: Person) -> list[str]:
-    """The sources a collection of this person's may hold: `personal`, and the
-    organisation of every workspace they belong to or have entries in."""
+    """The sources a collection of this person's may hold, in display order: per
+    organisation, the whole of it (`tree:`, expanded when read, so it takes in
+    workspaces added later) and then each workspace on its own; last, entries in no
+    workspace — offered only when there are some or a collection already holds them,
+    since a person writing on /people/me always names a workspace now."""
     slugs: set[str] = set()
     if person.user_id:
         from apps.workspaces import services as wsvc
@@ -58,8 +61,39 @@ def contexts(person: Person) -> list[str]:
         slugs |= wsvc.user_workspace_slugs(person.user)
     slugs |= set(PersonFact.objects.filter(person=person, workspace__isnull=False)
                  .values_list("workspace_id", flat=True).distinct())
-    roots = sorted({hcp.root_of(s) for s in slugs if s})
-    return [hcp.PERSONAL_SOURCE, *[hcp.tree_source(r) for r in roots]]
+    by_root: dict[str, list[str]] = {}
+    for s in slugs:
+        if s:
+            by_root.setdefault(hcp.root_of(s), []).append(s)
+    out: list[str] = []
+    for root in sorted(by_root):
+        out.append(hcp.tree_source(root))
+        out += [hcp.workspace_source(s) for s in sorted(by_root[root], key=hcp._display_name)]
+    if (PersonFact.objects.filter(person=person, workspace__isnull=True).exists()
+            or any(hcp.PERSONAL_SOURCE in (c.sources or [])
+                   for c in MemoryCollection.objects.filter(person=person))):
+        out.append(hcp.PERSONAL_SOURCE)
+    return out
+
+
+def context_label(source: str) -> str:
+    """A context's short name for a chip: "All of Dimagi", "Connect", "No workspace"."""
+    kind, _, slug = source.partition(":")
+    if kind == "tree":
+        return f"All of {hcp._display_name(slug)}"
+    if kind == "workspace":
+        return hcp._display_name(slug)
+    return "No workspace"
+
+
+def context_group(source: str) -> str:
+    """The organisation a context sits under, by name ("" for no workspace)."""
+    kind, _, slug = source.partition(":")
+    if kind == "tree":
+        return hcp._display_name(slug)
+    if kind == "workspace":
+        return hcp._display_name(hcp.root_of(slug))
+    return ""
 
 
 def _clean(person: Person, sources) -> list[str]:

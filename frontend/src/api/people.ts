@@ -101,6 +101,8 @@ export interface HcpGrant {
     reach?: string
     /** The same reach as data: the workspaces it reads, `null` = your personal entries. */
     reaches?: (string | null)[]
+    /** The same, resolved now as workspace names ("No workspace" last). */
+    reach_names?: string[]
     /** The memory collection it uses; null = the agent's default (its organisation). */
     collection?: { id: number; name: string } | null
     /** The OAuth client the grant was issued to, when it was one (HCP service). */
@@ -161,8 +163,9 @@ function confirmOrThrow(error: unknown, fallback: string): never {
   throw new Error((error as { detail?: string })?.detail || fallback)
 }
 
-/** Your memory collections — named sets of contexts (an organisation you belong
- *  to, your personal memory) you can point an agent at — and the contexts. */
+/** Your memory collections — named sets of contexts (all of an organisation, one
+ *  workspace, entries in no workspace) you can point an agent at — and the
+ *  contexts. Resolved when read: "all of" an organisation takes in new workspaces. */
 export async function listMyCollections(): Promise<MemoryCollections> {
   const { data, error } = await apiV2.GET('/api/people/me/memory-collections/')
   if (error) throw new Error('Failed to load your collections')
@@ -235,9 +238,9 @@ export const MY_CATEGORIES = [
   { value: 'coordination_context', label: 'How to coordinate with me' },
 ] as const
 
-/** Add an entry of your own to a workspace you belong to (agents whose reach
- *  covers it read it), or with `workspace` null to your personal memory, which an
- *  agent reads only through a collection of yours that includes it. */
+/** Add an entry of your own to a workspace you belong to; agents whose reach
+ *  covers that workspace read it. `workspace` null saves it in no workspace —
+ *  only for someone who belongs to none. */
 export async function addMyEntry(category: string, preference: string, workspace: string | null = null): Promise<void> {
   const { error } = await apiV2.POST('/api/hcp/v1/preferences/add', {
     params: { query: workspace ? { workspace } : {} },

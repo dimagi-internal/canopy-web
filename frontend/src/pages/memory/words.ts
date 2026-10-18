@@ -171,9 +171,10 @@ export function readsByEntry(audit: HcpAuditEvent[], names: Map<string, string>)
 }
 
 /** Where your entries live, which is what decides who reads them: each
- *  organisation with its workspaces, then your personal entries. */
+ *  organisation with its workspaces, then entries in no workspace (written by you
+ *  before a workspace was required, or by an outside app). */
 export interface Place {
-  /** A workspace slug, or null for your personal entries. */
+  /** A workspace slug, or null for entries in no workspace. */
   workspace: string | null
   name: string
   facts: PersonFactDetail[]
@@ -185,12 +186,12 @@ export interface OrgPlaces {
   places: Place[]
 }
 
-export function groupByPlace(facts: PersonFactDetail[]): { orgs: OrgPlaces[]; personal: Place } {
+export function groupByPlace(facts: PersonFactDetail[]): { orgs: OrgPlaces[]; unplaced: Place } {
   const orgs = new Map<string, OrgPlaces>()
-  const personal: Place = { workspace: null, name: 'Personal', facts: [] }
+  const unplaced: Place = { workspace: null, name: 'Not in any workspace', facts: [] }
   for (const f of facts) {
     if (!f.workspace) {
-      personal.facts.push(f)
+      unplaced.facts.push(f)
       continue
     }
     const key = f.org ?? f.workspace
@@ -203,10 +204,10 @@ export function groupByPlace(facts: PersonFactDetail[]): { orgs: OrgPlaces[]; pe
     place.facts.push(f)
     orgs.set(key, org)
   }
-  return { orgs: Array.from(orgs.values()), personal }
+  return { orgs: Array.from(orgs.values()), unplaced }
 }
 
-/** Does an agent you allow read entries in `workspace` (null = personal)? Canopy
+/** Does an agent you allow read entries in `workspace` (null = no workspace)? Canopy
  *  says which workspaces a grant reaches; nothing is derived here. */
 export function reads(a: AgentAccess, workspace: string | null): boolean {
   return a.grants.some((g) => (g.canopy.reaches ?? []).includes(workspace))
