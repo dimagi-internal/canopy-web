@@ -22118,6 +22118,11 @@ export interface components {
             readonly has_interface: boolean;
             /** Capabilities */
             readonly capabilities: number;
+            /**
+             * Full Access
+             * @default []
+             */
+            readonly full_access: readonly string[];
             /** Skills */
             readonly skills: number;
             /** Schedules */

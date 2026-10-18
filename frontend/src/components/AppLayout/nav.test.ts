@@ -1,9 +1,11 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import {
   NAV_GROUPS,
   isNavGroupActive,
   isNavItemActive,
   resolveNavGroups,
+  switchWorkspacePath,
 } from './nav'
 
 const authed = { isAuthed: true, active: 'connect' }
@@ -149,5 +151,30 @@ describe('isNavGroupActive', () => {
     // the index is the tenant route /w/:ws/storyboards.
     expect(groups.some((g) => isNavGroupActive(g, '/w/connect/storyboard/oes-supply'))).toBe(false)
     expect(isNavGroupActive(group('Demos'), '/w/connect/storyboards')).toBe(true)
+  })
+})
+
+describe('switchWorkspacePath', () => {
+  it('keeps the page you are on, in the other workspace', () => {
+    expect(switchWorkspacePath('/w/dimagi/health', 'marshellis')).toBe('/w/marshellis/health')
+    expect(switchWorkspacePath('/w/dimagi/analytics', 'marshellis')).toBe('/w/marshellis/analytics')
+    expect(switchWorkspacePath('/w/dimagi/settings/topology/runners', 'm')).toBe('/w/m/settings/topology')
+    // A page about one thing names something of the old workspace: its list instead.
+    expect(switchWorkspacePath('/w/dimagi/agents/hal/settings', 'm')).toBe('/w/m/agents')
+    expect(switchWorkspacePath('/w/dimagi/chat/abc', 'm')).toBe('/w/m/chat')
+    expect(switchWorkspacePath('/w/dimagi/threads/7', 'm')).toBe('/w/m/huddles')
+    expect(switchWorkspacePath('/w/dimagi', 'm')).toBe('/w/m/agents')
+    expect(switchWorkspacePath('/activity', 'm')).toBe('/w/m/agents')
+  })
+
+  it('never switches to a section that has no page of its own', async () => {
+    const { routeTable } = await import('../../router')
+    const { flattenRoutePaths } = await import('../../guide/coverage')
+    const all = flattenRoutePaths(routeTable).filter((p) => p.startsWith('/w/:workspace/'))
+    const routed = new Set(all.map((p) => p.replace('/w/:workspace/', '')))
+    for (const p of all) {
+      const target = switchWorkspacePath(p.replace(/:workspace/, 'x').replace(/:[a-zA-Z]+/g, 'v'), 'y')
+      expect(routed.has(target.replace('/w/y/', '')), `${p} -> ${target}`).toBe(true)
+    }
   })
 })

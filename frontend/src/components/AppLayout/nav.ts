@@ -153,3 +153,27 @@ export function isNavItemActive(href: string, pathname: string): boolean {
 export function isNavGroupActive(group: ResolvedNavGroup, pathname: string): boolean {
   return group.items.some((item) => isNavItemActive(item.href, pathname))
 }
+
+/**
+ * Where the workspace switcher goes: the SAME page in the other workspace, so
+ * switching from /w/dimagi/health lands on /w/marshellis/health rather than
+ * on Agents. Only the section is kept (settings keeps its sub-section too): a
+ * page about one thing — an agent, a chat, a huddle — names something that
+ * belongs to the old workspace, so it falls back to its list. Anything outside
+ * /w/ (a personal page) lands on the new workspace's Agents, as before.
+ */
+export function switchWorkspacePath(pathname: string, slug: string): string {
+  const m = /^\/w\/[^/]+\/?(.*)$/.exec(pathname)
+  if (!m || !m[1]) return `/w/${slug}/agents`
+  const parts = m[1].split('/').filter(Boolean)
+  if (parts[0] === 'settings') return `/w/${slug}/${parts.slice(0, 2).join('/')}`
+  return `/w/${slug}/${LIST_FOR[parts[0]] ?? parts[0]}`
+}
+
+/** Sections that exist only as one item's page (a shared walkthrough, a thread),
+ *  and the list a switch lands on instead of a 404. `nav.test.ts` checks every
+ *  routed section resolves to a page. */
+export const LIST_FOR: Record<string, string> = {
+  walkthrough: 'walkthroughs', storyboard: 'storyboards', narrative: 'storyboards',
+  'ddd-release': 'ddd', threads: 'huddles', review: 'agents', share: 'agents',
+}

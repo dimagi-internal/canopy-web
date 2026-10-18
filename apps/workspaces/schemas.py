@@ -491,8 +491,11 @@ class AgentHealthOut(StrictModel):
     # Whether it publishes an interface: what people other than its admins may
     # ask it to do. False = only its admins (and editors) can use it.
     has_interface: bool
-    # How many capabilities that interface offers.
+    # How many capabilities that interface offers (confined access).
     capabilities: int
+    # Its `full:` rules: the caller classes that get the WHOLE agent, as its
+    # admins do (e.g. "@dimagi.com:verified").
+    full_access: list[str] = []
     skills: int
     schedules: int
     # Active projects; open tasks (suggested or in progress); open tasks waiting
