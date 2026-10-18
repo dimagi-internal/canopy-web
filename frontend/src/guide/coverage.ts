@@ -57,6 +57,13 @@ const NOT_DOCUMENTABLE = new Set([
   '/w/:workspace/connected-apps',
   '/w/:workspace/inbound',
   '/w/:workspace/slack',
+  // Short forms of settings sections, sent on to /w/:workspace/settings/<section>.
+  '/w/:workspace/topology',
+  '/w/:workspace/email',
+  '/w/:workspace/access-requests',
+  '/w/:workspace/secrets',
+  '/w/:workspace/retention',
+  '/w/:workspace/admission-rules',
   '/w/:workspace/agents/:slug/needs-you',
   '/w/:workspace/agents/:slug/credentials',
   // Two nouns, Projects and Tasks: Work is Tasks, Inbox and Items are Tasks
