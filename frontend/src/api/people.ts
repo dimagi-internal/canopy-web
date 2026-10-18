@@ -236,8 +236,8 @@ export const MY_CATEGORIES = [
 ] as const
 
 /** Add an entry of your own to a workspace you belong to (agents whose reach
- *  covers it read it), or with `workspace` null to your personal memory, which
- *  no work agent reads unless you add it to a collection that agent uses. */
+ *  covers it read it), or with `workspace` null to your personal memory, which an
+ *  agent reads only through a collection of yours that includes it. */
 export async function addMyEntry(category: string, preference: string, workspace: string | null = null): Promise<void> {
   const { error } = await apiV2.POST('/api/hcp/v1/preferences/add', {
     params: { query: workspace ? { workspace } : {} },

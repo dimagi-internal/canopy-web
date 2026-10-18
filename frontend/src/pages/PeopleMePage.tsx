@@ -49,7 +49,7 @@ const MEMORY_SWITCHES = [
   {
     key: 'use' as const,
     label: 'Agents can use what they know',
-    on: 'Agents you allow are told what is below, so you don’t have to repeat yourself.',
+    on: 'Agents you allow are given the entries below that are within their reach.',
     off: 'No agent is told anything below, in any conversation. Nothing is deleted.',
   },
 ]
@@ -445,7 +445,7 @@ export function PeopleMePage() {
         </p>
         {access.length === 0 ? (
           <p className="mt-3 rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-            No agent can read your memory right now. An agent will ask you in a conversation if it needs to.
+            No agent can read your memory right now. An agent can read it only after you allow it in a conversation.
           </p>
         ) : (
           <ul className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -730,9 +730,10 @@ function PlaceHeading({ title, note, readers, empty }: { title: string; note: st
 
 type OnAdd = (category: string, text: string, workspace: string | null) => Promise<boolean>
 
-/** Your personal memory: life outside work. No work agent reads it unless you put
- *  it in a collection that agent uses — that is what makes it personal, not who
- *  wrote it (each entry already says "You" or "learned by …"). */
+/** Your personal memory: entries in no workspace. An agent's default reach is its
+ *  organisation, so it reads these only through a collection that includes
+ *  Personal. The page states that mechanism and who reads it now; it does not
+ *  promise what kind of agent will or won't (canopy doesn't classify agents). */
 function PersonalCard({
   place,
   readers,
@@ -750,9 +751,9 @@ function PersonalCard({
     <div className="flex flex-col rounded-xl border border-dashed border-border px-4 pt-3 pb-2">
       <PlaceHeading
         title="Personal"
-        note="kept away from work agents"
+        note="not in any workspace"
         readers={readers}
-        empty="No agent — unless you add it to a collection one uses"
+        empty="No agent reads this. An agent can only through a collection that includes Personal."
       />
       {place.facts.length === 0 ? (
         <p className="py-2.5 text-sm text-muted-foreground/70">Nothing yet.</p>
@@ -834,7 +835,7 @@ function Composer({ onAdd, workspaces, preferred }: { onAdd: OnAdd; workspaces: 
                   ))}
               </optgroup>
             ))}
-            <option value="">Personal (kept away from work agents)</option>
+            <option value="">Personal (no workspace)</option>
           </select>
         </label>
         <button
