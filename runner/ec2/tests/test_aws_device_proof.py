@@ -43,7 +43,7 @@ def test_signature_matches_botocore(cloud_runner):
     from botocore.awsrequest import AWSRequest
     from botocore.credentials import Credentials
 
-    ours = cloud_runner._signed_get_caller_identity(CREDS, HTU, iat=1700000000)
+    ours = cloud_runner._signed_get_caller_identity(CREDS, HTU, iat=1700000000, jti="")
     h = ours["headers"]
     req = AWSRequest(method="POST", url=ours["url"], data=ours["body"],
                      headers={k: h[k] for k in ("Content-Type", "Host", "X-Canopy-Proof-Htu",
@@ -52,7 +52,7 @@ def test_signature_matches_botocore(cloud_runner):
               "sts", "us-east-1").add_auth(req)
     # botocore signs at its own "now"; re-sign ours at that same second and compare.
     at = calendar.timegm(time.strptime(req.headers["X-Amz-Date"], "%Y%m%dT%H%M%SZ"))
-    again = cloud_runner._signed_get_caller_identity(CREDS, HTU, iat=1700000000, now=at)
+    again = cloud_runner._signed_get_caller_identity(CREDS, HTU, iat=1700000000, now=at, jti="")
     assert again["headers"]["X-Amz-Date"] == req.headers["X-Amz-Date"]
     assert again["headers"]["X-Amz-Security-Token"] == req.headers["X-Amz-Security-Token"]
     assert again["headers"]["Authorization"] == req.headers["Authorization"]
@@ -60,7 +60,7 @@ def test_signature_matches_botocore(cloud_runner):
 
 def test_signature_matches_the_pinned_botocore_vector(cloud_runner):
     # The same vector canopy's tests/test_device_key_aws.py pins for its copy of the signer.
-    req = cloud_runner._signed_get_caller_identity(CREDS, HTU, iat=1700000000, now=1792181563)
+    req = cloud_runner._signed_get_caller_identity(CREDS, HTU, iat=1700000000, now=1792181563, jti="")
     assert req["headers"]["Authorization"].endswith(
         "Signature=391ecfc04bb5eccd8b4e5c5e1939896c237c7a794d23335de7722d77befafad9")
 
@@ -75,6 +75,17 @@ def test_proof_shape_and_signed_binding(cloud_runner):
     assert h["X-Canopy-Proof-Htu"] == HTU and h["X-Canopy-Proof-Iat"] == "1792181563"
     signed = h["Authorization"].split("SignedHeaders=")[1].split(",")[0].split(";")
     assert {"x-canopy-proof-htu", "x-canopy-proof-iat"} <= set(signed)
+
+
+def test_two_proofs_in_the_same_second_differ(cloud_runner):
+    # canopy-web keeps each proof single-use; two resolves of one URL in the same
+    # second used to make the SAME proof, and the second was refused as a replay.
+    a = json.loads(base64.b64decode(cloud_runner.aws_proof(HTU, creds=CREDS, now=1792181563.1)))
+    b = json.loads(base64.b64decode(cloud_runner.aws_proof(HTU + "?refs=A", creds=CREDS, now=1792181563.9)))
+    assert a["headers"]["X-Canopy-Proof-Jti"] != b["headers"]["X-Canopy-Proof-Jti"]
+    assert a["headers"]["Authorization"] != b["headers"]["Authorization"]
+    signed = a["headers"]["Authorization"].split("SignedHeaders=")[1].split(",")[0].split(";")
+    assert "x-canopy-proof-jti" in signed
 
 
 def test_no_instance_role_means_no_header(cloud_runner):

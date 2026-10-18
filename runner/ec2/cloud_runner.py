@@ -74,6 +74,7 @@ import glob
 import pathlib
 import pty
 import re
+import secrets
 import select
 import signal
 import struct
@@ -1173,12 +1174,19 @@ def _sigv4(creds: dict, headers: dict, amz_date: str) -> dict:
 
 
 def _signed_get_caller_identity(creds: dict, htu: str = "", *, now: float | None = None,
-                                iat: int | None = None) -> dict:
+                                iat: int | None = None, jti: str | None = None) -> dict:
+    """The unsent STS request. With `htu`, the binding headers are signed, plus a fresh
+    random X-Canopy-Proof-Jti (``jti=""`` omits it): canopy-web keeps each proof single-
+    use, and without a nonce two proofs for one htu in the same second are identical —
+    the second refused as a replay (canopy's device_key_aws.JTI_HEADER, 2026-10-17)."""
     t = time.time() if now is None else now
     headers = {"Content-Type": _STS_CONTENT_TYPE, "Host": _STS_HOST}
     if htu:
         headers["X-Canopy-Proof-Htu"] = htu
         headers["X-Canopy-Proof-Iat"] = str(int(t if iat is None else iat))
+        nonce = secrets.token_hex(16) if jti is None else jti
+        if nonce:
+            headers["X-Canopy-Proof-Jti"] = nonce
     amz_date = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t))
     return {"method": "POST", "url": _STS_URL, "headers": _sigv4(creds, headers, amz_date),
             "body": _STS_BODY}
