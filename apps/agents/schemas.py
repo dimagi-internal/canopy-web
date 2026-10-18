@@ -1102,7 +1102,7 @@ class ProjectParticipantOut(StrictModel):
     display_name: str
     email: str = ""
     role: str = Field(default="", description="Free text: the part they play. Blank when canopy linked them itself.")
-    source: Literal["fact", "turn", "manual", "summary", "review", "backing", "reply"] = Field(
+    source: Literal["fact", "turn", "manual", "summary", "review", "backing", "reply", "checkin"] = Field(
         description="How canopy first learned it: a fact filed against the project, a conversation "
                     "that raised one of its tasks, a person adding them, an agent writing their "
                     "contributor page, a storyboard comment, backing it, or replying on one of its tasks.")

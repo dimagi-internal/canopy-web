@@ -18130,7 +18130,7 @@ export interface components {
              * @description How canopy first learned it: a fact filed against the project, a conversation that raised one of its tasks, a person adding them, an agent writing their contributor page, a storyboard comment, backing it, or replying on one of its tasks.
              * @enum {string}
              */
-            readonly source: "fact" | "turn" | "manual" | "summary" | "review" | "backing" | "reply";
+            readonly source: "fact" | "turn" | "manual" | "summary" | "review" | "backing" | "reply" | "checkin";
             /**
              * Since
              * Format: date-time

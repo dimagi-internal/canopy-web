@@ -232,3 +232,17 @@ def test_the_summary_reports_task_proposals(board):
     by_name = _client(board["owner"]).get(
         "/api/w/connect/engagement/summary?checkin=Weekly%20check-in").json()
     assert len(by_name["task_proposals"]) == 2
+
+
+def test_the_project_page_reads_with_a_check_in_participant(board):
+    """2026-10-18: the live project 500'd — a `checkin` participant was not a source
+    the page's schema knew."""
+    from apps.agents import participants
+    from apps.contacts import services as contacts
+
+    participants.ensure(board["project"], contacts.person_for(user=board["eva"].user), source="checkin")
+    _propose(board)
+    got = _client(board["owner"]).get(f"{AGENTS}/ada/projects/P1/")
+    assert got.status_code == 200, got.content
+    assert "checkin" in {p["source"] for p in got.json()["participants"]}
+    assert [t["title"] for t in got.json()["proposed_tasks"]] == ["Write the FAQ"]
