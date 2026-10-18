@@ -303,3 +303,32 @@ def test_a_cap_the_next_credential_survives_does_not_pause(cr, monkeypatch):
 
 def test_the_real_cap_text_parses_to_a_reset(cr):
     assert cr._cap_reset_epoch("You've hit your session limit · resets 2:30am (America/Denver)")
+
+
+def test_a_capped_login_then_a_dead_token_names_both_and_parks(cr, monkeypatch):
+    """Investigation 9 (turn 7d230f39, ACE on cloud-ec2-2, 2026-10-18): the box login
+    hit its session limit, the backup then came back "Authentication required", and
+    the note called the box "not signed in" — erasing the cap, which reset by itself."""
+    import time as _time
+    calls = _capture_pause(cr, monkeypatch)
+    monkeypatch.setattr(cr, "_notify_auth_required", lambda *a, **k: None)
+    reset = _time.time() + 5400
+    monkeypatch.setattr(cr, "_cap_reset_epoch", lambda text: reset)
+    cr._CLAUDE_CREDS[:] = [("box-login:a44d94c3", "", ""),
+                           ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
+    outcomes = iter([
+        (False, "You've hit your session limit · resets 10:50pm (UTC)", "s1"),
+        (False, "runner error (acp): Authentication required", ""),
+    ])
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: next(outcomes))
+    cr._apply_claude_credential(0)
+
+    ok, text, _ = cr.execute_prompt("do it", "turn-7d230f39", lambda e: None)
+
+    assert ok is False
+    assert "this box is not signed in" not in text
+    assert "at its usage cap: box-login:a44d94c3" in text
+    assert "not signed in: subscription-1" in text
+    assert "You've hit your session limit" in text
+    assert "paused itself until" in text
+    assert [c for c in calls if c[1] == "/runners/rid-1/pause"]

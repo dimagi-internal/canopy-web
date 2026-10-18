@@ -1830,7 +1830,9 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
     """
     attempted: list[str] = []
     resets: list[float] = []      # each capped credential's reset, epoch seconds
-    saw_dead_credential = False
+    capped_labels: list[str] = []
+    dead_labels: list[str] = []
+    cap_line = ""                 # the cap message itself, which a later attempt overwrites
     while True:
         ok, text, session_id = _execute_once(
             prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
@@ -1853,10 +1855,13 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             # An unusable credential either way, so it advances the same as a cap
             # — but the REASON is carried to the terminal message below, because
             # "wait for the reset" is wrong advice for a token that has none.
-            saw_dead_credential = True
+            dead_labels.append(_claude_cred_label())
             _log(f"turn {turn_id[:8]}: {_claude_cred_label()} is not signed in")
             _notify_auth_required(_claude_cred_label(), turn_id)
         else:
+            capped_labels.append(_claude_cred_label())
+            cap_line = next((ln.strip() for ln in (text or "").splitlines()
+                             if _is_usage_cap(ln)), cap_line)
             _log(f"turn {turn_id[:8]}: {_claude_cred_label()} is at its usage cap")
         if not _advance_claude_credential(turn_id=turn_id):
             # Before giving up: re-read the bundle. An operator who just ran
@@ -1872,7 +1877,24 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             # bare cap message names a reset time but never says the fleet has
             # run out of credentials entirely, which is the thing a human has to
             # act on.
-            if saw_dead_credential:
+            if dead_labels and capped_labels:
+                # Some capped, some dead: name each one's reason. Investigation 9
+                # (turn 7d230f39, ACE on cloud-ec2-2, 2026-10-18): the box login hit
+                # its session limit, the backup token then came back "Authentication
+                # required", and the note called the whole box "not signed in" with
+                # only the backup's text. The cap message was gone, the login read
+                # signed_in: true ten minutes later, and the note's "will NOT clear
+                # on its own" was wrong for the login, which reset at 22:50. The
+                # capped ones DO come back, so park for them like an all-cap cascade.
+                until = _park_until_cap_resets(resets, cap_line, turn_id)
+                note = (f"[runner] no Claude credential on this box could run the turn "
+                        f"(at its usage cap: {', '.join(capped_labels)}; not signed in: "
+                        f"{', '.join(dead_labels)}). {cap_line + ' ' if cap_line else ''}"
+                        f"This runner has paused itself until {until} and resumes on its "
+                        f"own then. The not-signed-in credential will NOT clear on its "
+                        f"own — someone has to re-authenticate it (`canopy runner "
+                        f"credential`).")
+            elif dead_labels:
                 # Deliberately does NOT mention waiting: this is the state that
                 # never clears on its own, and telling an operator a cap will
                 # reset is how a box sits dead for a day.
