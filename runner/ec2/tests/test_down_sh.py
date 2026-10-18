@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import pathlib
+import re
 import subprocess
 
 SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "down.sh"
@@ -173,5 +174,6 @@ def test_no_args_still_means_the_live_stack(tmp_path):
     state = _setup(tmp_path)
     _down(tmp_path, "--keep-runner", token=False)
     deletes = [c for c in _calls(state) if "describe-stacks" in c]
-    assert deletes and all("--stack-name canopy-cloud-runner" in c and
-                           "canopy-cloud-runner-" not in c for c in deletes), deletes
+    # The runner stack and its ECDH key stack (<stack>-ecdh), nothing else.
+    assert deletes and all(re.search(r"--stack-name canopy-cloud-runner(-ecdh)?( |$)", c)
+                           for c in deletes), deletes

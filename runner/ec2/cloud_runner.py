@@ -1252,7 +1252,9 @@ def _write_device_key_cache(role_arn: str, status: dict) -> None:
 def _ecdh_public_key() -> dict:
     """This box's ECDH key for the zero-knowledge vault (canopy-web#1550), made by the
     canopy CLI — this file stays stdlib-only, and making a P-256 key needs a crypto
-    library. The private half is canopy's 0600 `~/.canopy/device-key/ecdh.pem`; only
+    library. The private half is in AWS KMS when the box's `<stack>-ecdh` stack made
+    it one (canopy's device_key_kms; kind "aws-kms"), else canopy's 0600
+    `~/.canopy/device-key/ecdh.pem`; only
     `{kind, jkt, jwk}` (public) comes back. {} when canopy cannot (older CLI, no CLI) —
     the role is then enrolled exactly as before. Never raises."""
     try:
@@ -1268,7 +1270,8 @@ def _ecdh_public_key() -> dict:
         if not isinstance(jwk, dict) or set(jwk) != {"kty", "crv", "x", "y"}:
             _log("device key: canopy printed no public ECDH JWK")
             return {}
-        return {"jwk": jwk, "jkt": str(out.get("jkt") or "")}
+        return {"jwk": jwk, "jkt": str(out.get("jkt") or ""),
+                "kind": str(out.get("kind") or "software")}
     except Exception as exc:  # noqa: BLE001 — an ECDH key is an addition, never a failure
         _log(f"device key: no ECDH key ({exc.__class__.__name__}: {exc})")
         return {}
@@ -1309,7 +1312,7 @@ def enroll_aws_device_key(runner_id: str) -> dict:
     if ecdh:
         # canopy's cache fields, so `canopy vault zk` and a ZK resolve on this box know
         # which ECDH key is enrolled.
-        st.update(ecdh_jkt=ecdh["jkt"], ecdh_kind="software")
+        st.update(ecdh_jkt=ecdh["jkt"], ecdh_kind=ecdh.get("kind") or "software")
     try:
         _write_device_key_cache(role_arn, st)
     except OSError as exc:
