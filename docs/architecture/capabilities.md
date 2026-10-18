@@ -19,7 +19,7 @@ the CLI on the machine.
 capabilities. Every capability call is one the agent's stack grants that role —
 `BrokerPolicy`, attached through the stack's `BrokerRoleName` — scoped to that agent's
 tagged instances, its exec document, its bucket and its stack. That role is canopy-web's
-own `canopy-web-task-role` (since 2026-10-15; `deploy.md` § canopy-web's own task role),
+own `canopy-web-task-role` (`deploy.md` § canopy-web's own task role),
 so no other labs service gets the grant. Pass `BrokerRoleName=canopy-web-task-role`.
 
 ## 1. Declare it in your repo
@@ -95,10 +95,10 @@ aws cloudformation deploy --stack-name canopy-cap-<agent>-<capability> \
 | `Capability` | the manifest's `name` |
 | `Owner` | the agent's slug; tags instances `canopy:owner` and names the AMI parameter |
 | `OwnerTag` | the human-facing `owner` tag |
-| `BrokerRoleName` | the broker's IAM role: canopy-web's own task role, `canopy-web-task-role` (since 2026-10-15; `deploy.md`) |
+| `BrokerRoleName` | the broker's IAM role: canopy-web's own task role, `canopy-web-task-role` (`deploy.md`) |
 | `ExecAllow` | **required** (0.9.0+): the manifest's `exec.allow`, comma-separated; the exec document runs nothing else |
 | `MaxInstanceLifetimeSeconds` | 0.9.0+, default 16200 (4 h + 30 min): the backstop terminates any of the capability's instances older than this. Keep it above `max_lease_s` |
-| `RootVolumeIops`, `RootVolumeThroughput`, `RootVolumeInitializationRate` | 0.9.0+, default empty (= unset; `0` too): gp3 IOPS (3000–80000), gp3 throughput MiB/s (125–2000), and the EBS volume initialization rate MiB/s (100–300) at which a fresh root volume pulls the AMI snapshot instead of hydrating lazily. Every lease starts from a cold volume, so this is the boot-time lever: `6000` / `500` / `300` took the Android emulator's `boot_completed` from ~50 s to ~37 s |
+| `RootVolumeIops`, `RootVolumeThroughput`, `RootVolumeInitializationRate` | 0.9.0+, default empty (= unset; `0` too): gp3 IOPS (3000–80000), gp3 throughput MiB/s (125–2000), and the EBS volume initialization rate MiB/s (100–300) at which a fresh root volume pulls the AMI snapshot instead of hydrating lazily. Every lease starts from a cold volume, so this is the boot-time lever: `6000` / `500` / `300` cuts the Android emulator's `boot_completed` from ~50 s to ~37 s |
 | `InstanceType`, `VpcId`, `SubnetId`, `NestedVirtualization`, `RootVolumeGb`, `UserData` | as for persistent |
 | `AmiId`, `ConsumerTaskRoleName`, `IdleStopMinutes` | persistent only; leave empty |
 
@@ -117,7 +117,7 @@ What the stack must provide:
   (the launch template sets them; canopy-web also sends them, plus `canopy:lease=<id>` and
   `canopy:broker=<deployment>` — `CAPABILITY_BROKER_ID`, by default the host of
   `CANOPY_IDENTITY_BASE_URL`). A broker counts and kills only instances carrying its own
-  `canopy:broker` tag (or none: launched before the tag existed), so two canopy-webs can
+  `canopy:broker` tag (or no `canopy:broker` tag at all), so two canopy-webs can
   share a stack.
 - **AMI pointer:** the launch template's image is `resolve:ssm:/canopy/capabilities/<agent>/<name>/ami`,
   resolved by EC2 at every launch (as the RunInstances caller, so `BrokerPolicy` may read

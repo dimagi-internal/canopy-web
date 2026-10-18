@@ -10,7 +10,7 @@ canopy agent that can read the page state you choose to hand it. The user is
 your already-signed-in user, and the agent can only ever see what that user can
 see.
 
-**Two things to know before you start, because they change what you build:**
+**Three things to know before you start, because they change what you build:**
 
 1. **Agent actions work, and they are MCP tools.** What you declare with
    `registerAction` appears in the agent's tool list with your JSON-Schema —
@@ -65,9 +65,7 @@ Go to **Connected sites** in your workspace —
 | **Signing key** | The PUBLIC half of a key pair your server signs visitor statements with (§3). Several may be pasted during a rotation | Missing ⇒ your site can vouch for nobody, so the widget never gets a token |
 
 There is **no secret** to copy. A site proves itself by signing (§3), so canopy
-holds nothing that could impersonate it. (Until 2026-09-24 creating a site
-showed a secret once and offered **New secret**; it had authenticated nothing
-since the server-to-server token exchange was removed, so both went.)
+holds nothing that could impersonate it.
 
 URLs are validated on save. A wildcard, a path, or anything containing `;` is
 refused with an explanation — a wildcard in particular would undo the entire
@@ -107,10 +105,7 @@ uv run python manage.py grant_app_agent --workspace connect --name connect-labs 
 **Each workspace registers your site itself**, on its own Connected sites page:
 its own name for it, your JWKS URL, the URLs that may frame it, and which of
 *its* agents it may offer. There is no shared registration and no workspace
-that "owns" your site for the others. (Until 2026-09-24 there was — one row,
-a custodian workspace maintaining its keys, and grants from the rest. It
-existed only to arbitrate a shared row, and once your keys became a URL there
-was nothing left worth sharing.)
+that "owns" your site for the others.
 
 So nothing one workspace does can reach another's integration: editing its
 origins, disconnecting, or deleting the workspace touches its registration
@@ -288,13 +283,11 @@ surface a contact token reaches.
 **Either way, §5's page state works.** A contact declares theirs on that same
 prefix, so nothing in this guide is a privilege of visitors who happen to hold a
 canopy account — do not try to make visitors arrive as users just to make the
-panel page-aware. (It was, until 2026-09-23: the two declaration routes existed only
-under `/api/canopy-sessions/`, so the widget skipped them for a contact and the
-agent never learned what the visitor was looking at.)
+panel page-aware.
 
 Your ids live in your own namespace — `(your app, your id)` — so they cannot
-collide with a canopy user or with another site's people. That is why this is a
-smaller grant than the email-domain vouching it replaced, which reached into
+collide with a canopy user or with another site's people. That makes this a
+smaller grant than vouching for an email domain, which would reach into
 canopy's own user population.
 
 **Requirements canopy enforces**, so it is worth knowing before you debug a
@@ -528,10 +521,10 @@ an empty one does nothing. Older widgets have no `ask`, so feature-detect it
 
 ## 5. Hand the agent the page state
 
-**This changed on 2026-09-16.** `provideContext` still works, but it is the old
-model and it is worse: read once when a conversation opened, delivered as prose,
-attached to the first message only. Filter your page after opening the chat and
-the agent was reasoning about a screen that had moved.
+`provideContext` still works, but it is a snapshot and it is worse: read once
+when a conversation opens, delivered as prose, attached to the first message
+only. Filter your page after opening the chat and the agent reasons about a
+screen that has moved.
 
 Declare your page instead. Two lines:
 
@@ -567,8 +560,7 @@ Two paths, deliberately, and the redundancy is the point:
    declared selection (resource, ids, filters) into the caller envelope, and the
    canopy plugin hands it to the session as context alongside every message —
    NOT inside the person's message, so the transcript shows exactly what they
-   typed. (Until 2026-09-26 the widget pasted it under the first message as a
-   JSON block, which is how every conversation came to open with a dump.)
+   typed.
 2. **The MCP tool `current_page`** returns every attached page's state, so the
    agent re-reads your screen *whenever it needs to* — "close the ones I'm
    looking at" is answerable on turn nine.
@@ -577,13 +569,10 @@ Path 1 exists because path 2 can be unavailable: MCP servers connect
 asynchronously, and a conversation starts a fresh agent process, so the first
 turn can race that connection. **It is also not something the agent has to think
 of** — an agent whose MCP tools arrive deferred will not go looking for
-`current_page` unprompted, which is how connect-labs' first live attempt ended
-with "I can't see your screen" and no tool call at all (fixed 2026-09-23: until
-then only the legacy `provideContext` snapshot rode the first message, so a host
-following this page's advice sent nothing with it). Measured live on 2026-09-16 — the agent replied
-"the canopy-web MCP server is still connecting, its tools aren't loaded" and was
-blind to twenty rows it had been sent. The first turn carries the user's actual
-question, so it must not be the one that depends on the flakiest link.
+`current_page` unprompted, and one whose MCP server is still connecting cannot
+call it at all — with path 2 alone, the first reply is "I can't see your screen"
+with no tool call. The first turn carries the user's actual question, so it must
+not be the one that depends on the flakiest link.
 
 Also:
 
@@ -651,8 +640,7 @@ so a page that declared nothing is told nothing.
 
 This fires when the agent changes something, *and* when a scheduled job does,
 *and* when your own fleet does, *and* when the same page is open in another tab.
-Without it, the agent can delete rows you are still displaying — which is the
-bug this replaced.
+Without it, the agent can delete rows you are still displaying.
 
 The notification carries the resource URI and nothing else. That is MCP's
 `notifications/resources/updated` shape: you re-read through the path you
@@ -729,15 +717,13 @@ Three doors, and picking the wrong one is the commonest mistake:
 | **writing** server data | your server / MCP tool | audited, rate-limited, revocable, survives the tab closing |
 | something that **only exists in a browser** | page action | scroll to a row, open a drawer, fill a form, apply a filter |
 
-canopy got this wrong itself and it is worth learning from: its first page
-action (2026-09) was a "dismiss these rows" on a feed. It was a *data mutation
-wearing a page action's clothes* — unaudited, dead the moment the tab closed,
-capped by a 20-second wait, and a second implementation of a delete the REST API
-already had. It existed only because nothing could tell the page its data had
-changed. Once pages could be told their data changed (§5a), the reason was gone;
-it became a server tool and the page action was deleted. The Tasks page shows
-the right shape today: declining is the server tool `act_on_task`, and the page
-hears about it through `task://` (§5a).
+The classic wrong one is a "dismiss these rows" action on a feed. It is a *data
+mutation wearing a page action's clothes* — unaudited, dead the moment the tab
+closes, capped by a 20-second wait, and a second implementation of a delete the
+REST API already has. The only reason to build one is a page that cannot be told
+its data changed, and §5a removes that reason. The Tasks page shows the right
+shape: declining is the server tool `act_on_task`, and the page hears about it
+through `task://` (§5a).
 
 **If your action's last line is an HTTP call to your own backend, it is not a
 page action.** Put it in your MCP server and let §5a refresh the page.
@@ -832,7 +818,7 @@ open.
 ## 8a. Who the agent acts as
 
 The chain above governs **who can talk to the agent**. What the agent can *read*
-is a second question, and there are now two answers depending on whether your
+is a second question, and there are two answers depending on whether your
 site issues grants.
 
 **Without a grant** — the default, and every Slack or email caller — a tool call
@@ -913,7 +899,7 @@ ever holds either.
 (canopy does not sign assertions about your visitor for you to trust: whoever
 held that key could sign for anyone at every connected site.)
 
-For **canopy's own MCP tools**, unchanged: a visitor who is not the agent's owner
+For **canopy's own MCP tools**: a visitor who is not the agent's owner
 or an admin talks to a CONFINED session, which reaches canopy's MCP with a
 caller token scoped to **agent ∩ visitor** — the visitor's own canopy
 permissions (none, for a contact), limited to the tools the agent's declared
@@ -941,11 +927,10 @@ interface lists. The owner's token is never used there.
   no account is ever created. Any visitor your server
   vouches for can chat — there is no domain allowlist on this path — but none of
   them acts as a canopy account.
-- ~~**Context is a snapshot.**~~ **Fixed 2026-09-16.** Page state is pushed on
-  every change and re-read by the agent on demand via `current_page`, so
-  changing the page mid-conversation is now reflected. The page is also told
-  when its data changes (§5a). `provideContext` still behaves the old way; use
-  `setPageState`.
+- ~~**Context is a snapshot.**~~ Not a limit: page state is pushed on every
+  change and re-read by the agent on demand via `current_page`, so changing the
+  page mid-conversation is reflected. The page is also told when its data
+  changes (§5a). Only `provideContext` is a snapshot; use `setPageState`.
 - **The agent does not remember previous conversations.** A user can see and
   resume their prior chats, but each is its own transcript; a new conversation
   starts cold.
@@ -1003,9 +988,7 @@ for `request.user` directly. No secret, no signing key, no backend endpoint.
 
 **It follows canopy's own light/dark toggle**, through the same `theme` option
 any host uses (`frontend/src/widget/CanopyWidget.tsx`: `mode` at init,
-`setTheme` on each toggle). Before that, switching canopy to light left a dark
-panel on a light page — which is the first thing anyone dogfooding it noticed.
-No accent is passed: canopy's accent is the widget's default.
+`setTheme` on each toggle). No accent is passed: canopy's accent is the widget's default.
 
 ### canopy-web as a host of its own MCP (agents act as you on canopy's pages)
 
@@ -1107,3 +1090,5 @@ Neither imports the other. A React 18 or non-React host uses `canopy-client`
 and renders its own messages; a React 19 + Vite host can use both. Everything
 in §1–§3 still applies — the token endpoint, the registered origins and agents
 — and sessions are still created by your backend, never by the browser.
+
+---
