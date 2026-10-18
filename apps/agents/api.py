@@ -1860,7 +1860,6 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
     """One project's page — shared by the agent route and the workspace-project route."""
     from apps.harness import turn_access
 
-    agent = project.agent
     live_first = Case(When(status__in=services.LIVE_STATUSES, then=0), default=1,
                       output_field=IntegerField())
     tasks = list(project.tasks.select_related("agent", "project", "waiting_on_user", "parent")

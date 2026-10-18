@@ -26,7 +26,7 @@ const listAgents = vi.fn(async () => ({
   ),
   count: 0,
 }))
-vi.mock('@/api/agents', () => ({ listAgents }))
+vi.mock('@/api/agents', () => ({ listAgents, listWorkspaceProjects: async () => [] }))
 
 const { AppLayout } = await import('./AppLayout')
 const { AgentsPage } = await import('@/pages/AgentsPage')
