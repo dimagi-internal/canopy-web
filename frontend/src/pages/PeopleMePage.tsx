@@ -8,13 +8,16 @@ import {
   exportMine,
   getMyPerson,
   listMyAudit,
+  listMyCollections,
   listMyGrants,
   retractFact,
   revokeMyGrant,
   setMyAgentMemory,
 } from '../api/people'
-import type { HcpAuditEvent, HcpGrant, PersonFactDetail, PersonMe } from '../api/people'
-import { MemorySettings } from './MemorySettings'
+import type { HcpAuditEvent, HcpGrant, MemoryCollections, PersonFactDetail, PersonMe } from '../api/people'
+import { listWorkspaces } from '../api/workspaces'
+import type { WorkspaceOut } from '../api/workspaces'
+import { AgentReadsPicker, CollectionsPanel } from './memory/Collections'
 import {
   activeAccess,
   agentName,
@@ -85,8 +88,19 @@ export function PeopleMePage() {
   const [hovered, setHovered] = useState<AgentAccess | null>(null)
   const [pinned, setPinned] = useState<AgentAccess | null>(null)
   const lens = hovered ?? pinned
+  const [collections, setCollections] = useState<MemoryCollections | null>(null)
+  const [workspaces, setWorkspaces] = useState<WorkspaceOut[]>([])
+  const [busyCollections, setBusyCollections] = useState(false)
 
   const load = useCallback(() => {
+    // Collections and your workspaces only feed controls; if either fails the
+    // rest of the page still stands.
+    listMyCollections()
+      .then(setCollections)
+      .catch(() => setCollections(null))
+    listWorkspaces()
+      .then(setWorkspaces)
+      .catch(() => setWorkspaces([]))
     getMyPerson()
       .then(setMe)
       .catch((e: Error) => setError(e.message))
@@ -172,9 +186,18 @@ export function PeopleMePage() {
     void run((v) => setBusy(v as number | null), fact.id, () => correctMyEntry(fact.entry_id as string, text))
   }
 
-  const onAdd = async (category: string, text: string) => {
+  // A collection change re-reads grants too: a grant's reach follows its collection.
+  const actOnCollections = (work: () => Promise<unknown>) => {
+    setBusyCollections(true)
+    work()
+      .then(load)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusyCollections(false))
+  }
+
+  const onAdd = async (category: string, text: string, workspace: string | null) => {
     try {
-      await addMyEntry(category, text)
+      await addMyEntry(category, text, workspace)
       load()
       return true
     } catch (err) {
@@ -379,6 +402,7 @@ export function PeopleMePage() {
             )}
           </div>
         )}
+        {enabled && <Composer onAdd={onAdd} workspaces={workspaces} preferred={orgs[0]?.places[0]?.workspace ?? null} />}
         <div className="mt-4 space-y-4">
           {orgs.map((o) => (
             <div key={o.org} className="rounded-xl border border-border bg-card px-4 pt-3 pb-2">
@@ -393,6 +417,7 @@ export function PeopleMePage() {
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{p.name}</div>
                   )}
                   <ul className="divide-y divide-border">{p.facts.map(factRow)}</ul>
+                  {enabled && <AddLine onAdd={onAdd} workspace={p.workspace} label={`Add to ${p.name}`} />}
                 </div>
               ))}
             </div>
@@ -468,6 +493,14 @@ export function PeopleMePage() {
                       See what it reads
                     </a>
                   </div>
+                  {(() => {
+                    // Only an agent you keep allowing can be pointed at a collection;
+                    // a one-conversation grant reads its organisation and ends.
+                    const kept = a.grants.find((g) => g.grantType === 'persistent' && g.canopy.agent)
+                    return kept ? (
+                      <AgentReadsPicker grant={kept} data={collections} disabled={busyCollections} act={actOnCollections} />
+                    ) : null
+                  })()}
                 </li>
               )
             })}
@@ -499,6 +532,7 @@ export function PeopleMePage() {
             )}
           </div>
         )}
+        {enabled && <CollectionsPanel data={collections} busy={busyCollections} act={actOnCollections} />}
       </section>
 
       {/* --- what happened ------------------------------------------------------- */}
@@ -576,7 +610,6 @@ export function PeopleMePage() {
             })}
           </div>
         )}
-        {enabled && <MemorySettings grants={grants} onChanged={load} />}
         <button
           className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
           onClick={onExport}
@@ -695,8 +728,11 @@ function PlaceHeading({ title, note, readers, empty }: { title: string; note: st
   )
 }
 
-/** Your personal entries: what you add yourself, in no workspace. No agent reads
- *  them unless you point it at a collection that holds them (Settings). */
+type OnAdd = (category: string, text: string, workspace: string | null) => Promise<boolean>
+
+/** Your personal memory: life outside work. No work agent reads it unless you put
+ *  it in a collection that agent uses — that is what makes it personal, not who
+ *  wrote it (each entry already says "You" or "learned by …"). */
 function PersonalCard({
   place,
   readers,
@@ -707,29 +743,114 @@ function PersonalCard({
   place: Place
   readers: AgentAccess[]
   enabled: boolean
-  onAdd: (c: string, t: string) => Promise<boolean>
+  onAdd: OnAdd
   row: (f: PersonFactDetail) => ReactNode
 }) {
   return (
     <div className="flex flex-col rounded-xl border border-dashed border-border px-4 pt-3 pb-2">
       <PlaceHeading
         title="Personal"
-        note="what you add yourself"
+        note="kept away from work agents"
         readers={readers}
-        empty="Only you — unless you point an agent at it in Settings"
+        empty="No agent — unless you add it to a collection one uses"
       />
       {place.facts.length === 0 ? (
         <p className="py-2.5 text-sm text-muted-foreground/70">Nothing yet.</p>
       ) : (
         <ul className="divide-y divide-border">{place.facts.map(row)}</ul>
       )}
-      {enabled && <AddLine onAdd={onAdd} />}
+      {enabled && <AddLine onAdd={onAdd} workspace={null} label="Add to Personal" />}
     </div>
   )
 }
 
-/** "+ Add something" at the foot of Personal: opens into one line, saves on Enter. */
-function AddLine({ onAdd }: { onAdd: (c: string, t: string) => Promise<boolean> }) {
+function CategorySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <select
+      aria-label="What kind of thing"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+    >
+      {MY_CATEGORIES.map((c) => (
+        <option key={c.value} value={c.value}>
+          {c.label}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+/** "Tell agents something about you" — one line at the top of your memory, with
+ *  WHERE it goes as part of the sentence: a workspace you belong to (its agents
+ *  read it) or Personal. Workspaces are grouped under their organisation. */
+function Composer({ onAdd, workspaces, preferred }: { onAdd: OnAdd; workspaces: WorkspaceOut[]; preferred: string | null }) {
+  const [text, setText] = useState('')
+  const [category, setCategory] = useState<string>(MY_CATEGORIES[0].value)
+  const [where, setWhere] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const named = (slug: string) => workspaces.find((w) => w.slug === slug)?.display_name ?? slug
+  const orgs = Array.from(new Set(workspaces.map((w) => w.root)))
+  const target = where ?? (preferred && workspaces.some((w) => w.slug === preferred) ? preferred : workspaces[0]?.slug ?? '')
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!text.trim()) return
+    setSaving(true)
+    if (await onAdd(category, text.trim(), target || null)) setText('')
+    setSaving(false)
+  }
+  return (
+    <form
+      onSubmit={submit}
+      aria-label="Tell agents something about you"
+      className="mt-4 flex flex-col gap-2 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center"
+    >
+      <input
+        aria-label="Tell agents something about you"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        maxLength={500}
+        placeholder="Tell agents something about you…"
+        className="min-w-0 flex-1 bg-transparent px-1 py-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <CategorySelect value={category} onChange={setCategory} />
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          in
+          <select
+            aria-label="Where it goes"
+            value={target}
+            onChange={(e) => setWhere(e.target.value)}
+            className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+          >
+            {orgs.map((root) => (
+              <optgroup key={root} label={named(root)}>
+                {workspaces
+                  .filter((w) => w.root === root)
+                  .map((w) => (
+                    <option key={w.slug} value={w.slug}>
+                      {w.display_name}
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
+            <option value="">Personal (kept away from work agents)</option>
+          </select>
+        </label>
+        <button
+          type="submit"
+          disabled={saving || !text.trim()}
+          className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Remember'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+/** "+ Add to <place>" at the foot of a place: opens into one line, saves on Enter. */
+function AddLine({ onAdd, workspace, label }: { onAdd: OnAdd; workspace: string | null; label: string }) {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
   const [category, setCategory] = useState<string>(MY_CATEGORIES[0].value)
@@ -740,7 +861,7 @@ function AddLine({ onAdd }: { onAdd: (c: string, t: string) => Promise<boolean> 
         className="mt-auto inline-flex items-center gap-1 self-start rounded py-2 text-xs text-muted-foreground hover:text-primary"
         onClick={() => setOpen(true)}
       >
-        <Plus className="h-3.5 w-3.5" /> Add something about yourself
+        <Plus className="h-3.5 w-3.5" /> {label}
       </button>
     )
   }
@@ -748,7 +869,7 @@ function AddLine({ onAdd }: { onAdd: (c: string, t: string) => Promise<boolean> 
     e.preventDefault()
     if (!text.trim()) return
     setSaving(true)
-    if (await onAdd(category, text.trim())) {
+    if (await onAdd(category, text.trim(), workspace)) {
       setText('')
       setOpen(false)
     }
@@ -756,21 +877,10 @@ function AddLine({ onAdd }: { onAdd: (c: string, t: string) => Promise<boolean> 
   }
   return (
     <form onSubmit={submit} className="mt-auto flex flex-col gap-2 py-2 sm:flex-row sm:items-center">
-      <select
-        aria-label="What kind of thing"
-        value={category}
-        onChange={(e) => setCategory(e.target.value)}
-        className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
-      >
-        {MY_CATEGORIES.map((c) => (
-          <option key={c.value} value={c.value}>
-            {c.label}
-          </option>
-        ))}
-      </select>
+      <CategorySelect value={category} onChange={setCategory} />
       <input
         autoFocus
-        aria-label="Add something about yourself"
+        aria-label={label}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}

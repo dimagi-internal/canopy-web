@@ -235,10 +235,12 @@ export const MY_CATEGORIES = [
   { value: 'coordination_context', label: 'How to coordinate with me' },
 ] as const
 
-/** Add a PERSONAL entry — yours, in no workspace. No agent in a workspace reads a
- *  personal entry; you do, and any client you authorize does. */
-export async function addMyEntry(category: string, preference: string): Promise<void> {
+/** Add an entry of your own to a workspace you belong to (agents whose reach
+ *  covers it read it), or with `workspace` null to your personal memory, which
+ *  no work agent reads unless you add it to a collection that agent uses. */
+export async function addMyEntry(category: string, preference: string, workspace: string | null = null): Promise<void> {
   const { error } = await apiV2.POST('/api/hcp/v1/preferences/add', {
+    params: { query: workspace ? { workspace } : {} },
     body: {
       category,
       preference,
