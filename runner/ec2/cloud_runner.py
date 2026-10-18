@@ -1668,21 +1668,13 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
 # has run real turns on a real box; flip with RUNNER_EXECUTOR=acp.
 RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", "cli").strip().lower()
 
-# Wedge guards for ONE ACP turn. `claude -p` has no equivalent because the
-# subprocess exiting ends the turn; an ACP prompt is a request that could in
-# principle never resolve, and a turn that never returns holds its lease alive
-# forever (the lease renewer keeps beating), so the sweep never rescues it.
-#
-# A wedged turn is a SILENT one, so the guard is idle time: the turn fails when
-# the agent has sent no update (no reply text, no tool call, no tool result) for
-# ACP_TURN_IDLE_TIMEOUT_SECONDS. A wall-clock deadline used to be the guard, at
-# 5400s, and it killed a healthy turn: ACE's full `/ace:run bednet-check-2-visit`
-# on cloud-ec2-2 (turn 09d9322a, 2026-10-18, failure investigation 8) was still
-# logging tool calls every few seconds, in Phase 2, when it hit 90 minutes.
-# ACP_TURN_TIMEOUT_SECONDS stays as a far backstop for a turn that loops forever
-# while staying busy; it is not a budget for real work.
-ACP_TURN_IDLE_TIMEOUT_SECONDS = float(os.environ.get("ACP_TURN_IDLE_TIMEOUT_SECONDS", "1800"))
-ACP_TURN_TIMEOUT_SECONDS = float(os.environ.get("ACP_TURN_TIMEOUT_SECONDS", "28800"))
+# No time limit on an ACP turn, like `claude -p`. A wall-clock deadline (5400s)
+# killed ACE's full `/ace:run bednet-check-2-visit` on cloud-ec2-2 while it was
+# still working (turn 09d9322a, 2026-10-18, failure investigation 8), and an
+# idle limit would kill a long quiet tool call the same way. Agent turns run for
+# hours. A turn that really is stuck is ended by a stop (`request_stop` cancels
+# the ACP session, then closes it if ignored), and an adapter that dies ends
+# the prompt on its own.
 # Starting (or resuming) the ACP session — Claude Code booting with the agent's
 # plugins + MCP servers — is NOT the turn. canopy_acp defaults it to 120s, and
 # eva's environment sometimes takes 112-125s (one slow MCP server at startup), so
@@ -1779,8 +1771,6 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     # resumed turn, and fold it into this turn's result text. Observed directly:
     # a resumed turn re-emitted the previous turn's tool call and reply.
     state = {"replaying": False}
-    # When the agent last sent anything — the idle wedge guard's clock.
-    activity = {"at": time.time()}
     # The reply text of the message being streamed. ACP sends a reply as many
     # `agent_message_chunk` fragments — often a few characters each — and every
     # assistant event becomes one row everywhere downstream: a Slack post, a
@@ -1820,7 +1810,6 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     def on_update(_session_id, update):
         if state["replaying"]:
             return
-        activity["at"] = time.time()
         kind = reducer.apply(update)
         if kind is None:
             return
@@ -1889,8 +1878,6 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             # The stop arrived while the session was starting, when there was
             # no prompt yet to cancel.
             agent.cancel()
-        deadline = time.time() + ACP_TURN_TIMEOUT_SECONDS
-        activity["at"] = time.time()
         result = None
         while True:
             try:
@@ -1898,15 +1885,6 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 break
             except TimeoutError:
                 flush()          # stream while the turn is still running
-                now = time.time()
-                if now - activity["at"] > ACP_TURN_IDLE_TIMEOUT_SECONDS:
-                    agent.cancel()
-                    raise RuntimeError(
-                        f"ACP turn silent for {ACP_TURN_IDLE_TIMEOUT_SECONDS}s") from None
-                if now > deadline:
-                    agent.cancel()
-                    raise RuntimeError(
-                        f"ACP turn exceeded {ACP_TURN_TIMEOUT_SECONDS}s") from None
         flush(final=True)
 
         stop = (result or {}).get("stopReason", "")
