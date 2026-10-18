@@ -138,6 +138,24 @@ moved_base() {
   case "$m" in https://*) echo "$m" ;; esac
 }
 
+# The box's own runner token, if cloud_runner.py has shared an unexpired one
+# (RUNNER_TOKEN_FILE, 0600). runner.env's CANOPY_TOKEN is a person's PAT and only
+# the fallback: on 2026-10-17 it was revoked, every expected_sha read came back
+# empty ("unknown"), and the box stopped updating without a word.
+RUNNER_TOKEN_FILE="${RUNNER_TOKEN_FILE:-$RUNNER_HOME/runner-token.json}"
+runner_token() {
+  [ -r "$RUNNER_TOKEN_FILE" ] || return 0
+  python3 -c '
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+if (d.get("access_token") or "") and float(d.get("expires_at") or 0) - time.time() > 120:
+    print(d["access_token"])
+' "$RUNNER_TOKEN_FILE" 2>/dev/null
+}
+
 # --- what should be installed ----------------------------------------------
 expected_sha() {
   # GET the fleet list and pick our own row. Read-only by construction: there is no
@@ -146,7 +164,8 @@ expected_sha() {
   [ -r "$ENV_FILE" ] || { echo ""; return; }
   base="$(moved_base)"
   [ -n "$base" ] || base="$(sed -n 's/^CANOPY_BASE_URL=//p' "$ENV_FILE" | tail -1)"
-  token="$(sed -n 's/^CANOPY_TOKEN=//p' "$ENV_FILE" | tail -1)"
+  token="$(runner_token)"
+  [ -n "$token" ] || token="$(sed -n 's/^CANOPY_TOKEN=//p' "$ENV_FILE" | tail -1)"
   rid="$(json_field "$STATE_FILE" runner_id "")"
   [ -n "$base" ] && [ -n "$token" ] && [ -n "$rid" ] || { echo ""; return; }
   # `python3 -c`, NOT `python3 - <<HEREDOC`: a heredoc redirects stdin, so it would
@@ -374,6 +393,11 @@ elif [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ]; then
   # so the control plane was told the fleet's mailboxes were dead every 30 minutes.
   ( set +e
     if [ -r "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+    # The roster read and each prepare act AS THE BOX, as on service start —
+    # not with runner.env's PAT (revoked 2026-10-17: the roster came back empty
+    # and only the AGENT_SLUGS fallback was refreshed, never a new agent).
+    rt="$(runner_token)"
+    if [ -n "$rt" ]; then export CANOPY_TOKEN="$rt"; fi
     moved="$(moved_base)"
     if [ -n "$moved" ]; then
       case "${CANOPY_WEB_API_URL:-}" in

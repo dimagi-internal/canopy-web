@@ -170,12 +170,18 @@ if isinstance(d, list):
 ' 2>/dev/null || true
 }
 
-resolve_roster() {  # -> comma-joined slugs; registry first, AGENT_SLUGS offline
-  local reg; reg="$(agent_registry)"
-  local served; served="$(served_agents)"
-  if [[ -n "$reg" && -n "$served" ]]; then
-    reg="$(printf '%s\n' "$reg" | grep -Fxf <(printf '%s\n' "$served") || true)"
-    [[ -n "$reg" ]] || reg="$(agent_registry)"
+resolve_roster() {  # -> comma-joined slugs; served first, registry, AGENT_SLUGS offline
+  # What canopy-web says this box RUNS is the answer whenever it gives one: it
+  # spans every workspace the box is enrolled in (marshellis as well as dimagi),
+  # and it does not depend on the token being able to list the whole fleet. It
+  # used to be only a filter over the registry, so an empty registry (a revoked
+  # PAT, 2026-10-17) threw it away and fell back to AGENT_SLUGS.
+  local reg served
+  served="$(served_agents)"
+  if [[ -n "$served" ]]; then
+    reg="$served"
+  else
+    reg="$(agent_registry)"
   fi
   local slugs
   slugs="$(printf '%s' "$reg" | cut -f1 | grep -v '^$' | paste -sd, - 2>/dev/null || true)"

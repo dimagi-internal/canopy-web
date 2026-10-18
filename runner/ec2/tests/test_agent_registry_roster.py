@@ -45,7 +45,7 @@ def _extract_function(name: str) -> str:
 
 
 def _fake_curl(tmp: pathlib.Path, *, slugs, repos, fail=False, garbage=False,
-               trees=None, served=None) -> pathlib.Path:
+               trees=None, served=None, list_fail=False) -> pathlib.Path:
     state = tmp / "state"
     state.mkdir(exist_ok=True)
     (state / "list.json").write_text(json.dumps({"items": [{"slug": s} for s in slugs]}))
@@ -72,6 +72,8 @@ if "/api/harness/runners/" in url and url.endswith("/agents"):
     if SERVED is None:
         sys.exit(22)
     print(json.dumps(SERVED)); raise SystemExit
+if {list_fail!r}:
+    sys.exit(22)                      # the fleet list refuses (a revoked PAT)
 if TREES and "/api/agents/?limit=" in url:
     sys.exit(22)                      # 422 workspace-required, under curl -f
 if TREES and url.endswith("/api/workspaces/"):
@@ -218,11 +220,22 @@ def test_an_unknown_answer_keeps_the_whole_registry(tmp_path, served, paired):
     assert out == "ace,fizzy"
 
 
-def test_a_served_list_that_misses_the_registry_entirely_keeps_the_registry(tmp_path):
-    """No overlap is a disagreement, not an instruction to prepare nothing."""
+def test_the_served_list_is_the_roster_even_beyond_the_registry(tmp_path):
+    """An agent in another workspace the box is enrolled in (marshellis) is one
+    it runs, whether or not the token's fleet list shows it."""
     out = _run(tmp_path, "resolve_roster", "resolve_roster",
-               slugs=["ace"], repos={}, served=["scout"], env_extra=_paired(tmp_path))
-    assert out == "ace"
+               slugs=["ace"], repos={}, served=["ace", "family-helper"],
+               env_extra=_paired(tmp_path))
+    assert out == "ace,family-helper"
+
+
+def test_a_refused_fleet_list_still_uses_what_the_box_serves(tmp_path):
+    """2026-10-17: runner.env's PAT was revoked, the registry came back empty, and
+    the box provisioned the AGENT_SLUGS fallback — never an agent added since."""
+    out = _run(tmp_path, "resolve_roster", "resolve_roster",
+               slugs=["ace"], repos={}, served=["eva", "family-helper"], list_fail=True,
+               env_extra=_paired(tmp_path))
+    assert out == "eva,family-helper"
 
 
 # --- the clone pointer ---------------------------------------------------------
