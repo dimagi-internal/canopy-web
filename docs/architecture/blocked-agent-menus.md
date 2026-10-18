@@ -56,7 +56,7 @@ People look *because* a session went quiet, so a menu must not exist only as a l
 
 ### The composer lock
 
-The composer refuses to send while a **parsed dialog** is up — the TUI draws the menu where the composer would be, so a send would bounce as `COMPOSER_NOT_VISIBLE`. An **option-less marker does NOT lock it** (`menuBlocksComposer`, `frontend/packages/canopy-ui/src/chat/MenuPrompt.tsx`): nothing was parsed, so "a dialog is up" is a guess, and a wrong guess would leave a lock with no way out. If the marker is real, the send bounces loudly and the runner ships back the dialog it actually found.
+The composer refuses to send while a **parsed dialog** is up — the TUI draws the menu where the composer would be, so a send would bounce as `COMPOSER_NOT_VISIBLE`. An **option-less marker does NOT lock it** (`menuBlocksComposer`, `frontend/src/pages/chatPageLogic.ts`): nothing was parsed, so "a dialog is up" is a guess, and a wrong guess would leave a lock with no way out. If the marker is real, the send bounces loudly and the runner ships back the dialog it actually found.
 
 ## Answering: a tap becomes a keystroke
 
@@ -78,7 +78,7 @@ The runner **re-reads the screen before pressing anything**: a stale number type
 
 ### The outcome is a value, not a log line
 
-The API returns `sent` the instant it relays; only the runner knows whether the key landed. Refusals — `answered` / `no_dialog` / `not_on_menu` / `wrong_pane` / `unreachable` / `no_session` (`runner/canopy_runner/canopy_runner/hooks.py`) — ride the next session report back inside the menu itself as `answer_error` plus a human sentence in `answer_note` (the column is JSON). The report is forced (`sessions.request_report_now`) because a blocked session writes nothing to trigger the change-driven tick. Some refusals are irreducible (the dialog is on a laptop and you are on a phone).
+The API returns `sent` the instant it relays; only the runner knows whether the key landed. Refusals — `no_dialog` / `not_on_menu` / `unmodelled` / `wrong_pane` / `unreachable` / `no_session` / `ambiguous_session` (`runner/canopy_runner/canopy_runner/hooks.py`; success is `answered`) — ride the next session report back inside the menu itself as `answer_error` plus a human sentence in `answer_note` (the column is JSON). The report is forced (`sessions.request_report_now`) because a blocked session writes nothing to trigger the change-driven tick. Some refusals are irreducible (the dialog is on a laptop and you are on a phone).
 
 ### `send-keys` selects the Claude tab before refusing
 

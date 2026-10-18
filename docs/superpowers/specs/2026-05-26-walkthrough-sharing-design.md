@@ -376,7 +376,5 @@ SPA routes `/walkthroughs` and `/w/:id` registered in `frontend/src/App.tsx`.
 - `apps/opps/drive_client.py` (ace-web) — Drive client pattern being copied.
 - `apps/videos/drive.py` (ace-web) — Drive folder-layout pattern.
 - `apps/common/views_auth_e2e.py` (this repo) — bearer-token auth pattern.
-- `docs/superpowers/specs/2026-04-10-project-workbench-design.md` — project model
-  this walkthrough optionally links into.
 - `docs/walkthroughs/canopy-web-demo.yaml`, `docs/walkthroughs/project-workbench.yaml`
   — example walkthrough source specs.

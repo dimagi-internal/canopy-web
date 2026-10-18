@@ -9,8 +9,7 @@ App UI is **dense and readable: tables, not cards.**
 ## Shared kit: `canopy-ui`
 
 - The two-pane shell (left rail + scrolling main) used by the DDD and Agent workspaces, plus the design-system primitives, live in `frontend/packages/canopy-ui`, imported as `canopy-ui` with subpath exports `/ui`, `/lib`, `/chat`, `/presence`, `/shell`, `/tokens` (see its `package.json` `exports`). Surfaces consume it instead of re-implementing chrome.
-- It is published to public npm as the unscoped `canopy-ui`. Don't put it (or `canopy-client`) under an `@canopy` scope — that scope belongs to someone else.
-- Touching `frontend/packages/{canopy-ui,canopy-client}/src` requires a version bump in that package's `package.json`; the `Frontend build` CI job fails otherwise, and merging the bump publishes it (`.github/workflows/publish-canopy-ui.yml`).
+- It is published to public npm as the unscoped `canopy-ui`; naming, the version-bump CI check and release-on-merge: [embedding-internals.md § npm packages](embedding-internals.md#npm-packages).
 - Design: `docs/superpowers/specs/2026-06-17-shared-workbench-package-design.md`.
 
 ## Design tokens (no raw palette literals)
@@ -36,7 +35,7 @@ The whole authenticated app styles off semantic tokens. `frontend/src/index.css`
 - This fails safe: a new server route is excluded by construction; a forgotten SPA route only loses offline fallback (online it still resolves through `spa_view` in `config/views.py`). An iframe load is a navigation, so a server route the SW swallowed would render the SPA inside itself.
 - The lists are `NAVIGATE_FALLBACK_ALLOWLIST` / `NAVIGATE_FALLBACK_DENYLIST` in `frontend/src/pwa/navigation-fallback.ts` (unit-tested in `navigation-fallback.test.ts`), imported by `frontend/vite.config.ts`.
 - Server content under the allowlisted `/w/` prefix (`/w/<ws>/walkthrough/<id>/content`) is carved back out on the denylist (in workbox, denylist wins). The carve-out must end in `(?:\?.*)?$` because workbox matches `pathname + search` and embeds carry `?t=<share_token>`.
-- The retired flat `/walkthrough/`, `/review/`, `/share/` prefixes are not on the allowlist, so they reach Django's 404.
+- The retired flat `/walkthrough/`, `/review/`, `/share/`, `/storyboard/`, `/narrative/`, `/ddd-release/` prefixes are not on the allowlist, so they reach Django's 404.
 - Design: `docs/superpowers/specs/2026-07-23-pwa-navigation-fallback-fail-safe-design.md`.
 
 ## The app shell is never served stale

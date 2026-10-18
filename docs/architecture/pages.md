@@ -13,8 +13,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   "FOLLOW-UP") fails it.
 - **One URL per artifact, nothing forwarded.** The flat `/walkthrough/…`,
   `/review/…`, `/share/…`, `/storyboard/…`, `/narrative/…`, `/ddd-release/…`
-  and the pre-tenancy `/w/<uuid>/…` are a plain server 404 saying links now
-  carry the workspace (`config/views.py::flat_artifact_gone`, matched by
+  and the pre-tenancy `/w/<uuid>/…` are a plain server 404, reachable signed
+  out, saying links now carry the workspace (`config/views.py::flat_artifact_gone`, matched by
   `FLAT_ARTIFACT_PATH` before the SPA catch-all). Build links with
   `scoped_path` / `scoped_path_or_none` (`apps/workspaces/services.py`) or
   `useScopedPath` (`frontend/src/lib/scopedLinks.ts`); neither has a flat
@@ -103,6 +103,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
     thread; HTML bodies render only in a `sandbox=""` iframe behind a no-network
     CSP, meta refreshes stripped; attachments are
     presigned download links. No address → points to Settings → Email.
+  - **Skills** — catalog, and **History** (`skills/history`): how each skill
+    changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Capabilities** (`capabilities`) — the cloud capabilities the agent
     declares (`GET /api/agents/{slug}/capabilities`): kind, description,
     region/stack or pool slots, effective limits (manifest lowered by the
@@ -111,8 +113,6 @@ Every browser-facing address canopy-web serves. The SPA route table is
     Revoke (`PUT /api/capabilities/grants`, `DELETE /api/capabilities/grants/{id}`);
     a grant may only lower the manifest's limits and the server's refusal is
     shown verbatim. Everyone else reads it with a line saying an admin grants.
-  - **Skills** — catalog, and **History** (`skills/history`): how each skill
-    changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Settings** — everything that configures the agent, grouped by question:
     people and roles (owner + one roster of every member's role on the agent,
     why, and what they can reach — `GET /api/agents/{slug}/access`; admins
@@ -202,7 +202,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   critique above the round it shaped; co-sign arcs tying joint proposals), then
   the board tasks it produced. Derived, nothing stored (`apps/huddles`,
   `GET /api/huddles/`); content gated per round turn by `turn_access`. Also an
-  agent rail section.
+  agent rail section. `huddles/groups/:slug` (a work group's old page) redirects to the
+  project check-in it became (matched on `legacy_slug`), else to `/huddles`.
 - **`/threads/:id`** — a direct, bounded agent-to-agent conversation: purpose,
   participants, how it ended, each message. Frame + limits stored in
   `apps/threads`; messages are tagged turns, refused at enqueue by
@@ -314,6 +315,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/app`** — the door into the app: → the active workspace (signed out,
   Google sign-in first). The site's Sign in and `LOGIN_REDIRECT_URL`.
 - **`/about`** — the public explainer, chrome-less, live counts.
+- **`/get-started`** — public (no login): the three steps to use a canopy agent
+  in your own Claude Code; signed in, it lists your workspaces' agents with
+  their install and setup commands.
 - **`/supervisor`** — cross-fleet screens: Feed (home), **Waiting on you**
   (`GET /api/tasks/?waiting=me`, the same `TaskCard` tagged with its agent,
   actionable in place; `?tab=inbox` lands here), Sessions, Agents, Runners
@@ -393,7 +397,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `/auth/slack/{install,callback,link}/` — browser legs of sign-in/connect flows.
 - `/oauth/*`, `/.well-known/*`, `/api/hcp/oauth/*` — OAuth/HCP documents and
   endpoints ([`mcp-surface.md`](mcp-surface.md), [`hcp-service.md`](hcp-service.md),
-  [`host-grant-contract.md`](host-grant-contract.md)).
+  [host grant contract](../../sdk/python/README.md#host-grant-contract-v1)).
 - `/embed/chat`, `/embed/widget.js` — the one framable page and the widget
   loader ([`embedding-a-canopy-agent.md`](embedding-a-canopy-agent.md)).
 - `/w/<ws>/walkthrough/<id>/content`, `/w/<ws>/marketplace.json`,

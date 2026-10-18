@@ -64,7 +64,7 @@ canopy-runtime publish-capabilities --spec runtime.yaml --agent <slug> \
 It validates every manifest and sends the whole list in one
 `PUT /api/agents/{slug}/capabilities`. canopy-web validates again (same model), reads
 each stack's Outputs, and refuses the publish (422, naming what is wrong) unless every
-stack meets §2 — including, on a 0.9.0+ stack, that every `exec.allow` entry is on the
+stack meets §2 and is not another agent's (its `Owner` Output) — including, on a 0.9.0+ stack, that every `exec.allow` entry is on the
 stack's `ExecAllow` and that `max_lease_s` is within its `MaxInstanceLifetimeSeconds`.
 Idempotent. A capability missing from the list is **retired** and its live leases
 released. The caller must be the agent's owner or an admin, or the agent's own login (its
@@ -196,7 +196,7 @@ it (a laptop session). PAT-authenticated; every route is also an MCP tool.
 
 | Route | Body → response |
 |---|---|
-| `POST /api/capabilities/leases` | `{agent, capability, params?, turn_id?}` → lease. Returns at once: `provisioning` (launched with `ClientToken=lease_id`) or `queued` with `position` |
+| `POST /api/capabilities/leases` | `{agent, capability, params?, turn_id?}` → lease. Returns at once: `provisioning` (launched with `ClientToken=lease_id`) or `queued` with `position`. 422 for an undeclared capability or a bad param; 403 without a grant (§3) |
 | `GET /api/capabilities/leases/{id}?wait_s=0..20` | → lease. **The heartbeat**; while provisioning it reads `ready.json`. `wait_s` long-polls (below) |
 | `DELETE /api/capabilities/leases/{id}` | → lease, `released`; the machine is terminated. Idempotent |
 | `POST /api/capabilities/leases/{id}/exec` | `{argv[], timeout_s=600}` → `{lease_id, exec_id, timeout_s}`. 422 unless `argv[0]` is on `exec.allow`; 409 unless ready. `timeout_s` is capped at the time the lease has left |
@@ -241,14 +241,14 @@ build them.
   turn) and the lease is released when that turn ends.
 - **Caps:** at most `max_concurrent` machines per agent capability, counting holding
   leases plus any of this broker's tagged instances no lease accounts for (except one whose
-  lease has just ended). Over the cap, leases queue FIFO and are promoted as machines free
+  lease has already ended: it was terminated a moment ago). Over the cap, leases queue FIFO and are promoted as machines free
   up.
 
 **Operating it** (workspace-scoped; all also MCP tools):
 
 | Route | |
 |---|---|
-| `GET /api/capabilities/leases?agent=&capability=&status=&since=&limit=` | → `{leases: [lease], truncated}`, newest first; `status` is one status, a comma list, or `live`. Member, or the agent's own login. A read: no heartbeat |
+| `GET /api/capabilities/leases?agent=&capability=&status=&since=&limit=` | → `{leases: [lease], truncated}`, newest first; `status` is one status, a comma list, or `live` (queued, provisioning, ready); `limit` 1–500 (default 100). Member, or the agent's own login. A read: no heartbeat |
 | `GET /api/capabilities/spend?since=&until=&agent=&capability=` | → `{since, until, rows: [{agent, capability, leases, machine_seconds, live}], total_machine_seconds}`: machine time from `provisioning_at` to `ended_at` (or now), clipped to the window (default the last 7 days) |
 | `POST /api/capabilities/leases/{id}/force-release` | `{reason?}` → lease. Ends a live lease and terminates its machine **even if the lease already ended**. `integrations` or the agent's admins |
 | `POST /api/agents/{slug}/capabilities/{name}/terminate-orphans` | → `{agent, capability, orphans, gone}`: the sweep's machine pass, now. `integrations` or the agent's admins; 502 if EC2 cannot be listed |
@@ -350,8 +350,8 @@ its own values; there is no default or shared value across slots.
 | Route | Gate | Body → response |
 |---|---|---|
 | `PUT /api/agents/{slug}/capabilities/{name}/slots/{slot}` | workspace admin (`integrations`), or the agent's own login | `{"public": {k: v\|null}?, "secret": {k: v\|null}?}` → the masked slot |
-| `GET /api/agents/{slug}/capabilities/{name}/slots` | member, or the agent's own login | → `{agent, capability, slots: [masked slot]}`, one per declared slot, in order |
-| `DELETE /api/agents/{slug}/capabilities/{name}/slots/{slot}` | as PUT | → 204, idempotent |
+| `GET /api/agents/{slug}/capabilities/{name}/slots` | member, or the agent's own login | → `{agent, capability, slots: [masked slot]}`, one per declared slot, in order; 422 on an ec2-ephemeral capability |
+| `DELETE /api/agents/{slug}/capabilities/{name}/slots/{slot}` | as PUT | → 204, idempotent; also removes an undeclared slot's data |
 
 A **masked slot** is `{slot, declared, public, secret_keys, updated_at, updated_by, held,
 lease_id}`: public values, the NAMES of the secret keys, and whether (and which) live lease

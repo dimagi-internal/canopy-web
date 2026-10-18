@@ -74,8 +74,8 @@ label `canopy_host`), `.conformance`.
   the sdist + wheel to a GitHub Release; hosts pin
   `dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v<version>#subdirectory=sdk/python`.
 - **Touching `sdk/python/src` requires that bump** (and `canopy_sdk.__version__`
-  + `CHANGELOG.md`) — guarded in the `Backend tests` job, which also runs the
-  SDK's own suite.
+  + `CHANGELOG.md`) — guarded in the `Runner packages` job (which also runs the
+  SDK's own suite), required through the `Backend tests` gate.
 
 ## The embedded widget is canopy's chat page
 

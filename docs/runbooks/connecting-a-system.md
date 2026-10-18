@@ -49,8 +49,8 @@ ambiguous once two workspaces hold it, and canopy refuses rather than guesses.
 Three rows above are **typed-once production state that exists in no file**:
 the Connected site row, the signing key's value, and ACE's published interface.
 Rebuild the database and they are gone; nothing in CI would notice. This is the
-same shape as the hand-made IAM grants `CLAUDE.md` complains about under
-Deployment — recorded here so it is at least *known*, not so it is fine.
+same shape as the hand-applied IAM grants in
+[`deploy.md` § AWS IAM](../architecture/deploy.md#aws-iam) — recorded here so it is at least *known*, not so it is fine.
 
 Reproducing them is §4.
 
@@ -82,7 +82,7 @@ people; a *permanently* broken URL eventually does.
 
 ### Turning on host grants (a site lets the agent act as its visitor)
 
-The wire contract is `docs/architecture/host-grant-contract.md`. canopy's half
+The wire contract is [`sdk/python/README.md` § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1). canopy's half
 needs two keys and one row; nothing here can assert a user — the host signs
 every grant, canopy only redeems.
 
@@ -190,7 +190,7 @@ retaining Claude keys. Two steps, one on each side:
    verify it (it is an attestation, recorded with who made it), so declare it only for
    a box that uses zero-data-retention keys.
 2. **The host asks for it**: set `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["zdr"]` and pin
-   `dimagi-canopy` 0.6.0. Every visitor assertion then carries the requirement, and
+   the current `dimagi-canopy` ([SDK README § Install](../../sdk/python/README.md#install)). Every visitor assertion then carries the requirement, and
    that visitor's conversation runs only on a flagged runner. There is no fallback: with
    no ZDR runner online the turn says so and waits.
 

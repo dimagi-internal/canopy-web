@@ -13,8 +13,9 @@ is `apps/canopy_sessions/access.py` (see `docs/architecture/tenancy.md`).
   into one of twelve states: `picking_up`, `queued_behind`, `waiting_runner`,
   `unrouted`, `working`, `blocked`, `paused` (pending) and `done`, `cancelled`,
   `missed`, `failed`, `lost` (terminal).
-- **Queued is three states** (`picking_up` / `waiting_runner` / `unrouted`) because
-  the remedy differs — wait, open the laptop, or fix the agent's routing — and no
+- **Queued is four states** (`picking_up` / `queued_behind` / `waiting_runner` /
+  `unrouted`) because the remedy differs — wait (for a runner, or for the turn
+  ahead of it), open the laptop, or fix the agent's routing — and no
   client can derive those facts itself. A channel may collapse states, but only
   from the full set.
 - **Not a column.** It is a function of rows that change on their own clock
@@ -109,7 +110,7 @@ an emdash task name alone is not an identity.
   reaches the agent exactly as typed (the agent learns who is asking from the
   caller envelope via the `caller_context` hook). `persist_transcript_rows` links a
   transcript row to the earliest of this session's claimed, unlinked chat-send
-  turns (`authorship.is_chat_send`, claimed in the last 7 days) whose `prompt` is
+  turns (`authorship.is_chat_send`, sent in the last 7 days) whose `prompt` is
   byte-for-byte the row's text, in send order; `Message.author` / `source_turn_id`
   come from that turn's initiator. No match → `author=None` (correct for a line
   typed straight into emdash).
@@ -129,7 +130,7 @@ an emdash task name alone is not an identity.
   `staleness.SESSION_LIVE_WINDOW` (3 min). `reported_at` is stamped only by the
   report loop (`harness.services.replace_reported_sessions`), so "a runner is
   reporting an emdash task for this" is observable.
-- The laptop runner re-reports its whole open-task set on a ~10s heartbeat and skips
+- The laptop runner re-reports its whole open-task set every ~10s (`session_report_seconds`) and skips
   the report entirely if it cannot read emdash, so absence is an observation and a
   returning runner revives its own sessions. Don't depend on a close signal — emdash
   hard-deletes closed tasks. The cloud runner does not report, so "unseen" must not

@@ -285,7 +285,7 @@ export const routeTable: RouteObject[] = [
 
       // --- Tenant-scoped surfaces under /w/:workspace ---
       { path: '/w/:workspace', element: <WorkspaceIndex /> },
-      // Workspace settings — ONE surface, four sections. Each section keeps its
+      // Workspace settings — ONE surface, several sections. Each section keeps its
       // own URL so a deep link still names a place ("the Slack settings"), and
       // still loads only its own data.
       {

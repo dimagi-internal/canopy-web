@@ -1057,8 +1057,8 @@ class ProjectParticipant(models.Model):
 class ProjectBacking(models.Model):
     """Where one backer stands on a project — a person or an agent, never both.
 
-    Backing is a SIGNAL, not a gate (decision 4(b) of
-    `2026-10-16-huddle-outcomes-multiplayer-design.md`): starting a proposed
+    Backing is a SIGNAL, not a gate (decision 4(b), approved in
+    `2026-10-16-work-group-huddles-design.md`): starting a proposed
     project is its decision card's, and no number of backers starts it. What
     this row buys is that "Echo backs · Eva backs with changes: … · Shayoni
     passes: …" is a row on the project, not a sentence in a huddle transcript.

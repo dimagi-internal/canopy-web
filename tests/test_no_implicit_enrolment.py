@@ -236,21 +236,15 @@ def test_ensure_member_is_no_longer_called_from_any_create_path():
 
     root = pathlib.Path(__file__).resolve().parent.parent
     allowed = {
-        # The four deliberate doors, and nothing else. Each is either an
-        # explicit human action or configured server-side by an owner; none can
-        # be reached as a side effect of writing a row. See
-        # docs/architecture/roles.md, "How you get into a workspace".
+        # The deliberate doors, and nothing else. Each is an explicit human
+        # action; none can be reached as a side effect of writing a row. See
+        # docs/architecture/access.md, "Getting into a workspace".
         "apps/workspaces/services.py",      # ensure_member itself (default-workspace bootstrap)
         "apps/workspaces/api.py",           # workspace creation (creator = owner)
         "apps/workspaces/testing.py",       # fixtures
-        # App-credential token exchange. Legitimate because the workspace comes
-        # ONLY from the credential's server-side row (`provision_workspace`),
-        # never from the request — an owner configured it deliberately, and the
-        # grant is audited. This is the door roles.md calls the fourth.
-        "apps/tokens/exchange_api.py",
-        # An agent's OWN login, created for its canopy-pat (`canopy agent vault`). Takes a
-        # workspace admin or owner — the people who could invite it anyway — and makes a
-        # brand-new, password-less user linked to one agent. roles.md lists it.
+        # An agent's OWN login, created for its canopy-pat (`canopy agent vault`). Takes an
+        # agent admin with members.manage — people who could invite it anyway — and makes a
+        # brand-new, password-less user linked to one agent.
         "apps/agents/agent_login.py",
     }
     offenders = []

@@ -14,7 +14,7 @@ There are two ladders, and they are different questions:
 * an **agent role** says what a person may make one *agent* do.
 
 THE rule that joins them is one function, `apps/agents/access.decide(agent, who,
-*, verified, origin, capability=None)`, which returns a `Decision(role, access,
+*, verified, origin, capability=None, turn=None)`, which returns a `Decision(role, access,
 capability, may_request_auto, may_pin_runner, manual_only, basis, reason)`. Every
 door that makes an agent do work asks it (see "Where it is asked" below);
 `tests/test_access_matrix.py` asks it through every door. Don't write a second
@@ -59,20 +59,34 @@ fails on a fourth door, and `tests/test_no_implicit_enrolment.py` pins
   **owner** — owners of a parent workspace included — is emailed (and pushed) a
   deep link to the request's page,
   `/w/:workspace/settings/access-requests/:id`, where one of them **approves** at
-  **viewer**, **editor** or **admin** (no higher than they may grant) or
+  **viewer**, **editor** or **admin** (an owner any of them; an admin only below
+  admin — `permissions.may_manage_member`) or
   **denies**, with an optional reason. The requester is emailed the outcome. One
   open request per person per workspace; asking again is idempotent. `GET
   /api/workspaces/requestable` lists where you may ask. Notifications go through
   the invite mechanism (labs SES) plus Web Push and are best-effort: a failure
   never fails the request — it is stored on the request (`notify_result`) and
   written to the event log (`source=workspaces.access`, `warn`).
-* **Creating a workspace** makes you its **owner**.
+* **Creating a workspace** makes you its **owner** — subject to
+  `services.can_create_workspace`: an *invite-admitted* user holding no membership may
+  not, or invite-admission would become transitively delegable (create a workspace, mint
+  invites, and each invitee clears the login gate too). `/api/me/` reports
+  `can_create_workspace` so the UI never offers a button that 403s.
 * **An agent's own login** (not a person). `POST /api/agents/{slug}/canopy-token`, run by
   `canopy agent vault`, creates the login an agent signs in to canopy as when it has none:
   a brand-new, password-less **editor** from the agent's mailbox address, linked to that
-  one agent. Only a workspace **admin** or **owner** may — who could have invited it — and
+  one agent. Only an agent admin who is also a workspace **admin** or **owner** may — who could
+  have invited it — and
   an address that is already a canopy user is refused, never adopted
-  (`apps/agents/agent_login.py`).
+  (`apps/agents/agent_login.py`). Moving the agent (`POST /api/agents/{slug}/move`)
+  brings that login into the destination as an editor on the same bar — only when the
+  mover holds `members.manage` there; otherwise the move reports it and adds nobody.
+
+There is no other way in. A connected site's visitor is a **contact**, never a member
+(`WorkspaceMembership.provisioned_by_app` is provenance on old rows only), and
+`access_request_domains` means "may ask", never "may join". A request cannot probe
+tenants: a workspace whose domains do not match yours and one that does not exist return
+the **same 404**. Approval is upgrade-only, like an invite, so it never demotes a member.
 
 **Auto-approve** (`Workspace.auto_approve_role`, owner-set at
 `PUT /api/workspaces/{slug}/access-settings`): blank is off, and every request
@@ -270,7 +284,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   (`confined`/`full`), capability, turn mode, runner kind
   (`emdash`/`cloud`/`remote`), and reach (`paused`/`offline`, below). A blank
   condition means any. A rule needs at
-  least one. Its action is `reject` or `allow`. It also carries a reason and two
+  least one. Its action is `reject`, `allow` or `auto` (below). It also carries a reason and two
   notice switches (sender, owner), and it can be enabled or disabled.
 * **Where it is evaluated.** At enqueue, beside `_apply_capability`, for rules
   that need no runner (no turn-mode or runner-kind condition). And in
@@ -389,6 +403,10 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
 * **`ship_grant`** — when ANOTHER agent's verified login that is this agent's
   owner or admin dispatched the turn at it, push / PR / merge in this agent's OWN
   repo are pre-approved even in `manual`. Nothing else is.
+* **`sender_trust`** — `{email, reason, expires_at, active}` when an email turn's
+  sender was tied to a member although THIS message is not aligned, by a temporary
+  `SenderTrust` an agent admin set for that address (`verified` stays false); null
+  otherwise.
 * **`system_account`** — `{id, name, description, workspace}` when the asker is
   a system account (an automated sender, see "System accounts"); null for a
   person. The same object is in `who.system_account`.
@@ -406,7 +424,7 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
   the note) in the activity drill-down. canopy writes it; a runner cannot post
   that kind.
 * **`person`** (v3) — what canopy knows about the HUMAN asking:
-  `{id, display_name, email, workspace, facts[], see_all}` (plus `grant`, `recall`, `projects`).
+  `{id, display_name, email, workspace, facts[], see_all}` (plus `hcp`, `grant`, `recall`, `record`, `projects`).
   null only when the asker is not a human (canopy, another agent's login, a
   system account, unknown). See "What agents know about a person" below.
 * **`trigger.kind`** (v3) — what canopy-initiated work the turn is
@@ -463,9 +481,13 @@ tool; and beside every delivered prompt — the runner leaves
   never grants. Exact-argument scoping stays the hook's job.
 * **A confined session never holds the runner owner's PAT.** It reaches canopy's
   MCP with a **caller token** (`apps/harness/caller_tokens.py`, issued by
-  `harness.claiming.issue_credentials`): tools run as the caller (no canopy user
-  at all for an outside contact), and only the tools the capability lists exist
-  (`apps/mcp/turn_scope.py`).
+  `harness.claiming.issue_credentials`, `cct_…`), minted per confined turn at claim
+  and bound to its conversation; the canopy plugin's `headersHelper` sends it from
+  the session's profile. It resolves to the conversation's CURRENT turn: tools run as
+  that turn's caller (no canopy user at all for an outside contact), and only the
+  tools the capability lists exist (`apps/mcp/turn_scope.py`, `agent ∩ caller`).
+  Expired, long-finished, or a conversation whose current turn is not confined → it
+  authenticates nothing; `who_is_asking` answers only about its own conversation.
 * **A confined turn holds no credentials it does not need.** canopy refuses it
   the owner's GitHub token (`agents.delegations.github_token_for_turn` → 409).
   The cloud runner builds its env from an allowlist (`_confined_env` in
@@ -550,50 +572,14 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   of the agent may call it but sees only turns the turn ACL already shows them.
   No other agent, and no plain member, can read them. A fact's `source_turn` is
   a link, readable only by whoever can already read the turn.
-* **The person's own settings decide what agents get — per session.** Two
-  features, record and use, each with a canopy-level `available` + `default`
-  (`Person.hcp_*_available` / `hcp_*_default`, `PUT /api/people/me/agent-memory/`
-  `{record?: {available?, default?}, use?: {…}}`) and a per-session override
-  (`SessionAgentMemory`, `PUT /api/people/me/sessions/{id}/agent-memory/`
-  `{record?, use?}` = `on|off|inherit`). Effective for a turn = available AND
-  (that turn's session's override, else default); a turn with no chat session
-  uses the defaults; a session never turns on what is not available (403).
-  Everything starts unavailable; Jonathan is record available + on by default,
-  use not available (migration `contacts/0019`).
-  * record, "Agents may learn about me", gates WRITES: HCP add/create/update/
-    delete, the legacy `POST /api/people/{id}/facts/` by an agent's login, and
-    the envelope's `record` hint.
-  * use, "Agents may use what they've learned", gates READS: HCP search/get, and
-    the facts and `recall` in the envelope's `person` block.
-  * These settings are POLICY, never a grant. An agent is served only under a
-    grant the person gave THAT agent in a session (`hcp.issue_agent_grant`,
-    `POST /api/people/me/sessions/{id}/agent-grants/`): "allow for this session"
-    (temporary, ≤ 24 h, ends with the session) and then, as a separate act,
-    "keep allowing" (persistent). Nothing is presumed. See `hcp-service.md`.
-  * A refused operation is `scope-denied`: first the switch
-    (`hcp_api._principal(need=)` → `hcp.require(person, need, turn)`), then the
-    agent's grant (`hcp.NOT_GRANTED`). With nothing granted for what is on, the
-    block has `grant: null`.
-  * The block always carries `hcp: {record, use, available: {record, use},
-    session, agent, granted: {record, use}, awaiting_grant}` — `record`/`use` are
-    the switch AND this agent's grant; `awaiting_grant` lists features on in this
-    session that the person has not granted this agent yet (the UI asks, never the
-    agent). An envelope read is logged only when a read is actually granted.
-  * Record-only builds a model of the person that no agent sees yet. Without
-    `use` an agent cannot search before adding, so duplicates and contradictions
-    are left to HCP's conflict quarantine.
-  * Nothing is deleted when anything goes off. The person's own access (page,
-    export, audit) never changes.
-  * Only the person changes them — the canopy level as themself, a session's
-    override only for a session they created (`created_by`; anyone else 404) —
-    never an agent's login, a caller token, a system account or an admin; the
-    routes are off MCP.
-  * Each change is its own audit event: `agentRecord|agentUse.enabled|disabled`
-    (available), `.defaultOn|defaultOff` (default), and `sessionRecord|sessionUse.
-    on|off|inherit` (a session's override). These are canopy's own types, beyond
-    the spec's required set.
-  * Coverage counts only people who make record available (a session may still
-    turn it off; coverage does not see that).
+* **The person decides what agents get — per session, per agent.** Two switches,
+  record (gates writes) and use (gates reads), each canopy-level `available` +
+  `default` with a per-session override; they are policy, never a grant — an agent is
+  served only under a grant the person gave THAT agent, and only for people the
+  `HCP_PEOPLE` rollout gate names. Switches, grants, the envelope's `hcp` block and
+  the rollout gate: [`hcp-service.md`](hcp-service.md) § "The person's record/use
+  switches", § "canopy's own agents: grants per agent, only by the person's act" and
+  § "Who has memory at all — the rollout gate".
 * **The subject sees everything.** `GET /api/people/me/` (the page
   `/people/me/`): every live fact in every workspace, and the last
   50 reads. Every read — the envelope's and the API's — is a `PersonAccess` row.
@@ -610,7 +596,8 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
 ### Project participants, coverage, and contact notes
 
 * **Project participants.** `AgentProject.participants` (through
-  `ProjectParticipant`: `role` free text ≤ 80, `source` fact | turn | manual,
+  `ProjectParticipant`: `role` free text ≤ 80, `source` fact | turn | manual | summary |
+  review | backing | reply | checkin,
   `created_at`; one row per project and person, the FIRST source wins). Filled
   automatically (`apps/agents/participants.py`): any fact filed against a project
   makes its subject a participant (`people.record_fact`), and a task in a project
