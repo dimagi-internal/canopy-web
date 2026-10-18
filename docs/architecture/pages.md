@@ -177,6 +177,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
       each agent's ordered runners and source rules, unrouted agents and agents
       with no live runner, what stops if a runner goes dark, and routes whose
       runner's owner is not in the agent's workspace (they can never claim).
+      Its runner table is Health's (`components/runners/RunnersTable.tsx`);
+      opening a row also highlights the agents that route to it.
       Routes are edited on the agent. Admin and above (`logs.read`), checked on
       every descendant.
     - **topology/agents** — agent-to-agent access matrix over the subtree
@@ -228,7 +230,12 @@ Every browser-facing address canopy-web serves. The SPA route table is
   (the topology's rows: status, whether it runs current code, its own failing
   checks, how many agents it serves, when it last sent its usage report, and how
   many of its local sessions canopy has no record of — its admins open the list,
-  ask for a rescan and send chosen sessions up).
+  ask for a rescan and send chosen sessions up). That table is THE runner table,
+  shared with Topology → Runners; a row opens why the box is in its state in its
+  own words, the fix for a known cause (`topology.remedy`), its code against the
+  expected sha, every check's detail and the agents it serves.
+  Every figure opens its source: a tile filters the agents table, a count opens
+  the agent's page for it, a cell opens the setting it shows.
   An agent's row opens its steps — linked when the viewer is its owner or an admin
   (`can_fix`), else an email to the owner listing what is left. Renders, never decides.
 - **`/analytics`** — the second tab of Health (same gate). Turns, how they ended,
