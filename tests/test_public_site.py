@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.test import Client, override_settings
+from django.test import Client
 
 from config import public_site
 from config.static_middleware import CanopyWhiteNoiseMiddleware
@@ -38,6 +38,14 @@ def dists(tmp_path, settings):
     public_site._pages.cache_clear()
 
 
+@pytest.fixture
+def login_required(settings):
+    """The production login gate. Through the `settings` fixture, never
+    `@override_settings`: mixed with the fixture writes these tests make, the
+    decorator's change outlived the test (conftest `_settings_are_restored`)."""
+    settings.REQUIRE_AUTH = True
+
+
 def _body(resp) -> str:
     return b"".join(resp.streaming_content).decode() if resp.streaming else resp.content.decode()
 
@@ -47,7 +55,7 @@ def member(db):
     return get_user_model().objects.create_user(username="m", email="m@dimagi.com", password="x")
 
 
-@override_settings(REQUIRE_AUTH=True)
+@pytest.mark.usefixtures("login_required")
 def test_signed_out_root_is_the_site(dists, db):
     resp = Client().get("/")
     assert resp.status_code == 200
@@ -55,7 +63,7 @@ def test_signed_out_root_is_the_site(dists, db):
     assert resp["Cache-Control"] == "no-cache"
 
 
-@override_settings(REQUIRE_AUTH=True)
+@pytest.mark.usefixtures("login_required")
 def test_signed_in_root_is_the_site_too(dists, member):
     """For now `/` is the site for everyone (owner, 2026-10-06), so it can be seen
     while signed in; `/app` is the way into the app."""
@@ -64,21 +72,21 @@ def test_signed_in_root_is_the_site_too(dists, member):
     assert _body(c.get("/")) == SITE_HOME
 
 
-@override_settings(REQUIRE_AUTH=True)
+@pytest.mark.usefixtures("login_required")
 def test_app_is_the_door_into_the_app(dists, member):
     c = Client()
     c.force_login(member)
     assert _body(c.get("/app")) == SPA
 
 
-@override_settings(REQUIRE_AUTH=True)
+@pytest.mark.usefixtures("login_required")
 def test_signed_out_app_goes_through_sign_in_and_back(dists, db):
     resp = Client().get("/app")
     assert resp.status_code == 302
     assert resp["Location"].endswith("/accounts/google/login/?next=%2Fapp")
 
 
-@override_settings(REQUIRE_AUTH=True)
+@pytest.mark.usefixtures("login_required")
 @pytest.mark.parametrize("path", ["/how-it-works", "/how-it-works/"])
 def test_site_pages_are_public(dists, db, path):
     resp = Client().get(path)
@@ -86,21 +94,21 @@ def test_site_pages_are_public(dists, db, path):
     assert _body(resp) == SITE_PAGE
 
 
-@override_settings(REQUIRE_AUTH=True)
+@pytest.mark.usefixtures("login_required")
 def test_site_pages_are_served_to_members_too(dists, member):
     c = Client()
     c.force_login(member)
     assert _body(c.get("/how-it-works")) == SITE_PAGE
 
 
-@override_settings(REQUIRE_AUTH=True)
+@pytest.mark.usefixtures("login_required")
 def test_an_app_route_is_never_the_sites(dists, db):
     resp = Client().get("/supervisor")
     assert resp.status_code == 302
     assert "/accounts/google/login/" in resp["Location"]
 
 
-@override_settings(REQUIRE_AUTH=True)
+@pytest.mark.usefixtures("login_required")
 def test_without_a_site_build_root_still_asks_for_sign_in(tmp_path, settings, db):
     settings.SITE_DIST_DIR = tmp_path / "missing"
     public_site._pages.cache_clear()

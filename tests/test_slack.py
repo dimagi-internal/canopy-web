@@ -1759,6 +1759,39 @@ def test_a_runner_dying_mid_turn_is_noticed_and_pinged_once(slack, linked, hal, 
     assert ping["thread_ts"] == "1700000000.000100"
 
 
+def test_a_working_turn_that_goes_quiet_says_so_and_recovers(slack, linked, hal, alice,
+                                                            django_capture_on_commit_callbacks):
+    """2026-10-17: a box whose token was revoked kept heartbeating, claimed turns
+    and could report nothing back — each read "working on this" for its whole
+    lease. After QUIET_AFTER_SECONDS the line states the fact instead, in Slack
+    date tokens so the sweep does not edit it every minute."""
+    from apps.harness.models import TurnEvent
+    from apps.harness.turn_status import QUIET_AFTER_SECONDS
+
+    runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    ago = timezone.now() - _dt.timedelta(seconds=QUIET_AFTER_SECONDS + 60)
+    Turn.objects.filter(pk=turn.pk).update(claimed_at=ago)
+    TurnEvent.objects.filter(turn=turn).update(ts=ago)
+    slack_status.sweep(force=True)
+    text = slack.said("chat.update")[-1]["text"]
+    assert f"*jj-mbp* took this at <!date^{int(ago.timestamp())}^" in text
+    assert "nothing has come back from it since" in text
+
+    n = len(slack.said("chat.update"))
+    slack_status.sweep(force=True)
+    assert len(slack.said("chat.update")) == n, "a quiet line must not be edited every sweep"
+
+    # Something comes back: the line is a working line again …
+    harness_services.append_events(turn, [{"kind": "assistant", "payload": {"text": "on it"}}])
+    slack_status.sweep(force=True)
+    assert "working on this on *jj-mbp*" in slack.said("chat.update")[-1]["text"]
+    # … until that, too, is a while ago.
+    later = timezone.now() - _dt.timedelta(seconds=QUIET_AFTER_SECONDS + 30)
+    TurnEvent.objects.filter(turn=turn).update(ts=later)
+    slack_status.sweep(force=True)
+    assert "Nothing new from *jj-mbp* since" in slack.said("chat.update")[-1]["text"]
+
+
 def test_the_runner_coming_back_is_pinged_and_the_line_recovers(slack, linked, hal, alice,
                                                                 django_capture_on_commit_callbacks):
     runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)

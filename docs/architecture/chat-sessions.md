@@ -25,7 +25,7 @@ is `apps/canopy_sessions/access.py` (see `docs/architecture/tenancy.md`).
   session socket, drawn by `canopy-ui/chat/turnStatus.ts`
   (`frontend/packages/canopy-ui/src/chat/turnStatus.ts`). The embedded widget gets
   it because it mounts the same `ChatPanel`.
-- **A quiet `working` turn says so.** The status carries `claimed_at` and `last_progress_at` (the claim, or the newest ledger event) for `working`; after `QUIET_AFTER_MS` (5 min) with nothing back — counting messages on screen and a reply still streaming — the chat kit replaces silence with a fact: "cloud-ec2-2 took this 6m ago and nothing has come back from it since." No verdict ("stuck"); it never speaks over a pending dialog.
+- **A quiet `working` turn says so.** The status carries `claimed_at` and `last_progress_at` (the claim, or the newest ledger event) for `working`; after `QUIET_AFTER_MS` (5 min) with nothing back — counting messages on screen and a reply still streaming — the chat kit replaces silence with a fact: "cloud-ec2-2 took this 6m ago and nothing has come back from it since." No verdict ("stuck"); it never speaks over a pending dialog. Slack says the same from `TurnStatus.quiet_since` (`apps/harness/turn_status.py`, `QUIET_AFTER_SECONDS`) in Slack date tokens — "*cloud-ec2-2* took this at 15:45 and nothing has come back from it since" — so its sweep edits the line only when something changes, never every minute.
 - **Every channel reacts to the same three events:** enqueue
   (`harness.signals.turn_status_changed` — enqueue appends no `status` event, and
   it is the moment someone is watching), a `status` event row, and the throttled

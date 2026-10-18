@@ -32,6 +32,7 @@ import json
 import logging
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from apps.harness import runner_requirements as rr
 from apps.harness import turn_status as _ts
@@ -143,7 +144,7 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
 
     from .services import session_url
 
-    st = ts.derive(turn, reach=reach, cloud=cloud)
+    st = ts.derive(turn, reach=reach, cloud=cloud, progress_at=ts.progress_at(turn))
     session = turn.chat_session
     agent = f"`{st.agent_slug}`" if st.agent_slug else "the agent"
     runner = f"*{st.claimed_by}*" if st.claimed_by else "a runner"
@@ -193,6 +194,15 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
             line += (f" A runner admin can move it to *{cloud.name}* now — a fresh session there, "
                      f"so anything {runner} had not pushed stays behind.")
             button = cloud
+    elif st.state == ts.WORKING and (quiet := st.quiet_since(timezone.now())) is not None:
+        # The same fact the chat kit states, in times rather than "for 7m": the
+        # sweep re-renders every few seconds and a minute counter would edit the
+        # message every minute. This text changes only when something comes back.
+        claimed = st.claimed_at or quiet
+        line = (f":hourglass: {runner} took this at {_when(claimed)} and nothing has come back "
+                f"from it since." if quiet <= claimed else
+                f":hourglass: Nothing new from {runner} since {_when(quiet)} — {agent} was "
+                f"working on this.")
     elif st.state == ts.WORKING:
         line = f":gear: {agent} is working on this on {runner}."
     elif st.state == ts.BLOCKED:

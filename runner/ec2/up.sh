@@ -247,8 +247,10 @@ OUT=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
 IP=$(echo "$OUT" | python3 -c "import sys,json;print(next(o['OutputValue'] for o in json.load(sys.stdin) if o['OutputKey']=='PublicIp'))")
 KID=$(echo "$OUT" | python3 -c "import sys,json;print(next(o['OutputValue'] for o in json.load(sys.stdin) if o['OutputKey']=='KeyPairId'))")
 
-# Pull the CFN-managed private key out of SSM for SSH access.
-KEYFILE="./${STACK}-key.pem"
+# Pull the CFN-managed private key out of SSM for SSH access. KEY_DIR (default:
+# here) exists for the tests, which run up.sh in parallel and must not share — or
+# delete — one another's key file in this directory.
+KEYFILE="${KEY_DIR:-.}/${STACK}-key.pem"
 "${AWS[@]}" ssm get-parameter --name "/ec2/keypair/${KID}" --with-decryption \
   --query 'Parameter.Value' --output text > "$KEYFILE"
 chmod 600 "$KEYFILE"
