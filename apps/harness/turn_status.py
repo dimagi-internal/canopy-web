@@ -76,6 +76,9 @@ PENDING = frozenset({PICKING_UP, QUEUED_BEHIND, WAITING_RUNNER, UNROUTED, WORKIN
 STUCK = frozenset({WAITING_RUNNER, UNROUTED, BLOCKED, PAUSED})
 #: A failure reason is one sentence on a chat line, not a traceback.
 DETAIL_MAX = 300
+#: How long a WORKING turn may say nothing before a channel says so. The chat kit
+#: carries the same number (`canopy-ui/chat/turnStatus.ts::QUIET_AFTER_MS`).
+QUIET_AFTER_SECONDS = 5 * 60
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,17 @@ class TurnStatus:
     #: token was revoked, so every report it made was refused).
     claimed_at: datetime | None = None
     last_progress_at: datetime | None = None
+
+    def quiet_since(self, now: datetime) -> datetime | None:
+        """When anything last came back from a WORKING turn, if that was at least
+        QUIET_AFTER_SECONDS before `now` — the fact a channel states instead of
+        "working" ("nothing back from cloud-ec2-2 since 15:50"). None otherwise,
+        and never over a dialog the agent is waiting on."""
+        if self.state != WORKING or self.menu_pending or self.last_progress_at is None:
+            return None
+        if (now - self.last_progress_at).total_seconds() < QUIET_AFTER_SECONDS:
+            return None
+        return self.last_progress_at
 
     @property
     def settled(self) -> bool:
@@ -358,9 +372,14 @@ def resolve(turn: Turn) -> TurnStatus:
     menu = False
     if turn.chat_session_id:
         menu = pending_menu(turn.chat_session) is not None
-    progress = None
-    if turn.status in (Turn.CLAIMED, Turn.RUNNING):
-        from django.db.models import Max
+    return derive(turn, reach=reach, cloud=cloud, menu_pending=menu,
+                  progress_at=progress_at(turn))
 
-        progress = turn.events.aggregate(at=Max("ts"))["at"]
-    return derive(turn, reach=reach, cloud=cloud, menu_pending=menu, progress_at=progress)
+
+def progress_at(turn: Turn) -> datetime | None:
+    """When the newest ledger event of a claimed/running turn landed, else None."""
+    if turn.status not in (Turn.CLAIMED, Turn.RUNNING):
+        return None
+    from django.db.models import Max
+
+    return turn.events.aggregate(at=Max("ts"))["at"]

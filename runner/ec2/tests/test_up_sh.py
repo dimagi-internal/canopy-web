@@ -109,15 +109,16 @@ def _up(tmp, canopy, *args) -> subprocess.CompletedProcess:
     (home / ".claude" / "canopy").mkdir(parents=True, exist_ok=True)
     (home / ".claude" / "canopy" / "workbench-token").write_text("t\n")
     base = f"http://127.0.0.1:{canopy.server_address[1]}"
-    try:
-        return subprocess.run(
-            ["bash", str(SCRIPT), "--base-url", base, "--allow-dirty", *args],
-            capture_output=True, text=True, timeout=120, cwd=str(EC2),
-            env={"PATH": f"{tmp / 'bin'}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
-                 "HOME": str(home)})
-    finally:
-        for pem in EC2.glob("canopy-cloud-runner*-key.pem"):
-            pem.unlink()
+    # Each run's key file in its OWN dir: under xdist several tests run up.sh at
+    # once with the same stack name, and a shared ./<stack>-key.pem was written,
+    # chmod'ed and deleted by different workers mid-run (a `set -e` exit, 2026-10-17).
+    keys = tmp / "keys"
+    keys.mkdir(exist_ok=True)
+    return subprocess.run(
+        ["bash", str(SCRIPT), "--base-url", base, "--allow-dirty", *args],
+        capture_output=True, text=True, timeout=120, cwd=str(EC2),
+        env={"PATH": f"{tmp / 'bin'}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+             "HOME": str(home), "KEY_DIR": str(keys)})
 
 
 def _calls(state):

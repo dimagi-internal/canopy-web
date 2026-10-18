@@ -37,6 +37,27 @@ def default_workspace(db):
 
 
 @pytest.fixture(autouse=True)
+def _settings_are_restored():
+    """Fail the test that LEAKS a settings change, not the unlucky one after it.
+
+    `@override_settings` on a test that also writes through pytest-django's
+    `settings` fixture unwinds out of order: the decorator restores first, then
+    the fixture restores the snapshot it took INSIDE the override — so the
+    override outlives the test. That left REQUIRE_AUTH on for the rest of an
+    xdist worker, and whichever anonymous API test ran next there failed with
+    the login middleware's 401 (tests/test_public_site.py, 2026-10-17). Use one
+    mechanism per test: the `settings` fixture.
+    """
+    from django.conf import settings
+
+    before = settings.REQUIRE_AUTH
+    yield
+    assert settings.REQUIRE_AUTH == before, (
+        f"this test left settings.REQUIRE_AUTH={settings.REQUIRE_AUTH!r} (was {before!r}) — "
+        "don't mix @override_settings with writes through the `settings` fixture")
+
+
+@pytest.fixture(autouse=True)
 def _no_live_dns(monkeypatch):
     """No test reaches a real DNS resolver. The interface's mail-domain warning
     (apps/contacts/domain_proof.py) asks `_dmarc.<domain>` on every interface
