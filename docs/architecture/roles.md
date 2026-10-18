@@ -48,10 +48,10 @@ is an admin of every workspace below it** (`WorkspaceMembership.INHERITS_DOWN`).
 inherited. A parent's editors and viewers have no access to a child, and a child's members have
 none to its parent or siblings.
 
-Admin was added by owner decision (Jonathan, 2026-10-16: "fix it so admin flows down"): an org
-admin who could not see a division they were expected to run — ada@ was blind to `strategy`
-while administering `dimagi` — read as a bug, not a boundary. Admin still holds no keys
-(`permissions.OWN`), so an inherited admin runs a division without holding its agents' keys.
+Admin flows down by the owner's explicit choice: an org admin is expected to run its divisions,
+so one who cannot see a division (`strategy` while administering `dimagi`) is a bug, not a
+boundary. Admin still holds no keys (`permissions.OWN`), so an inherited admin runs a division
+without holding its agents' keys.
 
 The narrowness is the design. `dimagi` auto-approves an access request from every `@dimagi.com`
 address (`auto_approve_role = editor`), so if its
@@ -79,8 +79,8 @@ the same principle through `creation_workspace`.
 
 | Request | Scope of a list / search |
 |---|---|
-| pinned — `/api/w/<ws>/…`, or the MCP `workspace` argument | that workspace **and every workspace below it you belong to** (`pinned_read_scope`, 2026-10-12) |
-| unpinned, every membership in ONE tree (`dimagi` + `connect`) | the union, as before — one org's own data |
+| pinned — `/api/w/<ws>/…`, or the MCP `workspace` argument | that workspace **and every workspace below it you belong to** (`pinned_read_scope`) |
+| unpinned, every membership in ONE tree (`dimagi` + `connect`) | the union — one org's own data |
 | unpinned, memberships in MORE THAN ONE tree (`dimagi` + `marshellis`) | **422** `workspace-required`, naming the caller's workspaces grouped by tree |
 | unpinned, a connected site acting for its visitor (delegated token) | the site's own workspace — a site is one tenant's |
 
@@ -89,11 +89,10 @@ it to clients). The rule fails closed: nothing is guessed.
 
 ### A pinned read covers the workspaces below the pin
 
-Owner decision (Jonathan, 2026-10-12): *a pinned READ of workspace W returns W plus every
-DESCENDANT of W that the caller is a member of* — directly, or by owning an ancestor (inherited
-ownership). Before it, a pinned read was exactly W, so `list_agents(workspace="dimagi")` missed
-every agent living in `connect` and every client fanned one read out per workspace to put the
-organisation back together.
+This is deliberate: *a pinned READ of workspace W returns W plus every DESCENDANT of W that the
+caller is a member of* — directly, or by owning an ancestor (inherited ownership). So
+`list_agents(workspace="dimagi")` includes every agent living in `connect`, and a client need not
+fan one read out per workspace to put the organisation back together.
 
 | Pinned read by… | `/api/w/dimagi/…` | `/api/w/connect/…` |
 |---|---|---|
@@ -145,8 +144,8 @@ is answered from PINNED reads. On a tenant page it is retried pinned to the URL'
 a root page (`/supervisor`, `/sessions`, `/activity`, `/schedules` — the fleet views, which span
 every workspace you belong to) it is looped over the `pins` the refusal names (each covers the
 workspaces below it — usually one read per organisation), and the lists merged — so the server never answers a cross-organisation query and
-the fleet view still shows everything. (It first retried a root page pinned to the first
-membership, which hid every other workspace's agents on `/supervisor`.)
+the fleet view still shows everything. Don't retry a root page pinned to one membership: that
+hides every other workspace's agents on `/supervisor`.
 
 A stricter rule — *every* unpinned list refused, even inside one tree — is a possible
 follow-up; it would break every flat-route client in the Dimagi fleet today.
@@ -257,7 +256,7 @@ resolve its secrets, vault keys and the owner's GitHub token. A teammate whose o
 an agent's work therefore needs an admin grant on that agent.
 
 **A box serves only the workspaces it is enrolled in, and every workspace below one of them**
-(`RunnerEnrollment`, 2026-10-11; a division created later is covered too, separate roots never
+(`RunnerEnrollment`; a division created later is covered too, separate roots never
 are) — and only while its owner holds `agent.work` (editor and above) in each: the two intersect in
 `harness.routing.runner_tenant_slugs`, so enrollment narrows what membership allows and never
 widens it. Pairing enrolls a box in its pairing workspace only; a new membership enrolls
@@ -288,7 +287,7 @@ Deliberately off the ladder:
   authorize out by hand: a non-member of an EXISTING agent's workspace gets 404 (a 403 would
   make it an oracle over every agent name, since `Agent.slug` is globally unique).
 - **`GET /{slug}/credentials/resolve`** returns plaintext, bearer-only, to a box that may hold
-  the agent (above) — or, since canopy#850, to the agent's owner or an admin (`Agent.is_admin`)
+  the agent (above) — or to the agent's owner or an admin (`Agent.is_admin`)
   resolving for a local Claude Code session. The audit event records which (`via: runner |
   admin`). A browser session only ever sees the masked status.
 - **`GET /{slug}/credentials/access`** (member, session or bearer) answers the same gate for
@@ -302,11 +301,14 @@ A personal access token, or an MCP client signed in through OAuth (every REST ro
 MCP tool), acts as its user with exactly that user's role — no more, and no less. There
 are no web-app-only actions: inviting, changing roles, an agent's interface, credentials
 and admins, the shared vault, Slack configuration all work over MCP for someone whose role
-allows them. Browser-only gates were tried on 2026-10-02 and removed the same day: they
-protected against a leaked token by taking from the MCP exactly the administration it is
-most useful for. The one deliberate omission is `create_token`, which is not an MCP tool
-(it would put a fresh raw PAT into a chat transcript); mint tokens in the web app or with
-`/canopy:canopy-web-pat-mint`. The MCP sign-in consent page itself still requires a person,
+allows them. Don't add browser-only gates for administration: they would protect against a
+leaked token by taking from the MCP exactly the administration it is most useful for. The
+deliberate exceptions: `create_token` is not an MCP tool (it would put a fresh raw PAT into a
+chat transcript; mint tokens in the web app or with `/canopy:canopy-web-pat-mint`), and an
+action that reveals or re-keys a secret needs a passkey step-up a token can never hold
+(`apps/passkeys/stepup.py`) — passkeys, the vault keyset, revealing a zero-knowledge value,
+approving a device key. Each such route decides whether a token is refused or let through
+without the step-up (a PAT writing a credential from `canopy vault import` is let through). The MCP sign-in consent page itself still requires a person,
 or a token could sign itself in.
 
 ### Leaving a workspace takes what it carried
@@ -343,7 +345,7 @@ to every member of it. So *where a session is filed* decides who can see it.
    `PATCH /api/me/session-workspace/` (MCP `set_session_workspace_preference`,
    `{"workspace": "<slug>"}`; null clears it). Membership is re-checked at filing time, so
    leaving the workspace or being demoted to viewer silently falls back.
-3. The runner's own workspace (the behaviour before 2026-10-11).
+3. The runner's own workspace.
 
 Only NEW sessions are filed. The ~10s report loop reuses a session's binding and never
 rewrites its workspace, so existing sessions are not re-filed when the default changes, and
@@ -362,11 +364,11 @@ and the runner binding hang off the session, and session turns derive theirs fro
 Storyboards, reviews and walkthroughs that merely *link* to a session keep their own
 workspace; the link grants nothing.
 
-**The harness** — schedules and turns — is gated too, and it had to be, because it is where
-the table's promises actually cash out. A schedule is prompt text a runner later executes *as
-the agent*, holding the agent's resolved credentials, and `run-now` means immediately; a turn
-is the same thing without the wait. Both were membership-only, so a `viewer` could write a
-prompt of their choosing and fire it at the fleet. Now:
+**The harness** — schedules and turns — is gated too, because it is where the table's
+promises actually cash out. A schedule is prompt text a runner later executes *as the agent*,
+holding the agent's resolved credentials, and `run-now` means immediately; a turn is the same
+thing without the wait. Gated on membership alone, a `viewer` could write a prompt of their
+choosing and fire it at the fleet. So:
 
 - Schedule create / update / delete / run-now require `editor`, enforced inside
   `schedule_services._resolve_agent` — **not** in the Ninja handlers, because the MCP tools
@@ -381,9 +383,8 @@ prompt of their choosing and fire it at the fleet. Now:
 
 **The product surfaces** — walkthroughs, shareouts, reviews, DDD runs and
 narratives, storyboards, origin issues, the event log, feedback dispositions — gate every
-MUTATION on `editor` in the row's workspace and every READ on membership (2026-10-02; until
-then a `viewer` could do all of it, including approving a DDD gate and wiping a whole
-feed with `{}`). Three shapes recur, all pinned by `tests/test_product_acl.py`:
+MUTATION on `editor` in the row's workspace and every READ on membership — a `viewer` must not
+approve a DDD gate or wipe a whole feed with `{}`. Three shapes recur, all pinned by `tests/test_product_acl.py`:
 
 - **By-id writes resolve through the read gate first**: a non-member gets 404, a viewer who
   can already see the row gets 403, an editor writes.
@@ -397,15 +398,15 @@ feed with `{}`). Three shapes recur, all pinned by `tests/test_product_acl.py`:
 The anonymous token reads (`?t=` on walkthroughs and storyboards, `link` reviews, storyboard
 feedback) are a property of the link, not of a role, and are unchanged.
 
-**A row with no workspace is visible to nobody.** Projects (since retired), reviews, walkthroughs and origin
-issues each had a `workspace IS NULL ⇒ any signed-in user` leg — the NULL-means-allow shape.
-They fail closed now; `projects/0009` and `issues/0003` homed the stragglers first (a
-walkthrough with no workspace is still readable by its share token).
+**A row with no workspace is visible to nobody.** Reviews, walkthroughs and origin issues fail
+closed on a NULL workspace; never give them a `workspace IS NULL ⇒ any signed-in user` leg —
+the NULL-means-allow shape (a walkthrough with no workspace is still readable by its share
+token).
 
 ## What is about to change
 
 `Agent` currently carries **both** an `owner` (a person) and a `workspace` (a tenant), which
-is why "who owns this agent" has had two answers. The agreed direction is that an agent's
+is why "who owns this agent" has two answers. The agreed direction is that an agent's
 **definition is shared** across tenants — one `echo`, and improving echo improves it
 everywhere — while what you own is an **instance** of it. Forking produces a different agent,
 not a detached instance.

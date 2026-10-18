@@ -20,9 +20,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `useScopedPath` (`frontend/src/lib/scopedLinks.ts`); neither has a flat
   fallback — a row with no workspace has no address (`Unhomed`). Every URL
   field the API returns is under `/w/<ws>/`
-  (`tests/test_api_urls_are_workspace_scoped.py`). Stored flat links were
-  rewritten by `walkthroughs/0010` + `manage.py rewrite_flat_links`
-  (`apps/walkthroughs/flat_links.py`).
+  (`tests/test_api_urls_are_workspace_scoped.py`). `manage.py
+  rewrite_flat_links` (`apps/walkthroughs/flat_links.py`) rewrites a stored
+  flat link to its scoped address.
 - **Anonymous visitors reach only the scoped viewers**: `/w/<ws>/{walkthrough,
   review,share,storyboard,narrative,ddd-release}/…` plus the walkthrough
   content stream (`apps/common/middleware.py::_SCOPED_VIEWER` — the trailing
@@ -50,7 +50,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `/w/:workspace/agents`. An agent's projects and tasks (`AgentProject` /
   `AgentTask`) are canopy's one project system.
 - **`/projects/:agent/:ref`** (+ `/people/:person`) → redirects to the
-  project's one page, `/agents/:agent/projects/:ref` (the old team view).
+  project's one page, `/agents/:agent/projects/:ref`.
   **An idea is a task with `kind: "idea"`** — never inferred; `work` is the
   default — and it must carry a person's own words (at least one `human_why`,
   enforced on create and patch). The work toward it is its subtasks. Its stage
@@ -124,7 +124,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     history, and Zero-knowledge — turn on / grant pending / rotate / recover
     with code / turn off, every encryption in the browser, the one-time
     recovery-code dialog, the stated trust caveat; on a ZK agent Save and
-    Reveal encrypt/decrypt locally — #1550).
+    Reveal encrypt/decrypt locally).
   - Redirects (query kept): `work`, `items` → `tasks`; `inbox`, `needs-you` →
     `tasks?waiting=me`; `overview`, `work-products` → `projects`; `syncs` →
     `turns#status-reports`; `history` → `skills/history`; `credentials` →
@@ -244,7 +244,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   it without login. Bytes at `/walkthrough/:id/content`
   (`apps/walkthroughs/streaming.py`, a bare Django view — Range support,
   sandbox CSP).
-- **`/review/:id`** — retired as a narrative surface: a narrative review is
+- **`/review/:id`** — not a narrative surface: a narrative review is
   read, commented on and decided on its **storyboard**, so this address
   forwards there (`apps/reviews/views.py`, a bare 302 before the SPA; the SPA
   route asks `GET /api/reviews/{rid}/destination` for in-app navigation) to
@@ -351,10 +351,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
   plus the MCP address and `claude mcp add` line), personal access tokens, and
   runner device keys (`#device-keys`, shown when you have any or arrive by a
   box's `approve_url` with `?device_key=<id>`, which marks that row; approve /
-  revoke — Canopy Vault, #1538; approving one offers the vault-key grant for
-  zero-knowledge agents waiting on it, #1550), and your vault key
+  revoke — Canopy Vault; approving one offers the vault-key grant for
+  zero-knowledge agents waiting on it), and your vault key
   (`#vault-key`: set up with a PRF passkey or a passphrase + Secret Key with a
-  one-time Emergency Kit, add a passkey/passphrase, start a new one — #1550).
+  one-time Emergency Kit, add a passkey/passphrase, start a new one).
 - **`/sessions`** — your shared Claude Code transcripts (`/canopy:share-session`).
 - **`/system`** — capability catalog + Workflows view, read live from the
   canopy plugin.

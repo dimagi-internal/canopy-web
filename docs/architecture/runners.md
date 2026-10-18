@@ -45,7 +45,7 @@ GitHub token (re-asked at issue, since an owner can be demoted mid-turn), pins,
 and every routing write. A teammate whose laptop should run an agent's work needs
 an admin grant on that agent. An agent's own canopy login is not a holder.
 
-## Which agents a box runs — one rule (canopy-web#1563)
+## Which agents a box runs — one rule
 
 `routing.runner_routes_agent(runner, agent)` answers "could this box ever claim
 a turn of this agent?" with the claim's own static gates and nothing else:
@@ -87,12 +87,12 @@ A resolve refused because an APPROVED box does not run the agent is routing, not
 a misused token. The 401 says `reason: not_routed`, and it is recorded as an
 `agent.credentials.refused` event; the agent's owner is not emailed. A missing or
 unapproved proof is still a `device-proof` alert (`reason: no_valid_proof`).
-Before this, the vault counted disabled rows and ignored enrollment and the hold
-check, and the refresh walked the whole registry. So cloud-ec2-2, which never
-ran fizzy, asked for fizzy's vault every 30 minutes, and once fizzy became
-zero-knowledge, every refusal emailed its owner (2026-10-17).
+Don't widen a reader past the rule (counting disabled rows, skipping enrollment
+or the hold check, walking the whole registry): a box then asks every 30 minutes
+for the vault of an agent it never runs, and once that agent is zero-knowledge
+every refusal emails its owner.
 
-The refresh itself (`agent prepare --runner --credentials-only`, canopy#973)
+The refresh itself (`agent prepare --runner --credentials-only`)
 asks only for what that pass uses: the gog token (if declared) and the two vault
 keys. Each turn's claim refreshes the agent's full env, naming its turn.
 
@@ -375,13 +375,12 @@ which logins, in what order, and what the box last reported about each
   then records that a missing `default` means removed.
 
 **Long-lived tokens keep the box alive.** A full login renews itself, and a renewal
-can fail: on 2026-10-15 cloud-ec2-2's login stopped renewing after both backup
-tokens had been removed, and the box stopped. So:
+can fail; a box whose backup tokens have all been removed then stops. So:
 - The page always offers **Create a long-lived token** (`POST …/mint` with `slot:
   primary|secondary` runs `claude setup-token` on the box; the token lands in that
   slot). Its buttons say "token", never "Sign in with Claude": offered side by
-  side under the same words (2026-10-14) an operator got a token believing it was
-  the full login.
+  side under the same words, an operator takes a token believing it is the full
+  login.
 - `POST …/credential` refuses (422) a write that would clear the **last** backup
   token; replace it first. The page disables that Remove.
 - A box with no usable credential at all waits in `fetch_and_stage_credential`,

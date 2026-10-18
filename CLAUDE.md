@@ -2,7 +2,7 @@
 
 Collaborative web workspace for the canopy agent ecosystem — first-class AI agents, demo-driven development (DDD), walkthroughs, and shareouts.
 
-> **How to write this file.** It is loaded into every session, so it holds only the current state an agent needs before it knows what it is working on: how to run, test and ship, and the invariants nothing may break — each as a rule plus a pointer. Subject detail goes in `docs/architecture/<topic>.md` (index below). History — what something replaced, what broke, when, who decided — goes in the PR description, not here or in the topic docs. `tests/test_claude_md_budget.py` fails above 60k characters.
+> **How to write this file.** It is loaded into every session, so it holds only the current state an agent needs before it knows what it is working on: how to run, test and ship, and the invariants nothing may break — each as a rule plus a pointer. Subject detail goes in `docs/architecture/<topic>.md` (index below). History — what something replaced, what broke, when, who decided — goes in the PR description, not here or in the topic docs. `tests/test_claude_md_budget.py` fails above 60k characters or on a date or PR reference.
 
 ## Architecture
 
