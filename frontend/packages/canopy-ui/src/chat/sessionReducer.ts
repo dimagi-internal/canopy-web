@@ -310,9 +310,15 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         role === "tool_use"
           ? (block.id as string | undefined)
           : (block.tool_use_id as string | undefined);
+      // A live row has no ordinal (turn_index -1), and an older server names
+      // every one of them `seq:-1` — so its message id says nothing about which
+      // call it is. Matching on it made each new live call rewrite the first
+      // row still carrying that id, in place: a "running" tool rendered above
+      // the previous reply instead of at the bottom.
+      const live = frame.data.turn_index == null || frame.data.turn_index < 0;
       const existing = prev.messages.find(
         (m) =>
-          m.id === id ||
+          (m.id === id && m.role === role && !(live && id === "seq:-1")) ||
           (m.role === role &&
             correlation !== undefined &&
             correlation !== "" &&
@@ -330,8 +336,10 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
             m === existing
               ? {
                   ...m,
-                  id,
-                  turn_index: frame.data.turn_index ?? m.turn_index,
+                  // ...but a late live frame for a row already settled must
+                  // not hand it back a placeholder's identity or ordinal.
+                  id: live ? m.id : id,
+                  turn_index: live ? m.turn_index : frame.data.turn_index!,
                   content: block,
                   plaintext,
                   ...(role === "tool_result" && "app" in frame.data && frame.data.app
@@ -347,9 +355,9 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         id,
         // Fall back to appending after the newest row when the server didn't
         // send an ordinal — order still holds, since frames arrive in order.
-        turn_index:
-          frame.data.turn_index ??
-          (prev.messages[prev.messages.length - 1]?.turn_index ?? 0) + 1,
+        turn_index: live
+          ? (prev.messages[prev.messages.length - 1]?.turn_index ?? 0) + 1
+          : frame.data.turn_index!,
         role,
         content: block,
         plaintext,

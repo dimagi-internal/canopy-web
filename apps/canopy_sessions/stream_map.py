@@ -78,18 +78,32 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
     # runner ships the transcript's own block types. Both reach the same frame —
     # a renderer should never have to know which producer it was talking to.
     if kind in ("tool_start", "tool_use"):
-        mid = resolve_message_id(seq)
+        mid, ordinal = _tool_identity(seq, payload.get("id"), "use", resolve_message_id)
         return [{"event": "chat.tool_use",
                  "data": {"parent_message_id": None, "tool_message_id": mid,
-                          "turn_index": seq, "block": payload}}]
+                          "turn_index": ordinal, "block": payload}}]
     if kind in ("tool_end", "tool_result"):
-        mid = resolve_message_id(seq)
+        mid, ordinal = _tool_identity(seq, payload.get("tool_use_id"), "result", resolve_message_id)
         return [{"event": "chat.tool_result",
                  "data": {"parent_message_id": None, "tool_message_id": mid,
-                          "turn_index": seq, "block": payload}}]
+                          "turn_index": ordinal, "block": payload}}]
     if kind == "error":
         mid = resolve_message_id(seq)
         return [{"event": "chat.stream_error",
                  "data": {"message_id": mid, "detail": payload.get("detail") or payload.get("text", "error")}}]
     # status / heartbeat / question / approval carry no client-visible stream frame.
     return []
+
+
+def _tool_identity(seq, call_id, side: str, resolve_message_id: Callable[[int], str]):
+    """(message id, ordinal) for a tool row.
+
+    A live row from a hook or ACP (`seq` -1) has no transcript ordinal, so
+    `resolve_message_id` names every one of them `seq:-1` — one id shared by
+    every tool call in the session, which the client upserts on. Each new call
+    then rewrote the first row still holding it, wherever that row sat. Name it
+    by its own call instead, and send no ordinal rather than a -1 that sorts
+    above everything."""
+    if isinstance(seq, int) and seq < 0 and call_id:
+        return f"live:{side}:{call_id}", None
+    return resolve_message_id(seq), seq
