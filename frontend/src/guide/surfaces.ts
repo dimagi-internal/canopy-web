@@ -366,15 +366,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     audience: 'Anyone following how the fleet works as a team',
     what: 'Every huddle in this workspace — a team of agents syncing in rounds, led by one of them — with its type, team, leader, members, rounds dispatched and outcomes filed. Derived from turns; nothing is stored for it.',
     needsFirst: 'A team leader running `canopy huddle plan`.',
-    actions: ['Open a huddle', 'See which huddles are still in flight', 'Open or create a work group'],
-  },
-  {
-    path: '/w/:workspace/huddles/groups/:slug',
-    title: 'Work group',
-    audience: 'A work group\'s lead and members, and the workspace admins who set it up',
-    what: 'One work group — its lead, Slack channel, agents and cadence — and every run: announced in the channel, confirmed or skipped by the lead, what was read, the Slack post and the result. The channel is read only when the lead presses Confirm in Slack.',
-    needsFirst: 'A workspace owner or admin creating the work group on the Huddles page.',
-    actions: ['See each run and what it read', 'Open the Slack post or the huddle it produced', 'Edit or delete the group (admins)'],
+    actions: ['Open a huddle', 'See which huddles are still in flight', "Open a project's check-ins"],
   },
   {
     path: '/w/:workspace/huddles/:id',
@@ -403,8 +395,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/agents/:slug/projects/:ref',
     title: 'Project',
     audience: 'Anyone in the workspace — the link to send a teammate',
-    what: "A project's one page. What it is (its outcome in a line, its links — the live app, the history docs — and who owns it); where it stands — what is built, what is in progress, and the decisions waiting on someone, one line each; the ideas, each with its status and whose it is in their own words; and the people behind them. Its editors also get the project's status, Drive folder and repo, task numbers on the ideas, the agent's tasks on the same card as the Tasks page, and the recent turns that touched them; a teammate sees none of that.",
-    actions: ['Add your idea (it goes on the list as proposed, in your words, and the agent and owner are told)', 'Mark your own idea shipped', 'See what each idea is waiting on', 'Open a contributor\'s page', 'Follow a project link', 'Change the status (editors)', 'Act on a task in place (editors)', 'Open a turn that touched the project (editors)'],
+    what: "A project's one page. What it is (its outcome in a line, its links — the live app, the history docs — and who owns it); where it stands — what is built, what is in progress, and the decisions waiting on someone, one line each; the ideas, each with its status and whose it is in their own words; and the people behind them; the tasks its check-ins proposed, to start or decline right there; its check-ins (recurring meetings: lead, agents, cadence, an optional Slack channel read only when the lead confirms) and their timeline. Its editors also get the project's status, Drive folder and repo, task numbers on the ideas, the agent's tasks on the same card as the Tasks page, and the recent turns that touched them; a teammate sees none of that.",
+    actions: ['Add your idea (it goes on the list as proposed, in your words, and the agent and owner are told)', 'Mark your own idea shipped', 'See what each idea is waiting on', 'Open a contributor\'s page', 'Follow a project link', 'Change the status (editors)', 'Act on a task in place (editors)', 'Open a turn that touched the project (editors)', 'Start, decline, back or comment on a proposed task', "Add, edit, run or delete a check-in (the project's owner, workspace admins)", 'Follow a check-in run to its huddle'],
   },
   {
     path: '/w/:workspace/agents/:slug/projects/:ref/people/:person',

@@ -336,9 +336,9 @@ def interactions(request: HttpRequest) -> HttpResponse:
     action_id = str(action.get("action_id") or "")
     if action_id in ingest.ACTIONS:
         return _ingest_click(payload, action_id, action)
-    from apps.huddles import groups
+    from apps.huddles import checkins
 
-    if action_id in groups.ACTIONS:
+    if action_id in checkins.ACTIONS:
         return _group_run_click(payload, action_id, action)
     if not (action_id.startswith(menus.PICK)
             or action_id in (menus.SUBMIT, menus.DISMISS, status.ROUTE_CLOUD)):
@@ -411,11 +411,11 @@ def _ingest_click(payload: dict, action_id: str, action: dict) -> HttpResponse:
 
 
 def _group_run_click(payload: dict, action_id: str, action: dict) -> HttpResponse:
-    """Confirm / Skip on a work group's announcement (apps/huddles/groups.py).
+    """Confirm / Skip on a project check-in's announcement (apps/huddles/checkins.py).
 
     Only the lead's click counts, and only on the post canopy made for that run
-    in that channel. Confirm is the one thing that reads a work group's channel."""
-    from apps.huddles import groups
+    in that channel. Confirm is the one thing that reads a check-in's channel."""
+    from apps.huddles import checkins
 
     installation = services.installation_for(str((payload.get("team") or {}).get("id") or ""))
     if installation is None:
@@ -428,11 +428,11 @@ def _group_run_click(payload: dict, action_id: str, action: dict) -> HttpRespons
         text="", ts=str(container.get("message_ts") or (payload.get("message") or {}).get("ts") or ""),
     )
     try:
-        note = groups.click(installation, run_id=str(action.get("value") or ""),
-                            slack_user_id=inbound.slack_user_id, channel_id=inbound.channel_id,
-                            message_ts=inbound.ts, confirm=action_id == groups.CONFIRM)
+        note = checkins.click(installation, run_id=str(action.get("value") or ""),
+                              slack_user_id=inbound.slack_user_id, channel_id=inbound.channel_id,
+                              message_ts=inbound.ts, confirm=action_id == checkins.CONFIRM)
     except Exception as e:  # noqa: BLE001
-        logger.exception("work group click failed")
+        logger.exception("check-in click failed")
         _record(installation, inbound, "failed", repr(e), level=Event.ERROR)
         note = "Something went wrong recording that. It has been logged; nothing was read."
     if note:

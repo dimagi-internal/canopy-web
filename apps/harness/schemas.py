@@ -1017,8 +1017,9 @@ class SchedulePreviewOut(Schema):
 
 
 class ScheduleAnnouncedOut(Schema):
-    """A work group's schedule fired: canopy announced a run in the group's Slack
-    channel (apps/huddles) and queued no turn — the lead confirms there first."""
+    """A project check-in's schedule fired (apps/huddles): canopy made a run. With
+    a channel it announced it there and queued no turn — the lead confirms there
+    first; without one the run's turn is queued (`status` "running")."""
 
     announced: bool = True
     run_id: int | None = None

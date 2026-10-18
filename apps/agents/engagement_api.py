@@ -63,12 +63,13 @@ def record_engagement_view(request: HttpRequest, payload: EngagementViewIn) -> d
 
 
 @router.get("/summary", response=EngagementSummaryOut,
-            summary="What people actually did with projects, huddles and work-group runs")
-def engagement_summary(request: HttpRequest, days: int = 14, group: str = "", agent: str = "") -> dict:
+            summary="What people actually did with projects, huddles and check-in runs")
+def engagement_summary(request: HttpRequest, days: int = 14, checkin: str = "", agent: str = "") -> dict:
     """Over the last `days` (default 14), in the workspaces you can list: event
     counts by kind and surface; the unique people who did anything; for each
     project proposed in the window, the time to its first human reaction, the time
-    to its decision, its backers and comments; the proposals nobody reacted to;
-    and work-group runs announced vs confirmed vs skipped vs expired, with the
-    median time to confirm. `group` (a work group slug) and `agent` narrow it."""
-    return engagement.summary(_listed_agent_workspace_ids(request), days=days, group=group, agent=agent)
+    to its decision, its backers and comments; the proposals nobody reacted to —
+    for proposed projects and for the tasks check-ins proposed; and check-in runs
+    announced vs confirmed vs skipped vs expired, with the median time to
+    confirm. `checkin` (a check-in's id, or its name) and `agent` narrow it."""
+    return engagement.summary(_listed_agent_workspace_ids(request), days=days, checkin=checkin, agent=agent)

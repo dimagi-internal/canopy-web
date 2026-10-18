@@ -2904,6 +2904,204 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/projects/{ref}/tasks/propose/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Propose a task in a project (or revise an open proposed task of the same title)
+         * @description The task-level twin of `projects/propose/`, and what a project's check-in
+         *     files: one task, `status=suggested`, in the project, its `plan` steps as
+         *     child tasks, and one linked `suggested` task on each partner's own board.
+         *     `run` names the check-in run it came from. 201 when created; 200 when an open
+         *     proposed task of the same title was revised instead (its backings go stale).
+         *     409 when that title was declined before and no `new_evidence` is given.
+         *     Start and Decline are the task's own approve and decline (`POST
+         *     …/tasks/{task}/actions`), by the project's owner, the check-in's lead, or a
+         *     workspace owner or admin. The project's agent itself, or an editor.
+         */
+        readonly post: operations["propose_task"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/tasks/{task}/backings/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Where everyone stands on a proposed task
+         * @description Oldest first. `stale` marks a backing of an earlier version; `mine` the caller's own. Members.
+         */
+        readonly get: operations["list_task_backings"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/tasks/{task}/backings/me/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Back a proposed task, back it with changes, or pass — as yourself
+         * @description Replaces your earlier stance. `line` (at most 280 characters) is required
+         *     unless you simply back it. You become one of the project's participants. Any
+         *     member; backing is a signal — it never starts the task.
+         */
+        readonly put: operations["back_task"];
+        readonly post?: never;
+        /** Withdraw your backing of a proposed task */
+        readonly delete: operations["unback_task"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/tasks/{task}/backings/agents/{backer}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Record an agent's stance on a proposed task (a co-sign)
+         * @description Called by `backer`'s own login, or by the project's agent's (`canopy huddle
+         *     file` records members' round-3 co-signs: co-sign → backs, amend →
+         *     backs_with_changes, decline → passes). Replaces that agent's earlier stance.
+         */
+        readonly put: operations["back_task_as_agent"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/checkins/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a project's check-ins
+         * @description The project's recurring meetings: cadence, lead, agents, channel (if any). Members.
+         */
+        readonly get: operations["list_project_checkins"];
+        readonly put?: never;
+        /**
+         * Add a check-in to a project
+         * @description The project's owner, or a workspace owner or admin. Checks the lead is in
+         *     the workspace (and, with a channel, in the channel) and that the project's
+         *     agent may run every other agent; with a channel, puts it on the agent's read
+         *     allow-list (reusing an entry already there — only an owner or admin adds a
+         *     new one); creates the schedule (`/canopy:huddle`, the check-in's cadence) on
+         *     the project's agent. Reads nothing: each run is read only when the lead
+         *     presses Confirm on its announcement in Slack. Without a channel, each run
+         *     queues the agent's turn directly and reads nothing.
+         */
+        readonly post: operations["create_project_checkin"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/checkins/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get one of a project's check-ins */
+        readonly get: operations["get_project_checkin"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a project's check-in
+         * @description The project's owner, or a workspace owner or admin. Takes the channel off
+         *     the agent's read allow-list only if this check-in put it there (and no other
+         *     check-in still uses it), deletes the schedule, and lapses any announcement
+         *     still waiting for a confirm. Its runs stay on the project's timeline.
+         */
+        readonly delete: operations["delete_project_checkin"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a project's check-in
+         * @description The project's owner, or a workspace owner or admin. Send only what changes
+         *     (`channel: ""` takes the channel off); every check runs again.
+         */
+        readonly patch: operations["update_project_checkin"];
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/checkins/{name}/run-now": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Run a project's check-in now (announces; never reads)
+         * @description The project's owner, or a workspace owner or admin. With a channel: posts
+         *     the announcement now — the channel is read only if the lead presses Confirm
+         *     in Slack. Without one: queues the agent's turn now (nothing to read).
+         */
+        readonly post: operations["run_project_checkin_now"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/checkin-runs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A project's check-in timeline
+         * @description Every check-in run on the project, newest first: who took part, the read
+         *     window, who confirmed it, the huddle, and what it proposed — tasks with their
+         *     live status and any projects they spawned (and, for a huddle from before
+         *     check-ins proposed tasks, the projects it proposed). No material.
+         */
+        readonly get: operations["list_project_checkin_runs"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/": {
         readonly parameters: {
             readonly query?: never;
@@ -8351,13 +8549,14 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * What people actually did with projects, huddles and work-group runs
+         * What people actually did with projects, huddles and check-in runs
          * @description Over the last `days` (default 14), in the workspaces you can list: event
          *     counts by kind and surface; the unique people who did anything; for each
          *     project proposed in the window, the time to its first human reaction, the time
-         *     to its decision, its backers and comments; the proposals nobody reacted to;
-         *     and work-group runs announced vs confirmed vs skipped vs expired, with the
-         *     median time to confirm. `group` (a work group slug) and `agent` narrow it.
+         *     to its decision, its backers and comments; the proposals nobody reacted to —
+         *     for proposed projects and for the tasks check-ins proposed; and check-in runs
+         *     announced vs confirmed vs skipped vs expired, with the median time to
+         *     confirm. `checkin` (a check-in's id, or its name) and `agent` narrow it.
          */
         readonly get: operations["engagement_summary"];
         readonly put?: never;
@@ -8368,7 +8567,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/huddle-groups/": {
+    readonly "/api/checkins/": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -8376,21 +8575,56 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * List work groups
-         * @description Work groups in your workspaces: a lead, a Slack channel, the agents that
-         *     work it, and its cadence.
+         * List check-ins across your projects
+         * @description Every check-in on a project in your workspaces — a navigation view; each
+         *     one's record lives on its project's page.
          */
-        readonly get: operations["list_huddle_groups"];
+        readonly get: operations["list_checkins"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/checkins/runs/{run_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get one check-in run, with its material
+         * @description One run: status, who took part, the read window and the channel material
+         *     it read (members of the project's workspace, and the project agent's own login).
+         */
+        readonly get: operations["get_checkin_run"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/checkins/runs/{run_id}/finished": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
         readonly put?: never;
         /**
-         * Create a work group
-         * @description Owner or admin. Checks the lead is in the workspace AND the channel, and that
-         *     the leader agent may run every other agent; then puts the channel on the leader's
-         *     read allow-list, creates its schedule (`/canopy:huddle`, the group's cadence) and,
-         *     with one agent, the group's project. Reads nothing: each run is read only when
-         *     the lead presses Confirm on its announcement in Slack.
+         * Report a check-in run done
+         * @description The project agent's own login only. Marks the run done, records how many
+         *     tasks it proposed, and (with a channel) posts one line in the announcement's
+         *     thread pointing at the result — the content stays in canopy.
          */
-        readonly post: operations["create_huddle_group"];
+        readonly post: operations["finish_checkin_run"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -8405,9 +8639,9 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Get one work group run, with its material
-         * @description One run: status, the read window and the channel material it read (members
-         *     of the group's workspace, and the leader agent's own login).
+         * Deprecated: GET /api/checkins/runs/{id}
+         * @description Kept for one release so an engine that still says `--group-run` reads its
+         *     run. Use `GET /api/checkins/runs/{id}`.
          */
         readonly get: operations["get_huddle_group_run"];
         readonly put?: never;
@@ -8428,59 +8662,11 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Report a work group run done
-         * @description The leader agent's own login only. Marks the run done and posts one line in
-         *     the announcement's thread pointing at the result — the content stays in canopy.
+         * Deprecated: POST /api/checkins/runs/{id}/finished
+         * @description Kept for one release so an engine that still says `--group-run` finishes
+         *     its run. Use `POST /api/checkins/runs/{id}/finished`.
          */
         readonly post: operations["finish_huddle_group_run"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/huddle-groups/{slug}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** Get one work group */
-        readonly get: operations["get_huddle_group"];
-        readonly put?: never;
-        readonly post?: never;
-        /**
-         * Delete a work group
-         * @description Owner or admin. Takes the channel off the leader's read allow-list (unless
-         *     another group still uses it), deletes the group's schedule, and lapses any
-         *     announcement still waiting for a confirm.
-         */
-        readonly delete: operations["delete_huddle_group"];
-        readonly options?: never;
-        readonly head?: never;
-        /**
-         * Change a work group
-         * @description Owner or admin. Sends only what changes; every check runs again (lead in the
-         *     workspace and the channel, leader may run the members).
-         */
-        readonly patch: operations["update_huddle_group"];
-        readonly trace?: never;
-    };
-    readonly "/api/huddle-groups/{slug}/runs": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * List a work group's runs
-         * @description Newest first: status, the read window, the Slack post, the result (no material).
-         */
-        readonly get: operations["list_huddle_group_runs"];
-        readonly put?: never;
-        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -15454,6 +15640,7 @@ export interface components {
              * @default
              */
             readonly notes: string;
+            readonly spawned_from?: components["schemas"]["SpawnedFromOut"] | null;
             /** Decision Task */
             readonly decision_task?: string | null;
             /** Decision Task Id */
@@ -15474,6 +15661,32 @@ export interface components {
             readonly comments?: readonly components["schemas"]["ProposalCommentOut"][];
             /** Partners */
             readonly partners?: readonly components["schemas"]["ProposalPartnerOut"][];
+        };
+        /**
+         * SpawnedFromOut
+         * @description The task a project grew out of: "from <task> in <project>".
+         */
+        readonly SpawnedFromOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Ref */
+            readonly ref: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Project Ref
+             * @default
+             */
+            readonly project_ref: string;
+            /**
+             * Project Name
+             * @default
+             */
+            readonly project_name: string;
+            /** Url */
+            readonly url: string;
         };
         /**
          * ProjectProposeIn
@@ -15505,6 +15718,16 @@ export interface components {
              * @default
              */
             readonly new_evidence: string;
+            /**
+             * From Task
+             * @default
+             */
+            readonly from_task: string;
+            /**
+             * Checkin
+             * @default
+             */
+            readonly checkin: string;
             /**
              * Group
              * @default
@@ -15541,6 +15764,615 @@ export interface components {
              * @default
              */
             readonly huddle_id: string;
+        };
+        /**
+         * ProposedTaskOut
+         * @description A check-in's proposed task as both the project page and the huddle page
+         *     render it: what it is, its decision (Start = approve, Decline = decline, the
+         *     task's own actions) and whether the reader may make it, where people stand,
+         *     what they said, its partners and any project it spawned.
+         */
+        readonly ProposedTaskOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent */
+            readonly agent: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Ref */
+            readonly ref: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "suggested" | "in_progress" | "done" | "declined";
+            /**
+             * Why
+             * @default
+             */
+            readonly why: string;
+            /**
+             * Done When
+             * @default
+             */
+            readonly done_when: string;
+            /** Plan */
+            readonly plan?: readonly string[];
+            /**
+             * Project Ref
+             * @default
+             */
+            readonly project_ref: string;
+            /**
+             * Project Name
+             * @default
+             */
+            readonly project_name: string;
+            /**
+             * Project Url
+             * @default
+             */
+            readonly project_url: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Checkin */
+            readonly checkin?: number | null;
+            /** Run */
+            readonly run?: number | null;
+            /**
+             * Huddle Id
+             * @default
+             */
+            readonly huddle_id: string;
+            /** Proposed At */
+            readonly proposed_at?: string | null;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /**
+             * Notes
+             * @default
+             */
+            readonly notes: string;
+            /**
+             * Decision Open
+             * @default false
+             */
+            readonly decision_open: boolean;
+            /**
+             * May Decide
+             * @default false
+             */
+            readonly may_decide: boolean;
+            /** Backings */
+            readonly backings?: readonly components["schemas"]["ProjectBackingOut"][];
+            /** Comments */
+            readonly comments?: readonly components["schemas"]["ProposalCommentOut"][];
+            /** Partners */
+            readonly partners?: readonly components["schemas"]["ProposalPartnerOut"][];
+            /** Spawned */
+            readonly spawned?: readonly components["schemas"]["SpawnedProjectOut"][];
+        };
+        /**
+         * SpawnedProjectOut
+         * @description A project a task grew into: "spawned → <project>".
+         */
+        readonly SpawnedProjectOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Ref */
+            readonly ref: string;
+            /** Name */
+            readonly name: string;
+            /** Status */
+            readonly status: string;
+            /** Url */
+            readonly url: string;
+        };
+        /** TaskProposeOut */
+        readonly TaskProposeOut: {
+            /** Created */
+            readonly created: boolean;
+            readonly task: components["schemas"]["ProposedTaskOut"];
+        };
+        /**
+         * TaskProposeIn
+         * @description Create or revise a proposed task in a project (`POST …/projects/{ref}/tasks/propose/`).
+         */
+        readonly TaskProposeIn: {
+            /** Title */
+            readonly title: string;
+            /** Why */
+            readonly why: string;
+            /** Done When */
+            readonly done_when: string;
+            /** Plan */
+            readonly plan?: readonly string[];
+            /** Partners */
+            readonly partners?: readonly string[];
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Run */
+            readonly run?: number | null;
+            /**
+             * New Evidence
+             * @default
+             */
+            readonly new_evidence: string;
+        };
+        /** CheckinOut */
+        readonly CheckinOut: {
+            /** Id */
+            readonly id: number;
+            /** Name */
+            readonly name: string;
+            readonly project: components["schemas"]["CheckinProjectOut"];
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Topic
+             * @default
+             */
+            readonly topic: string;
+            /**
+             * Lead Email
+             * @default
+             */
+            readonly lead_email: string;
+            /**
+             * Lead Slack Id
+             * @default
+             */
+            readonly lead_slack_id: string;
+            /**
+             * Channel Id
+             * @default
+             */
+            readonly channel_id: string;
+            /**
+             * Channel Name
+             * @default
+             */
+            readonly channel_name: string;
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
+            /** Agent */
+            readonly agent: string;
+            /** Format */
+            readonly format: string;
+            /**
+             * Cron
+             * @default
+             */
+            readonly cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            readonly timezone: string;
+            /**
+             * Next Runs
+             * @default []
+             */
+            readonly next_runs: readonly string[];
+            /** Schedule Id */
+            readonly schedule_id?: number | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+            /**
+             * Added Allowance
+             * @default false
+             */
+            readonly added_allowance: boolean;
+            /**
+             * Last Run Status
+             * @default
+             */
+            readonly last_run_status: string;
+            /**
+             * Legacy Slug
+             * @default
+             */
+            readonly legacy_slug: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Can Edit
+             * @default false
+             */
+            readonly can_edit: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** CheckinProjectOut */
+        readonly CheckinProjectOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Ref */
+            readonly ref: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Status
+             * @default
+             */
+            readonly status: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+        };
+        /**
+         * CheckinIn
+         * @description A new check-in on a project. `lead_email` is the lead's canopy email (a
+         *     member of the project's workspace — and, with a channel, of the channel).
+         *     `channel` is `#name` or a channel id, or blank for none (then nothing is
+         *     read and no announcement is posted: the schedule queues the turn directly).
+         *     `agents` always includes the project's agent (added when missing); every
+         *     other one must be an agent the project's agent can run.
+         */
+        readonly CheckinIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Topic
+             * @default
+             */
+            readonly topic: string;
+            /** Lead Email */
+            readonly lead_email: string;
+            /**
+             * Channel
+             * @default
+             */
+            readonly channel: string;
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
+            /** Cron */
+            readonly cron: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            readonly timezone: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+        };
+        /** CheckinPatch */
+        readonly CheckinPatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Topic */
+            readonly topic?: string | null;
+            /** Lead Email */
+            readonly lead_email?: string | null;
+            /** Channel */
+            readonly channel?: string | null;
+            /** Agents */
+            readonly agents?: readonly string[] | null;
+            /** Cron */
+            readonly cron?: string | null;
+            /** Timezone */
+            readonly timezone?: string | null;
+            /** Enabled */
+            readonly enabled?: boolean | null;
+        };
+        /** CheckinParticipantsOut */
+        readonly CheckinParticipantsOut: {
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly string[];
+            /**
+             * Lead Email
+             * @default
+             */
+            readonly lead_email: string;
+        };
+        /** CheckinRunOut */
+        readonly CheckinRunOut: {
+            /** Id */
+            readonly id: number;
+            /** Checkin */
+            readonly checkin?: number | null;
+            /**
+             * Checkin Name
+             * @default
+             */
+            readonly checkin_name: string;
+            readonly project: components["schemas"]["CheckinProjectOut"];
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Slot
+             * Format: date-time
+             */
+            readonly slot: string;
+            /**
+             * Manual
+             * @default false
+             */
+            readonly manual: boolean;
+            /** Status */
+            readonly status: string;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            readonly participants: components["schemas"]["CheckinParticipantsOut"];
+            /**
+             * Channel Id
+             * @default
+             */
+            readonly channel_id: string;
+            /**
+             * Channel Name
+             * @default
+             */
+            readonly channel_name: string;
+            /**
+             * Announce Ts
+             * @default
+             */
+            readonly announce_ts: string;
+            /**
+             * Slack Url
+             * @default
+             */
+            readonly slack_url: string;
+            /**
+             * Confirmed By Email
+             * @default
+             */
+            readonly confirmed_by_email: string;
+            /** Confirmed At */
+            readonly confirmed_at?: string | null;
+            /**
+             * Read Messages
+             * @default 0
+             */
+            readonly read_messages: number;
+            /**
+             * Read First Ts
+             * @default
+             */
+            readonly read_first_ts: string;
+            /**
+             * Read Last Ts
+             * @default
+             */
+            readonly read_last_ts: string;
+            /** Read Since */
+            readonly read_since?: string | null;
+            /**
+             * Material
+             * @default
+             */
+            readonly material: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Huddle Id
+             * @default
+             */
+            readonly huddle_id: string;
+            /**
+             * Huddle Url
+             * @default
+             */
+            readonly huddle_url: string;
+            /**
+             * Result Url
+             * @default
+             */
+            readonly result_url: string;
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+            /**
+             * Tasks Proposed
+             * @default 0
+             */
+            readonly tasks_proposed: number;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /**
+         * CheckinRunTaskOut
+         * @description A task a run proposed, with its live status and any project it spawned.
+         */
+        readonly CheckinRunTaskOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Ref */
+            readonly ref: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Spawned
+             * @default []
+             */
+            readonly spawned: readonly components["schemas"]["SpawnedProjectOut"][];
+        };
+        /**
+         * CheckinTimelineRunOut
+         * @description One run on the project's timeline: what it proposed, live.
+         */
+        readonly CheckinTimelineRunOut: {
+            /** Id */
+            readonly id: number;
+            /** Checkin */
+            readonly checkin?: number | null;
+            /**
+             * Checkin Name
+             * @default
+             */
+            readonly checkin_name: string;
+            readonly project: components["schemas"]["CheckinProjectOut"];
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Slot
+             * Format: date-time
+             */
+            readonly slot: string;
+            /**
+             * Manual
+             * @default false
+             */
+            readonly manual: boolean;
+            /** Status */
+            readonly status: string;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            readonly participants: components["schemas"]["CheckinParticipantsOut"];
+            /**
+             * Channel Id
+             * @default
+             */
+            readonly channel_id: string;
+            /**
+             * Channel Name
+             * @default
+             */
+            readonly channel_name: string;
+            /**
+             * Announce Ts
+             * @default
+             */
+            readonly announce_ts: string;
+            /**
+             * Slack Url
+             * @default
+             */
+            readonly slack_url: string;
+            /**
+             * Confirmed By Email
+             * @default
+             */
+            readonly confirmed_by_email: string;
+            /** Confirmed At */
+            readonly confirmed_at?: string | null;
+            /**
+             * Read Messages
+             * @default 0
+             */
+            readonly read_messages: number;
+            /**
+             * Read First Ts
+             * @default
+             */
+            readonly read_first_ts: string;
+            /**
+             * Read Last Ts
+             * @default
+             */
+            readonly read_last_ts: string;
+            /** Read Since */
+            readonly read_since?: string | null;
+            /**
+             * Material
+             * @default
+             */
+            readonly material: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Huddle Id
+             * @default
+             */
+            readonly huddle_id: string;
+            /**
+             * Huddle Url
+             * @default
+             */
+            readonly huddle_url: string;
+            /**
+             * Result Url
+             * @default
+             */
+            readonly result_url: string;
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+            /**
+             * Tasks Proposed
+             * @default 0
+             */
+            readonly tasks_proposed: number;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Tasks
+             * @default []
+             */
+            readonly tasks: readonly components["schemas"]["CheckinRunTaskOut"][];
+            /**
+             * Projects
+             * @default []
+             */
+            readonly projects: readonly components["schemas"]["SpawnedProjectOut"][];
         };
         /** AgentOut */
         readonly AgentOut: {
@@ -16944,6 +17776,7 @@ export interface components {
              * @default 0
              */
             readonly waiting_task_count: number;
+            readonly spawned_from?: components["schemas"]["SpawnedFromOut"] | null;
             /**
              * Created At
              * Format: date-time
@@ -17076,6 +17909,7 @@ export interface components {
              * @default 0
              */
             readonly waiting_task_count: number;
+            readonly spawned_from?: components["schemas"]["SpawnedFromOut"] | null;
             /**
              * Created At
              * Format: date-time
@@ -17093,6 +17927,8 @@ export interface components {
             /** Recent Turns */
             readonly recent_turns?: readonly components["schemas"]["TurnBriefOut"][];
             readonly proposal?: components["schemas"]["ProposedProjectOut"] | null;
+            /** Proposed Tasks */
+            readonly proposed_tasks?: readonly components["schemas"]["ProposedTaskOut"][];
         };
         /**
          * AgentTaskOut
@@ -17323,6 +18159,8 @@ export interface components {
             readonly notes?: string | null;
             /** Links */
             readonly links?: readonly components["schemas"]["AgentTaskLink"][] | null;
+            /** Spawned From */
+            readonly spawned_from?: string | null;
         };
         /**
          * AgentTaskIn
@@ -23902,8 +24740,9 @@ export interface components {
         };
         /**
          * ScheduleAnnouncedOut
-         * @description A work group's schedule fired: canopy announced a run in the group's Slack
-         *     channel (apps/huddles) and queued no turn — the lead confirms there first.
+         * @description A project check-in's schedule fired (apps/huddles): canopy made a run. With
+         *     a channel it announced it there and queued no turn — the lead confirms there
+         *     first; without one the run's turn is queued (`status` "running").
          */
         readonly ScheduleAnnouncedOut: {
             /**
@@ -24236,15 +25075,16 @@ export interface components {
             readonly has_transcript: boolean;
         };
         /**
-         * HuddleGroupOut
-         * @description The work group a huddle ran for, when its anchor's `origin_ref` carries a
-         *     group run (filled by the work-groups layer; null otherwise).
+         * HuddleCheckinOut
+         * @description The check-in a huddle ran for, when its anchor's `origin_ref` carries a
+         *     check-in run (null otherwise): the header links back to the project.
          */
-        readonly HuddleGroupOut: {
-            /** Slug */
-            readonly slug: string;
+        readonly HuddleCheckinOut: {
+            /** Id */
+            readonly id?: number | null;
             /** Name */
             readonly name: string;
+            readonly project: components["schemas"]["CheckinProjectOut"];
             /**
              * Channel Name
              * @default
@@ -24257,13 +25097,13 @@ export interface components {
             readonly lead_email: string;
             /** Run Id */
             readonly run_id?: number | null;
-            readonly read?: components["schemas"]["HuddleGroupReadOut"] | null;
+            readonly read?: components["schemas"]["HuddleCheckinReadOut"] | null;
         };
         /**
-         * HuddleGroupReadOut
-         * @description What a work-group run read from its channel before the huddle.
+         * HuddleCheckinReadOut
+         * @description What a check-in run read from its channel before the huddle.
          */
-        readonly HuddleGroupReadOut: {
+        readonly HuddleCheckinReadOut: {
             /**
              * Messages
              * @default 0
@@ -24358,7 +25198,12 @@ export interface components {
              * @default []
              */
             readonly projects: readonly components["schemas"]["ProposedProjectOut"][];
-            readonly group?: components["schemas"]["HuddleGroupOut"] | null;
+            /**
+             * Tasks
+             * @default []
+             */
+            readonly tasks: readonly components["schemas"]["ProposedTaskOut"][];
+            readonly checkin?: components["schemas"]["HuddleCheckinOut"] | null;
         };
         /** HuddleOutputOut */
         readonly HuddleOutputOut: {
@@ -24462,6 +25307,11 @@ export interface components {
              * @default 0
              */
             readonly comments: number;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
         };
         /** EngagementRunsOut */
         readonly EngagementRunsOut: {
@@ -24505,155 +25355,48 @@ export interface components {
             readonly proposals?: readonly components["schemas"]["EngagementProposalOut"][];
             /** Unanswered */
             readonly unanswered?: readonly components["schemas"]["EngagementProposalOut"][];
+            /** Task Proposals */
+            readonly task_proposals?: readonly components["schemas"]["EngagementProposalOut"][];
+            /** Unanswered Tasks */
+            readonly unanswered_tasks?: readonly components["schemas"]["EngagementProposalOut"][];
             readonly runs: components["schemas"]["EngagementRunsOut"];
         };
-        /** WorkGroupOut */
-        readonly WorkGroupOut: {
-            /** Slug */
-            readonly slug: string;
-            /** Workspace */
-            readonly workspace: string;
-            /** Name */
-            readonly name: string;
+        /** CheckinRunFinishIn */
+        readonly CheckinRunFinishIn: {
             /**
-             * Topic
+             * Huddle Id
              * @default
              */
-            readonly topic: string;
+            readonly huddle_id: string;
             /**
-             * Lead Email
+             * Result Url
              * @default
              */
-            readonly lead_email: string;
+            readonly result_url: string;
             /**
-             * Lead Slack Id
+             * Summary
              * @default
              */
-            readonly lead_slack_id: string;
-            /** Channel Id */
-            readonly channel_id: string;
-            /**
-             * Channel Name
-             * @default
-             */
-            readonly channel_name: string;
-            /**
-             * Agents
-             * @default []
-             */
-            readonly agents: readonly string[];
-            /** Leader Agent */
-            readonly leader_agent: string;
-            /** Mode */
-            readonly mode: string;
-            /**
-             * Cron
-             * @default
-             */
-            readonly cron: string;
-            /**
-             * Timezone
-             * @default UTC
-             */
-            readonly timezone: string;
-            /**
-             * Next Runs
-             * @default []
-             */
-            readonly next_runs: readonly string[];
-            /** Schedule Id */
-            readonly schedule_id?: number | null;
-            readonly project?: components["schemas"]["WorkGroupProjectOut"] | null;
-            /**
-             * Enabled
-             * @default true
-             */
-            readonly enabled: boolean;
-            /**
-             * Last Run Status
-             * @default
-             */
-            readonly last_run_status: string;
-            /** Url */
-            readonly url: string;
-            /**
-             * Can Edit
-             * @default false
-             */
-            readonly can_edit: boolean;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            readonly updated_at: string;
-        };
-        /** WorkGroupProjectOut */
-        readonly WorkGroupProjectOut: {
-            /** Agent */
-            readonly agent: string;
-            /** Ref */
-            readonly ref: string;
-            /** Name */
-            readonly name: string;
-            /** Status */
-            readonly status: string;
-            /** Url */
-            readonly url: string;
+            readonly summary: string;
+            /** Tasks Proposed */
+            readonly tasks_proposed?: number | null;
         };
         /**
-         * WorkGroupIn
-         * @description A new work group. `channel` is `#name` or a channel id; `lead_email` the
-         *     lead's canopy email (they must be in the workspace AND the channel);
-         *     `leader_agent` is required with more than one agent and must be able to run
-         *     every other agent (its login an owner or admin of each).
+         * LegacyGroupRunOut
+         * @description `/api/huddle-groups/runs/{id}` — kept for one release so an engine that
+         *     has not moved to check-ins still reads and finishes its run.
          */
-        readonly WorkGroupIn: {
-            /** Slug */
-            readonly slug: string;
-            /** Name */
-            readonly name: string;
-            /**
-             * Topic
-             * @default
-             */
-            readonly topic: string;
-            /** Channel */
-            readonly channel: string;
-            /** Lead Email */
-            readonly lead_email: string;
-            /** Agents */
-            readonly agents: readonly string[];
-            /**
-             * Leader Agent
-             * @default
-             */
-            readonly leader_agent: string;
-            /** Cron */
-            readonly cron: string;
-            /**
-             * Timezone
-             * @default UTC
-             */
-            readonly timezone: string;
-            /**
-             * Enabled
-             * @default true
-             */
-            readonly enabled: boolean;
-        };
-        /** WorkGroupRunOut */
-        readonly WorkGroupRunOut: {
+        readonly LegacyGroupRunOut: {
             /** Id */
             readonly id: number;
-            /** Group */
-            readonly group: string;
-            /** Group Name */
-            readonly group_name: string;
+            /** Checkin */
+            readonly checkin?: number | null;
+            /**
+             * Checkin Name
+             * @default
+             */
+            readonly checkin_name: string;
+            readonly project: components["schemas"]["CheckinProjectOut"];
             /** Workspace */
             readonly workspace: string;
             /**
@@ -24673,6 +25416,17 @@ export interface components {
              * @default
              */
             readonly note: string;
+            readonly participants: components["schemas"]["CheckinParticipantsOut"];
+            /**
+             * Channel Id
+             * @default
+             */
+            readonly channel_id: string;
+            /**
+             * Channel Name
+             * @default
+             */
+            readonly channel_name: string;
             /**
              * Announce Ts
              * @default
@@ -24723,6 +25477,11 @@ export interface components {
              */
             readonly huddle_id: string;
             /**
+             * Huddle Url
+             * @default
+             */
+            readonly huddle_url: string;
+            /**
              * Result Url
              * @default
              */
@@ -24732,6 +25491,11 @@ export interface components {
              * @default
              */
             readonly summary: string;
+            /**
+             * Tasks Proposed
+             * @default 0
+             */
+            readonly tasks_proposed: number;
             /** Finished At */
             readonly finished_at?: string | null;
             /**
@@ -24739,45 +25503,16 @@ export interface components {
              * Format: date-time
              */
             readonly created_at: string;
-        };
-        /** WorkGroupRunFinishIn */
-        readonly WorkGroupRunFinishIn: {
             /**
-             * Huddle Id
+             * Group
              * @default
              */
-            readonly huddle_id: string;
+            readonly group: string;
             /**
-             * Result Url
+             * Group Name
              * @default
              */
-            readonly result_url: string;
-            /**
-             * Summary
-             * @default
-             */
-            readonly summary: string;
-        };
-        /** WorkGroupPatch */
-        readonly WorkGroupPatch: {
-            /** Name */
-            readonly name?: string | null;
-            /** Topic */
-            readonly topic?: string | null;
-            /** Channel */
-            readonly channel?: string | null;
-            /** Lead Email */
-            readonly lead_email?: string | null;
-            /** Agents */
-            readonly agents?: readonly string[] | null;
-            /** Leader Agent */
-            readonly leader_agent?: string | null;
-            /** Cron */
-            readonly cron?: string | null;
-            /** Timezone */
-            readonly timezone?: string | null;
-            /** Enabled */
-            readonly enabled?: boolean | null;
+            readonly group_name: string;
         };
         /** ThreadMessageOut */
         readonly ThreadMessageOut: {
@@ -31074,6 +31809,318 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ProjectBackingOut"];
+                };
+            };
+        };
+    };
+    readonly propose_task: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TaskProposeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TaskProposeOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TaskProposeOut"];
+                };
+            };
+        };
+    };
+    readonly list_task_backings: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly task: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectBackingOut"][];
+                };
+            };
+        };
+    };
+    readonly back_task: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly task: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectBackingIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectBackingOut"];
+                };
+            };
+        };
+    };
+    readonly unback_task: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly task: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly back_task_as_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly task: string;
+                readonly backer: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentBackingIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectBackingOut"];
+                };
+            };
+        };
+    };
+    readonly list_project_checkins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["CheckinOut"][];
+                };
+            };
+        };
+    };
+    readonly create_project_checkin: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CheckinIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CheckinOut"];
+                };
+            };
+        };
+    };
+    readonly get_project_checkin: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CheckinOut"];
+                };
+            };
+        };
+    };
+    readonly delete_project_checkin: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_project_checkin: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CheckinPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CheckinOut"];
+                };
+            };
+        };
+    };
+    readonly run_project_checkin_now: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Accepted */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CheckinRunOut"];
+                };
+            };
+        };
+    };
+    readonly list_project_checkin_runs: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["CheckinTimelineRunOut"][];
                 };
             };
         };
@@ -37986,7 +39033,7 @@ export interface operations {
         readonly parameters: {
             readonly query?: {
                 readonly days?: number;
-                readonly group?: string;
+                readonly checkin?: string;
                 readonly agent?: string;
             };
             readonly header?: never;
@@ -38006,7 +39053,7 @@ export interface operations {
             };
         };
     };
-    readonly list_huddle_groups: {
+    readonly list_checkins: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -38021,31 +39068,55 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["WorkGroupOut"][];
+                    readonly "application/json": readonly components["schemas"]["CheckinOut"][];
                 };
             };
         };
     };
-    readonly create_huddle_group: {
+    readonly get_checkin_run: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
-            readonly path?: never;
+            readonly path: {
+                readonly run_id: number;
+            };
             readonly cookie?: never;
         };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["WorkGroupIn"];
-            };
-        };
+        readonly requestBody?: never;
         readonly responses: {
-            /** @description Created */
-            readonly 201: {
+            /** @description OK */
+            readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["WorkGroupOut"];
+                    readonly "application/json": components["schemas"]["CheckinRunOut"];
+                };
+            };
+        };
+    };
+    readonly finish_checkin_run: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly run_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CheckinRunFinishIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CheckinRunOut"];
                 };
             };
         };
@@ -38067,7 +39138,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["WorkGroupRunOut"];
+                    readonly "application/json": components["schemas"]["LegacyGroupRunOut"];
                 };
             };
         };
@@ -38083,7 +39154,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["WorkGroupRunFinishIn"];
+                readonly "application/json": components["schemas"]["CheckinRunFinishIn"];
             };
         };
         readonly responses: {
@@ -38093,99 +39164,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["WorkGroupRunOut"];
-                };
-            };
-        };
-    };
-    readonly get_huddle_group: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["WorkGroupOut"];
-                };
-            };
-        };
-    };
-    readonly delete_huddle_group: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description No Content */
-            readonly 204: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    readonly update_huddle_group: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["WorkGroupPatch"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["WorkGroupOut"];
-                };
-            };
-        };
-    };
-    readonly list_huddle_group_runs: {
-        readonly parameters: {
-            readonly query?: {
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["WorkGroupRunOut"][];
+                    readonly "application/json": components["schemas"]["LegacyGroupRunOut"];
                 };
             };
         };

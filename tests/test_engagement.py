@@ -46,10 +46,10 @@ def world():
 def test_record_takes_a_workspace_or_its_slug_and_returns_the_row(world):
     a = engagement.record("backed", workspace=world["ws"], user=world["viewer"],
                           project=world["project"], meta={"stance": "backs"})
-    b = engagement.record("run_announced", workspace="connect", surface="slack", group="champions-a")
+    b = engagement.record("run_announced", workspace="connect", surface="slack", checkin="17")
     assert a.workspace_id == b.workspace_id == "connect"
     assert (a.kind, a.surface, a.meta) == ("backed", "web", {"stance": "backs"})
-    assert (b.user, b.group) == (None, "champions-a")
+    assert (b.user, b.checkin) == (None, "17")
 
 
 @pytest.mark.parametrize("kw", [{"kind": "liked"}, {"kind": "viewed", "surface": "fax"}])

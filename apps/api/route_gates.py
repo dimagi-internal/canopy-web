@@ -288,15 +288,28 @@ GATES: dict[str, tuple[str, ...]] = {
     "back_project": ("member",),  # as yourself; an agent's login is refused (it backs as itself)
     "unback_project": ("member", "self"),
     "back_project_as_agent": ("agent-login",),  # the backer's own login, or the project's agent's
-    # --- apps/huddles/groups_api.py: work groups. None of these can start a channel read
-    "list_huddle_groups": ("member",),
-    "create_huddle_group": ("integrations",),  # + integrations where the leader agent lives
-    "get_huddle_group": ("member",),
-    "update_huddle_group": ("integrations",),
-    "delete_huddle_group": ("integrations",),
-    "list_huddle_group_runs": ("member",),
-    "get_huddle_group_run": ("member", "agent-login"),  # material included: members, and the leader's login
-    "finish_huddle_group_run": ("agent-login",),  # the leader agent's own login only
+    # proposed TASKS in a project (check-ins, 2026-10-17): the same gates one level down
+    "propose_task": ("agent.work", "agent-login"),  # an editor, or the project's agent itself
+    "list_task_backings": ("member",),
+    "back_task": ("member",),  # as yourself; an agent's login is refused (it backs as itself)
+    "unback_task": ("member", "self"),
+    "back_task_as_agent": ("agent-login",),  # the backer's own login, or the project's agent's
+    # --- apps/huddles/checkins_api.py: project check-ins. None of these can start a channel read.
+    # A write is the project's owner (a member who owns it) or a workspace owner/admin
+    # (integrations); a NEW channel on an agent's read list is integrations only.
+    "list_project_checkins": ("member",),
+    "create_project_checkin": ("integrations", "member"),
+    "get_project_checkin": ("member",),
+    "update_project_checkin": ("integrations", "member"),
+    "delete_project_checkin": ("integrations", "member"),
+    "run_project_checkin_now": ("integrations", "member"),  # announces (or queues the turn); never reads
+    "list_project_checkin_runs": ("member",),
+    "list_checkins": ("member",),
+    "get_checkin_run": ("member", "agent-login"),  # material included: members, and the project agent's login
+    "finish_checkin_run": ("agent-login",),  # the project agent's own login only
+    # the two work-group run routes, kept one release as aliases of the two above
+    "get_huddle_group_run": ("member", "agent-login"),
+    "finish_huddle_group_run": ("agent-login",),
     # --- apps/threads/api.py: bounded agent->agent conversations; messages are tagged turns
     "open_thread": ("agent.work",),  # editor in the moderator agent's workspace
     "list_threads": ("member",),  # threads in the caller's workspaces; no message content
@@ -761,6 +774,12 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "edit_storyboard_decision": "a member's ruling on a demo-set default is the reader-tier act the decision log exists for; it is attributed and undoable (owner decision 2026-10-15)",
     "back_project": "any member says where they stand on a project, as themself, in one line — a signal that starts nothing (decision 5, 2026-10-16); deciding is the decision card's, gated to projects.decide or the project's owner",
     "unback_project": "withdraws only the caller's OWN backing",
+    "back_task": "any member says where they stand on a check-in's proposed task, as themself, in one line — a signal that starts nothing; starting it is the task's approve, gated to the project's owner, the check-in's lead or projects.decide",
+    "unback_task": "withdraws only the caller's OWN backing",
+    "create_project_checkin": "only the project's OWNER passes as a member (checkins.may_write); everyone else needs integrations, and putting a new channel on an agent's read list always does",
+    "update_project_checkin": "only the project's OWNER passes as a member (checkins.may_write); a new channel needs integrations",
+    "delete_project_checkin": "only the project's OWNER passes as a member (checkins.may_write); it removes only an allow-list entry the check-in itself added",
+    "run_project_checkin_now": "only the project's OWNER passes as a member (checkins.may_write); it announces in Slack (or queues the turn) and never reads a channel",
     "record_engagement_view": "records only that the caller opened a page they can already read, once a day; changes nothing",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
 }
@@ -827,8 +846,8 @@ SETTINGS: frozenset[str] = frozenset({
     "set_config_token", "clear_config_token", "declare_agent", "set_history",
     "set_channel_ingest", "revoke_channel_ingest",  # revoking withdraws an agent's access to a channel
     "allow_channel_ingest", "disallow_channel_ingest",  # an admin's standing grant of one channel to one agent
-    # work groups: a channel allow-listed for an agent + a schedule
-    "create_huddle_group", "update_huddle_group", "delete_huddle_group",
+    # project check-ins: a channel allow-listed for an agent + a schedule
+    "create_project_checkin", "update_project_checkin", "delete_project_checkin",
     "hcp_registerClient", "hcp_updateClient",
     # sharing and visibility
     "set_narrative_visibility", "storyboards_rotate_token", "ensure_token",
@@ -878,6 +897,7 @@ NOT_SETTINGS: dict[str, str] = {
     "record_engagement_view": "telemetry",  # the engagement view beacon
     "propose_project": "content", "back_project": "content", "unback_project": "content",
     "back_project_as_agent": "content",
+    "propose_task": "content", "back_task": "content", "unback_task": "content", "back_task_as_agent": "content",
     "check_scaffold_repo": "action",  # POST only to keep a token out of the URL; writes nothing
     "create_channel_ingest": "request",  # asks the channel; the approval click is the grant
     "mark_channel_ingest_read": "action",  # moves the agent's own read position; grants nothing
@@ -922,7 +942,8 @@ NOT_SETTINGS: dict[str, str] = {
     "create_turn": "turn", "enqueue_turn": "turn", "cancel_turn": "turn", "append_turn_events": "turn",
     "finish_turn": "turn", "start_turn": "turn", "append_turn_transcript": "turn",
     "fire_schedule_route": "turn",
-    "finish_huddle_group_run": "turn",  # the leader's turn reporting its work group run done
+    "finish_checkin_run": "turn",  # the project agent's turn reporting its check-in run done
+    "finish_huddle_group_run": "turn",  # the same, through the one-release alias
     # runner-protocol
     "post_bootstrap_report": "runner-protocol", "update_runner_capabilities": "runner-protocol",
     "claim_admission_notices": "runner-protocol", "report_admission_notice": "runner-protocol",
@@ -936,7 +957,7 @@ NOT_SETTINGS: dict[str, str] = {
     "report_drill": "runner-protocol",
     # action
     "check_agent_github": "action", "check_agent_salesforce": "action", "preview_cron": "action",
-    "run_schedule_now": "action", "start_runner_drill": "action", "start_runner_mint": "action",
+    "run_schedule_now": "action", "run_project_checkin_now": "action", "start_runner_drill": "action", "start_runner_mint": "action",
     "post_runner_mint_code": "action", "refresh_runner": "action", "test_connected_app": "action",
     "sync": "action", "hcp_searchPreferences": "action",
     # cloud capabilities: a lease is a machine for one use, not configuration

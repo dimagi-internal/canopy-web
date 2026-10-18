@@ -4,7 +4,7 @@ import { WorkbenchSkeleton } from 'canopy-ui'
 import { getHuddle, type Huddle } from '@/api/huddles'
 import { getHuddleThreads } from '@/api/threads'
 import { relativeTime } from '@/components/activity/turnLog'
-import { ProposedProjectCard } from '@/components/projects/ProposedProjectCard'
+import { ProposalCard } from '@/components/projects/ProposalCard'
 import { useEngagementView } from '@/components/projects/useEngagementView'
 import { HuddleConversation } from './HuddleConversation'
 import { readView } from './conversationModel'
@@ -83,25 +83,29 @@ function Stepper({ huddle }: { huddle: Huddle }) {
   )
 }
 
-/** "Work group X · #channel · lead Y · read N messages (A → B)" — set when the
- * huddle ran for a work group's confirmed run, null otherwise. */
-function GroupLine({ group }: { group: NonNullable<Huddle['group']> }) {
-  const { workspace = '' } = useParams()
+/** "Weekly check-in on Canopy support · #channel · lead Y · read N messages (A → B)" —
+ * set when the huddle ran for a project check-in's run, null otherwise. The
+ * header links back to the project, where the check-in and its record live. */
+function CheckinLine({ checkin }: { checkin: NonNullable<Huddle['checkin']> }) {
   const ts = (v: string) => {
     const n = Number(v)
     return v && Number.isFinite(n)
       ? new Date(n * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
       : v
   }
-  const read = group.read
+  const read = checkin.read
+  const p = checkin.project
   return (
-    <p data-group={group.slug} className="mt-2 text-[13px] text-foreground-secondary">
-      Work group{' '}
-      <Link className="font-medium text-primary hover:underline" to={`/w/${workspace}/huddles/groups/${group.slug}`}>
-        {group.name}
+    <p data-checkin={checkin.name} className="mt-2 text-[13px] text-foreground-secondary">
+      <Link className="font-medium text-primary hover:underline" to={`${p.url}#project-checkins`}>
+        {checkin.name}
+      </Link>{' '}
+      on{' '}
+      <Link className="font-medium text-primary hover:underline" to={p.url}>
+        {p.name}
       </Link>
-      {group.channel_name && <> · #{group.channel_name}</>}
-      {group.lead_email && <> · lead {group.lead_email}</>}
+      {checkin.channel_name ? <> · #{checkin.channel_name}</> : <> · no channel</>}
+      {checkin.lead_email && <> · lead {checkin.lead_email}</>}
       {read && (
         <>
           {' '}· read {read.messages} message{read.messages === 1 ? '' : 's'}
@@ -112,24 +116,34 @@ function GroupLine({ group }: { group: NonNullable<Huddle['group']> }) {
   )
 }
 
-/** The projects the huddle proposed — the same card the project page shows, so
+/** What the huddle proposed — tasks in its check-in's project, and (from huddles
+ * before check-ins) projects — on the same card the project page shows, so
  * people back, comment and decide right here. */
-function HuddleProjects({ huddle, onChanged }: { huddle: Huddle; onChanged: () => void }) {
+function HuddleProposals({ huddle, onChanged }: { huddle: Huddle; onChanged: () => void }) {
   const projects = huddle.projects ?? []
-  const open = projects.filter((p) => p.status === 'proposed').length
+  const tasks = huddle.tasks ?? []
+  const open =
+    projects.filter((p) => p.status === 'proposed').length + tasks.filter((t) => t.status === 'suggested').length
+  const parts = [
+    tasks.length ? `${tasks.length} proposed task${tasks.length === 1 ? '' : 's'}` : '',
+    projects.length ? `${projects.length} proposed project${projects.length === 1 ? '' : 's'}` : '',
+  ].filter(Boolean)
   return (
     <section aria-labelledby="huddle-projects" className="space-y-4">
       <div>
         <h2 id="huddle-projects" className="text-base font-semibold text-foreground">What it proposes</h2>
         <p className="mt-1 text-[14px] leading-relaxed text-foreground-secondary">
-          {projects.length} proposed project{projects.length === 1 ? '' : 's'}
+          {parts.join(' and ')}
           {open ? `, ${open} still waiting for a decision` : ''}. Back one, say what you would change, or ask —
           the agents read it before the next huddle.
         </p>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
+        {tasks.map((t) => (
+          <ProposalCard key={`task-${t.agent}-${t.ref}`} task={t} onChanged={onChanged} linkToProject />
+        ))}
         {projects.map((p) => (
-          <ProposedProjectCard key={`${p.agent}-${p.ref}`} proposal={p} onChanged={onChanged} linkToProject />
+          <ProposalCard key={`${p.agent}-${p.ref}`} proposal={p} onChanged={onChanged} linkToProject />
         ))}
       </div>
     </section>
@@ -231,13 +245,13 @@ export function HuddlePage() {
             </div>
             <Stepper huddle={huddle} />
           </div>
-          {huddle.group && <GroupLine group={huddle.group} />}
+          {huddle.checkin && <CheckinLine checkin={huddle.checkin} />}
           <PrioritiesBrief brief={huddle.priorities_brief ?? ''} />
         </header>
 
         {/* A huddle filed before proposed projects existed shows its loose tasks as before. */}
-        {(huddle.projects ?? []).length > 0 ? (
-          <HuddleProjects huddle={huddle} onChanged={() => setVersion((v) => v + 1)} />
+        {(huddle.projects ?? []).length + (huddle.tasks ?? []).length > 0 ? (
+          <HuddleProposals huddle={huddle} onChanged={() => setVersion((v) => v + 1)} />
         ) : (
           <HuddleOutcome huddle={huddle} compact={story} />
         )}

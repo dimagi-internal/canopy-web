@@ -20,6 +20,19 @@ vi.mock('@/api/agents', async (orig) => ({
   patchProject,
   getProjectTeam,
 }))
+const { listProjectCheckins, listProjectCheckinRuns, runProjectCheckinNow } = vi.hoisted(() => ({
+  listProjectCheckins: vi.fn(async () => [] as unknown[]),
+  listProjectCheckinRuns: vi.fn(async () => [] as unknown[]),
+  runProjectCheckinNow: vi.fn(async () => ({ status: 'awaiting_confirm', note: '' })),
+}))
+vi.mock('@/api/checkins', () => ({
+  listProjectCheckins,
+  listProjectCheckinRuns,
+  runProjectCheckinNow,
+  createProjectCheckin: vi.fn(),
+  updateProjectCheckin: vi.fn(),
+  deleteProjectCheckin: vi.fn(),
+}))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useOutletContext: () => ({ agent: { slug: 'eva', name: 'Eva' }, ...ctx }),
@@ -213,7 +226,7 @@ describe('AgentProjectPage', () => {
 
     expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Connect Enterprise'])
     const sections = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-    expect(sections).toEqual(['Where it stands', 'Ideas', 'People', "Eva's work", 'Activity'])
+    expect(sections).toEqual(['Where it stands', 'Ideas', 'People', 'Check-ins', 'Timeline', "Eva's work", 'Activity'])
 
     expect(screen.getByRole('link', { name: '← Projects' }).getAttribute('href')).toBe('/w/connect/agents/eva/projects')
     expect(screen.getByRole('link', { name: 'Overview doc' }).getAttribute('href')).toBe(
@@ -292,7 +305,7 @@ describe('AgentProjectPage', () => {
     show()
     await screen.findByTestId('idea-T1')
     const sections = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-    expect(sections).toEqual(['Where it stands', 'Ideas', 'People'])
+    expect(sections).toEqual(['Where it stands', 'Ideas', 'People', 'Check-ins', 'Timeline'])
     expect(screen.queryByLabelText('Project status')).toBeNull()
     expect(screen.queryByTestId(/^task-T/)).toBeNull()
     expect(screen.getByTestId('project-overview').textContent).not.toMatch(/\bT\d+\b/)
@@ -348,5 +361,44 @@ describe('AgentProjectPage', () => {
     cleanup()
     landed('/w/connect/projects/hal/P5/people/7')
     expect(await screen.findByText('person page')).toBeTruthy()
+  })
+
+  it('shows its check-ins, what they proposed and their timeline, and Run now only announces', async () => {
+    ctx.canEdit = true
+    getProject.mockResolvedValue({
+      ...detail(),
+      proposed_tasks: [{
+        id: 5, agent: 'eva', workspace: 'connect', ref: 'T12', title: 'Write the FAQ', status: 'suggested',
+        why: 'Asked weekly.', done_when: 'Pinned.', plan: [], project_ref: 'P1', project_name: 'Connect Enterprise',
+        project_url: '/w/connect/agents/eva/projects/P1', url: '/w/connect/agents/eva/projects/P1', source_url: '',
+        checkin: 4, run: 3, huddle_id: 'h1', proposed_at: null, expires_at: null, notes: '', decision_open: true,
+        may_decide: true, backings: [], comments: [], partners: [], spawned: [],
+      }],
+    })
+    listProjectCheckins.mockResolvedValue([{
+      id: 4, name: 'Weekly check-in', agent: 'eva', format: 'huddle', agents: ['eva', 'hal'], cron: '0 9 * * 2',
+      timezone: 'America/Denver', next_runs: [], channel_id: 'C1', channel_name: 'canopy-support',
+      lead_email: 'jj@dimagi.com', enabled: true, can_edit: true, last_run_status: 'done',
+    }])
+    listProjectCheckinRuns.mockResolvedValue([{
+      id: 3, checkin: 4, checkin_name: 'Weekly check-in', slot: '2026-10-20T15:00:00Z', status: 'done', manual: false,
+      note: '', participants: { agents: ['eva', 'hal'], lead_email: 'jj@dimagi.com' }, channel_id: 'C1',
+      channel_name: 'canopy-support', read_messages: 4, read_first_ts: '', read_last_ts: '', read_since: null,
+      confirmed_by_email: 'jj@dimagi.com', huddle_url: '/w/connect/huddles/h1', slack_url: '',
+      tasks: [{ agent: 'eva', ref: 'T12', title: 'Write the FAQ', status: 'suggested', url: '', spawned: [] }],
+      projects: [],
+    }])
+    show()
+    expect(await screen.findByRole('article', { name: 'Proposed task: Write the FAQ' })).toBeTruthy()
+    const checkin = await screen.findByText('Weekly check-in', { selector: 'p' })
+    expect(checkin.closest('li')?.textContent).toContain('#canopy-support')
+    const run = await screen.findByTestId('checkin-timeline')
+    expect(run.textContent).toContain('confirmed by jj@dimagi.com')
+    expect(run.textContent).toContain('4 messages')
+    expect(within(run).getByRole('link', { name: 'The huddle' }).getAttribute('href')).toBe('/w/connect/huddles/h1')
+    fireEvent.click(screen.getByRole('button', { name: 'Run now' }))
+    await waitFor(() => expect(runProjectCheckinNow).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: 'eva', ref: 'P1' }), 'Weekly check-in'))
+    expect(await screen.findByText(/Nothing is read until jj@dimagi.com confirms there/)).toBeTruthy()
   })
 })

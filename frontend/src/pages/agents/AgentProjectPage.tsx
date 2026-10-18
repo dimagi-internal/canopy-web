@@ -3,10 +3,11 @@ import { Link, useOutletContext, useParams } from 'react-router-dom'
 
 import { AgentApiError, getProject, patchProject, type ProjectDetailOut, type TaskOut } from '@/api/agents'
 import { relativeTime } from '@/components/activity/turnLog'
-import { ProposedProjectCard } from '@/components/projects/ProposedProjectCard'
+import { ProposalCard } from '@/components/projects/ProposalCard'
 import { useEngagementView } from '@/components/projects/useEngagementView'
 import { nestTasks, TaskCard } from '@/components/TasksBoard'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
+import { CheckinsPanel, CheckinTimeline } from '@/pages/agents/ProjectCheckins'
 import { ProjectOverview } from '@/pages/agents/ProjectOverview'
 import { ProjectStatusOptions, StatusChip } from '@/pages/agents/projectParts'
 import { Section } from '@/pages/agents/sectionLayout'
@@ -15,7 +16,9 @@ import { WorkbenchSkeleton } from 'canopy-ui'
 
 // ONE PROJECT'S PAGE — the one page for everyone, teammate or editor, always
 // in the same order: what it is, where it stands, the ideas, the people
-// (ProjectOverview), then the agent's work on it and the turns that touched it.
+// (ProjectOverview), what its check-ins propose (Start / Decline right here),
+// its check-ins and their timeline, then the agent's work on it and the turns
+// that touched it. The project is where the work lives over time.
 // The link to share is this one; the old team-view address redirects here.
 
 /** Live tasks first; otherwise the server's order (position) stands. */
@@ -41,6 +44,8 @@ export function AgentProjectPage(): JSX.Element {
     error: string | null
   } | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
+  // Bumped when a check-in is run from here, so the timeline re-reads.
+  const [timelineVersion, setTimelineVersion] = useState(0)
   const key = `${agent.slug}/${ref}`
 
   const reload = useCallback(() => {
@@ -147,6 +152,15 @@ export function AgentProjectPage(): JSX.Element {
           </a>
         )}
         {detail.repo_slug && <span>Repo: {detail.repo_slug}</span>}
+        {detail.spawned_from && (
+          <span data-testid="spawned-from">
+            From{' '}
+            <Link to={detail.spawned_from.url} className="text-primary hover:underline">
+              {detail.spawned_from.ref} {detail.spawned_from.title}
+            </Link>
+            {detail.spawned_from.project_name ? ` in ${detail.spawned_from.project_name}` : ''}
+          </span>
+        )}
       </div>
       {statusError && <p className="mt-2 text-[12px] text-destructive">{statusError}</p>}
     </>
@@ -179,7 +193,7 @@ export function AgentProjectPage(): JSX.Element {
           page that proposed it shows. */}
       {detail.proposal && (
         <div className="mt-4">
-          <ProposedProjectCard
+          <ProposalCard
             proposal={detail.proposal}
             onChanged={() => {
               reload()
@@ -197,6 +211,54 @@ export function AgentProjectPage(): JSX.Element {
           details={details}
         />
       </div>
+
+      {/* What the project's check-ins proposed, waiting for Start or Decline —
+          the same card the huddle that proposed each one shows. */}
+      {(detail.proposed_tasks ?? []).length > 0 && (
+        <Section
+          id="project-proposed"
+          title="Proposed"
+          description="Tasks this project's check-ins proposed. Start one, decline it with a reason, back it or ask — the agent reads it before the next check-in."
+        >
+          <div className="grid gap-4 lg:grid-cols-2">
+            {(detail.proposed_tasks ?? []).map((t) => (
+              <ProposalCard
+                key={`${t.agent}-${t.ref}`}
+                task={t}
+                onChanged={() => {
+                  reload()
+                  refreshWaiting()
+                  setTimelineVersion((v) => v + 1)
+                }}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      <Section
+        id="project-checkins"
+        title="Check-ins"
+        description="This project's recurring meetings: who leads each one, which agents take part, the cadence, and the Slack channel it reads — only when its lead presses Confirm there."
+      >
+        <CheckinsPanel
+          project={{ agent: agent.slug, ref: detail.ext_id, workspace: detail.workspace || workspace }}
+          projectAgent={agent.slug}
+          canAdd={canEdit}
+          onRan={() => setTimelineVersion((v) => v + 1)}
+        />
+      </Section>
+
+      <Section
+        id="project-timeline"
+        title="Timeline"
+        description="Every check-in run, newest first: who took part, what was read, who confirmed it, and what it proposed."
+      >
+        <CheckinTimeline
+          project={{ agent: agent.slug, ref: detail.ext_id, workspace: detail.workspace || workspace }}
+          version={timelineVersion}
+        />
+      </Section>
 
       {/* The agent's working detail is for whoever runs the work. A teammate
           reads the overview above: task cards, approve buttons and review

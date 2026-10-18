@@ -256,10 +256,13 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
         for a in _outputs_qs(workspaces).filter(
             Q(source_url__endswith=f"/huddles/{hid}") | Q(source_url__endswith=f"/huddles/{hid}/"))
         .order_by("agent__slug", "id")
+        # A check-in's proposed tasks are rendered as cards (`tasks`), not loose outputs.
+        if _ref(a).get("kind") != "checkin_proposal"
     ]
     projects = projects_of(hid, workspaces, user=user)
+    tasks = tasks_of(hid, workspaces, user=user)
     base = _base(anchor, rounds_dispatched=max([r for _, r in latest] or [0]),
-                 outcome_count=len(outputs) + len(projects))
+                 outcome_count=len(outputs) + len(projects) + len(tasks))
     # The leader's digest is the anchor's content; same gate as a round's.
     readable = turn_access.can_read_turn_content(user, anchor, memo)
     # The principal's priorities brief the huddle ran on (canopy `huddle plan
@@ -270,9 +273,9 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
             "priorities_brief": brief if readable else "",
             "deadline_at": (min(r1) + DEADLINE) if r1 else None,
             "cells": cells, "outputs": outputs,
-            "projects": projects,
-            # The work group it ran for, from the anchor's `origin_ref` group run.
-            "group": group_ref(anchor, workspaces)}
+            "projects": projects, "tasks": tasks,
+            # The check-in it ran for, from the anchor's `origin_ref` run.
+            "checkin": checkin_ref(anchor, workspaces)}
 
 
 def projects_of(huddle_id: str, workspaces, *, user) -> list[dict]:
@@ -290,20 +293,40 @@ def projects_of(huddle_id: str, workspaces, *, user) -> list[dict]:
     return [proposals.card(p, user) for p in rows]
 
 
-def group_ref(anchor, workspaces) -> dict | None:
-    """The work group header, when the anchor's origin_ref names a group run
-    that belongs to one of `workspaces` (the caller's, in the huddle's tree)."""
-    from .models import HuddleGroupRun
+def tasks_of(huddle_id: str, workspaces, *, user) -> list[dict]:
+    """The tasks this huddle proposed in its check-in's project — each as
+    `proposals.task_card` renders it (the same card the project page shows)."""
+    from apps.agents import proposals
 
-    run_id = _int(_ref(anchor).get("run") or _ref(anchor).get("group_run"))
+    rows = (AgentTask.objects.select_related("agent", "project", "project__owner_user")
+            .filter(agent__workspace_id__in=list(workspaces), origin_ref__kind=proposals.CHECKIN_PROPOSAL)
+            .filter(Q(origin_ref__huddle_id=huddle_id) | Q(source_url__endswith=f"/huddles/{huddle_id}")
+                    | Q(source_url__endswith=f"/huddles/{huddle_id}/"))
+            .order_by("agent__slug", "pk"))
+    return [proposals.task_card(t, user) for t in rows]
+
+
+def checkin_ref(anchor, workspaces) -> dict | None:
+    """The check-in header, when the anchor's origin_ref names a check-in run
+    whose project belongs to one of `workspaces` (the caller's, in the huddle's
+    tree). `group_run` / `run` are the names an engine from before check-ins
+    still writes; the run kept its id."""
+    from .checkins import project_path
+    from .models import CheckinRun
+
+    ref = _ref(anchor)
+    run_id = _int(ref.get("checkin_run") or ref.get("run") or ref.get("group_run"))
     if not run_id:
         return None
-    r = (HuddleGroupRun.objects.select_related("group", "group__lead")
-         .filter(pk=run_id, group__workspace_id__in=list(workspaces)).first())
+    r = (CheckinRun.objects.select_related("checkin", "checkin__lead", "project", "project__agent")
+         .filter(pk=run_id, project__agent__workspace_id__in=list(workspaces)).first())
     if r is None:
         return None
-    g = r.group
-    return {"slug": g.slug, "name": g.name, "channel_name": g.channel_name,
-            "lead_email": getattr(g.lead, "email", "") or "", "run_id": r.pk,
-            "read": {"messages": r.read_messages, "first_ts": r.read_first_ts, "last_ts": r.read_last_ts,
-                     "since": r.read_since.isoformat() if r.read_since else ""}}
+    p = r.project
+    lead = getattr(getattr(r.checkin, "lead", None), "email", "") or (r.participants or {}).get("lead_email") or ""
+    return {"id": r.checkin_id, "name": r.checkin_name,
+            "project": {"agent": p.agent.slug, "ref": p.ext_id, "name": p.name, "status": p.status,
+                        "url": project_path(p), "workspace": p.agent.workspace_id},
+            "channel_name": r.channel_name, "lead_email": lead, "run_id": r.pk,
+            "read": ({"messages": r.read_messages, "first_ts": r.read_first_ts, "last_ts": r.read_last_ts,
+                      "since": r.read_since.isoformat() if r.read_since else ""} if r.channel_id else None)}

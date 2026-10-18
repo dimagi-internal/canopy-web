@@ -47,6 +47,8 @@ const NOT_DOCUMENTABLE = new Set([
   '/w/:workspace',
   '/w/:workspace/projects',
   '/projects',
+  // A work group's old page: it forwards to the project its check-in lives on.
+  '/w/:workspace/huddles/groups/:slug',
   // The old project team view: a project has one page now, in the agent's console.
   '/w/:workspace/projects/:agent/:ref',
   '/w/:workspace/projects/:agent/:ref/people/:person',

@@ -35,14 +35,14 @@ def _tick() -> None:
 
 
 def _expire_group_runs() -> None:
-    """Work group announcements nobody confirmed lapse after 24 h (apps/huddles/groups.py)
+    """Check-in announcements nobody confirmed lapse after 24 h (apps/huddles/checkins.py)
     — on this loop because it is the one that already reads channels for them."""
-    from apps.huddles import groups
+    from apps.huddles import checkins
 
     try:
-        groups.expire_due()
+        checkins.expire_due()
     except Exception:  # noqa: BLE001 — never stop the reads over it
-        logger.exception("work group expiry failed")
+        logger.exception("check-in expiry failed")
 
 
 async def run_forever(interval_s: float) -> None:

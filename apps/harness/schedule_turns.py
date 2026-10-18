@@ -67,11 +67,11 @@ def _schedule_initiator(schedule, *, manual: bool = False):
     return who.system(via=via, accountable=schedule.created_by)
 
 
-def group_of(schedule):
-    """The work group (apps/huddles) this schedule announces for, or None."""
-    from apps.huddles.models import HuddleGroup
+def checkin_of(schedule):
+    """The project check-in (apps/huddles) this schedule runs, or None."""
+    from apps.huddles.models import ProjectCheckin
 
-    return HuddleGroup.objects.filter(schedule_id=schedule.pk).first() if schedule.pk else None
+    return ProjectCheckin.objects.filter(schedule_id=schedule.pk).first() if schedule.pk else None
 
 
 class OneOffSlotMismatch(Exception):
@@ -90,9 +90,10 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
     stored cron repeats yearly; this guard is what makes that repetition inert
     even for a runner whose clock or anchor is wrong.
 
-    A WORK GROUP's schedule (apps/huddles) does not enqueue a turn: it announces
-    the run in the group's channel and returns (None, created). The turn comes
-    later, once the lead confirms and the channel has been read.
+    A PROJECT CHECK-IN's schedule (apps/huddles) does not enqueue a turn here: it
+    makes the run and returns (None, created). With a channel it announces the
+    run there, and the turn comes later, once the lead confirms and the channel
+    has been read; without one the check-in queues the turn itself.
     """
     from .services import enqueue_turn  # services.py imports this module
 
@@ -101,10 +102,10 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
             f"schedule {schedule.id} is a one-off for {schedule.run_once_at.isoformat()}, "
             f"not {slot.isoformat()}"
         )
-    if group_of(schedule) is not None:
-        from apps.huddles import groups
+    if checkin_of(schedule) is not None:
+        from apps.huddles import checkins
 
-        _run, created = groups.announce(schedule, slot)
+        _run, created = checkins.announce(schedule, slot)
         return None, created
     key = f"sched:{schedule.id}:{slot.isoformat()}"
     with transaction.atomic():
@@ -151,15 +152,15 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
     fired it is not a different SOURCE: both route as scheduler work, which is
     the point of naming the source.
 
-    A work group's schedule announces now instead (no turn: returns None) —
+    A project check-in's schedule announces now instead (returns None) —
     pressing Run now never reads the channel; the lead's Confirm does.
     """
     from .services import enqueue_turn  # services.py imports this module
 
-    if group_of(schedule) is not None:
-        from apps.huddles import groups
+    if checkin_of(schedule) is not None:
+        from apps.huddles import checkins
 
-        groups.announce(schedule, timezone.now(), manual=True)
+        checkins.announce(schedule, timezone.now(), manual=True)
         return None
 
     with transaction.atomic():
@@ -249,9 +250,9 @@ def skip_late_scheduled_turns(*, now: dt.datetime | None = None) -> int:
         t for t in Turn.objects.filter(
             status=Turn.QUEUED, origin=Turn.ORIGIN_CANOPY_SCHEDULER
         ).only("id", "origin_ref", "status")
-        # A work group run's turn is queued when the lead confirms, hours after
+        # A check-in run's turn is queued when the lead confirms, hours after
         # its slot by design — the slot dates the announcement, not the turn.
-        if not t.origin_ref.get("manual") and t.origin_ref.get("kind") != "huddle_group_run"
+        if not t.origin_ref.get("manual") and t.origin_ref.get("kind") not in ("checkin_run", "huddle_group_run")
     ]
     if not queued:
         return 0
@@ -333,8 +334,8 @@ def _raise_schedule_nag(schedule, turn: Turn) -> None:
 
     again = {"prompt": schedule.prompt, "origin_ref": {"schedule_id": schedule.id, "manual": True,
                                                        "schedule_name": schedule.name}}
-    if (turn.origin_ref or {}).get("kind") == "huddle_group_run":
-        # Re-run the same work group run from its stored material — never a new read.
+    if (turn.origin_ref or {}).get("kind") in ("checkin_run", "huddle_group_run"):
+        # Re-run the same check-in run from its stored material — never a new read.
         again = {"prompt": turn.prompt, "origin_ref": {**turn.origin_ref, "manual": True}}
     agent_services.create_tasks(schedule.agent, [{
         "ask_kind": "review",
