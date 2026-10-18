@@ -356,3 +356,31 @@ export async function holdFleet(note = ''): Promise<FleetHoldOut> {
 export async function releaseFleetHold(): Promise<FleetHoldOut> {
   return unwrap(await apiV2.POST('/api/harness/fleet-hold/release'), 'releaseFleetHold')
 }
+
+// ---- a box's missing sessions (canopy-web events.usage) ------------------------
+// Sessions in repos canopy knows that the box has on disk and canopy has no record
+// of. The runner's admins only: the titles of a person's local sessions are theirs.
+export type MissingSessionsOut = components['schemas']['MissingSessionsOut']
+
+export async function listMissingSessions(runnerId: string): Promise<MissingSessionsOut> {
+  const res = await apiV2.GET('/api/harness/runners/{runner_id}/missing-sessions', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return unwrap(res, 'listMissingSessions') as MissingSessionsOut
+}
+
+/** Ask the box for a full rescan; the list refreshes once it reports (~1 min). */
+export async function checkMissingSessions(runnerId: string): Promise<MissingSessionsOut> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/usage-scan', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return unwrap(res, 'checkMissingSessions') as MissingSessionsOut
+}
+
+export async function sendUpMissingSessions(runnerId: string, claudeSessions: string[]): Promise<string[]> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/missing-sessions', {
+    params: { path: { runner_id: runnerId } },
+    body: { claude_sessions: claudeSessions },
+  })
+  return (unwrap(res, 'sendUpMissingSessions') as { sessions: string[] }).sessions
+}

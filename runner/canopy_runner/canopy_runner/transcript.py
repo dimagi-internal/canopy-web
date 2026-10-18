@@ -144,8 +144,13 @@ def resolve_transcript(
     # A Claude desktop session (desktop.py) is not an emdash task: its key IS the
     # CLI session id, which names the file exactly. Asked first; None for anything
     # that is not one, so emdash resolution below is unchanged.
+    from canopy_transcript import transcript_for_key
+
     from . import desktop as _desktop
 
+    sent_up = transcript_for_key(task, claude_home=claude_home)
+    if sent_up is not None:
+        return sent_up
     desktop_path = _desktop.transcript_for(task, home=home, claude_home=claude_home)
     if desktop_path is not None:
         return desktop_path

@@ -1,4 +1,4 @@
-"""Usage analytics over a set of workspaces — a read over `Activity` and `TurnUsage` only.
+"""Usage analytics over a set of workspaces — a read over `Activity` and `SessionUsage` only.
 
 Those two tables are the whole input on purpose: they are append-only, indexed by
 (workspace, time), and untouched by retention, so a number shown here does not
@@ -18,7 +18,7 @@ from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from . import activity
-from .models import Activity, TurnUsage
+from .models import Activity, SessionUsage
 
 _TOKENS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
 _EMPTY = {"turns": 0, "failed": 0, "sessions": 0, "messages": 0, "settings": 0, "mcp_calls": 0,
@@ -51,8 +51,8 @@ def _tokens(qs, group: str | None = None) -> dict:
     """{group value: token sums}, or the one total when `group` is None."""
     sums = {f: Sum(f) for f in _TOKENS}
     if group is None:
-        agg = qs.aggregate(**sums, turns=Count("id"))
-        return {**{f: int(agg[f] or 0) for f in _TOKENS}, "turns_with_usage": agg["turns"] or 0}
+        agg = qs.aggregate(**sums, sessions=Count("claude_session", distinct=True))
+        return {**{f: int(agg[f] or 0) for f in _TOKENS}, "sessions_with_usage": agg["sessions"] or 0}
     return {row[group]: {f: int(row[f] or 0) for f in _TOKENS} for row in qs.values(group).annotate(**sums)}
 
 
@@ -88,7 +88,7 @@ def _heaviest_first(row: dict):
 def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
     days, start_day, since = window(days, now)
     facts = Activity.objects.filter(workspace_id__in=workspace_slugs, at__gte=since).order_by()
-    usage = TurnUsage.objects.filter(workspace_id__in=workspace_slugs, at__gte=since).order_by()
+    usage = SessionUsage.objects.filter(workspace_id__in=workspace_slugs, day__gte=start_day).order_by()
     people = facts.filter(actor_kind=Activity.USER, actor__isnull=False)
 
     # ---- the daily series -------------------------------------------------------
@@ -112,7 +112,7 @@ def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
                 .annotate(n=Count("actor", distinct=True))):
         if row["day"] in series:
             series[row["day"]]["active_users"] = row["n"]
-    for day, sums in _tokens(usage.annotate(day=TruncDate("at")), "day").items():
+    for day, sums in _tokens(usage, "day").items():
         if day in series:
             series[day].update(input_tokens=sums["input_tokens"], output_tokens=sums["output_tokens"],
                                cache_read_tokens=sums["cache_read_tokens"])

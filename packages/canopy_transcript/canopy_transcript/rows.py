@@ -297,20 +297,13 @@ def conversational_messages(
     out: list[dict] = []
     for i, rec in enumerate(records):
         context = record_context(rec)
-        usage = record_usage(rec)
         for row in rows_for_record(rec):
             index = compose_index(i + record_offset, row["block"])
             if index <= since:
                 continue
-            content = row["content"]
-            if usage:
-                # Once per record, on its first shipped row: the server counts a
-                # model message's tokens once (keyed on `message_id`, since Claude
-                # Code writes one record per content block, each repeating it).
-                content, usage = {**content, "usage": usage}, None
             out.append({
                 "index": index, "role": row["role"],
-                "text": row["text"], "content": content, **context,
+                "text": row["text"], "content": row["content"], **context,
             })
     return out
 
@@ -318,10 +311,10 @@ def conversational_messages(
 def record_usage(rec: dict) -> dict:
     """What one assistant record's model call spent, as {"message_id", "model",
     "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
-    "at"}, or {} for anything else. `at` is the record's own timestamp, so usage
-    shipped long after the call (a backfill) still counts on the day it happened. THE reader of a record's `message.usage` — the chat
-    rows carry it to canopy-web, and canopy-web's own transcript parser
-    (`apps/events/usage.py`) reads interactive transcripts with it. Claude Code's
+    "at"}, or {} for anything else. `at` is the record's own timestamp, so a report
+    sent long after the call still counts on the day it happened. THE reader of a
+    record's `message.usage`: the box's usage report (`usage_scan`) is built on it.
+    Claude Code's
     `<synthetic>` messages (its own notices) spent nothing and are skipped."""
     msg = rec.get("message") if rec.get("type") == "assistant" else None
     if not isinstance(msg, dict) or not isinstance(msg.get("usage"), dict):

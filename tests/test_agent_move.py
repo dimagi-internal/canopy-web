@@ -272,7 +272,7 @@ _NOT_THE_AGENTS = {
     "events.SettingChange": "`user_agent` is a browser string; audit stays where it happened",
     "agents.EngagementEvent": "what people did, recorded in the workspace they did it in; telemetry stays there",
     "events.Activity": "an analytics fact, counted in the workspace it happened in; telemetry stays there",
-    "events.TurnUsage": "what a turn spent, counted in the workspace it ran in; telemetry stays there",
+    "events.SessionUsage": "what a Claude session spent, counted in the workspace it ran in; telemetry stays there",
 }
 
 

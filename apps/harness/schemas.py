@@ -1663,3 +1663,81 @@ class RunnerDeviceKeyOut(Schema):
     #: On the list: agents the caller administers whose secrets this key can
     #: open right now ("can open Hal, Eva").
     can_open: list[DeviceKeyAgentOut] = []
+
+
+# ---- the box's usage report (apps/events/usage.py) ---------------------------
+
+
+class UsageScopeOut(Schema):
+    # The repos canopy knows for this box — the only ones it scans.
+    repos: list[str]
+    # A person asked for a FULL rescan (Check for missing sessions): ignore what
+    # was already reported and send `full=True` on the last chunk.
+    full: bool
+
+
+class UsageDayIn(Schema):
+    day: str = Field(max_length=10)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_creation_tokens: int = Field(default=0, ge=0)
+    messages: int = Field(default=0, ge=0)
+    model: str = Field(default="", max_length=100)
+
+
+class UsageSessionIn(Schema):
+    """One Claude Code session's whole history, as `canopy_transcript.scan_usage`
+    reads it: usage and a little identity, never content."""
+
+    claude_session: str = Field(max_length=64)
+    repo: str = Field(default="", max_length=100)
+    cwd: str = Field(default="", max_length=500)
+    title: str = Field(default="", max_length=200)
+    first_at: str = Field(default="", max_length=40)
+    last_at: str = Field(default="", max_length=40)
+    days: list[UsageDayIn] = Field(default_factory=list, max_length=400)
+
+
+class UsageReportIn(Schema):
+    sessions: list[UsageSessionIn] = Field(default_factory=list, max_length=500)
+    # The last chunk of a requested full rescan: settles the ask.
+    full: bool = False
+
+
+class UsageReportOut(Schema):
+    stored: int
+    matched: int
+
+
+class MissingSessionOut(Schema):
+    claude_session: str
+    repo: str
+    title: str
+    first_at: dt.datetime | None = None
+    last_at: dt.datetime | None = None
+    days: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    # Where sending it up would file it (`harness.services.session_home`).
+    files_in: str
+    agent: str = ""
+
+
+class MissingSessionsOut(Schema):
+    runner: str
+    usage_reported_at: dt.datetime | None = None
+    usage_scan_requested_at: dt.datetime | None = None
+    usage_scanned_at: dt.datetime | None = None
+    sessions: list[MissingSessionOut]
+
+
+class SendUpIn(Schema):
+    claude_sessions: list[str] = Field(min_length=1, max_length=500)
+
+
+class SendUpOut(Schema):
+    # The canopy sessions they were filed as.
+    sessions: list[str]

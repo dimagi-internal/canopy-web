@@ -346,17 +346,15 @@ def test_an_older_claude_code_prompt_still_says_it_was_captured():
     assert ct.rows_for_record(_user("hello"))[0]["content"] == {"record": {}}
 
 
-def test_an_assistant_records_usage_rides_its_first_row_once():
-    from canopy_transcript import conversational_messages, record_usage
+def test_record_usage_reads_one_model_call():
+    from canopy_transcript import record_usage
 
     usage = {"input_tokens": 3, "output_tokens": 40, "cache_read_input_tokens": 900,
              "cache_creation_input_tokens": 12}
-    rec = {"type": "assistant", "message": {"id": "msg_1", "model": "claude-opus-5-5", "usage": usage,
-           "content": [{"type": "text", "text": "hi"}, {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}
-    rows = conversational_messages([rec], -1)
-    assert [("usage" in r["content"]) for r in rows] == [True, False]
-    assert rows[0]["content"]["usage"] == {
+    rec = {"type": "assistant", "timestamp": "2026-10-01T10:00:00Z",
+           "message": {"id": "msg_1", "model": "claude-opus-5-5", "usage": usage, "content": "hi"}}
+    assert record_usage(rec) == {
         "message_id": "msg_1", "model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 40,
-        "cache_read_tokens": 900, "cache_creation_tokens": 12, "at": ""}
+        "cache_read_tokens": 900, "cache_creation_tokens": 12, "at": "2026-10-01T10:00:00Z"}
     synthetic = {"type": "assistant", "message": {"model": "<synthetic>", "usage": usage, "content": "x"}}
     assert record_usage(synthetic) == {} and record_usage({"type": "user", "message": {}}) == {}

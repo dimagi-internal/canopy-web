@@ -124,6 +124,26 @@ def _sessions(agents: list[Agent], viewer) -> dict[int, dict]:
     return out
 
 
+def _runner_rows(rows: list[dict], viewer) -> list[dict]:
+    """The topology's runner rows, plus each box's usage report: when it last sent
+    one, how many of its local sessions canopy has no record of (a count — the
+    list is its admins' alone), and whether the viewer administers it."""
+    from apps.events.models import SessionUsage
+    from apps.harness.models import Runner
+    from apps.harness.runners import can_administer_runner
+
+    boxes = {r.pk: r for r in Runner.objects.filter(pk__in=[row["id"] for row in rows]).select_related("owner")}
+    missing = dict(SessionUsage.objects.filter(runner_id__in=list(boxes), workspace__isnull=True)
+                   .order_by().values("runner_id").annotate(n=Count("claude_session", distinct=True))
+                   .values_list("runner_id", "n"))
+    for row in rows:
+        box = boxes.get(row["id"])
+        row["usage_reported_at"] = box.usage_reported_at if box else None
+        row["missing_sessions"] = missing.get(row["id"], 0)
+        row["can_administer"] = bool(box) and can_administer_runner(viewer, box)
+    return rows
+
+
 def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True) -> dict:
     tree = wsvc.subtree(root, visible)
     agents = agents_in_tree(tree, "owner", "workspace")
@@ -138,7 +158,7 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
     states = [r["vault"]["state"] for r in rows]
     from apps.harness import topology
 
-    runners = topology.build(root, visible)["runners"]
+    runners = _runner_rows(topology.build(root, visible)["runners"], viewer)
     return {
         "root": root.slug,
         "workspaces": [{

@@ -222,6 +222,13 @@ class Runner(models.Model):
     # the box reporting a bootstrap newer than it (`health.bootstrapped_at`), so
     # nothing has to clear it and a refresh that never happened stays visible.
     refresh_requested_at = models.DateTimeField(null=True, blank=True)
+    # The usage report (`apps/events/usage.py`): when the box last posted one, when
+    # a person asked it for a FULL rescan (Health → Runners → Check for missing
+    # sessions; a durable ask the box reads off `usage-scope`, the doorbell rule),
+    # and when it last finished one.
+    usage_reported_at = models.DateTimeField(null=True, blank=True)
+    usage_scan_requested_at = models.DateTimeField(null=True, blank=True)
+    usage_scanned_at = models.DateTimeField(null=True, blank=True)
     # This runner's owner. Load-bearing for authz AND for tenancy:
     # `_runner_visibility_q` requires owner to be the caller (or NULL, the
     # legacy-ungated path it keeps open on purpose), and BOTH `_runner_schedule_qs`

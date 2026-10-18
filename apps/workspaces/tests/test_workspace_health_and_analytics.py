@@ -16,7 +16,7 @@ from apps.agents.models import Agent, AgentCredential
 from apps.agents.setup import setup_steps
 from apps.agents.vault_health import vault_health
 from apps.events import activity, usage
-from apps.events.models import Activity, TurnUsage
+from apps.events.models import Activity, SessionUsage
 from apps.harness import initiator as _initiator
 from apps.harness import services
 from apps.harness.models import Turn
@@ -110,38 +110,6 @@ def test_health_is_the_admin_tier(tree):
     assert _get(tree["staff"], "/api/workspaces/dimagi/health").status_code in (403, 404)
 
 
-# ---- usage from the transcript ------------------------------------------------
-
-
-def _result(cost, inp, out, model="claude-opus-5-5"):
-    return json.dumps({"type": "result", "subtype": "success", "is_error": False,
-                       "total_cost_usd": cost,
-                       "usage": {"input_tokens": inp, "output_tokens": out,
-                                 "cache_read_input_tokens": 7, "cache_creation_input_tokens": 1},
-                       "modelUsage": {model: {"costUSD": cost}}})
-
-
-def test_usage_sums_every_run_of_a_turn():
-    raw = "\n".join([json.dumps({"type": "assistant", "message": {}}), _result(0.5, 10, 20),
-                     "not json", _result(0.25, 1, 2)])
-    u = usage.parse(raw)
-    assert (u.input_tokens, u.output_tokens, u.cache_read_tokens, u.runs) == (11, 22, 14, 2)
-    assert u.model == "claude-opus-5-5"
-    assert usage.parse('{"type": "assistant"}') is None
-
-
-def test_a_transcript_batch_with_a_result_records_the_turns_usage(tree, django_capture_on_commit_callbacks):
-    turn = _turn(tree["hal"], "u1", tree["builder"])
-    with django_capture_on_commit_callbacks(execute=True):
-        services.append_transcript(turn, ['{"type": "system", "subtype": "init", "model": "m"}'])
-    assert not TurnUsage.objects.exists()
-    with django_capture_on_commit_callbacks(execute=True):
-        services.append_transcript(turn, [_result(1.5, 100, 50)])
-    row = TurnUsage.objects.get()
-    assert (row.workspace_id, row.agent_slug, row.user, row.input_tokens) == ("connect", "hal", tree["builder"], 100)
-    assert row.runs == 1
-
-
 # ---- the fact log -------------------------------------------------------------
 
 
@@ -184,14 +152,14 @@ def test_analytics_counts_turns_people_and_tokens_across_the_tree(tree, django_c
     t1 = _turn(tree["hal"], "a1", tree["builder"])
     _turn(tree["eva"], "a2", tree["ceo"])
     _turn(tree["eva"], "a3")  # canopy itself: a turn, not a person
-    with django_capture_on_commit_callbacks(execute=True):
-        services.append_transcript(t1, [_result(2.0, 300, 40)])
+    Turn.objects.filter(pk=t1.pk).update(session_key="claude-a1")
+    usage.record(_box(tree), [_report("claude-a1", "hal", inp=300)])
 
     body = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=7").json()
     assert body["totals"]["turns"] == 3
     assert body["totals"]["active_users"] == 2
     assert body["totals"]["input_tokens"] == 300 and "cost_usd" not in body["totals"]
-    assert body["totals"]["turns_with_usage"] == 1
+    assert body["totals"]["sessions_with_usage"] == 1
     assert len(body["series"]) == 7 and body["series"][-1]["turns"] == 3
     users = {u["email"]: u for u in body["users"]}
     assert users["b@dimagi.com"]["turns"] == 1 and users["b@dimagi.com"]["input_tokens"] == 300
@@ -208,8 +176,8 @@ def test_backfill_seeds_facts_once(tree):
 
     turn = _turn(tree["hal"], "b1", tree["builder"])
     Activity.objects.all().delete()
-    call_command("backfill_activity", "--no-usage")
-    call_command("backfill_activity", "--no-usage")
+    call_command("backfill_activity")
+    call_command("backfill_activity")
     assert Activity.objects.filter(kind=activity.TURN_ENQUEUED, ref=str(turn.pk)).count() == 1
 
 
@@ -228,77 +196,6 @@ def test_health_and_analytics_count_an_agents_turns_the_same_way(tree):
     analytics = {a["agent"]: a for a in _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=30").json()["agents"]}
     assert health["hal"]["turns_30d"] == analytics["hal"]["turns"] == 1
     assert health["hal"]["last_turn_at"] is not None
-
-
-# ---- usage from interactive transcripts and chat rows -------------------------
-
-
-def _assistant(msg_id, inp, out, model="claude-opus-5-5"):
-    return json.dumps({"type": "assistant", "message": {
-        "id": msg_id, "model": model, "content": [{"type": "text", "text": "ok"}],
-        "usage": {"input_tokens": inp, "output_tokens": out, "cache_read_input_tokens": 100}}})
-
-
-def test_an_interactive_transcript_counts_each_model_message_once():
-    # Claude Code writes one record per content block, each repeating its usage.
-    raw = "\n".join([_assistant("m1", 5, 50), _assistant("m1", 5, 50), _assistant("m2", 2, 20),
-                     json.dumps({"type": "assistant", "message": {"model": "<synthetic>", "usage": {"output_tokens": 9}}})])
-    u = usage.parse(raw)
-    assert (u.input_tokens, u.output_tokens, u.cache_read_tokens, u.runs) == (7, 70, 200, 0)
-
-
-def test_finishing_an_interactive_turn_records_its_tokens(tree, django_capture_on_commit_callbacks):
-    turn = _turn(tree["hal"], "i1", tree["builder"])
-    services.append_transcript(turn, [_assistant("m1", 3, 30)])
-    Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING)
-    turn.refresh_from_db()
-    with django_capture_on_commit_callbacks(execute=True):
-        services.finish_turn(turn, status=Turn.DONE)
-    row = TurnUsage.objects.get(turn_ref=str(turn.pk))
-    assert (row.output_tokens, row.runs) == (30, 0)
-
-
-def test_a_runs_own_totals_are_never_replaced_by_a_per_message_sum(tree, django_capture_on_commit_callbacks):
-    turn = _turn(tree["hal"], "i2", tree["builder"])
-    with django_capture_on_commit_callbacks(execute=True):
-        services.append_transcript(turn, [_assistant("m1", 3, 30), _result(0.4, 3, 30)])
-    usage._store(str(turn.pk), turn=turn, workspace="connect", agent=tree["hal"], user=None,
-                 at=turn.created_at, usage=usage.from_messages([{"message_id": "x", "output_tokens": 1}]))
-    row = TurnUsage.objects.get(turn_ref=str(turn.pk))
-    assert (row.runs, row.output_tokens) == (1, 30)
-
-
-def test_chat_rows_credit_their_tokens_to_the_message_they_answer(tree, django_capture_on_commit_callbacks):
-    from apps.canopy_sessions import services as chat
-    from apps.canopy_sessions.models import Message, Session
-
-    s = Session.objects.create(workspace_id="connect", agent=tree["hal"], created_by=tree["builder"],
-                               origin=Session.ORIGIN_RUNNER, title="t")
-    turn = _turn(tree["hal"], "c1", tree["builder"])
-    # The person's message arrives through the same path, attributed to its turn.
-    chat.persist_transcript_rows(s, [{"index": 10, "role": "user", "text": "q"}], attribute=False)
-    Message.objects.filter(session=s, turn_index=10).update(source_turn_id=turn.pk)
-    u1 = {"message_id": "m1", "model": "claude-opus-5-5", "input_tokens": 4, "output_tokens": 40,
-          "cache_read_tokens": 0, "cache_creation_tokens": 0}
-    rows = [{"index": 20, "role": "assistant", "text": "a", "content": {"usage": u1}},
-            {"index": 21, "role": "tool_use", "text": "", "content": {"id": "t", "name": "Bash", "input": {}}}]
-    with django_capture_on_commit_callbacks(execute=True):
-        chat.persist_transcript_rows(s, rows, attribute=False)
-    # A later batch of the same answer is summed with it, not instead of it.
-    u2 = {**u1, "message_id": "m2", "output_tokens": 5}
-    with django_capture_on_commit_callbacks(execute=True):
-        chat.persist_transcript_rows(s, [{"index": 30, "role": "assistant", "text": "b", "content": {"usage": u2}}],
-                                     attribute=False)
-    row = TurnUsage.objects.get(turn_ref=str(turn.pk))
-    assert (row.output_tokens, row.user, row.agent_slug) == (45, tree["builder"], "hal")
-    # Someone typing straight into the session (no turn) is still counted.
-    chat.persist_transcript_rows(s, [{"index": 40, "role": "user", "text": "typed"}], attribute=False)
-    Message.objects.filter(session=s, turn_index=40).update(author={"user_id": tree["ceo"].pk})
-    with django_capture_on_commit_callbacks(execute=True):
-        chat.persist_transcript_rows(s, [{"index": 50, "role": "assistant", "text": "c",
-                                          "content": {"usage": {**u1, "message_id": "m3"}}}], attribute=False)
-    typed = TurnUsage.objects.get(turn_ref=f"chat:{s.pk.hex}:40")
-    assert (typed.output_tokens, typed.user, typed.turn) == (40, tree["ceo"], None)
 
 
 def test_an_agents_login_and_a_system_account_are_not_people(tree):
@@ -417,36 +314,14 @@ def test_every_session_creation_emits_its_fact_once_with_its_repository(tree):
     assert Activity.objects.filter(kind=activity.TURN_ENQUEUED, ref=str(turn.pk)).count() == 1
 
 
-def test_a_backfill_recovers_tokens_for_rows_already_held_on_the_day_they_happened(tree, django_capture_on_commit_callbacks):
-    from apps.canopy_sessions import services as chat
+def test_analytics_has_a_row_per_repository(tree):
 
+    from apps.canopy_sessions.models import RunnerBinding
+
+    box = _box(tree)
     s = _repo_session(tree)
-    rows = [{"index": 10, "role": "user", "text": "fix it"}, {"index": 20, "role": "assistant", "text": "done"}]
-    with django_capture_on_commit_callbacks(execute=True):
-        chat.persist_transcript_rows(s, rows, attribute=False)  # streamed before usage existed
-    assert not TurnUsage.objects.exists()
-    used = {"message_id": "m1", "model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 70,
-            "cache_read_tokens": 900_000, "cache_creation_tokens": 0, "at": "2026-09-01T10:00:00Z"}
-    resent = [rows[0], {**rows[1], "content": {"usage": used}}]
-    with django_capture_on_commit_callbacks(execute=True):
-        assert chat.write_backfill(s, resent) == 0  # nothing new written ...
-    row = TurnUsage.objects.get()  # ... but the tokens arrived
-    assert (row.project, row.cache_read_tokens, row.user, str(row.at.date())) == (
-        "canopy-web", 900_000, tree["ceo"], "2026-09-01")
-    with django_capture_on_commit_callbacks(execute=True):
-        chat.write_backfill(s, resent)  # asking twice changes nothing
-    assert TurnUsage.objects.count() == 1
-
-
-def test_analytics_has_a_row_per_repository(tree, django_capture_on_commit_callbacks):
-    from apps.canopy_sessions import services as chat
-
-    s = _repo_session(tree)
-    used = {"message_id": "m1", "input_tokens": 1, "output_tokens": 2, "cache_read_tokens": 3, "cache_creation_tokens": 0}
-    with django_capture_on_commit_callbacks(execute=True):
-        chat.persist_transcript_rows(s, [{"index": 1, "role": "user", "text": "go"},
-                                         {"index": 2, "role": "assistant", "text": "ok", "content": {"usage": used}}],
-                                     attribute=False)
+    RunnerBinding.objects.create(session=s, runner=box, session_key="t", transcript_id="claude-r1", host="h")
+    usage.record(box, [_report("claude-r1", "canopy-web", cache=3)])
     body = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=7").json()
     repo = next(r for r in body["repositories"] if r["repository"] == "canopy-web")
     assert (repo["sessions"], repo["cache_read_tokens"]) == (1, 3)
@@ -477,25 +352,92 @@ def test_health_lists_the_trees_runners_with_their_code_and_problems(tree, setti
     assert body["totals"]["runners"] >= 1
 
 
-def test_usage_backfill_asks_only_boxes_on_current_code(tree, settings):
-    from io import StringIO
+# ---- the box's usage report and missing sessions ------------------------------
 
-    from django.core.management import call_command
+
+def _box(tree, name="laptop"):
     from django.utils import timezone
 
-    from apps.canopy_sessions.models import RunnerBinding
     from apps.harness.models import Runner
 
-    settings.RUNNER_CODE_SHA = "new"
-    new = Runner.objects.create(name="new-box", kind=Runner.EMDASH, owner=tree["ceo"], status=Runner.ONLINE,
-                                last_heartbeat_at=timezone.now(), code_sha="new")
-    old = Runner.objects.create(name="old-box", kind=Runner.EMDASH, owner=tree["ceo"], status=Runner.ONLINE,
-                                last_heartbeat_at=timezone.now(), code_sha="old")
-    a, b = _repo_session(tree), _repo_session(tree, "connect-labs")
-    RunnerBinding.objects.create(session=a, runner=new, session_key="a", thread_key="emdash:a", host="h")
-    RunnerBinding.objects.create(session=b, runner=old, session_key="b", thread_key="emdash:b", host="h")
-    out = StringIO()
-    call_command("request_usage_backfill", stdout=out)
-    assert RunnerBinding.objects.get(session=a).backfill_requested
-    assert not RunnerBinding.objects.get(session=b).backfill_requested
-    assert "waiting for old-box to run current code: 1" in out.getvalue()
+    return Runner.objects.get_or_create(name=name, defaults=dict(
+        kind=Runner.EMDASH, workspace_id="dimagi", owner=tree["ceo"], status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(), host=name))[0]
+
+
+def _report(cs, repo, *, day=None, inp=1, out=2, cache=3, title="Fix the login"):
+    from django.utils import timezone
+
+    day = day or str(timezone.now().date())
+    return {"claude_session": cs, "repo": repo, "title": title, "first_at": f"{day}T09:00:00Z",
+            "last_at": f"{day}T10:00:00Z", "days": [{"day": day, "input_tokens": inp, "output_tokens": out,
+                                                     "cache_read_tokens": cache, "messages": 4, "model": "m"}]}
+
+
+def test_a_report_is_matched_to_the_turn_that_ran_it_and_replaces_itself(tree):
+    turn = _turn(tree["hal"], "r1", tree["builder"])
+    Turn.objects.filter(pk=turn.pk).update(session_key="claude-x")
+    box = _box(tree)
+    assert usage.record(box, [_report("claude-x", "hal", out=10)]) == {"stored": 1, "matched": 1}
+    usage.record(box, [_report("claude-x", "hal", out=12)])  # the session grew: replaced, not added
+    row = SessionUsage.objects.get()
+    assert (row.workspace_id, row.agent_slug, row.user, row.output_tokens) == ("connect", "hal", tree["builder"], 12)
+
+
+def test_an_unknown_session_is_missing_until_its_admin_sends_it_up(tree, settings):
+    box = _box(tree)
+    usage.record(box, [_report("claude-lost", "canopy-web")])
+    body = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=7").json()
+    assert body["totals"]["sessions_with_usage"] == 0  # not counted anywhere until it has a home
+    lst = _get(tree["ceo"], f"/api/harness/runners/{box.pk}/missing-sessions").json()
+    assert [(m["claude_session"], m["repo"], m["files_in"]) for m in lst["sessions"]] == [
+        ("claude-lost", "canopy-web", "dimagi")]
+    assert _get(tree["staff"], f"/api/harness/runners/{box.pk}/missing-sessions").status_code in (403, 404)
+
+    c = Client()
+    c.force_login(tree["ceo"])
+    r = c.post(f"/api/harness/runners/{box.pk}/missing-sessions", data=json.dumps({"claude_sessions": ["claude-lost"]}),
+               content_type="application/json")
+    assert r.status_code == 200, r.content
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    s = Session.objects.get(pk=r.json()["sessions"][0])
+    b = RunnerBinding.objects.get(session=s)
+    assert (s.project, s.workspace_id, b.session_key, b.transcript_id, b.backfill_requested) == (
+        "canopy-web", "dimagi", "claude:claude-lost", "claude-lost", True)
+    assert SessionUsage.objects.get().workspace_id == "dimagi"
+    assert _get(tree["ceo"], f"/api/harness/runners/{box.pk}/missing-sessions").json()["sessions"] == []
+
+
+def test_checking_for_missing_sessions_asks_the_box_for_a_full_rescan(tree):
+    box = _box(tree)
+    c = Client()
+    c.force_login(tree["ceo"])
+    assert c.post(f"/api/harness/runners/{box.pk}/usage-scan").status_code == 200
+    box.refresh_from_db()
+    assert box.usage_scan_requested_at is not None
+    usage.record(box, [], full=True)
+    box.refresh_from_db()
+    assert box.usage_scan_requested_at is None and box.usage_scanned_at is not None
+
+
+def test_health_shows_a_boxes_missing_count_and_who_may_send_them(tree):
+    from apps.harness.models import RunnerAssignment
+
+    box = _box(tree)
+    RunnerAssignment.objects.create(agent=tree["eva"], runner=box, rank=0)
+    usage.record(box, [_report("claude-lost", "canopy-web")])
+    row = next(r for r in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["runners"] if r["name"] == "laptop")
+    assert (row["missing_sessions"], row["can_administer"]) == (1, True)
+    assert row["usage_reported_at"] is not None
+
+
+def test_a_box_scans_only_the_repos_canopy_knows_for_it(tree):
+    from apps.harness.models import RunnerAssignment
+
+    box = _box(tree)
+    box.capabilities = {"projects": ["canopy-web"]}
+    box.save(update_fields=["capabilities"])
+    Agent.objects.filter(pk=tree["eva"].pk).update(repo_url="https://github.com/dimagi/eva-agent")
+    RunnerAssignment.objects.create(agent=tree["eva"], runner=box, rank=0)
+    assert usage.scope(box) == ["canopy-web", "eva", "eva-agent"]

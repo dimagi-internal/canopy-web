@@ -3,7 +3,7 @@
 ## Rule
 
 **Anything worth counting is emitted as a fact through `apps.events.activity.emit`
-(or `activity.for_turn`), and analytics reads only `Activity` and `TurnUsage`.**
+(or `activity.for_turn`), and analytics reads only `Activity` and `SessionUsage`.**
 Nothing else creates an `Activity` row (`test_activity_has_one_writer`). A new
 metric means: add a kind to `activity.KINDS`, emit it where the thing happens, read
 it in `apps/events/analytics.py`.
@@ -14,7 +14,7 @@ it in `apps/events/analytics.py`.
 |---|---|---|
 | `Activity` | `apps/events/models.py` | Append-only fact: workspace (NOT NULL), `at`, dotted `kind`, `actor_kind` (user/agent/contact/runner/system), `actor`, `agent` + `agent_slug`, `surface`, `ref`, small `meta`. Indexed (workspace, at), (workspace, kind, at), (actor, at), (kind, ref). Never holds content; retention and `prune_events` do not touch it. |
 | `emit` / `for_turn` | `apps/events/activity.py` | The one writer. Own savepoint; a failure is logged and swallowed, never undoes the action. A fact with no workspace is dropped. `for_turn` derives tenancy (`Turn.tenant_slug`), agent (`acting_agent`), person (`initiator_user`, else `enqueued_by`) and surface (origin) once. |
-| `TurnUsage` | `apps/events/models.py`, `apps/events/usage.py` | Tokens per turn, or per typed message's answer, from whichever record of its model calls exists: a `claude -p` transcript's `{"type":"result"}` records (`runs > 0`, never replaced by a per-message sum); an interactive transcript's per-message `message.usage`, once per message id; or a session's rows, which carry the same usage (and the record's timestamp) on each assistant record's first row (`canopy_transcript.record_usage`) and are credited to the person's message they answer (`usage.record_for_chat`; its turn when it has one, else `chat:<session>:<index>`). Dated by the model call itself, so recovered history counts on its own day. Carries `agent_slug` or `project` and the person. **No cost**: `claude -p`'s `total_cost_usd` is a list-price estimate that does not describe a subscription. |
+| `SessionUsage` | `apps/events/models.py`, `apps/events/usage.py` | THE token record: per Claude Code session, per UTC day, as its box reports it. Each box scans its own transcripts in the repos canopy names for it (`GET /runners/{id}/usage-scope`: its declared projects and the agents it serves) with `canopy_transcript.send_usage_report` — both runners — and posts totals, never content (`POST /runners/{id}/usage`, every ~10 min, only changed files). Matched on write to canopy's record of that Claude session (a binding's `transcript_id`, a turn's `session_key`/`cli_session_id`) and attributed from it: workspace, agent or repository, person. No cost. |
 | `Event` | `apps/events/models.py` | The OPERATIONAL log (faults, actions). It coalesces repeats into a count, so it is never counted from. |
 
 ## Kinds and producers
@@ -36,16 +36,16 @@ of a session no agent runs — a person's own Claude Code session in a repo). Th
 analytics tables are one aggregation (`analytics._breakdown`) over agents,
 repositories and people.
 
-## Recovering token history
+## Missing sessions
 
-Sessions streamed before runners sent usage hold the rows but not the tokens.
-`manage.py request_usage_backfill [--days 90]` asks each bound session's box to
-re-ship its transcript (the ordinary backfill both runners drain);
-`persist_transcript_rows` adds the usage to rows it already holds (`_fill_usage`)
-and credits it. Safe to repeat. It asks only sessions whose box runs current code
-(a backfill is answered once, and older code would answer without usage), and
-reports the boxes it is waiting for — re-run it as they update (Health → Runners
-→ Code).
+A reported session that matches nothing has no workspace: it counts nowhere, and
+only the box's admins see it (Health → Runners → Missing sessions,
+`GET /runners/{id}/missing-sessions`). **Check for missing sessions** asks the box
+for a full rescan (`usage_scan_requested_at`, read off `usage-scope`); **Send up**
+files the chosen ones where the report sweep files that box's sessions
+(`harness.services.session_home`) with a binding keyed `claude:<uuid>`
+(`canopy_transcript.transcript_for_key`, both runners) and requests the ordinary
+backfill; their usage is matched at once.
 
 ## Shipping a change to the shared transcript core
 

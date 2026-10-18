@@ -15,6 +15,9 @@ from .hooks import (
     rows_for_hook,
 )
 from .paths import (
+    CLAUDE_SESSION_PREFIX,
+    transcript_for_key,
+    transcript_for_session_id,
     emdash_task_candidates,
     encode_project_dir,
     parse_emdash_worktree,
@@ -32,6 +35,7 @@ from .questions import (
     turn_ended_in_api_error,
 )
 from .records import read_records, read_tail_records
+from .usage_scan import repo_for_cwd, scan as scan_usage, send_report as send_usage_report, session_usage
 from .rows import (
     BLOCK_STRIDE,
     TOOL_INPUT_JSON_MAX,
@@ -54,6 +58,8 @@ from .rows import (
 from .tail import TailReader
 
 __all__ = [
+    "CLAUDE_SESSION_PREFIX", "transcript_for_key", "transcript_for_session_id",
+    "repo_for_cwd", "scan_usage", "send_usage_report", "session_usage",
     "record_usage",
     "ACTIVITY_EVENTS", "ASK_TOOL", "BLOCK_STRIDE", "FORWARDED_EVENTS",
     "STATUS_COMPLETE", "STATUS_PENDING", "pending_question", "hook_retires_menu",

@@ -257,9 +257,9 @@ def close(cfg, sid: str) -> str:
 
 
 def transcript_path(sid: str, claude_home: Path | None = None) -> Path | None:
-    home = claude_home or (Path.home() / ".claude" / "projects")
-    hits = glob.glob(str(home / "*" / f"{sid}.jsonl"))
-    return Path(hits[0]) if hits else None
+    from canopy_transcript import transcript_for_session_id
+
+    return transcript_for_session_id(sid, claude_home=claude_home or (Path.home() / ".claude" / "projects"))
 
 
 def transcript_for(session_key: str, *, home: Path, claude_home: Path) -> Path | None:

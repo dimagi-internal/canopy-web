@@ -35,6 +35,7 @@ const HEALTH: WorkspaceHealthOut = {
   runners: [{ id: '00000000-0000-0000-0000-000000000001', name: 'laptop', kind: 'emdash', location: 'local', status: 'online',
     ready: true, ready_note: '', paused: false, host: 'h', last_heartbeat_at: '2026-10-17T00:00:00Z', workspace: 'dimagi',
     in_tree: true, owner_email: 'jj@x.org', flags: [], agent_count: 2, code_current: false,
+    usage_reported_at: null, missing_sessions: 3, can_administer: false,
     problems: [{ name: 'disk', status: 'warn', detail: '90% full' }] }],
   totals: { agents: 3, set_up: 1, needs_setup: 2, vault_canopy_web: 1, vault_moving: 2, vault_1password: 0, vault_none: 0, runners: 1, runners_online: 1 },
 }
