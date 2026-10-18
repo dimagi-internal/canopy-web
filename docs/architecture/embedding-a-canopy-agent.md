@@ -934,9 +934,8 @@ interface lists. The owner's token is never used there.
 - **The agent does not remember previous conversations.** A user can see and
   resume their prior chats, but each is its own transcript; a new conversation
   starts cold.
-- **canopy's own pages are the only production host so far** (§11). That
-  exercises everything except the cross-origin boundary, so the first
-  third-party host is still the first real test of that. `scripts/e2e_embed_widget.py`
+- **Production hosts:** connect-labs and ace-web (cross-origin, each with
+  host grants on), and canopy's own pages (§11). `scripts/e2e_embed_widget.py`
   walks the live chain against a deployment.
 
 ---
@@ -1024,8 +1023,7 @@ path** — checked against the `canopy-web` site's JWKS URL, token endpoint
 discovered from RFC 8414 metadata, jwt-bearer grant POSTed with canopy's real
 client assertion and DPoP proof, verified by the SDK's `GrantHandler`. Those
 requests to canopy's own URLs are answered in-process by the same functions the
-public endpoints serve (on labs the RFC 8414 location for issuer `…/canopy` is
-at the ROOT of a host the ALB routes to connect-labs). In the visitor's turn the
+public endpoints serve, without the round trip through the load balancer. In the visitor's turn the
 agent calls `site_call`; canopy's gateway presents the token to its own
 `/api/mcp/` over HTTP with a fresh proof; the DPoP gate verifies it; the tool
 runs as the visitor, limited to the scope's tools.
