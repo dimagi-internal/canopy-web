@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Outlet, Link, useLocation, useParams, useNavigate } from 'react-router-dom'
+import { Outlet, Link, matchPath, useLocation, useParams, useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { ChevronDown } from 'lucide-react'
 import { PresenceBadge, pageKeyFor, usePresence } from 'canopy-ui/presence'
@@ -230,9 +230,15 @@ function PresenceHeaderBadge() {
 }
 
 export function AppLayout() {
+  // Read the workspace off the address, not the matched route's params: an
+  // address no route matches (a stale or mistyped /w/<slug>/… link) has no
+  // :workspace param, and the header then showed the LAST workspace used while
+  // the page said "not found" — naming the wrong tenant on the page you are on.
   const { workspace } = useParams()
+  const { pathname } = useLocation()
+  const fromPath = matchPath({ path: '/w/:workspace', end: false }, pathname)?.params.workspace
   return (
-    <WorkspaceProvider urlSlug={workspace ?? null}>
+    <WorkspaceProvider urlSlug={workspace ?? fromPath ?? null}>
       <AppShell />
     </WorkspaceProvider>
   )

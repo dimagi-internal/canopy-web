@@ -319,6 +319,11 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/connected-apps', element: <SettingsRedirect to="connected-apps" /> },
       { path: '/w/:workspace/inbound', element: <SettingsRedirect to="inbound" /> },
       { path: '/w/:workspace/slack', element: <SettingsRedirect to="slack" /> },
+      // The settings sections people name by their own word ("the marshellis
+      // topology", "its email") — the short form lands on the section instead of
+      // a 404 (2026-10-18: a hand-written /w/marshellis/topology link did).
+      ...['topology', 'email', 'access-requests', 'secrets', 'retention', 'admission-rules'].map((to) => (
+        { path: `/w/:workspace/${to}`, element: <SettingsRedirect to={to} /> })),
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
       // Is everything in this workspace tree set up right, and how is it used.
       { path: '/w/:workspace/health', element: <WorkspaceHealthPage /> },
