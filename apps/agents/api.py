@@ -442,6 +442,13 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         # destination needs editor or above. A refusal raises inside this
         # route's transaction, so the fields written above roll back with it.
         _move(request, agent, explicit)
+    if existing is None or (existing.email or "").lower() != (agent.email or "").lower():
+        # An address on one of the workspace's canopy-hosted domains needs no sign-in:
+        # give it its mailbox route now, so mail to it is the agent's turn from the first
+        # message. Anything else (a Google address) is signed in later, as before.
+        from apps.mail import domains as mail_domains
+
+        mail_domains.ensure_agent_route(agent, by=request.user)
     # No `ensure_member` here any more, and it is not an omission: since the
     # role gate above, every path that reaches this line has already required
     # editor-or-owner in `agent.workspace` — on a create, on an edit, and in the
@@ -2129,6 +2136,15 @@ def agent_credential_status(request: HttpRequest, slug: str):
     return services.agent_credential_status(agent)
 
 
+def _mailbox_backend(agent) -> str:
+    """"ses" when the agent's address is canopy-hosted (nothing to sign in; `canopy email`
+    goes through canopy-web), "google" for any other address, "" with none."""
+    from apps.mail import domains as mail_domains
+
+    kind = mail_domains.agent_mailbox(agent)["kind"]
+    return {"hosted": "ses", "google": "google"}.get(kind, "")
+
+
 def _credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
     """Who the caller is, for the purpose of reading this agent's plaintext:
     `("runner", "")`, `("admin", "")`, or `(None, <what access to get>)`.
@@ -2312,6 +2328,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
         github_token=delegations.decrypt_secret(delegation.secret_enc) if delegation else "",
         salesforce_creds=delegations.salesforce_creds_for(agent) if extra("salesforce_creds") else "",
         mailbox=agent.email or "",
+        mailbox_backend=_mailbox_backend(agent),
         zk=agent.zk_enabled, kv=agent.zk_kv if agent.zk_enabled else None, wrap=zk_wrap,
         agent_id=str(agent.pk) if agent.zk_enabled else "",
     )

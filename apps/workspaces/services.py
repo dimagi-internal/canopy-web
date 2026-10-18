@@ -1219,7 +1219,31 @@ def email_admitted_outside_domain(email: str) -> bool:
         return False
     if WorkspaceMembership.objects.filter(user__email__iexact=email).exists():
         return True
-    return pending_invite_for_email(email) is not None
+    if pending_invite_for_email(email) is not None:
+        return True
+    return sign_in_domain_workspace(email) is not None
+
+
+def sign_in_domain_workspace(email: str):
+    """The workspace that lets people at `email`'s domain sign in, or None: the domain is on
+    its `access_request_domains` AND is one of its VERIFIED canopy-hosted mail domains.
+
+    The second half is the proof of control. A domain on the request list alone was never a
+    login grant (anyone can make a Google account at gmail.com), but a workspace whose DKIM
+    records verified for the domain controls its DNS, so it decides who holds addresses
+    there — e.g. a family's or a team's free Google Workspace logins (Jonathan, 2026-10-18).
+    Signing in still grants nothing: the person can only ask to join, approved by an admin
+    or at the workspace's auto-approve role. The caller must already have checked the email
+    is PROVIDER-verified (`CustomSocialAccountAdapter`)."""
+    from apps.mail.models import MailDomain
+
+    domain = _email_domain(email)
+    if not domain:
+        return None
+    for d in MailDomain.objects.filter(name=domain).select_related("workspace"):
+        if d.routes_live and domain in [str(x).lower() for x in (d.workspace.access_request_domains or [])]:
+            return d.workspace
+    return None
 
 
 def can_create_workspace(user) -> bool:

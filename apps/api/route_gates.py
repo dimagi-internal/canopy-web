@@ -636,6 +636,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "reply_mail_thread": ("agent.work",),
     "send_mail": ("agent.work",),
     "set_mail_thread_state": ("agent.work",),
+    "get_agent_mailbox": ("member",),
+    "set_agent_mailbox": ("agent-admin",),  # the route itself also needs integrations (domains.ensure_agent_route)
     "ses_inbound": ("host",),  # auth=None; SNS signature + pinned cert host + pinned topic, 404 otherwise
     "ses_events": ("host",),  # auth=None; SNS signature + topic ARN verified, 404 otherwise
     # --- apps/push/api.py
@@ -808,7 +810,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
 SETTINGS: frozenset[str] = frozenset({
     # mail: workspace email domains and their routes
     "add_mail_domain", "update_mail_domain", "remove_mail_domain", "save_mail_route", "delete_mail_route",
-    "share_mail_domain", "unshare_mail_domain",
+    "share_mail_domain", "unshare_mail_domain", "set_agent_mailbox",
     # agents: identity, ownership, access, integrations, credentials
     "upsert_agent", "move_agent", "delete_agent", "transfer_owner", "link_canopy_user", "mint_agent_canopy_token",
     "give_agent_canopy_login", "grant_admin", "revoke_admin",

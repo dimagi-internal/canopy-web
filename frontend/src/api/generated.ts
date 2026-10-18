@@ -750,6 +750,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/mail/agents/{slug}/mailbox": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Where an agent's address lives: canopy-hosted, Google, or none */
+        readonly get: operations["get_agent_mailbox"];
+        /**
+         * Give an agent an address; on a canopy-hosted domain it is routed at once
+         * @description Set the agent's address (owner or agent admin). An address on one of the workspace's
+         *     hosted domains gets its mailbox route in the same step when the caller may change the
+         *     workspace's routes; one that already goes elsewhere is never taken over.
+         */
+        readonly put: operations["set_agent_mailbox"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/mail/threads/{workspace}": {
         readonly parameters: {
             readonly query?: never;
@@ -11805,6 +11828,21 @@ export interface components {
              * @default []
              */
             readonly shares: readonly components["schemas"]["MailDomainShareOut"][];
+            /**
+             * Sign In
+             * @default false
+             */
+            readonly sign_in: boolean;
+            /**
+             * Can Set Sign In
+             * @default false
+             */
+            readonly can_set_sign_in: boolean;
+            /**
+             * Mx Points At Google
+             * @default false
+             */
+            readonly mx_points_at_google: boolean;
         };
         /** MailDomainShareOut */
         readonly MailDomainShareOut: {
@@ -11852,6 +11890,8 @@ export interface components {
              * @default false
              */
             readonly unsuspend: boolean;
+            /** Sign In */
+            readonly sign_in?: boolean | null;
         };
         /** MailRouteIn */
         readonly MailRouteIn: {
@@ -11887,6 +11927,56 @@ export interface components {
             readonly workspace: string;
             /** Agent */
             readonly agent: string;
+        };
+        /**
+         * AgentMailboxOut
+         * @description Where an agent's address lives. `kind`: hosted (canopy-hosted, nothing to sign in),
+         *     google (signed in with Google), none. For hosted: `live` = mail to it is the agent's turn
+         *     now; `route` = mine | taken | none; `verified` = the domain's DNS checks out.
+         */
+        readonly AgentMailboxOut: {
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Address
+             * @default
+             */
+            readonly address: string;
+            /**
+             * Domain
+             * @default
+             */
+            readonly domain: string;
+            /**
+             * Verified
+             * @default false
+             */
+            readonly verified: boolean;
+            /**
+             * Live
+             * @default false
+             */
+            readonly live: boolean;
+            /**
+             * Route
+             * @default
+             */
+            readonly route: string;
+            /**
+             * Hosted Domains
+             * @default []
+             */
+            readonly hosted_domains: readonly string[];
+            /**
+             * Can Route
+             * @default false
+             */
+            readonly can_route: boolean;
+        };
+        /** AgentMailboxIn */
+        readonly AgentMailboxIn: {
+            /** Address */
+            readonly address: string;
         };
         /** MailAttachmentOut */
         readonly MailAttachmentOut: {
@@ -29226,6 +29316,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MailResolveOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_mailbox: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentMailboxOut"];
+                };
+            };
+        };
+    };
+    readonly set_agent_mailbox: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentMailboxIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentMailboxOut"];
                 };
             };
         };
