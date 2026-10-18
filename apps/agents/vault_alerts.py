@@ -55,6 +55,9 @@ DEBOUNCE = dt.timedelta(hours=1)
 #: `X-Canopy-Read-Purpose` a box sends when it refreshes an agent's credentials
 #: outside a turn (canopy `agent prepare --runner`).
 REFRESH_PURPOSE = "runner-refresh"
+#: `X-Canopy-Read-Purpose: check: <why> (by <user@host>)` — a verification run
+#: (canopy `agent prepare --check`). Alerted on, labelled; never exempt.
+CHECK_PREFIX = "check:"
 BURST_WINDOW_S = 300
 
 
@@ -85,15 +88,26 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
         # id would have caught: a turn id is not checked against a live turn either,
         # so this alert only ever catches an honest caller nobody expected
         # (canopy-web#1563). The read is still logged; the other checks still run.
-        refresh = (runner is not None
-                   and request.META.get("HTTP_X_CANOPY_READ_PURPOSE", "") == REFRESH_PURPOSE)
+        purpose = request.META.get("HTTP_X_CANOPY_READ_PURPOSE", "")
+        refresh = runner is not None and purpose == REFRESH_PURPOSE
         if not turn_id and via == "runner" and not refresh:
             box = f" on {runner.name}" if runner is not None else ""
-            raised.append(raise_alert(
-                agent, "no-turn", user=user, runner=runner,
-                detail=f"a box{box} ({_who(user)}) read {agent.slug}'s secrets outside a turn "
-                       "(no X-Canopy-Turn-Id)",
-                refs=sorted(handed)))
+            # A person's or agent's verification run (`canopy agent prepare --check`)
+            # says so. It is NOT exempt — anyone holding the token can send the
+            # header — it is only worded as the check it claims to be, under its own
+            # kind so it never uses up the hour's alert for an unlabelled read.
+            check = purpose[len(CHECK_PREFIX):].strip() if purpose.startswith(CHECK_PREFIX) else ""
+            if check:
+                raised.append(raise_alert(
+                    agent, "no-turn-check", user=user, runner=runner, refs=sorted(handed),
+                    detail=f"a box{box} ({_who(user)}) read {agent.slug}'s secrets outside a turn, "
+                           f"labelled as a verification check: {' '.join(check.split())[:200]}"))
+            else:
+                raised.append(raise_alert(
+                    agent, "no-turn", user=user, runner=runner,
+                    detail=f"a box{box} ({_who(user)}) read {agent.slug}'s secrets outside a turn "
+                           "(no X-Canopy-Turn-Id)",
+                    refs=sorted(handed)))
         declared = services.declared_credential_names(agent)
         undeclared = sorted(((asked or set()) | set(handed)) - declared - _EXTRAS)
         if undeclared:
@@ -225,6 +239,11 @@ _WHY = {
                 "secrets while it is running one of the agent's turns; a box reading them "
                 "at any other time is what a stolen or misused runner token looks like. "
                 "If you were not working on that box, pause it and revoke its token."),
+    "no-turn-check": ("The box said this was a verification check, and named who ran it — "
+                      "expected if you or one of your agents was checking that the agent's "
+                      "secrets load on that box. The label is the caller's own word, not "
+                      "proof: if nobody was checking, treat it as a read outside a turn — "
+                      "pause the box and revoke its token."),
     "undeclared-ref": ("Canopy watches for this because an agent should only ask for the "
                        "secrets its runtime.yaml declares. Usually the agent's repo is "
                        "missing a declaration, so add those names to its runtime.yaml. If "

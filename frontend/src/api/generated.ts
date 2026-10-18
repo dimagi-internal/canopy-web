@@ -18469,7 +18469,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            readonly kind: "no-turn" | "undeclared-ref" | "burst" | "device-proof" | "zk-wrap-missing";
+            readonly kind: "no-turn" | "no-turn-check" | "undeclared-ref" | "burst" | "device-proof" | "zk-wrap-missing";
             /**
              * Detail
              * @default
