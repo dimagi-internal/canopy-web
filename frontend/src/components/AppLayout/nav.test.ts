@@ -45,6 +45,14 @@ describe('NAV_GROUPS', () => {
 })
 
 describe('resolveNavGroups', () => {
+  it('offers Health only to a role that can read it, so an editor never lands on a refusal', () => {
+    const labels = (role: string | null) =>
+      resolveNavGroups({ ...authed, role }).flatMap((g) => g.items.map((i) => i.label))
+    expect(labels('admin')).toContain('Health')
+    expect(labels('editor')).not.toContain('Health')
+    expect(labels(null)).not.toContain('Health')
+  })
+
   it('resolves tenant items under the active workspace', () => {
     const work = resolveNavGroups(authed).find((g) => g.label === 'Work')!
     expect(work.items).toEqual([
