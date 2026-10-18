@@ -29,6 +29,9 @@ def _fast(monkeypatch):
     monkeypatch.setattr(delivery, "CONFIRM_POLL", 0.02)
     monkeypatch.setattr(delivery, "UNMATCHED_GRACE", 0.1)
     monkeypatch.setattr(execute, "RECOVERY_CONFIRM_TIMEOUT", 0.2)
+    monkeypatch.setattr(execute, "BUSY_WAIT_TIMEOUT", 0.3)
+    monkeypatch.setattr(execute, "BUSY_WAIT_POLL", 0.01)
+    monkeypatch.setattr(execute, "SNAPSHOT_AFTER_SEND", False)
     monkeypatch.setattr(emdash, "task_state", lambda *a, **k: "live")
     chat_bridge.IN_FLIGHT.clear()
     yield
@@ -417,3 +420,85 @@ def test_a_collapsed_paste_then_a_humans_words_is_left_alone():
 def test_a_collapsed_paste_then_our_tail_then_a_humans_words_is_left_alone():
     typed = "[Pasted text #1] before it goes live. also ignore that"
     assert delivery.recovery_action(_state(typed=typed), LONG)[0] == delivery.LEAVE
+
+
+# ── a busy session is waited out, not given up on (2026-10-18, turn 79313c1f) ──
+#
+# A background-agent notification started a turn ~20s after our Enter. At the look
+# the composer was empty and Claude was running, so recovery left it and the message
+# was lost. Busy only means "not yet": once idle, the queue has drained into the
+# transcript, so a message still missing was lost and retyping cannot double it.
+
+BUSY = _state(screen="⏺ working on the task notification\n❯ ", running=True)
+IDLE = _state(screen="⏺ done\n❯ ")
+
+
+def test_a_busy_session_that_goes_idle_with_no_trace_is_retyped_once(monkeypatch, transcript):
+    s = _Session(monkeypatch, transcript, looks=[BUSY, BUSY, IDLE], retype_lands=True)
+    client = _Client()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out.startswith("chat:t1")
+    assert client.failed is None
+    assert len(s.sends) == 2, "one retype, after the session went idle"
+    assert "delivery_wait_idle" in client.statuses()
+    assert client.retries() == [("retype", "no_trace")]
+    assert "delivery_recovered" in client.statuses()
+
+
+def test_a_message_that_lands_while_we_wait_for_idle_is_never_retyped(monkeypatch, transcript):
+    def lands_while_busy(session):
+        _land(session.transcript)
+        return BUSY
+    s = _Session(monkeypatch, transcript, looks=[BUSY, lands_while_busy, IDLE],
+                 retype_lands=True)
+    client = _Client()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out.startswith("chat:t1")
+    assert client.failed is None
+    assert len(s.sends) == 1, "the original was queued behind the busy turn"
+    assert "delivery_late" in client.statuses()
+
+
+def test_a_message_drained_by_going_idle_is_never_retyped(monkeypatch, transcript):
+    def idle_after_drain(session):
+        _land(session.transcript)
+        return IDLE
+    s = _Session(monkeypatch, transcript, looks=[BUSY, idle_after_drain], retype_lands=True)
+    client = _Client()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out.startswith("chat:t1")
+    assert client.failed is None
+    assert len(s.sends) == 1
+    assert "delivery_late" in client.statuses()
+
+
+def test_a_session_still_busy_at_the_deadline_fails_as_before(monkeypatch, transcript):
+    s = _Session(monkeypatch, transcript, looks=[BUSY], retype_lands=True)
+    client = _Client()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out.startswith("failed:")
+    assert len(s.sends) == 1, "never typed into a session that might hold it"
+    assert client.retries() == [("leave", "session_busy_timeout")]
+    assert "undelivered" in client.statuses()
+
+
+def test_a_snapshot_of_the_composer_is_posted_right_after_the_send(monkeypatch, transcript):
+    monkeypatch.setattr(execute, "SNAPSHOT_AFTER_SEND", True)
+    snap = _state(typed="", screen="❯ ", running=True)
+    _Session(monkeypatch, transcript, looks=[snap, _state(typed=PROMPT)], enter_lands=True)
+    client = _Client()
+
+    execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    first = [e["payload"] for e in client.events
+             if e["payload"].get("status") == "delivery_snapshot"]
+    assert first == [{"status": "delivery_snapshot", "task": "c-you-were-just-brought-into-an-8202",
+                      "found": True, "running": True, "line": ""}]

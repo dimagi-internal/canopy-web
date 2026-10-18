@@ -222,6 +222,8 @@ def recovery_action(state: dict, prompt: str) -> tuple[str, str]:
     if state.get("running"):
         # Claude is working. Maybe on our message (the transcript we watch is not
         # the one it is writing) — retyping would queue a second copy behind it.
+        # Not a final answer: the caller waits for idle and looks again
+        # (execute._await_idle, 2026-10-18 turn 79313c1f).
         return LEAVE, "session_busy"
     if _collapses(prompt) and _PASTED_ANY.search(screen):
         # Our message would show as "[Pasted text #N …]" and one is on screen; it
