@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -16,7 +16,7 @@ function agent(slug: string, over: Partial<AgentHealthOut> = {}): AgentHealthOut
     projects: 1, open_tasks: 3, waiting_tasks: 1, created_at: '2026-10-01T00:00:00Z',
     active_sessions: 1, last_session_at: '2026-10-17T00:00:00Z',
     recent_sessions: [{ id: 's1', workspace: 'connect', title: `${slug} chat`, at: '2026-10-17T00:00:00Z', active: true }],
-    last_turn_at: null, turns_30d: 0, left: 1,
+    last_turn_at: null, turns_30d: 0, done_30d: 0, failed_30d: 0, people_30d: 0, ran_on: [], left: 1,
     vault: { source: 'canopy-web', state: 'moving', declared: 2, refs: [{ name: 'gh', status: 'stored' }, { name: 'old', status: '1password' }],
       stored: ['gh'], in_1password: ['old'], missing: [], op_vault: '', op_key_set: false, zero_knowledge: true, machines_waiting: [] },
     steps: [step('repo', 'done'), step('vault', 'todo', '/w/connect/agents/x/settings#credentials')],
@@ -30,7 +30,9 @@ const HEALTH: WorkspaceHealthOut = {
     { slug: 'dimagi', name: 'Dimagi', depth: 0, parent: '', agents: 0, shared_vault: { vault: 'Fleet', key_set: true, inherited_from: '' } },
     { slug: 'connect', name: 'Connect', depth: 1, parent: 'dimagi', agents: 2, shared_vault: { vault: 'Fleet', key_set: true, inherited_from: 'dimagi' } },
   ],
-  agents: [agent('hal'), agent('eva', { can_fix: false, left: 1 }),
+  agents: [agent('hal', { turns_30d: 6, done_30d: 4, failed_30d: 2, people_30d: 1,
+    ran_on: [{ name: 'shayoni-win-cdp', kind: 'emdash', turns: 5 }, { name: 'cloud-ec2-2', kind: 'cloud', turns: 1 }] }),
+    agent('eva', { can_fix: false, left: 1 }),
     agent('ada', { left: 0, vault: { ...agent('ada').vault, state: 'canopy-web', in_1password: [] } })],
   runners: [{ id: '00000000-0000-0000-0000-000000000001', name: 'laptop', kind: 'emdash', location: 'local', status: 'online',
     ready: true, ready_note: '', paused: false, host: 'h', last_heartbeat_at: '2026-10-17T00:00:00Z', workspace: 'dimagi',
@@ -39,7 +41,7 @@ const HEALTH: WorkspaceHealthOut = {
     status_note: 'emdash CDP unreachable on :9223', remedy: 'open Emdash CDP', code_sha: 'aaaa1111', expected_code_sha: 'bbbb2222',
     agents: [{ slug: 'hal', name: 'Hal', workspace: 'connect' }],
     problems: [{ name: 'disk', status: 'warn', detail: '90% full' }] }],
-  totals: { agents: 3, set_up: 1, needs_setup: 2, vault_canopy_web: 1, vault_moving: 2, vault_1password: 0, vault_none: 0, runners: 1, runners_online: 1 },
+  totals: { agents: 3, set_up: 1, needs_setup: 2, used_30d: 1, vault_canopy_web: 1, vault_moving: 2, vault_1password: 0, vault_none: 0, runners: 1, runners_online: 1 },
 }
 
 vi.mock('@/api/workspaces', async (orig) => ({
@@ -96,6 +98,18 @@ describe('WorkspaceHealthPage', () => {
 })
 
 describe('every figure opens its source', () => {
+  it('says who used an agent with steps left, how its turns ended and where they ran', async () => {
+    renderPage()
+    const hal = (await screen.findAllByText('HAL'))[0].closest('tr') as HTMLElement
+    expect(within(hal).getByText(/2 failed/)).toBeTruthy()
+    expect(within(hal).getByTestId('ran-on').textContent).toBe('shayoni-win-cdp 5 · cloud-ec2-2 1')
+    fireEvent.click(screen.getByText('Used, 30 days'))
+    expect(screen.getByTestId('tile-filter').textContent).toContain('Used, 30 days')
+    const table = screen.getByTestId('health-agents')
+    expect(within(table).queryByText('EVA')).toBeNull()
+    expect(within(table).getByText('HAL')).toBeTruthy()
+  })
+
   it('a tile filters the agents table to what it counts', async () => {
     renderPage()
     await screen.findByText('HAL')

@@ -16,7 +16,7 @@ import { useTreeRead } from './useTreeRead'
 // (`GET /api/workspaces/{slug}/health`), so this page and the agent's Settings
 // page cannot disagree. Facts and states only — no urgency ranking.
 
-type Filter = 'all' | 'done' | 'setup' | 'vault' | AgentHealthOut['vault']['state']
+type Filter = 'all' | 'done' | 'used' | 'setup' | 'vault' | AgentHealthOut['vault']['state']
 
 const FILTER_LABEL: Partial<Record<Filter, string>> = {
   all: 'All', setup: 'Steps left', vault: 'Not on canopy-web vault',
@@ -63,8 +63,9 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <section aria-label="Summary" className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+      <section aria-label="Summary" className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-9">
         <Tile label="Agents" value={t.agents} onClick={show('all')} />
+        <Tile label="Used, 30 days" value={t.used_30d} hint="a turn, chat or message" onClick={show('used')} />
         <Tile label="Fully set up" value={t.set_up} onClick={show('done')} />
         <Tile label="With steps left" value={t.needs_setup} onClick={show('setup')} />
         <Tile label="On canopy-web vault" value={t.vault_canopy_web} onClick={show('canopy-web')} />
@@ -117,7 +118,7 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
           {!(filter in FILTER_LABEL) && (
             <button type="button" onClick={() => setFilter('all')} data-testid="tile-filter"
                     className="min-h-8 rounded-md border border-foreground/30 bg-muted px-2.5 text-[12px] text-foreground">
-              {filter === 'done' ? 'Fully set up' : `Vault: ${VAULT_LABEL[filter as AgentHealthOut['vault']['state']].text}`} ×
+              {filter === 'done' ? 'Fully set up' : filter === 'used' ? 'Used, 30 days' : `Vault: ${VAULT_LABEL[filter as AgentHealthOut['vault']['state']].text}`} ×
             </button>
           )}
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by name, owner, workspace"
@@ -132,13 +133,15 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
           <span>Open a row for each step and its fix.</span>
         </p>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1180px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-agents">
+          <table className="w-full min-w-[1380px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-agents">
             <thead className="text-left text-muted-foreground">
               <tr>
                 <th className="py-1 font-medium">Agent</th><th className="font-medium">Setup</th>
                 <th className="font-medium">Vault</th><th className="font-medium">Owner</th>
                 <th className="font-medium">Workspace</th><th className="font-medium">Last turn</th>
-                <th className="font-medium text-right">Turns, 30 days</th>
+                <th className="font-medium text-right" title="Turns started in 30 days, and how many of those that finished failed or were lost">Turns, 30 days</th>
+                <th className="font-medium text-right" title="People who asked it, chatted or messaged in 30 days">People</th>
+                <th className="font-medium" title="The runners its finished turns ran on in 30 days, and how many each">Ran on</th>
                 <th className="font-medium" title="Open sessions, and when any of its sessions last did something">Sessions</th>
                 <th className="font-medium text-right">Projects</th>
                 <th className="font-medium text-right" title="Suggested or in progress">Open tasks</th>
@@ -177,7 +180,18 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                     <td className="text-foreground-secondary">
                       {a.last_turn_at ? <CellLink to={`/w/${a.workspace}/agents/${a.slug}/turns`}>{relativeTime(a.last_turn_at, now)}</CellLink> : 'never'}
                     </td>
-                    <td className="text-right tabular-nums"><CountLink n={a.turns_30d} to={`/w/${a.workspace}/agents/${a.slug}/turns`} label="turns" /></td>
+                    <td className="whitespace-nowrap text-right tabular-nums">
+                      <CountLink n={a.turns_30d} to={`/w/${a.workspace}/agents/${a.slug}/turns`} label="turns" />
+                      {a.failed_30d > 0 && <span className="text-destructive"> · {a.failed_30d} failed</span>}
+                    </td>
+                    <td className="text-right tabular-nums text-foreground-secondary">{a.people_30d || '—'}</td>
+                    <td className="whitespace-nowrap text-foreground-secondary" data-testid="ran-on">
+                      {a.ran_on.length === 0 ? '—' : a.ran_on.map((r, i) => (
+                        <span key={r.name} title={`${r.kind || 'runner'} · ${r.turns} turn${r.turns === 1 ? '' : 's'}`}>
+                          {i > 0 && ' · '}{r.name} <span className="tabular-nums text-muted-foreground">{r.turns}</span>
+                        </span>
+                      ))}
+                    </td>
                     <td className="whitespace-nowrap text-foreground-secondary" title="Open the row for its latest sessions">
                       {a.active_sessions ? <span className="text-foreground">{a.active_sessions} open</span> : '0 open'}
                       {a.last_session_at && <span className="text-muted-foreground"> · {relativeTime(a.last_session_at, now)}</span>}
@@ -204,7 +218,7 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                     </td>
                   </tr>
                   {open === a.slug && (
-                    <tr><td colSpan={15} className="bg-muted/30 p-3"><AgentDetail agent={a} /></td></tr>
+                    <tr><td colSpan={17} className="bg-muted/30 p-3"><AgentDetail agent={a} /></td></tr>
                   )}
                 </Fragment>
               ))}
@@ -232,6 +246,7 @@ export function whoCanUse(a: Pick<AgentHealthOut, 'has_interface' | 'capabilitie
 function matches(a: AgentHealthOut, f: Filter): boolean {
   if (f === 'all') return true
   if (f === 'done') return a.left === 0
+  if (f === 'used') return a.turns_30d > 0 || a.people_30d > 0
   if (f === 'setup') return a.left > 0
   if (f === 'vault') return a.vault.state === 'moving' || a.vault.state === '1password'
   return a.vault.state === f

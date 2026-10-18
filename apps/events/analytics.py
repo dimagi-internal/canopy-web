@@ -37,13 +37,30 @@ def window(days: int, now=None) -> tuple[int, dt.date, dt.datetime]:
 
 def agent_turns(agent_slugs: list[str], *, days: int = 30, now=None) -> dict[str, dict]:
     """{agent slug: {"n": turns started in `window(days)`, "last_at": latest turn
-    ever}} from the fact log — the per-agent count Health shows beside Analytics'."""
+    ever, "done"/"failed": turns that finished so (failed counts lost), "people":
+    distinct people who did anything with it, "runners": [{name, kind, turns}]
+    its finished turns ran on, most first}} from the fact log — the per-agent
+    figures Health shows beside Analytics', counted the way `_breakdown` counts."""
     _, _, since = window(days, now)
-    started = Activity.objects.filter(kind=activity.TURN_ENQUEUED, agent_slug__in=agent_slugs).order_by()
-    out = {row["agent_slug"]: {"n": 0, "last_at": row["last_at"]}
-           for row in started.values("agent_slug").annotate(last_at=Max("at"))}
-    for row in started.filter(at__gte=since).values("agent_slug").annotate(n=Count("id")):
-        out[row["agent_slug"]]["n"] = row["n"]
+    facts = Activity.objects.filter(agent_slug__in=agent_slugs).order_by()
+    started = facts.filter(kind=activity.TURN_ENQUEUED)
+    blank = {"n": 0, "last_at": None, "done": 0, "failed": 0, "people": 0, "runners": []}
+    out: dict[str, dict] = {}
+    for row in started.values("agent_slug").annotate(last_at=Max("at")):
+        out[row["agent_slug"]] = {**blank, "runners": [], "last_at": row["last_at"]}
+    recent = facts.filter(at__gte=since)
+    for row in recent.values("agent_slug").annotate(
+            n=Count("id", filter=Q(kind=activity.TURN_ENQUEUED)),
+            done=Count("id", filter=Q(kind=activity.TURN_FINISHED, meta__status="done")),
+            failed=Count("id", filter=Q(kind=activity.TURN_FINISHED, meta__status__in=["failed", "lost"])),
+            people=Count("actor", filter=Q(actor_kind=Activity.USER), distinct=True)):
+        slug = row.pop("agent_slug")
+        out.setdefault(slug, {**blank, "runners": []}).update(row)
+    for row in (recent.filter(kind=activity.TURN_FINISHED, meta__has_key="runner")
+                .values("agent_slug", "meta__runner", "meta__runner_kind").annotate(n=Count("id"))
+                .order_by("agent_slug", "-n", "meta__runner")):
+        out[row["agent_slug"]]["runners"].append(
+            {"name": row["meta__runner"], "kind": row["meta__runner_kind"] or "", "turns": row["n"]})
     return out
 
 

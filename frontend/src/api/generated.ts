@@ -22458,11 +22458,40 @@ export interface components {
             readonly last_turn_at?: string | null;
             /** Turns 30D */
             readonly turns_30d: number;
+            /**
+             * Done 30D
+             * @default 0
+             */
+            readonly done_30d: number;
+            /**
+             * Failed 30D
+             * @default 0
+             */
+            readonly failed_30d: number;
+            /**
+             * People 30D
+             * @default 0
+             */
+            readonly people_30d: number;
+            /**
+             * Ran On
+             * @default []
+             */
+            readonly ran_on: readonly components["schemas"]["AgentRunnerUseOut"][];
             readonly vault: components["schemas"]["AgentVaultHealthOut"];
             /** Steps */
             readonly steps: readonly components["schemas"]["HealthStepOut"][];
             /** Left */
             readonly left: number;
+        };
+        /** AgentRunnerUseOut */
+        readonly AgentRunnerUseOut: {
+            /** Name */
+            readonly name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Turns */
+            readonly turns: number;
         };
         /** AgentVaultHealthOut */
         readonly AgentVaultHealthOut: {
@@ -22550,6 +22579,11 @@ export interface components {
             readonly set_up: number;
             /** Needs Setup */
             readonly needs_setup: number;
+            /**
+             * Used 30D
+             * @default 0
+             */
+            readonly used_30d: number;
             /** Vault Canopy Web */
             readonly vault_canopy_web: number;
             /** Vault Moving */

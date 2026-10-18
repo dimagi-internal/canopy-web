@@ -463,3 +463,22 @@ def test_a_box_scans_only_the_repos_canopy_knows_for_it(tree):
     Agent.objects.filter(pk=tree["eva"].pk).update(repo_url="https://github.com/dimagi/eva-agent")
     RunnerAssignment.objects.create(agent=tree["eva"], runner=box, rank=0)
     assert usage.scope(box) == ["canopy-web", "eva", "eva-agent"]
+
+
+def test_health_shows_how_an_agent_is_used_and_where_it_ran(tree):
+    """Setup is not the whole story: an agent with steps left can still be in use.
+    Each row says who used it, how its turns ended and which runner ran them."""
+    from apps.harness.models import Runner
+
+    box = Runner.objects.create(name="cloud-1", kind="cloud", owner=tree["builder"])
+    done, failed = _turn(tree["hal"], "u1", tree["builder"]), _turn(tree["hal"], "u2", tree["staff"])
+    for turn, status in ((done, Turn.DONE), (failed, Turn.FAILED)):
+        Turn.objects.filter(pk=turn.pk).update(claimed_by=box)
+        turn.refresh_from_db()
+        turn.status = status
+        activity.for_turn(activity.TURN_FINISHED, turn)
+    body = _get(tree["ceo"], "/api/workspaces/dimagi/health").json()
+    hal = {a["slug"]: a for a in body["agents"]}["hal"]
+    assert (hal["turns_30d"], hal["done_30d"], hal["failed_30d"], hal["people_30d"]) == (2, 1, 1, 2)
+    assert hal["ran_on"] == [{"name": "cloud-1", "kind": "cloud", "turns": 2}]
+    assert hal["left"] > 0 and body["totals"]["used_30d"] == 1
