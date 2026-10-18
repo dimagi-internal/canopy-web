@@ -25,7 +25,7 @@ export function WorkspaceAnalyticsPage(): JSX.Element {
   return (
     <div>
       <HealthViews title="Analytics" />
-      <div className="mb-4 flex flex-wrap items-center gap-2 text-[12px]">
+      {!forbidden && <div className="mb-4 flex flex-wrap items-center gap-2 text-[12px]">
         <div className="inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5" role="group" aria-label="Range">
           {RANGES.map((n) => (
             <button key={n} type="button" onClick={() => setDays(n)} aria-pressed={days === n}
@@ -38,7 +38,7 @@ export function WorkspaceAnalyticsPage(): JSX.Element {
           <input type="checkbox" checked={tree} onChange={(e) => setTree(e.target.checked)} />
           Include workspaces below
         </label>
-      </div>
+      </div>}
       {forbidden ? <AdminOnly what="workspace analytics" />
         : error ? <p className="text-[13px] text-destructive">{error}</p>
           : !data ? <p className="text-[13px] text-muted-foreground">Loading…</p>

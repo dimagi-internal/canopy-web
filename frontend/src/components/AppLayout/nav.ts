@@ -20,6 +20,8 @@
  * the `Canopy.` wordmark already links there.
  */
 
+import { roleAllows, type Capability } from '@/lib/workspaceRoles'
+
 /** A single destination. `tenant` items resolve under /w/:workspace. */
 export interface NavItem {
   /** Tenant items: the path segment under /w/:workspace ('' = the index).
@@ -27,6 +29,9 @@ export interface NavItem {
   path: string
   label: string
   tenant: boolean
+  /** Shown only to someone whose role in the active workspace allows this — a
+   *  link that always lands on "only an admin can see this" is a dead end. */
+  capability?: Capability
 }
 
 export interface NavGroup {
@@ -79,7 +84,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { path: 'timeline', label: 'Timeline', tenant: true },
       // Is everything set up right (agents, the vault) and how is it used,
       // tree-wide. One entry; Analytics is the page's second tab.
-      { path: 'health', label: 'Health', tenant: true },
+      { path: 'health', label: 'Health', tenant: true, capability: 'logs.read' },
       // ONE entry for the workspace's configuration. Members, Slack and
       // Inbound were three of the four sections behind it; the fourth
       // (Connected sites) was in no menu at all, which is what a surface with
@@ -117,12 +122,15 @@ export interface ResolvedNavGroup {
 export function resolveNavGroups(opts: {
   isAuthed: boolean
   active: string | null
+  /** The viewer's role in `active`, for items that name a `capability`. */
+  role?: string | null
 }): ResolvedNavGroup[] {
   if (!opts.isAuthed) return []
   return NAV_GROUPS.flatMap((group) => {
     const items = group.items.flatMap((item) => {
       if (!item.tenant) return [{ href: item.path, label: item.label }]
       if (!opts.active) return []
+      if (item.capability && !roleAllows(opts.role, item.capability)) return []
       return [{ href: `/w/${opts.active}${item.path ? `/${item.path}` : ''}`, label: item.label }]
     })
     return items.length > 0 ? [{ label: group.label, items }] : []

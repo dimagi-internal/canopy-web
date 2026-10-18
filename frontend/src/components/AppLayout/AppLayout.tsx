@@ -11,7 +11,7 @@ import {
 } from 'canopy-ui/ui'
 import { useAuth } from '@/auth/AuthProvider'
 import { useTheme } from '@/theme/ThemeProvider'
-import { WorkspaceProvider, useWorkspace } from '@/workspace/WorkspaceProvider'
+import { WorkspaceProvider, useWorkspace, useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
@@ -260,7 +260,8 @@ function AppShell() {
 
   // See `nav.ts` for the grouping and why the header is menus rather than a
   // flat row of links.
-  const navGroups = resolveNavGroups({ isAuthed, active })
+  const role = useWorkspaceRole(active)
+  const navGroups = resolveNavGroups({ isAuthed, active, role })
 
   // Collapse the mobile menu whenever the route changes (e.g. tapping a link).
   useEffect(() => {
