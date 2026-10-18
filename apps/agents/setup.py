@@ -89,9 +89,33 @@ def _vault(agent: Agent, settings: str) -> dict:
     return _op_vault(agent, settings)
 
 
+def _canopy_login(agent: Agent, settings: str) -> dict | None:
+    """Its own canopy login (`canopy-pat`) — one click on its Credentials page makes it,
+    stores it sealed and turns on renewal. Only for an agent on the Canopy vault; a
+    1Password agent's login comes from its vault like every other secret."""
+    if agent.credential_source != Agent.CANOPY_WEB:
+        return None
+    from .pat_rotation import CANOPY_PAT_REF
+
+    has = AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).exists()
+    return _step(
+        "canopy_login", "Give it its canopy login", DONE if has else TODO,
+        ("It signs in to canopy with its own login"
+         + (", which renews itself." if agent.pat_rotation_enabled else ".")) if has else
+        "How it reads its tasks, sends its email and reports back. One click makes it and keeps "
+        "it in its vault; it renews itself.",
+        href=f"{settings}#canopy-login", action="See its login" if has else "Give it its canopy login")
+
+
 def _canopy_vault(agent: Agent, settings: str, vh: dict) -> dict:
+    from .pat_rotation import CANOPY_PAT_REF
+
     title = "Give it a vault"
-    leftover = vh["in_1password"] + vh["missing"]
+    # Its canopy login has its own step (and button); listing it here too would be
+    # one missing thing reported twice.
+    leftover = [n for n in vh["in_1password"] + vh["missing"] if n != CANOPY_PAT_REF]
+    vh = {**vh, "in_1password": [n for n in vh["in_1password"] if n != CANOPY_PAT_REF],
+          "missing": [n for n in vh["missing"] if n != CANOPY_PAT_REF]}
     if leftover:
         parts = []
         if vh["in_1password"]:
@@ -285,6 +309,7 @@ def setup_steps(agent: Agent) -> list[dict]:
         _github(agent, settings),
         _mailbox(agent, settings),
         _vault(agent, settings),
+        *[s for s in [_canopy_login(agent, settings)] if s],
         _runner(agent, settings),
         _job(agent),
         _first_turn(agent, base),

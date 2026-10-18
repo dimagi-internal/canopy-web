@@ -50,6 +50,7 @@ from .schemas import (
     AgentSalesforceOut,
     AgentCanopyUserIn,
     AgentCanopyTokenIn,
+    AgentCanopyLoginOut,
     AgentCanopyTokenOut,
     AgentGitHubOut,
     AgentCredentialAccessOut,
@@ -692,6 +693,32 @@ def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanop
                                            user_email=user.email, created_user=created))
 
 
+# The browser's "Give it its canopy login": the same mint, but the token goes straight
+# into the agent's Canopy vault (sealed) and is never returned — so, unlike the route
+# above, nothing here can land in a transcript or a page.
+@router.post("/{slug}/canopy-login", response={201: AgentCanopyLoginOut},
+             summary="Give the agent its canopy login, stored in its Canopy vault")
+def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanopyTokenIn) -> Status:
+    """Mint the agent's own canopy token, store it as its `canopy-pat` sealed to the
+    people and machines that may read the agent, and turn on automatic rotation. Only
+    for an agent on the Canopy vault (409 otherwise, or when nobody could open the
+    stored token yet). Changes a secret, so a browser needs a fresh passkey step-up.
+    The owner or an admin."""
+    from apps.tokens.middleware import minting_refusal
+
+    agent = _agent_for_admin(request, slug)
+    refused = minting_refusal(request)
+    if refused:
+        raise HttpError(403, refused)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    try:
+        out = services.give_agent_canopy_login(agent, request.user, email=payload.email)
+    except services.AgentTokenRefused as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    return Status(201, AgentCanopyLoginOut(**out))
+
+
 # The owner is whose GitHub grant the agent's GitHub-backed features read
 # through, so moving it is held to the agent's owner or a workspace owner. A
 # token (PAT, MCP client) acts as its user and may do it too: anything the web
@@ -987,8 +1014,11 @@ def set_credential_source(request: HttpRequest, slug: str,
     The agent's owner or an admin only (`_agent_for_admin`), like the
     credentials and the vault pointer themselves: choosing where an agent's
     secrets come from is part of controlling them. Absent from AgentIn, so the
-    repo's self-publish upsert cannot move it."""
+    repo's self-publish upsert cannot move it. From a browser it needs a fresh
+    passkey step-up, like every other change to where secrets live."""
     agent = _agent_for_admin(request, slug)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
     if payload.credential_source == "canopy-web":
         # Zero-knowledge is the canopy-web vault's only mode (Jonathan,
         # 2026-10-17): moving here seals every stored value to the agent's

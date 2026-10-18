@@ -43,8 +43,13 @@ def _bearer(user) -> Client:
 
 
 def _session(user) -> Client:
+    """A browser that has just touched its passkey: moving an agent's secrets needs a
+    fresh step-up from a browser (test_agent_canopy_login pins the refusal)."""
+    from apps.passkeys.testing import grant_step_up
+
     c = Client()
     c.force_login(user)
+    grant_step_up(c)
     return c
 
 

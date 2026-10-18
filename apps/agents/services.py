@@ -79,8 +79,12 @@ def born_zk_fields(owner) -> dict:
     the canopy-web vault, Jonathan 2026-10-17): `zk_enabled` at kv 0 — no vault
     key yet, so every value that arrives is sealed (`zks1`) to whoever may read
     the agent (its owner's vault key, its approved machines) until a holder
-    creates the vault key."""
-    return {"zk_enabled": True, "zk_kv": 0}
+    creates the vault key.
+
+    And on the canopy-web vault itself: a new agent's secrets live here unless
+    its owner explicitly chooses 1Password (PATCH /credential-source). A person
+    with no 1Password — a family workspace — must never be routed to `op`."""
+    return {"zk_enabled": True, "zk_kv": 0, "credential_source": Agent.CANOPY_WEB}
 
 
 def make_zero_knowledge(agent) -> int:
@@ -250,6 +254,44 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
     raw, token = PersonalToken.create_for_user(
         user=user, label=(label or f"{agent.slug} agent").strip()[:100], ttl_days=0)
     return raw, token, user, created
+
+
+def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
+    """The agent's canopy login in one step, for an agent on the canopy-web vault: mint
+    its token (`mint_agent_canopy_token`), store it as its `canopy-pat` sealed to whoever
+    may read the agent (`minted=True` → zks1), and turn on automatic rotation. The raw
+    token never leaves this function — the browser button that calls it has no use for
+    it, and a response that carried it would put a live login in a page's memory.
+
+    Refuses BEFORE minting when nobody could read the stored token yet (no vault key,
+    no approved machine): a token minted and then not storable would be a live login
+    with nowhere to go."""
+    from django.db import transaction
+
+    from . import pat_rotation, zk_seal
+
+    if agent.credential_source != Agent.CANOPY_WEB:
+        raise AgentTokenRefused(
+            f"{agent.slug} reads its secrets from 1Password; switch it to the Canopy vault "
+            "first, or put its token in 1Password with `canopy agent vault`", 409)
+    if agent.zk_enabled and not zk_seal.recipients_for(agent):
+        raise AgentTokenRefused(
+            "nobody can open this agent's secrets yet — set up your key under Settings → "
+            "Security → You (one passkey touch), then try again", 409)
+    with transaction.atomic():
+        raw, token, user, created = mint_agent_canopy_token(
+            agent, actor, email=email, label=f"{agent.slug} agent")
+        set_agent_credentials(agent, {pat_rotation.CANOPY_PAT_REF: raw}, user=actor, minted=True)
+        del raw
+        agent.refresh_from_db()
+        rotation = pat_rotation.enable_refusal(agent, actor)
+        if rotation is None and not agent.pat_rotation_enabled:
+            agent.pat_rotation_enabled = True
+            agent.pat_rotation_enabled_by = actor
+            agent.save(update_fields=["pat_rotation_enabled", "pat_rotation_enabled_by", "updated_at"])
+    return {"user_email": user.email, "created_user": created, "token_id": token.pk,
+            "rotation_enabled": agent.pat_rotation_enabled,
+            "rotation_note": "" if rotation is None else str(rotation)}
 
 
 def agent_detail(agent: Agent) -> dict:

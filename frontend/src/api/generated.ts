@@ -3287,6 +3287,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/canopy-login": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Give the agent its canopy login, stored in its Canopy vault
+         * @description Mint the agent's own canopy token, store it as its `canopy-pat` sealed to the
+         *     people and machines that may read the agent, and turn on automatic rotation. Only
+         *     for an agent on the Canopy vault (409 otherwise, or when nobody could open the
+         *     stored token yet). Changes a secret, so a browser needs a fresh passkey step-up.
+         *     The owner or an admin.
+         */
+        readonly post: operations["give_agent_canopy_login"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/owner": {
         readonly parameters: {
             readonly query?: never;
@@ -3479,7 +3503,8 @@ export interface paths {
          *     The agent's owner or an admin only (`_agent_for_admin`), like the
          *     credentials and the vault pointer themselves: choosing where an agent's
          *     secrets come from is part of controlling them. Absent from AgentIn, so the
-         *     repo's self-publish upsert cannot move it.
+         *     repo's self-publish upsert cannot move it. From a browser it needs a fresh
+         *     passkey step-up, like every other change to where secrets live.
          */
         readonly patch: operations["set_credential_source"];
         readonly trace?: never;
@@ -16898,6 +16923,26 @@ export interface components {
              * @default
              */
             readonly label: string;
+        };
+        /**
+         * AgentCanopyLoginOut
+         * @description `POST /canopy-login`: the agent's canopy login was made (or reused), its token
+         *     stored sealed as `canopy-pat`, rotation turned on when it could be. Never the token.
+         */
+        readonly AgentCanopyLoginOut: {
+            /** User Email */
+            readonly user_email: string;
+            /** Created User */
+            readonly created_user: boolean;
+            /** Token Id */
+            readonly token_id: number;
+            /** Rotation Enabled */
+            readonly rotation_enabled: boolean;
+            /**
+             * Rotation Note
+             * @default
+             */
+            readonly rotation_note: string;
         };
         /** AgentOwnerIn */
         readonly AgentOwnerIn: {
@@ -32621,6 +32666,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentCanopyTokenOut"];
+                };
+            };
+        };
+    };
+    readonly give_agent_canopy_login: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentCanopyTokenIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentCanopyLoginOut"];
                 };
             };
         };
