@@ -4,6 +4,7 @@ import type { ChatSession } from '@/api/chat'
 import type { RunnerOut } from '@/api/harness'
 import { closeIntent } from '@/components/chat/closeAction'
 import { onlineSessionCapableRunners } from '@/components/chat/runnerEligibility'
+import { deleteConsequence } from './ideTree'
 
 /**
  * The /ide row's right-click menu. Every action is an existing session route
@@ -199,9 +200,7 @@ export function SessionContextMenu({
         title={
           close.kind === 'blocked'
             ? close.why
-            : session.runner_name
-              ? `Delete its emdash task on ${session.runner_name} and retire the session`
-              : 'Retire this session (it has nothing on a runner)'
+            : deleteConsequence(session)
         }
         testId="ide-menu-close"
       >

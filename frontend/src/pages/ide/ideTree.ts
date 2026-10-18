@@ -21,6 +21,7 @@ export type IdeSession = {
   agent_slug?: string | null
   emdash_project?: string
   project?: string
+  runner_reported?: boolean
   last_activity_at: string
 }
 
@@ -122,6 +123,15 @@ export function buildTree<T extends IdeSession>(
     if (!a.key !== !b.key) return a.key ? -1 : 1
     return a.key.localeCompare(b.key)
   })
+}
+
+/** What deleting a session does, in the words a confirm shows. Only a session
+ *  a runner reports as an emdash task has a task to delete; a cloud session or
+ *  an unbound web chat has its turns cancelled and is archived. */
+export function deleteConsequence(s: IdeSession): string {
+  if (s.runner_reported && s.runner_name) return `Deletes its emdash task on ${s.runner_name}.`
+  if (s.runner_name) return `Cancels its turns on ${s.runner_name} and archives it.`
+  return 'Archives it (it has nothing on a runner).'
 }
 
 /** Compact age for a dense row: "now", "12m", "3h", "2d". */

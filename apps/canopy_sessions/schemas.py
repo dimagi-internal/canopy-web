@@ -297,6 +297,10 @@ class SessionOut(Schema):
     # sentence, and when. "" when no failed close is outstanding. Shown as
     # "Close failed: <reason>" with a Retry (which re-requests the close).
     close_error: str = ""
+    #: A runner is reporting an emdash task for this session right now, so a
+    #: close deletes that task. False for a cloud session or an unbound web chat,
+    #: where a close cancels its turns and archives it.
+    runner_reported: bool = False
     close_error_at: dt.datetime | None = None
     # Push on every finished turn, rather than once the chat has gone quiet.
     notify_every_completion: bool = False

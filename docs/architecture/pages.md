@@ -322,7 +322,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `ChatPage` on the right (`onLeave` keeps a close or a move inside `/ide`).
   Objective by design: every filter is an on/off toggle (each runner, state,
   mode, archived), kept in `localStorage`, and nothing is ranked or labelled
-  "stuck". The rail header is two lines: the state totals (which are the
+  "stuck"; the foot of the list says how many sessions the filters hide, with
+  **Show all**. **New session** (the shared `NewChatMenu`: an agent, or a repo a
+  runner reports) opens the new chat in place. The rail header is two lines: the state totals (which are the
   state toggles), search, a **Filters** menu (runners, Alt-click to solo; mode;
   archived) whose button says how many are off, and `⋯` (collapse all, hide
   the list, hide the app bar). The ☰ folds the app bar away
@@ -330,7 +332,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   and `/` focuses search. The chat runs `compact` (one-line header) inside
   `.ide-dense`, which sets its text to 13px (`index.css`). Right-clicking a row offers the existing session routes (open in a
   new tab, copy link, stop, transfer to another runner, archive/unarchive,
-  delete = close); the rail's right edge drags to resize (double-click
+  delete = close — its confirm names an emdash task only when a runner reports
+  one, `SessionOut.runner_reported`; a cloud session's turns are cancelled and it is archived); the rail's right edge drags to resize (double-click
   resets). In the agent panel, "close the ones that are done" runs the close
   review: the agent reads the visible sessions with their last replies (page
   action `reviewCloseCandidates`, answered by this tab as you), proposes with

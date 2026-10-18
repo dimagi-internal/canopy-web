@@ -198,6 +198,9 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "waiting_on_you": waiting_on_you,
         "close_error": binding.close_error if binding else "",
         "close_error_at": binding.close_error_at if binding else None,
+        # Which of close_session's two branches a close takes — what a delete
+        # confirm must name (an emdash task, or only this session).
+        "runner_reported": services.is_runner_reported(binding),
         # Is a requested full-history ship still outstanding? EXACT, where the
         # client previously had to guess: it slept a flat 1200 ms and read once,
         # which on labs was 13 s early (rows landed at t+14.6s), so the button

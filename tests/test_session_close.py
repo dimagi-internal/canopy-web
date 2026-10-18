@@ -183,3 +183,26 @@ def test_a_closed_name_never_retires_a_still_open_namesake():
         runner, ws, [_Reported("ddd")], archived=["ddd"]
     )
     assert Session.objects.get(runner_binding__session_key="ddd").status == Session.ACTIVE
+
+
+def test_the_list_says_which_branch_a_close_takes():
+    """/ide's delete confirm names an emdash task only when there is one: the list
+    carries `runner_reported`, the same question close_session branches on."""
+    from django.test import Client
+
+    user, ws = _ctx()
+    runner = _runner(user, ws)
+    local = _local_session(user, ws, runner)
+    cloud = Session.objects.create(
+        workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="cloud chat"
+    )
+    RunnerBinding.objects.create(
+        session=cloud, runner=runner, host=runner.host,
+        session_key="0d6f2c1e-1111-2222-3333-444455556666",
+        thread_key=str(cloud.id), live_seen_at=timezone.now(), reported_at=None,
+    )
+    client = Client()
+    client.force_login(user)
+    rows = {r["id"]: r for r in client.get("/api/canopy-sessions/?state=all").json()}
+    assert rows[str(local.id)]["runner_reported"] is True
+    assert rows[str(cloud.id)]["runner_reported"] is False

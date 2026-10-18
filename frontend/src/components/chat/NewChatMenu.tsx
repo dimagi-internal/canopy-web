@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
-import { createSession } from '@/api/chat'
+import { createSession, type ChatSession } from '@/api/chat'
 import { getAgentDefaultOrder, getAgentRunners, type AgentOut, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { onlineSessionCapableRunners, repoChoices, reportedRepos, type RepoChoice } from './runnerEligibility'
@@ -30,22 +30,30 @@ type PendingTarget =
  * The repos offered are the ones the fleet's online, session-capable runners
  * report (`repoChoices`) — the set a project chat can actually be claimed on.
  * `runners` may be passed by a caller that already loaded them; otherwise the
- * menu loads them itself.
+ * menu loads them itself. `onCreated` replaces the default of opening the new
+ * chat at `/w/<ws>/chat/<id>` (/ide opens it in place).
  */
 export function NewChatMenu({
   agents,
   runners: runnersProp,
   onError,
+  onCreated,
+  label = 'New chat',
+  className,
 }: {
   agents: readonly AgentOut[]
   runners?: readonly RunnerOut[] | null
   onError: (message: string) => void
+  onCreated?: (session: ChatSession) => void
+  label?: string
+  className?: string
 }) {
   const navigate = useNavigate()
   const [ownRunners, setOwnRunners] = useState<RunnerOut[] | null>(null)
   const fleetRunners = runnersProp ?? ownRunners
   const projects = useMemo(() => repoChoices(fleetRunners ?? []), [fleetRunners])
   const [creating, setCreating] = useState(false)
+  const [open, setOpen] = useState(false)
   const [pending, setPending] = useState<PendingTarget | null>(null)
   const [agentRunnerOptions, setAgentRunnerOptions] = useState<AgentRunnerOut[]>([])
   const [runnersLoading, setRunnersLoading] = useState(false)
@@ -66,13 +74,23 @@ export function NewChatMenu({
     (args: Parameters<typeof createSession>[0]) => {
       setCreating(true)
       createSession(args)
-        .then((s) => navigate(`/w/${s.workspace}/chat/${s.id}`))
+        .then((s) => {
+          if (onCreated) {
+            setCreating(false)
+            setOpen(false)
+            setPending(null)
+            setSelectedRunnerId('')
+            onCreated(s)
+          } else {
+            navigate(`/w/${s.workspace}/chat/${s.id}`)
+          }
+        })
         .catch((err: unknown) => {
           onError(err instanceof Error ? err.message : 'could not start chat')
           setCreating(false)
         })
     },
-    [navigate, onError],
+    [navigate, onError, onCreated],
   )
 
   // Reset the "Run on" step, e.g. when the menu closes.
@@ -142,18 +160,25 @@ export function NewChatMenu({
   )
 
   return (
-    <DropdownMenu onOpenChange={(open: boolean) => { if (!open) resetPending() }}>
+    <DropdownMenu
+      open={open}
+      onOpenChange={(next: boolean) => {
+        setOpen(next)
+        if (!next) resetPending()
+      }}
+    >
       <DropdownMenuTrigger
         render={
           <Button
             size="sm"
             disabled={creating || (agents.length === 0 && projects.length === 0)}
             data-testid="new-chat"
+            className={className}
           />
         }
       >
         <Plus className="mr-1 h-4 w-4" />
-        New chat
+        {label}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
         {!pending ? (

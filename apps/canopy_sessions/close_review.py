@@ -67,7 +67,7 @@ def _blocked(user, session: Session, row: dict) -> str:
     if row["waiting_on_you"]:
         return "It is waiting on you"
     binding = getattr(session, "runner_binding", None)
-    if services._is_runner_reported(binding) and \
+    if services.is_runner_reported(binding) and \
             binding.runner.live_status not in (Runner.ONLINE, Runner.DEGRADED):
         return f"Its runner {binding.runner.name} is offline"
     return ""

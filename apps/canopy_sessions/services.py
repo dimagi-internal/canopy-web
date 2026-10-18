@@ -2586,7 +2586,7 @@ def stop_session(session: Session, *, by: str = "") -> str:
     return "session" if interrupt_session(session) == "sent" else ""
 
 
-def _is_runner_reported(binding) -> bool:
+def is_runner_reported(binding) -> bool:
     """Is a runner CURRENTLY reporting an emdash task for this session?
 
     The one question `close_session` branches on, observed rather than inferred.
@@ -2610,7 +2610,7 @@ def close_session(*, session: Session) -> str:
     """End a session for good. Returns
     "closing" | "closed" | "unavailable" | "already_closed".
 
-    Two branches on one question — see `_is_runner_reported`.
+    Two branches on one question — see `is_runner_reported`.
 
     REPORTED (a laptop's emdash task): cancel the turns, then relay a close and
     write NOTHING to the session. The emdash task is the truth for a local session,
@@ -2636,7 +2636,7 @@ def close_session(*, session: Session) -> str:
         return "already_closed"
 
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
-    if _is_runner_reported(binding):
+    if is_runner_reported(binding):
         reachable = {Runner.ONLINE, Runner.DEGRADED}
         if binding.runner.live_status not in reachable:
             return "unavailable"
