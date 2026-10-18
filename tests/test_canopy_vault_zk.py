@@ -647,23 +647,42 @@ def test_enrollment_records_the_ecdh_key_and_its_thumbprint(fleet):
     assert device_keys.thumbprint(VECTORS["inputs"]["device_pub_jwk"]) == VECTORS["inputs"]["device_jkt"]
 
 
-def test_changing_the_ecdh_key_sends_an_active_key_back_to_pending(fleet):
+def test_a_new_ecdh_key_waits_for_approval_but_the_key_stays_active(fleet):
+    """A new ECDH key must not cut the box's sign-in (cloud-ec2-2 went offline
+    for every agent on 2026-10-18 when it did): only the ECDH key waits."""
     assert _enable(fleet).status_code == 200
     same = _register(fleet, fleet.sign, fleet.ecdh)
-    assert same.status == RunnerDeviceKey.ACTIVE  # re-posting the same key changes nothing
+    assert same.status == RunnerDeviceKey.ACTIVE and same.ecdh_ready  # re-posting changes nothing
     new_ecdh = ec.generate_private_key(ec.SECP256R1())
     key = _register(fleet, fleet.sign, new_ecdh)
-    assert key.pk == fleet.device.pk and key.status == RunnerDeviceKey.PENDING
-    assert key.ecdh_jkt == ref.jkt(new_ecdh.public_key())
+    assert key.pk == fleet.device.pk and key.status == RunnerDeviceKey.ACTIVE
+    assert key.ecdh_jkt == ref.jkt(new_ecdh.public_key()) and key.ecdh_waiting and not key.ecdh_ready
     row = Client().get(f"/api/runner-device-keys/?runner={fleet.runner.pk}",
                        HTTP_AUTHORIZATION=f"Bearer {fleet.pat}").json()[0]
-    assert row["status"] == "pending" and row["reapproval"] is True
+    assert row["status"] == "active" and row["ecdh_waiting"] is True and row["reapproval"] is False
+    assert row["zk_pending_agents"] == ["eva"]  # approving will also give it access
     assert not AgentVaultWrap.objects.filter(kind="device").exists()
+    # Nothing can be wrapped to the unapproved ECDH key.
+    from apps.agents import zk
+
+    assert zk.eligible_device_keys(_agent(fleet)) == []
     res = fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve")
     assert res.status_code == 200 and res.json()["zk_pending_agents"] == ["eva"]
+    assert res.json()["ecdh_waiting"] is False
+    key.refresh_from_db()
+    assert key.ecdh_ready and key.ecdh_approved_by_id is not None
+    assert [k.pk for k in zk.eligible_device_keys(_agent(fleet))] == [key.pk]
 
 
-def test_an_aws_iam_key_with_a_new_ecdh_key_needs_re_approval(fleet, monkeypatch):
+def test_approving_a_new_key_approves_its_ecdh_key_too(fleet):
+    key = _register(fleet, ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1()))
+    assert key.status == RunnerDeviceKey.PENDING and not key.ecdh_ready and not key.ecdh_waiting
+    assert fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve").status_code == 200
+    key.refresh_from_db()
+    assert key.status == RunnerDeviceKey.ACTIVE and key.ecdh_ready
+
+
+def test_an_aws_iam_key_with_a_new_ecdh_key_stays_active_and_its_ecdh_key_waits(fleet, monkeypatch):
     from apps.harness import aws_iam_proof
 
     role = "arn:aws:iam::123456789012:role/canopy-runner"
@@ -679,7 +698,8 @@ def test_an_aws_iam_key_with_a_new_ecdh_key_needs_re_approval(fleet, monkeypatch
     assert first.status_code == 201 and first.json()["ecdh_jkt"]
     fleet.client.post(f"/api/runner-device-keys/{first.json()['id']}/approve")
     again = enroll(ec.generate_private_key(ec.SECP256R1()))
-    assert again.status_code == 200 and again.json()["status"] == "pending"
+    assert again.status_code == 200 and again.json()["status"] == "active"
+    assert RunnerDeviceKey.objects.get(pk=first.json()["id"]).ecdh_waiting
 
 
 def test_enrollment_refuses_a_bad_ecdh_key(fleet):
@@ -1048,3 +1068,22 @@ def test_make_zero_knowledge_seals_every_custodial_value(fleet):
         assert row.value_enc == ""
         assert ref.open_sealed_value(row.value_zk, _aid(fleet), name, "device", fleet.device.ecdh_jkt,
                                      fleet.ecdh) == plain
+
+
+def test_migration_restores_a_key_sent_back_to_pending_by_its_ecdh_key(fleet):
+    """0079: an approved key that `_set_ecdh` used to send back to pending signs in
+    again; its ECDH key waits. A plainly active key keeps its ECDH approval."""
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    forwards = importlib.import_module("apps.harness.migrations.0079_device_key_ecdh_approval").forwards
+    bumped = _register(fleet, ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1()))
+    RunnerDeviceKey.objects.filter(pk=bumped.pk).update(status=RunnerDeviceKey.PENDING, approved_at=timezone.now())
+    fresh = _register(fleet, ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1()))
+    RunnerDeviceKey.objects.filter(pk=fleet.device.pk).update(ecdh_approved_at=None)
+    forwards(django_apps, None)
+    bumped.refresh_from_db(), fresh.refresh_from_db(), fleet.device.refresh_from_db()
+    assert bumped.status == RunnerDeviceKey.ACTIVE and bumped.ecdh_waiting
+    assert fresh.status == RunnerDeviceKey.PENDING  # never approved: still a new box
+    assert fleet.device.ecdh_ready

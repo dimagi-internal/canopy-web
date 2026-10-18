@@ -19286,6 +19286,11 @@ export interface components {
              */
             readonly reapproval: boolean;
             /**
+             * Ecdh Waiting
+             * @default false
+             */
+            readonly ecdh_waiting: boolean;
+            /**
              * Status
              * @enum {string}
              */

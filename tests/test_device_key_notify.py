@@ -76,7 +76,7 @@ def test_re_registering_the_same_key_sends_nothing(box, django_capture_on_commit
     assert mail.outbox == []
 
 
-def test_an_active_key_sent_back_to_pending_asks_for_re_approval(box, django_capture_on_commit_callbacks):
+def test_an_active_key_with_a_new_ecdh_key_asks_for_re_approval(box, django_capture_on_commit_callbacks):
     key = ec.generate_private_key(ec.SECP256R1())
     with django_capture_on_commit_callbacks(execute=True):
         kid = _register(box, key).json()["id"]
@@ -84,8 +84,10 @@ def test_an_active_key_sent_back_to_pending_asks_for_re_approval(box, django_cap
     mail.outbox.clear()
     with django_capture_on_commit_callbacks(execute=True):
         assert _register(box, key, ecdh=ec.generate_private_key(ec.SECP256R1())).status_code == 200
-    assert RunnerDeviceKey.objects.get(pk=kid).status == RunnerDeviceKey.PENDING
+    after = RunnerDeviceKey.objects.get(pk=kid)
+    assert after.status == RunnerDeviceKey.ACTIVE and after.ecdh_waiting  # still signs in
     assert {m.to[0] for m in mail.outbox} == {"ad@dimagi.com", "jj@dimagi.com"}
+    assert "stays online" in mail.outbox[0].body
     assert "needs re-approving" in mail.outbox[0].subject
 
 

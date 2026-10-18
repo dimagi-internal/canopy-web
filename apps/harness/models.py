@@ -1247,11 +1247,17 @@ class RunnerDeviceKey(models.Model):
     #: Zero-knowledge vault (canopy-web#1550): a SEPARATE P-256 key the box
     #: does ECDH with — Secure Enclave keys are per-purpose, so the signing key
     #: cannot also agree keys; for `aws-iam` it is a 0600 key file on the box.
-    #: Setting or changing it on an `active` key sends the key back to
-    #: `pending` (a new key to receive vault keys is a new trust decision).
+    #: It is approved on its OWN (`ecdh_approved_at`): a new ECDH key on an
+    #: active key waits for a person, but the signing key stays active, so the
+    #: box keeps signing in and running every other agent meanwhile.
     ecdh_public_jwk = models.JSONField(default=dict, blank=True)
     #: RFC 7638 thumbprint of `ecdh_public_jwk` — bound into every device wrap.
     ecdh_jkt = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    #: When a person approved THIS ecdh key (None: not yet, or none). Vault keys
+    #: are wrapped, and values sealed, only to an approved one (`ecdh_ready`).
+    ecdh_approved_at = models.DateTimeField(null=True, blank=True)
+    ecdh_approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                         null=True, blank=True, related_name="+")
     jkt = models.CharField(max_length=64, unique=True)
     kind = models.CharField(max_length=16, choices=KIND_CHOICES)
     label = models.CharField(max_length=120, blank=True, default="")
@@ -1272,6 +1278,16 @@ class RunnerDeviceKey(models.Model):
 
     def __str__(self) -> str:
         return f"devicekey:{self.runner_id}:{self.jkt[:12]}:{self.status}"
+
+    @property
+    def ecdh_ready(self) -> bool:
+        """May vault keys be wrapped (and values sealed) to this key's ECDH key?"""
+        return self.status == self.ACTIVE and bool(self.ecdh_jkt) and self.ecdh_approved_at is not None
+
+    @property
+    def ecdh_waiting(self) -> bool:
+        """Active, signing in, but its (new) ECDH key awaits a person's approval."""
+        return self.status == self.ACTIVE and bool(self.ecdh_jkt) and self.ecdh_approved_at is None
 
 
 class RunnerAccessToken(models.Model):

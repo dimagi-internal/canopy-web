@@ -2701,7 +2701,7 @@ def agent_device_keys(request: HttpRequest, slug: str):
     out = []
     for k in device_keys.keys_for_agent(agent):
         row = key_out(k, can_manage=can_administer_runner(request.user, k.runner))
-        if row.can_manage and k.status == RunnerDeviceKey.PENDING:
+        if row.can_manage and (k.status == RunnerDeviceKey.PENDING or k.ecdh_waiting):
             # Approving it will also wrap these (one passkey touch, canopy-web#1550).
             row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=True)
         out.append(row)
