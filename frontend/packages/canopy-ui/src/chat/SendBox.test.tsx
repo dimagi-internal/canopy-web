@@ -368,6 +368,43 @@ describe("SendBox — attaching files", () => {
     expect(onAttach).toHaveBeenCalledWith([file]);
   });
 
+  it("types a placeholder where the file was pasted, numbered after the staged ones", () => {
+    const { rerender } = render(<SendBox {...attachProps} storage={null} onAttach={vi.fn()} />);
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "this is it: and more" } });
+    box.setSelectionRange(11, 11);
+    fireEvent.paste(box, { clipboardData: { files: [new File(["x"], "image.png", { type: "image/png" })] } });
+    expect(box.value).toBe("this is it: [Image #1] and more");
+
+    rerender(
+      <SendBox {...attachProps} storage={null} onAttach={vi.fn()} attachments={[{ id: "a1", filename: "image.png" }]} />,
+    );
+    box.setSelectionRange(box.value.length, box.value.length);
+    fireEvent.paste(box, { clipboardData: { files: [new File(["x"], "notes.pdf", { type: "application/pdf" })] } });
+    expect(box.value).toBe("this is it: [Image #1] and more [File #2] ");
+  });
+
+  it("removing a file takes its placeholder out and renumbers the rest", () => {
+    const onRemoveAttachment = vi.fn();
+    render(
+      <SendBox
+        {...attachProps}
+        storage={null}
+        onAttach={vi.fn()}
+        onRemoveAttachment={onRemoveAttachment}
+        attachments={[
+          { id: "a1", filename: "one.png" },
+          { id: "a2", filename: "two.png" },
+        ]}
+      />,
+    );
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "first [Image #1] then [Image #2] end" } });
+    fireEvent.click(screen.getByRole("button", { name: /remove one.png/i }));
+    expect(box.value).toBe("first then [Image #1] end");
+    expect(onRemoveAttachment).toHaveBeenCalledWith("a1");
+  });
+
   it("renders a chip per staged file, and marks one still uploading", () => {
     render(
       <SendBox

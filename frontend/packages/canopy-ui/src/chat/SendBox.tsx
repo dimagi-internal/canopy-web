@@ -77,6 +77,11 @@ interface Props {
   onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
 }
 
+/** What the composer types where a file goes: "[Image #2]", "[File #3]". */
+function attachmentPlaceholder(file: Pick<File, "type">, n: number): string {
+  return `[${file.type.startsWith("image/") ? "Image" : "File"} #${n}]`;
+}
+
 export function SendBox({
   draft,
   connected,
@@ -192,9 +197,36 @@ export function SendBox({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
-  const take = (files: FileList | null | undefined) => {
+  // Each file is typed into the message where it was pasted, as "[Image #N]"
+  // (N = its place among the staged files, the order the runner receives
+  // them in), the way Claude Code shows a paste. The runner's note then names
+  // the file behind each placeholder; the text itself is sent as typed.
+  const take = (files: FileList | File[] | null | undefined) => {
     if (!canAttach || !files || files.length === 0) return;
-    onAttach!(Array.from(files));
+    const list = Array.from(files);
+    const el = textareaRef.current;
+    const start = el?.selectionStart ?? body.length;
+    const end = el?.selectionEnd ?? body.length;
+    const before = body.slice(0, start);
+    const after = body.slice(end);
+    const tokens = list.map((f, i) => attachmentPlaceholder(f, staged.length + i + 1)).join(" ");
+    const inserted = `${before && !/\s$/.test(before) ? " " : ""}${tokens}${/^\s/.test(after) ? "" : " "}`;
+    handleChange(before + inserted + after);
+    const caret = before.length + inserted.length;
+    requestAnimationFrame(() => textareaRef.current?.setSelectionRange(caret, caret));
+    onAttach!(list);
+  };
+
+  // Removing a file takes its placeholder out and renumbers the ones after it,
+  // so "[Image #N]" keeps meaning the Nth file that is actually sent.
+  const remove = (index: number, id: string) => {
+    const next = body
+      .replace(new RegExp(`\\[(?:Image|File) #${index + 1}\\] ?`, "g"), "")
+      .replace(/\[(Image|File) #(\d+)\]/g, (m, kind: string, n: string) =>
+        Number(n) > index + 1 ? `[${kind} #${Number(n) - 1}]` : m,
+      );
+    if (next !== body) handleChange(next);
+    onRemoveAttachment!(id);
   };
 
   // Paste is the point on desktop: a screenshot goes to the clipboard, and
@@ -204,7 +236,7 @@ export function SendBox({
     const files = Array.from(e.clipboardData?.files ?? []);
     if (files.length === 0) return;
     e.preventDefault();  // else the filename lands in the textarea as text
-    onAttach!(files);
+    take(files);
   };
 
   const handleSend = () => {
@@ -265,7 +297,7 @@ export function SendBox({
         {peers}
         {staged.length > 0 && (
           <ul className="mb-1.5 flex flex-wrap gap-1.5" data-testid="attachment-chips">
-            {staged.map((a) => (
+            {staged.map((a, i) => (
               <li
                 key={a.id}
                 className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs ${
@@ -274,6 +306,7 @@ export function SendBox({
                     : "border-border bg-muted text-foreground-secondary"
                 }`}
               >
+                <span className="text-muted-foreground">#{i + 1}</span>
                 <span className="max-w-[14rem] truncate">{a.filename}</span>
                 {a.uploading && <span className="text-muted-foreground">uploading…</span>}
                 {a.error && <span title={a.error}>· {a.error}</span>}
@@ -281,7 +314,7 @@ export function SendBox({
                   <button
                     type="button"
                     aria-label={`Remove ${a.filename}`}
-                    onClick={() => onRemoveAttachment(a.id)}
+                    onClick={() => remove(i, a.id)}
                     className="text-muted-foreground hover:text-foreground"
                   >
                     ×

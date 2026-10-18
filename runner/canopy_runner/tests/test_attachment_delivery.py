@@ -51,7 +51,7 @@ def test_attachments_land_on_disk_under_the_turn():
     assert missing == []
     assert len(paths) == 1
     assert paths[0].read_bytes() == b"PNGDATA"
-    assert paths[0].name == "shot.png"
+    assert paths[0].name == "1-shot.png"
     assert "t1" in str(paths[0]), "scoped per turn so two sends cannot collide"
 
 
@@ -75,8 +75,8 @@ def test_one_unfetchable_attachment_does_not_sink_the_turn():
         client, "r1", _turn([{"id": "bad", "filename": "x.png"}, {"id": "ok", "filename": "y.png"}])
     )
 
-    assert [p.name for p in paths] == ["y.png"]
-    assert missing == ["x.png"]
+    assert [p.name for p in paths] == ["2-y.png"]
+    assert missing == ["1-x.png"]
 
 
 def test_the_prompt_tells_the_agent_to_READ_the_file():
@@ -125,3 +125,24 @@ def test_a_long_list_of_missing_files_is_summarized():
 
     assert "29 attached files could not be downloaded" in out
     assert "and 19 more" in out
+
+
+def test_two_pasted_screenshots_named_alike_both_arrive(tmp_path, monkeypatch):
+    """Every pasted screenshot is "image.png"; two in one message used to land on
+    one path, the second overwriting the first."""
+    monkeypatch.setattr(execute, "ATTACHMENT_ROOT", tmp_path)
+    client = _Client()
+    paths, missing = execute.fetch_attachments(
+        client, "r1", _turn([{"id": "a1", "filename": "image.png"}, {"id": "a2", "filename": "image.png"}]))
+    assert missing == [] and [p.name for p in paths] == ["1-image.png", "2-image.png"]
+
+
+def test_a_placeholder_in_the_message_labels_its_file():
+    """The composer types "[Image #N]" where a file was pasted. The message stays
+    as typed; the note says which file each placeholder is."""
+    paths = [pathlib.Path("/tmp/t/1-image.png"), pathlib.Path("/tmp/t/2-image.png")]
+    out = execute.prompt_with_attachments("before [Image #2] and after", paths)
+    assert out.startswith("before [Image #2] and after\n\n")
+    assert "- /tmp/t/1-image.png\n- [Image #2] /tmp/t/2-image.png" in out
+    assert "marks where the user placed" in out
+    assert "marks where" not in execute.prompt_with_attachments("no placeholder", paths)

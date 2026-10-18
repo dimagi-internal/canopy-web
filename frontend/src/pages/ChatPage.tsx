@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { clsx } from 'clsx'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -136,6 +136,9 @@ export function ChatPage({
   // session is holding, which is why no ids need to cross the WebSocket.
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
 
+  // Uploads go one at a time: the server hands files to the runner in upload
+  // order, and the composer's "[Image #N]" means the Nth file staged.
+  const uploads = useRef<Promise<unknown>>(Promise.resolve())
   const handleAttach = useCallback(
     (files: File[]) => {
       for (const file of files) {
@@ -143,7 +146,7 @@ export function ChatPage({
         // success. Without it a large paste looks like nothing happened.
         const tempId = `pending:${file.name}:${Date.now()}:${Math.random()}`
         setAttachments((prev) => [...prev, { id: tempId, filename: file.name, uploading: true }])
-        uploadAttachment(id!, file)
+        uploads.current = uploads.current.then(() => uploadAttachment(id!, file)
           .then((saved) =>
             setAttachments((prev) =>
               prev.map((a) => (a.id === tempId ? { id: saved.id, filename: saved.filename } : a)),
@@ -157,7 +160,7 @@ export function ChatPage({
                   : a,
               ),
             ),
-          )
+          ))
       }
     },
     [id],

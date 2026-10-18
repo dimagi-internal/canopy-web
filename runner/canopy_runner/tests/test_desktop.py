@@ -254,7 +254,7 @@ def test_a_chat_turns_attachments_reach_the_desktop_session(cfg, tmp_path, monke
     run = desktop.TurnRun(cfg, Client(), "r", turn, "th", {"reuse": False}, reuse="")
     prompt = run._prompt()
     assert prompt.startswith("see the screenshot")
-    shot = tmp_path / "att" / "turn-0001-aaaa" / "dialog.png"
+    shot = tmp_path / "att" / "turn-0001-aaaa" / "1-dialog.png"
     assert str(shot) in prompt and shot.read_bytes() == b"png"
 
 

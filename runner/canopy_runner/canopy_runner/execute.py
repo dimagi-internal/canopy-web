@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+import re
 import time
 import types
 from pathlib import Path
@@ -670,11 +671,14 @@ def fetch_attachments(client, runner_id: str, turn: dict) -> tuple[list[pathlib.
     refs = (turn.get("origin_ref") or {}).get("attachments") or []
     paths: list[pathlib.Path] = []
     missing: list[str] = []
-    for ref in refs:
+    for n, ref in enumerate(refs, start=1):
         aid = ref.get("id")
         if not aid:
             continue
-        name = _safe_name(ref.get("filename", ""))
+        # Numbered by position: every pasted screenshot is "image.png", and two
+        # in one message overwrote each other (the agent read the second twice).
+        # The number is also the N of the composer's "[Image #N]".
+        name = f"{n}-{_safe_name(ref.get('filename', ''))}"
         dest = ATTACHMENT_ROOT / str(turn.get("id", "unknown")) / name
         try:
             client.download_attachment(runner_id, str(turn.get("id", "")), aid, dest)
@@ -684,6 +688,26 @@ def fetch_attachments(client, runner_id: str, turn: dict) -> tuple[list[pathlib.
             continue
         paths.append(dest)
     return paths, missing
+
+
+# The placeholder the composer types where a file was pasted ("[Image #1]"),
+# numbered by the file's position in the message's attachments.
+_PLACEHOLDER = re.compile(r"\[(?:Image|File) #(\d+)\]")
+
+
+def attachment_lines(prompt: str, paths: list[pathlib.Path]) -> tuple[str, bool]:
+    """One "- path" line per file, led by its placeholder when the message has
+    one ("- [Image #1] /…/1-image.png"), so the agent knows which file sits
+    where the person put it. The message itself is left exactly as typed: it
+    is what the transcript records and what attribution matches on. Returns
+    the lines and whether any placeholder was matched."""
+    placed = {m.group(1): m.group(0) for m in _PLACEHOLDER.finditer(prompt or "")}
+    lines, any_placed = [], False
+    for p in paths:
+        token = placed.get(p.name.split("-", 1)[0])
+        any_placed = any_placed or bool(token)
+        lines.append(f"- {token} {p}" if token else f"- {p}")
+    return "\n".join(lines), any_placed
 
 
 def prompt_with_attachments(prompt: str, paths: list[pathlib.Path],
@@ -697,13 +721,15 @@ def prompt_with_attachments(prompt: str, paths: list[pathlib.Path],
     """
     out = prompt
     if paths:
-        lines = "\n".join(f"- {p}" for p in paths)
+        lines, placed = attachment_lines(prompt, paths)
         noun = "file" if len(paths) == 1 else "files"
         out = (
             f"{out}\n\n"
             f"The user attached the following {noun}. Read {'it' if len(paths) == 1 else 'them'} "
             f"with the Read tool before replying:\n{lines}"
         )
+        if placed:
+            out += "\n([Image #N] in the message marks where the user placed that file.)"
     if missing:
         names = ", ".join(missing[:10]) + (f" and {len(missing) - 10} more" if len(missing) > 10 else "")
         out = (
