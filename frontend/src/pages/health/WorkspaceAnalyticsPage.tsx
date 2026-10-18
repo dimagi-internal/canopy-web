@@ -77,7 +77,7 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
           { key: 'cancelled', label: 'Cancelled', className: 'fill-muted-foreground' },
         ]} />
         <DailyBars title="Messages sent" days={days} layers={[{ key: 'messages', label: 'Messages', className: 'fill-primary' }]} />
-        <DailyBars title="Active people" days={days} layers={[{ key: 'active_users', label: 'People', className: 'fill-primary' }]} />
+        <DailyBars title="Active people" days={days} rangeTotal={t.active_users} layers={[{ key: 'active_users', label: 'People', className: 'fill-primary' }]} />
         <DailyBars title="Tokens (input + output)" days={days} format={compact} layers={[
           { key: 'input_tokens', label: 'Input', className: 'fill-primary' },
           { key: 'output_tokens', label: 'Output', className: 'fill-muted-foreground' },

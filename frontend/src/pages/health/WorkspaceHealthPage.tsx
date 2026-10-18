@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState, type JSX } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 
 import { getWorkspaceHealth, type AgentHealthOut, type WorkspaceHealthOut } from '@/api/workspaces'
 import { relativeTime } from '@/components/activity/turnLog'
@@ -103,14 +104,21 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                  aria-label="Filter agents"
                  className="ml-auto min-h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] sm:w-64" />
         </div>
+        <p className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+          {health.agents[0] && <span>Setup, in order: {health.agents[0].steps.map((st) => st.title).join(' · ')}.</span>}
+          {(['done', 'todo', 'waiting', 'optional'] as const).map((st) => (
+            <span key={st} className="inline-flex items-center gap-1"><StatusIcon status={st} />{st === 'todo' ? 'to do' : st}</span>
+          ))}
+          <span>Open a row for each step and its fix.</span>
+        </p>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[880px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-agents">
             <thead className="text-left text-muted-foreground">
               <tr>
-                <th className="py-1 font-medium">Agent</th><th className="font-medium">Workspace</th>
-                <th className="font-medium">Owner</th><th className="font-medium">Setup</th>
-                <th className="font-medium">Vault</th><th className="font-medium">Last turn</th>
-                <th className="font-medium text-right">Turns 30d</th><th className="font-medium text-right">Skills</th>
+                <th className="py-1 font-medium">Agent</th><th className="font-medium">Setup</th>
+                <th className="font-medium">Vault</th><th className="font-medium">Owner</th>
+                <th className="font-medium">Workspace</th><th className="font-medium">Last turn</th>
+                <th className="font-medium text-right">Turns, 30 days</th><th className="font-medium text-right">Skills</th>
                 <th className="font-medium text-right">Schedules</th><th className="font-medium">Interface</th>
                 <th className="font-medium">Mode</th>
               </tr>
@@ -121,20 +129,24 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                   <tr className="cursor-pointer hover:bg-muted/50" data-agent={a.slug}
                       onClick={() => setOpen(open === a.slug ? null : a.slug)}>
                     <td className="py-1.5">
-                      <button type="button" aria-expanded={open === a.slug} className="text-left font-medium text-foreground">
+                      <button type="button" aria-expanded={open === a.slug}
+                              className="inline-flex items-center gap-1 text-left font-medium text-foreground">
+                        {open === a.slug
+                          ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                          : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />}
                         {a.name}
                       </button>
                       <span className="ml-1 font-mono text-muted-foreground">{a.slug}</span>
                     </td>
-                    <td className="font-mono text-foreground-secondary">{a.workspace}</td>
-                    <td className="text-foreground-secondary">{a.owner_email || '—'}</td>
                     <td>
                       <span className="inline-flex items-center gap-0.5" aria-label={`${a.left} steps left`}>
                         {a.steps.map((s) => <span key={s.key} title={`${s.title}: ${s.status}`}><StatusIcon status={s.status} /></span>)}
-                        <span className="ml-1 tabular-nums text-muted-foreground">{a.left ? `${a.left} left` : 'done'}</span>
+                        <span className="ml-1 whitespace-nowrap tabular-nums text-muted-foreground">{a.left ? `${a.left} left` : 'done'}</span>
                       </span>
                     </td>
                     <td><VaultBadge agent={a} /></td>
+                    <td className="text-foreground-secondary">{a.owner_email || '—'}</td>
+                    <td className="font-mono text-foreground-secondary">{a.workspace}</td>
                     <td className="text-foreground-secondary">{a.last_turn_at ? relativeTime(a.last_turn_at, now) : 'never'}</td>
                     <td className="text-right tabular-nums">{a.turns_30d}</td>
                     <td className="text-right tabular-nums">{a.skills}</td>

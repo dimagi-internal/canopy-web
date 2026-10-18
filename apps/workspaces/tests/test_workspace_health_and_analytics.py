@@ -212,3 +212,20 @@ def test_backfill_seeds_facts_once(tree):
     call_command("backfill_activity", "--no-usage")
     call_command("backfill_activity", "--no-usage")
     assert Activity.objects.filter(kind=activity.TURN_ENQUEUED, ref=str(turn.pk)).count() == 1
+
+
+def test_health_and_analytics_count_an_agents_turns_the_same_way(tree):
+    """One window, one source: Health's "Turns, 30 days" equals Analytics' per-agent
+    Turns for 30 days (the first-use review found them disagreeing)."""
+    import datetime as dt
+
+    from django.utils import timezone
+
+    _turn(tree["hal"], "w1", tree["builder"])
+    old = _turn(tree["hal"], "w2", tree["builder"])
+    # 30 days and a few hours ago: outside the 30-UTC-day window either way.
+    Activity.objects.filter(ref=str(old.pk)).update(at=timezone.now() - dt.timedelta(days=30, hours=1))
+    health = {a["slug"]: a for a in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["agents"]}
+    analytics = {a["agent"]: a for a in _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=30").json()["agents"]}
+    assert health["hal"]["turns_30d"] == analytics["hal"]["turns"] == 1
+    assert health["hal"]["last_turn_at"] is not None

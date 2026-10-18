@@ -30,11 +30,30 @@ def _usage_sums(qs) -> dict:
     return out
 
 
-def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
+def window(days: int, now=None) -> tuple[int, dt.date, dt.datetime]:
+    """THE "last N days": N UTC calendar days ending today, as (days, first day,
+    start instant). Every "N days" figure on any screen uses this, so Health's
+    per-agent turn count and Analytics' cannot disagree under the same label."""
     now = now or timezone.now()
     days = max(1, min(days, 365))
     start_day = (now - dt.timedelta(days=days - 1)).date()
-    since = dt.datetime.combine(start_day, dt.time.min, tzinfo=dt.UTC)
+    return days, start_day, dt.datetime.combine(start_day, dt.time.min, tzinfo=dt.UTC)
+
+
+def agent_turns(agent_slugs: list[str], *, days: int = 30, now=None) -> dict[str, dict]:
+    """{agent slug: {"n": turns started in `window(days)`, "last_at": latest turn
+    ever}} from the fact log — the per-agent count Health shows beside Analytics'."""
+    _, _, since = window(days, now)
+    started = Activity.objects.filter(kind=activity.TURN_ENQUEUED, agent_slug__in=agent_slugs).order_by()
+    out = {row["agent_slug"]: {"n": 0, "last_at": row["last_at"]}
+           for row in started.values("agent_slug").annotate(last_at=Max("at"))}
+    for row in started.filter(at__gte=since).values("agent_slug").annotate(n=Count("id")):
+        out[row["agent_slug"]]["n"] = row["n"]
+    return out
+
+
+def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
+    days, start_day, since = window(days, now)
     facts = Activity.objects.filter(workspace_id__in=workspace_slugs, at__gte=since).order_by()
     usage = TurnUsage.objects.filter(workspace_id__in=workspace_slugs, at__gte=since).order_by()
     people = facts.filter(actor_kind=Activity.USER, actor__isnull=False)

@@ -14,11 +14,15 @@ const W = 600, H = 120, PAD = 18
 
 /** Daily columns: one series, or a few stacked status layers. Hovering a day shows
  *  its values; a legend names the layers when there is more than one. */
-export function DailyBars({ title, days, layers, format = (n) => n.toLocaleString() }: {
+export function DailyBars({ title, days, layers, format = (n) => n.toLocaleString(), rangeTotal }: {
   title: string
   days: readonly AnalyticsDayOut[]
   layers: BarLayer[]
   format?: (n: number) => string
+  /** The range's figure when the days do not add up to it — distinct people
+   *  over 30 days is not the sum of each day's distinct people. Pass the
+   *  server's own total so the caption agrees with the tile above it. */
+  rangeTotal?: number
 }): JSX.Element {
   const [hover, setHover] = useState<number | null>(null)
   const totals = days.map((d) => layers.reduce((n, l) => n + Number(d[l.key] ?? 0), 0))
@@ -26,19 +30,20 @@ export function DailyBars({ title, days, layers, format = (n) => n.toLocaleStrin
   const bw = W / Math.max(days.length, 1)
   const gap = Math.min(2, bw / 4)
   const y = (v: number) => (max ? (v / max) * (H - PAD) : 0)
-  const shown = hover ?? days.length - 1
-  const day = days[shown]
+  // Until a day is hovered, the caption is the whole range: defaulting to the last
+  // column showed today's partial UTC day, all zeros early on, as "nothing happened".
+  const day = hover === null ? null : days[hover]
+  const sum = (key: keyof AnalyticsDayOut) => days.reduce((n, d) => n + Number(d[key] ?? 0), 0)
 
   return (
     <figure className="m-0 rounded-lg border border-border bg-card p-3">
       <figcaption className="mb-1 flex items-baseline justify-between gap-2 text-[12px]">
         <span className="font-semibold text-foreground">{title}</span>
-        {day && (
-          <span className="text-muted-foreground tabular-nums">
-            {day.day}: {layers.length === 1 ? format(totals[shown])
-              : layers.map((l) => `${l.label} ${format(Number(day[l.key] ?? 0))}`).join(' · ')}
-          </span>
-        )}
+        <span className="text-muted-foreground tabular-nums">
+          {day ? `${day.day}: ` : `${days.length} days: `}
+          {layers.length === 1 ? format(day ? totals[hover!] : rangeTotal ?? sum(layers[0].key))
+            : layers.map((l) => `${l.label} ${format(day ? Number(day[l.key] ?? 0) : sum(l.key))}`).join(' · ')}
+        </span>
       </figcaption>
       <svg viewBox={`0 0 ${W} ${H}`} className="h-28 w-full" role="img" preserveAspectRatio="none"
            aria-label={`${title}, ${days.length} days, peak ${format(max)}`}

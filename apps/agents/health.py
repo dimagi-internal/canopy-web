@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from django.db.models import Count, Max
+from django.db.models import Count
 
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
@@ -39,7 +39,7 @@ def _shared_vault(ws: Workspace) -> dict:
 def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict) -> dict:
     steps = setup_steps(agent)
     left = [s for s in steps if s["status"] not in (DONE, OPTIONAL)]
-    last = last_turns.get(agent.pk) or {}
+    last = last_turns.get(agent.slug) or {}
     c = counts.get(agent.pk) or {}
     return {
         "slug": agent.slug,
@@ -54,7 +54,7 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict) -> dict:
         "skills": c.get("skills", 0),
         "schedules": c.get("schedules", 0),
         "created_at": agent.created_at,
-        "last_turn_at": last.get("at"),
+        "last_turn_at": last.get("last_at"),
         "turns_30d": last.get("n", 0),
         "vault": vault_health(agent),
         "steps": steps,
@@ -71,36 +71,12 @@ def _counts(agents: list[Agent]) -> dict[int, dict]:
     return out
 
 
-def _last_turns(agents: list[Agent]) -> dict[int, dict]:
-    """Latest turn and 30-day count per agent, both under `agent_turns_q`'s
-    definition (agent turns AND turns on its sessions)."""
-    import datetime as dt
-
-    from django.utils import timezone
-
-    from apps.harness.models import Turn
-
-    since = timezone.now() - dt.timedelta(days=30)
-    out: dict[int, dict] = {}
-    ids = [a.pk for a in agents]
-    # order_by() clears any default ordering, which would otherwise join the GROUP BY.
-    direct = Turn.objects.filter(agent_id__in=ids).order_by().values("agent_id")
-    via_session = (Turn.objects.filter(agent__isnull=True, chat_session__agent_id__in=ids)
-                   .order_by().values("chat_session__agent_id"))
-    for qs, key in ((direct, "agent_id"), (via_session, "chat_session__agent_id")):
-        for row in qs.annotate(at=Max("created_at")):
-            cur = out.setdefault(row[key], {"at": None, "n": 0})
-            if cur["at"] is None or (row["at"] and row["at"] > cur["at"]):
-                cur["at"] = row["at"]
-        for row in qs.filter(created_at__gte=since).annotate(n=Count("id")):
-            out.setdefault(row[key], {"at": None, "n": 0})["n"] += row["n"]
-    return out
-
-
 def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True) -> dict:
     tree = wsvc.subtree(root, visible)
     agents = agents_in_tree(tree, "owner", "workspace")
-    last_turns, counts = _last_turns(agents), _counts(agents)
+    from apps.events import analytics
+
+    last_turns, counts = analytics.agent_turns([a.slug for a in agents], days=30), _counts(agents)
     rows = [agent_row(a, viewer, last_turns, counts) for a in agents]
     per_ws: dict[str, int] = {}
     for r in rows:
