@@ -1433,7 +1433,34 @@ def create_session(*, workspace, created_by=None, agent=None, project: str = "",
         )
         if created_by is not None:
             ensure_participant(session, created_by, SessionParticipant.OWNER)
+            _inherit_participants(session, created_by)
     return session
+
+
+def _inherit_participants(session: Session, created_by) -> None:
+    """A session dispatched from inside another one is work done on behalf of
+    that conversation's people, so they join it: an agent asked to start the
+    work in chat creates it under its own login, and without this the person
+    who asked could not see what they asked for.
+
+    Only from a parent the creator can read (naming a session id is not a way
+    to pull its people in), only people who are members of the new session's
+    workspace, and never as owner — the dispatcher owns what it started; a
+    parent viewer stays a viewer."""
+    from apps.workspaces import services as wsvc
+
+    from . import access
+    from .models import SessionParticipant
+    from .participants import ensure_participant
+
+    parent = session.parent_session
+    if parent is None or not access.can_read(created_by, parent):
+        return
+    for p in parent.participants.select_related("user").exclude(user=created_by):
+        if not wsvc.is_member(p.user, session.workspace_id):
+            continue
+        role = SessionParticipant.VIEWER if p.role == SessionParticipant.VIEWER else SessionParticipant.EDITOR
+        ensure_participant(session, p.user, role)
 
 
 # Marks a session whose DURABLE record is its Claude transcript, keyed on each
