@@ -37,6 +37,12 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"GET"}), r"/api/agents"),
     (frozenset({"GET"}), rf"/api/agents/{_SLUG}"),
     (frozenset({"GET"}), rf"/api/agents/{_SLUG}/credentials/resolve"),
+    # … and the two reads that tell `canopy agent prepare` what it is resolving:
+    # where the agent's repo lives, and which backend its secrets come from. A
+    # runner token answers both only for agents its own runner serves
+    # (`apps/agents/api._credential_access`).
+    (frozenset({"GET"}), rf"/api/agents/{_SLUG}/runtime"),
+    (frozenset({"GET"}), rf"/api/agents/{_SLUG}/credentials/access"),
     (frozenset({"GET"}), r"/api/workspaces"),
     # Its device key: re-registering after an ECDH key change.
     (frozenset({"GET", "POST"}), r"/api/runner-device-keys"),

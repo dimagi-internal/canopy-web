@@ -2066,7 +2066,20 @@ def _credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
     make, so the cheap check can never disagree with the real gate. `runner`
     wins when both hold (`caller_runs_agent` already implies admin), because it
     is the more specific claim and the audit trail should say a box read it.
+
+    A runner token (`RunnerAccessToken`, bought with a device key) signs in as
+    the runner's owner, but it speaks for ONE box: it is a `runner` caller only
+    for an agent that box serves (`device_keys.runner_serves_agent`), and never
+    an `admin` — the owner's other agents stay out of a box's reach.
     """
+    rtok = getattr(request, "runner_token", None)
+    if rtok is not None:
+        from apps.harness.device_keys import runner_serves_agent
+
+        if agent.is_admin(request.user) and runner_serves_agent(rtok.runner, agent):
+            return "runner", ""
+        return None, (f"this runner token is {rtok.runner.name}'s, and {rtok.runner.name} "
+                      f"does not run {agent.slug}")
     if services.caller_runs_agent(request.user, agent):
         return "runner", ""
     if agent.is_admin(request.user):
@@ -2172,6 +2185,12 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     # the read log can name the box that proved itself; REQUIRED only when the
     # agent asks for it and resolves from canopy-web.
     device_key, refused, unrouted = _device_key_from_proof(request, agent)
+    # A runner token speaks for one box: a proof from some other box's key does
+    # not go with it.
+    rtok = getattr(request, "runner_token", None)
+    if rtok is not None and device_key is not None and device_key.runner_id != rtok.runner_id:
+        raise HttpError(403, f"the device proof is {device_key.runner.name}'s, not this "
+                             f"runner token's ({rtok.runner.name})")
     # A zero-knowledge agent ALWAYS needs one (canopy-web#1550): the wrap handed
     # out is the proving device's, so there is nothing to give without it.
     if (device_key is None
