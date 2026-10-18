@@ -91,7 +91,7 @@ Set-StrictMode -Version Latest
 $RUNNER_SRC   = "runner/canopy_runner/canopy_runner"
 # Same list as provenance.CODE_PATHS, install-runner.sh and deploy-labs.yml
 # (tests/test_runner_code_paths.py). A different list here = a box marked stale forever.
-$RUNNER_CODE_PATHS = @("runner/canopy_runner/canopy_runner", "runner/canopy_runner/scripts", "runner/menubar", "runner/device-key", "assets/brand")
+$RUNNER_CODE_PATHS = @("runner/canopy_runner/canopy_runner", "runner/canopy_runner/scripts", "runner/menubar", "runner/device-key", "assets/brand", "packages/canopy_cron", "packages/canopy_transcript")
 $TASK_FOLDER  = "\Canopy"
 $RUNNER_TASK  = "canopy-runner"
 $UPDATER_TASK = "canopy-runner-updater"
@@ -227,7 +227,8 @@ COMMITTED_AT = $(if ($CommittedAt) { $CommittedAt } else { 0 })
     # still serves croniter and the realtime extra's websocket-client. The runner
     # itself is named by direct file:// URL so no index can shadow it.
     $uri = "file:///" + ($wheel.FullName -replace '\\','/')
-    & uv tool install --force --find-links $dist "canopy-runner[realtime] @ $uri"
+    # --reinstall-package: the in-repo packages never change version (see install-runner.sh).
+    & uv tool install --force --reinstall-package canopy-cron --reinstall-package canopy-transcript --find-links $dist "canopy-runner[realtime] @ $uri"
     if ($LASTEXITCODE -ne 0) { Fail "uv tool install failed" }
 } finally {
     Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue

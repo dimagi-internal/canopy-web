@@ -78,7 +78,7 @@ RUNNER_SRC="runner/ec2/cloud_runner.py"
 # old script. Listing it here makes an updater change a deploy, as the shim's own
 # comment already claims. Keep in step with deploy-labs.yml's cloud_sha step —
 # runner/ec2/tests/test_update_runner_sh.py pins the two lists equal.
-SHA_PATHS=("runner/ec2/cloud_runner.py" "runner/ec2/bootstrap_agents.sh" "runner/ec2/update_runner.sh")
+SHA_PATHS=("runner/ec2/cloud_runner.py" "runner/ec2/bootstrap_agents.sh" "runner/ec2/update_runner.sh" "packages/canopy_transcript" "runner/canopy_acp")
 # The daemon rewrites the busy marker every heartbeat (20s). Older than this means
 # it is not running its loop at all — stopped, wedged, or crash-looping. That is
 # NOT busy: it is the case this script exists to rescue, so it must never block.

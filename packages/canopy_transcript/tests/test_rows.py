@@ -344,3 +344,19 @@ def test_an_older_claude_code_prompt_still_says_it_was_captured():
     """No flags at all is `{}` — present, so a reader can tell "captured, and a
     person typed it" from a row shipped before provenance existed."""
     assert ct.rows_for_record(_user("hello"))[0]["content"] == {"record": {}}
+
+
+def test_an_assistant_records_usage_rides_its_first_row_once():
+    from canopy_transcript import conversational_messages, record_usage
+
+    usage = {"input_tokens": 3, "output_tokens": 40, "cache_read_input_tokens": 900,
+             "cache_creation_input_tokens": 12}
+    rec = {"type": "assistant", "message": {"id": "msg_1", "model": "claude-opus-5-5", "usage": usage,
+           "content": [{"type": "text", "text": "hi"}, {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}
+    rows = conversational_messages([rec], -1)
+    assert [("usage" in r["content"]) for r in rows] == [True, False]
+    assert rows[0]["content"]["usage"] == {
+        "message_id": "msg_1", "model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 40,
+        "cache_read_tokens": 900, "cache_creation_tokens": 12}
+    synthetic = {"type": "assistant", "message": {"model": "<synthetic>", "usage": usage, "content": "x"}}
+    assert record_usage(synthetic) == {} and record_usage({"type": "user", "message": {}}) == {}

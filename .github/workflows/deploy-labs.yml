@@ -168,7 +168,7 @@ jobs:
           # RUNNER_CODE_PATHS (tests/test_runner_code_paths.py): the menu-bar app and
           # its icons ship through the same auto-update as the package.
           # RUNNER_CODE, not *PATHS: the cloud step below owns `PATHS=` and its tests find it by that text.
-          RUNNER_CODE="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand"
+          RUNNER_CODE="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand packages/canopy_cron packages/canopy_transcript"
           SHA="$(git log -1 --format=%H -- $RUNNER_CODE)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           # Committer epoch of the SAME commit, from the same command. A sha is an
@@ -186,11 +186,13 @@ jobs:
       # bootstrap_agents.sh is in scope alongside the runner itself: it re-runs on
       # every service start, but nothing ever TRIGGERS a start, so a bootstrap fix
       # ships only when a human happens to restart the box. Including it here is
-      # what makes the auto-updater supply that missing event.
+      # what makes the auto-updater supply that missing event. So are the in-repo
+      # packages the box imports from its clone (canopy_transcript, canopy_acp):
+      # it re-syncs them only on a restart, and only a sha change restarts it.
       - name: Resolve cloud runner code sha
         id: cloud_sha
         run: |
-          PATHS="runner/ec2/cloud_runner.py runner/ec2/bootstrap_agents.sh runner/ec2/update_runner.sh"
+          PATHS="runner/ec2/cloud_runner.py runner/ec2/bootstrap_agents.sh runner/ec2/update_runner.sh packages/canopy_transcript runner/canopy_acp"
           SHA="$(git log -1 --format=%H -- $PATHS)"
           TS="$(git log -1 --format=%ct -- $PATHS)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"

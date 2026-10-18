@@ -43,7 +43,7 @@ RUNNER_SRC="runner/canopy_runner/canopy_runner"
 # What counts as the runner's code for staleness: the package, the installer, the
 # menu-bar app and the icons it bundles. Same list as provenance.CODE_PATHS and
 # deploy-labs.yml (tests/test_runner_code_paths.py keeps the three equal).
-RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand"
+RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand packages/canopy_cron packages/canopy_transcript"
 LABEL="com.canopy.runner"
 UPDATER_LABEL="com.canopy.runner.updater"
 CONFIG="$HOME/.canopy/runner.json"
@@ -205,7 +205,11 @@ echo "==> installing $(basename "$WHEEL")"
 # fails outright ("the current Python version (3.9.6) does not satisfy >=3.11") —
 # hit provisioning a third account on 2026-09-28. uv downloads a match if none exists.
 PY_REQ="$(sed -n 's/^requires-python *= *"\(.*\)"/\1/p' "$TMP/runner/canopy_runner/pyproject.toml" | head -1)"
+# --reinstall-package: the in-repo packages never change version (0.1.0), so
+# without it uv keeps the copy it already has and a change to the shared
+# transcript core reaches no laptop even though the sha moved.
 uv tool install --force ${PY_REQ:+--python "$PY_REQ"} \
+  --reinstall-package canopy-cron --reinstall-package canopy-transcript \
   --find-links "$TMP/dist" "canopy-runner[realtime] @ file://$WHEEL"
 
 # Ask uv where it PUT the executable rather than trusting PATH order — an older

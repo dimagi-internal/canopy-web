@@ -43,6 +43,7 @@ from .rows import (
     end_index,
     record_context,
     record_flags,
+    record_usage,
     row_payload,
     rows_for_record,
     rows_to_ship,
@@ -53,6 +54,7 @@ from .rows import (
 from .tail import TailReader
 
 __all__ = [
+    "record_usage",
     "ACTIVITY_EVENTS", "ASK_TOOL", "BLOCK_STRIDE", "FORWARDED_EVENTS",
     "STATUS_COMPLETE", "STATUS_PENDING", "pending_question", "hook_retires_menu",
     "menu_from_hook", "marker_from_hook", "stamp_observed",
