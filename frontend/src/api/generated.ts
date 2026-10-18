@@ -18932,6 +18932,11 @@ export interface components {
              */
             readonly mailbox: string;
             /**
+             * Mailbox Backend
+             * @default
+             */
+            readonly mailbox_backend: string;
+            /**
              * Zk
              * @default false
              */
