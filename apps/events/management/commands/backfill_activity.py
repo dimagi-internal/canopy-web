@@ -6,7 +6,8 @@ Idempotent: every fact carries the `ref` its live producer uses (a turn, session
 setting change or MCP call id), and a (kind, ref) already present is skipped — so a
 re-run, or a run after the live producers are deployed, never double-counts.
 Usage is re-derived per turn (`usage.record_for_turn`, an upsert) from transcripts
-retention has not purged yet; run it before they go.
+retention has not purged yet; run it before they go. Facts recorded as a person
+whose login turns out to be an agent's or a system account's are reclassified.
 """
 from __future__ import annotations
 
@@ -88,6 +89,8 @@ class Command(BaseCommand):
                        .defer("raw_jsonl_gz").iterator(chunk_size=50)):
                 derived += usage.record_for_turn(tt.turn)
 
+        reclassified = activity.reclassify()
         for kind, n in written.items():
             self.stdout.write(f"{kind}: {n} written")
         self.stdout.write(f"turn usage derived: {derived}")
+        self.stdout.write(f"facts reclassified as an agent or system: {reclassified}")
