@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react'
 import { clsx } from 'clsx'
 import { ArrowDown, ArrowUp, X } from 'lucide-react'
 
-import type { RunnerOut } from '@/api/harness'
+import { enrollRunnerWorkspace, type RunnerOut } from '@/api/harness'
 import { getRunnerOrder, setRunnerOrder, type RunnerOrderRowOut } from '@/api/workspaces'
 import { RepoSetupDialog } from '@/components/agents/RepoSetupDialog'
 import { roleAllows } from '@/lib/workspaceRoles'
@@ -81,7 +81,8 @@ export function WorkspaceOrderPanel({
         <h3 className="m-0 text-[16px] font-semibold text-foreground">{ws?.displayName ?? workspace}: default runners</h3>
         <p className="m-0 text-[12px] text-foreground-secondary">
           Every agent here without runners of its own follows this order, live, after its own rules — and so does
-          every workspace below without an order of its own. Replacing a box means changing it here once.
+          every workspace below without an order of its own. Replacing a box means changing it here once. Adding
+          one of your own boxes also has it start serving this workspace.
         </p>
       </div>
 
@@ -139,8 +140,17 @@ export function WorkspaceOrderPanel({
             type="button"
             disabled={!adding}
             onClick={() => {
-              save([...asRows(rows), { runnerId: adding, enabled: true }])
+              const id = adding
               setAdding('')
+              // A box serves a workspace only once it is enrolled there, and the
+              // order refuses one that is not. Adding your own box here IS the
+              // choice to have it serve this workspace, so enroll it on the way
+              // (idempotent) instead of sending you to each runner's page first.
+              // Someone else's box is left to its owner: the save says why.
+              const enroll = fleet.get(id)?.can_manage ? enrollRunnerWorkspace(id, workspace) : Promise.resolve()
+              enroll
+                .then(() => save([...asRows(rows), { runnerId: id, enabled: true }]))
+                .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Could not enroll that runner here'))
             }}
             className="min-h-9 rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
             data-testid="workspace-order-add"
