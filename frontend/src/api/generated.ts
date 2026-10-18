@@ -22189,6 +22189,15 @@ export interface components {
             /** Service Key */
             readonly service_key?: string | null;
         };
+        /** RunnerAgentOut */
+        readonly RunnerAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+        };
         /** RunnerProblemOut */
         readonly RunnerProblemOut: {
             /** Name */
@@ -22336,6 +22345,43 @@ export interface components {
              * @default []
              */
             readonly problems: readonly components["schemas"]["RunnerProblemOut"][];
+            /**
+             * Status Note
+             * @default
+             */
+            readonly status_note: string;
+            /**
+             * Remedy
+             * @default
+             */
+            readonly remedy: string;
+            /**
+             * Code Sha
+             * @default
+             */
+            readonly code_sha: string;
+            /**
+             * Expected Code Sha
+             * @default
+             */
+            readonly expected_code_sha: string;
+            /**
+             * Agents
+             * @default []
+             */
+            readonly agents: readonly components["schemas"]["RunnerAgentOut"][];
+            /** Usage Reported At */
+            readonly usage_reported_at?: string | null;
+            /**
+             * Missing Sessions
+             * @default 0
+             */
+            readonly missing_sessions: number;
+            /**
+             * Can Administer
+             * @default false
+             */
+            readonly can_administer: boolean;
         };
         /** TopologyWorkspaceOut */
         readonly TopologyWorkspaceOut: {
@@ -22445,61 +22491,6 @@ export interface components {
             readonly zero_knowledge: boolean;
             /** Machines Waiting */
             readonly machines_waiting: readonly string[];
-        };
-        /** HealthRunnerOut */
-        readonly HealthRunnerOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            readonly id: string;
-            /** Name */
-            readonly name: string;
-            /** Kind */
-            readonly kind: string;
-            /** Location */
-            readonly location: string;
-            /** Status */
-            readonly status: string;
-            /** Ready */
-            readonly ready: boolean;
-            /** Ready Note */
-            readonly ready_note: string;
-            /** Paused */
-            readonly paused: boolean;
-            /** Host */
-            readonly host: string;
-            /** Last Heartbeat At */
-            readonly last_heartbeat_at: string | null;
-            /** Workspace */
-            readonly workspace: string | null;
-            /** In Tree */
-            readonly in_tree: boolean;
-            /** Owner Email */
-            readonly owner_email: string | null;
-            /** Flags */
-            readonly flags: readonly string[];
-            /** Agent Count */
-            readonly agent_count: number;
-            /** Code Current */
-            readonly code_current?: boolean | null;
-            /**
-             * Problems
-             * @default []
-             */
-            readonly problems: readonly components["schemas"]["RunnerProblemOut"][];
-            /** Usage Reported At */
-            readonly usage_reported_at?: string | null;
-            /**
-             * Missing Sessions
-             * @default 0
-             */
-            readonly missing_sessions: number;
-            /**
-             * Can Administer
-             * @default false
-             */
-            readonly can_administer: boolean;
         };
         /** HealthSessionOut */
         readonly HealthSessionOut: {
@@ -22614,7 +22605,7 @@ export interface components {
             /** Agents */
             readonly agents: readonly components["schemas"]["AgentHealthOut"][];
             /** Runners */
-            readonly runners: readonly components["schemas"]["HealthRunnerOut"][];
+            readonly runners: readonly components["schemas"]["TopologyRunnerOut"][];
             readonly totals: components["schemas"]["HealthTotalsOut"];
         };
         /** AnalyticsAgentOut */

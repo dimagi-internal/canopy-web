@@ -802,7 +802,7 @@ def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
     from apps.harness import topology
 
     root, visible = _tree_reader(request, slug)
-    return RunnerTopologyOut(**topology.build(root, visible=visible))
+    return RunnerTopologyOut(**topology.build(root, visible=visible, viewer=request.user))
 
 
 def _tree_reader(request: HttpRequest, slug: str):

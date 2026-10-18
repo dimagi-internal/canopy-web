@@ -350,6 +350,28 @@ def test_health_lists_the_trees_runners_with_their_code_and_problems(tree, setti
     assert (row["code_current"], row["agent_count"]) == (False, 1)
     assert row["problems"] == [{"name": "disk", "status": "warn", "detail": "90% full"}]
     assert body["totals"]["runners"] >= 1
+    assert row["agents"] == [{"slug": "eva", "name": tree["eva"].name, "workspace": tree["eva"].workspace_id}]
+    assert (row["code_sha"], row["expected_code_sha"]) == ("old", "new")
+
+
+def test_health_and_topology_serve_one_runner_row_with_its_reason_and_fix(tree):
+    """Health and Topology → Runners render one table over one row: the box's own
+    note, the fix for a known cause, and its usage report."""
+    from django.utils import timezone
+
+    from apps.harness.models import Runner
+    from apps.workspaces.testing import enrolled
+
+    enrolled(Runner.objects.create(
+        name="laptop", kind=Runner.EMDASH, workspace_id="dimagi", owner=tree["ceo"], status=Runner.DEGRADED,
+        last_heartbeat_at=timezone.now(), ready=False, status_note="emdash CDP unreachable on :9223 — not claiming",
+        ready_note="emdash CDP unreachable on :9223"))
+    health = next(r for r in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["runners"] if r["name"] == "laptop")
+    topo = next(r for r in _get(tree["ceo"], "/api/workspaces/dimagi/runner-topology").json()["runners"]
+                if r["name"] == "laptop")
+    assert health == topo
+    assert health["status"] == "degraded" and "Emdash CDP" in health["remedy"]
+    assert health["can_administer"] is True and health["missing_sessions"] == 0
 
 
 # ---- the box's usage report and missing sessions ------------------------------

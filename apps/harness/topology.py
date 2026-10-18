@@ -46,10 +46,42 @@ def problems(runner) -> list[dict]:
             for c in sorted(checks, key=lambda c: c["status"] != "fail")]
 
 
-def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) -> dict:
+def remedy(runner) -> str:
+    """What a person does about a not-ready box, when its note names a known
+    cause; "" otherwise (the note itself is shown either way)."""
+    note = f"{runner.status_note} {runner.ready_note}"
+    if "CDP unreachable" in note:
+        return ("Emdash is running without its debug port. On that machine, open "
+                "\"Emdash CDP\" (Spotlight), which reopens Emdash with it.")
+    return ""
+
+
+def _usage(rows: list[dict], viewer) -> None:
+    """Each box's usage report on its row: when it last sent one, how many of its
+    local sessions canopy has no record of (a count — the list is its admins'
+    alone), and whether the viewer administers it."""
+    from django.db.models import Count
+
+    from apps.events.models import SessionUsage
+
+    from .runners import can_administer_runner
+
+    boxes = {r.pk: r for r in Runner.objects.filter(pk__in=[row["id"] for row in rows]).select_related("owner")}
+    missing = dict(SessionUsage.objects.filter(runner_id__in=list(boxes), workspace__isnull=True)
+                   .order_by().values("runner_id").annotate(n=Count("claude_session", distinct=True))
+                   .values_list("runner_id", "n"))
+    for row in rows:
+        box = boxes.get(row["id"])
+        row["usage_reported_at"] = box.usage_reported_at if box else None
+        row["missing_sessions"] = missing.get(row["id"], 0)
+        row["can_administer"] = bool(box) and viewer is not None and can_administer_runner(viewer, box)
+
+
+def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, viewer=None) -> dict:
     """The topology rooted at `root`: its subtree (the descendants `visible`
     admits), every agent in it with its routing, and every runner those agents
-    route to or that lives in the tree."""
+    route to or that lives in the tree — each runner as THE row both the
+    Topology → Runners table and Health render."""
     from apps.agents.tree import agents_in_tree
 
     tree = wsvc.subtree(root, visible)
@@ -145,6 +177,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
             (s for s in ws.ancestor_slugs() if s in ordered_anywhere), None),
     } for ws, depth in tree]
 
+    by_pk = {a.pk: {"slug": a.slug, "name": a.name, "workspace": a.workspace_id} for a in agents}
     runner_rows = []
     for r in runners.values():
         runner_rows.append({
@@ -155,6 +188,8 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
             "status": r.live_status,
             "ready": r.ready,
             "ready_note": r.ready_note,
+            "status_note": r.status_note,
+            "remedy": remedy(r),
             "paused": r.paused,
             "host": r.host,
             "last_heartbeat_at": r.last_heartbeat_at,
@@ -164,7 +199,11 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
             "flags": sorted(f.flag for f in r.declared_flags.all()),
             "agent_count": len(serves.get(r.pk, ())),
             "code_current": code_current(r),
+            "code_sha": r.code_sha,
+            "expected_code_sha": r.expected_code_sha(),
+            "agents": sorted((by_pk[a] for a in serves.get(r.pk, ()) if a in by_pk), key=lambda a: a["slug"]),
             "problems": problems(r),
         })
     runner_rows.sort(key=lambda row: (not row["in_tree"], row["name"].lower()))
+    _usage(runner_rows, viewer)
     return {"root": root.slug, "workspaces": ordered, "runners": runner_rows}

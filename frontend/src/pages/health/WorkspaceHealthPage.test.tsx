@@ -36,6 +36,8 @@ const HEALTH: WorkspaceHealthOut = {
     ready: true, ready_note: '', paused: false, host: 'h', last_heartbeat_at: '2026-10-17T00:00:00Z', workspace: 'dimagi',
     in_tree: true, owner_email: 'jj@x.org', flags: [], agent_count: 2, code_current: false,
     usage_reported_at: null, missing_sessions: 3, can_administer: false,
+    status_note: 'emdash CDP unreachable on :9223', remedy: 'open Emdash CDP', code_sha: 'aaaa1111', expected_code_sha: 'bbbb2222',
+    agents: [{ slug: 'hal', name: 'Hal', workspace: 'connect' }],
     problems: [{ name: 'disk', status: 'warn', detail: '90% full' }] }],
   totals: { agents: 3, set_up: 1, needs_setup: 2, vault_canopy_web: 1, vault_moving: 2, vault_1password: 0, vault_none: 0, runners: 1, runners_online: 1 },
 }
@@ -70,7 +72,7 @@ describe('WorkspaceHealthPage', () => {
   it('links an agent’s projects and open tasks, and says who can use it in words', async () => {
     renderPage()
     expect((await screen.findAllByRole('link', { name: '3 open tasks' }))[0].getAttribute('href')).toBe('/w/connect/agents/hal/tasks')
-    expect(screen.getAllByRole('link', { name: '1 projects' })[0].getAttribute('href')).toBe('/w/connect/agents/hal')
+    expect(screen.getAllByRole('link', { name: '1 projects' })[0].getAttribute('href')).toBe('/w/connect/agents/hal/projects')
     expect(screen.getAllByText('Admins only').length).toBe(3)
     expect(screen.getAllByText('Manual · asks first').length).toBe(3)
     expect(screen.getAllByText('1 open').length).toBe(3)
@@ -93,12 +95,45 @@ describe('WorkspaceHealthPage', () => {
   })
 })
 
+describe('every figure opens its source', () => {
+  it('a tile filters the agents table to what it counts', async () => {
+    renderPage()
+    await screen.findByText('HAL')
+    fireEvent.click(screen.getByRole('button', { name: /Fully set up/ }))
+    expect(screen.getByTestId('tile-filter').textContent).toContain('Fully set up')
+    expect(screen.queryByText('HAL')).toBeNull()
+    expect(screen.getByText('ADA')).toBeTruthy()
+  })
+
+  it('links a row’s settings, turns and workspace to where each is set', async () => {
+    renderPage()
+    await screen.findByText('HAL')
+    const row = screen.getByText('HAL').closest('tr')!
+    const hrefs = [...row.querySelectorAll('a')].map((a) => a.getAttribute('href'))
+    expect(hrefs).toEqual(expect.arrayContaining([
+      '/w/connect/agents/hal/settings#credentials', '/w/connect/health', '/w/connect/agents/hal/settings#reach',
+      '/w/connect/agents/hal/settings#running', 'mailto:hal@x.org',
+    ]))
+  })
+})
+
 describe('runners on Health', () => {
   it('lists each runner with whether its code is current and what its own checks say', async () => {
     renderPage()
     const row = (await screen.findByText('laptop')).closest('tr')!
     expect(row.textContent).toContain('update pending')
     expect(row.textContent).toContain('disk')
+  })
+
+  it('opens a runner for why it is in its state, the fix, its checks and its agents', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByText('laptop'))
+    const detail = screen.getByTestId('runner-detail')
+    expect(screen.getByTestId('runner-note').textContent).toContain('emdash CDP unreachable on :9223')
+    expect(screen.getByTestId('runner-remedy').textContent).toContain('open Emdash CDP')
+    expect(detail.textContent).toContain('90% full')
+    expect(detail.textContent).toContain('aaaa1111')
+    expect(screen.getByRole('link', { name: 'Hal' }).getAttribute('href')).toBe('/w/connect/agents/hal/settings#running')
   })
 })
 

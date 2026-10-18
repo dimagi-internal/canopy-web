@@ -1,13 +1,13 @@
-import { Fragment, useMemo, useState, type JSX } from 'react'
+import { Fragment, useMemo, useState, type JSX, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
-import { getWorkspaceHealth, type AgentHealthOut, type WorkspaceHealthOut } from '@/api/workspaces'
+import { getWorkspaceHealth, type AgentHealthOut, type TopologyRunnerOut, type WorkspaceHealthOut } from '@/api/workspaces'
 import { relativeTime } from '@/components/activity/turnLog'
 import { SetupSteps, StatusIcon } from '@/components/agents/AgentSetupChecklist'
 import { AdminOnly, HealthViews } from './HealthViews'
-import { MissingSessions } from './MissingSessions'
+import { RunnersTable } from '@/components/runners/RunnersTable'
 import { useTreeRead } from './useTreeRead'
 
 // WORKSPACE HEALTH: what is not set up right, across this workspace and every one
@@ -16,7 +16,11 @@ import { useTreeRead } from './useTreeRead'
 // (`GET /api/workspaces/{slug}/health`), so this page and the agent's Settings
 // page cannot disagree. Facts and states only — no urgency ranking.
 
-type Filter = 'all' | 'setup' | 'vault'
+type Filter = 'all' | 'done' | 'setup' | 'vault' | AgentHealthOut['vault']['state']
+
+const FILTER_LABEL: Partial<Record<Filter, string>> = {
+  all: 'All', setup: 'Steps left', vault: 'Not on canopy-web vault',
+}
 
 const VAULT_LABEL: Record<AgentHealthOut['vault']['state'], { text: string; className: string }> = {
   'canopy-web': { text: 'canopy-web', className: 'border-success/30 bg-success/10 text-success' },
@@ -47,22 +51,28 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return health.agents.filter((a) =>
-      (filter === 'all' || (filter === 'setup' ? a.left > 0 : a.vault.state === 'moving' || a.vault.state === '1password'))
+      matches(a, filter)
       && (!needle || [a.name, a.slug, a.owner_email, a.workspace].some((s) => s.toLowerCase().includes(needle))))
   }, [health.agents, filter, q])
   const now = new Date()
+  // A tile filters the agents table to what it counts and brings it into view.
+  const show = (f: Filter) => () => {
+    setFilter(f)
+    document.getElementById('health-agents')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  }
 
   return (
     <div className="space-y-6">
       <section aria-label="Summary" className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
-        <Tile label="Agents" value={t.agents} />
-        <Tile label="Fully set up" value={t.set_up} />
-        <Tile label="With steps left" value={t.needs_setup} />
-        <Tile label="On canopy-web vault" value={t.vault_canopy_web} />
-        <Tile label="Moving" value={t.vault_moving} hint="some secrets elsewhere" />
-        <Tile label="On 1Password" value={t.vault_1password} />
-        <Tile label="No secrets" value={t.vault_none} />
-        <Tile label="Runners online" value={t.runners_online} hint={`of ${t.runners}`} />
+        <Tile label="Agents" value={t.agents} onClick={show('all')} />
+        <Tile label="Fully set up" value={t.set_up} onClick={show('done')} />
+        <Tile label="With steps left" value={t.needs_setup} onClick={show('setup')} />
+        <Tile label="On canopy-web vault" value={t.vault_canopy_web} onClick={show('canopy-web')} />
+        <Tile label="Moving" value={t.vault_moving} hint="some secrets elsewhere" onClick={show('moving')} />
+        <Tile label="On 1Password" value={t.vault_1password} onClick={show('1password')} />
+        <Tile label="No secrets" value={t.vault_none} onClick={show('none')} />
+        <Tile label="Runners online" value={t.runners_online} hint={`of ${t.runners}`}
+              onClick={() => document.getElementById('health-runners')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })} />
       </section>
 
       <section aria-label="Workspaces">
@@ -76,15 +86,17 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
             {health.workspaces.map((w) => (
               <tr key={w.slug}>
                 <td className="py-1.5" style={{ paddingLeft: `${w.depth * 16}px` }}>
-                  <Link to={`/w/${w.slug}/settings/secrets`} className="text-foreground hover:underline">{w.name}</Link>
+                  <Link to={`/w/${w.slug}/health`} className="text-foreground hover:underline">{w.name}</Link>
                   <span className="ml-1 font-mono text-muted-foreground">{w.slug}</span>
                 </td>
-                <td className="tabular-nums">{w.agents}</td>
+                <td className="tabular-nums"><CountLink n={w.agents} to={`/w/${w.slug}/agents`} label="agents" /></td>
                 <td className="text-foreground-secondary">
+                  <Link to={`/w/${w.slug}/settings/secrets`} className="hover:underline">
                   {w.shared_vault.vault
                     ? <>{w.shared_vault.vault}{w.shared_vault.key_set ? '' : ' · no key stored'}
                       {w.shared_vault.inherited_from && <span className="text-muted-foreground"> · from {w.shared_vault.inherited_from}</span>}</>
                     : <span className="text-muted-foreground">none</span>}
+                  </Link>
                 </td>
               </tr>
             ))}
@@ -92,16 +104,22 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
         </table>
       </section>
 
-      <section aria-label="Agents">
+      <section aria-label="Agents" id="health-agents" className="scroll-mt-4">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h2 className="mr-2 text-[13px] font-semibold text-foreground">Agents</h2>
           {(['all', 'setup', 'vault'] as const).map((f) => (
             <button key={f} type="button" onClick={() => setFilter(f)}
                     className={clsx('min-h-8 rounded-md border px-2.5 text-[12px]',
                       filter === f ? 'border-foreground/30 bg-muted text-foreground' : 'border-border text-muted-foreground hover:text-foreground')}>
-              {f === 'all' ? 'All' : f === 'setup' ? 'Steps left' : 'Not on canopy-web vault'}
+              {FILTER_LABEL[f]}
             </button>
           ))}
+          {!(filter in FILTER_LABEL) && (
+            <button type="button" onClick={() => setFilter('all')} data-testid="tile-filter"
+                    className="min-h-8 rounded-md border border-foreground/30 bg-muted px-2.5 text-[12px] text-foreground">
+              {filter === 'done' ? 'Fully set up' : `Vault: ${VAULT_LABEL[filter as AgentHealthOut['vault']['state']].text}`} ×
+            </button>
+          )}
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by name, owner, workspace"
                  aria-label="Filter agents"
                  className="ml-auto min-h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] sm:w-64" />
@@ -151,30 +169,38 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                         <span className="ml-1 whitespace-nowrap tabular-nums text-muted-foreground">{a.left ? `${a.left} left` : 'done'}</span>
                       </span>
                     </td>
-                    <td><VaultBadge agent={a} /></td>
-                    <td className="text-foreground-secondary">{a.owner_email || '—'}</td>
-                    <td className="font-mono text-foreground-secondary">{a.workspace}</td>
-                    <td className="text-foreground-secondary">{a.last_turn_at ? relativeTime(a.last_turn_at, now) : 'never'}</td>
-                    <td className="text-right tabular-nums">{a.turns_30d}</td>
-                    <td className="whitespace-nowrap text-foreground-secondary">
+                    <td><CellLink to={`/w/${a.workspace}/agents/${a.slug}/settings#credentials`}><VaultBadge agent={a} /></CellLink></td>
+                    <td className="text-foreground-secondary">
+                      {a.owner_email ? <a href={`mailto:${a.owner_email}`} onClick={stop} className="hover:underline">{a.owner_email}</a> : '—'}
+                    </td>
+                    <td className="font-mono text-foreground-secondary"><CellLink to={`/w/${a.workspace}/health`}>{a.workspace}</CellLink></td>
+                    <td className="text-foreground-secondary">
+                      {a.last_turn_at ? <CellLink to={`/w/${a.workspace}/agents/${a.slug}/turns`}>{relativeTime(a.last_turn_at, now)}</CellLink> : 'never'}
+                    </td>
+                    <td className="text-right tabular-nums"><CountLink n={a.turns_30d} to={`/w/${a.workspace}/agents/${a.slug}/turns`} label="turns" /></td>
+                    <td className="whitespace-nowrap text-foreground-secondary" title="Open the row for its latest sessions">
                       {a.active_sessions ? <span className="text-foreground">{a.active_sessions} open</span> : '0 open'}
                       {a.last_session_at && <span className="text-muted-foreground"> · {relativeTime(a.last_session_at, now)}</span>}
                     </td>
                     <td className="text-right tabular-nums">
-                      <CountLink n={a.projects} to={`/w/${a.workspace}/agents/${a.slug}`} label="projects" />
+                      <CountLink n={a.projects} to={`/w/${a.workspace}/agents/${a.slug}/projects`} label="projects" />
                     </td>
                     <td className="text-right tabular-nums">
                       <CountLink n={a.open_tasks} to={`/w/${a.workspace}/agents/${a.slug}/tasks`} label="open tasks" />
                     </td>
-                    <td className="text-right tabular-nums">{a.waiting_tasks}</td>
-                    <td className="text-right tabular-nums">{a.skills}</td>
-                    <td className="text-right tabular-nums">{a.schedules}</td>
+                    <td className="text-right tabular-nums">
+                      <CountLink n={a.waiting_tasks} to={`/w/${a.workspace}/agents/${a.slug}/tasks`} label="tasks waiting on people" />
+                    </td>
+                    <td className="text-right tabular-nums"><CountLink n={a.skills} to={`/w/${a.workspace}/agents/${a.slug}/skills`} label="skills" /></td>
+                    <td className="text-right tabular-nums"><CountLink n={a.schedules} to={`/w/${a.workspace}/agents/${a.slug}/schedules`} label="schedules" /></td>
                     <td className="whitespace-nowrap text-foreground-secondary"
                         title={a.full_access.length ? `Whole agent for: ${a.full_access.join(', ')}` : undefined}>
-                      {whoCanUse(a)}
+                      <CellLink to={`/w/${a.workspace}/agents/${a.slug}/settings#reach`}>{whoCanUse(a)}</CellLink>
                     </td>
                     <td className="whitespace-nowrap text-foreground-secondary">
-                      {a.turn_mode === 'manual' ? 'Manual · asks first' : a.turn_mode === 'auto' ? 'Auto' : a.turn_mode}
+                      <CellLink to={`/w/${a.workspace}/agents/${a.slug}/settings#running`}>
+                        {a.turn_mode === 'manual' ? 'Manual · asks first' : a.turn_mode === 'auto' ? 'Auto' : a.turn_mode}
+                      </CellLink>
                     </td>
                   </tr>
                   {open === a.slug && (
@@ -203,97 +229,55 @@ export function whoCanUse(a: Pick<AgentHealthOut, 'has_interface' | 'capabilitie
   return `Admins + ${parts.join(' · ')}`
 }
 
-type RunnerRow = WorkspaceHealthOut['runners'][number]
+function matches(a: AgentHealthOut, f: Filter): boolean {
+  if (f === 'all') return true
+  if (f === 'done') return a.left === 0
+  if (f === 'setup') return a.left > 0
+  if (f === 'vault') return a.vault.state === 'moving' || a.vault.state === '1password'
+  return a.vault.state === f
+}
 
-/** The runners the tree's agents route to or that live in it — the runner
- *  topology's own rows, so the map, the Runners table and this agree. Facts and
- *  states only: what it reports, never a verdict. */
+type RunnerRow = TopologyRunnerOut
+
+/** The runners section: THE runner table (shared with Topology → Runners). */
 function Runners({ runners, workspace }: { runners: readonly RunnerRow[]; workspace: string }): JSX.Element {
-  const now = new Date()
-  const [open, setOpen] = useState<string | null>(null)
   return (
-    <section aria-label="Runners" className="overflow-x-auto">
+    <section aria-label="Runners" id="health-runners" className="scroll-mt-4">
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <h2 className="text-[13px] font-semibold text-foreground">Runners</h2>
         <Link to={`/w/${workspace}/settings/topology/runners`} className="text-[12px] text-primary hover:underline">
           Routing and drills
         </Link>
       </div>
-      <table className="w-full min-w-[900px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-runners">
-        <thead className="text-left text-muted-foreground">
-          <tr><th className="py-1 font-medium">Runner</th><th className="font-medium">Kind</th><th className="font-medium">Owner</th>
-            <th className="font-medium">Status</th><th className="font-medium" title="Running the code the deployed server expects">Code</th>
-            <th className="font-medium">Its own checks</th><th className="font-medium text-right">Agents</th>
-            <th className="font-medium" title="Sessions in repos canopy knows that this box has and canopy does not">Missing sessions</th>
-            <th className="font-medium">Last heartbeat</th></tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {runners.map((r) => (
-            <Fragment key={r.id}>
-            <tr data-runner={r.name}>
-              <td className="py-1.5">
-                <span className="font-mono text-foreground">{r.name}</span>
-                {!r.in_tree && <span className="ml-1 text-muted-foreground" title="Homed outside this tree">· elsewhere</span>}
-              </td>
-              <td className="text-foreground-secondary">{r.kind}</td>
-              <td className="text-foreground-secondary">{r.owner_email || '—'}</td>
-              <td className="whitespace-nowrap">
-                <span className={clsx(r.status === 'online' ? 'text-success' : r.status === 'degraded' ? 'text-warning' : 'text-muted-foreground')}>
-                  {r.status}
-                </span>
-                {r.paused && <span className="text-muted-foreground"> · paused</span>}
-                {!r.ready && r.ready_note && <span className="text-muted-foreground" title={r.ready_note}> · not ready</span>}
-              </td>
-              <td className="whitespace-nowrap text-foreground-secondary">
-                {r.code_current === true ? 'current' : r.code_current === false ? <span className="text-warning">update pending</span> : 'unknown'}
-              </td>
-              <td className="text-foreground-secondary">
-                {r.problems.length === 0 ? 'all ok' : r.problems.map((p) => (
-                  <span key={p.name} title={p.detail} className={clsx('mr-2', p.status === 'fail' ? 'text-destructive' : 'text-warning')}>
-                    {p.name}
-                  </span>
-                ))}
-              </td>
-              <td className="text-right tabular-nums">{r.agent_count}</td>
-              <td className="whitespace-nowrap">
-                {r.can_administer
-                  ? <button type="button" onClick={() => setOpen(open === r.id ? null : r.id)}
-                            aria-expanded={open === r.id} className="text-primary hover:underline">
-                      {r.missing_sessions ? `${r.missing_sessions} — review` : 'check'}
-                    </button>
-                  : <span className="tabular-nums text-foreground-secondary">{r.missing_sessions}</span>}
-                {!r.usage_reported_at && <span className="text-muted-foreground" title="This box has not sent a usage report yet"> · no report</span>}
-              </td>
-              <td className="text-foreground-secondary">{r.last_heartbeat_at ? relativeTime(r.last_heartbeat_at, now) : 'never'}</td>
-            </tr>
-            {open === r.id && (
-              <tr><td colSpan={9} className="bg-muted/30 p-3"><MissingSessions runnerId={r.id} /></td></tr>
-            )}
-            </Fragment>
-          ))}
-        </tbody>
-      </table>
-      {runners.length === 0 && <p className="py-3 text-[12px] text-muted-foreground">No runner serves this tree.</p>}
+      <RunnersTable runners={runners} workspace={workspace} />
     </section>
   )
 }
 
-/** A count that opens the agent's page for it; a zero is just a zero. The click
- *  must not also toggle the row open. */
+// A link inside a row that opens on click must not also toggle the row.
+const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
+
+/** A count that opens the page it counts; a zero is just a zero. */
 function CountLink({ n, to, label }: { n: number; to: string; label: string }): JSX.Element {
   if (!n) return <span className="text-muted-foreground">0</span>
   return (
-    <Link to={to} onClick={(e) => e.stopPropagation()} aria-label={`${n} ${label}`}
+    <Link to={to} onClick={stop} aria-label={`${n} ${label}`}
           className="text-primary hover:underline">{n}</Link>
   )
 }
 
-function Tile({ label, value, hint }: { label: string; value: number; hint?: string }): JSX.Element {
+/** A cell's value that opens where it is set. */
+function CellLink({ to, children }: { to: string; children: ReactNode }): JSX.Element {
+  return <Link to={to} onClick={stop} className="hover:underline">{children}</Link>
+}
+
+function Tile({ label, value, hint, onClick }: { label: string; value: number; hint?: string; onClick: () => void }): JSX.Element {
   return (
-    <div className="rounded-lg border border-border bg-card px-3 py-2">
+    <button type="button" onClick={onClick}
+            className="rounded-lg border border-border bg-card px-3 py-2 text-left hover:border-foreground/30">
       <div className="text-[11px] text-muted-foreground">{label}{hint && <span> · {hint}</span>}</div>
       <div className="text-lg font-semibold tabular-nums text-foreground">{value}</div>
-    </div>
+    </button>
   )
 }
 

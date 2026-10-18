@@ -9,7 +9,7 @@ import {
   type TopologyRouteOut,
   type TopologyRunnerOut,
 } from '@/api/workspaces'
-import { relativeTime } from '@/components/activity/turnLog'
+import { RunnersTable } from '@/components/runners/RunnersTable'
 import { TopologyViews } from './topology/TopologyViews'
 import { agentHealth, defaultRoutes, dependsSolelyOn, ruleRoutes, statusTone } from './runnerTopology'
 
@@ -75,7 +75,6 @@ function Topology({ slug }: { slug: string }): JSX.Element {
   if (error) return <p className="text-[13px] text-destructive">{error}</p>
   if (!topo) return <p className="text-[13px] text-muted-foreground">Loading…</p>
 
-  const now = new Date()
   const agentCount = topo.workspaces.reduce((n, w) => n + w.agents.length, 0)
   const selectedRunner = selected ? runners.get(selected) : undefined
 
@@ -92,80 +91,13 @@ function Topology({ slug }: { slug: string }): JSX.Element {
         <p className="mt-1 max-w-3xl text-[13px] text-foreground-secondary">
           Which runner each agent&rsquo;s turns land on, across this workspace and every one below it.
           An agent tries its runners in order; a rule sends one source (email, Slack…) somewhere first.
-          Select a runner to see what depends on it. Routes are changed on each agent, under Settings.
+          Open a runner for why it is in its state and what depends on it. Routes are changed on each agent, under Settings.
         </p>
       </section>
 
       <section>
         <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Runners</h3>
-        {topo.runners.length === 0 ? (
-          <p className="text-[12px] text-muted-foreground">No runner lives in or serves this workspace.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12px]" data-testid="topology-runners">
-              <thead className="text-left text-muted-foreground">
-                <tr className="border-b border-border">
-                  <th className="py-1.5 pr-3 font-medium">Runner</th>
-                  <th className="py-1.5 pr-3 font-medium">Status</th>
-                  <th className="py-1.5 pr-3 font-medium">Lives in</th>
-                  <th className="py-1.5 pr-3 font-medium">Owned by</th>
-                  <th className="py-1.5 pr-3 font-medium text-right">Agents</th>
-                  <th className="py-1.5 font-medium">Heartbeat</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topo.runners.map((r) => (
-                  <tr
-                    key={r.id}
-                    onClick={() => setSelected(selected === r.id ? null : r.id)}
-                    className={clsx(
-                      'cursor-pointer border-b border-border hover:bg-muted',
-                      selected === r.id && 'bg-primary/10',
-                    )}
-                    data-testid={`topology-runner-${r.name}`}
-                    aria-selected={selected === r.id}
-                  >
-                    <td className="py-1.5 pr-3">
-                      <span className="whitespace-nowrap font-medium text-foreground">{r.name}</span>{' '}
-                      <span className="text-muted-foreground">
-                        {r.kind}
-                        {r.host ? ` · ${r.host}` : ''}
-                      </span>
-                      {r.flags.map((f) => (
-                        <span key={f} className="ml-1 rounded border border-border px-1 text-[10px] uppercase text-muted-foreground">
-                          {f}
-                        </span>
-                      ))}
-                    </td>
-                    <td className="py-1.5 pr-3">
-                      <span className={clsx('whitespace-nowrap', statusTone(r.status))}>● {r.status}</span>
-                      {!r.ready && (
-                        <span className="ml-1 text-warning" title={r.ready_note}>not ready</span>
-                      )}
-                    </td>
-                    <td className="py-1.5 pr-3 text-foreground-secondary">
-                      {r.workspace ?? '—'}
-                      {!r.in_tree && <span className="ml-1 text-muted-foreground">(outside)</span>}
-                    </td>
-                    <td className="py-1.5 pr-3 text-foreground-secondary">{r.owner_email ?? '—'}</td>
-                    <td className="py-1.5 pr-3 text-right tabular-nums text-foreground-secondary">{r.agent_count}</td>
-                    <td className="py-1.5 text-muted-foreground">
-                      {r.last_heartbeat_at ? relativeTime(r.last_heartbeat_at, now) : 'never'}
-                      {' · '}
-                      <Link
-                        to={`/supervisor?tab=runners&runner=${r.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-primary hover:underline"
-                      >
-                        open
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <RunnersTable runners={topo.runners} workspace={slug} open={selected} onOpen={setSelected} />
       </section>
 
       <section>

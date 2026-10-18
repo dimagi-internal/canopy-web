@@ -280,6 +280,12 @@ class RunnerProblemOut(StrictModel):
     detail: str = ""
 
 
+class RunnerAgentOut(StrictModel):
+    slug: str
+    name: str
+    workspace: str
+
+
 class TopologyRunnerOut(StrictModel):
     """A runner that lives in the tree or that an agent in it routes to.
     `in_tree` False = homed elsewhere (another workspace, or none)."""
@@ -304,6 +310,21 @@ class TopologyRunnerOut(StrictModel):
     code_current: bool | None = None
     # Its own health checks that are not ok, as it last reported them.
     problems: list[RunnerProblemOut] = []
+    # Why it is degraded / not ready, in its own words, and the fix when the
+    # cause is a known one (`topology.remedy`).
+    status_note: str = ""
+    remedy: str = ""
+    code_sha: str = ""
+    expected_code_sha: str = ""
+    # The agents in the tree it serves.
+    agents: list[RunnerAgentOut] = []
+    # When the box last sent its usage report (`events.usage`).
+    usage_reported_at: dt.datetime | None = None
+    # Its local sessions in known repos canopy has no record of (a count; the list
+    # is its admins' alone: GET /api/harness/runners/{id}/missing-sessions).
+    missing_sessions: int = 0
+    # The viewer may check for and send up its missing sessions.
+    can_administer: bool = False
 
 
 class RunnerTopologyOut(StrictModel):
@@ -544,16 +565,6 @@ class WorkspaceHealthNodeOut(StrictModel):
     shared_vault: SharedVaultHealthOut
 
 
-class HealthRunnerOut(TopologyRunnerOut):
-    # When the box last sent its usage report (`events.usage`).
-    usage_reported_at: dt.datetime | None = None
-    # Its local sessions in known repos canopy has no record of (a count; the list
-    # is its admins' alone: GET /api/harness/runners/{id}/missing-sessions).
-    missing_sessions: int = 0
-    # The viewer may check for and send up its missing sessions.
-    can_administer: bool = False
-
-
 class HealthTotalsOut(StrictModel):
     agents: int
     set_up: int
@@ -572,7 +583,7 @@ class WorkspaceHealthOut(StrictModel):
     agents: list[AgentHealthOut]
     # The runners the tree's agents route to, or that live in it — the runner
     # topology's own rows, plus each box's usage report.
-    runners: list[HealthRunnerOut]
+    runners: list[TopologyRunnerOut]
     totals: HealthTotalsOut
 
 
