@@ -444,11 +444,55 @@ Outside the rollout:
   extension and the same code on SQLite in tests. Move it into pgvector if one
   person's served entries reach the thousands.
 
-**Turning it on:** deploy the task role (its `memory-embeddings` policy grants
-`bedrock:InvokeModel` on embedding models only), enable the model under Bedrock
-model access in the labs account, set `HCP_EMBEDDINGS_MODEL` in
-`deploy/aws/canopy-web.cfn.yaml`, deploy, then run `manage.py hcp_embed`.
-Turning it off is clearing the variable; vectors stay but are never read.
+**Zero retention is checked, not assumed** (`embeddings.retention_ok`). Before the
+first call, and again every 15 minutes, canopy asks the provider whether it keeps
+what we send; until the answer is yes, nothing leaves canopy and search stays
+lexical. On Vertex that is the project's `cacheConfig` saying `disableCache: true`
+(Gemini models cache inputs up to 24 h by default). On Bedrock it is the account
+having no model-invocation logging (Bedrock itself stores no prompts). Neither
+check covers the contract: both clouds are under Dimagi's BAA, and Vertex's
+abuse-monitoring prompt logging does not apply to an invoiced billing account —
+confirm both once, by hand, for the project used.
+
+**Turning it on — Vertex (the Dimagi-approved route).** No Google key is stored:
+the ECS task's AWS role (`canopy-web-task-role`) is exchanged for a short-lived
+Google token by workload identity federation. In the GCP project (here
+`canopy-494811`; `NUMBER` is its project number, `gcloud projects describe`):
+
+```
+P=canopy-494811; ROLE_ARN=arn:aws:sts::858923557655:assumed-role/canopy-web-task-role
+gcloud services enable aiplatform.googleapis.com iamcredentials.googleapis.com sts.googleapis.com --project $P
+# 1. No caching of what we send (applies to every region of the project):
+curl -X PATCH -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" \
+  https://us-central1-aiplatform.googleapis.com/v1/projects/$P/cacheConfig \
+  -d "{\"name\": \"projects/$P/cacheConfig\", \"disableCache\": true}"
+# 2. A service account that can only embed and read that setting:
+gcloud iam roles create canopyMemoryEmbeddings --project $P \
+  --permissions=aiplatform.endpoints.predict,aiplatform.cacheConfigs.get
+gcloud iam service-accounts create canopy-memory-embeddings --project $P
+SA=canopy-memory-embeddings@$P.iam.gserviceaccount.com
+gcloud projects add-iam-policy-binding $P --member serviceAccount:$SA \
+  --role projects/$P/roles/canopyMemoryEmbeddings
+# 3. Let exactly canopy-web's task role act as it:
+gcloud iam workload-identity-pools create canopy-aws --location global --project $P
+gcloud iam workload-identity-pools providers create-aws canopy-web --location global \
+  --workload-identity-pool canopy-aws --account-id 858923557655 --project $P \
+  --attribute-condition "attribute.aws_role=='$ROLE_ARN'"
+gcloud iam service-accounts add-iam-policy-binding $SA --project $P --role roles/iam.workloadIdentityUser \
+  --member "principalSet://iam.googleapis.com/projects/NUMBER/locations/global/workloadIdentityPools/canopy-aws/attribute.aws_role/$ROLE_ARN"
+```
+
+Then in `deploy/aws/canopy-web.cfn.yaml` set `HCP_EMBEDDINGS_MODEL=vertex/gemini-embedding-001`,
+`HCP_VERTEX_PROJECT`, `HCP_VERTEX_WIF_AUDIENCE=//iam.googleapis.com/projects/NUMBER/locations/global/workloadIdentityPools/canopy-aws/providers/canopy-web`
+and `HCP_VERTEX_SERVICE_ACCOUNT=$SA`, deploy, and run `manage.py hcp_embed` (it
+prints the retention check first and refuses on a no).
+
+**Turning it on — Bedrock.** Deploy the task role (its `memory-embeddings` policy
+grants `bedrock:InvokeModel` on embedding models only, and the read-only logging
+check), enable the model under Bedrock model access, set `HCP_EMBEDDINGS_MODEL` to
+its id, deploy, run `manage.py hcp_embed`.
+
+Turning either off is clearing the variable; vectors stay but are never read.
 
 The original plan, kept for the reasoning. Before this, `hcp.search` ranked by
 term overlap (`_score`), declared as `lexical` (spec 4.4.3). That misses

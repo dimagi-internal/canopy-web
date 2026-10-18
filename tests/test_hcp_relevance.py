@@ -149,11 +149,17 @@ def _fake_invoke(calls):
     return invoke
 
 
+@pytest.fixture(autouse=True)
+def _fresh_retention_check(monkeypatch):
+    monkeypatch.setitem(embeddings._retention, "model", None)
+
+
 @pytest.fixture()
 def embeddings_on(settings, monkeypatch):
     settings.HCP_EMBEDDINGS_MODEL = "cohere.embed-multilingual-v3"
     calls: list = []
     monkeypatch.setattr(embeddings, "_invoke", _fake_invoke(calls))
+    monkeypatch.setattr(embeddings, "_check_retention", lambda m: (True, "keeps nothing"))
     return calls
 
 
@@ -188,12 +194,85 @@ def test_a_vector_is_cleared_when_its_version_stops_being_served(w, embeddings_o
     assert new.embedding is None
 
 
+@pytest.mark.parametrize("check", [
+    lambda m: (False, "caching is on"),
+    lambda m: (_ for _ in ()).throw(RuntimeError("403 from cacheConfig")),
+])
+def test_nothing_is_sent_until_the_provider_is_verified_to_keep_nothing(w, embeddings_on, monkeypatch, check):
+    monkeypatch.setattr(embeddings, "_check_retention", check)
+    _add(w, "Prefers concise replies.")
+    assert _said(_search(w, _turn(w, "k"), "how long should a status message be")) == []
+    assert embeddings_on == []                                      # no text left canopy
+    with pytest.raises(Exception, match="not sending memory text"):
+        call_command("hcp_embed")
+
+
+def test_a_passed_retention_check_is_trusted_for_a_while_not_forever(w, embeddings_on, monkeypatch):
+    checks = []
+    monkeypatch.setattr(embeddings, "_check_retention", lambda m: checks.append(m) or (True, "ok"))
+    embeddings.embed(["a"])
+    embeddings.embed(["b"])
+    assert len(checks) == 1
+    monkeypatch.setitem(embeddings._retention, "at", embeddings._retention["at"] - embeddings.RETENTION_TTL - 1)
+    embeddings.embed(["c"])
+    assert len(checks) == 2
+
+
+def test_vertex_asks_for_retrieval_embeddings_one_text_at_a_time(settings, monkeypatch):
+    settings.HCP_EMBEDDINGS_MODEL = "vertex/gemini-embedding-001"
+    settings.HCP_VERTEX_PROJECT, settings.HCP_VERTEX_LOCATION = "canopy-494811", "us-central1"
+    posts = []
+
+    class Session:
+        def post(self, url, json, timeout):
+            posts.append((url, json))
+
+            class R:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"predictions": [{"embeddings": {"values": [1.0, 0.0]}} for _ in json["instances"]]}
+            return R()
+    monkeypatch.setattr(embeddings, "_vertex_session", lambda: Session())
+    monkeypatch.setattr(embeddings, "_check_retention", lambda m: (True, "caching disabled"))
+    assert len(embeddings.embed(["one", "two"], purpose="query")) == 2
+    assert [u for u, _ in posts] == [
+        "https://us-central1-aiplatform.googleapis.com/v1/projects/canopy-494811/locations/us-central1"
+        "/publishers/google/models/gemini-embedding-001:predict"] * 2
+    assert posts[0][1]["instances"] == [{"content": "one", "task_type": "RETRIEVAL_QUERY"}]
+
+
+def test_vertex_retention_means_the_projects_cache_is_disabled(settings, monkeypatch):
+    settings.HCP_EMBEDDINGS_MODEL = "vertex/gemini-embedding-001"
+    settings.HCP_VERTEX_PROJECT = "canopy-494811"
+
+    def session(body):
+        class S:
+            def get(self, url, timeout):
+                assert url.endswith("/projects/canopy-494811/cacheConfig")
+
+                class R:
+                    def raise_for_status(self):
+                        pass
+
+                    def json(self):
+                        return body
+                return R()
+        return lambda: S()
+    monkeypatch.setattr(embeddings, "_vertex_session", session({"disableCache": True}))
+    assert embeddings.retention_ok(force=True)[0] is True
+    monkeypatch.setattr(embeddings, "_vertex_session", session({"retentionType": "DURABLE"}))
+    assert embeddings.retention_ok(force=True)[0] is False
+
+
 def test_a_failing_model_falls_back_to_lexical(w, settings, monkeypatch):
     settings.HCP_EMBEDDINGS_MODEL = "cohere.embed-multilingual-v3"
 
     def down(*a, **k):
         raise RuntimeError("bedrock is down")
     monkeypatch.setattr(embeddings, "_invoke", down)
+    monkeypatch.setattr(embeddings, "_check_retention", lambda m: (True, "keeps nothing"))
     _add(w, "Owns the finance dashboard.")
     assert _said(_search(w, _turn(w, "i"), "finance dashboard")) == ["Owns the finance dashboard."]
 

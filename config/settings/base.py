@@ -323,14 +323,22 @@ HCP_PEOPLE = [a.strip().lower() for a in env("HCP_PEOPLE", default="").split(","
 HCP_CONTACT_OPT_IN = env.bool("HCP_CONTACT_OPT_IN", default=False)
 
 # --- Memory search by meaning (apps/contacts/embeddings.py) ---
-# Empty = off: search ranks by shared words only (declared "lexical"). A Bedrock
-# embedding model id turns it on — cohere.embed-v4:0 or cohere.embed-multilingual-v3
-# (separate query/document embeddings, French and Swahili as well as English), or
-# amazon.titan-embed-text-v2:0. The task role needs bedrock:InvokeModel on it
-# (deploy/aws/canopy-web-task-role.cfn.yaml) and the model must be enabled in the
-# account's Bedrock model access. Changing it re-embeds lazily; vectors never mix.
+# Empty = off: search ranks by shared words only (declared "lexical"). A model
+# turns it on: `vertex/gemini-embedding-001` (Google Vertex AI, the Dimagi-approved
+# route — needs the HCP_VERTEX_* below) or a Bedrock id (cohere.embed-v4:0,
+# amazon.titan-embed-text-v2:0; needs the task role's memory-embeddings policy).
+# Either way nothing is sent until the provider is verified to retain nothing
+# (embeddings.retention_ok). Changing it re-embeds lazily; vectors never mix.
 HCP_EMBEDDINGS_MODEL = env("HCP_EMBEDDINGS_MODEL", default="")
 HCP_EMBEDDINGS_REGION = env("HCP_EMBEDDINGS_REGION", default=env("AWS_REGION", default=""))
+# Vertex by workload identity federation from the ECS task role (no stored key):
+# the GCP project, its region, the federation provider's audience
+# (//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/
+# <pool>/providers/<provider>) and the service account the task acts as.
+HCP_VERTEX_PROJECT = env("HCP_VERTEX_PROJECT", default="")
+HCP_VERTEX_LOCATION = env("HCP_VERTEX_LOCATION", default="us-central1")
+HCP_VERTEX_WIF_AUDIENCE = env("HCP_VERTEX_WIF_AUDIENCE", default="")
+HCP_VERTEX_SERVICE_ACCOUNT = env("HCP_VERTEX_SERVICE_ACCOUNT", default="")
 
 # Whether LoginRequiredMiddleware enforces auth. Default on; toggle off during rollout.
 REQUIRE_AUTH = env.bool("REQUIRE_AUTH", default=True)

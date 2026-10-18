@@ -1,11 +1,23 @@
 """Vectors for finding memory by meaning (docs/architecture/hcp-service.md § Retrieval).
 
-Off unless `settings.HCP_EMBEDDINGS_MODEL` names a model. When on, every current
-entry carries a vector of its text, made by that model on AWS Bedrock (canopy's own
-AWS account; nothing leaves it), and `hcp.search` ranks by meaning as well as by
-shared words. The sentence stays the source of truth: a vector is only for finding,
-lives on the entry's own row (a hard delete takes it too), and is cleared the moment
-its version stops being served.
+Off unless `settings.HCP_EMBEDDINGS_MODEL` names a model:
+
+* `vertex/<model>` — Google Vertex AI (e.g. `vertex/gemini-embedding-001`), reached
+  from the ECS task with workload identity federation: the task's own AWS role is
+  exchanged for a short-lived Google token, so no Google key is stored anywhere.
+* a bare Bedrock model id (`cohere.embed-v4:0`, `amazon.titan-embed-text-v2:0`) — AWS
+  Bedrock in canopy's own account.
+
+When on, every current entry carries a vector of its text and `hcp.search` ranks by
+meaning as well as by shared words. The sentence stays the source of truth: a
+vector is only for finding, lives on the entry's own row (a hard delete takes it
+too), and is cleared the moment its version stops being served.
+
+**Nothing is sent until the provider is verified to keep nothing** (`retention_ok`):
+on Vertex, the project's cache config must say `disableCache: true`; on Bedrock,
+the account must have no model-invocation logging. Checked before the first call
+and again every `RETENTION_TTL` seconds; a failed or unverifiable check means
+lexical search, not a guess.
 
 Vectors from different models never mix: a row whose `embedding_model` is not the
 current one counts as having none, and is re-embedded the next time a search meets
@@ -17,21 +29,32 @@ from __future__ import annotations
 import json
 import logging
 import math
+import threading
+import time
 from array import array
 
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-#: Cohere takes at most 96 texts per call; Titan takes one.
+#: Cohere takes at most 96 texts per call; Titan and gemini-embedding take one.
 COHERE_BATCH = 96
+#: Vertex's text-embedding-* models take up to 250 instances per call.
+VERTEX_TEXT_BATCH = 250
+#: Vector size asked of models that let us choose (Gemini: 768, 1536 or 3072).
+VERTEX_DIMENSIONS = 768
 #: How many missing vectors one search will fill before ranking. Beyond that the
 #: rest rank lexically this time and are filled by later searches (or hcp_embed).
 FILL_PER_SEARCH = 96
-#: Text sent per entry is capped (Cohere truncates at ~512 tokens anyway).
+#: Text sent per entry is capped (the models truncate at a few thousand tokens anyway).
 TEXT_MAX = 2000
+#: How long a passed retention check is trusted before it is asked again.
+RETENTION_TTL = 900
+VERTEX_PREFIX = "vertex/"
 
-_client = None
+_clients: dict = {}
+_retention: dict = {"model": None, "ok": False, "why": "not checked", "at": 0.0}
+_lock = threading.Lock()
 
 
 def model() -> str:
@@ -43,22 +66,29 @@ def enabled() -> bool:
     return bool(model())
 
 
-def _bedrock():
-    global _client
-    if _client is None:
+def provider(model_id: str | None = None) -> str:
+    model_id = model() if model_id is None else model_id
+    return "vertex" if model_id.startswith(VERTEX_PREFIX) else "bedrock"
+
+
+# --- providers --------------------------------------------------------------------
+
+
+def _bedrock(service: str = "bedrock-runtime"):
+    if service not in _clients:
         import boto3
         from botocore.config import Config
 
         # Short timeouts: a search waits on this, and lexical is always there to fall back to.
-        _client = boto3.client(
-            "bedrock-runtime", region_name=getattr(settings, "HCP_EMBEDDINGS_REGION", "") or None,
+        _clients[service] = boto3.client(
+            service, region_name=getattr(settings, "HCP_EMBEDDINGS_REGION", "") or None,
             config=Config(connect_timeout=2, read_timeout=5, retries={"max_attempts": 1}))
-    return _client
+    return _clients[service]
 
 
-def _invoke(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
-    """One Bedrock call per batch. `purpose` is "document" (an entry) or "query" (a
-    search) — Cohere embeds them differently; Titan has one space for both."""
+def _invoke_bedrock(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
+    """`purpose` is "document" (an entry) or "query" (a search) — Cohere embeds them
+    differently; Titan has one space for both."""
     out: list[list[float]] = []
     if model_id.startswith("cohere."):
         input_type = "search_query" if purpose == "query" else "search_document"
@@ -79,10 +109,114 @@ def _invoke(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
     raise ValueError(f"no Bedrock embedding adapter for {model_id!r} (cohere.* or amazon.titan-embed*)")
 
 
+class _TaskRoleCredentials:
+    """google-auth's AWS supplier, fed from boto3: on ECS the task role's credentials
+    come from the container endpoint, which google-auth cannot read on its own."""
+
+    def get_aws_security_credentials(self, context, request):
+        import boto3
+        from google.auth import aws
+
+        c = boto3.Session().get_credentials().get_frozen_credentials()
+        return aws.AwsSecurityCredentials(c.access_key, c.secret_key, c.token)
+
+    def get_aws_region(self, context, request):
+        import boto3
+
+        return boto3.Session().region_name or getattr(settings, "AWS_REGION", "") or "us-east-1"
+
+
+def _vertex_session():
+    """An authorized HTTP session to Vertex as the configured service account, by
+    workload identity federation from the task's AWS role. No stored Google key."""
+    if "vertex" not in _clients:
+        from google.auth import aws
+        from google.auth.transport.requests import AuthorizedSession
+
+        sa = settings.HCP_VERTEX_SERVICE_ACCOUNT
+        creds = aws.Credentials(
+            audience=settings.HCP_VERTEX_WIF_AUDIENCE,
+            subject_token_type="urn:ietf:params:aws:token-type:aws4_request",
+            aws_security_credentials_supplier=_TaskRoleCredentials(),
+            service_account_impersonation_url=(
+                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
+                f"{sa}:generateAccessToken"),
+            scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        _clients["vertex"] = AuthorizedSession(creds)
+    return _clients["vertex"]
+
+
+def _vertex_base() -> str:
+    loc = settings.HCP_VERTEX_LOCATION
+    return f"https://{loc}-aiplatform.googleapis.com/v1/projects/{settings.HCP_VERTEX_PROJECT}"
+
+
+def _invoke_vertex(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
+    name = model_id.removeprefix(VERTEX_PREFIX)
+    url = f"{_vertex_base()}/locations/{settings.HCP_VERTEX_LOCATION}/publishers/google/models/{name}:predict"
+    task = "RETRIEVAL_QUERY" if purpose == "query" else "RETRIEVAL_DOCUMENT"
+    # gemini-embedding takes one text per call; text-embedding-* take a batch.
+    batch = VERTEX_TEXT_BATCH if name.startswith("text-") else 1
+    out: list[list[float]] = []
+    for i in range(0, len(texts), batch):
+        body = {"instances": [{"content": t, "task_type": task} for t in texts[i:i + batch]],
+                "parameters": {"autoTruncate": True, "outputDimensionality": VERTEX_DIMENSIONS}}
+        resp = _vertex_session().post(url, json=body, timeout=(2, 5))
+        resp.raise_for_status()
+        out.extend(p["embeddings"]["values"] for p in resp.json()["predictions"])
+    return out
+
+
+def _invoke(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
+    if provider(model_id) == "vertex":
+        return _invoke_vertex(model_id, texts, purpose)
+    return _invoke_bedrock(model_id, texts, purpose)
+
+
+# --- zero retention ---------------------------------------------------------------
+
+
+def _check_retention(model_id: str) -> tuple[bool, str]:
+    """(ok, why). Ok only when the provider says, right now, that it keeps nothing
+    we send. Raises are the caller's to treat as "not verified"."""
+    if provider(model_id) == "vertex":
+        resp = _vertex_session().get(f"{_vertex_base()}/cacheConfig", timeout=(2, 5))
+        resp.raise_for_status()
+        if resp.json().get("disableCache") is True:
+            return True, "Vertex caching is disabled for the project"
+        return False, f"Vertex caching is on for project {settings.HCP_VERTEX_PROJECT} (cacheConfig)"
+    cfg = _bedrock("bedrock").get_model_invocation_logging_configuration().get("loggingConfig")
+    if not cfg:
+        return True, "Bedrock model-invocation logging is off for the account"
+    return False, "Bedrock model-invocation logging is on for the account; it would keep memory text"
+
+
+def retention_ok(*, force: bool = False) -> tuple[bool, str]:
+    """Is the current provider verified to keep nothing? Cached for RETENTION_TTL."""
+    model_id = model()
+    if not model_id:
+        return False, "embeddings are off"
+    with _lock:
+        fresh = (_retention["model"] == model_id and time.monotonic() - _retention["at"] < RETENTION_TTL)
+        if fresh and not force:
+            return _retention["ok"], _retention["why"]
+        try:
+            ok, why = _check_retention(model_id)
+        except Exception as exc:  # noqa: BLE001 — unverifiable is the same as not verified
+            ok, why = False, f"could not verify retention: {exc.__class__.__name__}: {exc}"
+        if not ok:
+            logger.warning("hcp embeddings: not sending memory text to %s — %s", model_id, why)
+        _retention.update(model=model_id, ok=ok, why=why, at=time.monotonic())
+        return ok, why
+
+
 def embed(texts: list[str], *, purpose: str = "document") -> list[bytes] | None:
-    """Packed, unit-length vectors for `texts`, or None when off or on any failure."""
+    """Packed, unit-length vectors for `texts`, or None when off, unverified, or on
+    any failure."""
     model_id = model()
     if not model_id or not texts:
+        return None
+    if not retention_ok()[0]:
         return None
     try:
         vectors = _invoke(model_id, [t[:TEXT_MAX] for t in texts], purpose)
@@ -94,6 +228,8 @@ def embed(texts: list[str], *, purpose: str = "document") -> list[bytes] | None:
                        len(vectors), len(texts))
         return None
     return [pack(v) for v in vectors]
+
+
 
 
 def pack(vector: list[float]) -> bytes:
