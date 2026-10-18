@@ -43,6 +43,11 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
     # (`apps/agents/api._credential_access`).
     (frozenset({"GET"}), rf"/api/agents/{_SLUG}/runtime"),
     (frozenset({"GET"}), rf"/api/agents/{_SLUG}/credentials/access"),
+    # … and what it then reports back: the readiness `canopy agent prepare --runner`
+    # posts after preparing one agent. Only for an agent this box serves
+    # (`apps/agents/api.post_bootstrap_report`). Missing here, every report a
+    # keyless box made was refused — 401 on the revoked PAT, 403 on its own token.
+    (frozenset({"POST"}), rf"/api/agents/{_SLUG}/bootstrap-report"),
     (frozenset({"GET"}), r"/api/workspaces"),
     # Its device key: re-registering after an ECDH key change.
     (frozenset({"GET", "POST"}), r"/api/runner-device-keys"),

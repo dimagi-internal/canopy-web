@@ -2935,6 +2935,14 @@ def post_bootstrap_report(request: HttpRequest, slug: str,
     agent = _get_agent_or_404(request, slug)
     if not services.caller_runs_agent(request.user, agent):
         raise HttpError(403, "no live runner you pair is assigned to this agent")
+    # A runner token speaks for ONE box: it reports only for an agent that box
+    # serves, never for the owner's other agents (same rule as credentials).
+    rtok = getattr(request, "runner_token", None)
+    if rtok is not None:
+        from apps.harness.device_keys import runner_serves_agent
+
+        if not runner_serves_agent(rtok.runner, agent):
+            raise HttpError(403, f"{rtok.runner.name} does not run {agent.slug}")
     r = services.record_bootstrap_report(
         agent, runner_name=payload.runner_name,
         client_creds_ok=payload.client_creds_ok, mailbox_ok=payload.mailbox_ok,

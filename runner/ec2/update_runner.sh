@@ -138,12 +138,27 @@ moved_base() {
   case "$m" in https://*) echo "$m" ;; esac
 }
 
-# The box's own runner token, if cloud_runner.py has shared an unexpired one
-# (RUNNER_TOKEN_FILE, 0600). runner.env's CANOPY_TOKEN is a person's PAT and only
-# the fallback: on 2026-10-17 it was revoked, every expected_sha read came back
-# empty ("unknown"), and the box stopped updating without a word.
+# --- this box's credential ---------------------------------------------------
+# The bearer for the one read below — the SAME credential the daemon signs in with.
+# Since keyless runners (#1594) that is a runner token bought with this box's device
+# key (its EC2 instance role), and runner.env's CANOPY_TOKEN — a person's PAT — is
+# only the fallback for a box whose key is not approved yet. This script used to
+# read the PAT and nothing else: when it was revoked in the 2026-10-17 token
+# cleanup the daemon carried on keyless, but every tick here got a 401, read
+# `unknown`, and installed nothing — for hours, on a box the runner itself was
+# nudging every ten minutes (cloud-ec2-2, 2026-10-17 23:30Z onward).
+#
+# Two sources, in order:
+#   1. the token the running daemon SHARES (RUNNER_TOKEN_FILE, 0600, #1630) — free;
+#   2. one this script BUYS with the INSTALLED runner's own exchange code. Not
+#      optional: (1) is written only by runner bytes newer than #1630, and a box
+#      whose PAT is dead cannot reach those bytes without this — the updater that
+#      would install the token-sharing daemon needs a token to decide to. It also
+#      covers the crash-looping daemon that shares nothing. Imported, never run
+#      (its `__main__` would start a second daemon), with stdout diverted while it
+#      imports so nothing it prints can be mistaken for a token.
 RUNNER_TOKEN_FILE="${RUNNER_TOKEN_FILE:-$RUNNER_HOME/runner-token.json}"
-runner_token() {
+shared_runner_token() {
   [ -r "$RUNNER_TOKEN_FILE" ] || return 0
   python3 -c '
 import json, sys, time
@@ -156,36 +171,83 @@ if (d.get("access_token") or "") and float(d.get("expires_at") or 0) - time.time
 ' "$RUNNER_TOKEN_FILE" 2>/dev/null
 }
 
+MINT_HELPER='
+import contextlib, importlib.util, sys
+target, base, rid = sys.argv[1:4]
+try:
+    with contextlib.redirect_stdout(sys.stderr):
+        spec = importlib.util.spec_from_file_location("installed_cloud_runner", target)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        exchange = getattr(m, "_exchange_device_proof", None)
+        if exchange is None:
+            sys.exit(0)
+        m._log = lambda msg: print(msg, file=sys.stderr)
+        m.BASE_URL = base.rstrip("/")
+        ok = exchange(rid)
+    if ok:
+        print(m._RUNNER_TOKEN["raw"])
+except Exception as exc:
+    print(f"device-key exchange failed: {exc}", file=sys.stderr)
+'
+minted_runner_token() {  # <base> <runner id>
+  [ "${CANOPY_DEVICE_KEY:-1}" = "0" ] && return 0
+  [ -n "$1" ] && [ -n "$2" ] && [ -r "$TARGET" ] || return 0
+  python3 -c "$MINT_HELPER" "$TARGET" "$1" "$2" 2>/dev/null | tail -1
+}
+
+runner_token() {  # <base> <runner id> -> a runner token, or nothing
+  local t
+  t="$(shared_runner_token)"
+  [ -n "$t" ] || t="$(minted_runner_token "$1" "$2")"
+  printf '%s' "$t"
+}
+
 # --- what should be installed ----------------------------------------------
-expected_sha() {
-  # GET the fleet list and pick our own row. Read-only by construction: there is no
-  # POST anywhere in this script, deliberately (see the header).
-  local base token rid
-  [ -r "$ENV_FILE" ] || { echo ""; return; }
-  base="$(moved_base)"
-  [ -n "$base" ] || base="$(sed -n 's/^CANOPY_BASE_URL=//p' "$ENV_FILE" | tail -1)"
-  token="$(runner_token)"
-  [ -n "$token" ] || token="$(sed -n 's/^CANOPY_TOKEN=//p' "$ENV_FILE" | tail -1)"
-  rid="$(json_field "$STATE_FILE" runner_id "")"
-  [ -n "$base" ] && [ -n "$token" ] && [ -n "$rid" ] || { echo ""; return; }
+fleet_expected() {  # <base> <token> <runner id> -> the sha; non-zero if unreadable
   # `python3 -c`, NOT `python3 - <<HEREDOC`: a heredoc redirects stdin, so it would
   # silently win over the pipe and the parser would read the PROGRAM instead of the
   # response — every box answering `unknown`, forever, with nothing in the log.
-  curl -fsS --max-time 30 -H "Authorization: Bearer $token" \
-      "${base%/}/api/harness/runners/" 2>/dev/null \
-    | python3 -c '
+  local body
+  body="$(curl -fsS --max-time 30 -H "Authorization: Bearer $2" \
+      "${1%/}/api/harness/runners/" 2>/dev/null)" || return 1
+  printf '%s' "$body" | python3 -c '
 import json, sys
 rid = sys.argv[1]
 try:
     rows = json.load(sys.stdin)
 except Exception:
-    sys.exit(0)
+    sys.exit(1)
 rows = rows.get("items", rows) if isinstance(rows, dict) else rows
 for row in rows or []:
     if str(row.get("id")) == rid:
         print((row.get("expected_code_sha") or "").strip())
         break
-' "$rid" 2>/dev/null
+' "$3" 2>/dev/null
+}
+
+expected_sha() {
+  # GET the fleet list and pick our own row. Read-only by construction: there is no
+  # POST anywhere in this script, deliberately (see the header).
+  #
+  # WHY it is empty goes to stderr (the journal): an `unknown` that does not say
+  # why is how a revoked token stalled this box for hours with nothing in the log.
+  local base pat rid rtok
+  [ -r "$ENV_FILE" ] || { log "unknown because: $ENV_FILE is not readable" >&2; return; }
+  base="$(moved_base)"
+  [ -n "$base" ] || base="$(sed -n 's/^CANOPY_BASE_URL=//p' "$ENV_FILE" | tail -1)"
+  pat="$(sed -n 's/^CANOPY_TOKEN=//p' "$ENV_FILE" | tail -1)"
+  rid="$(json_field "$STATE_FILE" runner_id "")"
+  if [ -z "$base" ] || [ -z "$rid" ]; then
+    log "unknown because: no canopy-web address or no runner id ($STATE_FILE) yet" >&2
+    return
+  fi
+  rtok="$(runner_token "$base" "$rid")"
+  if [ -n "$rtok" ] && fleet_expected "$base" "$rtok" "$rid"; then return; fi
+  if [ -n "$pat" ] && fleet_expected "$base" "$pat" "$rid"; then return; fi
+  log "unknown because: canopy-web's runner list was unreadable with $(
+    [ -n "$rtok" ] && echo "this box's runner token or " || echo "no runner token (device key not approved?) and ")$(
+    [ -n "$pat" ] && echo "the CANOPY_TOKEN fallback" || echo "no CANOPY_TOKEN fallback")" >&2
 }
 
 # --- verdict ----------------------------------------------------------------
@@ -393,11 +455,6 @@ elif [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ]; then
   # so the control plane was told the fleet's mailboxes were dead every 30 minutes.
   ( set +e
     if [ -r "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
-    # The roster read and each prepare act AS THE BOX, as on service start —
-    # not with runner.env's PAT (revoked 2026-10-17: the roster came back empty
-    # and only the AGENT_SLUGS fallback was refreshed, never a new agent).
-    rt="$(runner_token)"
-    if [ -n "$rt" ]; then export CANOPY_TOKEN="$rt"; fi
     moved="$(moved_base)"
     if [ -n "$moved" ]; then
       case "${CANOPY_WEB_API_URL:-}" in
@@ -405,6 +462,12 @@ elif [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ]; then
       esac
       export CANOPY_BASE_URL="$moved"
     fi
+    # The roster read, each prepare and its readiness report act AS THE BOX, as on
+    # service start — not with runner.env's PAT (revoked 2026-10-17: the roster
+    # came back empty, only the AGENT_SLUGS fallback was refreshed, and every
+    # readiness report was a 401).
+    rt="$(runner_token "${CANOPY_BASE_URL:-}" "$(json_field "$STATE_FILE" runner_id "")")"
+    if [ -n "$rt" ]; then export CANOPY_TOKEN="$rt"; fi
     "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" --credentials-only ) \
     || log "credentials refresh returned non-zero — the box is otherwise untouched."
 fi
