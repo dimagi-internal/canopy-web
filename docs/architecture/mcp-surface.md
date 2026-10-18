@@ -32,27 +32,27 @@ they take from MCP the administration it is most useful for.
 **No agent tools.** This server is canopy the PRODUCT — board, sessions, turns,
 runners, schedules, mail, every REST route, page actions. It does not offer
 per-agent tools that run an agent remotely (no `<agent>__<capability>`, no
-`agent_reply`): a call like that ran as a turn on the agent OWNER's machine,
+`agent_reply`): a call like that would run as a turn on the agent OWNER's machine,
 under their credentials. To use an agent, install its plugin from your agent
 catalog (`/plugins/marketplace.json`, marketplace `canopy-agents`; see
 `plugin-marketplace.md`) into your own Claude Code and run it
-locally as yourself — see `/get-started`. A client still calling an old agent
-tool gets MCP's unknown-tool error. An agent's declared interface still confines
+locally as yourself — see `/get-started`. A call to an `<agent>__…` tool gets
+MCP's unknown-tool error. An agent's declared interface still confines
 the callers who DO reach it through canopy (web chat, Slack, email, embedded
 sites).
 
-A handful of **hand-written** tools remain for what is not a REST route
-(caller envelope, site gateway, per-agent capability tools, page tools, Slack
-share, session-noise audit). The implementation lives in `apps/mcp/`.
+A handful of **hand-written** tools cover what is not a REST route
+(caller envelope, site gateway, page tools, /ide close review, Slack share,
+session-noise audit). The implementation lives in `apps/mcp/`.
 
 ## Module layout (`apps/mcp/`)
 
 | File | Responsibility |
 |---|---|
 | `auth.py` | `CanopyPATVerifier` — the server's one FastMCP `TokenVerifier`: resolves a bearer (PAT, OAuth access token, caller token, or a DPoP-proved host-grant token) to a Django user (mirrors `apps.tokens.middleware`). |
-| `server.py` | The `FastMCP("canopy-web", auth=CanopyPATVerifier(...))` instance, its middleware (`TurnScopeMiddleware`, `DelegatedScopeMiddleware`) and providers (page actions, generated API tools, agent interfaces), and `build_http_app()` for the ASGI mount. Importing `apps.mcp.tools` registers the static tools. |
+| `server.py` | The `FastMCP("canopy-web", auth=CanopyPATVerifier(...))` instance, its middleware (`TurnScopeMiddleware`, `DelegatedScopeMiddleware`) and providers (page actions, generated API tools), and `build_http_app()` for the ASGI mount. Importing `apps.mcp.tools` registers the static tools. |
 | `api_tools.py` | The generated API tools: `CanopyAPIProvider` (one tool per REST route), the in-process transport, `EXCLUDED` / `EXCLUDED_PREFIXES`. |
-| `tools/` | Hand-written static tools: `caller.py`, `site.py`, `conversations.py`, `page.py`, `slack.py`, `sessions.py`. |
+| `tools/` | Hand-written static tools: `caller.py`, `site.py`, `page.py`, `close_review.py`, `slack.py`, `sessions.py`. |
 | `page_tools.py` | `PageActionProvider` — each open page's declared actions as per-caller tools. |
 | `turn_scope.py` | `TurnScopeMiddleware` — a caller token sees only its capability's canopy tools. |
 | `chat_scope.py` | `current_chat_session()` — the chat an `X-Canopy-Chat-Key` header names, which narrows page tools to that one chat. |
@@ -100,7 +100,7 @@ caller via `get_access_token()`.
   of the shared host (`/.well-known/…/canopy…`), which the ALB routes to canopy.
 
 * **Host-grant token (canopy-web as a host of its own MCP).**
-  An ADDITIONAL credential; PATs and caller tokens are unchanged. When the
+  An ADDITIONAL credential beside PATs and caller tokens. When the
   widget on one of canopy's own registered pages mints, canopy issues itself
   an ID-JAG for that page's read-only scopes and redeems it at its own
   `/oauth/token` (`apps/tokens/self_host.py`, the SDK's `GrantHandler`). The

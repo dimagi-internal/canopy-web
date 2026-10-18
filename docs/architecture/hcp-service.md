@@ -1,16 +1,14 @@
 # The HCP service
 
 canopy holds each person's **Human Context Protocol** instance (HCP v1, draft 4:
-`apps/contacts/hcp.py`, `hcp_api.py`). Until 2026-10-09 only canopy's own agents
-could reach it, so it declared `authorization_profile: first-party`. Those agents
-are now granted per agent, by the person, in a session — see "canopy's own
-agents" below. The **HCP
-service** lets an application canopy does not operate ask a person, through
+`apps/contacts/hcp.py`, `hcp_api.py`). canopy's own agents reach it under grants
+the person gives each agent in a session — see "canopy's own agents" below. The
+**HCP service** lets an application canopy does not operate ask a person, through
 OAuth 2.0, for access to parts of their instance. That makes the profile `oauth2`
 and the service eligible for HCP v1 Interop (spec 5.2.1).
 
-Jonathan, 2026-10-09: *"fully implement the wholistic model end-to-end, but for now
-we're only going to let it be used internally, but design it fully properly."*
+The model is implemented end to end and designed for outside use, but is used only
+internally for now — the owner's explicit choice ("Internal only — the one gate").
 
 This page records the design and every judgment call made building it. The
 self-audit against the spec is `hcp-conformance.md`.
@@ -96,11 +94,12 @@ every read path filters by it (Rule 4, `hcp.within_grant`).
 **A client's writes are personal entries.** No workspace's agent is told an entry
 an outside app wrote.
 
-**Workspace agents never read personal entries.** First-party agent behaviour is
-exactly as before: an agent reads only its own workspace. A person's personal
-entries reach only the person and the clients they authorize. Letting agents read
-them too would be a reasonable later choice, but it would change what agents are
-told without the person asking.
+**Workspace agents never read personal entries by default.** A first-party agent's
+grant reaches its own organisation's workspaces (`hcp.reach_of`). A person's personal
+entries reach only the person, the clients they authorize, and an agent the person
+has pointed at a memory collection that includes them, after confirming
+(`hcp-conformance.md`, 4.1.5.1). Reaching them by default would change what agents
+are told without the person asking.
 
 **The person's switches bound every client.** A client is served with no session,
 so `hcp.require(person, need, None)` applies the person's *defaults*: a read
@@ -171,14 +170,13 @@ registry is never on MCP: an agent registering an app that then asks people for
 their context is exactly the escalation to rule out.
 
 **Account without a workspace.** Any account that can sign in can already reach
-`/people/me`. It now can also add, correct and export entries there without being
+`/people/me`, and can add, correct and export entries there without being
 in any workspace. First run points a workspace-less person to it.
 
 ## canopy's own agents: grants per agent, only by the person's act
 
-Jonathan, 2026-10-09: *"each agent session / entry should obtain the grant
-explicitly or due to previous granting to this agent."* This closed the last
-authorization gap in `hcp-conformance.md` (presumed first-party grants).
+The rule, the owner's explicit choice: *"each agent session / entry should obtain
+the grant explicitly or due to previous granting to this agent."*
 
 | Piece | Where |
 |---|---|
@@ -240,17 +238,15 @@ has no session UI and no account, so they have no way to act, and no agent is
 granted for them. That is the conformant result. It changes nothing in practice
 today: everyone but Jonathan has nothing available.
 
-**Retiring the presumed grants.** No presumed grant was the person's act, so
-migration `0022` revokes every active `canopy-control-plane` grant and logs a
-`grant.revoked` on each person's log saying why. Policy is untouched. Jonathan
-(record available and on by default, use not available) is offered "record" by
-the next agent he talks to in a session.
+**No grant is presumed.** A `canopy-control-plane` grant is not the person's act,
+so none is active: migration `0022` revokes each, logging a `grant.revoked` on the
+person's log saying why. Policy is untouched: a person with record available and on
+by default is offered "record" by the next agent they talk to in a session.
 
 ## Contacts, from a site canopy trusts for email
 
-Jonathan, 2026-10-09: "allow contacts to start building up HCP interactions if they
-opt in from a trusted system like labs where we do trust their e-mail identity."
-Code: `apps/tokens/contact_hcp_api.py` (`/api/contact/hcp/…`), the widget's
+Contacts may build up HCP interactions when they opt in from a trusted system, such
+as labs, whose email identity canopy trusts. Code: `apps/tokens/contact_hcp_api.py` (`/api/contact/hcp/…`), the widget's
 `frontend/src/embed/ContactMemory.tsx`; tests `tests/test_hcp_trusted_contacts.py`.
 
 **Who.** A contact (a widget visitor with no canopy account) on a connected site
@@ -260,11 +256,10 @@ with `AppCredential.asserts_verified_email` set, whose arrival assertion signed
 site's address stays recorded-but-not-an-identity (`record_embed_visitor`), and an
 anonymous or unverified visitor sees nothing.
 
-**What labs sends.** connect-labs already signs `email` + `email_verified: true` when
-the address came from Connect's OAuth identity (`connect_labs/labs/canopy.py`), so
-no connect-labs change was needed. Migration `tokens/0031` trusts the live
+**What labs sends.** connect-labs signs `email` + `email_verified: true` when the
+address came from Connect's OAuth identity (`connect_labs/labs/canopy.py`). The live
 `connect-labs` registration whose JWKS is served from `https://labs.connect.dimagi.com/`
-(matched on both, so a tenant that merely named a site "connect-labs" is not trusted).
+is trusted (migration `tokens/0031`, matched on both, so a tenant that merely named a site "connect-labs" is not trusted).
 
 **Judgment calls.**
 
@@ -295,7 +290,7 @@ no connect-labs change was needed. Migration `tokens/0031` trusts the live
   that contact. The host page's scripts get none of it: they cannot read an HttpOnly
   cookie, their calls are cross-site and carry no canopy cookie (CORS never allows
   credentials, `tokens/cors.py`), and they cannot read the frame. canopy served on
-  the framing site's own origin (the retired `/canopy` prefix on labs) is refused,
+  the framing site's own origin (the old address's `/canopy` prefix on labs) is refused,
   because there the host's scripts would BE the frame's origin.
   **Boundary:** a host's own SERVER can forge headers and fetch the shell to get a
   cookie, i.e. impersonate its visitor's click. A server that does that can already
@@ -326,7 +321,7 @@ no connect-labs change was needed. Migration `tokens/0031` trusts the live
 ## Who has memory at all — the rollout gate
 
 Narrower than the audience below, and checked first: memory is on only for the
-people `HCP_PEOPLE` names (Jonathan, 2026-10-11: "only for me right now").
+people `HCP_PEOPLE` names.
 `HCP_PEOPLE` is a comma-separated list of canopy addresses; **empty means nobody**,
 and `*` (everyone) is for tests and local dev only. `HCP_CONTACT_OPT_IN` decides
 whether a trusted site's visitors are offered memory at all (production: false).
@@ -380,11 +375,11 @@ Outside the rollout:
 - **Security review** of the consent screen and token endpoint by someone other than
   the author.
 
-## Retrieval: where search goes after keywords (not built — decided 2026-10-12)
+## Retrieval: where search goes after keywords (not built — decided)
 
 Today `hcp.search` ranks by term overlap (`_score`), declared as `lexical` (spec
 4.4.3). That misses paraphrases: "how does Jonathan like updates?" doesn't find
-"Prefers short answers". Jonathan's direction (2026-10-12), for when it matters
+"Prefers short answers". The decided direction, for when it matters
 (roughly a few hundred entries per person, or agents recording steadily):
 
 **Stay in Postgres; add pgvector. No separate vector or graph store.**

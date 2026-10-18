@@ -139,7 +139,7 @@ Asked in this order; the first row that matches decides.
 | 6 | viewer / contact whose class a capability lists | `confined` to it | the routing ladder | no | — |
 | 7 | anyone else | `none` | — | — | — |
 
-* Row 3 before row 4 keeps an owner's chosen domain-wide setup exactly as it was:
+* Row 3 before row 4 keeps an owner's chosen domain-wide setup intact:
   Eva's members get her whole through `full: [member]`, in her routing's mode.
 * Row 4 (the **editor tier**): an editor may EDIT the agent (its definition and
   settings, as `agent.work` always allowed) and DISPATCH work to it ("improve
@@ -161,9 +161,8 @@ Asked in this order; the first row that matches decides.
 
 A **system account** is a non-human workspace member: an automated sender, such
 as AWS CloudWatch alarm mail or CI, that makes agents do work the way a person
-with the same role would, and **can never sign in** (`apps/workspaces/system_accounts.py`,
-canopy-web#1253). Owner decision, 2026-10-07: *"alarms should be allowed for sure
-… it's basically the same as a user with edit."*
+with the same role would, and **can never sign in** (`apps/workspaces/system_accounts.py`).
+This is the owner's explicit choice: an alarm sender is basically the same as a user with edit.
 
 It is a real `User` with a `SystemAccount` row and an ordinary membership, so it
 goes down the decision table above like anyone else. That is the point: routing
@@ -207,9 +206,8 @@ unchanged.
   user do here". A parallel kind would have to be taught to each of them, and
   would drift.
 * **A refusal points here:** a verified contact refused by an interface is told
-  that, if it is automated, a workspace admin can bind it as a system account.
-  Before this existed, Hal's alarms were cancelled at enqueue for nine days and
-  nothing said so.
+  that, if it is automated, a workspace admin can bind it as a system account,
+  so an automated sender is never cancelled at enqueue without anyone being told.
 
 ## Runner roles
 
@@ -219,7 +217,7 @@ access requests from a whole email domain).
 
 | Runner role | Who | May |
 |---|---|---|
-| **runner admin** | the runner's owner, or a `RunnerAdmin` grant (`can_administer_runner`) | Set its credentials and browser sign-in, declare its flags (ZDR), read its admin list, **start readiness drills and read their results**, and **route agents' work onto the box**: add it to an agent's default runner list, a source rule or a person's route (`_runners_for_routing`). That means a runner admin can direct which agents' work a box takes — and so whose Claude subscription it spends; that is the owner's explicit choice, not a side effect. The agent side is unchanged: the caller needs the agent's write tier, its **admin** for any `turn_mode: auto` (#1106), and the box must still be able to hold the agent (`runner_may_hold_agent`). Routing decides what the box runs, never who it speaks as — heartbeat, claim and the credential fetch stay the owner's. A drill on an agent also needs that agent's **admin** (`Agent.is_admin`) unless the caller is the runner's owner — a drill turn runs as `system` in the agent's routing mode, so letting an editor start one would lift the editor tier's always-`manual` rule; the owner's box can only claim it when the owner is the agent's admin anyway (`runner_may_hold_agent`). |
+| **runner admin** | the runner's owner, or a `RunnerAdmin` grant (`can_administer_runner`) | Set its credentials and browser sign-in, declare its flags (ZDR), read its admin list, **start readiness drills and read their results**, and **route agents' work onto the box**: add it to an agent's default runner list, a source rule or a person's route (`_runners_for_routing`). That means a runner admin can direct which agents' work a box takes — and so whose Claude subscription it spends; that is the owner's explicit choice, not a side effect. The agent side is unchanged: the caller needs the agent's write tier, its **admin** for any `turn_mode: auto`, and the box must still be able to hold the agent (`runner_may_hold_agent`). Routing decides what the box runs, never who it speaks as — heartbeat, claim and the credential fetch stay the owner's. A drill on an agent also needs that agent's **admin** (`Agent.is_admin`) unless the caller is the runner's owner — a drill turn runs as `system` in the agent's routing mode, so letting an editor start one would lift the editor tier's always-`manual` rule; the owner's box can only claim it when the owner is the agent's admin anyway (`runner_may_hold_agent`). |
 | **runner owner** | `Runner.owner` — whoever paired it | Everything above, plus everything that speaks FOR the box with the owner's memberships: heartbeat, claim, executing turns (drill turns included), pause, retire, capabilities, granting and revoking runner admins. |
 
 Anyone else — a member, viewer or contact — gets the runner-admin routes' **404**,
@@ -339,9 +337,8 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
     not), and links to fix it: the rule
     on the settings page (`?rule=<id>`, highlighted), the agent's turn mode and
     runners, its interface callers, and its turns.
-* **Defaults.** Every workspace is seeded with two rows: by migration
-  `admission/0002` for the workspaces that existed then, and at creation for
-  every new one. The first rejects email + confined + manual + cloud, with both
+* **Defaults.** Every workspace is seeded with two rows (migration
+  `admission/0002`, and at creation for every new one). The first rejects email + confined + manual + cloud, with both
   notices, and is **on**. The second is the same on a laptop (`emdash`) runner
   and is **off**. From then on they are ordinary rows. Disable one, narrow it
   with an `allow`, or delete it (a deleted default is not re-seeded).
@@ -357,8 +354,8 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   rule records the ledger event and the fired count and sends its notices, while
   the turn keeps the refusal's own `result_note`. Migration `admission/0005`,
   and every new workspace, seed `blocked-sender` and `offered-nothing`, each
-  with **every notice off**, which is what these refusals did before. A blocked
-  sender still gets no reply unless an admin turns one on.
+  with **every notice off**, so by default these refusals stay silent. A blocked
+  sender gets no reply unless an admin turns one on.
 
 * **Reach rules: no runner will take it.** `reach: paused` matches a turn when
   every runner that could take it (`harness.claim.turn_reach`, the claim's own
@@ -403,7 +400,7 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
   tied to their account. It tells the agent (and the owner) "your own member,
   whose domain's mail authentication needs fixing", not "a stranger". It grants
   nothing and changes no other field; null otherwise, including for a blocked
-  contact and any non-email turn (canopy-web#1265). canopy also LOGS it, once, on
+  contact and any non-email turn. canopy also LOGS it, once, on
   the turn's event ledger at enqueue: a `TurnEvent` of kind `unproven_member`
   whose payload is this same object, read by `read_turn_events` and shown (with
   the note) in the activity drill-down. canopy writes it; a runner cannot post
@@ -420,7 +417,7 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
   channel_name, thread_ts, permalink, is_dm}`; null otherwise. Read from the
   session's cache (`apps/slack/location.py`) — building the envelope never calls
   Slack. `channel_name` needs the install's `channels:read` / `groups:read`
-  (a re-install after this landed) unless a slash command named it, and is null
+  unless a slash command named it, and is null
   for a DM; `thread_ts` is null for a DM; `permalink` falls back to the web-client
   link. With `turn_id`, the agent may act on that conversation: see "Agents and
   their own conversation" in `api-surface.md` (`start_new_slack_thread`).
@@ -547,8 +544,8 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   (`people.known_in`: a member, a contact, an initiator of a turn there, or the
   subject of a fact there) — otherwise 404, so an id or an address confirms
   nothing across tenants.
-* **Raw conversations stay exactly as private as before.** The one new read of
-  turn content is `GET /api/people/{id}/conversations/?agent=<slug>`: the turns
+* **Raw conversations stay private.** The people API's one read of turn content
+  is `GET /api/people/{id}/conversations/?agent=<slug>`: the turns
   that person started with THAT agent, for that agent's OWN login only. An admin
   of the agent may call it but sees only turns the turn ACL already shows them.
   No other agent, and no plain member, can read them. A fact's `source_turn` is
@@ -572,8 +569,7 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
     grant the person gave THAT agent in a session (`hcp.issue_agent_grant`,
     `POST /api/people/me/sessions/{id}/agent-grants/`): "allow for this session"
     (temporary, ≤ 24 h, ends with the session) and then, as a separate act,
-    "keep allowing" (persistent). Nothing is presumed; migration `contacts/0022`
-    revoked the presumed grants. See `hcp-service.md`.
+    "keep allowing" (persistent). Nothing is presumed. See `hcp-service.md`.
   * A refused operation is `scope-denied`: first the switch
     (`hcp_api._principal(need=)` → `hcp.require(person, need, turn)`), then the
     agent's grant (`hcp.NOT_GRANTED`). With nothing granted for what is on, the

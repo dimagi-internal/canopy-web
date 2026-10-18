@@ -1,8 +1,7 @@
 # Your canopy agents as one Claude Code plugin catalog
 
 Code: `apps/plugins/` (services, views). Tests: `tests/test_plugin_marketplace.py`.
-Replaces the per-workspace marketplaces of canopy-web#1376 (owner decision,
-Jonathan Jackson, 2026-10-14).
+One catalog per person, not per workspace, is the owner's explicit choice.
 
 Every signed-in person gets **one** catalog, the marketplace **`canopy-agents`**,
 listing the agent plugins of every workspace they are a member of, at any role,
@@ -49,7 +48,7 @@ servers twice under one `plugin.json` name. So:
 
 **A plugin is code; an instance is canopy-web's `Agent` record** (identity,
 workspace, 1Password vault). A local install is bound to **exactly one**
-instance, chosen once at setup (Jonathan, 2026-10-14). Choosing it is the
+instance, chosen once at setup (the owner's explicit choice). Choosing it is the
 agent's own setup command's job (`/<plugin>:setup`, via the shared canopy setup
 step), not the catalog's. The setup reads the instance's vault from canopy-web
 rather than hardcoding `op://Agent-<Name>/…` or deriving it by convention:
@@ -126,8 +125,8 @@ Then, in a session:
 ```
 
 `/plugin marketplace add https://canopy.dimagi.com/plugins/marketplace.json`
-alone can't attach a header, so it gets a 401. Use the settings entry. Old
-`canopy-<ws>` entries should be removed; their URL now answers 410.
+alone can't attach a header, so it gets a 401. Use the settings entry. Remove
+any `canopy-<ws>` entry; its URL answers 410.
 
 ### What the helper must do
 
@@ -181,9 +180,8 @@ So **an agent must bump `plugin.json`'s `version` on every merge** it wants user
 to receive (the fleet agents' auto-bump workflows do this). An agent that merges
 without bumping leaves users on their cached copy until it next bumps. An agent
 that drops `version` from `plugin.json` is tracked by commit sha instead, and
-every merge is an update. (The retired archive path rewrote the version to
-`<version>+<sha>` to hide this; with `github` sources canopy no longer touches
-the plugin.)
+every merge is an update. canopy never rewrites the version: with `github` sources
+it does not touch the plugin.
 
 Users receive updates with `/plugin marketplace update canopy-agents`, or by
 turning on auto-update for the marketplace under `/plugin` → Marketplaces.
