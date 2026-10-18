@@ -1,9 +1,9 @@
-"""The ACP wedge guard fails a SILENT turn, not a long one.
+"""An ACP turn has no time limit, like `claude -p`.
 
 A 5400s wall-clock deadline killed ACE's full `/ace:run bednet-check-2-visit`
 on cloud-ec2-2 while it was still logging tool calls every few seconds in
-Phase 2 (turn 09d9322a, 2026-10-18, failure investigation 8). The guard is now
-idle time since the agent's last update, with a far wall-clock backstop.
+Phase 2 (turn 09d9322a, 2026-10-18, failure investigation 8). A stuck turn is
+ended by a stop (tests/test_turn_stop.py), not by a clock.
 """
 from __future__ import annotations
 
@@ -86,24 +86,18 @@ def _run(cloud_runner, monkeypatch, tmp_path, *, polls, busy):
     return ok, note, cancelled
 
 
-def test_a_busy_turn_outlives_the_old_90_minute_deadline(cloud_runner, monkeypatch, tmp_path):
-    two_hours = int(7200 / cloud_runner.TRANSCRIPT_FLUSH_SECONDS)
-    ok, note, cancelled = _run(cloud_runner, monkeypatch, tmp_path, polls=two_hours, busy=True)
+TEN_HOURS = 36000
+
+
+def test_a_busy_turn_runs_as_long_as_it_needs(cloud_runner, monkeypatch, tmp_path):
+    polls = int(TEN_HOURS / cloud_runner.TRANSCRIPT_FLUSH_SECONDS)
+    ok, note, cancelled = _run(cloud_runner, monkeypatch, tmp_path, polls=polls, busy=True)
     assert ok, note
     assert not cancelled
 
 
-def test_a_silent_turn_is_still_cut_off(cloud_runner, monkeypatch, tmp_path):
-    polls = int(cloud_runner.ACP_TURN_IDLE_TIMEOUT_SECONDS / cloud_runner.TRANSCRIPT_FLUSH_SECONDS) + 3
+def test_a_long_quiet_tool_call_is_not_cut_off(cloud_runner, monkeypatch, tmp_path):
+    polls = int(TEN_HOURS / cloud_runner.TRANSCRIPT_FLUSH_SECONDS)
     ok, note, cancelled = _run(cloud_runner, monkeypatch, tmp_path, polls=polls, busy=False)
-    assert not ok
-    assert "silent" in note
-    assert cancelled
-
-
-def test_the_backstop_still_ends_a_turn_that_never_stops(cloud_runner, monkeypatch, tmp_path):
-    polls = int(cloud_runner.ACP_TURN_TIMEOUT_SECONDS / cloud_runner.TRANSCRIPT_FLUSH_SECONDS) + 3
-    ok, note, cancelled = _run(cloud_runner, monkeypatch, tmp_path, polls=polls, busy=True)
-    assert not ok
-    assert "exceeded" in note
-    assert cancelled
+    assert ok, note
+    assert not cancelled
