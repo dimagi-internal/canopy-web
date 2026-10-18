@@ -5758,9 +5758,10 @@ def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
 # them — they are started by claude, not by the agent's shell.
 PROFILE_ROOT = pathlib.Path.home() / ".canopy" / "profiles"
 CALLER_ROOT = pathlib.Path.home() / ".canopy" / "caller"
-#: The canopy plugin's guard must implement at least this for a confined turn to be
-#: safe here: version 2 is the one that honours CANOPY_PROFILE.
-CLOUD_PROFILES_VERSION = 2
+#: The format version written into each profile file's `"version"` field (2 = the
+#: shape this box writes for a guard that honours CANOPY_PROFILE). Nothing reads it
+#: today; what the box reports is the guard's own version (`profiles_supported`).
+PROFILE_DOC_VERSION = 2
 #: The oldest guard this box runs a caller's turn under, and what it reports is the
 #: guard's own version — see canopy_runner caller.MIN_GUARD_VERSION (3 = writes
 #: checked against write_paths).
@@ -5881,7 +5882,7 @@ def _confine(turn: dict) -> tuple[dict, str]:
     turn_id = str(turn["id"])
     cap = _capability(turn)
     caller_path = CALLER_ROOT / f"{turn_id}.json"
-    doc = {"version": CLOUD_PROFILES_VERSION, "turn_id": turn_id, "capability": cap,
+    doc = {"version": PROFILE_DOC_VERSION, "turn_id": turn_id, "capability": cap,
            "caller_path": str(caller_path),
            "thread_id": str(((turn.get("caller_context") or {}).get("conversation") or {})
                             .get("thread_id") or "") or None,
