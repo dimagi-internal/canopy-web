@@ -258,7 +258,9 @@ export function SendBox({
         take(e.dataTransfer?.files);
       }}
     >
-      {banner}
+      {/* Capped and scrollable: a many-question dialog is taller than a short
+          pane, and uncapped it pushed its own Send (and the composer) off screen. */}
+      {banner ? <div className="max-h-[60vh] overflow-y-auto" data-testid="sendbox-banner">{banner}</div> : null}
       <div className={`p-2 ${dragging ? "bg-primary/5 ring-1 ring-inset ring-primary/40" : ""}`}>
         {peers}
         {staged.length > 0 && (
