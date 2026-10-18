@@ -18,7 +18,11 @@ The contract (the runner half, canopy's CLI, builds against it):
 * The signature must COVER `X-Canopy-Proof-Htu` (the canopy URL being called;
   any query string is ignored) and `X-Canopy-Proof-Iat` (unix seconds, within
   ±120 s), so a captured proof is no good for another endpoint or later.
-* Each proof is single-use: its signature is remembered for the window.
+* Each proof is single-use: its signature is remembered for the window. So
+  clients also sign a random `X-Canopy-Proof-Jti`: without it a proof is a
+  pure function of (credentials, htu, second), and two honest resolves of one
+  URL in the same second collided here as a "replay" (2026-10-17). It is not
+  required — any extra signed header is checked by STS, not by us.
 
 Server side, nothing about WHERE the request goes comes from the client: it is
 always sent to `STS_URL` (pinned here, not a setting), and the client's own

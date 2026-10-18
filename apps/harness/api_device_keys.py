@@ -31,7 +31,7 @@ from apps.api.auth import session_auth
 from apps.events import audit
 from apps.passkeys import stepup
 
-from . import device_keys
+from . import device_key_notify, device_keys
 from .models import Runner, RunnerAdmin, RunnerDeviceKey
 from .runners import can_administer_runner
 from .schemas import RunnerDeviceKeyCreatedOut, RunnerDeviceKeyIn, RunnerDeviceKeyOut
@@ -117,6 +117,7 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
         key = RunnerDeviceKey.objects.get(jkt=jkt)
         _set_ecdh(key, ecdh_jwk, ecdh_jkt)
         return 200, _created(key)
+    device_key_notify.notify_pending_on_commit(key)
     return 201, _created(key)
 
 
@@ -160,6 +161,7 @@ def _set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
     if before != key.status:
         audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
                           before=before, after=key.status)
+        device_key_notify.notify_pending_on_commit(key, reapproval=True)
 
 
 def _verified_role(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[str, str]:

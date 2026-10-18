@@ -1,0 +1,97 @@
+"""A pending runner device key tells the people who can approve it
+(apps/harness/device_key_notify.py): the owner and explicit runner admins get an
+email + Web Push linking to Settings → Your machines with the key highlighted —
+once per new key, again only when an active key is sent back to pending.
+"""
+from __future__ import annotations
+
+import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
+from django.contrib.auth import get_user_model
+from django.core import mail
+from django.test import Client
+from django.utils import timezone
+
+from apps.harness.models import Runner, RunnerAdmin, RunnerDeviceKey
+from apps.push import services as push_services
+from apps.workspaces.models import Workspace
+
+pytestmark = pytest.mark.django_db
+
+
+def _jwk(key) -> dict:
+    from canopy_sdk.keys import header_jwk
+
+    return header_jwk(key)
+
+
+@pytest.fixture
+def box(monkeypatch):
+    from apps.tokens.models import PersonalToken
+
+    users = get_user_model().objects
+    jj = users.create_user(username="jj", email="jj@dimagi.com")
+    admin = users.create_user(username="ad", email="ad@dimagi.com")
+    users.create_user(username="other", email="other@dimagi.com")
+    ws = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=jj)
+    runner = Runner.objects.create(name="haldimagi-mbp-cdp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
+                                   workspace=ws, last_heartbeat_at=timezone.now(), capabilities={})
+    RunnerAdmin.objects.create(runner=runner, user=admin)
+    raw, _ = PersonalToken.create_for_user(user=jj, label="t")
+    pushed: list[tuple[str, str]] = []
+    monkeypatch.setattr(push_services, "send_to_user",
+                        lambda user, title, body, url: pushed.append((user.username, url)) or 1)
+    return {"runner": runner, "pat": raw, "pushed": pushed}
+
+
+def _register(box, key, ecdh=None):
+    data = {"runner": str(box["runner"].pk), "public_jwk": _jwk(key), "kind": "secure-enclave", "label": "Mac"}
+    if ecdh is not None:
+        data["ecdh_public_jwk"] = _jwk(ecdh)
+    return Client().post("/api/runner-device-keys/", data=data, content_type="application/json",
+                         HTTP_AUTHORIZATION=f"Bearer {box['pat']}")
+
+
+def test_a_new_pending_key_mails_and_pushes_the_owner_and_runner_admins(box, django_capture_on_commit_callbacks):
+    key = ec.generate_private_key(ec.SECP256R1())
+    with django_capture_on_commit_callbacks(execute=True):
+        res = _register(box, key)
+    assert res.status_code == 201
+    kid = res.json()["id"]
+    assert sorted(m.to[0] for m in mail.outbox) == ["ad@dimagi.com", "jj@dimagi.com"]
+    msg = mail.outbox[0]
+    assert "approve haldimagi-mbp-cdp" in msg.subject
+    assert f"/settings?device_key={kid}#device-keys" in msg.body
+    assert sorted(u for u, _ in box["pushed"]) == ["ad", "jj"]
+    assert all(url.endswith(f"/settings?device_key={kid}#device-keys") for _, url in box["pushed"])
+
+
+def test_re_registering_the_same_key_sends_nothing(box, django_capture_on_commit_callbacks):
+    key = ec.generate_private_key(ec.SECP256R1())
+    with django_capture_on_commit_callbacks(execute=True):
+        _register(box, key)
+    mail.outbox.clear()
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _register(box, key).status_code == 200
+    assert mail.outbox == []
+
+
+def test_an_active_key_sent_back_to_pending_asks_for_re_approval(box, django_capture_on_commit_callbacks):
+    key = ec.generate_private_key(ec.SECP256R1())
+    with django_capture_on_commit_callbacks(execute=True):
+        kid = _register(box, key).json()["id"]
+    RunnerDeviceKey.objects.filter(pk=kid).update(status=RunnerDeviceKey.ACTIVE, approved_at=timezone.now())
+    mail.outbox.clear()
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _register(box, key, ecdh=ec.generate_private_key(ec.SECP256R1())).status_code == 200
+    assert RunnerDeviceKey.objects.get(pk=kid).status == RunnerDeviceKey.PENDING
+    assert {m.to[0] for m in mail.outbox} == {"ad@dimagi.com", "jj@dimagi.com"}
+    assert "needs re-approving" in mail.outbox[0].subject
+
+
+def test_a_failing_notice_never_fails_the_registration(box, monkeypatch, django_capture_on_commit_callbacks):
+    from apps.harness import device_key_notify
+
+    monkeypatch.setattr(device_key_notify, "approvers", lambda runner: 1 / 0)
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _register(box, ec.generate_private_key(ec.SECP256R1())).status_code == 201

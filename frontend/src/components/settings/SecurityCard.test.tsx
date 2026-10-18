@@ -126,6 +126,33 @@ describe('SecurityCard', () => {
     expect(vault.putKeyset).not.toHaveBeenCalled()
   })
 
+  it('checks a saved recovery code in the browser and changes nothing', async () => {
+    const me = await zk.generateKeyPair()
+    const r = zk.randomBytes(32)
+    const rseal = await zk.sealUserKeyRecovery(me.scalar, USER, r)
+    vault.getKeyset.mockResolvedValue({ user_id: USER, prf_input: 'cHJm', exists: true, public_jwk: me.publicJwk,
+                                        seals: [rseal], passkeys: [] })
+    render(<SecurityCard machines={null} />)
+    fireEvent.click(await screen.findByTestId('security-check'))
+    const box = screen.getByLabelText('Recovery code to check')
+
+    fireEvent.change(box, { target: { value: zk.recoveryCode(r).toLowerCase() } })
+    fireEvent.click(screen.getByTestId('security-check-go'))
+    expect((await screen.findByTestId('security-check-result')).textContent).toBe('This code works ✓')
+
+    fireEvent.change(box, { target: { value: zk.recoveryCode(zk.randomBytes(32)) } })
+    fireEvent.click(screen.getByTestId('security-check-go'))
+    expect((await screen.findByTestId('security-check-result')).textContent).toMatch(/doesn’t match/)
+
+    fireEvent.change(box, { target: { value: 'ABCD-EFGH' } })
+    fireEvent.click(screen.getByTestId('security-check-go'))
+    expect((await screen.findByTestId('security-check-result')).textContent).toMatch(/doesn’t look like a recovery code/)
+
+    expect(vault.putKeyset).not.toHaveBeenCalled()
+    expect(passkeys.registerThisDevice).not.toHaveBeenCalled()
+    expect(prf.assertWithPrf).not.toHaveBeenCalled()
+  })
+
   it('#vault-key opens the extra options', async () => {
     await keyset()
     window.location.hash = '#vault-key'

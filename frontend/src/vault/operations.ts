@@ -81,6 +81,12 @@ export interface Unlocked {
 // (`prf`), or a passphrase + Secret Key (`2skd`, 1Password-style). The Secret
 // Key is remembered in this browser (localStorage, per user) so unlocking here
 // needs only the passphrase; on a new device the person types both.
+//
+// Deliberate, and why CodeQL's clear-text-storage alert (#39) is dismissed: the
+// Secret Key alone opens nothing — it is one of TWO factors, mixed with the
+// passphrase (which is never stored) in 2SKD. Its job is to make a stolen
+// copy of canopy-web's database un-guessable, not to resist this browser's own
+// storage; 1Password keeps it on the device the same way.
 
 const SK_STORE = (userId: string) => `canopy-vault-secret-key:${userId}`
 
@@ -249,6 +255,31 @@ export async function ensureRecoveryCode(me: Unlocked, confirm: (code: string) =
   const prepared = await prepareRecoveryCode(me)
   await confirm(prepared.code)
   await prepared.commit()
+}
+
+/**
+ * Does this recovery code open your key? Opened here, in the browser, and then
+ * thrown away — nothing is saved or sent. `'malformed'` is a typo the parser
+ * can name (`detail`); `'wrong'` is a well-formed code for some other key.
+ */
+export async function checkRecoveryCode(code: string):
+    Promise<{ result: 'works' | 'wrong' | 'malformed' | 'none'; detail?: string }> {
+  let r: Uint8Array
+  try {
+    r = parseRecoveryCode(code)
+  } catch (e) {
+    return { result: 'malformed', detail: e instanceof Error ? e.message : '' }
+  }
+  const ks = await getKeyset()
+  const seal = sealsOf(ks).find((s): s is PersonRecoverySeal => s.alg === 'recovery')
+  if (!ks.exists || !seal) return { result: 'none' }
+  try {
+    const scalar = await openUserKeyRecovery(seal, ks.user_id, r)
+    scalar.fill(0)
+    return { result: 'works' }
+  } catch {
+    return { result: 'wrong' }
+  }
 }
 
 /**

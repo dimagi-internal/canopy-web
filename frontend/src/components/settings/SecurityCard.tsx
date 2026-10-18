@@ -4,6 +4,7 @@ import { getKeyset, type VaultKeysetOut } from '@/api/vault'
 import { registerThisDevice } from '@/api/passkeys'
 import { defaultLabel } from '@/auth/webauthn'
 import {
+  checkRecoveryCode,
   hasRecoveryCode,
   prepareRecoveryCode,
   recoverVaultKey,
@@ -75,6 +76,9 @@ function RecoveryRow() {
   const [typed, setTyped] = useState('')
   const [newPass, setNewPass] = useState('')
   const [kit, setKit] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [checkTyped, setCheckTyped] = useState('')
+  const [checked, setChecked] = useState<{ ok: boolean; text: string } | null>(null)
 
   const load = () => getKeyset().then(setKs).catch(() => setKs(null))
   useEffect(() => {
@@ -121,6 +125,23 @@ function RecoveryRow() {
       setMade(null)
     } catch (e) {
       fail(e, 'Could not save the recovery code.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Try the saved code without using it: opened here, then discarded. */
+  const check = async () => {
+    setBusy(true)
+    setChecked(null)
+    try {
+      const out = await checkRecoveryCode(checkTyped)
+      setChecked(out.result === 'works' ? { ok: true, text: 'This code works ✓' }
+        : out.result === 'malformed' ? { ok: false, text: `That doesn’t look like a recovery code: ${out.detail}` }
+          : out.result === 'none' ? { ok: false, text: 'You have no recovery code on file.' }
+            : { ok: false, text: 'This code doesn’t match. Look for a newer one, or create a new recovery code.' })
+    } catch (e) {
+      fail(e, 'Could not check the code.')
     } finally {
       setBusy(false)
     }
@@ -218,10 +239,39 @@ function RecoveryRow() {
             {more ? 'Fewer options' : 'More options'}
           </button>
           {hasRecoveryCode(ks) && (
+            <button type="button" className="text-primary hover:underline"
+                    onClick={() => { setChecking((v) => !v); setChecked(null); setCheckTyped('') }}
+                    data-testid="security-check">
+              Check my recovery code
+            </button>
+          )}
+          {hasRecoveryCode(ks) && (
             <button type="button" className="text-primary hover:underline" onClick={() => setRecovering((v) => !v)}
                     data-testid="security-recover">
               Lost your passkey?
             </button>
+          )}
+        </div>
+      )}
+
+      {checking && (
+        <div className="space-y-2" data-testid="security-check-form">
+          <p className="text-xs text-muted-foreground">
+            Paste the code you saved to make sure it works. It is checked here in your browser and nothing changes.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input value={checkTyped} onChange={(e) => { setCheckTyped(e.target.value); setChecked(null) }}
+                   autoComplete="off" spellCheck={false} placeholder="Your recovery code" aria-label="Recovery code to check"
+                   className="min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground sm:min-h-0 sm:w-96" />
+            <Button size="sm" variant="outline" disabled={busy || !checkTyped.trim()} onClick={() => void check()}
+                    data-testid="security-check-go">
+              Check
+            </Button>
+          </div>
+          {checked && (
+            <p className={`text-xs ${checked.ok ? 'text-success' : 'text-warning'}`} data-testid="security-check-result">
+              {checked.text}
+            </p>
           )}
         </div>
       )}
