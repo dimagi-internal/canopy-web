@@ -317,8 +317,9 @@ def conversational_messages(
 
 def record_usage(rec: dict) -> dict:
     """What one assistant record's model call spent, as {"message_id", "model",
-    "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"},
-    or {} for anything else. THE reader of a record's `message.usage` — the chat
+    "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
+    "at"}, or {} for anything else. `at` is the record's own timestamp, so usage
+    shipped long after the call (a backfill) still counts on the day it happened. THE reader of a record's `message.usage` — the chat
     rows carry it to canopy-web, and canopy-web's own transcript parser
     (`apps/events/usage.py`) reads interactive transcripts with it. Claude Code's
     `<synthetic>` messages (its own notices) spent nothing and are skipped."""
@@ -340,6 +341,7 @@ def record_usage(rec: dict) -> dict:
         "input_tokens": n("input_tokens"), "output_tokens": n("output_tokens"),
         "cache_read_tokens": n("cache_read_input_tokens"),
         "cache_creation_tokens": n("cache_creation_input_tokens"),
+        "at": str(rec.get("timestamp") or ""),
     }
 
 

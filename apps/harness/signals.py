@@ -153,3 +153,19 @@ def _stamp_provenance(sender, instance, raw=False, **kwargs) -> None:
 def _log_created(sender, instance, created=False, raw=False, **kwargs) -> None:
     if created and not raw:
         provenance.on_created(instance)
+        _creation_fact(instance)
+
+
+def _creation_fact(instance) -> None:
+    """The analytics fact for a new Turn or Session (`apps/events/activity.py`),
+    here for the same reason as provenance: every creation site, not the ones that
+    remember. apps/events itself stays inert (`tests/test_events_emits_nothing.py`)."""
+    from apps.events import activity
+
+    if isinstance(instance, Turn):
+        activity.for_turn(activity.TURN_ENQUEUED, instance, at=instance.created_at)
+    else:
+        activity.emit(activity.CHAT_SESSION_CREATED, workspace=instance.workspace_id,
+                      actor=instance.created_by, agent=instance.agent, surface=instance.origin,
+                      ref=str(instance.pk), at=instance.created_at,
+                      project=activity.repo_of(session=instance))

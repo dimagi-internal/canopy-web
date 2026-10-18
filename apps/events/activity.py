@@ -61,9 +61,27 @@ def reclassify() -> int:
     return n + people.filter(actor__system_account__isnull=False).update(actor_kind=Activity.SYSTEM)
 
 
+def repo_of(*, turn=None, session=None) -> str:
+    """The repository a fact is about when it is not an agent's work: a repo turn's
+    `project`, or the `project` of a session no agent runs (a person's own Claude
+    Code session in a repo). Blank for agent work — an agent's chat keeps its
+    worktree in `Session.emdash_project`, and its agent is the dimension. THE one
+    rule, for facts and token usage alike."""
+    if turn is not None:
+        if turn.agent_id:
+            return ""
+        if turn.chat_session_id:
+            session = turn.chat_session
+        else:
+            return turn.project or ""
+    if session is not None and not session.agent_id:
+        return session.project or ""
+    return ""
+
+
 def emit(kind: str, *, workspace, actor=None, actor_kind: str = "", agent=None,
          surface: str = "", ref: str = "", meta: dict | None = None, at=None,
-         dedupe: bool = False) -> Activity | None:
+         dedupe: bool = False, project: str = "") -> Activity | None:
     """Record one fact. `workspace` is a Workspace or its slug and is required —
     a fact with no tenant is dropped (logged), never stored as visible-to-all.
 
@@ -84,7 +102,7 @@ def emit(kind: str, *, workspace, actor=None, actor_kind: str = "", agent=None,
                 workspace_id=slug, kind=kind, at=at or timezone.now(),
                 actor=actor, actor_kind=actor_kind or _actor_kind(actor, agent),
                 agent=agent, agent_slug=agent.slug if agent is not None else "",
-                surface=surface[:32], ref=str(ref)[:64], meta=meta or {},
+                project=project[:100], surface=surface[:32], ref=str(ref)[:64], meta=meta or {},
             )
     except Exception:  # noqa: BLE001 — a fact is never worth a failed action
         logger.exception("could not record activity %s (ref=%s)", kind, ref)
@@ -114,5 +132,5 @@ def for_turn(kind: str, turn, *, at=None, dedupe: bool = False, **meta) -> Activ
                      else _actor_kind(actor, agent))
     return emit(kind, workspace=turn.tenant_slug, actor=actor, actor_kind=kind_of_actor,
                 agent=agent, surface=_ORIGIN_SURFACE.get(turn.origin, turn.origin),
-                ref=f"{turn.pk}", at=at, dedupe=dedupe,
+                ref=f"{turn.pk}", at=at, dedupe=dedupe, project=repo_of(turn=turn),
                 meta={"status": turn.status, "origin": turn.origin, **meta})

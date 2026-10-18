@@ -6289,7 +6289,9 @@ export interface paths {
          * What is not set up right, across this workspace and every one below it
          * @description Every agent in the tree with its setup checklist (the same steps as its own
          *     Settings page and `agent_setup`), its vault state (canopy-web, moving, 1Password)
-         *     and properties; every workspace with its shared vault. Each step carries the link
+         *     and properties; every workspace with its shared vault; the runners its agents
+         *     route to or that live in it (the runner topology's rows, plus whether each runs
+         *     current code and its own failing checks). Each step carries the link
          *     that fixes it; `can_fix` says whether the viewer may follow it, else
          *     `owner_email` is who to send it to. Admin and above.
          */
@@ -6310,12 +6312,14 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Turns, chats, messages, tokens, cost and people over time
-         * @description Daily series plus per-agent and per-person tables for the last `days` (1-365)
-         *     UTC days, over this workspace and, with `tree`, every one below it the caller
-         *     may read. Counts come from the analytics fact log, which retention does not
-         *     purge. Tokens and cost cover turns whose transcript reported them
-         *     (`totals.turns_with_usage`). Admin and above.
+         * Turns, chats, messages, tokens and people over time, by agent, repository and person
+         * @description Daily series plus per-agent, per-repository and per-person tables for the last
+         *     `days` (1-365) UTC days, over this workspace and, with `tree`, every one below it
+         *     the caller may read. A repository is work no agent ran: a repo turn, or a
+         *     person's own session in a repo. Counts come from the analytics fact log, which
+         *     retention does not purge; tokens cover the turns and answers whose usage was
+         *     seen (`totals.turns_with_usage`). No cost: no run reports one that describes a
+         *     subscription. Admin and above.
          */
         readonly get: operations["workspace_analytics"];
         readonly put?: never;
@@ -21950,6 +21954,21 @@ export interface components {
             /** Service Key */
             readonly service_key?: string | null;
         };
+        /** RunnerProblemOut */
+        readonly RunnerProblemOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "warn" | "fail";
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+        };
         /**
          * RunnerTopologyOut
          * @description Workspaces in tree order (depth-first, `depth` 0 = the root).
@@ -22075,6 +22094,13 @@ export interface components {
             readonly flags: readonly string[];
             /** Agent Count */
             readonly agent_count: number;
+            /** Code Current */
+            readonly code_current?: boolean | null;
+            /**
+             * Problems
+             * @default []
+             */
+            readonly problems: readonly components["schemas"]["RunnerProblemOut"][];
         };
         /** TopologyWorkspaceOut */
         readonly TopologyWorkspaceOut: {
@@ -22251,6 +22277,10 @@ export interface components {
             readonly vault_1password: number;
             /** Vault None */
             readonly vault_none: number;
+            /** Runners */
+            readonly runners: number;
+            /** Runners Online */
+            readonly runners_online: number;
         };
         /** SharedVaultHealthOut */
         readonly SharedVaultHealthOut: {
@@ -22293,30 +22323,40 @@ export interface components {
             readonly workspaces: readonly components["schemas"]["WorkspaceHealthNodeOut"][];
             /** Agents */
             readonly agents: readonly components["schemas"]["AgentHealthOut"][];
+            /** Runners */
+            readonly runners: readonly components["schemas"]["TopologyRunnerOut"][];
             readonly totals: components["schemas"]["HealthTotalsOut"];
         };
         /** AnalyticsAgentOut */
         readonly AnalyticsAgentOut: {
-            /** Agent */
-            readonly agent: string;
             /** Turns */
             readonly turns: number;
-            /** Messages */
-            readonly messages: number;
-            /** Sessions */
-            readonly sessions: number;
             /** Failed */
             readonly failed: number;
+            /** Sessions */
+            readonly sessions: number;
+            /** Messages */
+            readonly messages: number;
+            /** Settings */
+            readonly settings: number;
+            /** Mcp Calls */
+            readonly mcp_calls: number;
             /** People */
             readonly people: number;
+            /** Active Days */
+            readonly active_days: number;
             /** Input Tokens */
             readonly input_tokens: number;
             /** Output Tokens */
             readonly output_tokens: number;
-            /** Cost Usd */
-            readonly cost_usd: number;
+            /** Cache Read Tokens */
+            readonly cache_read_tokens: number;
+            /** Cache Creation Tokens */
+            readonly cache_creation_tokens: number;
             /** Last At */
             readonly last_at?: string | null;
+            /** Agent */
+            readonly agent: string;
         };
         /** AnalyticsDayOut */
         readonly AnalyticsDayOut: {
@@ -22347,8 +22387,37 @@ export interface components {
             readonly output_tokens: number;
             /** Cache Read Tokens */
             readonly cache_read_tokens: number;
-            /** Cost Usd */
-            readonly cost_usd: number;
+        };
+        /** AnalyticsRepositoryOut */
+        readonly AnalyticsRepositoryOut: {
+            /** Turns */
+            readonly turns: number;
+            /** Failed */
+            readonly failed: number;
+            /** Sessions */
+            readonly sessions: number;
+            /** Messages */
+            readonly messages: number;
+            /** Settings */
+            readonly settings: number;
+            /** Mcp Calls */
+            readonly mcp_calls: number;
+            /** People */
+            readonly people: number;
+            /** Active Days */
+            readonly active_days: number;
+            /** Input Tokens */
+            readonly input_tokens: number;
+            /** Output Tokens */
+            readonly output_tokens: number;
+            /** Cache Read Tokens */
+            readonly cache_read_tokens: number;
+            /** Cache Creation Tokens */
+            readonly cache_creation_tokens: number;
+            /** Last At */
+            readonly last_at?: string | null;
+            /** Repository */
+            readonly repository: string;
         };
         /** AnalyticsTotalsOut */
         readonly AnalyticsTotalsOut: {
@@ -22362,6 +22431,8 @@ export interface components {
             readonly active_users: number;
             /** Active Agents */
             readonly active_agents: number;
+            /** Active Repositories */
+            readonly active_repositories: number;
             /** Input Tokens */
             readonly input_tokens: number;
             /** Output Tokens */
@@ -22370,43 +22441,43 @@ export interface components {
             readonly cache_read_tokens: number;
             /** Cache Creation Tokens */
             readonly cache_creation_tokens: number;
-            /** Cost Usd */
-            readonly cost_usd: number;
             /** Turns With Usage */
             readonly turns_with_usage: number;
-            /** Turns With Cost */
-            readonly turns_with_cost: number;
         };
         /** AnalyticsUserOut */
         readonly AnalyticsUserOut: {
-            /** User Id */
-            readonly user_id: number;
-            /** Email */
-            readonly email: string;
-            /** Messages */
-            readonly messages: number;
             /** Turns */
             readonly turns: number;
+            /** Failed */
+            readonly failed: number;
             /** Sessions */
             readonly sessions: number;
+            /** Messages */
+            readonly messages: number;
             /** Settings */
             readonly settings: number;
             /** Mcp Calls */
             readonly mcp_calls: number;
-            /** Agents */
-            readonly agents: number;
+            /** People */
+            readonly people: number;
             /** Active Days */
             readonly active_days: number;
             /** Input Tokens */
             readonly input_tokens: number;
             /** Output Tokens */
             readonly output_tokens: number;
-            /** Cost Usd */
-            readonly cost_usd: number;
-            /** Top Agents */
-            readonly top_agents: readonly string[];
+            /** Cache Read Tokens */
+            readonly cache_read_tokens: number;
+            /** Cache Creation Tokens */
+            readonly cache_creation_tokens: number;
             /** Last At */
             readonly last_at?: string | null;
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Top */
+            readonly top: readonly string[];
         };
         /** WorkspaceAnalyticsOut */
         readonly WorkspaceAnalyticsOut: {
@@ -22428,6 +22499,8 @@ export interface components {
             };
             /** Agents */
             readonly agents: readonly components["schemas"]["AnalyticsAgentOut"][];
+            /** Repositories */
+            readonly repositories: readonly components["schemas"]["AnalyticsRepositoryOut"][];
             /** Users */
             readonly users: readonly components["schemas"]["AnalyticsUserOut"][];
         };

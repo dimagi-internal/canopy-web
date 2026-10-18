@@ -274,6 +274,12 @@ class TopologyWorkspaceOut(StrictModel):
     order_from: str | None = None
 
 
+class RunnerProblemOut(StrictModel):
+    name: str
+    status: Literal["warn", "fail"]
+    detail: str = ""
+
+
 class TopologyRunnerOut(StrictModel):
     """A runner that lives in the tree or that an agent in it routes to.
     `in_tree` False = homed elsewhere (another workspace, or none)."""
@@ -293,6 +299,11 @@ class TopologyRunnerOut(StrictModel):
     owner_email: str | None
     flags: list[str]
     agent_count: int
+    # Running the code the deployed server expects for its kind? None = unknown
+    # (either side never reported) — never read as stale.
+    code_current: bool | None = None
+    # Its own health checks that are not ok, as it last reported them.
+    problems: list[RunnerProblemOut] = []
 
 
 class RunnerTopologyOut(StrictModel):
@@ -541,12 +552,17 @@ class HealthTotalsOut(StrictModel):
     vault_moving: int
     vault_1password: int
     vault_none: int
+    runners: int
+    runners_online: int
 
 
 class WorkspaceHealthOut(StrictModel):
     root: str
     workspaces: list[WorkspaceHealthNodeOut]
     agents: list[AgentHealthOut]
+    # The runners the tree's agents route to, or that live in it — the runner
+    # topology's own rows.
+    runners: list[TopologyRunnerOut]
     totals: HealthTotalsOut
 
 
@@ -559,17 +575,15 @@ class AnalyticsTotalsOut(StrictModel):
     messages: int
     active_users: int
     active_agents: int
+    # Repositories with work no agent ran: repo turns, people's own sessions.
+    active_repositories: int
     input_tokens: int
     output_tokens: int
     cache_read_tokens: int
     cache_creation_tokens: int
-    cost_usd: float
-    # Turns (or typed chat messages) whose tokens were seen; the rest are "not
+    # Turns (or typed messages' answers) whose tokens were seen; the rest are "not
     # reported", not zero.
     turns_with_usage: int
-    # Of those, the ones whose run reported a cost (`claude -p`); interactive
-    # sessions report tokens only, so cost covers fewer turns than tokens.
-    turns_with_cost: int
 
 
 class AnalyticsDayOut(StrictModel):
@@ -585,37 +599,41 @@ class AnalyticsDayOut(StrictModel):
     input_tokens: int
     output_tokens: int
     cache_read_tokens: int
-    cost_usd: float
 
 
-class AnalyticsAgentOut(StrictModel):
-    agent: str
+class AnalyticsRowOut(StrictModel):
+    """One row of a breakdown — the same figures for an agent, a repository and a
+    person (`analytics._breakdown`)."""
+
     turns: int
-    messages: int
-    sessions: int
+    # Of those, finished failed or lost.
     failed: int
-    people: int
-    input_tokens: int
-    output_tokens: int
-    cost_usd: float
-    last_at: dt.datetime | None = None
-
-
-class AnalyticsUserOut(StrictModel):
-    user_id: int
-    email: str
-    messages: int
-    turns: int
     sessions: int
+    messages: int
     settings: int
     mcp_calls: int
-    agents: int
+    people: int
     active_days: int
     input_tokens: int
     output_tokens: int
-    cost_usd: float
-    top_agents: list[str]
+    cache_read_tokens: int
+    cache_creation_tokens: int
     last_at: dt.datetime | None = None
+
+
+class AnalyticsAgentOut(AnalyticsRowOut):
+    agent: str
+
+
+class AnalyticsRepositoryOut(AnalyticsRowOut):
+    repository: str
+
+
+class AnalyticsUserOut(AnalyticsRowOut):
+    user_id: int
+    email: str
+    # What they worked with most: agents' slugs, else repositories' names.
+    top: list[str]
 
 
 class WorkspaceAnalyticsOut(StrictModel):
@@ -626,4 +644,5 @@ class WorkspaceAnalyticsOut(StrictModel):
     series: list[AnalyticsDayOut]
     surfaces: dict[str, int]
     agents: list[AnalyticsAgentOut]
+    repositories: list[AnalyticsRepositoryOut]
     users: list[AnalyticsUserOut]

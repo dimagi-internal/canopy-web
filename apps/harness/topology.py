@@ -30,6 +30,22 @@ from .models import Runner, RunnerAssignment, WorkspaceRunnerOrder
 from .services import inherited_orders, runner_tenant_slugs
 
 
+def code_current(runner) -> bool | None:
+    """Whether the box runs the code the deployed server expects for its kind
+    (`Runner.expected_code_sha`). None when either side is unknown — the
+    supervisor's own rule: empty is unknown, never stale."""
+    expected = runner.expected_code_sha()
+    return (runner.code_sha == expected) if (runner.code_sha and expected) else None
+
+
+def problems(runner) -> list[dict]:
+    """Its self-reported health checks that are not ok, failures first."""
+    checks = [c for c in ((runner.health or {}).get("checks") or [])
+              if isinstance(c, dict) and c.get("status") in ("warn", "fail")]
+    return [{"name": str(c.get("name", "")), "status": c["status"], "detail": str(c.get("detail", ""))[:500]}
+            for c in sorted(checks, key=lambda c: c["status"] != "fail")]
+
+
 def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) -> dict:
     """The topology rooted at `root`: its subtree (the descendants `visible`
     admits), every agent in it with its routing, and every runner those agents
@@ -147,6 +163,8 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
             "owner_email": r.owner.email if r.owner_id else None,
             "flags": sorted(f.flag for f in r.declared_flags.all()),
             "agent_count": len(serves.get(r.pk, ())),
+            "code_current": code_current(r),
+            "problems": problems(r),
         })
     runner_rows.sort(key=lambda row: (not row["in_tree"], row["name"].lower()))
     return {"root": root.slug, "workspaces": ordered, "runners": runner_rows}

@@ -817,7 +817,9 @@ def _tree_reader(request: HttpRequest, slug: str):
 def workspace_health(request: HttpRequest, slug: str) -> WorkspaceHealthOut:
     """Every agent in the tree with its setup checklist (the same steps as its own
     Settings page and `agent_setup`), its vault state (canopy-web, moving, 1Password)
-    and properties; every workspace with its shared vault. Each step carries the link
+    and properties; every workspace with its shared vault; the runners its agents
+    route to or that live in it (the runner topology's rows, plus whether each runs
+    current code and its own failing checks). Each step carries the link
     that fixes it; `can_fix` says whether the viewer may follow it, else
     `owner_email` is who to send it to. Admin and above."""
     from apps.agents import health
@@ -827,14 +829,16 @@ def workspace_health(request: HttpRequest, slug: str) -> WorkspaceHealthOut:
 
 
 @router.get("/{slug}/analytics", response=WorkspaceAnalyticsOut,
-            summary="Turns, chats, messages, tokens, cost and people over time")
+            summary="Turns, chats, messages, tokens and people over time, by agent, repository and person")
 def workspace_analytics(request: HttpRequest, slug: str, days: int = 30,
                         tree: bool = True) -> WorkspaceAnalyticsOut:
-    """Daily series plus per-agent and per-person tables for the last `days` (1-365)
-    UTC days, over this workspace and, with `tree`, every one below it the caller
-    may read. Counts come from the analytics fact log, which retention does not
-    purge. Tokens and cost cover turns whose transcript reported them
-    (`totals.turns_with_usage`). Admin and above."""
+    """Daily series plus per-agent, per-repository and per-person tables for the last
+    `days` (1-365) UTC days, over this workspace and, with `tree`, every one below it
+    the caller may read. A repository is work no agent ran: a repo turn, or a
+    person's own session in a repo. Counts come from the analytics fact log, which
+    retention does not purge; tokens cover the turns and answers whose usage was
+    seen (`totals.turns_with_usage`). No cost: no run reports one that describes a
+    subscription. Admin and above."""
     from apps.events import analytics
 
     root, visible = _tree_reader(request, slug)

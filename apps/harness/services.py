@@ -614,9 +614,6 @@ def enqueue_turn(
         if replay is not None:
             return replay, False
         raise
-    from apps.events import activity
-
-    activity.for_turn(activity.TURN_ENQUEUED, turn, at=turn.created_at)
     if origin == Turn.ORIGIN_EMAIL:
         _log_unproven_member(turn)
     if session is not None:

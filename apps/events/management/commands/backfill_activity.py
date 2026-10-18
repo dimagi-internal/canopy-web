@@ -60,13 +60,14 @@ class Command(BaseCommand):
                 once(activity.CHAT_MESSAGE, ref, lambda: activity.emit(
                     activity.CHAT_MESSAGE, workspace=t.chat_session.workspace_id,
                     actor=activity.turn_actor(t), agent=t.chat_session.agent, surface=t.origin,
-                    ref=ref, at=t.created_at))
+                    ref=ref, at=t.created_at, project=activity.repo_of(session=t.chat_session)))
 
         for s in (Session.objects.filter(created_at__gte=since)
                   .select_related("agent", "created_by").iterator(chunk_size=500)):
             once(activity.CHAT_SESSION_CREATED, str(s.pk), lambda: activity.emit(
                 activity.CHAT_SESSION_CREATED, workspace=s.workspace_id, actor=s.created_by,
-                agent=s.agent, surface="chat", ref=str(s.pk), at=s.created_at))
+                agent=s.agent, surface=s.origin, ref=str(s.pk), at=s.created_at,
+                project=activity.repo_of(session=s)))
 
         for c in (SettingChange.objects.filter(created_at__gte=since, workspace__isnull=False)
                   .select_related("actor").iterator(chunk_size=500)):
@@ -90,7 +91,28 @@ class Command(BaseCommand):
                 derived += usage.record_for_turn(tt.turn)
 
         reclassified = activity.reclassify()
+        repos = self._fill_repositories(since)
         for kind, n in written.items():
             self.stdout.write(f"{kind}: {n} written")
         self.stdout.write(f"turn usage derived: {derived}")
         self.stdout.write(f"facts reclassified as an agent or system: {reclassified}")
+        self.stdout.write(f"facts and usage rows given their repository: {repos}")
+
+    def _fill_repositories(self, since) -> int:
+        """Name the repository on facts and usage recorded before facts carried one:
+        repo turns, and sessions no agent runs (`activity.repo_of`)."""
+        from apps.canopy_sessions.models import Session
+        from apps.events.models import TurnUsage
+        from apps.harness.models import Turn
+
+        n = 0
+        for t in (Turn.objects.filter(created_at__gte=since, agent__isnull=True)
+                  .select_related("chat_session").iterator(chunk_size=500)):
+            repo = activity.repo_of(turn=t)
+            if repo:
+                n += Activity.objects.filter(ref=str(t.pk), project="").update(project=repo)
+                n += TurnUsage.objects.filter(turn_ref=str(t.pk), project="").update(project=repo)
+        for s in Session.objects.filter(agent__isnull=True).exclude(project="").iterator(chunk_size=500):
+            n += Activity.objects.filter(kind=activity.CHAT_SESSION_CREATED, ref=str(s.pk), project="").update(project=s.project)
+            n += TurnUsage.objects.filter(turn_ref__startswith=f"chat:{s.pk.hex}:", project="").update(project=s.project)
+        return n
