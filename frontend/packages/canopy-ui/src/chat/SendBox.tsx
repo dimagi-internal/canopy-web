@@ -256,6 +256,13 @@ export function SendBox({
       e.preventDefault();
       if (canSend) handleSend();
     }
+    // Esc stops the agent, as it does in Claude Code and emdash — the same as
+    // pressing Stop. Only while there is something to stop, so Esc stays free
+    // for anything else the rest of the time.
+    if (e.key === "Escape" && !isComposing && isStreaming) {
+      e.preventDefault();
+      handleStopClick();
+    }
   };
 
   const handleStopClick = () => {
@@ -397,6 +404,7 @@ export function SendBox({
               type="button"
               variant="destructive"
               size="sm"
+              title="Stop the agent (Esc)"
               onClick={handleStopClick}
             >
               {stopState === "requested" ? "stopping…" : "stop"}

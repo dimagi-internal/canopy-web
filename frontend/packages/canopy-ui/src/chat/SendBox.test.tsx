@@ -717,3 +717,27 @@ describe("SendBox — typing visibility control", () => {
     expect(control.title.length).toBeGreaterThan(0);
   });
 });
+
+describe("SendBox — Esc stops the agent", () => {
+  const props = {
+    draft: draft(),
+    connected: true,
+    streamingMessageId: "m1",
+    onUpdate: vi.fn(),
+    onSend: vi.fn(),
+  };
+
+  it("Esc in the composer stops a running reply, like Stop", () => {
+    const onStop = vi.fn();
+    render(<SendBox {...props} isStreaming onStop={onStop} />);
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+    expect(onStop).toHaveBeenCalledWith("m1");
+  });
+
+  it("Esc does nothing when nothing is running", () => {
+    const onStop = vi.fn();
+    render(<SendBox {...props} isStreaming={false} onStop={onStop} />);
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+    expect(onStop).not.toHaveBeenCalled();
+  });
+});

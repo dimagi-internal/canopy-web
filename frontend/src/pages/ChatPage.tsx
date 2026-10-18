@@ -977,6 +977,7 @@ export function ChatPage({
             socket.sendChat()
           }}
           onStop={socket.stopChat}
+          onUnqueue={socket.unqueueChat}
           awaitingReply={socket.awaitingReply}
           attachments={attachments}
           onAttach={handleAttach}

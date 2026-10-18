@@ -22,6 +22,9 @@ export interface ChatPanelProps {
   currentUserId: number | null;
   onSend: () => void;
   onStop: (messageId: string | null) => void;
+  /** Withdraw one of your own still-queued sends (`useSessionSocket().unqueueChat`).
+   *  Omit and queued rows offer no Cancel. */
+  onUnqueue?: (turnId: string) => void;
   /** A send is outstanding but no reply has begun — the turn is queued,
    *  waiting for a runner to claim it. Keeps Stop reachable in that window. */
   awaitingReply?: boolean;
@@ -74,6 +77,7 @@ export function ChatPanel({
   currentUserId,
   onSend,
   onStop,
+  onUnqueue,
   awaitingReply = false,
   attachments,
   onAttach,
@@ -219,6 +223,17 @@ export function ChatPanel({
   // The text of your own sends still waiting to be confirmed — for a client
   // that sends no client_id (an older host's HTTP send), the only way to tell
   // its queued entry from a second copy of the same line.
+  // Your own sends a runner has not picked up yet, by client_id: the row your
+  // optimistic echo draws is where their Cancel goes.
+  const cancellable = useMemo(
+    () =>
+      new Map(
+        (state.queued ?? [])
+          .filter((q) => q.state === "queued" && q.client_id && isMine(q.author, currentUserId, currentContactId))
+          .map((q) => [q.client_id, q.turn_id] as const),
+      ),
+    [state.queued, currentUserId, currentContactId],
+  );
   const ownPendingTexts = useMemo(
     () =>
       new Set(
@@ -273,6 +288,8 @@ export function ChatPanel({
           pendingLabel={pendingLabel}
           currentUserId={currentUserId}
           currentContactId={currentContactId}
+          cancellable={cancellable}
+          onCancelQueued={onUnqueue}
         />
         <QueuedRows
           queued={state.queued ?? []}
@@ -280,6 +297,7 @@ export function ChatPanel({
           currentUserId={currentUserId}
           currentContactId={currentContactId}
           ownPendingTexts={ownPendingTexts}
+          onCancel={onUnqueue}
         />
       </div>
       <SendBox

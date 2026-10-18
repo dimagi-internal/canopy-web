@@ -34,6 +34,10 @@ interface Props {
   currentUserId?: number | null;
   /** The viewer when it is a contact; see MessageItem. */
   currentContactId?: number | null;
+  /** Your own sends still queued, by client_id → turn id: their rows get a
+   *  Cancel (`onCancelQueued`). */
+  cancellable?: Map<string, string>;
+  onCancelQueued?: (turnId: string) => void;
 }
 
 // Show the bulk expand/collapse toolbar once a session has more than this
@@ -50,6 +54,8 @@ export function MessageList({
   pendingLabel,
   currentUserId,
   currentContactId,
+  cancellable,
+  onCancelQueued,
 }: Props) {
   const paired = useMemo(() => pairToolMessages(messages), [messages]);
   // Collapse back-to-back tool calls into one row. An agent mid-task emits long
@@ -165,7 +171,7 @@ export function MessageList({
               pair
             );
           }
-          return (
+          const item = (
             <MessageItem
               key={row.key}
               message={row.message}
@@ -174,6 +180,22 @@ export function MessageList({
               currentUserId={currentUserId}
               currentContactId={currentContactId}
             />
+          );
+          const clientId = row.message.role === "user" ? row.message.content?.client_id : undefined;
+          const queuedTurn = typeof clientId === "string" ? cancellable?.get(clientId) : undefined;
+          if (!queuedTurn || !onCancelQueued) return item;
+          return (
+            <div key={row.key} className="flex flex-col">
+              {item}
+              <div className="flex justify-end gap-2 text-[11px] text-muted-foreground">
+                <span>queued</span>
+                <button type="button" onClick={() => onCancelQueued(queuedTurn)}
+                        data-testid="queued-cancel"
+                        className="underline hover:text-foreground">
+                  Cancel
+                </button>
+              </div>
+            </div>
           );
         })}
         {pendingReply && (

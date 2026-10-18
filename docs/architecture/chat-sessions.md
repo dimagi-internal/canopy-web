@@ -107,6 +107,14 @@ an emdash task name alone is not an identity.
 - **A send only enqueues.** `services.queued_messages` (derived, never stored) shows
   every watcher the sends not yet in the transcript; REST and contact sends carry a
   `client_id` so the sender's optimistic row dedupes against the queued entry.
+- **Stop cancels every live turn; Cancel withdraws one send.** Stop (the button, or
+  Esc in the composer while the agent has the floor) is `services.stop_session`.
+  The socket action `chat.unqueue {turn_id}` is `services.unqueue_send`: your OWN
+  send, only while still `QUEUED` (a claimed one may already be in the agent's
+  input), finished CANCELLED and the queued list re-sent; anything else is refused
+  with `session.error` `unqueue_refused`. The Cancel sits on your queued line
+  (`ChatPanel` → `MessageList`/`QueuedRows`). Only transcript-sourced sessions have
+  queued lines: a ledger send writes its Message at once.
 - Pending attachments are scoped to their uploader (`uploaded_by`): one person's
   send must not carry another's staged files.
 - **A runner fetches attachments through the turn it holds, never through the

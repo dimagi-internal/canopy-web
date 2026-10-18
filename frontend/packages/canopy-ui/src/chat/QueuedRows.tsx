@@ -8,7 +8,7 @@ import { authorColor } from "./personColor";
  *  host's HTTP send), by the text of your own still-unconfirmed row
  *  (`ownPendingTexts`) — so a line never appears twice. */
 export function QueuedRows({
-  queued, hideClientIds, currentUserId, currentContactId, ownPendingTexts,
+  queued, hideClientIds, currentUserId, currentContactId, ownPendingTexts, onCancel,
 }: {
   queued: QueuedMessage[];
   hideClientIds: Set<string>;
@@ -16,6 +16,8 @@ export function QueuedRows({
   currentContactId?: number | null;
   /** Trimmed text of the viewer's own optimistic rows not yet confirmed. */
   ownPendingTexts?: Set<string>;
+  /** Withdraw one of your own still-queued sends; omit to offer no Cancel. */
+  onCancel?: (turnId: string) => void;
 }) {
   const rows = queued.filter((q) => {
     if (q.client_id && hideClientIds.has(q.client_id)) return false;
@@ -39,6 +41,13 @@ export function QueuedRows({
                 {mine ? "You" : q.author?.name ?? "Someone"}
               </span>
               <span>{q.state === "queued" ? "queued" : "sending to agent…"}</span>
+              {mine && q.state === "queued" && onCancel && (
+                <button type="button" onClick={() => onCancel(q.turn_id)}
+                        data-testid="queued-cancel"
+                        className="ml-auto underline hover:text-foreground">
+                  Cancel
+                </button>
+              )}
             </div>
             <div className="whitespace-pre-wrap text-foreground-secondary [overflow-wrap:anywhere]">{q.text}</div>
           </div>

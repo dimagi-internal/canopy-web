@@ -2334,6 +2334,40 @@ def queued_messages(session: Session) -> list[dict]:
     return out
 
 
+def unqueue_send(session: Session, turn_id, user, *, by: str = "") -> bool:
+    """Take back one of YOUR OWN sends that has not reached the agent yet.
+    Returns whether it was withdrawn.
+
+    The single-message counterpart of Stop, which cancels every live turn on the
+    session at once. Only a turn still QUEUED qualifies: once a runner has
+    claimed it the words may already be in the agent's input, and taking them
+    back then would be a claim nobody can keep. Only the sender's own: a
+    teammate's queued line is theirs to withdraw. `cancel_turn` guards the
+    write on status=QUEUED, so a claim landing in between wins and this
+    returns False.
+    """
+    from apps.harness import services as harness_services  # framework->framework; lazy
+
+    try:
+        uuid.UUID(str(turn_id))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    turn = Turn.objects.filter(pk=turn_id, chat_session=session, status=Turn.QUEUED,
+                               initiator_user=user).first()
+    if turn is None:
+        return False
+    if not authorship.is_chat_send(turn):
+        return False
+    done = harness_services.cancel_turn(turn, by=by)
+    if done is None or done.status != Turn.CANCELLED:
+        return False
+    from .queued_feed import publish_queued
+
+    sid = session.pk
+    transaction.on_commit(lambda: publish_queued(sid))
+    return True
+
+
 def place_queued_turn(*, session: Session, placement: str) -> Turn:
     """Re-pin a session's oldest QUEUED turn — the chat banner's after-the-fact
     directed-placement decision (vs `_resolve_placement`, which only applies to

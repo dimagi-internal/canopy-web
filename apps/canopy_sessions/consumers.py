@@ -24,6 +24,7 @@ _EDIT_ROLES = {SessionParticipant.OWNER, SessionParticipant.EDITOR}
 # listed so a viewer's old client is still told `forbidden`.
 _EDIT_ACTIONS = (
     "draft.update", "draft.take_over", "draft.discard", "draft.set_visibility", "chat.send",
+    "chat.unqueue",
 )
 
 
@@ -272,6 +273,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             await self._draft_set_visibility(data)
         elif action == "chat.send":
             await self._chat_send(data if isinstance(data, dict) else {})
+        elif action == "chat.unqueue":
+            await self._chat_unqueue(data if isinstance(data, dict) else {})
 
     # -- actions --
     async def _error(self, code, message="", detail=None):
@@ -386,6 +389,19 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             "type": "chat.stream_cancelled",
             "message_id": data.get("message_id"), "partial_len": 0,
         })
+
+    async def _chat_unqueue(self, data):
+        # Withdraw one of your own queued sends (services.unqueue_send). The
+        # refreshed queued list reaches everyone through session.queued; only a
+        # refusal (already claimed, not yours) is answered here, so the sender's
+        # row can say it went to the agent after all.
+        turn_id = str(data.get("turn_id") or "")
+        ok = await database_sync_to_async(chat_services.unqueue_send)(
+            self.session, turn_id, self.user,
+            by=chat_services.person_name((getattr(self, "scope", None) or {}).get("user")))
+        if not ok:
+            await self._error("unqueue_refused", "That message already went to the agent.",
+                              detail={"turn_id": turn_id})
 
     # -- sync DB helpers --
     def _commit_and_send(self, text=None, client_id=""):

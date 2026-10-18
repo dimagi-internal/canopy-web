@@ -165,6 +165,9 @@ export interface UseSessionSocketResult {
   awaitingReply: boolean;
   sendChat: () => void;
   stopChat: (messageId: string | null) => void;
+  /** Withdraw one of your own queued sends (a `QueuedMessage.turn_id`). Its row
+   *  leaves the screen at once; the server's `session.queued` confirms it. */
+  unqueueChat: (turnId: string) => void;
   updateDraft: (body: string) => void;
   /** @deprecated ignored since 0.13 — everyone has their own draft now, so
    *  there is no lock left to take over. Kept as a no-op so a host still
@@ -596,6 +599,24 @@ export function useSessionSocket({
     [send],
   );
 
+  const unqueueChat = useCallback(
+    (turnId: string) => {
+      setState((prev) => {
+        const entry = (prev.queued ?? []).find((q) => q.turn_id === turnId);
+        const clientId = entry?.client_id || null;
+        const queued = (prev.queued ?? []).filter((q) => q.turn_id !== turnId);
+        // Your own line is drawn by its optimistic row (keyed by client_id),
+        // not by the queued list — take it down too, or it reads as still sent.
+        const messages = clientId
+          ? prev.messages.filter((m) => !(m.role === "user" && m.content?.client_id === clientId))
+          : prev.messages;
+        return { ...prev, queued, messages };
+      });
+      send({ action: "chat.unqueue", data: { turn_id: turnId } });
+    },
+    [send],
+  );
+
   const updateDraft = useCallback(
     (body: string) => {
       // Optimistic local update so the textarea feels snappy.
@@ -787,6 +808,7 @@ export function useSessionSocket({
     awaitingReply,
     sendChat: sendOverHttp ? sendChatOverHttp : sendChat,
     stopChat,
+    unqueueChat,
     updateDraft: sendOverHttp ? updateLocalDraft : updateDraft,
     takeOverDraft,
     discardDraft,
