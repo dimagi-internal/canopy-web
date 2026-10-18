@@ -15,6 +15,7 @@ import { declaresMailbox, GOG_TOKEN_REF, mintOutcome } from '@/pages/agents/goog
 import { AgentGitHubSection } from '@/pages/agents/AgentGitHubSection'
 import { AgentSalesforceSection } from '@/pages/agents/AgentSalesforceSection'
 import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
+import { AgentSecretsHomeSection } from '@/pages/agents/AgentSecretsHomeSection'
 import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
 import { AgentPatRotationSection } from '@/pages/agents/AgentPatRotationSection'
 import { AgentCredentialAlertsSection } from '@/pages/agents/AgentCredentialAlertsSection'
@@ -96,6 +97,9 @@ export function AgentCredentialsPanel({
   // Collapsed by DEFAULT. These rows are correct and need nothing; shown as a
   // list of empty inputs they read as forty-five things to type.
   const [showVault, setShowVault] = useState(false)
+  // Where its secrets live; follows the switch on this page without a reload.
+  const [source, setSource] = useState<string>(agent.credential_source ?? '1password')
+  useEffect(() => setSource(agent.credential_source ?? '1password'), [agent.credential_source])
   const [status, setStatus] = useState<Partial<Record<StatusKey, CredStatus>>>({})
   const report = useCallback(
     (key: StatusKey) => (s: CredStatus) => setStatus((prev) => ({ ...prev, [key]: s })),
@@ -229,8 +233,13 @@ export function AgentCredentialsPanel({
       ? { label: 'From 1Password', tone: 'muted' }
       : { label: 'Not connected', tone: 'destructive' }
 
+  const onCanopy = source === 'canopy-web'
+  const hasLogin = rows.some((r) => r.name === 'canopy-pat' && r.set)
   const statusRows: { key: string; name: string; href?: string; s: CredStatus | undefined }[] = [
-    { key: 'vault', name: '1Password vault', href: '#cred-vault', s: status.vault },
+    onCanopy
+      ? { key: 'vault', name: 'Canopy vault', href: '#canopy-login',
+          s: hasLogin ? { label: 'Ready', tone: 'success' } : { label: 'Needs its canopy login', tone: 'warning' } }
+      : { key: 'vault', name: '1Password vault', href: '#cred-vault', s: status.vault },
     { key: 'github', name: 'GitHub', href: '#cred-github', s: status.github },
     ...(status.salesforce ? [{ key: 'salesforce', name: 'Salesforce', href: '#cred-salesforce', s: status.salesforce }] : []),
     ...(hasMailbox ? [{ key: 'mailbox', name: 'Google mailbox', s: mailbox }] : []),
@@ -394,12 +403,20 @@ export function AgentCredentialsPanel({
           not about its runtime.yaml — and they were rendered inside the
           "declares some secrets" branch, so the form was hidden on exactly the
           agents nobody had registered yet (2026-09-23). */}
-      <AgentVaultSection slug={agent.slug} workspace={agent.workspace} onStatus={onVault} />
+      <AgentSecretsHomeSection
+        slug={agent.slug}
+        credentialSource={source}
+        storedNames={rows.filter((r) => r.set).map((r) => r.name)}
+        canEdit={canEdit}
+        onChanged={reload}
+        onSource={setSource}
+      />
+      {!onCanopy && <AgentVaultSection slug={agent.slug} workspace={agent.workspace} onStatus={onVault} />}
       <AgentGitHubSection slug={agent.slug} onStatus={onGitHub} />
       <AgentSalesforceSection slug={agent.slug} onStatus={onSalesforce} />
       <AgentDeviceKeysSection
         slug={agent.slug}
-        credentialSource={agent.credential_source}
+        credentialSource={source}
         requireDeviceBinding={agent.require_device_binding}
         canEdit={canEdit}
       />

@@ -609,6 +609,18 @@ class AgentCanopyTokenIn(StrictModel):
     label: str = ""
 
 
+class AgentCanopyLoginOut(StrictModel):
+    """`POST /canopy-login`: the agent's canopy login was made (or reused), its token
+    stored sealed as `canopy-pat`, rotation turned on when it could be. Never the token."""
+
+    user_email: str
+    created_user: bool
+    token_id: int
+    rotation_enabled: bool
+    # Why rotation stayed off, when it did ("" otherwise).
+    rotation_note: str = ""
+
+
 class AgentCanopyTokenOut(StrictModel):
     # Shown once and never stored here in the clear (PersonalToken keeps a hash).
     # The caller writes it to the agent's vault; it must not reach a transcript.

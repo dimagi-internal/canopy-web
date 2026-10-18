@@ -87,6 +87,30 @@ export async function setPatRotation(slug: string, enabled: boolean, periodDays:
   return unwrap(res, 'setPatRotation') as PatRotationOut
 }
 
+export type AgentCanopyLoginOut = Schemas['AgentCanopyLoginOut']
+
+function problem(res: { error?: unknown }, what: string): never {
+  const e = res.error as { detail?: unknown; title?: unknown } | undefined
+  const msg = typeof e?.detail === 'string' ? e.detail : typeof e?.title === 'string' ? e.title : `${what} failed`
+  throw new Error(msg)
+}
+
+/** Where the agent's secrets live. Needs a passkey step-up, which `apiV2` prompts for. */
+export async function setCredentialSource(slug: string, source: '1password' | 'canopy-web'): Promise<void> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/credential-source', {
+    params: { path: { slug } },
+    body: { credential_source: source },
+  })
+  if (res.error !== undefined) problem(res, 'setCredentialSource')
+}
+
+/** Make the agent's canopy login and store it in its Canopy vault. The token is never returned. */
+export async function giveCanopyLogin(slug: string): Promise<AgentCanopyLoginOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/canopy-login', { params: { path: { slug } }, body: {} })
+  if (res.error !== undefined || res.data === undefined) problem(res, 'giveCanopyLogin')
+  return res.data as AgentCanopyLoginOut
+}
+
 /** Rotate now. Needs a passkey step-up, which `apiV2` prompts for and retries. */
 export async function rotatePatNow(slug: string): Promise<PatRotationOut> {
   const res = await apiV2.POST('/api/agents/{slug}/pat-rotation/rotate', { params: { path: { slug } } })
