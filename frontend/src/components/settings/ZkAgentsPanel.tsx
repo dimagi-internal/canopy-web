@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
 import { listAgents } from '@/api/agents'
+import { listRunnerDeviceKeys, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { getZkState, type ZkStateOut } from '@/api/vault'
+import { AuthContext } from '@/auth/AuthProvider'
+import { machineShortName } from './machineText'
 
 /**
  * "Your agents" on the Security card (canopy-web#1550): where each agent that
@@ -33,7 +36,26 @@ function statusText(r: AgentRow): string {
   const people = pending.filter((p) => p.kind === 'member').map((p) => p.email || 'someone')
   if (machines.length) return `${machines.join(', ')} waiting — approve it under Your machines`
   if (people.length) return `${people.join(', ')} waiting — let them in on ${r.name}’s page`
-  return 'Private to you ✓'
+  return 'Private ✓'
+}
+
+/** Who holds a copy of the agent's key right now, in plain words: "you",
+ *  a colleague's email, "MacBook (acedimagi)", "cloud-ec2-2". An agent with no
+ *  key of its own yet (kv 0) seals each secret to its owner and approved
+ *  machines as it arrives, so it is said that way. */
+function openedBy(zk: ZkStateOut, me: string, keys: RunnerDeviceKeyOut[]): string {
+  if (!zk.enabled || zk.kv === 0) return 'you and the machines you approve'
+  const byId = new Map(keys.map((k) => [k.id, k]))
+  const current = (zk.wraps ?? []).filter((w) => w.kv === zk.kv && w.current !== false)
+  const people = current.filter((w) => w.kind === 'member')
+    .map((w) => (me && w.label === me ? 'you' : w.label || 'someone'))
+    .sort((a, b) => (a === 'you' ? -1 : b === 'you' ? 1 : a.localeCompare(b)))
+  const machines = current.filter((w) => w.kind === 'device').map((w) => {
+    const k = w.target ? byId.get(w.target) : undefined
+    return k ? machineShortName(k) : (w.label || 'a machine').split(' · ')[0]
+  })
+  const all = [...people, ...machines]
+  return all.length ? all.join(', ') : 'nobody yet'
 }
 
 async function findAgents(): Promise<AgentRow[]> {
@@ -52,9 +74,13 @@ async function findAgents(): Promise<AgentRow[]> {
 
 export function ZkAgentsPanel() {
   const [rows, setRows] = useState<AgentRow[] | null>(null)
+  const [keys, setKeys] = useState<RunnerDeviceKeyOut[]>([])
+  const me = useContext(AuthContext).user?.email ?? ''
 
   useEffect(() => {
     findAgents().then(setRows).catch(() => setRows([]))
+    // Only to name machines plainly; without it a wrap's own label is used.
+    listRunnerDeviceKeys().then(setKeys).catch(() => setKeys([]))
   }, [])
 
   if (rows === null) return <p className="text-sm text-muted-foreground">Loading…</p>
@@ -64,16 +90,22 @@ export function ZkAgentsPanel() {
   return (
     <div className="space-y-2" data-testid="settings-zk-agents">
       <p className="text-xs text-muted-foreground">
-        Only you and the machines you approve can read these agents&rsquo; secrets — canopy-web can&rsquo;t.
+        Who holds a copy of each agent&rsquo;s key — canopy-web never does.
       </p>
       <ul className="divide-y divide-border text-sm">
         {rows.map((r) => {
           const pending = waitingOn(r.zk)
           const ok = r.zk.enabled && pending.length === 0
           return (
-            <li key={r.slug} className="flex items-center justify-between gap-2 py-1.5" data-testid={`zk-agent-${r.slug}`}>
-              <a href={`/agents/${r.slug}/settings#cred-zk`} className="text-foreground hover:underline">{r.name}</a>
-              <span className={`text-xs ${ok ? 'text-success' : 'text-warning'}`} data-testid={`zk-agent-status-${r.slug}`}>
+            <li key={r.slug} className="flex flex-col gap-1 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+                data-testid={`zk-agent-${r.slug}`}>
+              <p className="min-w-0">
+                <a href={`/agents/${r.slug}/settings#cred-zk`} className="font-medium text-foreground hover:underline">{r.name}</a>
+                <span className="text-muted-foreground" data-testid={`zk-agent-holders-${r.slug}`}>
+                  {' — can be opened by: '}{openedBy(r.zk, me, keys)}
+                </span>
+              </p>
+              <span className={`shrink-0 text-xs ${ok ? 'text-success' : 'text-warning'}`} data-testid={`zk-agent-status-${r.slug}`}>
                 {pending.some((p) => p.kind === 'device')
                   ? <a href="#your-machines" className="hover:underline">{statusText(r)}</a>
                   : statusText(r)}

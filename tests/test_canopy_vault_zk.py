@@ -682,6 +682,35 @@ def test_approving_a_new_key_approves_its_ecdh_key_too(fleet):
     assert key.status == RunnerDeviceKey.ACTIVE and key.ecdh_ready
 
 
+def test_the_key_list_says_which_machine_what_it_can_open_and_where_its_key_lives(fleet):
+    """Settings > Your machines reads "box — AWS server · key held by AWS · can
+    open Eva" from these fields."""
+    def row():
+        return fleet.client.get("/api/runner-device-keys/").json()[0]
+
+    assert row()["can_open"] == []  # not zero-knowledge yet: nothing to open
+    assert row()["runner_kind"] == "cloud" and row()["runner_host"] == ""
+    assert _enable(fleet).status_code == 200
+    assert row()["can_open"] == [{"slug": "eva", "name": "Eva"}]
+
+    def post(ecdh, store):
+        body = {"runner": str(fleet.runner.pk), "public_jwk": _jwk(fleet.sign), "kind": "secure-enclave",
+                "label": "mbp", "ecdh_public_jwk": ref.jwk(ecdh.public_key()), "ecdh_store": store}
+        res = Client().post("/api/runner-device-keys/", data=body, content_type="application/json",
+                            HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
+        assert res.status_code == 200, res.content
+        return RunnerDeviceKey.objects.get(pk=fleet.device.pk)
+
+    assert post(fleet.ecdh, "secure-enclave").ecdh_store == "secure-enclave"  # said with the same key
+    assert post(fleet.ecdh, "bogus").ecdh_store == "secure-enclave"  # an unknown word is ignored
+    assert row()["ecdh_store"] == "secure-enclave" and row()["can_open"] == [{"slug": "eva", "name": "Eva"}]
+    # A new ECDH key that says nothing of where it lives does not inherit the old label —
+    # and, waiting for approval, it can open nothing.
+    key = post(ec.generate_private_key(ec.SECP256R1()), "")
+    assert key.ecdh_store == "" and key.ecdh_waiting
+    assert row()["can_open"] == []
+
+
 def test_an_aws_iam_key_with_a_new_ecdh_key_stays_active_and_its_ecdh_key_waits(fleet, monkeypatch):
     from apps.harness import aws_iam_proof
 

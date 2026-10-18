@@ -226,6 +226,24 @@ def test_enrollment_sends_the_ecdh_key_canopy_made(cloud_runner, monkeypatch, tm
     assert cached["ecdh_jkt"].startswith("Pypib") and cached["ecdh_kind"] == "software"
 
 
+def test_enrollment_says_where_the_ecdh_key_lives(cloud_runner, monkeypatch, tmp_path):
+    """Settings shows "key held by AWS" from this — display only."""
+    monkeypatch.setattr(cloud_runner, "_aws_instance_credentials", lambda: CREDS)
+    monkeypatch.setattr(cloud_runner, "_aws_role_arn", lambda creds: ROLE)
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    monkeypatch.setattr(cloud_runner, "_ecdh_public_key",
+                        lambda: {"jwk": ECDH_JWK, "jkt": "K", "kind": "aws-kms"})
+    posts = []
+
+    def api(method, path, body=None, *, prefix="/api/harness", headers=None):
+        posts.append(body)
+        return 201, {"id": "k1", "jkt": "f" * 64, "status": "pending", "approve_url": "u"}
+
+    monkeypatch.setattr(cloud_runner, "_api", api)
+    cloud_runner.enroll_aws_device_key("r-ec2")
+    assert posts[0]["ecdh_store"] == "aws-kms"
+
+
 @pytest.mark.parametrize("rc,out,want", [
     (0, json.dumps({"kind": "software", "jkt": "J", "jwk": ECDH_JWK, "created": True}),
      {"jwk": ECDH_JWK, "jkt": "J", "kind": "software"}),

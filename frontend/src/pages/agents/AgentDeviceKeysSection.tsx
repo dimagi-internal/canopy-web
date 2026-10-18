@@ -50,17 +50,17 @@ export function AgentDeviceKeysSection({
   return (
     <section id="cred-device-keys" className="mb-6" data-testid="agent-device-keys">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Device keys
+        Machines
       </h3>
       <label className="mb-2 flex items-center gap-2 text-[12px] text-foreground">
         <input
           type="checkbox"
           checked={required}
           onChange={() => void toggle()}
-          aria-label="Require a device proof to read secrets"
+          aria-label="Only approved machines may read secrets"
           data-testid="require-device-binding"
         />
-        Require a device proof to read this agent&rsquo;s secrets
+        Only machines you approved may read this agent&rsquo;s secrets
       </label>
       {required && credentialSource !== 'canopy-web' && (
         <p className="mb-2 text-[11px] text-warning">
@@ -69,7 +69,7 @@ export function AgentDeviceKeysSection({
       )}
       {required && credentialSource === 'canopy-web' && keys !== null && active === 0 && (
         <p className="mb-2 text-[11px] text-destructive" data-testid="no-active-device-key">
-          No active device key: no box can read this agent&rsquo;s secrets until one is approved.
+          No approved machine yet: none can read this agent&rsquo;s secrets until you approve one.
         </p>
       )}
       {keys === null ? (

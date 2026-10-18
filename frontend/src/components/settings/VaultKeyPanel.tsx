@@ -182,7 +182,7 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
          data-testid="settings-vault-key">
       {!embedded && (
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Your vault key</h2>
+          <h2 className="text-sm font-semibold text-foreground">Your key to your agents&rsquo; secrets</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             It unlocks your agents&rsquo; secrets in your browser. Your passkey or a passphrase opens it; canopy-web
             cannot.
@@ -217,7 +217,7 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
           <table className="w-full text-xs">
             <thead>
               <tr className="text-left text-muted-foreground">
-                <th className="py-1 font-medium">Unlocks with</th>
+                <th className="py-1 font-medium">Opens your agents&rsquo; secrets</th>
                 <th className="py-1 font-medium" />
               </tr>
             </thead>
@@ -251,11 +251,11 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
             </Button>
             <Button size="sm" variant="outline" disabled={busy} data-testid="vault-key-replace"
                     onClick={() => {
-                      if (window.confirm('Start a NEW vault key? Every agent must let you in again, and your recovery code stops working.')) {
+                      if (window.confirm('Start over with a new key? Every agent must let you in again, and your recovery code stops working.')) {
                         void run(() => setUpVaultKey(true))
                       }
                     }}>
-              Start a new vault key
+              Start over with a new key
             </Button>
           </div>
           {mode === 'passphrase' && passphraseForm}

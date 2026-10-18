@@ -127,7 +127,7 @@ describe('An agent page: nothing to set up by hand', () => {
       pending: [{ kind: 'device', target: 'dk1', runner_name: 'box' }], rotation_recommended: false, values: null,
       sealed: ['kindora'] })
     render(<AgentZkSection slug="eva" canEdit />)
-    expect((await screen.findByTestId('zk-private')).textContent).toMatch(/Only you and the machines you approve/)
+    expect((await screen.findByTestId('zk-private')).textContent).toMatch(/Only you \(your passkey\) and the machines you approve can open these/)
     expect((await screen.findByTestId('zk-trust-caveat')).textContent).toBe(ZK_TRUST_CAVEAT)
     expect(screen.queryByRole('button')).toBeNull()
     expect(document.body.textContent).not.toMatch(/finish setup|\block\b/i)

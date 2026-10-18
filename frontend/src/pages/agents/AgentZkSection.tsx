@@ -22,7 +22,7 @@ const KIND_LABEL: Record<string, string> = { device: 'machine', member: 'person'
 /** The trust assumption that remains, stated where the controls are. */
 export const ZK_TRUST_CAVEAT =
   'One trust assumption remains: this page runs JavaScript served by canopy-web. A compromised canopy-web could ' +
-  'serve a page that captures the vault key when you unlock it here. The canopy CLI on your own machine does not ' +
+  'serve a page that captures your key when you unlock it here. The canopy CLI on your own machine does not ' +
   'depend on that.'
 
 function message(e: unknown, fallback: string): string {
@@ -127,7 +127,7 @@ export function AgentZkSection({
   return (
     <section id="cred-zk" className="mb-6" data-testid="agent-zk">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Who can read these secrets
+        Who can open these secrets
       </h3>
 
       {!state.enabled || state.kv === 0 ? (
@@ -135,17 +135,17 @@ export function AgentZkSection({
         // has each secret sealed to you and its approved machines as it arrives,
         // and approving a new machine gives it access (canopy-web#1550).
         <p className="text-[12px] text-foreground" data-testid="zk-private">
-          Only you and the machines you approve can read these — canopy-web can&rsquo;t.
+          Only you (your passkey) and the machines you approve can open these — canopy-web can&rsquo;t.
         </p>
       ) : (
         <div className="space-y-2 text-[12px]">
           <p className="text-foreground" data-testid="zk-on">
-            Only you and the machines you approve can read these — canopy-web can&rsquo;t.
+            Only you (your passkey) and the machines you approve can open these — canopy-web can&rsquo;t.
           </p>
           <table className="w-full text-[12px]" data-testid="zk-wraps">
             <thead>
               <tr className="text-left text-muted-foreground">
-                <th className="py-1 font-medium">Can read them</th>
+                <th className="py-1 font-medium">Can open them</th>
                 <th className="py-1 font-medium" />
                 <th className="py-1 font-medium" />
               </tr>
@@ -153,7 +153,9 @@ export function AgentZkSection({
             <tbody className="divide-y divide-border">
               {current.map((w) => (
                 <tr key={`${w.kind}:${w.target ?? ''}`}>
-                  <td className="py-1.5 text-foreground">{w.kind === 'recovery' ? 'Recovery code' : w.label}</td>
+                  <td className="py-1.5 text-foreground">
+                    {w.kind === 'recovery' ? 'Recovery code' : w.kind === 'device' ? w.label.split(' · ')[0] : w.label}
+                  </td>
                   <td className="py-1.5 text-muted-foreground">{KIND_LABEL[w.kind] ?? w.kind}</td>
                   <td className="py-1.5 text-right">
                     {!w.current && <span className="text-warning">no longer allowed — change the key</span>}
@@ -163,7 +165,7 @@ export function AgentZkSection({
               {pending.map((p) => (
                 <tr key={`pending:${p.kind}:${p.target}`} data-testid={`zk-pending-${p.target}`}>
                   <td className="py-1.5 text-foreground">
-                    {p.kind === 'device' ? `${p.runner_name} · ${p.label || p.device_kind}` : p.email}
+                    {p.kind === 'device' ? p.runner_name || p.label || 'a machine' : p.email}
                   </td>
                   <td className="py-1.5 text-muted-foreground">{KIND_LABEL[p.kind] ?? p.kind}</td>
                   <td className="py-1.5 text-right text-warning">waiting</td>
@@ -173,7 +175,7 @@ export function AgentZkSection({
           </table>
           {state.rotation_recommended && (
             <p className="text-warning" data-testid="zk-rotate-recommended">
-              A machine or person who is no longer allowed could still read these. Change the key to shut them out.
+              A machine or person who is no longer allowed could still open these. Change the key to shut them out.
             </p>
           )}
           <div className="flex flex-wrap gap-2">

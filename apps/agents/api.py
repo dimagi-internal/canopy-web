@@ -2693,14 +2693,16 @@ def agent_device_keys(request: HttpRequest, slug: str):
     says whether the caller may approve or revoke each (the runner's owner or
     an admin of it)."""
     from apps.harness import device_keys
-    from apps.harness.api_device_keys import zk_agents_waiting_on, key_out
+    from apps.harness.api_device_keys import agents_key_opens, key_out, zk_agents_waiting_on
     from apps.harness.models import RunnerDeviceKey
     from apps.harness.runners import can_administer_runner
 
     agent = _agent_for_admin(request, slug)
+    vault = [agent] if agent.zk_enabled and agent.credential_source == "canopy-web" else []
     out = []
     for k in device_keys.keys_for_agent(agent):
         row = key_out(k, can_manage=can_administer_runner(request.user, k.runner))
+        row.can_open = agents_key_opens(k, vault)
         if row.can_manage and (k.status == RunnerDeviceKey.PENDING or k.ecdh_waiting):
             # Approving it will also wrap these (one passkey touch, canopy-web#1550).
             row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=True)

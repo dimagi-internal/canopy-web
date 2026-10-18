@@ -1258,6 +1258,10 @@ class RunnerDeviceKey(models.Model):
     ecdh_approved_at = models.DateTimeField(null=True, blank=True)
     ecdh_approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
                                          null=True, blank=True, related_name="+")
+    #: Where the box SAYS the ECDH private key lives — "secure-enclave", "tpm",
+    #: "aws-kms" or "software" (a 0600 file); "" = not said. Self-reported and
+    #: shown to people only ("key held by AWS"); nothing trusts it.
+    ecdh_store = models.CharField(max_length=16, blank=True, default="")
     jkt = models.CharField(max_length=64, unique=True)
     kind = models.CharField(max_length=16, choices=KIND_CHOICES)
     label = models.CharField(max_length=120, blank=True, default="")
