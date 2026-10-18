@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNo
 import { AlertTriangle, BookOpen, Check, ChevronDown, Download, Eye, Pencil, Plus, Trash2, X } from 'lucide-react'
 
 import {
+  MY_CATEGORIES,
   addMyEntry,
   correctMyEntry,
   exportMine,
@@ -17,17 +18,19 @@ import { MemorySettings } from './MemorySettings'
 import {
   activeAccess,
   agentName,
+  categoryLabel,
   dayLabel,
   durationOf,
   endedOf,
   eventSentence,
-  grantCategories,
-  groupFacts,
+  groupByPlace,
   placeOf,
+  reads,
   readsByEntry,
   relTime,
   type AgentAccess,
   type EntryReads,
+  type Place,
 } from './memory/words'
 
 /** The two canopy-level switches. They are POLICY: they grant no agent anything.
@@ -77,6 +80,11 @@ export function PeopleMePage() {
   const [editing, setEditing] = useState<{ id: number; text: string } | null>(null)
   const [showPast, setShowPast] = useState(false)
   const [activityShown, setActivityShown] = useState(12)
+  // The agent whose view you are looking through: hovering its card (or pinning it
+  // with "See what it reads") fades every entry it can't read.
+  const [hovered, setHovered] = useState<AgentAccess | null>(null)
+  const [pinned, setPinned] = useState<AgentAccess | null>(null)
+  const lens = hovered ?? pinned
 
   const load = useCallback(() => {
     getMyPerson()
@@ -101,7 +109,7 @@ export function PeopleMePage() {
     for (const g of grants) if (g.canopy.agent) m.set(g.canopy.agent, agentName(g))
     return m
   }, [grants])
-  const reads = useMemo(() => readsByEntry(audit, names), [audit, names])
+  const used = useMemo(() => readsByEntry(audit, names), [audit, names])
   const access = useMemo(() => activeAccess(grants), [grants])
   const past = useMemo(() => grants.filter((g) => g.status !== 'active'), [grants])
   const lastRead = useMemo(
@@ -225,15 +233,16 @@ export function PeopleMePage() {
   const conflicted = allFacts.filter((f) => f.status === 'conflicted')
   const settled = allFacts.filter((f) => f.status !== 'conflicted')
   const shown = settled.filter((f) => source === 'all' || sourceOf(f).mine === (source === 'you'))
-  const groups = groupFacts(shown).filter((g) => enabled || g.facts.length > 0)
+  const { orgs, personal } = groupByPlace(shown)
   const activity = audit.slice(0, activityShown)
 
   const factRow = (f: PersonFactDetail) => {
     const src = sourceOf(f)
-    const r: EntryReads | undefined = f.entry_id ? reads.get(f.entry_id) : undefined
+    const r: EntryReads | undefined = f.entry_id ? used.get(f.entry_id) : undefined
     const isEditing = editing?.id === f.id
+    const hidden = lens !== null && !reads(lens, f.workspace ?? null)
     return (
-      <li key={f.id} className="group relative py-2.5">
+      <li key={f.id} className={`group relative py-2.5 transition-opacity ${hidden ? 'opacity-25' : ''}`}>
         {isEditing ? (
           <form
             className="flex items-start gap-2"
@@ -288,6 +297,7 @@ export function PeopleMePage() {
             {src.mine ? '' : 'learned by '}
             {src.text}
           </span>
+          <span>{categoryLabel(f.category)}</span>
           {f.project ? <span>{f.project.title}</span> : null}
           {r ? (
             <span className="inline-flex items-center gap-1" title={`Read ${r.count}× · last ${new Date(r.last).toLocaleString()}`}>
@@ -359,27 +369,47 @@ export function PeopleMePage() {
             ]}
           />
         </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          {groups.map((g) => (
-            <div key={g.category} className="flex flex-col rounded-xl border border-border bg-card px-4 pt-3 pb-2">
-              <div className="flex items-baseline justify-between">
-                <h3 className="text-sm font-semibold text-foreground">{g.label}</h3>
-                <span className="text-xs text-muted-foreground">{g.facts.length || ''}</span>
-              </div>
-              {g.facts.length === 0 ? (
-                <p className="py-2.5 text-sm text-muted-foreground/70">Nothing yet.</p>
-              ) : (
-                <ul className="divide-y divide-border">{g.facts.map(factRow)}</ul>
-              )}
-              {enabled && g.category !== 'other' && <AddLine category={g.category} label={g.label} onAdd={onAdd} />}
+        {lens && (
+          <div className="sticky top-2 z-10 mt-3 flex items-center justify-between gap-2 rounded-lg bg-primary/15 px-3 py-2 text-xs text-primary backdrop-blur">
+            <span>Showing what {lens.name} can read. Everything faded is out of its reach.</span>
+            {pinned && (
+              <button className="font-medium hover:underline" onClick={() => setPinned(null)}>
+                Show everything
+              </button>
+            )}
+          </div>
+        )}
+        <div className="mt-4 space-y-4">
+          {orgs.map((o) => (
+            <div key={o.org} className="rounded-xl border border-border bg-card px-4 pt-3 pb-2">
+              <PlaceHeading
+                title={o.name}
+                note={o.places.length > 1 ? `${o.places.length} workspaces` : ''}
+                readers={access.filter((a) => o.places.some((p) => reads(a, p.workspace)))}
+              />
+              {o.places.map((p) => (
+                <div key={p.workspace} className="mt-2">
+                  {(o.places.length > 1 || p.name !== o.name) && (
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{p.name}</div>
+                  )}
+                  <ul className="divide-y divide-border">{p.facts.map(factRow)}</ul>
+                </div>
+              ))}
             </div>
           ))}
+          {(enabled || personal.facts.length > 0) && (
+            <PersonalCard
+              place={personal}
+              readers={access.filter((a) => reads(a, null))}
+              enabled={enabled}
+              onAdd={onAdd}
+              row={factRow}
+            />
+          )}
+          {orgs.length === 0 && personal.facts.length === 0 && !enabled && (
+            <p className="text-sm text-muted-foreground">Nothing is remembered about you.</p>
+          )}
         </div>
-        {enabled && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            What you add here is personal: agents read it only if you point them at your personal memory (Settings, below).
-          </p>
-        )}
       </section>
 
       {/* --- who can read it ----------------------------------------------------- */}
@@ -398,10 +428,14 @@ export function PeopleMePage() {
               const lastByThem = audit.find(
                 (e) => e.eventType === 'preference.read' && eventSentence(e, names).who === a.name,
               )
-              const cats = Array.from(new Set(a.grants.flatMap(grantCategories)))
               const reach = a.grants.map((g) => g.canopy.reach).find(Boolean)
               return (
-                <li key={a.key} className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
+                <li
+                  key={a.key}
+                  onMouseEnter={() => setHovered(a)}
+                  onMouseLeave={() => setHovered(null)}
+                  className={`flex flex-col gap-3 rounded-xl border bg-card p-4 transition-colors ${lens?.key === a.key ? 'border-primary/50' : 'border-border'}`}
+                >
                   <div className="flex items-start gap-3">
                     <Avatar name={a.name} />
                     <div className="min-w-0 flex-1">
@@ -418,16 +452,21 @@ export function PeopleMePage() {
                       {busyGrant === a.key ? 'Taking back…' : 'Take back'}
                     </button>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {cats.map((c) => (
-                      <span key={c} className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
-                        {c}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {reach ? `Reaches ${reach}. ` : ''}
-                    {lastByThem ? `Last read ${relTime(lastByThem.timestamp)}.` : 'Hasn’t read anything yet.'}
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span>
+                      {reach ? `Reaches ${reach}. ` : ''}
+                      {lastByThem ? `Last read ${relTime(lastByThem.timestamp)}.` : 'Hasn’t read anything yet.'}
+                    </span>
+                    <a
+                      href="#remembered"
+                      onClick={() => {
+                        setPinned(a)
+                        setHovered(null)
+                      }}
+                      className="text-primary hover:underline"
+                    >
+                      See what it reads
+                    </a>
                   </div>
                 </li>
               )
@@ -639,10 +678,61 @@ function Avatar({ name }: { name: string }) {
   )
 }
 
-/** "+ Add" at the foot of a category: opens into one line, saves on Enter. */
-function AddLine({ category, label, onAdd }: { category: string; label: string; onAdd: (c: string, t: string) => Promise<boolean> }) {
+/** A place's heading, with who can read what is in it — the line that answers
+ *  "who sees this?" right where the entries are. */
+function PlaceHeading({ title, note, readers, empty }: { title: string; note: string; readers: AgentAccess[]; empty?: string }) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+      <h3 className="text-sm font-semibold text-foreground">
+        {title}
+        {note ? <span className="ml-2 font-normal text-muted-foreground">{note}</span> : null}
+      </h3>
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <Eye className="h-3 w-3" />
+        {readers.length ? `Read by ${readers.map((a) => a.name).join(', ')}` : (empty ?? 'No agent reads this right now')}
+      </span>
+    </div>
+  )
+}
+
+/** Your personal entries: what you add yourself, in no workspace. No agent reads
+ *  them unless you point it at a collection that holds them (Settings). */
+function PersonalCard({
+  place,
+  readers,
+  enabled,
+  onAdd,
+  row,
+}: {
+  place: Place
+  readers: AgentAccess[]
+  enabled: boolean
+  onAdd: (c: string, t: string) => Promise<boolean>
+  row: (f: PersonFactDetail) => ReactNode
+}) {
+  return (
+    <div className="flex flex-col rounded-xl border border-dashed border-border px-4 pt-3 pb-2">
+      <PlaceHeading
+        title="Personal"
+        note="what you add yourself"
+        readers={readers}
+        empty="Only you — unless you point an agent at it in Settings"
+      />
+      {place.facts.length === 0 ? (
+        <p className="py-2.5 text-sm text-muted-foreground/70">Nothing yet.</p>
+      ) : (
+        <ul className="divide-y divide-border">{place.facts.map(row)}</ul>
+      )}
+      {enabled && <AddLine onAdd={onAdd} />}
+    </div>
+  )
+}
+
+/** "+ Add something" at the foot of Personal: opens into one line, saves on Enter. */
+function AddLine({ onAdd }: { onAdd: (c: string, t: string) => Promise<boolean> }) {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
+  const [category, setCategory] = useState<string>(MY_CATEGORIES[0].value)
   const [saving, setSaving] = useState(false)
   if (!open) {
     return (
@@ -650,7 +740,7 @@ function AddLine({ category, label, onAdd }: { category: string; label: string; 
         className="mt-auto inline-flex items-center gap-1 self-start rounded py-2 text-xs text-muted-foreground hover:text-primary"
         onClick={() => setOpen(true)}
       >
-        <Plus className="h-3.5 w-3.5" /> Add
+        <Plus className="h-3.5 w-3.5" /> Add something about yourself
       </button>
     )
   }
@@ -665,10 +755,22 @@ function AddLine({ category, label, onAdd }: { category: string; label: string; 
     setSaving(false)
   }
   return (
-    <form onSubmit={submit} className="mt-auto flex items-center gap-2 py-2">
+    <form onSubmit={submit} className="mt-auto flex flex-col gap-2 py-2 sm:flex-row sm:items-center">
+      <select
+        aria-label="What kind of thing"
+        value={category}
+        onChange={(e) => setCategory(e.target.value)}
+        className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
+      >
+        {MY_CATEGORIES.map((c) => (
+          <option key={c.value} value={c.value}>
+            {c.label}
+          </option>
+        ))}
+      </select>
       <input
         autoFocus
-        aria-label={`Add to ${label}`}
+        aria-label="Add something about yourself"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}

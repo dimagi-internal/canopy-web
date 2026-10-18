@@ -104,9 +104,16 @@ def people_me(request: HttpRequest) -> dict:
     if person is None:
         raise _not_found()
     facts = []
+    places: dict[str, dict] = {}
     for f in people.live_facts(person).select_related("asserted_by_agent", "asserted_by_user"):
         d = people.fact_dict(f)
         d["workspace"] = f.workspace_id
+        if f.workspace_id:
+            if f.workspace_id not in places:
+                org = hcp.root_of(f.workspace_id)
+                places[f.workspace_id] = {"workspace_name": hcp._display_name(f.workspace_id),
+                                          "org": org, "org_name": hcp._display_name(org)}
+            d.update(places[f.workspace_id])
         d["asserted_by"] = (f.asserted_by_agent.slug if f.asserted_by_agent_id
                             else (f.asserted_by_user.email if f.asserted_by_user_id else ""))
         d["source_turn_id"] = str(f.source_turn_id) if f.source_turn_id else None

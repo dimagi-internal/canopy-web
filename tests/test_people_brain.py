@@ -363,6 +363,9 @@ def test_me_shows_everything(world):
     assert me["id"] == person.pk and me["display_name"] == "Lilianna Bagnoli"
     assert [f["statement"] for f in me["facts"]] == ["Say KC."]
     assert me["facts"][0]["workspace"] == "connect"
+    # Where it lives, in names: this world has no tree, so the workspace is its own organisation.
+    assert {k: me["facts"][0][k] for k in ("workspace_name", "org", "org_name")} == {
+        "workspace_name": "Connect", "org": "connect", "org_name": "Connect"}
     assert "digests" not in me
     assert me["accesses"][0]["via"] == "envelope" and me["accesses"][0]["reader_agent"] == "ace"
 

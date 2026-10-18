@@ -1333,6 +1333,10 @@ def grant_dict(grant: PersonGrant) -> dict:
                    "workspace": grant.workspace_id, "modality": grant.modality,
                    # 4.1.5.1 Rule 3: the reach, in the words a person reads.
                    "reach": reach_label(grant_sources(grant)) if not grant.hcp_client_id else "",
+                   # The same reach as data: the workspaces it reads (null = your
+                   # personal entries), so a page can show WHICH entries it sees
+                   # without re-deriving the tree.
+                   "reaches": sorted(reach_of(grant), key=lambda s: (s is not None, s or "")),
                    # The person's memory collection it uses (None = the agent's default).
                    "collection": ({"id": grant.collection_id, "name": grant.collection.name}
                                   if grant.collection_id else None),

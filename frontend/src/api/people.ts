@@ -99,6 +99,8 @@ export interface HcpGrant {
     modality: string
     /** An agent's grant: the part of your memory it reaches, in words (HCP 4.1.5.1). */
     reach?: string
+    /** The same reach as data: the workspaces it reads, `null` = your personal entries. */
+    reaches?: (string | null)[]
     /** The memory collection it uses; null = the agent's default (its organisation). */
     collection?: { id: number; name: string } | null
     /** The OAuth client the grant was issued to, when it was one (HCP service). */

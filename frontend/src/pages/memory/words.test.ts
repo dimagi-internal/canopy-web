@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import type { HcpAuditEvent, HcpGrant } from '../../api/people'
-import { activeAccess, durationOf, eventSentence, placeOf, readsByEntry } from './words'
+import type { HcpAuditEvent, HcpGrant, PersonFactDetail } from '../../api/people'
+import { activeAccess, durationOf, eventSentence, groupByPlace, placeOf, reads, readsByEntry } from './words'
 
 const grant = (over: Partial<HcpGrant> & { channel?: string; agent?: string | null } = {}): HcpGrant => ({
   grantId: over.grantId ?? 'g1',
@@ -53,6 +53,18 @@ describe('memory words', () => {
     expect(durationOf(grant({ grantType: 'temporary', expiresAt: '2026-10-16T15:00:00Z' }), now)).toBe(
       'For one conversation · ends in 5 h',
     )
+  })
+
+  it('groups entries by organisation and workspace, and asks canopy who reads each', () => {
+    const fact = (id: number, workspace: string | null, org?: string) =>
+      ({ id, workspace, workspace_name: workspace ?? '', org: org ?? null, org_name: org ? 'Dimagi' : '' }) as unknown as PersonFactDetail
+    const { orgs, personal } = groupByPlace([fact(1, 'connect', 'dimagi'), fact(2, 'ace', 'dimagi'), fact(3, null), fact(4, 'connect', 'dimagi')])
+    expect(orgs.map((o) => [o.name, o.places.map((p) => [p.workspace, p.facts.length])])).toEqual([
+      ['Dimagi', [['connect', 2], ['ace', 1]]],
+    ])
+    expect(personal.facts.map((f) => f.id)).toEqual([3])
+    const [ace] = activeAccess([{ ...grant(), canopy: { ...grant().canopy, reaches: ['ace', 'connect', 'dimagi'] } }])
+    expect([reads(ace, 'connect'), reads(ace, null)]).toEqual([true, false])
   })
 
   it('turns audit events into sentences and counts reads per entry', () => {
