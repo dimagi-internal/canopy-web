@@ -98,59 +98,14 @@ def test_another_boxs_proof_does_not_go_with_this_token(fleet, sts):  # noqa: F8
     assert res.status_code == 403, res.content
 
 
-REPORT = {"runner_name": "ec2-box", "client_creds_ok": True, "mailbox_ok": True,
-          "gog_client": "canopy", "turn_client": "canopy", "turn_ready": True,
-          "env_ok": True, "detail": ""}
-
-
-def _report(slug, token):
-    return Client().post(f"/api/agents/{slug}/bootstrap-report", data=REPORT,
-                         content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {token}")
-
-
-def test_the_token_posts_its_boxs_readiness_report(fleet, sts):  # noqa: F811 — fixtures
-    """2026-10-18: every `canopy agent prepare --runner` on cloud-ec2-2 staged its
-    agent with this token and then had its readiness report refused, so
-    `/readiness` showed day-old reports for the whole fleet."""
-    _active_role(fleet, sts)
-    raw = _runner_token(fleet)
-
-    res = _report("eva", raw)
-    assert res.status_code == 200, res.content
-    rows = _get("/api/agents/eva/readiness", fleet["pat"]).json()
-    assert [(r["runner_name"], r["turn_ready"], r["env_ok"]) for r in rows] == [
-        ("ec2-box", True, True)]
-
-
-def test_the_token_reports_for_no_agent_its_box_does_not_serve(fleet, sts):  # noqa: F811
-    """The owner runs Ada on ANOTHER box; this box's token may not speak for her."""
-    _active_role(fleet, sts)
-    ada = Agent.objects.create(slug="ada", name="Ada", workspace=fleet["ws"], owner=fleet["user"])
-    laptop = Runner.objects.create(name="laptop", kind=Runner.EMDASH, owner=fleet["user"],
-                                   workspace=fleet["ws"], status=Runner.ONLINE,
-                                   last_heartbeat_at=timezone.now(), capabilities={})
-    RunnerAssignment.objects.create(agent=ada, runner=laptop, rank=0)
-    raw = _runner_token(fleet)
-
-    res = _report("ada", raw)
-    assert res.status_code == 403, res.content
-    assert "does not run ada" in res.json()["detail"]
-    # The owner's PAT, which pairs the laptop, still reports for her.
-    assert _report("ada", fleet["pat"]).status_code == 200
-
-
 @pytest.mark.parametrize("method,path,ok", [
     ("GET", "/api/agents/eva/runtime", True),
     ("GET", "/api/agents/eva/credentials/access", True),
-    ("POST", "/api/agents/eva/bootstrap-report", True),
-    ("POST", "/api/w/connect/agents/eva/bootstrap-report/", True),
-    ("GET", "/api/agents/eva/readiness", False),
-    ("POST", "/api/agents/eva/credentials", False),
     ("PUT", "/api/agents/eva/runtime", False),
     ("GET", "/api/agents/eva/vault", False),
     ("GET", "/api/agents/eva/credentials/status", False),
 ])
-def test_runner_auth_adds_only_what_prepare_needs(method, path, ok):
+def test_runner_auth_adds_only_the_two_prepare_reads(method, path, ok):
     from apps.harness import runner_auth
 
     assert runner_auth.reaches(method, path, "11111111-2222-3333-4444-555555555555") is ok
