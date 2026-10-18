@@ -24,6 +24,8 @@ import {
   type ChatSession,
 } from '@/api/chat'
 import { listRunners, type RunnerOut } from '@/api/harness'
+import { listAgents, type AgentOut } from '@/api/agents'
+import { NewChatMenu } from '@/components/chat/NewChatMenu'
 import { wsUrl } from '@/lib/wsUrl'
 import { ChatPage } from '@/pages/ChatPage'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
@@ -34,6 +36,7 @@ import {
   DEFAULT_FILTERS,
   NO_RUNNER,
   buildTree,
+  deleteConsequence,
   runnerKey,
   sessionMode,
   sessionState,
@@ -181,6 +184,7 @@ export function IdePage() {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initial.collapsed))
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [runners, setRunners] = useState<RunnerOut[]>([])
+  const [agents, setAgents] = useState<AgentOut[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => new Date())
@@ -238,6 +242,17 @@ export function IdePage() {
       window.removeEventListener('focus', onFocus)
     }
   }, [refresh])
+
+  // The agents "New session" offers; repos come from the runners' reports.
+  useEffect(() => {
+    let live = true
+    listAgents({ limit: 100 })
+      .then((page) => { if (live) setAgents(page.items) })
+      .catch(() => { /* repos alone still make a usable menu */ })
+    return () => {
+      live = false
+    }
+  }, [])
 
   useEffect(() => {
     const t = window.setInterval(() => setNow(new Date()), 30_000)
@@ -300,6 +315,11 @@ export function IdePage() {
 
   const tree = useMemo(() => buildTree(sessions, filters), [sessions, filters])
   const shown = useMemo(() => tree.flatMap((f) => f.sessions), [tree])
+  // Sessions the filters keep out of the tree. Said in the list itself, with a
+  // way back: a runner switched off weeks ago otherwise reads as "no sessions".
+  const filteredOut = sessions.filter((s) => filters.archived || s.status !== 'archived').length - shown.length
+  const showAll = () =>
+    setFilters((f) => ({ ...DEFAULT_FILTERS, archived: f.archived }))
   // The agent panel's close review reads what is on screen, as you.
   useCloseReview(shown, state)
   const totals = useMemo(() => {
@@ -403,9 +423,8 @@ export function IdePage() {
           setNote({ text: `Unarchived “${label(s)}”`, error: false })
           break
         case 'close': {
-          const where = s.runner_name ? ` This deletes its emdash task on ${s.runner_name}.` : ''
           const working = s.running ? ' It is still working.' : ''
-          if (!window.confirm(`Delete “${label(s)}”?${working}${where}`)) return
+          if (!window.confirm(`Delete “${label(s)}”?${working} ${deleteConsequence(s)}`)) return
           const r = await closeSession(s.id)
           const message = closeResultMessage(r, s)
           if (message) {
@@ -476,9 +495,20 @@ export function IdePage() {
             capped
           </span>
         )}
+        <NewChatMenu
+          agents={agents}
+          runners={runners}
+          label="New session"
+          className="ml-auto h-6 shrink-0 px-1.5 text-[12px]"
+          onError={(message) => setNote({ text: message, error: true })}
+          onCreated={(s) => {
+            void refresh()
+            navigate(`/ide/${s.id}`)
+          }}
+        />
         <span
           aria-label={live ? 'live' : 'polling'}
-          className={clsx('ml-auto shrink-0 text-[11px]', live ? 'text-success' : 'text-muted-foreground')}
+          className={clsx('shrink-0 text-[11px]', live ? 'text-success' : 'text-muted-foreground')}
           title={live ? 'Updates as runners report' : `Live updates unavailable — polling every ${POLL_MS / 1000}s`}
         >
           {live ? '●' : '○'}
@@ -689,6 +719,14 @@ export function IdePage() {
               </div>
             )
           })}
+          {filteredOut > 0 && (
+            <p className="px-3 py-2 text-[11px] text-muted-foreground" data-testid="ide-filtered-out">
+              {filteredOut} {filteredOut === 1 ? 'session' : 'sessions'} hidden by filters ·{' '}
+              <button type="button" onClick={showAll} className="underline hover:text-foreground" data-testid="ide-show-all">
+                Show all
+              </button>
+            </p>
+          )}
         </div>
       </WorkbenchRail>
       <div

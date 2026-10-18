@@ -15390,6 +15390,11 @@ export interface components {
              * @default
              */
             readonly close_error: string;
+            /**
+             * Runner Reported
+             * @default false
+             */
+            readonly runner_reported: boolean;
             /** Close Error At */
             readonly close_error_at?: string | null;
             /**
@@ -25856,6 +25861,11 @@ export interface components {
              * @default
              */
             readonly close_error: string;
+            /**
+             * Runner Reported
+             * @default false
+             */
+            readonly runner_reported: boolean;
             /** Close Error At */
             readonly close_error_at?: string | null;
             /**

@@ -3,6 +3,7 @@ import {
   DEFAULT_FILTERS,
   NO_RUNNER,
   buildTree,
+  deleteConsequence,
   folderKey,
   matches,
   sessionMode,
@@ -107,5 +108,17 @@ describe('shortAge', () => {
     expect(shortAge('2026-10-16T11:48:00Z', now)).toBe('12m')
     expect(shortAge('2026-10-16T09:00:00Z', now)).toBe('3h')
     expect(shortAge('2026-10-14T12:00:00Z', now)).toBe('2d')
+  })
+})
+
+describe('deleteConsequence', () => {
+  it('names an emdash task only when a runner reports one', () => {
+    expect(deleteConsequence(s({ runner_name: 'acedimagi-mbp-cdp', runner_reported: true }))).toBe(
+      'Deletes its emdash task on acedimagi-mbp-cdp.',
+    )
+    expect(deleteConsequence(s({ runner_name: 'cloud-ec2-2', runner_reported: false }))).toBe(
+      'Cancels its turns on cloud-ec2-2 and archives it.',
+    )
+    expect(deleteConsequence(s({}))).toBe('Archives it (it has nothing on a runner).')
   })
 })
