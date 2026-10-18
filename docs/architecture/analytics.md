@@ -42,8 +42,10 @@ Sessions streamed before runners sent usage hold the rows but not the tokens.
 `manage.py request_usage_backfill [--days 90]` asks each bound session's box to
 re-ship its transcript (the ordinary backfill both runners drain);
 `persist_transcript_rows` adds the usage to rows it already holds (`_fill_usage`)
-and credits it. Safe to repeat. Needs the boxes on the runner code that sends
-usage (Health → Runners → Code: current).
+and credits it. Safe to repeat. It asks only sessions whose box runs current code
+(a backfill is answered once, and older code would answer without usage), and
+reports the boxes it is waiting for — re-run it as they update (Health → Runners
+→ Code).
 
 ## Shipping a change to the shared transcript core
 
