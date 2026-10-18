@@ -136,6 +136,9 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
     for r in rows:
         per_ws[r["workspace"]] = per_ws.get(r["workspace"], 0) + 1
     states = [r["vault"]["state"] for r in rows]
+    from apps.harness import topology
+
+    runners = topology.build(root, visible)["runners"]
     return {
         "root": root.slug,
         "workspaces": [{
@@ -143,6 +146,7 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
             "agents": per_ws.get(ws.slug, 0), "shared_vault": _shared_vault(ws),
         } for ws, depth in tree],
         "agents": rows,
+        "runners": runners,
         "totals": {
             "agents": len(rows),
             "set_up": sum(1 for r in rows if not r["left"]),
@@ -151,5 +155,7 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
             "vault_moving": states.count("moving"),
             "vault_1password": states.count("1password"),
             "vault_none": states.count("none"),
+            "runners": len(runners),
+            "runners_online": sum(1 for r in runners if r["status"] == "online"),
         },
     }

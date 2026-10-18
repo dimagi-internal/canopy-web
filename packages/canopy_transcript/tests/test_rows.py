@@ -357,6 +357,6 @@ def test_an_assistant_records_usage_rides_its_first_row_once():
     assert [("usage" in r["content"]) for r in rows] == [True, False]
     assert rows[0]["content"]["usage"] == {
         "message_id": "msg_1", "model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 40,
-        "cache_read_tokens": 900, "cache_creation_tokens": 12}
+        "cache_read_tokens": 900, "cache_creation_tokens": 12, "at": ""}
     synthetic = {"type": "assistant", "message": {"model": "<synthetic>", "usage": usage, "content": "x"}}
     assert record_usage(synthetic) == {} and record_usage({"type": "user", "message": {}}) == {}

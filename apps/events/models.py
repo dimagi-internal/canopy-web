@@ -223,6 +223,10 @@ class Activity(models.Model):
     agent_slug = models.CharField(max_length=64, blank=True, default="")
     """Kept beside the FK so the fact still names the agent after it is deleted."""
 
+    project = models.CharField(max_length=100, blank=True, default="")
+    """The repository, for work that is not an agent's: a repo turn, or a person's
+    own session in a repo (`activity.repo_of`). Blank for agent work."""
+
     surface = models.CharField(max_length=32, blank=True, default="")
     """Where it arrived from: `ui`, `mcp`, `cli`, `slack`, `email`, `scheduler`, …"""
 
@@ -247,8 +251,8 @@ class Activity(models.Model):
 
 
 class TurnUsage(models.Model):
-    """Tokens and cost one turn spent, from the `result` record(s) of its uploaded
-    `claude -p` transcript (`apps/events/usage.py`).
+    """Tokens one turn (or one typed message's answer) spent, from whichever record
+    of its model calls exists (`apps/events/usage.py`).
 
     Its own row, not columns on `Turn`, and not cascaded from the transcript:
     retention purges transcripts, and this is the part of them analytics needs to
@@ -266,6 +270,8 @@ class TurnUsage(models.Model):
         "agents.Agent", on_delete=models.SET_NULL, null=True, blank=True, related_name="turn_usage",
     )
     agent_slug = models.CharField(max_length=64, blank=True, default="")
+    project = models.CharField(max_length=100, blank=True, default="")
+    """The repository, for work that is not an agent's (`activity.repo_of`)."""
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="turn_usage",
@@ -280,7 +286,6 @@ class TurnUsage(models.Model):
     output_tokens = models.BigIntegerField(default=0)
     cache_read_tokens = models.BigIntegerField(default=0)
     cache_creation_tokens = models.BigIntegerField(default=0)
-    cost_usd = models.DecimalField(max_digits=12, decimal_places=6, default=0)
     runs = models.PositiveIntegerField(default=0)
     """How many `result` records were summed — a turn that failed over down the
     credential cascade runs `claude -p` more than once."""

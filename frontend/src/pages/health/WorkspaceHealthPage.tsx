@@ -53,7 +53,7 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <section aria-label="Summary" className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+      <section aria-label="Summary" className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
         <Tile label="Agents" value={t.agents} />
         <Tile label="Fully set up" value={t.set_up} />
         <Tile label="With steps left" value={t.needs_setup} />
@@ -61,6 +61,7 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
         <Tile label="Moving" value={t.vault_moving} hint="some secrets elsewhere" />
         <Tile label="On 1Password" value={t.vault_1password} />
         <Tile label="No secrets" value={t.vault_none} />
+        <Tile label="Runners online" value={t.runners_online} hint={`of ${t.runners}`} />
       </section>
 
       <section aria-label="Workspaces">
@@ -185,6 +186,8 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
           {rows.length === 0 && <p className="py-3 text-[12px] text-muted-foreground">No agents match.</p>}
         </div>
       </section>
+
+      <Runners runners={health.runners} workspace={health.root} />
     </div>
   )
 }
@@ -197,6 +200,65 @@ export function whoCanUse(a: Pick<AgentHealthOut, 'has_interface' | 'capabilitie
   if (a.full_access.length) parts.push(`full: ${a.full_access.length} rule${a.full_access.length === 1 ? '' : 's'}`)
   if (a.capabilities) parts.push(`${a.capabilities} capabilit${a.capabilities === 1 ? 'y' : 'ies'}`)
   return `Admins + ${parts.join(' · ')}`
+}
+
+type RunnerRow = WorkspaceHealthOut['runners'][number]
+
+/** The runners the tree's agents route to or that live in it — the runner
+ *  topology's own rows, so the map, the Runners table and this agree. Facts and
+ *  states only: what it reports, never a verdict. */
+function Runners({ runners, workspace }: { runners: readonly RunnerRow[]; workspace: string }): JSX.Element {
+  const now = new Date()
+  return (
+    <section aria-label="Runners" className="overflow-x-auto">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h2 className="text-[13px] font-semibold text-foreground">Runners</h2>
+        <Link to={`/w/${workspace}/settings/topology/runners`} className="text-[12px] text-primary hover:underline">
+          Routing and drills
+        </Link>
+      </div>
+      <table className="w-full min-w-[900px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-runners">
+        <thead className="text-left text-muted-foreground">
+          <tr><th className="py-1 font-medium">Runner</th><th className="font-medium">Kind</th><th className="font-medium">Owner</th>
+            <th className="font-medium">Status</th><th className="font-medium" title="Running the code the deployed server expects">Code</th>
+            <th className="font-medium">Its own checks</th><th className="font-medium text-right">Agents</th>
+            <th className="font-medium">Last heartbeat</th></tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {runners.map((r) => (
+            <tr key={r.id} data-runner={r.name}>
+              <td className="py-1.5">
+                <span className="font-mono text-foreground">{r.name}</span>
+                {!r.in_tree && <span className="ml-1 text-muted-foreground" title="Homed outside this tree">· elsewhere</span>}
+              </td>
+              <td className="text-foreground-secondary">{r.kind}</td>
+              <td className="text-foreground-secondary">{r.owner_email || '—'}</td>
+              <td className="whitespace-nowrap">
+                <span className={clsx(r.status === 'online' ? 'text-success' : r.status === 'degraded' ? 'text-warning' : 'text-muted-foreground')}>
+                  {r.status}
+                </span>
+                {r.paused && <span className="text-muted-foreground"> · paused</span>}
+                {!r.ready && r.ready_note && <span className="text-muted-foreground" title={r.ready_note}> · not ready</span>}
+              </td>
+              <td className="whitespace-nowrap text-foreground-secondary">
+                {r.code_current === true ? 'current' : r.code_current === false ? <span className="text-warning">update pending</span> : 'unknown'}
+              </td>
+              <td className="text-foreground-secondary">
+                {r.problems.length === 0 ? 'all ok' : r.problems.map((p) => (
+                  <span key={p.name} title={p.detail} className={clsx('mr-2', p.status === 'fail' ? 'text-destructive' : 'text-warning')}>
+                    {p.name}
+                  </span>
+                ))}
+              </td>
+              <td className="text-right tabular-nums">{r.agent_count}</td>
+              <td className="text-foreground-secondary">{r.last_heartbeat_at ? relativeTime(r.last_heartbeat_at, now) : 'never'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {runners.length === 0 && <p className="py-3 text-[12px] text-muted-foreground">No runner serves this tree.</p>}
+    </section>
+  )
 }
 
 /** A count that opens the agent's page for it; a zero is just a zero. The click

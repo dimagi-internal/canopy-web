@@ -223,12 +223,15 @@ Every browser-facing address canopy-web serves. The SPA route table is
   capabilities its interface publishes) and its turn mode; open sessions and
   last session activity (`staleness.active`, `services.with_activity`) with its
   latest sessions the viewer may open (`access.readable_sessions`); every
-  workspace's shared vault.
+  workspace's shared vault; the runners its agents route to or that live in it
+  (the topology's rows: status, whether it runs current code, its own failing
+  checks, how many agents it serves).
   An agent's row opens its steps — linked when the viewer is its owner or an admin
   (`can_fix`), else an email to the owner listing what is left. Renders, never decides.
 - **`/analytics`** — the second tab of Health (same gate). Turns, how they ended,
-  chats, messages, active people, tokens and cost per UTC day over 7/30/90 days,
-  where turns came from, per-agent and per-person tables
+  chats, messages, active people, tokens (cache reads apart) per UTC day over
+  7/30/90 days, where turns came from, and one table each for agents,
+  repositories (work no agent ran) and people — no cost
   (`GET /api/workspaces/{slug}/analytics`, `apps/events/analytics.py`) —
   see `docs/architecture/analytics.md`.
 - **`/shareouts`** (+ `/:period`, a permalink to one briefing) — dated

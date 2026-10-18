@@ -7,7 +7,7 @@ import { DailyBars } from './DailyBars'
 import { AdminOnly, HealthViews } from './HealthViews'
 import { useTreeRead } from './useTreeRead'
 
-// WORKSPACE ANALYTICS: turns, chats, messages, tokens, cost and people over time,
+// WORKSPACE ANALYTICS: turns, chats, messages, tokens and people over time,
 // across this workspace and (by default) every one below it. Every number comes
 // from the server's analytics fact log (`GET /api/workspaces/{slug}/analytics`),
 // which retention does not purge — so a number here does not drop when old
@@ -48,11 +48,9 @@ export function WorkspaceAnalyticsPage(): JSX.Element {
 }
 
 const compact = (n: number) => Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(n)
-const usd = (n: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
   const t = a.totals
-  const now = new Date()
   const days = a.series
   return (
     <div className="space-y-6">
@@ -62,12 +60,11 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         <Stat label="Messages sent" value={compact(t.messages)} />
         <Stat label="Active people" value={compact(t.active_users)} />
         <Stat label="Active agents" value={compact(t.active_agents)} />
-        <Stat label="Input tokens" value={compact(t.input_tokens)}
-              hint={`${compact(t.cache_read_tokens)} more read from cache`} />
-        <Stat label="Output tokens" value={compact(t.output_tokens)}
-              hint={t.turns ? `from ${t.turns_with_usage} of ${t.turns} turns` : undefined} />
-        <Stat label="Reported cost" value={usd(t.cost_usd)}
-              hint={t.turns ? `from ${t.turns_with_cost} of ${t.turns} turns` : undefined} />
+        <Stat label="Active repositories" value={compact(t.active_repositories)} hint="work no agent ran" />
+        <Stat label="Tokens read from cache" value={compact(t.cache_read_tokens)}
+              hint={`${compact(t.cache_creation_tokens)} written to cache`} />
+        <Stat label="Input · output tokens" value={`${compact(t.input_tokens)} · ${compact(t.output_tokens)}`}
+              hint={t.turns_with_usage ? `from ${compact(t.turns_with_usage)} turns and answers` : 'none reported yet'} />
       </section>
 
       <section aria-label="Over time" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -80,11 +77,12 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         ]} />
         <DailyBars title="Messages sent" days={days} layers={[{ key: 'messages', label: 'Messages', className: 'fill-primary' }]} />
         <DailyBars title="Active people" days={days} rangeTotal={t.active_users} layers={[{ key: 'active_users', label: 'People', className: 'fill-primary' }]} />
-        <DailyBars title="Tokens (input + output)" days={days} format={compact} layers={[
+        <DailyBars title="Tokens read from cache" days={days} format={compact}
+                   layers={[{ key: 'cache_read_tokens', label: 'From cache', className: 'fill-primary' }]} />
+        <DailyBars title="Input and output tokens" days={days} format={compact} layers={[
           { key: 'input_tokens', label: 'Input', className: 'fill-primary' },
           { key: 'output_tokens', label: 'Output', className: 'fill-muted-foreground' },
         ]} />
-        <DailyBars title="Reported cost" days={days} format={usd} layers={[{ key: 'cost_usd', label: 'Cost', className: 'fill-primary' }]} />
       </section>
 
       <section aria-label="Where turns came from">
@@ -99,35 +97,18 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         </div>
       </section>
 
-      <section aria-label="Agents" className="overflow-x-auto">
-        <h2 className="mb-2 text-[13px] font-semibold text-foreground">Agents</h2>
-        <table className="w-full min-w-[720px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="analytics-agents">
-          <thead className="text-left text-muted-foreground">
-            <tr><th className="py-1 font-medium">Agent</th><NumHead>Turns</NumHead><NumHead>Failed or lost</NumHead><NumHead>Chats</NumHead>
-              <NumHead>Messages</NumHead><NumHead>People</NumHead><NumHead>Input</NumHead><NumHead>Output</NumHead><NumHead>Reported cost</NumHead>
-              <th className="font-medium">Last activity</th></tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {a.agents.map((r) => (
-              <tr key={r.agent}>
-                <td className="py-1.5 font-mono text-foreground">{r.agent}</td>
-                <Num>{r.turns}</Num><Num>{r.failed}</Num><Num>{r.sessions}</Num><Num>{r.messages}</Num>
-                <Num>{r.people}</Num><Num>{compact(r.input_tokens)}</Num><Num>{compact(r.output_tokens)}</Num>
-                <Num>{usd(r.cost_usd)}</Num>
-                <td className="text-foreground-secondary">{r.last_at ? relativeTime(r.last_at, now) : '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+      <Breakdown title="Agents" column="Agent" testid="analytics-agents" rows={a.agents.map((r) => ({ name: r.agent, row: r }))} />
+      <Breakdown title="Repositories" column="Repository" testid="analytics-repositories" empty="No work outside agents in this range."
+                 note="Work no agent ran: repo turns, and people’s own Claude Code sessions in a repository."
+                 rows={a.repositories.map((r) => ({ name: r.repository, row: r }))} />
 
       <section aria-label="People" className="overflow-x-auto">
         <h2 className="mb-2 text-[13px] font-semibold text-foreground">People</h2>
-        <table className="w-full min-w-[820px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="analytics-people">
+        <table className="w-full min-w-[920px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="analytics-people">
           <thead className="text-left text-muted-foreground">
             <tr><th className="py-1 font-medium">Person</th><NumHead>Active days</NumHead><NumHead>Messages</NumHead><NumHead>Turns</NumHead>
-              <NumHead>Chats</NumHead><NumHead>Settings changed</NumHead><NumHead>MCP calls</NumHead><NumHead>Agents</NumHead>
-              <th className="font-medium">Uses most</th><NumHead>Tokens</NumHead><NumHead>Reported cost</NumHead>
+              <NumHead>Chats</NumHead><NumHead>Settings changed</NumHead><NumHead>MCP calls</NumHead>
+              <th className="font-medium">Works with most</th><NumHead>From cache</NumHead><NumHead>Input · output</NumHead>
               <th className="font-medium">Last active</th></tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -135,10 +116,11 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
               <tr key={u.user_id}>
                 <td className="py-1.5 text-foreground">{u.email}</td>
                 <Num>{u.active_days}</Num><Num>{u.messages}</Num><Num>{u.turns}</Num><Num>{u.sessions}</Num>
-                <Num>{u.settings}</Num><Num>{u.mcp_calls}</Num><Num>{u.agents}</Num>
-                <td className="font-mono text-foreground-secondary">{u.top_agents.join(', ') || '—'}</td>
-                <Num>{compact(u.input_tokens + u.output_tokens)}</Num><Num>{usd(u.cost_usd)}</Num>
-                <td className="text-foreground-secondary">{u.last_at ? relativeTime(u.last_at, now) : '—'}</td>
+                <Num>{u.settings}</Num><Num>{u.mcp_calls}</Num>
+                <td className="font-mono text-foreground-secondary">{u.top.join(', ') || '—'}</td>
+                <Num>{compact(u.cache_read_tokens)}</Num>
+                <Num>{compact(u.input_tokens)} · {compact(u.output_tokens)}</Num>
+                <td className="text-foreground-secondary">{u.last_at ? relativeTime(u.last_at, new Date()) : '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -146,6 +128,47 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         {a.users.length === 0 && <p className="py-3 text-[12px] text-muted-foreground">Nobody did anything here in this range.</p>}
       </section>
     </div>
+  )
+}
+
+type BreakdownRow = WorkspaceAnalyticsOut['agents'][number] | WorkspaceAnalyticsOut['repositories'][number]
+
+/** One breakdown table — agents and repositories show the same figures
+ *  (`analytics._breakdown` on the server). */
+function Breakdown({ title, column, testid, rows, note, empty }: {
+  title: string
+  column: string
+  testid: string
+  rows: { name: string; row: BreakdownRow }[]
+  note?: string
+  empty?: string
+}): JSX.Element {
+  const now = new Date()
+  return (
+    <section aria-label={title} className="overflow-x-auto">
+      <h2 className="text-[13px] font-semibold text-foreground">{title}</h2>
+      {note && <p className="text-[11px] text-muted-foreground">{note}</p>}
+      <table className="mt-2 w-full min-w-[820px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid={testid}>
+        <thead className="text-left text-muted-foreground">
+          <tr><th className="py-1 font-medium">{column}</th>
+            <NumHead>Turns</NumHead><NumHead>Failed or lost</NumHead><NumHead>Chats</NumHead>
+            <NumHead>Messages</NumHead><NumHead>People</NumHead><NumHead>From cache</NumHead>
+            <NumHead>Input · output</NumHead><th className="font-medium">Last activity</th></tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {rows.map(({ name, row: r }) => (
+            <tr key={name}>
+              <td className="py-1.5 font-mono text-foreground">{name}</td>
+              <Num>{r.turns}</Num><Num>{r.failed}</Num><Num>{r.sessions}</Num><Num>{r.messages}</Num>
+              <Num>{r.people}</Num><Num>{compact(r.cache_read_tokens)}</Num>
+              <Num>{compact(r.input_tokens)} · {compact(r.output_tokens)}</Num>
+              <td className="text-foreground-secondary">{r.last_at ? relativeTime(r.last_at, now) : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length === 0 && empty && <p className="py-3 text-[12px] text-muted-foreground">{empty}</p>}
+    </section>
   )
 }
 

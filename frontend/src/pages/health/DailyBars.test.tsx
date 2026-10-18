@@ -9,7 +9,7 @@ afterEach(() => cleanup())
 
 const day = (d: string, turns: number, people: number): AnalyticsDayOut => ({
   day: d, turns, sessions: 0, messages: 0, active_users: people, done: 0, failed: 0, lost: 0, cancelled: 0,
-  input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cost_usd: 0,
+  input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
 })
 const DAYS = [day('2026-10-16', 4, 2), day('2026-10-17', 3, 2), day('2026-10-18', 0, 0)]
 

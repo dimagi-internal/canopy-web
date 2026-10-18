@@ -5,31 +5,24 @@ Those two tables are the whole input on purpose: they are append-only, indexed b
 change when a transcript is purged or an event is pruned. Anything worth counting
 is emitted as a fact first (`activity.emit`), then shows up here for free.
 
-Days are UTC calendar days.
+Three breakdowns share one aggregation (`_breakdown`): by agent, by repository
+(work no agent runs — a repo turn, a person's own session in a repo), and by
+person. Days are UTC calendar days.
 """
 from __future__ import annotations
 
 import datetime as dt
-from decimal import Decimal
 
-from django.db.models import Count, Max, Q, Sum
+from django.db.models import Case, Count, F, Max, Q, Sum, When
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from . import activity
 from .models import Activity, TurnUsage
 
-_TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
-
-
-def _usage_sums(qs) -> dict:
-    agg = qs.aggregate(**{f: Sum(f) for f in _TOKEN_FIELDS}, cost=Sum("cost_usd"), turns=Count("id"),
-                       costed=Count("id", filter=Q(runs__gt=0)))
-    out = {f: int(agg[f] or 0) for f in _TOKEN_FIELDS}
-    out["cost_usd"] = float(agg["cost"] or Decimal(0))
-    out["turns_with_usage"] = agg["turns"] or 0
-    out["turns_with_cost"] = agg["costed"] or 0
-    return out
+_TOKENS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+_EMPTY = {"turns": 0, "failed": 0, "sessions": 0, "messages": 0, "settings": 0, "mcp_calls": 0,
+          "people": 0, "last_at": None, "active_days": 0}
 
 
 def window(days: int, now=None) -> tuple[int, dt.date, dt.datetime]:
@@ -54,6 +47,44 @@ def agent_turns(agent_slugs: list[str], *, days: int = 30, now=None) -> dict[str
     return out
 
 
+def _tokens(qs, group: str | None = None) -> dict:
+    """{group value: token sums}, or the one total when `group` is None."""
+    sums = {f: Sum(f) for f in _TOKENS}
+    if group is None:
+        agg = qs.aggregate(**sums, turns=Count("id"))
+        return {**{f: int(agg[f] or 0) for f in _TOKENS}, "turns_with_usage": agg["turns"] or 0}
+    return {row[group]: {f: int(row[f] or 0) for f in _TOKENS} for row in qs.values(group).annotate(**sums)}
+
+
+def _breakdown(facts, usage, field: str, usage_field: str | None = None) -> dict:
+    """{value of `field` (agent_slug, project, actor_id): turns, failed or lost,
+    chats, messages, settings changed, MCP calls, people, active days, last
+    activity, and its tokens}. The ONE aggregation behind every table."""
+    rows: dict = {}
+    for row in facts.values(field).annotate(
+            turns=Count("id", filter=Q(kind=activity.TURN_ENQUEUED)),
+            failed=Count("id", filter=Q(kind=activity.TURN_FINISHED, meta__status__in=["failed", "lost"])),
+            sessions=Count("id", filter=Q(kind=activity.CHAT_SESSION_CREATED)),
+            messages=Count("id", filter=Q(kind=activity.CHAT_MESSAGE)),
+            settings=Count("id", filter=Q(kind=activity.SETTING_CHANGED)),
+            mcp_calls=Count("id", filter=Q(kind=activity.MCP_CALL)),
+            people=Count("actor", filter=Q(actor_kind=Activity.USER), distinct=True),
+            last_at=Max("at")):
+        key = row.pop(field)
+        rows[key] = {**_EMPTY, **row, **{f: 0 for f in _TOKENS}}
+    for key, n in (facts.annotate(day=TruncDate("at")).values(field)
+                   .annotate(n=Count("day", distinct=True)).values_list(field, "n")):
+        if key in rows:
+            rows[key]["active_days"] = n
+    for key, sums in _tokens(usage, usage_field or field).items():
+        rows.setdefault(key, {**_EMPTY, **{f: 0 for f in _TOKENS}}).update(sums)
+    return rows
+
+
+def _heaviest_first(row: dict):
+    return (-(row["input_tokens"] + row["output_tokens"] + row["cache_read_tokens"]), -row["turns"])
+
+
 def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
     days, start_day, since = window(days, now)
     facts = Activity.objects.filter(workspace_id__in=workspace_slugs, at__gte=since).order_by()
@@ -64,7 +95,7 @@ def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
     series = {start_day + dt.timedelta(days=i): {
         "turns": 0, "sessions": 0, "messages": 0, "active_users": 0,
         "done": 0, "failed": 0, "lost": 0, "cancelled": 0,
-        "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cost_usd": 0.0,
+        "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
     } for i in range(days)}
     count_kinds = {activity.TURN_ENQUEUED: "turns", activity.CHAT_SESSION_CREATED: "sessions",
                    activity.CHAT_MESSAGE: "messages"}
@@ -81,82 +112,49 @@ def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
                 .annotate(n=Count("actor", distinct=True))):
         if row["day"] in series:
             series[row["day"]]["active_users"] = row["n"]
-    for row in (usage.annotate(day=TruncDate("at")).values("day")
-                .annotate(i=Sum("input_tokens"), o=Sum("output_tokens"), c=Sum("cache_read_tokens"),
-                          cost=Sum("cost_usd"))):
-        if row["day"] in series:
-            series[row["day"]].update(input_tokens=int(row["i"] or 0), output_tokens=int(row["o"] or 0),
-                                      cache_read_tokens=int(row["c"] or 0),
-                                      cost_usd=float(row["cost"] or 0))
+    for day, sums in _tokens(usage.annotate(day=TruncDate("at")), "day").items():
+        if day in series:
+            series[day].update(input_tokens=sums["input_tokens"], output_tokens=sums["output_tokens"],
+                               cache_read_tokens=sums["cache_read_tokens"])
 
-    # ---- per agent --------------------------------------------------------------
-    agents: dict[str, dict] = {}
-
-    def _agent(slug: str) -> dict:
-        return agents.setdefault(slug, {"agent": slug, "turns": 0, "messages": 0, "sessions": 0,
-                                        "failed": 0, "people": 0, "input_tokens": 0,
-                                        "output_tokens": 0, "cost_usd": 0.0, "last_at": None})
-
-    for row in (facts.exclude(agent_slug="").values("agent_slug").annotate(
-            turns=Count("id", filter=Q(kind=activity.TURN_ENQUEUED)),
-            messages=Count("id", filter=Q(kind=activity.CHAT_MESSAGE)),
-            sessions=Count("id", filter=Q(kind=activity.CHAT_SESSION_CREATED)),
-            failed=Count("id", filter=Q(kind=activity.TURN_FINISHED, meta__status__in=["failed", "lost"])),
-            people=Count("actor", filter=Q(actor_kind=Activity.USER), distinct=True),
-            last_at=Max("at"))):
-        a = _agent(row.pop("agent_slug"))
-        a.update(row)
-    for row in (usage.exclude(agent_slug="").values("agent_slug").annotate(
-            i=Sum("input_tokens"), o=Sum("output_tokens"), cost=Sum("cost_usd"))):
-        _agent(row["agent_slug"]).update(input_tokens=int(row["i"] or 0), output_tokens=int(row["o"] or 0),
-                                         cost_usd=float(row["cost"] or 0))
-
-    # ---- per person -------------------------------------------------------------
-    users: dict[int, dict] = {}
-    for row in (people.values("actor_id", "actor__email").annotate(
-            messages=Count("id", filter=Q(kind=activity.CHAT_MESSAGE)),
-            turns=Count("id", filter=Q(kind=activity.TURN_ENQUEUED)),
-            sessions=Count("id", filter=Q(kind=activity.CHAT_SESSION_CREATED)),
-            settings=Count("id", filter=Q(kind=activity.SETTING_CHANGED)),
-            mcp_calls=Count("id", filter=Q(kind=activity.MCP_CALL)),
-            agents=Count("agent_slug", filter=~Q(agent_slug=""), distinct=True),
-            last_at=Max("at"))):
-        uid = row.pop("actor_id")
-        users[uid] = {"user_id": uid, "email": row.pop("actor__email") or "", **row,
-                      "active_days": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0,
-                      "top_agents": []}
-    for row in (people.annotate(day=TruncDate("at")).values("actor_id")
-                .annotate(n=Count("day", distinct=True))):
-        if row["actor_id"] in users:
-            users[row["actor_id"]]["active_days"] = row["n"]
-    for row in (people.exclude(agent_slug="").values("actor_id", "agent_slug")
-                .annotate(n=Count("id")).order_by("actor_id", "-n")):
-        u = users.get(row["actor_id"])
-        if u is not None and len(u["top_agents"]) < 3:
-            u["top_agents"].append(row["agent_slug"])
-    for row in (usage.filter(user__isnull=False).values("user_id").annotate(
-            i=Sum("input_tokens"), o=Sum("output_tokens"), cost=Sum("cost_usd"))):
-        if row["user_id"] in users:
-            users[row["user_id"]].update(input_tokens=int(row["i"] or 0), output_tokens=int(row["o"] or 0),
-                                         cost_usd=float(row["cost"] or 0))
+    # ---- breakdowns ---------------------------------------------------------------
+    agents = sorted(({"agent": k, **v} for k, v in _breakdown(
+        facts.exclude(agent_slug=""), usage.exclude(agent_slug=""), "agent_slug").items()),
+        key=_heaviest_first)
+    repos = sorted(({"repository": k, **v} for k, v in _breakdown(
+        facts.exclude(project=""), usage.exclude(project=""), "project").items()),
+        key=_heaviest_first)
+    emails = dict(people.values_list("actor_id", "actor__email").distinct())
+    # What each person worked WITH most: an agent, else a repository.
+    worked_with = Case(When(~Q(agent_slug=""), then=F("agent_slug")), default=F("project"))
+    top: dict[int, list] = {}
+    for uid, where in (people.annotate(where=worked_with).exclude(where="").values("actor_id", "where")
+                       .annotate(n=Count("id")).order_by("actor_id", "-n").values_list("actor_id", "where")):
+        if len(top.setdefault(uid, [])) < 3:
+            top[uid].append(where)
+    users = sorted(({"user_id": uid, "email": emails[uid], "top": top.get(uid, []), **v}
+                    for uid, v in _breakdown(people, usage.filter(user__isnull=False), "actor_id",
+                                             usage_field="user_id").items() if uid in emails),
+                   key=_heaviest_first)
 
     surfaces = {row["surface"] or "other": row["n"] for row in (
         facts.filter(kind=activity.TURN_ENQUEUED).values("surface").annotate(n=Count("id")))}
-    turn_count = facts.filter(kind=activity.TURN_ENQUEUED).count()
     return {
         "days": days,
         "since": since,
         "workspaces": sorted(workspace_slugs),
         "totals": {
-            "turns": turn_count,
+            "turns": facts.filter(kind=activity.TURN_ENQUEUED).count(),
             "sessions": facts.filter(kind=activity.CHAT_SESSION_CREATED).count(),
             "messages": facts.filter(kind=activity.CHAT_MESSAGE).count(),
             "active_users": people.values("actor").distinct().count(),
             "active_agents": facts.exclude(agent_slug="").values("agent_slug").distinct().count(),
-            **_usage_sums(usage),
+            "active_repositories": facts.exclude(project="").values("project").distinct().count(),
+            **_tokens(usage),
         },
         "series": [{"day": d, **v} for d, v in series.items()],
         "surfaces": surfaces,
-        "agents": sorted(agents.values(), key=lambda a: (-a["turns"], a["agent"])),
-        "users": sorted(users.values(), key=lambda u: (-(u["messages"] + u["turns"]), u["email"])),
+        "agents": agents,
+        "repositories": repos,
+        "users": users,
     }

@@ -7,7 +7,6 @@ verdict, the analytics fact log — rather than keeping second opinions.
 from __future__ import annotations
 
 import json
-from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -127,7 +126,7 @@ def test_usage_sums_every_run_of_a_turn():
                      "not json", _result(0.25, 1, 2)])
     u = usage.parse(raw)
     assert (u.input_tokens, u.output_tokens, u.cache_read_tokens, u.runs) == (11, 22, 14, 2)
-    assert u.cost_usd == Decimal("0.75") and u.model == "claude-opus-5-5"
+    assert u.model == "claude-opus-5-5"
     assert usage.parse('{"type": "assistant"}') is None
 
 
@@ -140,7 +139,7 @@ def test_a_transcript_batch_with_a_result_records_the_turns_usage(tree, django_c
         services.append_transcript(turn, [_result(1.5, 100, 50)])
     row = TurnUsage.objects.get()
     assert (row.workspace_id, row.agent_slug, row.user, row.input_tokens) == ("connect", "hal", tree["builder"], 100)
-    assert row.cost_usd == Decimal("1.5")
+    assert row.runs == 1
 
 
 # ---- the fact log -------------------------------------------------------------
@@ -191,14 +190,14 @@ def test_analytics_counts_turns_people_and_tokens_across_the_tree(tree, django_c
     body = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=7").json()
     assert body["totals"]["turns"] == 3
     assert body["totals"]["active_users"] == 2
-    assert body["totals"]["input_tokens"] == 300 and body["totals"]["cost_usd"] == 2.0
+    assert body["totals"]["input_tokens"] == 300 and "cost_usd" not in body["totals"]
     assert body["totals"]["turns_with_usage"] == 1
     assert len(body["series"]) == 7 and body["series"][-1]["turns"] == 3
     users = {u["email"]: u for u in body["users"]}
     assert users["b@dimagi.com"]["turns"] == 1 and users["b@dimagi.com"]["input_tokens"] == 300
-    assert users["b@dimagi.com"]["top_agents"] == ["hal"]
+    assert users["b@dimagi.com"]["top"] == ["hal"]
     agents = {a["agent"]: a for a in body["agents"]}
-    assert agents["eva"]["turns"] == 2 and agents["hal"]["cost_usd"] == 2.0
+    assert agents["eva"]["turns"] == 2 and agents["hal"]["input_tokens"] == 300
 
     only_root = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=7&tree=false").json()
     assert only_root["totals"]["turns"] == 2
@@ -246,7 +245,6 @@ def test_an_interactive_transcript_counts_each_model_message_once():
                      json.dumps({"type": "assistant", "message": {"model": "<synthetic>", "usage": {"output_tokens": 9}}})])
     u = usage.parse(raw)
     assert (u.input_tokens, u.output_tokens, u.cache_read_tokens, u.runs) == (7, 70, 200, 0)
-    assert u.cost_usd == 0  # tokens only: an interactive session reports no cost
 
 
 def test_finishing_an_interactive_turn_records_its_tokens(tree, django_capture_on_commit_callbacks):
@@ -260,13 +258,14 @@ def test_finishing_an_interactive_turn_records_its_tokens(tree, django_capture_o
     assert (row.output_tokens, row.runs) == (30, 0)
 
 
-def test_a_reported_cost_is_never_replaced_by_a_per_message_estimate(tree, django_capture_on_commit_callbacks):
+def test_a_runs_own_totals_are_never_replaced_by_a_per_message_sum(tree, django_capture_on_commit_callbacks):
     turn = _turn(tree["hal"], "i2", tree["builder"])
     with django_capture_on_commit_callbacks(execute=True):
         services.append_transcript(turn, [_assistant("m1", 3, 30), _result(0.4, 3, 30)])
     usage._store(str(turn.pk), turn=turn, workspace="connect", agent=tree["hal"], user=None,
                  at=turn.created_at, usage=usage.from_messages([{"message_id": "x", "output_tokens": 1}]))
-    assert TurnUsage.objects.get(turn_ref=str(turn.pk)).cost_usd == Decimal("0.4")
+    row = TurnUsage.objects.get(turn_ref=str(turn.pk))
+    assert (row.runs, row.output_tokens) == (1, 30)
 
 
 def test_chat_rows_credit_their_tokens_to_the_message_they_answer(tree, django_capture_on_commit_callbacks):
@@ -398,3 +397,81 @@ def test_only_its_admins_set_the_repository_and_only_to_github(tree):
                   {"repo_url": "https://github.com/x/evil"}).status_code == 403
     assert _patch(tree["ceo"], "/api/agents/muse/repository",
                   {"repo_url": "https://gitlab.com/x/y"}).status_code == 422
+
+
+# ---- repositories: work no agent runs -----------------------------------------
+
+
+def _repo_session(tree, project="canopy-web"):
+    from apps.canopy_sessions.models import Session
+
+    return Session.objects.create(workspace_id="dimagi", project=project, created_by=tree["ceo"],
+                                  origin=Session.ORIGIN_RUNNER, title="work")
+
+
+def test_every_session_creation_emits_its_fact_once_with_its_repository(tree):
+    s = _repo_session(tree)  # a raw create, as the runner's report sweep does
+    facts = Activity.objects.filter(kind=activity.CHAT_SESSION_CREATED, ref=str(s.pk))
+    assert list(facts.values_list("project", "agent_slug", "actor__email")) == [("canopy-web", "", "ceo@dimagi.com")]
+    turn = _turn(tree["hal"], "once", tree["builder"])
+    assert Activity.objects.filter(kind=activity.TURN_ENQUEUED, ref=str(turn.pk)).count() == 1
+
+
+def test_a_backfill_recovers_tokens_for_rows_already_held_on_the_day_they_happened(tree, django_capture_on_commit_callbacks):
+    from apps.canopy_sessions import services as chat
+
+    s = _repo_session(tree)
+    rows = [{"index": 10, "role": "user", "text": "fix it"}, {"index": 20, "role": "assistant", "text": "done"}]
+    with django_capture_on_commit_callbacks(execute=True):
+        chat.persist_transcript_rows(s, rows, attribute=False)  # streamed before usage existed
+    assert not TurnUsage.objects.exists()
+    used = {"message_id": "m1", "model": "claude-opus-5-5", "input_tokens": 3, "output_tokens": 70,
+            "cache_read_tokens": 900_000, "cache_creation_tokens": 0, "at": "2026-09-01T10:00:00Z"}
+    resent = [rows[0], {**rows[1], "content": {"usage": used}}]
+    with django_capture_on_commit_callbacks(execute=True):
+        assert chat.write_backfill(s, resent) == 0  # nothing new written ...
+    row = TurnUsage.objects.get()  # ... but the tokens arrived
+    assert (row.project, row.cache_read_tokens, row.user, str(row.at.date())) == (
+        "canopy-web", 900_000, tree["ceo"], "2026-09-01")
+    with django_capture_on_commit_callbacks(execute=True):
+        chat.write_backfill(s, resent)  # asking twice changes nothing
+    assert TurnUsage.objects.count() == 1
+
+
+def test_analytics_has_a_row_per_repository(tree, django_capture_on_commit_callbacks):
+    from apps.canopy_sessions import services as chat
+
+    s = _repo_session(tree)
+    used = {"message_id": "m1", "input_tokens": 1, "output_tokens": 2, "cache_read_tokens": 3, "cache_creation_tokens": 0}
+    with django_capture_on_commit_callbacks(execute=True):
+        chat.persist_transcript_rows(s, [{"index": 1, "role": "user", "text": "go"},
+                                         {"index": 2, "role": "assistant", "text": "ok", "content": {"usage": used}}],
+                                     attribute=False)
+    body = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=7").json()
+    repo = next(r for r in body["repositories"] if r["repository"] == "canopy-web")
+    assert (repo["sessions"], repo["cache_read_tokens"]) == (1, 3)
+    assert body["totals"]["active_repositories"] == 1
+    assert next(u for u in body["users"] if u["email"] == "ceo@dimagi.com")["top"] == ["canopy-web"]
+
+
+# ---- runners on health --------------------------------------------------------
+
+
+def test_health_lists_the_trees_runners_with_their_code_and_problems(tree, settings):
+    from django.utils import timezone
+
+    from apps.harness.models import Runner, RunnerAssignment
+    from apps.workspaces.testing import enrolled
+
+    settings.RUNNER_CODE_SHA = "new"
+    box = enrolled(Runner.objects.create(
+        name="laptop", kind=Runner.EMDASH, workspace_id="dimagi", owner=tree["ceo"], status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(), code_sha="old",
+        health={"checks": [{"name": "disk", "status": "warn", "detail": "90% full"},
+                           {"name": "cdp", "status": "ok"}]}))
+    RunnerAssignment.objects.create(agent=tree["eva"], runner=box, rank=0)
+    body = _get(tree["ceo"], "/api/workspaces/dimagi/health").json()
+    row = next(r for r in body["runners"] if r["name"] == "laptop")
+    assert (row["code_current"], row["agent_count"]) == (False, 1)
+    assert row["problems"] == [{"name": "disk", "status": "warn", "detail": "90% full"}]
+    assert body["totals"]["runners"] >= 1
