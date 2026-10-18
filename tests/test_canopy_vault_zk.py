@@ -1116,3 +1116,29 @@ def test_migration_restores_a_key_sent_back_to_pending_by_its_ecdh_key(fleet):
     assert bumped.status == RunnerDeviceKey.ACTIVE and bumped.ecdh_waiting
     assert fresh.status == RunnerDeviceKey.PENDING  # never approved: still a new box
     assert fleet.device.ecdh_ready
+
+
+# ==== an agent in ANOTHER workspace the box is enrolled in (marshellis, 2026-10-18) ====
+
+def test_a_new_agent_in_another_enrolled_workspace_seals_to_the_box(fleet):
+    """Jonathan's runners serve his family's workspace too. A new agent there has no
+    runner rows of its own; it follows that workspace's runner order. Its secrets
+    must seal to the approved machines that order names — and to nobody else."""
+    from apps.harness import device_keys
+    from apps.harness.models import WorkspaceRunnerOrder
+    from apps.harness.runners import enroll_runner
+
+    f = fleet
+    family = Workspace.objects.create(slug="family", display_name="Family", created_by=f.user)
+    WorkspaceMembership.objects.create(workspace=family, user=f.user, role=WorkspaceMembership.OWNER)
+    helper = Agent.objects.create(slug="helper", name="Helper", workspace=family, owner=f.user,
+                                  credential_source=Agent.CANOPY_WEB)
+    # Not enrolled there yet: the box is no recipient, whatever the order says.
+    assert zk.eligible_device_keys(helper) == []
+
+    enroll_runner(f.runner, "family", by=f.user)
+    WorkspaceRunnerOrder.objects.create(workspace=family, runner=f.runner, rank=0)
+
+    assert [k.pk for k in zk.eligible_device_keys(helper)] == [f.device.pk]
+    assert ("device", f.device.ecdh_jkt) in {(kind, t) for kind, t, _ in zk_seal.recipients_for(helper)}
+    assert "helper" in {a.slug for a in device_keys.agents_served(f.runner)}

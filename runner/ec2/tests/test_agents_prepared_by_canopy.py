@@ -91,3 +91,35 @@ def test_a_never_seen_agent_is_prepared_alone(cloud_runner, monkeypatch):
     assert fleet == [] and runs[0][1:] == ["agent", "prepare", "--runner", "--slug", "scout"]
     # ...and it IS what `_ensure_agent_clone` runs (the test loader swaps in a no-op).
     assert "_LAZY_BOOTSTRAPPER = prepare_agent" in (HERE / "cloud_runner.py").read_text()
+
+
+def test_the_fleet_bootstrap_reads_as_the_box_not_with_runner_envs_pat(cloud_runner, monkeypatch,
+                                                                       tmp_path):
+    """2026-10-17: runner.env's PAT was revoked. The bootstrap inherited it, its roster
+    read came back empty, and only the AGENT_SLUGS fallback was ever prepared — a new
+    agent (marshellis) never was. It gets the box's own token, as prepare_agent does."""
+    mod = cloud_runner
+    src = tmp_path / "src"
+    (src / "runner" / "ec2").mkdir(parents=True)
+    (src / "runner" / "ec2" / "bootstrap_agents.sh").write_text("exit 0\n")
+    monkeypatch.setattr(mod, "RUNNER_SRC_DIR", str(src))
+    monkeypatch.setattr(mod, "sync_runner_src", lambda: True)
+    monkeypatch.setattr(mod, "ensure_updater_clone", lambda: True)
+    monkeypatch.setenv("CANOPY_TOKEN", "revoked_pat")
+    monkeypatch.setattr(mod, "_bearer", lambda: "crt_box")
+    seen = {}
+    monkeypatch.setattr(mod, "_run_teed",
+                        lambda cmd, env, timeout: (seen.update(env=env) or (0, [])))
+    mod._run_bootstrap()
+    assert seen["env"]["CANOPY_TOKEN"] == "crt_box"
+
+
+def test_the_box_shares_its_runner_token_with_the_updater(cloud_runner, monkeypatch, tmp_path):
+    import json
+    import stat
+
+    target = tmp_path / "runner-token.json"
+    monkeypatch.setattr(cloud_runner, "RUNNER_TOKEN_FILE", target)
+    cloud_runner._share_runner_token("crt_x", 4102444800.0)
+    assert json.loads(target.read_text()) == {"access_token": "crt_x", "expires_at": 4102444800.0}
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600

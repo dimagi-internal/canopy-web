@@ -344,6 +344,49 @@ def test_a_moved_box_calls_its_new_address_not_runner_envs(box):
     assert "CANOPY_WEB_API_URL=https://new.example" in lines
 
 
+# 2026-10-17: runner.env's CANOPY_TOKEN (a person's PAT) was revoked. Every
+# expected_sha read came back empty — "unknown", so the box stopped updating — and
+# the refresh's roster read was refused, so only the AGENT_SLUGS fallback was ever
+# refreshed. The box's own runner token (shared by cloud_runner.py) comes first.
+def _share_token(box, token: str, expires_in: float) -> None:
+    (box.home / "runner-token.json").write_text(
+        json.dumps({"access_token": token, "expires_at": time.time() + expires_in}))
+
+
+def _record_refresh_token(box) -> pathlib.Path:
+    seen = box.root / "bootstrap-env.txt"
+    stub = box.repo / "runner" / "ec2" / "bootstrap_agents.sh"
+    stub.write_text("#!/bin/bash\n"
+                    f'printf "%s\\n" "CANOPY_TOKEN=${{CANOPY_TOKEN:-}}" > "{seen}"\n')
+    stub.chmod(0o755)
+    return seen
+
+
+def test_the_updater_reads_as_the_box_when_it_has_a_runner_token(box):
+    sha = box.seed_repo(GOOD_RUNNER)
+    seen = _record_refresh_token(box)
+    box.stamp(sha)
+    box.expect(sha)
+    _share_token(box, "crt_box", 3600)
+    r = box.run()
+    assert r.returncode == 0, r.stderr
+    assert "Bearer crt_box" in box.curl_log.read_text()
+    assert "Bearer tok" not in box.curl_log.read_text()
+    assert "CANOPY_TOKEN=crt_box" in seen.read_text().splitlines()
+
+
+def test_an_expired_runner_token_falls_back_to_runner_envs(box):
+    sha = box.seed_repo(GOOD_RUNNER)
+    seen = _record_refresh_token(box)
+    box.stamp(sha)
+    box.expect(sha)
+    _share_token(box, "crt_old", 30)   # inside the 120 s margin: treated as gone
+    r = box.run()
+    assert r.returncode == 0, r.stderr
+    assert "Bearer tok" in box.curl_log.read_text()
+    assert "CANOPY_TOKEN=tok" in seen.read_text().splitlines()
+
+
 def test_an_override_that_is_not_https_is_ignored(box):
     (box.home / "base_url.override").write_text("http://evil.example\n")
     sha = box.seed_repo(GOOD_RUNNER)

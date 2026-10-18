@@ -230,9 +230,12 @@ STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(pathlib.Path.home() /
 # (runner/ec2/update_runner.sh, spec 2026-07-30) shares with it:
 #   build-info.json — what code is installed, stamped by whoever installed it.
 #   in-flight       — how many turns this box is carrying right now.
+#   runner-token.json — this box's current runner token (0600), so the updater
+#                     reads its expected code as the box, not with a PAT.
 RUNNER_HOME = pathlib.Path(os.environ.get("RUNNER_HOME", "/opt/canopy-runner"))
 BUILD_INFO_FILE = pathlib.Path(os.environ.get("BUILD_INFO_FILE", str(RUNNER_HOME / "build-info.json")))
 IN_FLIGHT_FILE = pathlib.Path(os.environ.get("IN_FLIGHT_FILE", str(RUNNER_HOME / "in-flight")))
+RUNNER_TOKEN_FILE = pathlib.Path(os.environ.get("RUNNER_TOKEN_FILE", str(RUNNER_HOME / "runner-token.json")))
 
 # Bound on reaping the claude subprocess in run_claude's cleanup (review N1) —
 # a bare, untimed proc.wait() can hang the RUNNER forever if the child is still
@@ -307,10 +310,28 @@ def _exchange_device_proof(runner_id: str) -> bool:
     if not raw:
         return False
     _RUNNER_TOKEN.update(raw=raw, exp=exp)
+    _share_runner_token(raw, exp)
     if not _RUNNER_TOKEN["announced"]:
         _RUNNER_TOKEN["announced"] = True
         _log("keyless: signed in with this box's device key (no PAT in use)")
     return True
+
+
+def _share_runner_token(raw: str, exp: float) -> None:
+    """Hand the auto-updater (a separate unit, update_runner.sh) this box's token.
+
+    It used to read its expected code with CANOPY_TOKEN from runner.env — a PAT
+    revoked on 2026-10-17, after which every check came back "unknown" and the box
+    stopped updating. 0600 and written atomically; the token opens the runner
+    protocol only and lasts an hour. Never raises."""
+    try:
+        tmp = RUNNER_TOKEN_FILE.with_name(RUNNER_TOKEN_FILE.name + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            json.dump({"access_token": raw, "expires_at": exp}, fh)
+        os.replace(tmp, RUNNER_TOKEN_FILE)
+    except OSError as exc:
+        _log(f"warn: could not share the runner token with the updater ({exc})")
 
 
 def _bearer() -> str:
@@ -3625,6 +3646,13 @@ def _run_bootstrap() -> None:
         return
     env = dict(os.environ)
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
+    # The roster read and every `canopy agent prepare` it runs act AS THIS BOX, as
+    # prepare_agent's do. Inheriting os.environ handed them runner.env's PAT, which
+    # was revoked on 2026-10-17: the roster came back empty and the box fell back to
+    # AGENT_SLUGS, so an agent added since was never prepared at bootstrap.
+    bearer = _bearer()
+    if bearer:
+        env["CANOPY_TOKEN"] = bearer
     _log(f"running {script}")
     try:
         rc, tail = _run_teed(["bash", str(script)], env=env, timeout=900)
