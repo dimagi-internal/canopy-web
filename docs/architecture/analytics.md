@@ -19,7 +19,7 @@ it in `apps/events/analytics.py`.
 
 ## Kinds and producers
 
-- `turn.finished` — `harness.services.finish_turn` and `harness.claim.sweep_expired_leases` (lost/cancelled); `meta.status`.
+- `turn.finished` — `harness.services.finish_turn` and `harness.claim.sweep_expired_leases` (lost/cancelled); `meta.status`, and `meta.runner`/`meta.runner_kind` — the box that ran it, by name (Health's "Ran on").
 - `turn.enqueued` and `chat.session.created` come from the rows themselves (`harness/signals.py`, the post-save creation receiver beside provenance's), so every creation path — raw `Session.objects.create`s, the runner's report sweep, Slack, a refused email turn — counts.
 - `chat.message` — `canopy_sessions.services.send_message` (both paths), `ref` = the turn.
 - `setting.changed` — `events.audit.audited`, alongside the `SettingChange` row (`ref` `sc<pk>`).

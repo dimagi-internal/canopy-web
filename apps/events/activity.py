@@ -124,7 +124,9 @@ def turn_actor(turn):
 
 def for_turn(kind: str, turn, *, at=None, dedupe: bool = False, **meta) -> Activity | None:
     """A turn fact: tenancy from `Turn.tenant_slug`, agent from `acting_agent`,
-    person from `turn_actor`, surface from the origin."""
+    person from `turn_actor`, surface from the origin, and — once a box has it —
+    the runner it ran on (`runner`, `runner_kind`), kept by name so the fact
+    still says where after the box is retired."""
     agent = turn.acting_agent
     actor = turn_actor(turn)
     kind_of_actor = (Activity.CONTACT if turn.initiator_contact_id and actor is None
@@ -133,4 +135,10 @@ def for_turn(kind: str, turn, *, at=None, dedupe: bool = False, **meta) -> Activ
     return emit(kind, workspace=turn.tenant_slug, actor=actor, actor_kind=kind_of_actor,
                 agent=agent, surface=_ORIGIN_SURFACE.get(turn.origin, turn.origin),
                 ref=f"{turn.pk}", at=at, dedupe=dedupe, project=repo_of(turn=turn),
-                meta={"status": turn.status, "origin": turn.origin, **meta})
+                meta={"status": turn.status, "origin": turn.origin, **runner_of(turn), **meta})
+
+
+def runner_of(turn) -> dict:
+    """{runner, runner_kind} of the box that claimed `turn`, or {} when none has."""
+    box = turn.claimed_by if turn.claimed_by_id else None
+    return {"runner": box.name, "runner_kind": box.kind} if box is not None else {}

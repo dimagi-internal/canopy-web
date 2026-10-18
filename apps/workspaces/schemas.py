@@ -508,6 +508,13 @@ class HealthSessionOut(StrictModel):
     active: bool
 
 
+class AgentRunnerUseOut(StrictModel):
+    name: str
+    # cloud | emdash | … (`Runner.kind`), as it was when the turn ran.
+    kind: str
+    turns: int
+
+
 class AgentHealthOut(StrictModel):
     slug: str
     name: str
@@ -544,6 +551,13 @@ class AgentHealthOut(StrictModel):
     created_at: dt.datetime
     last_turn_at: dt.datetime | None = None
     turns_30d: int
+    # Over the same 30 days: turns that finished done, and failed or lost; the
+    # people who did anything with it (asked it, chatted, messaged); and the
+    # runners its finished turns ran on, most first.
+    done_30d: int = 0
+    failed_30d: int = 0
+    people_30d: int = 0
+    ran_on: list[AgentRunnerUseOut] = []
     vault: AgentVaultHealthOut
     steps: list[HealthStepOut]
     # Steps neither done nor optional.
@@ -569,6 +583,8 @@ class HealthTotalsOut(StrictModel):
     agents: int
     set_up: int
     needs_setup: int
+    # Agents anyone used in the last 30 days (a turn, or a person's chat or message).
+    used_30d: int = 0
     vault_canopy_web: int
     vault_moving: int
     vault_1password: int
