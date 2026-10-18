@@ -65,6 +65,7 @@ def key_out(key: RunnerDeviceKey, *, can_manage: bool) -> RunnerDeviceKeyOut:
         kind=key.kind, label=key.label, role_arn=key.role_arn, status=key.status,
         ecdh_jkt=key.ecdh_jkt, ecdh_public_jwk=key.ecdh_public_jwk or {},
         reapproval=key.status == RunnerDeviceKey.PENDING and key.approved_at is not None,
+        ecdh_waiting=key.ecdh_waiting,
         created_at=key.created_at,
         approved_at=key.approved_at,
         approved_by_email=(key.approved_by.email if key.approved_by_id else ""),
@@ -138,29 +139,26 @@ def _ecdh(payload: RunnerDeviceKeyIn) -> tuple[dict | None, str]:
 
 
 def _set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
-    """Attach or change a known key's ECDH key (canopy-web#1550). An ACTIVE key
-    goes back to `pending`: which key receives an agent's vault key is a trust
-    decision a person makes, not one the box makes by re-posting. Wraps to the
-    old ECDH key are dropped (they name its thumbprint). Re-sending the same
-    key, or none, changes nothing; a revoked key stays revoked."""
+    """Attach or change a known key's ECDH key (canopy-web#1550). The new ECDH
+    key waits for a person (`ecdh_approved_at` cleared): which key receives an
+    agent's vault key is a trust decision a person makes, not one the box makes
+    by re-posting. The SIGNING key keeps its status — an active box goes on
+    signing in and running every agent that needs no vault key; it only cannot
+    read zero-knowledge agents until the new key is approved. Wraps to the old
+    ECDH key are dropped (they name its thumbprint). Re-sending the same key, or
+    none, changes nothing; a revoked key stays revoked."""
     if jwk is None or jkt == key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED:
         return
     from apps.agents import zk
 
-    before = key.status
     with transaction.atomic():
         key.ecdh_public_jwk, key.ecdh_jkt = jwk, jkt
-        fields = ["ecdh_public_jwk", "ecdh_jkt"]
-        if key.status == RunnerDeviceKey.ACTIVE:
-            # approved_at/by stay as the record of the earlier approval: a
-            # pending key carrying them is a RE-approval (`reapproval` on the row).
-            key.status = RunnerDeviceKey.PENDING
-            fields += ["status"]
-        key.save(update_fields=fields)
+        key.ecdh_approved_at, key.ecdh_approved_by = None, None
+        key.save(update_fields=["ecdh_public_jwk", "ecdh_jkt", "ecdh_approved_at", "ecdh_approved_by"])
         zk.forget_device_wraps(key)
-    if before != key.status:
-        audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
-                          before=before, after=key.status)
+    if key.status == RunnerDeviceKey.ACTIVE:
+        audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}/ecdh",
+                          before="approved", after="waiting")
         device_key_notify.notify_pending_on_commit(key, reapproval=True)
 
 
@@ -204,7 +202,7 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
     out = []
     for k in qs:
         row = key_out(k, can_manage=True)
-        if k.status == RunnerDeviceKey.PENDING:
+        if k.status == RunnerDeviceKey.PENDING or k.ecdh_waiting:
             # What approving it will leave waiting on a vault-key wrap, so the
             # browser can approve AND wrap in one passkey touch (canopy-web#1550).
             row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=True)
@@ -215,8 +213,9 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
 @router.post("/{key_id}/approve", response=RunnerDeviceKeyOut,
              summary="Approve a pending device key (browser session + passkey step-up)")
 def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
-    """`pending` → `active`. A revoked key cannot be revived (409); approving an
-    active key is a no-op."""
+    """`pending` → `active`, and its ECDH key approved with it; on an active key
+    whose new ECDH key waits, approves just that. A revoked key cannot be
+    revived (409); approving a fully approved key is a no-op."""
     if not _is_browser_session(request):
         raise HttpError(403, "approving a device key needs a browser session, not a token")
     key = _key_or_404(request, key_id)
@@ -227,11 +226,16 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     if key.status == RunnerDeviceKey.REVOKED:
         raise HttpError(409, "this key was revoked; register a new one")
     before = key.status
+    now = timezone.now()
+    fields = []
     if key.status == RunnerDeviceKey.PENDING:
-        key.status = RunnerDeviceKey.ACTIVE
-        key.approved_by = request.user
-        key.approved_at = timezone.now()
-        key.save(update_fields=["status", "approved_by", "approved_at"])
+        key.status, key.approved_by, key.approved_at = RunnerDeviceKey.ACTIVE, request.user, now
+        fields += ["status", "approved_by", "approved_at"]
+    if key.ecdh_jkt and key.ecdh_approved_at is None:
+        key.ecdh_approved_by, key.ecdh_approved_at = request.user, now
+        fields += ["ecdh_approved_by", "ecdh_approved_at"]
+    if fields:
+        key.save(update_fields=fields)
     audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
                       before=before, after=key.status)
     out = key_out(key, can_manage=True)
@@ -250,7 +254,7 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
     agent's vault key in the same passkey touch (opening the sealed values with
     the person's own key), so a machine approved later can read them too —
     nobody has to "finish setting up" an agent by hand."""
-    if (key.status != RunnerDeviceKey.ACTIVE and not assume_active) or not key.ecdh_jkt:
+    if not key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED or not (assume_active or key.ecdh_ready):
         return []
     from apps.agents import zk
     from apps.agents.models import Agent

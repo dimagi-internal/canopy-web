@@ -133,15 +133,21 @@ export function DeviceKeysTable({
                     re-approval: encryption key added
                   </span>
                 )}
-                {k.status === 'active' && k.approved_by_email && (
+                {k.status === 'active' && k.ecdh_waiting ? (
+                  // Still online and running other agents; it just cannot read
+                  // private secrets until its new key is approved.
+                  <span className="ml-2 text-[11px] text-warning" data-testid={`device-key-ecdh-waiting-${k.id}`}>
+                    New key waiting — approve to give it access
+                  </span>
+                ) : k.status === 'active' && k.approved_by_email ? (
                   <span className="ml-2 text-[11px] text-muted-foreground">by {k.approved_by_email}</span>
-                )}
+                ) : null}
               </td>
               <td className="py-1.5 text-muted-foreground">{k.last_used_at ? relativeAge(k.last_used_at) : '—'}</td>
               <td className="py-1.5 text-right">
                 {/* An approved machine that agents still wait on (approved
                     before they existed, or by someone else): one touch lets it in. */}
-                {k.can_manage && k.status === 'active' && (k.zk_pending_agents ?? []).length > 0 && (
+                {k.can_manage && k.status === 'active' && !k.ecdh_waiting && (k.zk_pending_agents ?? []).length > 0 && (
                   <button
                     type="button"
                     data-testid={`device-key-give-${k.id}`}
@@ -152,9 +158,10 @@ export function DeviceKeysTable({
                     Give access
                   </button>
                 )}
-                {k.can_manage && k.status === 'pending' && (
+                {k.can_manage && (k.status === 'pending' || k.ecdh_waiting) && (
                   <button
                     type="button"
+                    data-testid={`device-key-approve-${k.id}`}
                     onClick={() => void approve(k)}
                     disabled={busy !== null}
                     className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"

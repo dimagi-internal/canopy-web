@@ -1630,6 +1630,9 @@ class RunnerDeviceKeyOut(Schema):
     #: Pending AGAIN after an approval — its ECDH (encryption) key was added
     #: or changed (canopy-web#1550), not a new box.
     reapproval: bool = False
+    #: Active and signing in, but its new ECDH key waits for approval: it
+    #: cannot read zero-knowledge agents until a person approves it.
+    ecdh_waiting: bool = False
     status: DeviceKeyStatus
     created_at: dt.datetime
     approved_at: dt.datetime | None = None

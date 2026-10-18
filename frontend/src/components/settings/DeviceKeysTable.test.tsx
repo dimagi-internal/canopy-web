@@ -19,7 +19,7 @@ const KEY = {
   id: 'k1', runner: 'r1', runner_name: 'jj-mbp', jkt: 'abcdefghijklmnopqrstuvwxyz', kind: 'secure-enclave' as const,
   label: 'laptop', role_arn: '', status: 'pending' as const, created_at: '2026-10-16T00:00:00Z', approved_at: null,
   approved_by_email: '', revoked_at: null, last_used_at: null, can_manage: true,
-  ecdh_jkt: '', ecdh_public_jwk: {}, zk_pending_agents: [] as string[], reapproval: false,
+  ecdh_jkt: '', ecdh_public_jwk: {}, zk_pending_agents: [] as string[], reapproval: false, ecdh_waiting: false,
 }
 
 afterEach(() => {
@@ -28,6 +28,17 @@ afterEach(() => {
 })
 
 describe('DeviceKeysTable', () => {
+  it('shows an online machine whose new key waits, and approves it in one touch', async () => {
+    const waiting = { ...KEY, status: 'active' as const, ecdh_waiting: true, zk_pending_agents: ['hal', 'eva'] }
+    approveAndGrant.mockResolvedValue({ key: { ...waiting, ecdh_waiting: false }, granted: ['hal', 'eva'], failed: [] })
+    render(<DeviceKeysTable keys={[waiting]} onChange={vi.fn()} />)
+    expect(screen.getByTestId('device-key-ecdh-waiting-k1').textContent).toMatch(/New key waiting/)
+    expect(screen.getByText('active')).toBeTruthy()
+    expect(screen.queryByTestId('device-key-give-k1')).toBeNull()
+    fireEvent.click(screen.getByTestId('device-key-approve-k1'))
+    await waitFor(() => expect(approveAndGrant).toHaveBeenCalledWith('k1', ['hal', 'eva'], expect.any(Function)))
+  })
+
   it('approves and grants in one go when zero-knowledge agents wait on the key (canopy-web#1550)', async () => {
     approveAndGrant.mockResolvedValue({ key: { ...KEY, status: 'active' }, granted: ['eva'], failed: [] })
     const onChange = vi.fn()

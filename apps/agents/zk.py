@@ -143,14 +143,16 @@ def check_seal(seal, what: str = "seal") -> dict:
 # ---- who may hold a wrap ---------------------------------------------------------
 
 def eligible_device_keys(agent) -> list:
-    """ACTIVE device keys with an ECDH key, on runners whose proof this agent's
-    resolve accepts — the devices that can be (and, at the current kv, should
-    be) wrapped to."""
+    """ACTIVE device keys with an APPROVED ECDH key, on runners whose proof this
+    agent's resolve accepts — the devices that can be (and, at the current kv,
+    should be) wrapped to. A new ECDH key a person has not approved yet gets
+    nothing, though its signing key stays active."""
     from apps.harness import device_keys
     from apps.harness.models import RunnerDeviceKey
 
     return list(device_keys.keys_for_agent(agent)
-                .filter(status=RunnerDeviceKey.ACTIVE).exclude(ecdh_jkt=""))
+                .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
+                .exclude(ecdh_jkt=""))
 
 
 def device_waits(agent, key) -> bool:

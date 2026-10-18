@@ -54,12 +54,17 @@ def classify(agent: Agent, stored: set[str] | None = None) -> dict[str, str]:
 
 def machines_waiting(agent: Agent) -> list[str]:
     """Runners that would run this agent but cannot open its zero-knowledge
-    values yet (`zk.device_waits`): a member's passkey touch lets them in."""
+    values yet (`zk.device_waits`), or whose new ECDH key awaits approval: a
+    member's passkey touch lets them in."""
     if not agent.zk_enabled:
         return []
+    from apps.harness import device_keys
+
     from . import zk
 
-    return sorted({k.runner.name for k in zk.eligible_device_keys(agent) if zk.device_waits(agent, k)})
+    waiting = {k.runner.name for k in zk.eligible_device_keys(agent) if zk.device_waits(agent, k)}
+    waiting |= {k.runner.name for k in device_keys.keys_for_agent(agent) if k.ecdh_waiting}
+    return sorted(waiting)
 
 
 def vault_health(agent: Agent) -> dict:

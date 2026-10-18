@@ -48,8 +48,9 @@ def notify_pending(key, *, reapproval: bool = False) -> dict:
         what = key.label or key.kind
         if reapproval:
             subject = f"Canopy · {runner.name} needs re-approving"
-            detail = (f"{runner.name} ({what}) sent a new encryption key, so it is paused until you approve it "
-                      f"again. Until then it cannot read the secrets of agents that need an approved machine.")
+            detail = (f"{runner.name} ({what}) has a new key for reading agents' private secrets. It stays "
+                      f"online and keeps running other agents, but it cannot read those secrets until you "
+                      f"approve the new key — one passkey touch, which also gives it access.")
         else:
             subject = f"Canopy · approve {runner.name}"
             detail = (f"{runner.name} ({what}) is asking to be approved. Until you approve it, it cannot read the "
