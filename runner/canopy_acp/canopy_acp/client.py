@@ -27,7 +27,7 @@ import pathlib
 import shutil
 import subprocess
 import threading
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger("canopy_acp.client")
 
@@ -305,11 +305,33 @@ ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp"
 ADAPTER_BIN = "claude-agent-acp"
 
 
-def find_adapter(explicit: str | None = None) -> list[str] | None:
+#: Install prefixes searched after PATH: the cloud box's (`npm i -g --prefix
+#: ~/.local`, on its unit's PATH) and a laptop runner's (launchd's PATH is the bare
+#: system one, so it is found here or not at all).
+ADAPTER_PREFIXES = (pathlib.Path.home() / ".local", pathlib.Path.home() / ".canopy" / "acp")
+
+
+def _node() -> str | None:
+    for cand in (shutil.which("node"), "/opt/homebrew/bin/node", "/usr/local/bin/node",
+                 os.path.expandvars(r"%ProgramFiles%\nodejs\node.exe")):
+        if cand and os.access(cand, os.X_OK):
+            return cand
+    return None
+
+
+def _entry_points(root: pathlib.Path) -> list[pathlib.Path]:
+    pkg = pathlib.Path(*ADAPTER_PACKAGE.split("/"))
+    return [root / "lib" / "node_modules" / pkg / "dist" / "index.js",  # npm -g --prefix
+            root / "node_modules" / pkg / "dist" / "index.js"]          # npm --prefix / local
+
+
+def find_adapter(explicit: str | None = None, prefixes=None) -> list[str] | None:
     """The argv that starts the adapter, or None if it isn't installed.
 
-    Checked in order: an explicit path, a `claude-agent-acp` on PATH, then a
-    local `node_modules` install next to the runner.
+    Checked in order: an explicit path, a `claude-agent-acp` on PATH, then an
+    install under each of `prefixes` (ADAPTER_PREFIXES by default) or next to
+    this package. A found `index.js` runs as `node index.js`, so a caller whose
+    PATH has no node (launchd) still starts it.
     """
     if explicit:
         path = pathlib.Path(explicit)
@@ -319,17 +341,36 @@ def find_adapter(explicit: str | None = None) -> list[str] | None:
     on_path = shutil.which(ADAPTER_BIN)
     if on_path:
         return [on_path]
-    node = shutil.which("node")
+    node = _node()
     if not node:
         return None
-    for root in (pathlib.Path.cwd(), pathlib.Path(__file__).resolve().parent.parent):
-        candidate = root / "node_modules" / ADAPTER_PACKAGE.replace("@", "").replace(
-            "/", os.sep) / "dist" / "index.js"
-        alt = root / "node_modules" / "@agentclientprotocol" / "claude-agent-acp" / "dist" / "index.js"
-        for option in (alt, candidate):
+    roots = [*(ADAPTER_PREFIXES if prefixes is None else prefixes),
+             pathlib.Path.cwd(), pathlib.Path(__file__).resolve().parent.parent]
+    for root in roots:
+        for option in _entry_points(pathlib.Path(root)):
             if option.exists():
                 return [node, str(option)]
     return None
+
+
+def install_adapter(prefix: pathlib.Path) -> str:
+    """Install the adapter under `prefix` unless one is already found there or on
+    PATH. `npm install -g --prefix`: a bare `-g` is EACCES for a service user.
+
+    Returns "present", "installed", "no-node" (nothing attempted) or
+    "failed: <why>" — the caller words its own log line."""
+    if shutil.which(ADAPTER_BIN) or find_adapter(prefixes=[prefix]):
+        return "present"
+    npm = shutil.which("npm")
+    if not npm or not shutil.which("node"):
+        return "no-node"
+    try:
+        subprocess.run([npm, "install", "-g", "--prefix", str(prefix), ADAPTER_PACKAGE],
+                       check=True, timeout=600,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as exc:  # noqa: BLE001
+        return f"failed: {exc}"
+    return "installed"
 
 
 class AcpAgent:

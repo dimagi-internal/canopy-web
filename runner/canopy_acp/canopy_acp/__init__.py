@@ -10,19 +10,23 @@ Same precedent as `canopy_cron` and `canopy_transcript`: shared by the server
 and the runners so a behaviour can't exist in two versions.
 """
 from .client import (
+    ADAPTER_PACKAGE,
     AcpAgent,
     AcpConnection,
-    PermissionDecision,
     Pending,
+    PermissionDecision,
     allow_first_option,
     find_adapter,
+    install_adapter,
 )
 from .menus import menu_from_permission_request, option_id_for
+from .turn import TurnError, TurnResult, drive_turn
 from .updates import TERMINAL_STATUSES, ToolCall, UpdateReducer
 
 __all__ = [
     "AcpAgent", "AcpConnection", "Pending", "PermissionDecision",
     "TERMINAL_STATUSES", "ToolCall", "UpdateReducer",
-    "allow_first_option", "find_adapter",
+    "TurnError", "TurnResult", "drive_turn",
+    "ADAPTER_PACKAGE", "allow_first_option", "find_adapter", "install_adapter",
     "menu_from_permission_request", "option_id_for",
 ]

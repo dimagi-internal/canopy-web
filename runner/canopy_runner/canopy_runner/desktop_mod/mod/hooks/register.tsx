@@ -102,6 +102,10 @@ export const register: Register = (on) => {
     // A headless `claude -p` seed also loads this mod; it must not take the task.
     // The runner writes `seeded` only after the seed has exited.
     if (!(await $.fs.exists(`${candidate}/seeded`))) return r
+    // The `claude-cli` runtime's own headless turns run here too (headless.py). The
+    // channel is for the app's process only: claimed here, `alive` would read as
+    // "the app holds this session" and the runner would hand its turn to itself.
+    if (await $.env.get('CANOPY_HEADLESS')) return r
     dir = candidate
     sid = await $.session.id()
     if (!(await mine($))) { dir = ''; return r }
@@ -129,6 +133,20 @@ export const register: Register = (on) => {
       answer: String(e.answer ?? '').slice(0, 4000),
     })
     return r
+  })
+
+  // Says, in the app, that this session is canopy's: a person who opened it from
+  // canopy-web (or found it in the sidebar) can see that messages sent from
+  // canopy-web land here. Drawn only in a session whose channel this mod claimed.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (!dir) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    return (
+      <Box>
+        <Text bold>Canopy</Text>
+        <Text dimColor> · connected to canopy-web. Messages sent there arrive in this session.</Text>
+      </Box>
+    )
   })
 
   // A permission ask is a session waiting on a human. The app shows its own card;

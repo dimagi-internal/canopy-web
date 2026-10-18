@@ -398,6 +398,10 @@ export function IdePage() {
           await navigator.clipboard.writeText(url)
           setNote({ text: 'Link copied', error: false })
           return
+        case 'open-desktop':
+          window.location.href = a.href
+          setNote({ text: `Opening “${label(s)}” in Claude desktop`, error: false })
+          return
         case 'stop': {
           const r = await stopSession(s.id)
           setNote({ text: r.cancelled ? `Stopped “${label(s)}”` : `Asked ${s.runner_name ?? 'its runner'} to interrupt “${label(s)}”`, error: false })

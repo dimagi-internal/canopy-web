@@ -213,8 +213,10 @@ def reported_projects(cfg: Config) -> list[str] | None:
     unclaimable — the same shape as the drift that once blanked the supervisor by
     reporting zero sessions, with more of the fleet behind it.
     """
+    from . import desktop
+
     try:
-        return emdash.list_projects(cfg.emdash_db)
+        return sorted(set(emdash.list_projects(cfg.emdash_db)) | set(desktop.local_projects(cfg)))
     except emdash.EmdashReadError:
         # WARNING, not debug: the silent-degradation class verify-emdash exists
         # for. Omitting the field is safe; omitting it *quietly* is how a routing

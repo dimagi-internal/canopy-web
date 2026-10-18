@@ -91,7 +91,7 @@ Set-StrictMode -Version Latest
 $RUNNER_SRC   = "runner/canopy_runner/canopy_runner"
 # Same list as provenance.CODE_PATHS, install-runner.sh and deploy-labs.yml
 # (tests/test_runner_code_paths.py). A different list here = a box marked stale forever.
-$RUNNER_CODE_PATHS = @("runner/canopy_runner/canopy_runner", "runner/canopy_runner/scripts", "runner/menubar", "runner/device-key", "assets/brand", "packages/canopy_cron", "packages/canopy_transcript")
+$RUNNER_CODE_PATHS = @("runner/canopy_runner/canopy_runner", "runner/canopy_runner/scripts", "runner/menubar", "runner/device-key", "assets/brand", "packages/canopy_cron", "packages/canopy_transcript", "runner/canopy_acp")
 $TASK_FOLDER  = "\Canopy"
 $RUNNER_TASK  = "canopy-runner"
 $UPDATER_TASK = "canopy-runner-updater"
@@ -215,7 +215,7 @@ COMMITTED_AT = $(if ($CommittedAt) { $CommittedAt } else { 0 })
 
     Info "building wheels"
     $dist = Join-Path $Tmp "dist"
-    foreach ($pkg in @("packages/canopy_cron", "packages/canopy_transcript", "runner/canopy_runner")) {
+    foreach ($pkg in @("packages/canopy_cron", "packages/canopy_transcript", "runner/canopy_acp", "runner/canopy_runner")) {
         & uv build --quiet --wheel -o $dist (Join-Path $Tmp $pkg)
         if ($LASTEXITCODE -ne 0) { Fail "wheel build failed for $pkg" }
     }
@@ -223,12 +223,12 @@ COMMITTED_AT = $(if ($CommittedAt) { $CommittedAt } else { 0 })
     $wheel = Get-ChildItem -Path $dist -Filter "canopy_runner-*.whl" | Select-Object -First 1
     if (-not $wheel) { Fail "no canopy_runner wheel produced in $dist" }
     Info "installing $($wheel.Name)"
-    # --find-links supplies canopy-cron / canopy-transcript while the real index
+    # --find-links supplies canopy-cron / canopy-transcript / canopy-acp while the real index
     # still serves croniter and the realtime extra's websocket-client. The runner
     # itself is named by direct file:// URL so no index can shadow it.
     $uri = "file:///" + ($wheel.FullName -replace '\\','/')
     # --reinstall-package: the in-repo packages never change version (see install-runner.sh).
-    & uv tool install --force --reinstall-package canopy-cron --reinstall-package canopy-transcript --find-links $dist "canopy-runner[realtime] @ $uri"
+    & uv tool install --force --reinstall-package canopy-cron --reinstall-package canopy-transcript --reinstall-package canopy-acp --find-links $dist "canopy-runner[realtime] @ $uri"
     if ($LASTEXITCODE -ne 0) { Fail "uv tool install failed" }
 } finally {
     Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue

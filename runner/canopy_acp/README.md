@@ -17,6 +17,7 @@ lifecycle (`tool_call` / `tool_call_update` with a status), streamed reply text
 |---|---|
 | `updates.py` | `session/update` → canopy's row shape, via a **sparse-patch reducer** |
 | `client.py` | JSON-RPC/stdio transport to the adapter: prompt, cancel, steer, load |
+| `turn.py` | `drive_turn`: one turn end to end — the loop BOTH runners run (cloud `run_acp`, laptop `claude-cli`) |
 
 ## The one thing to know
 

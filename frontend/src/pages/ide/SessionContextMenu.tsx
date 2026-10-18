@@ -14,6 +14,7 @@ import { deleteConsequence } from './ideTree'
 export type IdeAction =
   | { kind: 'open-tab' }
   | { kind: 'copy-link' }
+  | { kind: 'open-desktop'; href: string }
   | { kind: 'stop' }
   | { kind: 'transfer'; runner: RunnerOut }
   | { kind: 'archive' }
@@ -54,6 +55,30 @@ function Item({
 }
 
 const Sep = () => <div className="my-1 h-px bg-border" />
+
+const CLAUDE_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * The Claude app link that opens THIS one session — never the app's own
+ * "Import N Claude Code CLI sessions", which takes every CLI session on the box.
+ * Offered for a session on a `claude-cli` or Claude desktop runner, whose key is the
+ * Claude session id. A Claude CLI session whose turn is running headless is refused:
+ * two Claude processes on one session fork it silently. You click it, so the app
+ * coming to the front is the point — the focus rule is about automation.
+ */
+export function claudeDesktopLink(
+  session: ChatSession,
+  runners: readonly RunnerOut[],
+): { href: string } | { blocked: string } | null {
+  const engine = runners.find((r) => r.id === session.runner_id)?.engine
+  if (engine !== 'claude-cli' && engine !== 'claude-desktop') return null
+  const key = session.session_key ?? ''
+  if (!CLAUDE_SESSION_ID.test(key)) return null
+  if (engine === 'claude-cli' && session.running) {
+    return { blocked: 'Its turn is running on the runner. Open it once the turn ends.' }
+  }
+  return { href: `claude://resume?session=${key}` }
+}
 
 export function SessionContextMenu({
   session,
@@ -114,6 +139,7 @@ export function SessionContextMenu({
   }, [onDismiss])
 
   const archived = session.status !== 'active'
+  const desktop = claudeDesktopLink(session, runners)
   const busy = Boolean(session.running || session.waiting_on_you)
   const close = closeIntent(session)
   const targets = onlineSessionCapableRunners(runners, session.runner_requirements).filter(
@@ -143,6 +169,20 @@ export function SessionContextMenu({
       </div>
       <Item onClick={() => onAction({ kind: 'open-tab' })}>Open in new tab</Item>
       <Item onClick={() => onAction({ kind: 'copy-link' })}>Copy link</Item>
+      {desktop && (
+        <Item
+          onClick={'href' in desktop ? () => onAction({ kind: 'open-desktop', href: desktop.href }) : undefined}
+          disabled={'blocked' in desktop}
+          title={
+            'blocked' in desktop
+              ? desktop.blocked
+              : `Opens just this session in the Claude app. Works on ${session.runner_host || 'its runner'}, signed in as that account.`
+          }
+          testId="ide-menu-open-desktop"
+        >
+          Open in Claude desktop
+        </Item>
+      )}
       <Sep />
       <Item
         onClick={() => onAction({ kind: 'stop' })}

@@ -39,7 +39,13 @@ class Runner(models.Model):
     # daemon; it was folded into the laptop runner as this setting.)
     ENGINE_EMDASH = "emdash"
     ENGINE_CLAUDE_DESKTOP = "claude-desktop"
-    ENGINE_CHOICES = [(ENGINE_EMDASH, "emdash"), (ENGINE_CLAUDE_DESKTOP, "Claude desktop")]
+    # The runner runs Claude itself, headless over ACP (the cloud runner's
+    # executor), and never opens an app or needs emdash: a person opens a session
+    # in the Claude desktop app from the IDE when they want it there. Runtimes are
+    # named <vendor>-<surface>, so another vendor's CLI gets its own value.
+    ENGINE_CLAUDE_CLI = "claude-cli"
+    ENGINE_CHOICES = [(ENGINE_EMDASH, "emdash"), (ENGINE_CLAUDE_DESKTOP, "Claude desktop"),
+                      (ENGINE_CLAUDE_CLI, "Claude CLI (headless)")]
 
     ONLINE, STALE, DISCONNECTED, DEGRADED, RETIRED = (
         "online", "stale", "disconnected", "degraded", "retired",

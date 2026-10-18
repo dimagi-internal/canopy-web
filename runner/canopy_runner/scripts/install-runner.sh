@@ -43,7 +43,7 @@ RUNNER_SRC="runner/canopy_runner/canopy_runner"
 # What counts as the runner's code for staleness: the package, the installer, the
 # menu-bar app and the icons it bundles. Same list as provenance.CODE_PATHS and
 # deploy-labs.yml (tests/test_runner_code_paths.py keeps the three equal).
-RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand packages/canopy_cron packages/canopy_transcript"
+RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand packages/canopy_cron packages/canopy_transcript runner/canopy_acp"
 LABEL="com.canopy.runner"
 UPDATER_LABEL="com.canopy.runner.updater"
 CONFIG="$HOME/.canopy/runner.json"
@@ -189,13 +189,13 @@ COMMITTED_AT = ${RUNNER_COMMITTED_AT:-0}
 EOF
 
 echo "==> building wheels"
-for pkg in packages/canopy_cron packages/canopy_transcript runner/canopy_runner; do
+for pkg in packages/canopy_cron packages/canopy_transcript runner/canopy_acp runner/canopy_runner; do
   uv build --quiet --wheel -o "$TMP/dist" "$TMP/$pkg"
 done
 
 WHEEL="$(ls "$TMP"/dist/canopy_runner-*.whl)"
 echo "==> installing $(basename "$WHEEL")"
-# --find-links supplies canopy-cron / canopy-transcript (on no index) while the
+# --find-links supplies canopy-cron / canopy-transcript / canopy-acp (on no index) while the
 # real index still serves croniter and the realtime extra's websocket-client.
 # The runner itself is named by direct file:// URL so no index can shadow it.
 #
@@ -209,7 +209,7 @@ PY_REQ="$(sed -n 's/^requires-python *= *"\(.*\)"/\1/p' "$TMP/runner/canopy_runn
 # without it uv keeps the copy it already has and a change to the shared
 # transcript core reaches no laptop even though the sha moved.
 uv tool install --force ${PY_REQ:+--python "$PY_REQ"} \
-  --reinstall-package canopy-cron --reinstall-package canopy-transcript \
+  --reinstall-package canopy-cron --reinstall-package canopy-transcript --reinstall-package canopy-acp \
   --find-links "$TMP/dist" "canopy-runner[realtime] @ file://$WHEEL"
 
 # Ask uv where it PUT the executable rather than trusting PATH order — an older

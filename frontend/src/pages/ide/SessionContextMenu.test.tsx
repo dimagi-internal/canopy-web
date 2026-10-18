@@ -54,4 +54,21 @@ describe('SessionContextMenu', () => {
     open(session({ status: 'archived' }))
     expect(screen.getByTestId('ide-menu-unarchive')).toBeTruthy()
   })
+
+  it('opens one session in Claude desktop, from a Claude CLI runner', () => {
+    const key = '40cca779-4c36-4b93-8007-69dc2478d51b'
+    const onAction = open(session({ runner_id: 'box', session_key: key }), [runner('box', { engine: 'claude-cli' })])
+    fireEvent.click(screen.getByTestId('ide-menu-open-desktop'))
+    expect(onAction).toHaveBeenCalledWith({ kind: 'open-desktop', href: `claude://resume?session=${key}` })
+  })
+
+  it('refuses while a Claude CLI turn is running, and is absent for an emdash runner', () => {
+    const key = '40cca779-4c36-4b93-8007-69dc2478d51b'
+    open(session({ runner_id: 'box', session_key: key, running: true }), [runner('box', { engine: 'claude-cli' })])
+    expect((screen.getByTestId('ide-menu-open-desktop') as HTMLButtonElement).disabled).toBe(true)
+    cleanup()
+    open(session({ runner_id: 'box', session_key: key }), [runner('box', { engine: 'emdash' })])
+    expect(screen.queryByTestId('ide-menu-open-desktop')).toBeNull()
+  })
 })
+

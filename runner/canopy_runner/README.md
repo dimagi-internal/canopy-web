@@ -17,16 +17,17 @@ skips that session report rather than POSTing an empty list that would clear
 every binding server-side. `verify-emdash` (below) remains the proactive check
 for the schema drift that causes such a failure.
 
-## Session runtime: emdash or Claude desktop
+## Session runtime: emdash, Claude desktop or Claude CLI
 
-A runner opens new sessions in **emdash** (the default) or in the **Claude
-desktop app's Code tab**. Flip it either way, any time:
+A runner opens new sessions in **emdash** (the default), in the **Claude
+desktop app's Code tab**, or runs them itself, headless (**Claude CLI**). Flip it any
+time:
 
 - **canopy-web:** Supervisor → the runner → **Session runtime** → *emdash* /
-  *Claude desktop*. Available to the runner's owner and its admins.
-- **On the box:** `canopy-runner runtime set claude-desktop` and
-  `canopy-runner runtime set emdash` (`canopy-runner runtime` shows the current
-  setting). This sets the same switch on canopy-web.
+  *Claude desktop* / *Claude CLI*. Available to the runner's owner and its admins.
+- **On the box:** `canopy-runner runtime set claude-desktop|claude-cli|emdash`
+  (`canopy-runner runtime` shows the current setting). This sets the same switch
+  on canopy-web; `set claude-cli` also installs the ACP adapter if it is missing.
 
 Nothing needs restarting. The runner reads the setting off its next heartbeat,
 so the flip takes effect within seconds. It's safe while sessions are live,
@@ -54,6 +55,28 @@ canopy-web#1188):
 - **Keep the app running:** Claude.app must stay running (it may be hidden), and
   the runner starts it if it isn't. Quitting it stops that runtime's sessions.
 
+How a Claude CLI session is driven (`desktop.py` + `headless.py`):
+- **Never the app, never a deep link, so nothing takes the focus.** A new thread
+  gets the same worktree, settings and mod as a Claude desktop session, and the
+  runner runs the turn over ACP — the cloud runner's executor (`runner/canopy_acp`),
+  with `@agentclientprotocol/claude-agent-acp` installed under `~/.canopy/acp`.
+  You watch and steer it in canopy-web; an agent turn runs to completion there.
+- **Opening it in the app is your click:** canopy-web's IDE → right-click the
+  session → **Open in Claude desktop** opens exactly that session
+  (`claude://resume?session=<id>`), once its turn has ended. Not the app's own
+  "Import N Claude Code CLI sessions" card, which imports every session on the box.
+- **One live process per session.** Two Claude processes on one session fork it
+  silently, so a headless turn's process lives for that turn only. Once the app
+  holds the session (the mod stamps `alive`), follow-ups go in through the mod;
+  when the app's process is gone, they run headless again.
+- **The mod stays out of headless turns:** they run with `CANOPY_HEADLESS=1`.
+- **No emdash needed** (Windows, or a laptop without it): a `claude-cli` box
+  claims and reports ready with emdash closed or absent. It drives the projects
+  emdash holds, if any, plus its own list in runner.json's `project_paths`:
+  `canopy-runner projects add <name> <checkout>` (`list`, `remove <name>`); the
+  running daemon reports the change on its next tick. A follow-up on a thread
+  still held by an emdash session needs emdash, and fails while it is closed.
+
 ## Layout
 
 `main.py` is the LOOP and the CLI. Every subsystem it drives owns its own module,
@@ -74,6 +97,7 @@ so "where does X live" has exactly one answer:
 | `transcript.py` / `tail.py` | resolving and incrementally reading transcripts |
 | `inbox.py` / `schedules.py` | the email and cron turn producers |
 | `provenance.py` / `update.py` / `_build_info.py` | what code this box runs, and whether to update |
+| `desktop.py` / `headless.py` | the Claude desktop and Claude CLI session runtimes; the headless ACP executor |
 | `cancel.py` / `failure_log.py` | the shared "stop this turn" set; repeat-aware retry logging |
 | `readiness.py` / `wake.py` / `dialog.py` | can-I-fire; the WS wake channel; the native prompt |
 | `pair.py` | one-time setup of a new account: pair, ports, runner.json, launcher |

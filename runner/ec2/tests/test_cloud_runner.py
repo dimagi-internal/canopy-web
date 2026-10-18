@@ -10,6 +10,7 @@ import json
 import pathlib
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -1849,14 +1850,48 @@ def test_stop_cancels_the_live_session(cloud_runner):
         cloud_runner._acp_unregister("turn-4")
 
 
-def test_the_turn_unregisters_before_the_connection_closes(cloud_runner):
+def test_the_turn_unregisters_before_the_connection_closes(cloud_runner, monkeypatch, tmp_path):
     """Order matters: a stop/cancel arriving in the gap would reach a closed
     connection and raise inside the WS thread."""
-    import re
-    src = (pathlib.Path(cloud_runner.__file__).read_text()
-           if hasattr(cloud_runner, "__file__") else "")
-    body = re.search(r"finally:\n\s*# Unregister BEFORE close.*?agent\.close\(\)", src, re.S)
-    assert body, "run_acp's finally no longer unregisters before closing"
+    seen = {}
+
+    class Agent:
+        session_id = "acp-u"
+
+        def __init__(self, cwd, env, on_update):
+            pass
+
+        def start(self):
+            pass
+
+        def new_session(self, timeout=None):
+            seen["registered"] = cloud_runner._acp_agent_for("turn-u") is self
+            return self.session_id
+
+        def prompt(self, _p):
+            return SimpleNamespace(result=lambda timeout=None: {"stopReason": "end_turn"})
+
+        def cancel(self):
+            pass
+
+        def close(self):
+            seen["at_close"] = cloud_runner._acp_agent_for("turn-u")
+
+    class Reducer:
+        assistant_text = "ok"
+        rate_limit = None
+
+        def apply(self, update):
+            return None
+
+        def reset_stream_state(self):
+            pass
+
+    monkeypatch.setattr(cloud_runner, "_acp_core",
+                        lambda: SimpleNamespace(AcpAgent=Agent, UpdateReducer=Reducer))
+    monkeypatch.setattr(cloud_runner, "_agent_env", lambda slug: {})
+    ok, _, _ = cloud_runner.run_acp("hi", "turn-u", lambda e: None, cwd=tmp_path)
+    assert ok and seen == {"registered": True, "at_close": None}
 
 
 # ── the doorbell, answered ──────────────────────────────────────────────────

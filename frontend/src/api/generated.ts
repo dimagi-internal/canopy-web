@@ -7380,8 +7380,8 @@ export interface paths {
         readonly get?: never;
         /**
          * Choose the session runtime a laptop runner opens new sessions in
-         * @description Set the runtime (`emdash` or `claude-desktop`) a laptop runner opens new
-         *     sessions in. Takes effect on the runner's next heartbeat; sessions already
+         * @description Set the runtime (`emdash`, `claude-desktop` or `claude-cli`) a laptop runner
+         *     opens new sessions in. Takes effect on the runner's next heartbeat; sessions already
          *     running stay where they are.
          */
         readonly put: operations["set_runner_engine"];

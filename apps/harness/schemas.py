@@ -105,7 +105,7 @@ class RunnerFlagsIn(Schema):
 
 
 class RunnerEngineIn(Schema):
-    # emdash | claude-desktop (Runner.ENGINE_CHOICES). Validated in the view so the
+    # emdash | claude-desktop | claude-cli (Runner.ENGINE_CHOICES). Validated in the view so the
     # error names the choices rather than a pydantic literal mismatch.
     engine: str
 
@@ -114,8 +114,8 @@ class RunnerOut(Schema):
     id: uuid.UUID
     name: str
     kind: str
-    # The session runtime this (laptop) runner opens NEW sessions in — emdash or
-    # claude-desktop. The runner reads it off its own heartbeat response, so this
+    # The session runtime this (laptop) runner opens NEW sessions in — emdash,
+    # claude-desktop or claude-cli. The runner reads it off its own heartbeat response, so this
     # field is also how a flip reaches the box (canopy-web#1188).
     engine: str = "emdash"
     status: str

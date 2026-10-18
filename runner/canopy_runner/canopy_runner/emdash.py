@@ -92,6 +92,13 @@ READ_SCHEMA: dict[str, list[str]] = {
 }
 
 
+
+def _present(db_path: str) -> bool:
+    """Whether emdash's DB is on this box. A box with no emdash (a `claude-cli`
+    runner, a Windows one) has `emdash_db` empty, and Path("") is "." — which
+    exists, so `.exists()` alone would read the current directory as the DB."""
+    return bool(db_path) and Path(db_path).is_file()
+
 def _cols(conn: sqlite3.Connection, table: str) -> set[str]:
     """The column names `table` actually has, or an empty set if it has none.
 
@@ -187,7 +194,7 @@ def check_read_schema(db_path: str) -> tuple[list[str], list[str]]:
     Raises ``SchemaCheckError`` if the DB itself can't be opened, so "can't find the
     DB" stays distinct from "the schema drifted".
     """
-    if not Path(db_path).exists():  # don't let sqlite3.connect() create an empty file
+    if not _present(db_path):  # don't let sqlite3.connect() create an empty file
         raise SchemaCheckError(f"emdash DB not found at {db_path}")
     problems: list[str] = []
     older: list[str] = []
@@ -231,7 +238,7 @@ def task_state(db_path: str, name: str) -> str:
     Names aren't unique in emdash's schema, so the newest row wins: an old archived
     namesake must not report a live task as gone.
     """
-    if not Path(db_path).exists():          # don't let sqlite3.connect() create one
+    if not _present(db_path):          # don't let sqlite3.connect() create one
         return "unknown"
     try:
         with _db(db_path) as conn:
@@ -305,7 +312,7 @@ def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
     emdash UI. `status` is the TASK's status, always 'in_progress' in practice (emdash
     never updates it); `agent_status` is the per-conversation one that does move — see
     `_agent_statuses`, and note it is "" whenever this emdash could not answer."""
-    if not Path(db_path).exists():
+    if not _present(db_path):
         return []
     try:
         with _db(db_path) as conn:
@@ -355,7 +362,7 @@ def task_projects(db_path: str, name: str) -> list[str] | None:
     the name alone is enough (exactly one) or would be a guess (several). None is
     deliberately not [] — "I could not look" must never read as "there is none".
     """
-    if not name or not Path(db_path).exists():
+    if not name or not _present(db_path):
         return None
     try:
         with _db(db_path) as conn:
@@ -403,7 +410,7 @@ def list_projects(db_path: str) -> list[str]:
     that once blanked the supervisor via `replace_reported_sessions`, one notch
     worse.
     """
-    if not Path(db_path).exists():
+    if not _present(db_path):
         return []
     try:
         with _db(db_path) as conn:
@@ -429,7 +436,7 @@ def list_recently_archived_tasks(db_path: str, limit: int = 100) -> list[str]:
     real read failure raises EmdashReadError (the caller omits the field rather than
     asserting "nothing was archived", which would un-archive every closed task).
     """
-    if not Path(db_path).exists():
+    if not _present(db_path):
         return []
     try:
         with _db(db_path) as conn:
@@ -470,7 +477,7 @@ def session_transcript_ref(db_path: str, project: str, task: str) -> tuple[str, 
     reason `_agent_statuses` prefers the newest — an earlier conversation under a
     reused task name must not answer for the live one.
     """
-    if not project or not task or not Path(db_path).exists():
+    if not project or not task or not _present(db_path):
         return None
     try:
         with _db(db_path) as conn:
@@ -503,7 +510,7 @@ def task_worktree(db_path: str, project: str, task: str) -> str | None:
     answer, never a guess: the caller writes settings INTO this directory, so a wrong
     answer would confine the wrong session.
     """
-    if not project or not task or not Path(db_path).exists():
+    if not project or not task or not _present(db_path):
         return None
     try:
         with _db(db_path) as conn:

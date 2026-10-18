@@ -358,6 +358,17 @@ wheels = [
 ]
 
 [[package]]
+name = "canopy-acp"
+version = "0.1.0"
+source = { editable = "runner/canopy_acp" }
+dependencies = [
+    { name = "canopy-transcript" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "canopy-transcript", editable = "packages/canopy_transcript" }]
+
+[[package]]
 name = "canopy-agent-factory"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -399,12 +410,14 @@ requires-dist = [{ name = "croniter", specifier = ">=6.0,<7.0" }]
 name = "canopy-runner"
 source = { editable = "runner/canopy_runner" }
 dependencies = [
+    { name = "canopy-acp" },
     { name = "canopy-cron" },
     { name = "canopy-transcript" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "canopy-acp", editable = "runner/canopy_acp" },
     { name = "canopy-cron", editable = "packages/canopy_cron" },
     { name = "canopy-transcript", editable = "packages/canopy_transcript" },
     { name = "websocket-client", marker = "extra == 'realtime'", specifier = ">=1.8,<2" },
