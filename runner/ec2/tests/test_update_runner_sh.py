@@ -443,3 +443,82 @@ def test_a_change_to_the_updater_alone_moves_the_deployed_sha(box):
                  "runner/ec2/cloud_runner.py", "runner/ec2/bootstrap_agents.sh",
                  "runner/ec2/update_runner.sh")
     assert after != before
+
+
+# --- the box's own credential (keyless runners) -------------------------------
+#
+# 2026-10-17: the owner's PAT in runner.env was revoked. The daemon carried on
+# with its device-key runner token; this script kept GETting with the PAT, read
+# 401 as `unknown`, and installed nothing for hours while the daemon nudged it
+# every ten minutes (cloud-ec2-2, expected moving, installed stuck at f6da246).
+KEYLESS_RUNNER = (
+    "#!/usr/bin/env python3\n"
+    "print('import-time noise that must never read as a token')\n"
+    "BASE_URL = ''\n"
+    "_RUNNER_TOKEN = {'raw': ''}\n"
+    "def _log(msg):\n"
+    "    print(msg)\n"
+    "def _exchange_device_proof(runner_id):\n"
+    "    _log('keyless: signed in')\n"
+    f"    if runner_id != {RUNNER_ID!r} or not BASE_URL.startswith('https://'):\n"
+    "        return False\n"
+    "    _RUNNER_TOKEN['raw'] = 'crt_box'\n"
+    "    return True\n"
+)
+
+
+def _only_accepts(box, token: str) -> None:
+    """canopy-web refusing every bearer but `token` (curl -f exits 22 on a 401)."""
+    box._write_stub(
+        "curl",
+        f'echo "$@" >> "{box.curl_log}"\n'
+        f'case "$*" in *"Bearer {token}"*) cat "{box.api_body}" ;; *) exit 22 ;; esac\n',
+    )
+
+
+def test_a_revoked_pat_does_not_stall_a_box_with_an_approved_device_key(box):
+    (box.home / "cloud_runner.py").write_text(KEYLESS_RUNNER)
+    box.stamp("0" * 40)
+    sha = box.seed_repo(GOOD_RUNNER)
+    box.expect(sha)
+    _only_accepts(box, "crt_box")
+    assert box.run("--check").stdout.startswith(f"stale expected={sha}")
+    r = box.run()
+    assert r.returncode == 0, r.stderr
+    assert "i am the new runner" in box.installed
+    assert box.restarted
+
+
+def test_no_device_key_falls_back_to_the_pat(box):
+    # An installed runner that predates keyless (or a key not yet approved).
+    (box.home / "cloud_runner.py").write_text(GOOD_RUNNER)
+    box.stamp("abc123")
+    box.expect("f" * 40)
+    _only_accepts(box, "tok")
+    assert box.run("--check").stdout.startswith("stale")
+
+
+def test_an_unknown_verdict_says_why(box):
+    (box.home / "cloud_runner.py").write_text(KEYLESS_RUNNER)
+    box.stamp("abc123")
+    box.expect("f" * 40)
+    _only_accepts(box, "nobody")
+    out = box.run("--check")
+    assert out.stdout.startswith("unknown")
+    assert "unknown because" in out.stderr
+    assert "runner token" in out.stderr and "CANOPY_TOKEN" in out.stderr
+    assert "crt_box" not in out.stdout + out.stderr, "a token must never reach the journal"
+
+
+def test_the_credentials_refresh_mints_a_token_when_the_daemon_shared_none(box):
+    sha = box.seed_repo(GOOD_RUNNER)
+    (box.home / "cloud_runner.py").write_text(KEYLESS_RUNNER)
+    seen = box.root / "bootstrap-env.txt"
+    stub = box.repo / "runner" / "ec2" / "bootstrap_agents.sh"
+    stub.write_text(f'#!/bin/bash\nprintf "%s\\n" "CANOPY_TOKEN=${{CANOPY_TOKEN:-}}" > "{seen}"\n')
+    stub.chmod(0o755)
+    box.stamp(sha)
+    box.expect(sha)
+    _only_accepts(box, "crt_box")
+    assert box.run().returncode == 0
+    assert "CANOPY_TOKEN=crt_box" in seen.read_text().splitlines()
