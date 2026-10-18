@@ -172,6 +172,14 @@ class TurnModeIn(StrictModel):
     turn_mode: Literal["manual", "auto"]
 
 
+class RepositoryIn(StrictModel):
+    """Point an agent at its GitHub repository — the code its runners clone."""
+
+    repo_url: str = Field(min_length=1, max_length=300)
+    # The branch its runners run; empty leaves it as it is.
+    repo_ref: str = Field(default="", max_length=120)
+
+
 class CredentialSourceIn(StrictModel):
     """Choose where `canopy cred` resolves this agent's secrets from (canopy#850).
 

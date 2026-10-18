@@ -105,6 +105,7 @@ from .schemas import (
     TurnBriefOut,
     TurnModeIn,
     CredentialSourceIn,
+    RepositoryIn,
     AgentCredentialReadOut,
     DeviceBindingIn,
     DeviceProofRequiredOut,
@@ -940,6 +941,38 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
         _refuse_auto_unless_admin(request, agent, "setting the agent's turn mode")
     agent.turn_mode = payload.turn_mode
     agent.save(update_fields=["turn_mode", "updated_at"])
+    return _detail(request, agent)
+
+
+@router.patch("/{slug}/repository", response=AgentDetailOut,
+              summary="Point an agent at its GitHub repository")
+def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> AgentDetailOut:
+    """Set the repository (and optionally the branch) its runners clone and run —
+    the one field the setup checklist's first step asks for, without the create
+    wizard. A github.com URL in any spelling; stored as `https://github.com/owner/repo`.
+
+    The agent's owner or an admin (`_agent_for_admin`): the repo is what a box
+    runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
+    cloud boxes that take its turns are asked to re-run their bootstrap, as a
+    repo change through the upsert does."""
+    from apps.events import audit
+
+    from . import delegations
+    from .setup import request_setup
+
+    agent = _agent_for_admin(request, slug)
+    full = delegations.repo_full_name(payload.repo_url.strip())
+    if not full:
+        raise HttpError(422, "give a github.com repository, e.g. https://github.com/dimagi/muse")
+    url = f"https://github.com/{full}"
+    ref = payload.repo_ref.strip() or agent.repo_ref
+    before = {"repo_url": agent.repo_url, "repo_ref": agent.repo_ref}
+    agent.repo_url, agent.repo_ref = url, ref
+    agent.save(update_fields=["repo_url", "repo_ref", "updated_at"])
+    audit.note_change(scope=f"agent:{agent.slug}/repository", before=before,
+                      after={"repo_url": url, "repo_ref": ref})
+    if before["repo_url"] != url:
+        request_setup(agent)
     return _detail(request, agent)
 
 

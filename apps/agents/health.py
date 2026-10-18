@@ -36,7 +36,7 @@ def _shared_vault(ws: Workspace) -> dict:
     }
 
 
-def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict) -> dict:
+def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: dict) -> dict:
     steps = setup_steps(agent)
     left = [s for s in steps if s["status"] not in (DONE, OPTIONAL)]
     last = last_turns.get(agent.slug) or {}
@@ -57,6 +57,9 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict) -> dict:
         "projects": c.get("projects", 0),
         "open_tasks": c.get("open_tasks", 0),
         "waiting_tasks": c.get("waiting_tasks", 0),
+        "active_sessions": sessions.get(agent.pk, {}).get("active", 0),
+        "last_session_at": sessions.get(agent.pk, {}).get("last_at"),
+        "recent_sessions": sessions.get(agent.pk, {}).get("recent", []),
         "created_at": agent.created_at,
         "last_turn_at": last.get("last_at"),
         "turns_30d": last.get("n", 0),
@@ -86,13 +89,48 @@ def _counts(agents: list[Agent]) -> dict[int, dict]:
                       "open_tasks": r["open_n"], "waiting_tasks": r["waiting_n"]} for r in rows}
 
 
+#: How many of an agent's latest sessions a row lists.
+RECENT_SESSIONS = 3
+
+
+def _sessions(agents: list[Agent], viewer) -> dict[int, dict]:
+    """Per agent: how many sessions are open (`staleness.active`, the chat list's
+    `state=active`), when any session last did something (`services.with_activity`,
+    the list's rule) — both over ALL its sessions, as counts — and its latest
+    sessions, only those the viewer may open (`access.readable_sessions`): showing
+    a title is showing the chat, and opening one is never a grant."""
+    from apps.canopy_sessions import access, services as chat, staleness
+    from apps.canopy_sessions.models import Session
+
+    ids = [a.pk for a in agents]
+    out: dict[int, dict] = {i: {"active": 0, "last_at": None, "recent": []} for i in ids}
+    mine = Session.objects.filter(agent_id__in=ids)
+    open_ids = set(staleness.active(mine).values_list("pk", flat=True))
+    readable = set(access.readable_sessions(viewer).filter(agent_id__in=ids).values_list("pk", flat=True))
+    # One pass, newest first: the first row per agent is its last activity (over
+    # every session); the readable ones fill its recent list.
+    rows = chat.with_activity(mine).order_by("-_activity").values(
+        "pk", "agent_id", "workspace_id", "title", "_activity")
+    for s in rows:
+        row = out[s["agent_id"]]
+        if row["last_at"] is None:
+            row["last_at"] = s["_activity"]
+        if s["pk"] in open_ids:
+            row["active"] += 1
+        if s["pk"] in readable and len(row["recent"]) < RECENT_SESSIONS:
+            row["recent"].append({"id": str(s["pk"]), "workspace": s["workspace_id"], "title": s["title"],
+                                  "at": s["_activity"], "active": s["pk"] in open_ids})
+    return out
+
+
 def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True) -> dict:
     tree = wsvc.subtree(root, visible)
     agents = agents_in_tree(tree, "owner", "workspace")
     from apps.events import analytics
 
     last_turns, counts = analytics.agent_turns([a.slug for a in agents], days=30), _counts(agents)
-    rows = [agent_row(a, viewer, last_turns, counts) for a in agents]
+    sessions = _sessions(agents, viewer)
+    rows = [agent_row(a, viewer, last_turns, counts, sessions) for a in agents]
     per_ws: dict[str, int] = {}
     for r in rows:
         per_ws[r["workspace"]] = per_ws.get(r["workspace"], 0) + 1

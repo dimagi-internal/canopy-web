@@ -5,6 +5,7 @@ import { CheckCircle2 } from 'lucide-react'
 import { AgentAccessRoster } from '@/components/agents/AgentAccessRoster'
 import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
 import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
+import { AgentRepositoryControl } from '@/components/agents/AgentRepositoryControl'
 import { AgentRouting } from '@/components/agents/AgentRouting'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
@@ -170,6 +171,14 @@ export function AgentSettingsSection() {
           >
             <AgentRouting agentSlug={agent.slug} agentName={agent.name} initialTurnMode={agent.turn_mode} />
           </Setting>
+          {/* The checklist's "Give it a repository" lands here (#repository). */}
+          <div id="repository" className="scroll-mt-6 border-t border-border">
+            <Setting title="Repository" who={admins} canEdit={isAdmin}
+                     description="The GitHub repository its runners clone and run, and the branch.">
+              <AgentRepositoryControl slug={agent.slug} initialUrl={agent.definition?.repo_url ?? ''}
+                                      initialRef={agent.definition?.repo_ref ?? ''} canEdit={isAdmin} />
+            </Setting>
+          </div>
         </div>
       </Section>
 

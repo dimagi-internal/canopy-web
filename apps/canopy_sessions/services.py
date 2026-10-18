@@ -507,6 +507,17 @@ def is_session_running(binding) -> bool:
 _BACKFILL_ROLES = {Message.USER, Message.ASSISTANT, Message.TOOL_USE, Message.TOOL_RESULT, Message.SYSTEM}
 
 
+def with_activity(sessions):
+    """Annotate `_last_msg_at` and `_activity`: `last_activity_at`'s rule (binding >
+    newest message > created) in SQL, so a list can window, sort or aggregate on it.
+    The one SQL spelling, for the session list and the workspace health dashboard."""
+    from django.db.models import Max
+    from django.db.models.functions import Coalesce
+
+    return sessions.annotate(_last_msg_at=Max("messages__created_at")).annotate(
+        _activity=Coalesce("runner_binding__last_interacted_at", "_last_msg_at", "created_at"))
+
+
 def last_activity_at(session, binding):
     """When this session last DID something — not when its row was created.
 

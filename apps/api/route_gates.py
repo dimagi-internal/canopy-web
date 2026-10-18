@@ -119,6 +119,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_runner_preference": ("agent.work",),
     "set_turn_mode": ("agent.work",),
     "set_credential_source": ("agent-admin",),
+    "set_repository": ("agent-admin",),  # what its boxes run: a DEFINITION_FIELDS change
     "set_device_binding": ("agent-admin",),
     "agent_credential_reads": ("agent-admin",),  # the read log; never a value
     "agent_device_keys": ("agent-admin",),  # can_manage per key = runner-admin
@@ -810,7 +811,7 @@ SETTINGS: frozenset[str] = frozenset({
     "upsert_agent", "move_agent", "delete_agent", "transfer_owner", "link_canopy_user", "mint_agent_canopy_token",
     "grant_admin", "revoke_admin",
     "publish_interface", "unpublish_interface",
-    "set_credential_source", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",
+    "set_credential_source", "set_repository", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",
     "set_device_binding", "approve_runner_device_key", "revoke_runner_device_key",
     "set_pat_rotation", "rotate_pat_now",
     "enable_agent_zk", "set_agent_zk_values", "add_agent_zk_wraps", "rotate_agent_zk",
