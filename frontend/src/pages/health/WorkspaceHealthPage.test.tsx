@@ -12,7 +12,7 @@ const step = (key: string, status: 'done' | 'todo', href = '') => ({
 function agent(slug: string, over: Partial<AgentHealthOut> = {}): AgentHealthOut {
   return {
     slug, name: slug.toUpperCase(), workspace: 'connect', owner_email: `${slug}@x.org`, can_fix: true, email: '',
-    repo_url: '', turn_mode: 'manual', has_interface: false, capabilities: 0, skills: 2, schedules: 0,
+    repo_url: '', turn_mode: 'manual', has_interface: false, capabilities: 0, full_access: [], skills: 2, schedules: 0,
     projects: 1, open_tasks: 3, waiting_tasks: 1, created_at: '2026-10-01T00:00:00Z',
     active_sessions: 1, last_session_at: '2026-10-17T00:00:00Z',
     recent_sessions: [{ id: 's1', workspace: 'connect', title: `${slug} chat`, at: '2026-10-17T00:00:00Z', active: true }],
@@ -40,7 +40,7 @@ vi.mock('@/api/workspaces', async (orig) => ({
   getWorkspaceHealth: vi.fn(async () => HEALTH),
 }))
 
-const { WorkspaceHealthPage } = await import('./WorkspaceHealthPage')
+const { WorkspaceHealthPage, whoCanUse } = await import('./WorkspaceHealthPage')
 
 afterEach(() => cleanup())
 
@@ -85,5 +85,13 @@ describe('WorkspaceHealthPage', () => {
     const mail = screen.getByTestId('send-to-owner').getAttribute('href') ?? ''
     expect(mail.startsWith('mailto:eva%40x.org?subject=')).toBe(true)
     expect(decodeURIComponent(mail)).toContain('Step vault: detail vault')
+  })
+})
+
+describe('whoCanUse', () => {
+  it('names both kinds of published access, never "0 capabilities"', () => {
+    expect(whoCanUse({ has_interface: false, capabilities: 0, full_access: [] })).toBe('Admins only')
+    expect(whoCanUse({ has_interface: true, capabilities: 0, full_access: ['@dimagi.com:verified'] })).toBe('Admins + full: 1 rule')
+    expect(whoCanUse({ has_interface: true, capabilities: 3, full_access: ['a', 'b'] })).toBe('Admins + full: 2 rules · 3 capabilities')
   })
 })

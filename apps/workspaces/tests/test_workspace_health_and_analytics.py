@@ -338,7 +338,7 @@ def test_health_counts_projects_open_tasks_and_waits_like_the_agent_pages(tree):
     hal.save(update_fields=["interface"])
     row = next(a for a in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["agents"] if a["slug"] == "hal")
     assert (row["projects"], row["open_tasks"], row["waiting_tasks"]) == (1, 2, 1)
-    assert (row["has_interface"], row["capabilities"]) == (True, 1)
+    assert (row["has_interface"], row["capabilities"], row["full_access"]) == (True, 1, [])
 
 
 def test_health_shows_open_sessions_and_only_the_latest_ones_the_viewer_may_open(tree):

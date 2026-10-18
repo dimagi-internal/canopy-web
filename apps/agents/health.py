@@ -52,6 +52,7 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
         "turn_mode": agent.turn_mode,
         "has_interface": iface_mod.published(agent.interface or {}),
         "capabilities": len((agent.interface or {}).get("capabilities") or {}),
+        "full_access": [str(c) for c in ((agent.interface or {}).get("full") or [])],
         "skills": c.get("skills", 0),
         "schedules": c.get("schedules", 0),
         "projects": c.get("projects", 0),

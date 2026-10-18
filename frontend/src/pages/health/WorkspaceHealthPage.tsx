@@ -167,10 +167,9 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                     <td className="text-right tabular-nums">{a.waiting_tasks}</td>
                     <td className="text-right tabular-nums">{a.skills}</td>
                     <td className="text-right tabular-nums">{a.schedules}</td>
-                    <td className="whitespace-nowrap text-foreground-secondary">
-                      {a.has_interface
-                        ? `Admins + ${a.capabilities} capabilit${a.capabilities === 1 ? 'y' : 'ies'}`
-                        : 'Admins only'}
+                    <td className="whitespace-nowrap text-foreground-secondary"
+                        title={a.full_access.length ? `Whole agent for: ${a.full_access.join(', ')}` : undefined}>
+                      {whoCanUse(a)}
                     </td>
                     <td className="whitespace-nowrap text-foreground-secondary">
                       {a.turn_mode === 'manual' ? 'Manual · asks first' : a.turn_mode === 'auto' ? 'Auto' : a.turn_mode}
@@ -188,6 +187,16 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
       </section>
     </div>
   )
+}
+
+/** "Who can use it" in words: its admins, plus whatever its interface publishes —
+ *  `full:` rules (the whole agent) and capabilities (confined to one job each). */
+export function whoCanUse(a: Pick<AgentHealthOut, 'has_interface' | 'capabilities' | 'full_access'>): string {
+  if (!a.has_interface) return 'Admins only'
+  const parts = []
+  if (a.full_access.length) parts.push(`full: ${a.full_access.length} rule${a.full_access.length === 1 ? '' : 's'}`)
+  if (a.capabilities) parts.push(`${a.capabilities} capabilit${a.capabilities === 1 ? 'y' : 'ies'}`)
+  return `Admins + ${parts.join(' · ')}`
 }
 
 /** A count that opens the agent's page for it; a zero is just a zero. The click
