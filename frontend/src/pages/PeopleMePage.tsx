@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { AlertTriangle, BookOpen, Check, ChevronDown, Download, Eye, Pencil, Plus, Trash2, X } from 'lucide-react'
 
 import {
-  MY_CATEGORIES,
   addMyEntry,
   correctMyEntry,
   exportMine,
@@ -14,55 +14,56 @@ import {
 } from '../api/people'
 import type { HcpAuditEvent, HcpGrant, PersonFactDetail, PersonMe } from '../api/people'
 import { MemorySettings } from './MemorySettings'
+import {
+  activeAccess,
+  agentName,
+  dayLabel,
+  durationOf,
+  endedOf,
+  eventSentence,
+  grantCategories,
+  groupFacts,
+  placeOf,
+  readsByEntry,
+  relTime,
+  type AgentAccess,
+  type EntryReads,
+} from './memory/words'
 
-/** The person's two agent-memory features, each with a canopy-level "available"
- *  and "on by default in new sessions". These are POLICY: they grant no agent
- *  anything. An agent is granted only when you allow it in a session (and,
- *  separately, choose to keep allowing it), within what is available here. */
+/** The two canopy-level switches. They are POLICY: they grant no agent anything.
+ *  An agent is granted only when you allow it in a conversation (and, separately,
+ *  choose to keep allowing it), within what is switched on here. */
 const MEMORY_SWITCHES = [
   {
     key: 'record' as const,
-    label: 'Learn from me',
-    on: 'Available: agents you allow can add what they learn to your memory.',
-    off: 'Not available: no agent adds anything to your memory, in any conversation.',
+    label: 'Agents can learn from me',
+    on: 'Agents you allow can remember things about you as you work with them.',
+    off: 'No agent remembers anything new about you, in any conversation.',
   },
   {
     key: 'use' as const,
-    label: 'Use my memory',
-    on: 'Available: agents you allow can read your memory to help you.',
-    off: 'Not available: no agent reads your memory, in any conversation. Nothing below is deleted.',
+    label: 'Agents can use what they know',
+    on: 'Agents you allow are told what is below, so you don’t have to repeat yourself.',
+    off: 'No agent is told anything below, in any conversation. Nothing is deleted.',
   },
 ]
 
-/** 4.1.5.1 Rule 3: show a narrowed grant as narrowed — which of your entries an
- *  app's grant reaches (your personal ones, plus any workspace you ticked). */
-function reachOf(g: HcpGrant): string {
-  // An agent's grant: canopy names its reach in words (e.g. "your Dimagi memory (all divisions)").
-  if (g.canopy.reach) return g.canopy.reach
-  const sources = new Set<string>()
-  for (const r of g.restrictions as { narrowedTo?: { sources?: string[] } }[]) {
-    for (const src of r.narrowedTo?.sources ?? []) sources.add(src)
-  }
-  if (sources.size === 0) return ''
-  return Array.from(sources)
-    .map((src) => (src === 'personal' ? 'your personal entries' : `what ${src.replace('workspace:', '')} learned`))
-    .join(' and ')
-}
+type Source = 'all' | 'you' | 'agents'
 
-/** Where an entry came from, in a person's words: "learned by Hal on connect-labs ·
- *  Oct 9" (the site is canopy's provenance extension, `record.provenance.site`). */
-function learnedLine(f: PersonFactDetail): string {
+/** Where an entry came from, as a short chip: "You" or "ACE · Oct 7". */
+function sourceOf(f: PersonFactDetail): { mine: boolean; text: string } {
   const when = f.created_at ? new Date(f.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''
   const site = (f.provenance_site as { name?: string } | undefined)?.name
-  if (f.learned_by) return `learned by ${f.learned_by}${site ? ` on ${site}` : ''}${when ? ` · ${when}` : ''}`
-  if (!f.workspace) return `added by you${when ? ` · ${when}` : ''}`
-  return `${f.asserted_by ? `by ${f.asserted_by}` : f.basis}${when ? ` · ${when}` : ''}`
+  if (f.learned_by) return { mine: false, text: `${f.learned_by}${site ? ` on ${site}` : ''}${when ? ` · ${when}` : ''}` }
+  if (!f.workspace || f.basis === 'declared') return { mine: true, text: `You${when ? ` · ${when}` : ''}` }
+  return { mine: false, text: `${f.asserted_by || 'an agent'}${when ? ` · ${when}` : ''}` }
 }
 
-/** "What agents know about me" — every live fact canopy holds about you, in one
- *  list; which clients (an agent, over a channel, on a host) may read it,
- *  each revocable; and your audit log of every read and change. You can
- *  retract any fact. Fleet brain v1 (canopy#804), on HCP v1 (hcp_api.py). */
+/** "What agents know about me" — three questions, in the order a person asks them:
+ *  what is remembered, who can read it, and what happened to it. Every entry can
+ *  be corrected or removed in place; every agent's access can be taken back; past
+ *  access and settings stay one click away rather than in the way. Fleet brain v1
+ *  (canopy#804), on HCP v1 (hcp_api.py). */
 export function PeopleMePage() {
   const [me, setMe] = useState<PersonMe | null>(null)
   const [grants, setGrants] = useState<HcpGrant[]>([])
@@ -72,9 +73,10 @@ export function PeopleMePage() {
   const [busy, setBusy] = useState<number | null>(null)
   const [busyGrant, setBusyGrant] = useState<string | null>(null)
   const [busyMemory, setBusyMemory] = useState<string | null>(null)
-  const [newCategory, setNewCategory] = useState<string>(MY_CATEGORIES[0].value)
-  const [newText, setNewText] = useState('')
-  const [adding, setAdding] = useState(false)
+  const [source, setSource] = useState<Source>('all')
+  const [editing, setEditing] = useState<{ id: number; text: string } | null>(null)
+  const [showPast, setShowPast] = useState(false)
+  const [activityShown, setActivityShown] = useState(12)
 
   const load = useCallback(() => {
     getMyPerson()
@@ -91,105 +93,101 @@ export function PeopleMePage() {
       .catch((e: Error) => setError(e.message))
   }, [])
 
-  const moreAudit = async () => {
+  useEffect(load, [load])
+
+  // agent slug → the name you know it by, from your grants ("ace" → "ACE").
+  const names = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const g of grants) if (g.canopy.agent) m.set(g.canopy.agent, agentName(g))
+    return m
+  }, [grants])
+  const reads = useMemo(() => readsByEntry(audit, names), [audit, names])
+  const access = useMemo(() => activeAccess(grants), [grants])
+  const past = useMemo(() => grants.filter((g) => g.status !== 'active'), [grants])
+  const lastRead = useMemo(
+    () => audit.find((e) => e.eventType === 'preference.read' && e.actorType !== 'user'),
+    [audit],
+  )
+
+  const run = async (key: (v: string | number | null) => void, id: string | number, work: () => Promise<unknown>) => {
+    key(id)
+    try {
+      await work()
+      load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      key(null)
+    }
+  }
+
+  const onRevoke = (a: AgentAccess) => {
+    if (!confirm(`Take back ${a.name}'s access? It stops being told anything about you right away, and won't be again unless you allow it.`)) return
+    void run(
+      (v) => setBusyGrant(v as string | null),
+      a.key,
+      () => Promise.all(a.grants.map((g) => revokeMyGrant(g.grantId))),
+    )
+  }
+
+  const onToggleAvailable = (which: 'record' | 'use') => {
+    if (!me) return
+    const next = !me.agent_memory[which].available
+    const offWarning =
+      which === 'record'
+        ? 'Stop agents learning from you, in every conversation? Nothing already remembered is deleted.'
+        : 'Stop agents using your memory, in every conversation? Nothing is deleted.'
+    if (!next && !confirm(offWarning)) return
+    void run((v) => setBusyMemory(v as string | null), `${which}:available`, () =>
+      setMyAgentMemory({ [which]: { available: next } }),
+    )
+  }
+
+  const onToggleDefault = (which: 'record' | 'use') => {
+    if (!me) return
+    void run((v) => setBusyMemory(v as string | null), `${which}:default`, () =>
+      setMyAgentMemory({ [which]: { default: !me.agent_memory[which].default } }),
+    )
+  }
+
+  const onRetract = (fact: PersonFactDetail) => {
+    if (!me) return
+    if (!confirm(`Forget "${fact.statement}"? Agents stop being told it.`)) return
+    void run((v) => setBusy(v as number | null), fact.id, () => retractFact(me.id, fact.id))
+  }
+
+  const onSaveEdit = (fact: PersonFactDetail) => {
+    if (!editing || !fact.entry_id) return
+    const text = editing.text.trim()
+    setEditing(null)
+    if (!text || text === fact.statement) return
+    void run((v) => setBusy(v as number | null), fact.id, () => correctMyEntry(fact.entry_id as string, text))
+  }
+
+  const onAdd = async (category: string, text: string) => {
+    try {
+      await addMyEntry(category, text)
+      load()
+      return true
+    } catch (err) {
+      setError((err as Error).message)
+      return false
+    }
+  }
+
+  const moreActivity = async () => {
+    if (activityShown < audit.length) {
+      setActivityShown((n) => n + 20)
+      return
+    }
     if (!nextCursor) return
     try {
       const page = await listMyAudit(nextCursor)
       setAudit((prev) => [...prev, ...page.events])
       setNextCursor(page.nextCursor)
+      setActivityShown((n) => n + 20)
     } catch (e) {
       setError((e as Error).message)
-    }
-  }
-
-  const onRevoke = async (g: HcpGrant) => {
-    if (!confirm(`Revoke ${g.client.name}? It will stop being told anything about you, and canopy will not grant it again unless you do.`)) return
-    setBusyGrant(g.grantId)
-    try {
-      await revokeMyGrant(g.grantId)
-      load()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusyGrant(null)
-    }
-  }
-
-  useEffect(load, [load])
-
-  const onToggleAvailable = async (which: 'record' | 'use') => {
-    if (!me) return
-    const next = !me.agent_memory[which].available
-    const offWarning =
-      which === 'record'
-        ? 'Stop agents learning from you, in every conversation? Nothing already in your memory is deleted.'
-        : 'Stop agents using your memory, in every conversation? Nothing is deleted.'
-    if (!next && !confirm(offWarning)) return
-    setBusyMemory(`${which}:available`)
-    try {
-      await setMyAgentMemory({ [which]: { available: next } })
-      load()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusyMemory(null)
-    }
-  }
-
-  const onToggleDefault = async (which: 'record' | 'use') => {
-    if (!me) return
-    setBusyMemory(`${which}:default`)
-    try {
-      await setMyAgentMemory({ [which]: { default: !me.agent_memory[which].default } })
-      load()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusyMemory(null)
-    }
-  }
-
-  const onRetract = async (fact: PersonFactDetail) => {
-    if (!me) return
-    if (!confirm(`Retract "${fact.statement}"? Agents will stop being told it.`)) return
-    setBusy(fact.id)
-    try {
-      await retractFact(me.id, fact.id)
-      load()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const onCorrect = async (fact: PersonFactDetail) => {
-    if (!fact.entry_id) return
-    const text = prompt('Correct this. Agents will be told the corrected version.', fact.statement)
-    if (text === null || !text.trim() || text.trim() === fact.statement) return
-    setBusy(fact.id)
-    try {
-      await correctMyEntry(fact.entry_id, text.trim())
-      load()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const onAdd = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!newText.trim()) return
-    setAdding(true)
-    try {
-      await addMyEntry(newCategory, newText.trim())
-      setNewText('')
-      load()
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setAdding(false)
     }
   }
 
@@ -210,7 +208,6 @@ export function PeopleMePage() {
   if (error) return <div className="p-6 text-destructive">{error}</div>
   if (me === null) return <div className="p-6 text-muted-foreground">Loading…</div>
 
-  const allFacts = me.facts ?? []
   // Memory is on only for the people settings.HCP_PEOPLE names, for now. Outside
   // that: nothing here at all — unless canopy already holds some of yours, which
   // stays yours to see, download and delete ("paused").
@@ -224,248 +221,468 @@ export function PeopleMePage() {
     )
   }
 
-  return (
-    <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">
-          {enabled ? 'Your memory' : 'Your memory (paused)'}
-        </h1>
-        {!enabled && (
-          <p className="mt-1 text-sm text-muted-foreground">
-            Memory isn&apos;t on for you yet, so no agent learns from you or uses any of this. What
-            canopy already holds is below: you can download it, remove anything, or take back access.
-          </p>
-        )}
-        <p className="mt-1 text-sm text-muted-foreground" hidden={!enabled}>
-          {me.display_name}
-          {me.email ? ` · ${me.email}` : ''}. When you talk to an agent you allowed, it is handed the
-          few facts relevant to what you asked from its organisation&apos;s memory, and can look up
-          more while it works. Retract anything that is wrong. A fact marked{' '}
-          <em>conflicted</em> is something an agent guessed that contradicts what you said; agents
-          are not told it until you correct or retract it.
-        </p>
-      </div>
+  const allFacts = me.facts ?? []
+  const conflicted = allFacts.filter((f) => f.status === 'conflicted')
+  const settled = allFacts.filter((f) => f.status !== 'conflicted')
+  const shown = settled.filter((f) => source === 'all' || sourceOf(f).mine === (source === 'you'))
+  const groups = groupFacts(shown).filter((g) => enabled || g.facts.length > 0)
+  const activity = audit.slice(0, activityShown)
 
-      {enabled && (<>
-      <section aria-label="Learn from me and use my memory" className="divide-y divide-border rounded-lg border border-border">
-        {MEMORY_SWITCHES.map((sw) => {
-          const { available, default: byDefault } = me.agent_memory[sw.key]
-          return (
-            <div
-              key={sw.key}
-              className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-foreground">{sw.label}</div>
-                <p className="mt-0.5 text-sm text-muted-foreground">
-                  {available ? sw.on : sw.off}
-                  {available
-                    ? byDefault
-                      ? ' On in new conversations: each agent asks you once, in the conversation, before it starts.'
-                      : ' Off in new conversations; turn it on in a conversation and that agent asks you there.'
-                    : ''}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={available}
-                  aria-label={`${sw.label}: available`}
-                  onClick={() => onToggleAvailable(sw.key)}
-                  disabled={busyMemory !== null}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 ${
-                    available
-                      ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                      : 'border border-border text-foreground hover:bg-muted'
-                  }`}
-                >
-                  {busyMemory === `${sw.key}:available` ? 'Saving…' : available ? 'Available' : 'Not available'}
-                </button>
-                {available && (
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={byDefault}
-                    aria-label={`${sw.label}: on by default in new sessions`}
-                    onClick={() => onToggleDefault(sw.key)}
-                    disabled={busyMemory !== null}
-                    className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:opacity-50"
-                  >
-                    {busyMemory === `${sw.key}:default` ? 'Saving…' : byDefault ? 'On by default' : 'Off by default'}
-                  </button>
-                )}
-              </div>
+  const factRow = (f: PersonFactDetail) => {
+    const src = sourceOf(f)
+    const r: EntryReads | undefined = f.entry_id ? reads.get(f.entry_id) : undefined
+    const isEditing = editing?.id === f.id
+    return (
+      <li key={f.id} className="group relative py-2.5">
+        {isEditing ? (
+          <form
+            className="flex items-start gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              onSaveEdit(f)
+            }}
+          >
+            <textarea
+              autoFocus
+              aria-label="Correct this"
+              value={editing.text}
+              onChange={(e) => setEditing({ id: f.id, text: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setEditing(null)
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  onSaveEdit(f)
+                }
+              }}
+              rows={2}
+              maxLength={500}
+              className="min-w-0 flex-1 resize-none rounded-md border border-primary/50 bg-background px-2 py-1 text-sm text-foreground outline-none"
+            />
+            <IconButton label="Save" onClick={() => onSaveEdit(f)}>
+              <Check className="h-4 w-4" />
+            </IconButton>
+            <IconButton label="Cancel" onClick={() => setEditing(null)}>
+              <X className="h-4 w-4" />
+            </IconButton>
+          </form>
+        ) : (
+          <div className="flex items-start gap-2">
+            <p className={`min-w-0 flex-1 text-sm text-foreground ${busy === f.id ? 'opacity-50' : ''}`}>{f.statement}</p>
+            <div className="flex shrink-0 gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+              {enabled && f.entry_id && (
+                <IconButton label="Correct" onClick={() => setEditing({ id: f.id, text: f.statement })} disabled={busy === f.id}>
+                  <Pencil className="h-3.5 w-3.5" />
+                </IconButton>
+              )}
+              <IconButton label="Forget" danger onClick={() => onRetract(f)} disabled={busy === f.id}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </IconButton>
             </div>
-          )
-        })}
-      </section>
-
-      <form onSubmit={onAdd} aria-label="Add something about yourself" className="rounded-lg border border-border px-4 py-3">
-        <div className="text-sm font-semibold text-foreground">Add something about yourself</div>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Saved to your personal memory. Agents are not told it unless you let them use your personal
-          memory (More settings); you, and any app you allow below, are.
-        </p>
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-          <select
-            aria-label="Category"
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+          </div>
+        )}
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span
+            className={`rounded-full px-1.5 py-px ${src.mine ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}
+            title={src.mine ? 'You said this' : f.confidence ? `An agent concluded this (${f.confidence} confidence)` : 'An agent recorded this'}
           >
-            {MY_CATEGORIES.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-          <input
-            aria-label="What to add to your memory"
-            value={newText}
-            onChange={(e) => setNewText(e.target.value)}
-            maxLength={500}
-            placeholder="One sentence, e.g. I prefer a short answer with links."
-            className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-          />
-          <button
-            type="submit"
-            disabled={adding || !newText.trim()}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {adding ? 'Saving…' : 'Save'}
-          </button>
+            {src.mine ? '' : 'learned by '}
+            {src.text}
+          </span>
+          {f.project ? <span>{f.project.title}</span> : null}
+          {r ? (
+            <span className="inline-flex items-center gap-1" title={`Read ${r.count}× · last ${new Date(r.last).toLocaleString()}`}>
+              <Eye className="h-3 w-3" />
+              {r.by.join(', ')} used this {r.count === 1 ? 'once' : `${r.count}×`}
+            </span>
+          ) : null}
         </div>
-      </form>
-      </>)}
+      </li>
+    )
+  }
 
-      {allFacts.length === 0 ? (
-        <p className="text-muted-foreground">Nothing yet — nothing has been recorded about you.</p>
-      ) : (
-        <section aria-label="Your memory" className="rounded-lg border border-border">
-          <ul className="divide-y divide-border">
-            {allFacts.map((f) => (
-              <li key={f.id} className="flex items-start gap-3 px-4 py-3 text-sm">
-                <div className="min-w-0 flex-1">
-                  <div className="text-foreground">{f.statement}</div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {f.status && f.status !== 'active' ? (
-                      <span className="mr-1 rounded bg-destructive/10 px-1 text-destructive">{f.status}</span>
-                    ) : null}
-                    {learnedLine(f)}
-                    {f.confidence ? ` · ${f.confidence} confidence` : ''}
-                    {f.project ? ` · ${f.project.title}` : ''}
-                  </div>
-                </div>
-                <div className="flex shrink-0 gap-3">
-                  {enabled && f.entry_id && (
-                    <button
-                      className="text-primary hover:underline disabled:opacity-50"
-                      disabled={busy === f.id}
-                      onClick={() => onCorrect(f)}
-                    >
-                      Correct
-                    </button>
-                  )}
-                  <button
-                    className="text-destructive hover:text-destructive/80 disabled:opacity-50"
-                    disabled={busy === f.id}
-                    onClick={() => onRetract(f)}
-                  >
-                    Retract
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+  return (
+    <div className="mx-auto max-w-4xl space-y-10 px-4 py-8">
+      {/* --- the answer, before the detail ------------------------------------------ */}
+      <header className="space-y-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">{enabled ? 'Your memory' : 'Your memory (paused)'}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {enabled
+              ? 'What agents remember about you, who can read it, and what they did with it. Only you see this page.'
+              : "Memory isn't on for you yet, so no agent learns from you or uses any of this. You can still download it, remove anything, or take back access."}
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
+          <Stat href="#remembered" value={String(settled.length)} label={settled.length === 1 ? 'thing remembered' : 'things remembered'} />
+          <Stat
+            href="#who"
+            value={String(access.length)}
+            label={access.length === 1 ? 'agent can read it' : 'agents can read it'}
+            hint={access.map((a) => a.name).join(', ') || 'none right now'}
+          />
+          <Stat
+            href="#activity"
+            value={lastRead ? relTime(lastRead.timestamp) : '—'}
+            label="last read"
+            hint={lastRead ? `by ${eventSentence(lastRead, names).who}` : 'never'}
+          />
+        </div>
+      </header>
+
+      {conflicted.length > 0 && (
+        <section aria-label="Needs your eye" className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            {conflicted.length === 1 ? 'One thing needs your eye' : `${conflicted.length} things need your eye`}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            An agent guessed these, and they contradict something you said. No agent is told them until you correct or forget them.
+          </p>
+          <ul className="mt-1 divide-y divide-border">{conflicted.map(factRow)}</ul>
         </section>
       )}
 
-      <section>
-        <h2 className="text-sm font-semibold text-foreground">Who can read it</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          An agent is here only if you allowed it in a session — for that session, or kept for that
-          agent. Allowing one agent allows no other. An app outside canopy is here only if you
-          allowed it on its consent screen, and reaches only what it says below. Revoking stops it
-          immediately and for good, unless you allow it again.
-        </p>
-        {grants.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">You have not allowed any agent or app.</p>
-        ) : (
-          <ul className="mt-2 divide-y divide-border rounded-lg border border-border text-sm">
-            {grants.map((g) => (
-              <li key={g.grantId} className="flex items-start gap-3 px-4 py-2">
-                <div className="min-w-0 flex-1">
-                  <div className="text-foreground">
-                    {g.client.name}
-                    {g.canopy.client ? (
-                      <span className="text-muted-foreground"> · app run by {g.canopy.client.operator}</span>
-                    ) : null}
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {g.status}
-                    {g.grantType === 'persistent'
-                      ? ' · kept until you revoke it'
-                      : g.canopy.client
-                        ? ' · temporary'
-                        : ` · this conversation only${g.expiresAt ? `, until ${new Date(g.expiresAt).toLocaleString()}` : ''}`}
-                    {g.canopy.workspace ? ` · ${g.canopy.workspace}` : ''}
-                    {reachOf(g) ? ` · reaches ${reachOf(g)}` : ''}
-                    {` · since ${new Date(g.issuedAt).toLocaleDateString()}`}
-                    {g.expiresAt ? ` · until ${new Date(g.expiresAt).toLocaleString()}` : ''}
-                    {` · ${Array.from(new Set(g.scopes.map((s) => s.split(':').slice(1, -1).join(':')))).join(', ')}`}
-                  </div>
-                </div>
-                {g.status === 'active' && (
-                  <button
-                    className="shrink-0 text-destructive hover:text-destructive/80 disabled:opacity-50"
-                    disabled={busyGrant === g.grantId}
-                    onClick={() => onRevoke(g)}
-                  >
-                    Revoke
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
+      {/* --- what is remembered -------------------------------------------------- */}
+      <section id="remembered" aria-label="What agents know" className="scroll-mt-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">What agents know about you</h2>
+            <p className="text-sm text-muted-foreground">Fix anything that's wrong — agents are told the corrected version.</p>
+          </div>
+          <Segmented
+            value={source}
+            onChange={setSource}
+            options={[
+              ['all', 'Everything'],
+              ['you', 'You said'],
+              ['agents', 'Agents learned'],
+            ]}
+          />
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          {groups.map((g) => (
+            <div key={g.category} className="flex flex-col rounded-xl border border-border bg-card px-4 pt-3 pb-2">
+              <div className="flex items-baseline justify-between">
+                <h3 className="text-sm font-semibold text-foreground">{g.label}</h3>
+                <span className="text-xs text-muted-foreground">{g.facts.length || ''}</span>
+              </div>
+              {g.facts.length === 0 ? (
+                <p className="py-2.5 text-sm text-muted-foreground/70">Nothing yet.</p>
+              ) : (
+                <ul className="divide-y divide-border">{g.facts.map(factRow)}</ul>
+              )}
+              {enabled && g.category !== 'other' && <AddLine category={g.category} label={g.label} onAdd={onAdd} />}
+            </div>
+          ))}
+        </div>
+        {enabled && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            What you add here is personal: agents read it only if you point them at your personal memory (Settings, below).
+          </p>
         )}
       </section>
 
-      {enabled && <MemorySettings grants={grants} onChanged={load} />}
-
-      <section>
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-foreground">Audit log</h2>
-          <button className="text-sm text-primary hover:underline" onClick={onExport}>
-            Download everything (JSON-LD)
-          </button>
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Every read and change of your memory, newest first. Only you can see it.
+      {/* --- who can read it ----------------------------------------------------- */}
+      <section id="who" aria-label="Who can read it" className="scroll-mt-6">
+        <h2 className="text-lg font-semibold text-foreground">Who can read it</h2>
+        <p className="text-sm text-muted-foreground">
+          Only agents you allowed, in a conversation. Allowing one allows no other. Taking access back works immediately.
         </p>
-        {audit.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">Nothing yet.</p>
+        {access.length === 0 ? (
+          <p className="mt-3 rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+            No agent can read your memory right now. An agent will ask you in a conversation if it needs to.
+          </p>
         ) : (
-          <ul className="mt-2 divide-y divide-border rounded-lg border border-border text-sm">
-            {audit.map((e) => (
-              <li key={e.eventId} className="flex flex-wrap gap-x-3 px-4 py-2">
-                <span className="text-muted-foreground">{new Date(e.timestamp).toLocaleString()}</span>
-                <span className="text-foreground">{e.actorId}</span>
-                <span className="text-muted-foreground">
-                  {e.eventType}
-                  {e.category ? ` · ${e.category}` : ''}
-                  {e.purpose ? ` · “${e.purpose}”` : ''}
-                </span>
-              </li>
-            ))}
+          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+            {access.map((a) => {
+              const lastByThem = audit.find(
+                (e) => e.eventType === 'preference.read' && eventSentence(e, names).who === a.name,
+              )
+              const cats = Array.from(new Set(a.grants.flatMap(grantCategories)))
+              const reach = a.grants.map((g) => g.canopy.reach).find(Boolean)
+              return (
+                <li key={a.key} className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
+                  <div className="flex items-start gap-3">
+                    <Avatar name={a.name} />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-foreground">{a.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {a.kept ? 'Until you take it back' : durationOf(a.grants[0])} · in {a.places.join(', ')}
+                      </div>
+                    </div>
+                    <button
+                      className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                      disabled={busyGrant === a.key}
+                      onClick={() => onRevoke(a)}
+                    >
+                      {busyGrant === a.key ? 'Taking back…' : 'Take back'}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cats.map((c) => (
+                      <span key={c} className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {reach ? `Reaches ${reach}. ` : ''}
+                    {lastByThem ? `Last read ${relTime(lastByThem.timestamp)}.` : 'Hasn’t read anything yet.'}
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         )}
-        {nextCursor && (
-          <button className="mt-2 text-sm text-primary hover:underline" onClick={moreAudit}>
-            Show older
+        {past.length > 0 && (
+          <div className="mt-3">
+            <button
+              className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+              aria-expanded={showPast}
+              onClick={() => setShowPast((v) => !v)}
+            >
+              <ChevronDown className={`h-4 w-4 transition-transform ${showPast ? 'rotate-180' : ''}`} />
+              {showPast ? 'Hide' : 'Show'} {past.length} past {past.length === 1 ? 'access' : 'accesses'}
+            </button>
+            {showPast && (
+              <ul className="mt-2 divide-y divide-border rounded-xl border border-border text-sm">
+                {past.map((g) => (
+                  <li key={g.grantId} className="flex flex-wrap items-baseline justify-between gap-x-4 px-4 py-2">
+                    <span className="text-foreground">
+                      {agentName(g)} <span className="text-muted-foreground">in {placeOf(g)}</span>
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {endedOf(g)} · allowed {new Date(g.issuedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* --- what happened ------------------------------------------------------- */}
+      <section id="activity" aria-label="What happened" className="scroll-mt-6">
+        <h2 className="text-lg font-semibold text-foreground">What happened</h2>
+        <p className="text-sm text-muted-foreground">Every time your memory was read or changed, newest first.</p>
+        {activity.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">Nothing yet.</p>
+        ) : (
+          <ol className="mt-3 space-y-4">
+            {activity.map((e, i) => {
+              const day = dayLabel(e.timestamp)
+              const s = eventSentence(e, names)
+              return (
+                <li key={e.eventId}>
+                  {(i === 0 || dayLabel(activity[i - 1].timestamp) !== day) && (
+                    <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{day}</div>
+                  )}
+                  <div className="flex gap-3 border-l-2 border-border pl-3 text-sm">
+                    <span className="w-16 shrink-0 text-xs leading-5 text-muted-foreground">
+                      {new Date(e.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="font-medium text-foreground">{s.who}</span>{' '}
+                      <span className="text-foreground">{s.did}</span>
+                      {s.why ? <span className="block text-xs text-muted-foreground">to {s.why.replace(/^to\s+/i, '')}</span> : null}
+                    </span>
+                  </div>
+                </li>
+              )
+            })}
+          </ol>
+        )}
+        {(activityShown < audit.length || nextCursor) && (
+          <button className="mt-3 text-sm text-primary hover:underline" onClick={moreActivity}>
+            Show more
           </button>
         )}
+      </section>
+
+      {/* --- the controls you rarely need ---------------------------------------- */}
+      <section aria-label="Settings" className="space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">Settings</h2>
+        {enabled && (
+          <div className="divide-y divide-border rounded-xl border border-border">
+            {MEMORY_SWITCHES.map((sw) => {
+              const { available, default: byDefault } = me.agent_memory[sw.key]
+              return (
+                <div key={sw.key} className="flex items-start gap-4 px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-foreground">{sw.label}</div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{available ? sw.on : sw.off}</p>
+                    {available && (
+                      <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={byDefault}
+                          disabled={busyMemory !== null}
+                          onChange={() => onToggleDefault(sw.key)}
+                          aria-label={`${sw.label}: on by default in new conversations`}
+                        />
+                        On in new conversations (each agent still asks you once first)
+                      </label>
+                    )}
+                  </div>
+                  <Switch
+                    on={available}
+                    label={sw.label}
+                    busy={busyMemory === `${sw.key}:available`}
+                    disabled={busyMemory !== null}
+                    onClick={() => onToggleAvailable(sw.key)}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {enabled && <MemorySettings grants={grants} onChanged={load} />}
+        <button
+          className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+          onClick={onExport}
+        >
+          <Download className="h-4 w-4" />
+          Download everything canopy holds about you
+        </button>
       </section>
     </div>
+  )
+}
+
+function Stat({ href, value, label, hint }: { href: string; value: string; label: string; hint?: string }) {
+  return (
+    <a href={href} className="block min-w-0 rounded-xl border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/40 sm:px-4 sm:py-3">
+      <div className="text-lg font-semibold text-foreground sm:text-2xl">{value}</div>
+      <div className="text-xs text-muted-foreground sm:text-sm">{label}</div>
+      {hint ? <div className="mt-0.5 truncate text-xs text-muted-foreground/80">{hint}</div> : null}
+    </a>
+  )
+}
+
+function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T
+  onChange: (v: T) => void
+  options: [T, string][]
+}) {
+  return (
+    <div role="radiogroup" className="inline-flex rounded-lg border border-border p-0.5 text-xs">
+      {options.map(([v, label]) => (
+        <button
+          key={v}
+          role="radio"
+          aria-checked={value === v}
+          onClick={() => onChange(v)}
+          className={`rounded-md px-2.5 py-1 ${value === v ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function Switch({ on, label, busy, disabled, onClick }: { on: boolean; label: string; busy: boolean; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-60 ${on ? 'bg-primary' : 'bg-muted-foreground/30'} ${busy ? 'animate-pulse' : ''}`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-background shadow transition-transform ${on ? 'translate-x-5' : ''}`}
+      />
+    </button>
+  )
+}
+
+function IconButton({
+  label,
+  onClick,
+  disabled,
+  danger,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  disabled?: boolean
+  danger?: boolean
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded p-1 text-muted-foreground disabled:opacity-50 ${danger ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:bg-muted hover:text-foreground'}`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function Avatar({ name }: { name: string }) {
+  return (
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+      {name.charAt(0).toUpperCase() || <BookOpen className="h-4 w-4" />}
+    </span>
+  )
+}
+
+/** "+ Add" at the foot of a category: opens into one line, saves on Enter. */
+function AddLine({ category, label, onAdd }: { category: string; label: string; onAdd: (c: string, t: string) => Promise<boolean> }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [saving, setSaving] = useState(false)
+  if (!open) {
+    return (
+      <button
+        className="mt-auto inline-flex items-center gap-1 self-start rounded py-2 text-xs text-muted-foreground hover:text-primary"
+        onClick={() => setOpen(true)}
+      >
+        <Plus className="h-3.5 w-3.5" /> Add
+      </button>
+    )
+  }
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!text.trim()) return
+    setSaving(true)
+    if (await onAdd(category, text.trim())) {
+      setText('')
+      setOpen(false)
+    }
+    setSaving(false)
+  }
+  return (
+    <form onSubmit={submit} className="mt-auto flex items-center gap-2 py-2">
+      <input
+        autoFocus
+        aria-label={`Add to ${label}`}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
+        maxLength={500}
+        placeholder="One sentence, e.g. I prefer a short answer with links."
+        className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+      />
+      <button
+        type="submit"
+        disabled={saving || !text.trim()}
+        className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
+      >
+        {saving ? 'Saving…' : 'Save'}
+      </button>
+    </form>
   )
 }
