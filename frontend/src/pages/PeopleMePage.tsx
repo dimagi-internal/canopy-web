@@ -75,6 +75,9 @@ export function PeopleMePage() {
   const [grants, setGrants] = useState<HcpGrant[]>([])
   const [audit, setAudit] = useState<HcpAuditEvent[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
+  // `fatal`: your own record didn't load, so there is no page. `error`: anything
+  // else failed (a section, or an action) and shows as a banner above the page.
+  const [fatal, setFatal] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [busyGrant, setBusyGrant] = useState<string | null>(null)
@@ -103,16 +106,16 @@ export function PeopleMePage() {
       .catch(() => setWorkspaces([]))
     getMyPerson()
       .then(setMe)
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setFatal(e.message))
     listMyGrants()
       .then(setGrants)
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setError(`Couldn't load which agents can read your memory: ${e.message}`))
     listMyAudit()
       .then((page) => {
         setAudit(page.events)
         setNextCursor(page.nextCursor)
       })
-      .catch((e: Error) => setError(e.message))
+      .catch((e: Error) => setError(`Couldn't load what happened: ${e.message}`))
   }, [])
 
   useEffect(load, [load])
@@ -236,7 +239,7 @@ export function PeopleMePage() {
     }
   }
 
-  if (error) return <div className="p-6 text-destructive">{error}</div>
+  if (fatal) return <div className="p-6 text-destructive">{fatal}</div>
   if (me === null) return <div className="p-6 text-muted-foreground">Loading…</div>
 
   // Memory is on only for the people settings.HCP_PEOPLE names, for now. Outside
@@ -335,6 +338,15 @@ export function PeopleMePage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-10 px-4 py-8">
+      {error && (
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p className="min-w-0 flex-1">{error}</p>
+          <IconButton label="Dismiss" onClick={() => setError(null)}>
+            <X className="h-4 w-4" />
+          </IconButton>
+        </div>
+      )}
       {/* --- the answer, before the detail ------------------------------------------ */}
       <header className="space-y-4">
         <div>
