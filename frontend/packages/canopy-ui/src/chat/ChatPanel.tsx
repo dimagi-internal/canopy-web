@@ -5,7 +5,7 @@ import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
-import { isMine } from "./identity";
+import { isMine, isUnconfirmed } from "./identity";
 import { QueuedRows } from "./QueuedRows";
 import { PeerComposers } from "./PeerComposers";
 import { SendBox, type PendingAttachment } from "./SendBox";
@@ -166,19 +166,50 @@ export function ChatPanel({
   const scrollDep = `${messages.length}:${lastMessageLen}:${showPendingReply}:${queuedCount}`;
   const { containerRef, onScroll } = useStickyBottom(scrollDep);
 
-  // Your own optimistic sends already render in the transcript (as a
+  // A send still waiting its turn is drawn ONCE, in the queue, in the order the
+  // server took it. Your own optimistic row for a send the server lists as
+  // `queued` leaves the transcript and is drawn by <QueuedRows> instead: left
+  // in place it read as already sent, and it sat ABOVE every queued row without
+  // a bubble of its own (a send from before a remount), so a later line showed
+  // first. A `delivering` send keeps its bubble — it is the agent's next read.
+  const waitingClientIds = useMemo(
+    () =>
+      new Set(
+        (state.queued ?? [])
+          .filter((q) => q.state === "queued" && q.client_id)
+          .map((q) => q.client_id),
+      ),
+    [state.queued],
+  );
+  const shownMessages = useMemo(
+    () =>
+      waitingClientIds.size === 0
+        ? state.messages
+        : state.messages.filter(
+            (m) =>
+              !(
+                m.role === "user" &&
+                isUnconfirmed(m) &&
+                typeof m.content?.client_id === "string" &&
+                waitingClientIds.has(m.content.client_id)
+              ),
+          ),
+    [state.messages, waitingClientIds],
+  );
+
+  // Every other send of yours already renders in the transcript (as a
   // "pending" user row keyed by client_id) the instant you press send, so a
   // queued row for the SAME send would show it twice — once as your bubble,
   // once as a dashed "queued" placeholder. hideClientIds is every client_id
-  // already on screen in `messages`.
+  // still on screen in the transcript.
   const hideClientIds = useMemo(
     () =>
       new Set(
-        state.messages
+        shownMessages
           .map((m) => m.content?.client_id)
           .filter((c): c is string => typeof c === "string"),
       ),
-    [state.messages],
+    [shownMessages],
   );
 
   // Who is looking, for "is this line mine": a member by user id, a contact
@@ -191,7 +222,7 @@ export function ChatPanel({
   const ownPendingTexts = useMemo(
     () =>
       new Set(
-        state.messages
+        shownMessages
           .filter(
             (m) =>
               m.role === "user" &&
@@ -200,7 +231,7 @@ export function ChatPanel({
           )
           .map((m) => m.plaintext.trim()),
       ),
-    [state.messages, currentUserId, currentContactId],
+    [shownMessages, currentUserId, currentContactId],
   );
 
   // Everyone else's live drafts. The same list draws their boxes above the
@@ -235,7 +266,7 @@ export function ChatPanel({
           sideways into empty space. Wide content scrolls inside its own box. */}
       <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-x-hidden overflow-y-auto">
         <MessageList
-          messages={state.messages}
+          messages={shownMessages}
           emptyState={emptyState}
           renderMarkdown={renderMarkdown}
           pendingReply={showPendingReply}
