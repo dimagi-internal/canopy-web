@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { HcpAuditEvent, HcpGrant, PersonFactDetail } from '../../api/people'
-import { activeAccess, durationOf, eventSentence, groupByPlace, placeOf, reads, readsByEntry } from './words'
+import { activeAccess, byProject, durationOf, eventSentence, groupByPlace, placeOf, reads, readsByEntry } from './words'
 
 const grant = (over: Partial<HcpGrant> & { channel?: string; agent?: string | null } = {}): HcpGrant => ({
   grantId: over.grantId ?? 'g1',
@@ -65,6 +65,18 @@ describe('memory words', () => {
     expect(unplaced.facts.map((f) => f.id)).toEqual([3])
     const [ace] = activeAccess([{ ...grant(), canopy: { ...grant().canopy, reaches: ['ace', 'connect', 'dimagi'] } }])
     expect([reads(ace, 'connect'), reads(ace, null)]).toEqual([true, false])
+  })
+
+  it('splits a workspace’s entries by project, newest project first, unattached last', () => {
+    const fact = (id: number, project?: [number, string]) =>
+      ({ id, project: project ? { id: project[0], title: project[1], ext_id: '' } : null }) as unknown as PersonFactDetail
+    const groups = byProject([fact(1, [7, 'Kenya rollout']), fact(2), fact(3, [9, 'Budget']), fact(4, [7, 'Kenya rollout'])])
+    expect(groups.map((g) => [g.project?.title ?? null, g.facts.map((f) => f.id)])).toEqual([
+      ['Kenya rollout', [1, 4]],
+      ['Budget', [3]],
+      [null, [2]],
+    ])
+    expect(byProject([fact(5)]).map((g) => g.project)).toEqual([null])
   })
 
   it('turns audit events into sentences and counts reads per entry', () => {

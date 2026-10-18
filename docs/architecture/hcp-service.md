@@ -418,12 +418,43 @@ Outside the rollout:
 - **Security review** of the consent screen and token endpoint by someone other than
   the author.
 
-## Retrieval: where search goes after keywords (not built — decided)
+## Retrieval: where search goes after keywords (built, off until turned on)
 
-Today `hcp.search` ranks by term overlap (`_score`), declared as `lexical` (spec
-4.4.3). That misses paraphrases: "how does Jonathan like updates?" doesn't find
-"Prefers short answers". The decided direction, for when it matters
-(roughly a few hundred entries per person, or agents recording steadily):
+**What runs today** (`hcp.rank`, `apps/contacts/embeddings.py`):
+- One search ranks everything the grant reaches together (`workspace_slugs`), so
+  the best entry wins wherever it lives — the envelope and `searchPreferences`
+  no longer fill from the agent's own workspace first.
+- What an agent records during a turn dispatched from a board task is filed
+  against that task's project (`hcp.project_of`); a later turn on the same project
+  gives those entries `PROJECT_BOOST` and admits them even with no word in common.
+- Unmatched role entries come along as background, at most `ROLE_FLOOR` (every
+  agent-written `work_context` entry is filed as a role, so "all of them" meant
+  "the newest work_context entries, whatever was asked"). Corrections always lead.
+- **Embeddings, when `HCP_EMBEDDINGS_MODEL` names a Bedrock model** (Cohere Embed
+  v4 / multilingual v3, or Titan v2): each served entry carries a float32 unit
+  vector on its own row (`PersonFact.embedding`, with `embedding_model`). Written
+  after commit on every write, filled lazily by any search that meets an entry
+  without one (`FILL_PER_SEARCH` at a time), all at once by `manage.py hcp_embed`;
+  cleared when a version is superseded or deleted. The query is embedded as a
+  query, entries as documents. Score = shared words + `PROJECT_BOOST` +
+  `SEMANTIC_WEIGHT` × similarity (above `SEMANTIC_FLOOR`). Any failure ranks
+  lexically. Declared method: `hybrid` while on, `lexical` while off.
+- Comparison is done in Python over the filtered candidates rather than pgvector:
+  the same exact scan the plan below calls for at this scale, with no database
+  extension and the same code on SQLite in tests. Move it into pgvector if one
+  person's served entries reach the thousands.
+
+**Turning it on:** deploy the task role (its `memory-embeddings` policy grants
+`bedrock:InvokeModel` on embedding models only), enable the model under Bedrock
+model access in the labs account, set `HCP_EMBEDDINGS_MODEL` in
+`deploy/aws/canopy-web.cfn.yaml`, deploy, then run `manage.py hcp_embed`.
+Turning it off is clearing the variable; vectors stay but are never read.
+
+The original plan, kept for the reasoning. Before this, `hcp.search` ranked by
+term overlap (`_score`), declared as `lexical` (spec 4.4.3). That misses
+paraphrases: "how does Jonathan like updates?" doesn't find "Prefers short
+answers". The decided direction, for when it matters (roughly a few hundred
+entries per person, or agents recording steadily):
 
 **Stay in Postgres; add pgvector. No separate vector or graph store.**
 - Filter first, then rank. Grant categories (4.4.1), reach restrictions

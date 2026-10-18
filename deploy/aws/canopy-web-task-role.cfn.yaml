@@ -24,6 +24,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 #                                      stacks -> each stack's BrokerPolicy
 #                                      (BrokerRoleName=canopy-web-task-role)
 #   ECS Exec (EnableExecuteCommand)    ssmmessages -> EcsExec here
+#   apps/contacts/embeddings.py        bedrock InvokeModel on embedding models
+#                                      -> memory-embeddings here
 #   apps/common/kms_envelope.py        kms GenerateDataKey/Decrypt on the Canopy
 #                                      Vault key -> that key's KEY POLICY in
 #                                      canopy-web.cfn.yaml (EnableVaultKms only)
@@ -107,6 +109,19 @@ Resources:
                 Effect: Allow
                 Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
                 Resource: !Sub arn:${AWS::Partition}:s3:::${AttachmentsBucketName}/*
+        # Memory search by meaning (apps/contacts/embeddings.py): embedding
+        # models only, never a generating model. Inert until
+        # HCP_EMBEDDINGS_MODEL is set in canopy-web.cfn.yaml.
+        - PolicyName: memory-embeddings
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: EmbeddingModels
+                Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/cohere.embed-*
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-*
       Tags:
         - {Key: owner, Value: canopy-web}
         - {Key: managed-by, Value: cloudformation}

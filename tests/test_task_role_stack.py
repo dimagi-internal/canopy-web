@@ -40,12 +40,17 @@ def test_the_role_is_named_and_only_ecs_tasks_in_this_account_assume_it():
     assert trust["Condition"]["StringEquals"]["aws:SourceAccount"] == {"Ref": "AWS::AccountId"}
 
 
-def test_the_role_carries_ecs_exec_and_the_attachments_objects_only():
+def test_the_role_carries_ecs_exec_attachments_and_embedding_models_only():
     t = _load("canopy-web-task-role.cfn.yaml")
     st = _statements(t["Resources"]["TaskRole"]["Properties"])
-    assert set(st) == {"EcsExec", "AttachmentsObjects"}
+    assert set(st) == {"EcsExec", "AttachmentsObjects", "EmbeddingModels"}
     assert all(a.startswith("ssmmessages:") for a in st["EcsExec"]["Action"])
     assert set(st["AttachmentsObjects"]["Action"]) == {"s3:PutObject", "s3:GetObject", "s3:DeleteObject"}
+    # Memory search: invoke embedding models only — never a generating model.
+    assert st["EmbeddingModels"]["Action"] == "bedrock:InvokeModel"
+    arns = [r["Sub"] for r in st["EmbeddingModels"]["Resource"]]
+    assert arns and all("foundation-model/cohere.embed-" in a or "foundation-model/amazon.titan-embed-" in a
+                        for a in arns)
 
 
 def test_attachments_bucket_is_the_one_canopy_web_writes():
