@@ -302,9 +302,11 @@ def _job(agent: Agent) -> dict:
 
 
 def _first_turn(agent: Agent, base: str) -> dict:
-    from apps.harness.models import Turn
+    from apps.harness.models import Turn, agent_turns_q
 
-    done = Turn.objects.filter(agent=agent, status=Turn.DONE).exists()
+    # Its turns include those that reach it through a chat (email, Slack), which
+    # carry the agent on their session — the same set its Turns page lists.
+    done = Turn.objects.filter(agent_turns_q(agent), status=Turn.DONE).exists()
     return _step("first_turn", "Run its first turn", DONE if done else TODO,
                  "It has finished a turn." if done else
                  "Give it something to do from its Tasks page and watch the turn finish.",

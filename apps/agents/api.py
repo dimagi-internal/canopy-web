@@ -1222,7 +1222,7 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
     from collections import Counter
 
     from apps.harness.actors import actor_of
-    from apps.harness.models import Runner, RunnerAssignment, Turn
+    from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 
     agent = _get_agent_or_404(request, slug)
     # Queued depth per (source, actor) — what the UI's "N turns are parked" warning
@@ -1234,7 +1234,7 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
     # people's parked work to your rule.
     queued: Counter = Counter()
     for t in (
-        Turn.objects.filter(agent=agent, status=Turn.QUEUED)
+        Turn.objects.filter(agent_turns_q(agent), status=Turn.QUEUED)
         .select_related("enqueued_by", "initiator_contact")
         .only("origin", "origin_ref", "enqueued_by", "initiator_contact")
     ):
@@ -1820,7 +1820,7 @@ def _turns_touching(agent, ext_ids: list[str]) -> list:
     """
     from django.db import connection
 
-    from apps.harness.models import Turn
+    from apps.harness.models import Turn, agent_turns_q
 
     if not ext_ids:
         return []
@@ -1831,7 +1831,7 @@ def _turns_touching(agent, ext_ids: list[str]) -> list:
         else:
             q |= Q(task_ext_ids__icontains=f'"{eid}"')
     # `redact` reads each turn's agent and claiming box; join them up front.
-    return list(Turn.objects.filter(agent=agent).filter(q)
+    return list(Turn.objects.filter(agent_turns_q(agent)).filter(q)
                 .select_related("agent", "claimed_by")
                 .order_by("-created_at")[:_PROJECT_RECENT_TURNS])
 

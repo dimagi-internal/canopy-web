@@ -322,6 +322,20 @@ def test_a_new_agent_has_everything_but_its_repo_left_to_do(editor, ws):
         f"git clone https://github.com/{REPO} ~/emdash-projects/scout && cd ~/emdash-projects/scout && claude ")
 
 
+def test_a_turn_through_its_chat_counts_as_its_first_turn(editor, ws):
+    """An email or Slack turn carries the agent on its session, not on itself — and
+    it is still the agent's turn (`agent_turns_q`, what its Turns page lists)."""
+    from apps.canopy_sessions.models import Session
+    from apps.harness.models import Turn
+
+    agent = _agent(ws, editor)
+    assert _status(agent)["first_turn"] == "todo"
+    session = Session.objects.create(workspace=ws, agent=agent, title="mail")
+    Turn.objects.create(chat_session=session, agent=None, origin=Turn.ORIGIN_EMAIL, status=Turn.DONE,
+                        prompt="hi", idempotency_key="mail-1")
+    assert _status(agent)["first_turn"] == "done"
+
+
 def test_no_mailbox_is_optional_not_missing(editor, ws):
     agent = _agent(ws, editor)
     agent.email = ""
