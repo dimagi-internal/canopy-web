@@ -311,7 +311,7 @@ class TopologyRunnerOut(StrictModel):
     # Its own health checks that are not ok, as it last reported them.
     problems: list[RunnerProblemOut] = []
     # Why it is degraded / not ready, in its own words, and the fix when the
-    # cause is a known one (`topology.remedy`).
+    # cause is a known one (`Runner.remedy`).
     status_note: str = ""
     remedy: str = ""
     code_sha: str = ""

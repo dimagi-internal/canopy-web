@@ -56,7 +56,7 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     status: 'online',
     status_note: '',
     ready: true,
-    ready_note: '',
+    ready_note: '', remedy: '',
     paused: false,
     paused_note: '',
     paused_at: null,

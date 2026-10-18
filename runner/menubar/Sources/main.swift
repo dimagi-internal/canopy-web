@@ -42,15 +42,17 @@ func baseURL() -> String {
 }
 
 // ── runner state (mirrors canopy_runner.menubar._runner_state) ────────────────────
-// Green means canopy is accepting this box, not merely that the loop is turning:
-// a revoked token kept the loop turning (and the tree green) for hours while the
-// server showed the runner offline and gave its work to other boxes.
+// Green means canopy is accepting this box AND calls it ready, not merely that the
+// loop is turning: a revoked token kept the loop turning (and the tree green) for
+// hours while the server showed the runner offline and gave its work to other
+// boxes, and a box whose emdash lost its debug port read green while Health read
+// it degraded. The verdict is canopy's (its heartbeat reply), so the two agree.
 enum RunnerState: String {
-    case running, paused, stopped, stale, rejected, unreachable
+    case running, paused, degraded, stopped, stale, rejected, unreachable
     var color: NSColor {
         switch self {
         case .running: return NSColor(srgbRed: 0.40, green: 0.71, blue: 0.52, alpha: 1)  // green
-        case .paused:  return NSColor(srgbRed: 0.89, green: 0.69, blue: 0.28, alpha: 1)  // amber
+        case .paused, .degraded: return NSColor(srgbRed: 0.89, green: 0.69, blue: 0.28, alpha: 1)  // amber
         case .stopped, .rejected: return NSColor(srgbRed: 0.85, green: 0.35, blue: 0.32, alpha: 1)  // red
         case .stale, .unreachable: return NSColor(srgbRed: 0.90, green: 0.57, blue: 0.27, alpha: 1)  // orange
         }
@@ -59,6 +61,7 @@ enum RunnerState: String {
         switch self {
         case .running: return "Running"
         case .paused:  return "Paused"
+        case .degraded: return "Degraded — not taking turns"
         case .stopped: return "Stopped"
         case .stale:   return "Stale (no recent heartbeat)"
         case .rejected: return "Offline — canopy is refusing this runner"
@@ -75,6 +78,12 @@ struct ServerStatus {
     let lastOk: Date?
     let httpStatus: Int?
     let detail: String
+    // Canopy's verdict on an accepted heartbeat: its status for the box, whether
+    // it is ready, the box's own notes, and the fix for a known cause.
+    let runnerStatus: String
+    let ready: Bool
+    let note: String
+    let remedy: String
 
     static func load() -> ServerStatus? {
         guard let data = try? Data(contentsOf: serverStatusFile),
@@ -83,8 +92,13 @@ struct ServerStatus {
         return ServerStatus(
             ok: ok, at: Date(timeIntervalSince1970: at),
             lastOk: (obj["last_ok_at"] as? Double).map { Date(timeIntervalSince1970: $0) },
-            httpStatus: obj["status"] as? Int, detail: obj["detail"] as? String ?? "")
+            httpStatus: obj["status"] as? Int, detail: obj["detail"] as? String ?? "",
+            runnerStatus: obj["runner_status"] as? String ?? "", ready: obj["ready"] as? Bool ?? true,
+            note: obj["note"] as? String ?? "", remedy: obj["remedy"] as? String ?? "")
     }
+
+    // Accepted, but canopy says the box cannot take work.
+    var degraded: Bool { ok && (runnerStatus == "degraded" || !ready) }
 
     // A refusal canopy will repeat however often it is retried: the token is
     // revoked or expired (401), or no longer allowed this runner (403/404).
@@ -143,7 +157,7 @@ func currentState() -> RunnerState {
     guard let server = ServerStatus.load(), Date().timeIntervalSince(server.at) < 120 else {
         return .running
     }
-    if server.ok { return .running }
+    if server.ok { return server.degraded ? .degraded : .running }
     if server.refusedByCanopy { return .rejected }
     // A blip is not an outage: only orange once nothing has been accepted for 2 min.
     if let lastOk = server.lastOk, Date().timeIntervalSince(lastOk) < 120 { return .running }
@@ -377,6 +391,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if state == .rejected || state == .unreachable, let server = ServerStatus.load() {
                 tip += "\n\(server.summary)"
             }
+            if state == .degraded, let server = ServerStatus.load() {
+                if !server.note.isEmpty { tip += "\n\(server.note)" }
+                if !server.remedy.isEmpty { tip += "\nTo fix: \(server.remedy)" }
+            }
             btn.toolTip = tip
         }
         // Note: we do NOT assign statusItem.menu here — a permanent menu would swallow the
@@ -393,6 +411,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let line = NSMenuItem(title: "  \(server.summary)", action: nil, keyEquivalent: "")
             line.isEnabled = false
             menu.addItem(line)
+            if state == .degraded {
+                for text in [server.note, server.remedy.isEmpty ? "" : "To fix: \(server.remedy)"] where !text.isEmpty {
+                    let item = NSMenuItem(title: "  \(text)", action: nil, keyEquivalent: "")
+                    item.isEnabled = false
+                    menu.addItem(item)
+                }
+            }
         } else if let age = heartbeatAgeSeconds() {
             let hb = NSMenuItem(title: "  last heartbeat \(age)s ago", action: nil, keyEquivalent: "")
             hb.isEnabled = false

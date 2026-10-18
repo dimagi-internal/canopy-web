@@ -46,16 +46,6 @@ def problems(runner) -> list[dict]:
             for c in sorted(checks, key=lambda c: c["status"] != "fail")]
 
 
-def remedy(runner) -> str:
-    """What a person does about a not-ready box, when its note names a known
-    cause; "" otherwise (the note itself is shown either way)."""
-    note = f"{runner.status_note} {runner.ready_note}"
-    if "CDP unreachable" in note:
-        return ("Emdash is running without its debug port. On that machine, open "
-                "\"Emdash CDP\" (Spotlight), which reopens Emdash with it.")
-    return ""
-
-
 def _usage(rows: list[dict], viewer) -> None:
     """Each box's usage report on its row: when it last sent one, how many of its
     local sessions canopy has no record of (a count — the list is its admins'
@@ -189,7 +179,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
             "ready": r.ready,
             "ready_note": r.ready_note,
             "status_note": r.status_note,
-            "remedy": remedy(r),
+            "remedy": r.remedy,
             "paused": r.paused,
             "host": r.host,
             "last_heartbeat_at": r.last_heartbeat_at,
