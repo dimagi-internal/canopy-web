@@ -346,3 +346,19 @@ def test_closing_a_fork_keeps_the_worktree_its_source_still_uses(cfg, runs, tmp_
     assert wt.exists()
     assert desktop.close(cfg, "sid-new") == "closed"
     assert not wt.exists()
+
+
+def test_a_headless_turn_is_one_shot_so_background_work_is_refused(monkeypatch):
+    """The session ends with the turn: canopy's one_shot_turn_guard must refuse a
+    background Agent/Bash there, as on a cloud turn, or its work is silently lost."""
+    import canopy_acp
+
+    seen = {}
+
+    def drive_turn(prompt, **kw):
+        seen.update(kw["env"])
+        return SimpleNamespace(cancelled=False, rate_limit={}, ok=True, text="t", session_id="s")
+
+    monkeypatch.setattr(canopy_acp, "drive_turn", drive_turn)
+    headless.run_turn("hi", cwd=Path("/tmp"), emit=lambda e: None, env={"X": "1"})
+    assert seen == {"X": "1", headless.HEADLESS_ENV: "1", headless.ONE_SHOT_ENV: "1"}

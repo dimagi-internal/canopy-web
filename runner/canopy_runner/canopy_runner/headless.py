@@ -37,6 +37,10 @@ logger = logging.getLogger("canopy_runner.headless")
 ADAPTER_PREFIX = Path.home() / ".canopy" / "acp"
 #: Set in the headless process's env; the mod stays inert where it is set.
 HEADLESS_ENV = "CANOPY_HEADLESS"
+#: Also set there: the session ends with the turn, so canopy's one_shot_turn_guard
+#: must refuse background work, as it does on a cloud turn — a background task's
+#: notification would have no process to wake, and its work would be dropped.
+ONE_SHOT_ENV = "CANOPY_ONE_SHOT_TURN"
 #: How often streamed events are pushed while a turn runs.
 FLUSH_SECONDS = 3.0
 
@@ -106,7 +110,7 @@ def run_turn(prompt: str, *, cwd: Path, emit, env: dict | None = None,
     res = canopy_acp.drive_turn(
         prompt, make_agent=functools.partial(canopy_acp.AcpAgent, argv=argv),
         reducer=canopy_acp.UpdateReducer(), emit=emit, cwd=cwd,
-        env={**(env or {}), HEADLESS_ENV: "1"}, resume=resume,
+        env={**(env or {}), HEADLESS_ENV: "1", ONE_SHOT_ENV: "1"}, resume=resume,
         on_start=agents.append, on_session=started, on_end=ended, cancelled=cancelled,
         flush_seconds=FLUSH_SECONDS, timeout=timeout, log=logger.info)
     if res.cancelled:
