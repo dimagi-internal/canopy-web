@@ -279,6 +279,20 @@ export async function getProject(slug: string, ref: string): Promise<ProjectDeta
   return unwrap(res, 'getProject') as ProjectDetailOut
 }
 
+/** Workspace projects: owned by a workspace, kept current by a steward agent. */
+export async function listWorkspaceProjects(): Promise<ProjectOut[]> {
+  const res = await apiV2.GET('/api/workspace-projects/', { params: { query: {} } })
+  return Array.from(unwrap(res, 'listWorkspaceProjects')) as ProjectOut[]
+}
+
+/** One workspace project by its address, `<workspace>/<handle>`. */
+export async function getWorkspaceProject(workspace: string, handle: string): Promise<ProjectDetailOut> {
+  const res = await apiV2.GET('/api/workspace-projects/{workspace}/{handle}/', {
+    params: { path: { workspace, handle } },
+  })
+  return unwrap(res, 'getWorkspaceProject') as ProjectDetailOut
+}
+
 /** A project's ideas (people's wants, not its tasks) and its contributors. */
 export async function getProjectIdeas(slug: string, ref: string): Promise<ProjectIdeasOut> {
   const res = await apiV2.GET('/api/agents/{slug}/projects/{ref}/contributors/', {

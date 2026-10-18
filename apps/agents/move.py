@@ -29,6 +29,10 @@ What does NOT move, deliberately, and is reported as `left_behind`:
   on `agent.workspace`); the person grants again in the new tenant.
 - **Audit** (`events.Event`, `SettingChange`) stays where it happened.
 
+What REFUSES the move: a workspace project the agent stewards. It is the
+workspace's and stays there, and its steward must be in its workspace, so the
+move waits until each one is handed to another steward.
+
 What follows the agent with no write at all — tasks, projects, skills,
 schedules, runner assignments, turns (whose tenancy derives from
 `agent.workspace`), session messages — is still COUNTED, so the dry run shows
@@ -130,6 +134,13 @@ def check(agent, dest_slug: str, *, by) -> Workspace:
                         "workspace", status=403)
     if dest.slug == agent.workspace_id:
         raise MoveError(f"{agent.slug} is already in '{dest.slug}'", status=422)
+    from apps.agents.services import stewarded_workspace_projects
+
+    stewarded = stewarded_workspace_projects(agent)
+    if stewarded:
+        # A workspace project stays in its workspace; its steward must be there too.
+        raise MoveError(f"{agent.slug} stewards workspace project(s) {', '.join(stewarded)}, which "
+                        f"stay in '{agent.workspace_id}'; hand each to another steward first", status=409)
     return dest
 
 

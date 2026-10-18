@@ -858,6 +858,18 @@ class AgentProjectPatch(StrictModel):
     #: The task this project grew out of, as `<agent>/<task ext_id>` ("ada/T41");
     #: `""` clears it. Same agent's or another visible agent's task.
     spawned_from: str | None = Field(default=None, max_length=130)
+    #: Make it a WORKSPACE project addressed `<workspace>/<handle>`, this agent as
+    #: steward. One-way: a handle is an address other agents hold.
+    handle: str | None = Field(default=None, max_length=60)
+    #: Hand a workspace project to another agent of its workspace.
+    steward: str | None = Field(default=None, max_length=100)
+
+
+class WorkspaceProjectIn(AgentProjectIn):
+    """Create a workspace project directly: owned by the steward's workspace."""
+
+    handle: str = Field(min_length=3, max_length=60)
+    steward: str = Field(min_length=1, max_length=100)
 
 
 class SpawnedFromOut(StrictModel):
@@ -875,10 +887,22 @@ class SpawnedFromOut(StrictModel):
 
 class AgentProjectOut(StrictModel):
     id: int
+    #: The owning agent; for a workspace project, its steward.
     agent_slug: str
-    #: The workspace the project lives in (its agent's). A list pinned to a
-    #: parent workspace carries its children's rows too.
+    #: The workspace the project lives in (its owner's, else its agent's). A list
+    #: pinned to a parent workspace carries its children's rows too.
     workspace: str = ""
+    #: `agent` — one agent's piece of work; `workspace` — owned by the workspace,
+    #: kept current by its steward, shared by every agent in it.
+    scope: Literal["agent", "workspace"] = "agent"
+    #: A workspace project's address within its workspace (blank otherwise).
+    handle: str = ""
+    #: The agent keeping a workspace project current (None for an agent project).
+    steward_slug: str | None = None
+    #: How to name it anywhere: `<workspace>/<handle>` or `<agent>/<ext_id>`.
+    address: str = ""
+    #: Its page.
+    url: str = ""
     ext_id: str
     name: str
     outcome: str
@@ -981,6 +1005,8 @@ class AgentTaskOut(StrictModel):
     ext_id: str
     project_ext_id: str | None = None
     project_name: str | None = None
+    #: `<workspace>/<handle>` for a workspace project, else `<agent>/<ext_id>`.
+    project_address: str | None = None
     #: The task this is a subtask of; null for a top-level task.
     parent_ext_id: str | None = None
     #: `idea` — a person's want, in their words (`human_why`); `work` otherwise.

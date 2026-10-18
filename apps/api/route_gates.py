@@ -182,6 +182,10 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/agents/fleet_api.py  (fleet-wide lists, scoped to visible agents)
     "list_fleet_tasks": ("member",),
     "list_fleet_projects": ("member",),
+    "list_workspace_projects": ("member",),
+    "get_workspace_project": ("member",),
+    "create_workspace_project": ("agent.work",),  # the steward's write gate
+    "patch_workspace_project": ("agent.work",),  # the steward's (and a new steward's) write gate
     "set_agent_credentials": ("agent-admin",),
     "agent_credential_status": ("member",),
     "agent_credential_access": ("member",),  # no values; reports the resolve gate for the caller
@@ -906,6 +910,7 @@ NOT_SETTINGS: dict[str, str] = {
     # content
     "create_run_doc": "content", "put_run_doc_state": "content", "mark_task_action_applied": "content",
     "create_project": "content", "patch_project": "content",
+    "create_workspace_project": "content", "patch_workspace_project": "content",
     "put_contributor_summary": "content", "delete_contributor_summary": "content",
     "create_run": "content", "fork_run": "content", "record_gate": "content", "record_verdict": "content",
     "create_sync": "content", "delete_sync": "content", "replace_skills": "content",

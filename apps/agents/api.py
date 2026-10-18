@@ -928,13 +928,20 @@ def delete_agent(request: HttpRequest, slug: str):
 
     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
     syncs, projects, schedules, task actions, runner assignments/drills), so
-    this is a real delete rather than a soft flag — nothing is left dangling
-    and nothing blocks it. Its open chat sessions are closed first: the runner
+    this is a real delete rather than a soft flag — nothing is left dangling.
+    One thing blocks it: a workspace project the agent stewards (409). Its open chat sessions are closed first: the runner
     deletes each emdash task, and an offline runner does so when it is back.
     """
     from apps.canopy_sessions.services import close_agent_sessions
 
     agent = _agent_for_write(request, slug)
+    # A workspace project it stewards is the workspace's, not the agent's: the
+    # cascade would delete it. Hand it on first.
+    stewarded = services.stewarded_workspace_projects(agent)
+    if stewarded:
+        raise HttpError(409, f"{agent.slug} stewards workspace project(s) {', '.join(stewarded)}; "
+                             "hand each to another steward (PATCH …/workspace-projects/<ws>/<handle>/ "
+                             "with steward) before deleting it")
     # Its sessions would otherwise outlive it: still listed, their emdash tasks
     # still on the box. Closed first, while they can still be told apart by agent.
     close_agent_sessions(agent)
@@ -1845,10 +1852,15 @@ def _turn_brief(turn) -> TurnBriefOut:
 @router.get("/{slug}/projects/{ref}/", response=AgentProjectDetailOut,
             summary="Get one project: its fields and links, its tasks, its recent turns",)
 def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetailOut:
+    agent = _get_agent_or_404(request, slug)
+    return project_detail(request, _get_project_or_404(agent, ref))
+
+
+def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
+    """One project's page — shared by the agent route and the workspace-project route."""
     from apps.harness import turn_access
 
-    agent = _get_agent_or_404(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = project.agent
     live_first = Case(When(status__in=services.LIVE_STATUSES, then=0), default=1,
                       output_field=IntegerField())
     tasks = list(project.tasks.select_related("agent", "project", "waiting_on_user", "parent")
@@ -1859,7 +1871,14 @@ def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetail
     # `waiting_task_count` is left to the model property: one COUNT through
     # `services.waiting_q`, rather than a second Python copy of that predicate.
     # Everyone sees what the agent did; a turn's prompt is a log (turn_access).
-    turns = turn_access.redact(_turns_touching(agent, [t.ext_id for t in tasks]), request.user)
+    # ext_ids are per agent, so a workspace project's turns are found per task owner.
+    by_agent: dict = {}
+    for t in tasks:
+        by_agent.setdefault(t.agent_id, (t.agent, []))[1].append(t.ext_id)
+    found = [turn for a, eids in by_agent.values() for turn in _turns_touching(a, eids)]
+    found = sorted({turn.pk: turn for turn in found}.values(), key=lambda turn: turn.created_at,
+                   reverse=True)[:_PROJECT_RECENT_TURNS]
+    turns = turn_access.redact(found, request.user)
     # Built from the plain project shape: `project.tasks` is a manager, not a list.
     from . import participants
 
@@ -1886,16 +1905,31 @@ def patch_project(request: HttpRequest, slug: str, ref: str,
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump()
                          for link in data["links"]]
+    return AgentProjectOut.model_validate(apply_project_patch(request, project, data))
+
+
+def apply_project_patch(request: HttpRequest, project, data: dict):
+    """A PATCH body against one project, from either address. `handle` promotes
+    it to a workspace project; `steward` hands a workspace project on — and the
+    caller must be able to write the new steward too."""
     if "spawned_from" in data:
         from .proposals_api import resolve_task_ref
 
         ref_ = (data.pop("spawned_from") or "").strip()
         project.spawned_from = resolve_task_ref(request, ref_) if ref_ else None
+    handle, steward = data.pop("handle", None), data.pop("steward", None)
     try:
-        project = services.patch_project(project, data)
+        with transaction.atomic():
+            if handle is not None:
+                project = services.promote_project(project, handle)
+            if steward is not None:
+                project = services.set_steward(project, _agent_for_write(request, steward.strip()))
+            project = services.patch_project(project, data)
     except services.UnknownPersonError as exc:
         raise HttpError(422, str(exc)) from exc
-    return AgentProjectOut.model_validate(project)
+    except services.ProjectScopeError as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    return project
 
 
 # ---- tasks, addressed by `ext_id` ----
