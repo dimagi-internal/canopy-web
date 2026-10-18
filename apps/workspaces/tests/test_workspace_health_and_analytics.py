@@ -475,3 +475,27 @@ def test_health_lists_the_trees_runners_with_their_code_and_problems(tree, setti
     assert (row["code_current"], row["agent_count"]) == (False, 1)
     assert row["problems"] == [{"name": "disk", "status": "warn", "detail": "90% full"}]
     assert body["totals"]["runners"] >= 1
+
+
+def test_usage_backfill_asks_only_boxes_on_current_code(tree, settings):
+    from io import StringIO
+
+    from django.core.management import call_command
+    from django.utils import timezone
+
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.models import Runner
+
+    settings.RUNNER_CODE_SHA = "new"
+    new = Runner.objects.create(name="new-box", kind=Runner.EMDASH, owner=tree["ceo"], status=Runner.ONLINE,
+                                last_heartbeat_at=timezone.now(), code_sha="new")
+    old = Runner.objects.create(name="old-box", kind=Runner.EMDASH, owner=tree["ceo"], status=Runner.ONLINE,
+                                last_heartbeat_at=timezone.now(), code_sha="old")
+    a, b = _repo_session(tree), _repo_session(tree, "connect-labs")
+    RunnerBinding.objects.create(session=a, runner=new, session_key="a", thread_key="emdash:a", host="h")
+    RunnerBinding.objects.create(session=b, runner=old, session_key="b", thread_key="emdash:b", host="h")
+    out = StringIO()
+    call_command("request_usage_backfill", stdout=out)
+    assert RunnerBinding.objects.get(session=a).backfill_requested
+    assert not RunnerBinding.objects.get(session=b).backfill_requested
+    assert "waiting for old-box to run current code: 1" in out.getvalue()
