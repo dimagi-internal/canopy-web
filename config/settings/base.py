@@ -322,6 +322,16 @@ HCP_SERVICE_AUDIENCE = env("HCP_SERVICE_AUDIENCE", default="internal")
 HCP_PEOPLE = [a.strip().lower() for a in env("HCP_PEOPLE", default="").split(",") if a.strip()]
 HCP_CONTACT_OPT_IN = env.bool("HCP_CONTACT_OPT_IN", default=False)
 
+# --- Memory search by meaning (apps/contacts/embeddings.py) ---
+# Empty = off: search ranks by shared words only (declared "lexical"). A Bedrock
+# embedding model id turns it on — cohere.embed-v4:0 or cohere.embed-multilingual-v3
+# (separate query/document embeddings, French and Swahili as well as English), or
+# amazon.titan-embed-text-v2:0. The task role needs bedrock:InvokeModel on it
+# (deploy/aws/canopy-web-task-role.cfn.yaml) and the model must be enabled in the
+# account's Bedrock model access. Changing it re-embeds lazily; vectors never mix.
+HCP_EMBEDDINGS_MODEL = env("HCP_EMBEDDINGS_MODEL", default="")
+HCP_EMBEDDINGS_REGION = env("HCP_EMBEDDINGS_REGION", default=env("AWS_REGION", default=""))
+
 # Whether LoginRequiredMiddleware enforces auth. Default on; toggle off during rollout.
 REQUIRE_AUTH = env.bool("REQUIRE_AUTH", default=True)
 

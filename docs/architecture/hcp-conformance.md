@@ -58,7 +58,7 @@ the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
 | At least one transport fully implemented | pass | REST and MCP. OAuth clients use REST; MCP is first-party (`hcp-service.md`) |
 | No entry outside granted scopes (4.4.1) | pass | `hcp.search` refuses out-of-scope categories; `within_grant` per entry, including OAuth-grant sources |
 | Quantity bound, not padded (4.4.2) | pass | `min(maxEntries, 20)`; nothing added |
-| Relevance ordering, method declared (4.4.3) | pass | lexical; discovery `minimization_method: lexical` |
+| Relevance ordering, method declared (4.4.3) | pass | `hcp.rank`: lexical, plus project and (with `HCP_EMBEDDINGS_MODEL` set) embedding similarity; discovery and every response declare `lexical` or `hybrid` accordingly |
 | Provenance source / capturedBy omitted for agent actors (4.4.4) | pass | `to_entry(redact=True)` for agents and OAuth clients; `test_the_whole_flow…` |
 | `minimization` object on search and single-entry (4.4.5) | pass | `hcp.minimization` |
 | Hard deletion on the person's request | pass | `delete_entry(hard=True)`, person only |

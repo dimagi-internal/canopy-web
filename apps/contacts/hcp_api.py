@@ -377,16 +377,14 @@ def hcp_search_preferences(request: HttpRequest, payload: HcpSearchIn, turn: str
     p = _principal(request, turn, hcp.USE)
     if payload.responseDetail not in ("full", "minimal"):
         raise hcp.malformed('responseDetail is "full" or "minimal"')
-    hits, searched, retrieval = [], [], None
-    for slug in _search_workspace(p, workspace):
-        found, searched, retrieval = hcp.search(
-            p.person, workspace_slug=slug, query=payload.query, categories=payload.categories,
-            purpose=payload.purpose, max_entries=payload.maxEntries, grant=p.grant,
-            actor=p.actor, turn=p.turn)
-        hits.extend(found)
-    hits = hits[:min(payload.maxEntries, hcp.MAX_ENTRIES)]
+    project = hcp.project_of(p.turn)
+    hits, searched, retrieval = hcp.search(
+        p.person, workspace_slugs=_search_workspace(p, workspace), query=payload.query,
+        categories=payload.categories, purpose=payload.purpose, max_entries=payload.maxEntries,
+        grant=p.grant, actor=p.actor, turn=p.turn,
+        project_id=project.pk if project is not None else None)
     return _ok({"entries": [_render(f, p, payload.responseDetail) for f in hits],
-                "retrievalId": f"urn:uuid:{retrieval or uuid.uuid4()}",
+                "retrievalId": f"urn:uuid:{retrieval}",
                 "minimization": hcp.minimization(p.actor),
                 "categoriesSearched": searched or payload.categories,
                 "timestamp": timezone.now().isoformat()})
@@ -417,6 +415,9 @@ def hcp_add_preference(request: HttpRequest, payload: HcpAddIn, turn: str | None
             declaration=payload.declarationType, actor=p.actor, confidence=payload.confidence,
             dimension=payload.dimension, source=payload.sourceContext, source_turn=p.turn,
             by_user=_by_user(request), user_verified=p.actor.is_person,
+            # Learned while working on a board project: filed against it, so a later
+            # turn on that project finds it first.
+            project=hcp.project_of(p.turn, ws) if ws is not None else None,
             captured_by_override="" if captured == p.actor.id else captured)
         return _ok({"entry": _render(fact, p)}, status=201)
     return _idempotent(request, body, run)
@@ -460,6 +461,7 @@ def hcp_create_entry(request: HttpRequest, payload: HcpEntryIn, turn: str | None
             expires_at=expires, relationship=str(subject.get("relationship") or ""),
             metadata={k: v for k, v in meta.items() if not str(k).startswith("canopy:")},
             user_verified=bool(prov.get("userVerified")) and p.actor.is_person,
+            project=hcp.project_of(p.turn, ws) if ws is not None else None,
             captured_by_override=_claimed_capture(p, str(prov.get("capturedBy") or "")))
         return _ok({"entry": _render(fact, p)}, status=201)
     return _idempotent(request, payload.model_dump(), run)

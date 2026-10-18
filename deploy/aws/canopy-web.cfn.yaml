@@ -512,6 +512,12 @@ Resources:
             # sites are not offered it until HCP_CONTACT_OPT_IN is true.
             - { Name: HCP_PEOPLE, Value: "jjackson@dimagi.com" }
             - { Name: HCP_CONTACT_OPT_IN, Value: "false" }
+            # Memory search by meaning (apps/contacts/embeddings.py). Empty = off
+            # (lexical only). To turn on: the task role's memory-embeddings policy
+            # deployed, the model enabled in Bedrock model access, then set e.g.
+            # cohere.embed-multilingual-v3 here and deploy; `manage.py hcp_embed`
+            # fills every vector at once (searches also fill them as they go).
+            - { Name: HCP_EMBEDDINGS_MODEL, Value: "" }
             - { Name: AWS_REGION, Value: !Ref "AWS::Region" }
             - { Name: PORT, Value: !Ref ContainerPort }
             # Google Drive root folder for walkthrough storage. Not a secret

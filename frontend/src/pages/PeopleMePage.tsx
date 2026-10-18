@@ -21,7 +21,7 @@ import { AgentReadsPicker, CollectionsPanel } from './memory/Collections'
 import {
   activeAccess,
   agentName,
-  categoryLabel,
+  byProject,
   dayLabel,
   durationOf,
   endedOf,
@@ -323,8 +323,6 @@ export function PeopleMePage() {
             {src.mine ? '' : 'learned by '}
             {src.text}
           </span>
-          <span>{categoryLabel(f.category)}</span>
-          {f.project ? <span>{f.project.title}</span> : null}
           {r ? (
             <span className="inline-flex items-center gap-1" title={`Read ${r.count}× · last ${new Date(r.last).toLocaleString()}`}>
               <Eye className="h-3 w-3" />
@@ -427,7 +425,7 @@ export function PeopleMePage() {
               {o.places.map((p) => (
                 <div key={p.workspace} className="mt-3">
                   <WorkspaceHeading name={p.name} readers={access.filter((a) => reads(a, p.workspace))} />
-                  <ul className="divide-y divide-border">{p.facts.map(factRow)}</ul>
+                  <ProjectGroups facts={p.facts} row={factRow} />
                   {enabled && <AddLine onAdd={onAdd} workspace={p.workspace} label={`Add to ${p.name}`} />}
                 </div>
               ))}
@@ -747,6 +745,31 @@ function WorkspaceHeading({ name, readers }: { name: string; readers: AgentAcces
         <Eye className="h-3 w-3" />
         {readers.length ? `Read by ${readers.map((a) => a.name).join(', ')}` : 'No agent reads this right now'}
       </span>
+    </div>
+  )
+}
+
+/** A workspace's entries, under the board project each was learned on when any
+ *  was. An agent working on a project is told that project's entries first. */
+function ProjectGroups({ facts, row }: { facts: PersonFactDetail[]; row: (f: PersonFactDetail) => ReactNode }) {
+  const groups = byProject(facts)
+  if (groups.every((g) => g.project === null)) return <ul className="divide-y divide-border">{facts.map(row)}</ul>
+  return (
+    <div className="space-y-2">
+      {groups.map((g) => (
+        <div key={g.project?.id ?? 'none'} className="border-l-2 border-border pl-3">
+          <p className="pt-2 text-xs text-muted-foreground">
+            {g.project ? (
+              <>
+                Project <span className="font-medium text-foreground">{g.project.title}</span>
+              </>
+            ) : (
+              'Not tied to a project'
+            )}
+          </p>
+          <ul className="divide-y divide-border">{g.facts.map(row)}</ul>
+        </div>
+      ))}
     </div>
   )
 }

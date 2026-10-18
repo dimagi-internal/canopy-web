@@ -207,6 +207,30 @@ export function groupByPlace(facts: PersonFactDetail[]): { orgs: OrgPlaces[]; un
   return { orgs: Array.from(orgs.values()), unplaced }
 }
 
+/** A workspace's entries split by the board project they were learned on: each
+ *  project in order of its newest entry, then the entries tied to none (null).
+ *  An agent working on a project is told that project's entries first. */
+export interface ProjectGroup {
+  project: { id: number; title: string } | null
+  facts: PersonFactDetail[]
+}
+
+export function byProject(facts: PersonFactDetail[]): ProjectGroup[] {
+  const groups = new Map<number, ProjectGroup>()
+  const none: ProjectGroup = { project: null, facts: [] }
+  for (const f of facts) {
+    if (!f.project) {
+      none.facts.push(f)
+      continue
+    }
+    const g = groups.get(f.project.id) ?? { project: { id: f.project.id, title: f.project.title }, facts: [] }
+    g.facts.push(f)
+    groups.set(f.project.id, g)
+  }
+  const out = Array.from(groups.values())
+  return none.facts.length ? [...out, none] : out
+}
+
 /** Does an agent you allow read entries in `workspace` (null = no workspace)? Canopy
  *  says which workspaces a grant reaches; nothing is derived here. */
 export function reads(a: AgentAccess, workspace: string | null): boolean {

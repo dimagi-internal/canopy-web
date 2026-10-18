@@ -55,6 +55,8 @@ ACTIONS = ("read", "write")
 DEFAULT_MAX_ENTRIES = 5
 MAX_ENTRIES = 20                       # 4.4.2, normative on every transport
 MINIMIZATION_METHOD = "lexical"
+#: Declared instead while embeddings are on (`embeddings.enabled`): meaning plus shared words.
+HYBRID_METHOD = "hybrid"
 #: 4.4.4 — never shown to an agent; the person sees them.
 REDACTED_FIELDS = ["record.provenance.source", "record.provenance.capturedBy"]
 
@@ -177,6 +179,20 @@ def session_of(turn):
     if turn is None or not getattr(turn, "chat_session_id", None):
         return None
     return turn.chat_session
+
+
+def project_of(turn, workspace=None):
+    """The board project a turn is working in — the project of the task it was
+    dispatched from — or None. With `workspace`, only a project of that workspace's
+    agents (an entry may only be filed against a project where it is written)."""
+    task = getattr(turn, "raised_from_task", None) if turn is not None else None
+    project = getattr(task, "project", None) if task is not None else None
+    if project is None:
+        return None
+    ws_id = getattr(workspace, "pk", workspace)
+    if workspace is not None and project.agent.workspace_id != ws_id:
+        return None
+    return project
 
 
 def _override(person: Person, session):
@@ -1363,8 +1379,27 @@ _STOP = frozenset("""the and for are but not you your yours with this that these
 were what when where which who whom why how can could would should will shall may might must does did
 doing about into onto over under than then them they their there here our ours its it's i'm i've i'd
 any all some each very just also only more most such own same too out off again once""".split())
-#: A person's own corrections and role are relevant to anything they ask.
-ALWAYS_RELEVANT = frozenset({PersonFact.CORRECTION, PersonFact.ROLE})
+#: A person's own corrections are relevant to anything they ask.
+ALWAYS_RELEVANT = frozenset({PersonFact.CORRECTION})
+#: Role entries are background for anything too, but every agent-written
+#: work_context entry is filed as a role (CATEGORY_KIND), so admitting all of them
+#: unmatched would hand over the newest work_context entries whatever was asked.
+#: At most this many unmatched ones come along, behind every match.
+ROLE_FLOOR = 2
+#: An entry from the project the turn is working in: as relevant as this many shared
+#: words, and admitted even when it shares none.
+PROJECT_BOOST = 2.0
+#: With embeddings on: below this cosine similarity, meaning alone does not admit an
+#: entry (shared words or the project still can). Each word shared adds 1, a
+#: similarity of 1.0 adds SEMANTIC_WEIGHT.
+SEMANTIC_FLOOR = 0.35
+SEMANTIC_WEIGHT = 4.0
+
+
+def minimization_method() -> str:
+    from . import embeddings
+
+    return HYBRID_METHOD if embeddings.enabled() else MINIMIZATION_METHOD
 
 
 def _terms(text: str) -> set[str]:
@@ -1377,17 +1412,56 @@ def _score(fact: PersonFact, query_terms: set[str]) -> int:
     return len(query_terms & _terms(hay))
 
 
-def search(person: Person, *, workspace_slug: str, query: str, categories: list[str],
+def rank(candidates: list[PersonFact], query: str, *, limit: int,
+         project_id: int | None = None) -> list[PersonFact]:
+    """The `limit` most relevant of `candidates` (already filtered to what the grant
+    reaches — filter first, then rank). Corrections lead; then by score: shared
+    words, the turn's project, and with embeddings on, closeness in meaning. Ties go
+    to the newer entry. Nothing unrelated pads the result (4.4.2)."""
+    from . import embeddings
+
+    terms = _terms(query)
+    sims: dict[int, float] = {}
+    if embeddings.enabled() and candidates and (query or "").strip():
+        embeddings.fill(candidates)
+        q = embeddings.embed([query], purpose="query")
+        if q is not None:
+            sims = {f.pk: embeddings.similarity(q[0], f.embedding)
+                    for f in candidates if embeddings.has_current(f)}
+    scored, roles = [], []
+    for f in candidates:
+        s = float(_score(f, terms))
+        same_project = project_id is not None and f.project_id == project_id
+        if same_project:
+            s += PROJECT_BOOST
+        sim = sims.get(f.pk, 0.0)
+        if sim >= SEMANTIC_FLOOR:
+            s += sim * SEMANTIC_WEIGHT
+        if s > 0 or f.kind in ALWAYS_RELEVANT:
+            scored.append((0 if f.kind == PersonFact.CORRECTION else 1, -s, -f.created_at.timestamp(), f))
+        elif f.kind == PersonFact.ROLE:
+            roles.append((-f.created_at.timestamp(), f))
+    scored.sort(key=lambda t: t[:3])
+    hits = [t[3] for t in scored]
+    hits += [f for _, f in sorted(roles, key=lambda t: t[0])[:ROLE_FLOOR]]
+    return hits[:limit]
+
+
+def search(person: Person, *, workspace_slugs, query: str, categories: list[str],
            purpose: str, max_entries: int, grant: PersonGrant | None, actor: Actor,
-           turn=None) -> tuple[list[PersonFact], list[str], str]:
+           turn=None, project_id: int | None = None) -> tuple[list[PersonFact], list[str], str]:
     """searchPreferences. Returns (entries, categoriesSearched, retrievalId).
 
+    `workspace_slugs`: every workspace to look in (None = entries in no
+    workspace), ranked together — so the best entry wins wherever it lives.
     4.4.1 — only categories the grant reads (the person themself: their own
     held categories); an out-of-scope category is a 403, not a silent drop.
-    4.4.2 — at most min(maxEntries, 20), never padded. 4.4.3 — lexical order.
+    4.4.2 — at most min(maxEntries, 20), never padded. 4.4.3 — ordered by
+    relevance (`rank`), method declared by `minimization_method`.
     Every call appends `preference.read` (one per returned entry, or one for
     an empty result), with the stated purpose.
     """
+    slugs = list(workspace_slugs)
     if not (purpose or "").strip():
         raise malformed("purpose is required")
     if not isinstance(max_entries, int) or max_entries < 1:
@@ -1403,18 +1477,15 @@ def search(person: Person, *, workspace_slug: str, query: str, categories: list[
     outside = [c for c in wanted if c not in readable]
     if outside:
         raise denied(f"not authorized for {outside}")
-    qs = servable(PersonFact.objects.filter(person=person, workspace_id=workspace_slug,
-                                            category__in=wanted)).select_related("project", "person",
-                                                                                 "workspace")
+    named = [s for s in slugs if s is not None]
+    where = Q(workspace_id__in=named)
+    if None in slugs:
+        where |= Q(workspace__isnull=True)
+    qs = servable(PersonFact.objects.filter(where, person=person, category__in=wanted)
+                  ).select_related("project", "person", "workspace") if slugs else PersonFact.objects.none()
     candidates = [f for f in qs if actor.is_person or within_grant(f, grant, "read")]
-    terms = _terms(query)
-    scored = []
-    for f in candidates:
-        s = _score(f, terms)
-        if s > 0 or f.kind in ALWAYS_RELEVANT:
-            scored.append((0 if f.kind == PersonFact.CORRECTION else 1, -s, -f.created_at.timestamp(), f))
-    scored.sort(key=lambda t: t[:3])
-    hits = [t[3] for t in scored[:limit]]
+    hits = rank(candidates, query, limit=limit, project_id=project_id)
+    workspace_slug = slugs[0] if slugs else None
     retrieval = str(uuid.uuid4())
     detail = f"retrievalId=urn:uuid:{retrieval}; returned={len(hits)}"
     if hits:
@@ -1428,7 +1499,7 @@ def search(person: Person, *, workspace_slug: str, query: str, categories: list[
 
 
 def minimization(actor: Actor) -> dict:
-    return {"method": MINIMIZATION_METHOD,
+    return {"method": minimization_method(),
             "redactedFields": [] if actor.is_person else list(REDACTED_FIELDS)}
 
 
@@ -1473,7 +1544,7 @@ def discovery(base_url: str) -> dict:
         "conformance_level": CONFORMANCE_LEVEL,
         "authorization_profile": "oauth2",
         "envelope_form": "grouped",
-        "minimization_method": MINIMIZATION_METHOD,
+        "minimization_method": minimization_method(),
         "audit_durability": {"default": "synchronous"},
         "pagination": {"audit": "cursor"},
         "problem_type_base": PROBLEM_BASE,

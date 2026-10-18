@@ -269,7 +269,8 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
     if supersedes is not None:
         # The old row stops being current BEFORE the new one exists, so the
         # (entry_id, version) history never has two current rows.
-        PersonFact.objects.filter(pk=supersedes.pk).update(superseded_at=timezone.now())
+        PersonFact.objects.filter(pk=supersedes.pk).update(superseded_at=timezone.now(),
+                                                           embedding=None, embedding_model="")
     fact = PersonFact.objects.create(
         person=person, workspace=workspace, kind=kind, statement=statement, basis=basis,
         project=project, instance_ref=(instance_ref or "").strip()[:300],
@@ -294,6 +295,12 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
               detail=audit_detail or (f"version {version}" + (f"; {reason}" if reason else "")))
     if check_conflicts:
         hcp.detect_conflicts(fact, actor=actor)
+    from . import embeddings
+
+    if embeddings.enabled():
+        # After commit, so a slow or failed embedding call never fails the write; a
+        # missed vector is filled by the next search that meets the entry.
+        transaction.on_commit(lambda: embeddings.fill([fact]))
     if project is not None:
         # Any fact filed against a project makes its subject a participant (v1.1).
         from apps.agents import participants
@@ -328,6 +335,7 @@ def retract(fact: PersonFact, *, by, actor=None, reason: str = "") -> PersonFact
     if fact.retracted_at is None:
         updated = PersonFact.objects.filter(pk=fact.pk, retracted_at__isnull=True).update(
             retracted_at=timezone.now(), status=PersonFact.DELETED,
+            embedding=None, embedding_model="",
             retracted_by=by if getattr(by, "is_authenticated", False) else None)
         fact.refresh_from_db()
         if updated:
@@ -409,18 +417,17 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         if record:
             write_grant = hcp.grant_for(person, agent=agent, session=session, action="write")
         if read_grant is not None:
-            # Everywhere the person let this agent reach (4.1.5.1): its own
-            # workspace first, then the rest of its organisation, then personal.
-            for slug in sorted(hcp.reach_of(read_grant),
-                               key=lambda s: (s != workspace_slug, s is None, s or "")):
-                if len(facts) >= ENVELOPE_FACTS:
-                    break
-                found, _, _ = hcp.search(person, workspace_slug=slug, query=turn.prompt or "",
-                                         categories=hcp.categories_for(read_grant, "read"),
-                                         purpose=ENVELOPE_PURPOSE,
-                                         max_entries=ENVELOPE_FACTS - len(facts),
-                                         grant=read_grant, actor=hcp.agent_actor(agent), turn=turn)
-                facts.extend(found)
+            # Everywhere the person let this agent reach (4.1.5.1), ranked together:
+            # the best entries win wherever they live, and entries from the project
+            # this turn is working in count for more.
+            project = hcp.project_of(turn)
+            slugs = sorted(hcp.reach_of(read_grant),
+                           key=lambda s: (s != workspace_slug, s is None, s or ""))
+            facts, _, _ = hcp.search(person, workspace_slugs=slugs, query=turn.prompt or "",
+                                     categories=hcp.categories_for(read_grant, "read"),
+                                     purpose=ENVELOPE_PURPOSE, max_entries=ENVELOPE_FACTS,
+                                     grant=read_grant, actor=hcp.agent_actor(agent), turn=turn,
+                                     project_id=project.pk if project is not None else None)
     if read_grant is not None:
         # "Did the brain have anything to say", recorded NOW, for the coverage
         # metric (`apps/contacts/coverage.py`). Only a read is logged: without use

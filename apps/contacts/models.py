@@ -602,6 +602,13 @@ class PersonFact(models.Model):
     metadata = models.JSONField(default=dict, blank=True)
     #: Why this version exists (the update/delete `reason`).
     reason = models.CharField(max_length=300, blank=True, default="")
+    #: A unit vector of the entry's text (`embeddings.text_of`), float32-packed, for
+    #: search by meaning — only while embeddings are on, and only on a current,
+    #: served version (cleared when it is superseded or deleted). Personal data:
+    #: never rendered, exported or sent anywhere.
+    embedding = models.BinaryField(null=True, blank=True, editable=False)
+    #: The model that made `embedding`; a vector from any other model counts as none.
+    embedding_model = models.CharField(max_length=120, blank=True, default="")
 
     class Meta:
         db_table = "contact_person_facts"
