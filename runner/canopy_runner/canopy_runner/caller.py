@@ -178,9 +178,10 @@ def clear_pending(task: str, *, root: pathlib.Path | None = None) -> None:
 
 PROFILE_ROOT = pathlib.Path.home() / ".canopy" / "profiles"
 
-#: The profile contract this runner implements. Reported only when the installed
-#: canopy plugin's guard implements the same one — see `profiles_supported`.
-PROFILES_VERSION = 1
+#: The format version written into each profile file's `"version"` field. Nothing
+#: reads it today. It is NOT what the runner reports: that is the installed guard's
+#: version (`profiles_supported`), which harness `PROFILES_VERSION` gates on.
+PROFILE_DOC_VERSION = 1
 #: The oldest installed guard this runner will run a caller's turn under. 3 is the
 #: one that checks Write/Edit against `write_paths` (2026-09-26); an older guard
 #: checks them against read_paths, which lets a caller overwrite the script its
@@ -255,7 +256,7 @@ def write_profile(task: str, turn: dict, *, root: pathlib.Path | None = None) ->
     if not session_naming.is_restricted_task(task) or not re.fullmatch(r"cx-[a-z0-9-]{1,200}", task):
         raise ProfileError(f"a caller's turn must run in a cx- session, not {task!r}")
     root = root or PROFILE_ROOT
-    doc = {"version": PROFILES_VERSION, "turn_id": str(turn.get("id") or ""),
+    doc = {"version": PROFILE_DOC_VERSION, "turn_id": str(turn.get("id") or ""),
            "thread_id": thread_id(turn) or None, "capability": cap,
            # The envelope the session is told to read (`--caller`); naming it here
            # lets the guard allow exactly that one file outside the worktree.
