@@ -297,15 +297,50 @@ def conversational_messages(
     out: list[dict] = []
     for i, rec in enumerate(records):
         context = record_context(rec)
+        usage = record_usage(rec)
         for row in rows_for_record(rec):
             index = compose_index(i + record_offset, row["block"])
             if index <= since:
                 continue
+            content = row["content"]
+            if usage:
+                # Once per record, on its first shipped row: the server counts a
+                # model message's tokens once (keyed on `message_id`, since Claude
+                # Code writes one record per content block, each repeating it).
+                content, usage = {**content, "usage": usage}, None
             out.append({
                 "index": index, "role": row["role"],
-                "text": row["text"], "content": row["content"], **context,
+                "text": row["text"], "content": content, **context,
             })
     return out
+
+
+def record_usage(rec: dict) -> dict:
+    """What one assistant record's model call spent, as {"message_id", "model",
+    "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"},
+    or {} for anything else. THE reader of a record's `message.usage` — the chat
+    rows carry it to canopy-web, and canopy-web's own transcript parser
+    (`apps/events/usage.py`) reads interactive transcripts with it. Claude Code's
+    `<synthetic>` messages (its own notices) spent nothing and are skipped."""
+    msg = rec.get("message") if rec.get("type") == "assistant" else None
+    if not isinstance(msg, dict) or not isinstance(msg.get("usage"), dict):
+        return {}
+    if msg.get("model") == "<synthetic>":
+        return {}
+    u = msg["usage"]
+
+    def n(key: str) -> int:
+        try:
+            return int(u.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "message_id": str(msg.get("id") or ""), "model": str(msg.get("model") or ""),
+        "input_tokens": n("input_tokens"), "output_tokens": n("output_tokens"),
+        "cache_read_tokens": n("cache_read_input_tokens"),
+        "cache_creation_tokens": n("cache_creation_input_tokens"),
+    }
 
 
 def record_context(rec: dict) -> dict:

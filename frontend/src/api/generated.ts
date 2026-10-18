@@ -21395,6 +21395,8 @@ export interface components {
             readonly cost_usd: number;
             /** Turns With Usage */
             readonly turns_with_usage: number;
+            /** Turns With Cost */
+            readonly turns_with_cost: number;
         };
         /** AnalyticsUserOut */
         readonly AnalyticsUserOut: {

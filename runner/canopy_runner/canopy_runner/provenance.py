@@ -35,10 +35,12 @@ def version() -> str:
 #: package: the installer, the menu-bar app and the icons it bundles ship to a box
 #: through the same auto-update, and a change to any of them that did not mark the
 #: box stale never reached it (the 2026-10-06 mark sat installed-nowhere-visible).
+#: The in-repo packages it installs (canopy_cron, canopy_transcript) count too: a
+#: change to the shared transcript core is a runner change.
 #: The SAME list is in .github/workflows/deploy-labs.yml (what the server expects)
 #: and install-runner.sh (what an install stamps); tests/test_runner_code_paths.py
 #: fails if the three drift, because a mismatch is a box marked stale forever.
-CODE_PATHS = ('runner/canopy_runner/canopy_runner', 'runner/canopy_runner/scripts', 'runner/menubar', 'runner/device-key', 'assets/brand')
+CODE_PATHS = ('runner/canopy_runner/canopy_runner', 'runner/canopy_runner/scripts', 'runner/menubar', 'runner/device-key', 'assets/brand', 'packages/canopy_cron', 'packages/canopy_transcript')
 
 
 def runner_src_dir() -> Path:

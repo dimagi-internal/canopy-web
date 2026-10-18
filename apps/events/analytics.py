@@ -23,10 +23,12 @@ _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_cr
 
 
 def _usage_sums(qs) -> dict:
-    agg = qs.aggregate(**{f: Sum(f) for f in _TOKEN_FIELDS}, cost=Sum("cost_usd"), turns=Count("id"))
+    agg = qs.aggregate(**{f: Sum(f) for f in _TOKEN_FIELDS}, cost=Sum("cost_usd"), turns=Count("id"),
+                       costed=Count("id", filter=Q(runs__gt=0)))
     out = {f: int(agg[f] or 0) for f in _TOKEN_FIELDS}
     out["cost_usd"] = float(agg["cost"] or Decimal(0))
     out["turns_with_usage"] = agg["turns"] or 0
+    out["turns_with_cost"] = agg["costed"] or 0
     return out
 
 

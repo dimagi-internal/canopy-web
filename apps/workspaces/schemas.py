@@ -535,8 +535,12 @@ class AnalyticsTotalsOut(StrictModel):
     cache_read_tokens: int
     cache_creation_tokens: int
     cost_usd: float
-    # Turns whose transcript reported usage; the rest are "not reported", not zero.
+    # Turns (or typed chat messages) whose tokens were seen; the rest are "not
+    # reported", not zero.
     turns_with_usage: int
+    # Of those, the ones whose run reported a cost (`claude -p`); interactive
+    # sessions report tokens only, so cost covers fewer turns than tokens.
+    turns_with_cost: int
 
 
 class AnalyticsDayOut(StrictModel):

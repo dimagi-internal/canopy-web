@@ -229,3 +229,74 @@ def test_health_and_analytics_count_an_agents_turns_the_same_way(tree):
     analytics = {a["agent"]: a for a in _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=30").json()["agents"]}
     assert health["hal"]["turns_30d"] == analytics["hal"]["turns"] == 1
     assert health["hal"]["last_turn_at"] is not None
+
+
+# ---- usage from interactive transcripts and chat rows -------------------------
+
+
+def _assistant(msg_id, inp, out, model="claude-opus-5-5"):
+    return json.dumps({"type": "assistant", "message": {
+        "id": msg_id, "model": model, "content": [{"type": "text", "text": "ok"}],
+        "usage": {"input_tokens": inp, "output_tokens": out, "cache_read_input_tokens": 100}}})
+
+
+def test_an_interactive_transcript_counts_each_model_message_once():
+    # Claude Code writes one record per content block, each repeating its usage.
+    raw = "\n".join([_assistant("m1", 5, 50), _assistant("m1", 5, 50), _assistant("m2", 2, 20),
+                     json.dumps({"type": "assistant", "message": {"model": "<synthetic>", "usage": {"output_tokens": 9}}})])
+    u = usage.parse(raw)
+    assert (u.input_tokens, u.output_tokens, u.cache_read_tokens, u.runs) == (7, 70, 200, 0)
+    assert u.cost_usd == 0  # tokens only: an interactive session reports no cost
+
+
+def test_finishing_an_interactive_turn_records_its_tokens(tree, django_capture_on_commit_callbacks):
+    turn = _turn(tree["hal"], "i1", tree["builder"])
+    services.append_transcript(turn, [_assistant("m1", 3, 30)])
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING)
+    turn.refresh_from_db()
+    with django_capture_on_commit_callbacks(execute=True):
+        services.finish_turn(turn, status=Turn.DONE)
+    row = TurnUsage.objects.get(turn_ref=str(turn.pk))
+    assert (row.output_tokens, row.runs) == (30, 0)
+
+
+def test_a_reported_cost_is_never_replaced_by_a_per_message_estimate(tree, django_capture_on_commit_callbacks):
+    turn = _turn(tree["hal"], "i2", tree["builder"])
+    with django_capture_on_commit_callbacks(execute=True):
+        services.append_transcript(turn, [_assistant("m1", 3, 30), _result(0.4, 3, 30)])
+    usage._store(str(turn.pk), turn=turn, workspace="connect", agent=tree["hal"], user=None,
+                 at=turn.created_at, usage=usage.from_messages([{"message_id": "x", "output_tokens": 1}]))
+    assert TurnUsage.objects.get(turn_ref=str(turn.pk)).cost_usd == Decimal("0.4")
+
+
+def test_chat_rows_credit_their_tokens_to_the_message_they_answer(tree, django_capture_on_commit_callbacks):
+    from apps.canopy_sessions import services as chat
+    from apps.canopy_sessions.models import Message, Session
+
+    s = Session.objects.create(workspace_id="connect", agent=tree["hal"], created_by=tree["builder"],
+                               origin=Session.ORIGIN_RUNNER, title="t")
+    turn = _turn(tree["hal"], "c1", tree["builder"])
+    # The person's message arrives through the same path, attributed to its turn.
+    chat.persist_transcript_rows(s, [{"index": 10, "role": "user", "text": "q"}], attribute=False)
+    Message.objects.filter(session=s, turn_index=10).update(source_turn_id=turn.pk)
+    u1 = {"message_id": "m1", "model": "claude-opus-5-5", "input_tokens": 4, "output_tokens": 40,
+          "cache_read_tokens": 0, "cache_creation_tokens": 0}
+    rows = [{"index": 20, "role": "assistant", "text": "a", "content": {"usage": u1}},
+            {"index": 21, "role": "tool_use", "text": "", "content": {"id": "t", "name": "Bash", "input": {}}}]
+    with django_capture_on_commit_callbacks(execute=True):
+        chat.persist_transcript_rows(s, rows, attribute=False)
+    # A later batch of the same answer is summed with it, not instead of it.
+    u2 = {**u1, "message_id": "m2", "output_tokens": 5}
+    with django_capture_on_commit_callbacks(execute=True):
+        chat.persist_transcript_rows(s, [{"index": 30, "role": "assistant", "text": "b", "content": {"usage": u2}}],
+                                     attribute=False)
+    row = TurnUsage.objects.get(turn_ref=str(turn.pk))
+    assert (row.output_tokens, row.user, row.agent_slug) == (45, tree["builder"], "hal")
+    # Someone typing straight into the session (no turn) is still counted.
+    chat.persist_transcript_rows(s, [{"index": 40, "role": "user", "text": "typed"}], attribute=False)
+    Message.objects.filter(session=s, turn_index=40).update(author={"user_id": tree["ceo"].pk})
+    with django_capture_on_commit_callbacks(execute=True):
+        chat.persist_transcript_rows(s, [{"index": 50, "role": "assistant", "text": "c",
+                                          "content": {"usage": {**u1, "message_id": "m3"}}}], attribute=False)
+    typed = TurnUsage.objects.get(turn_ref=f"chat:{s.pk.hex}:40")
+    assert (typed.output_tokens, typed.user, typed.turn) == (40, tree["ceo"], None)

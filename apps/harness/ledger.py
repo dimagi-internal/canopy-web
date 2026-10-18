@@ -116,9 +116,12 @@ def append_transcript(turn: Turn, raw_lines: list[str], *, batch_id: str = "") -
     # Drop truly-empty elements (see docstring) before both the count and the
     # join — a splitter's trailing "" must never count as a stored line.
     lines = [line for line in raw_lines if line != ""]
-    if any('"result"' in line for line in lines):
-        # A run just ended: derive the turn's tokens and cost from the whole
-        # transcript once this batch is durable (`apps/events/usage.py`).
+    if any('"result"' in line for line in lines) or (
+            turn.status in Turn.TERMINAL and any('"usage"' in line for line in lines)):
+        # A `claude -p` run just ended, or an interactive turn's last batch landed
+        # after it finished: derive the turn's tokens (and any reported cost) from
+        # the whole transcript once this batch is durable (`apps/events/usage.py`).
+        # `finish_turn` covers an interactive turn whose batches all came first.
         from apps.events import usage
 
         transaction.on_commit(lambda: usage.record_for_turn(turn))

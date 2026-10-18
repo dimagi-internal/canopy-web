@@ -1123,6 +1123,13 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
         # already serializes writers for THIS session), so a racing writer costs a
         # skipped row rather than a failed batch.
         Message.objects.bulk_create(fresh, batch_size=500, ignore_conflicts=True)
+        spent = [m.turn_index for m in fresh if "usage" in (m.content or {})]
+        if spent:
+            # Tokens the answer spent (`canopy_transcript.record_usage` on the row),
+            # credited to the message it answers once these rows are durable.
+            from apps.events import usage as turn_usage
+
+            transaction.on_commit(lambda: turn_usage.record_for_chat(locked, spent))
         return len(fresh)
 
 

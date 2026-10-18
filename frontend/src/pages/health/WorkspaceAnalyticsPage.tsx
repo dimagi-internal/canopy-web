@@ -62,10 +62,12 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         <Stat label="Messages sent" value={compact(t.messages)} />
         <Stat label="Active people" value={compact(t.active_users)} />
         <Stat label="Active agents" value={compact(t.active_agents)} />
-        <Stat label="Input tokens" value={compact(t.input_tokens)} hint={`${compact(t.cache_read_tokens)} from cache`} />
-        <Stat label="Output tokens" value={compact(t.output_tokens)} />
-        <Stat label="Cost" value={usd(t.cost_usd)}
-              hint={t.turns ? `${t.turns_with_usage} of ${t.turns} turns reported` : undefined} />
+        <Stat label="Input tokens" value={compact(t.input_tokens)}
+              hint={`${compact(t.cache_read_tokens)} more read from cache`} />
+        <Stat label="Output tokens" value={compact(t.output_tokens)}
+              hint={t.turns ? `from ${t.turns_with_usage} of ${t.turns} turns` : undefined} />
+        <Stat label="Reported cost" value={usd(t.cost_usd)}
+              hint={t.turns ? `from ${t.turns_with_cost} of ${t.turns} turns` : undefined} />
       </section>
 
       <section aria-label="Over time" className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -82,7 +84,7 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
           { key: 'input_tokens', label: 'Input', className: 'fill-primary' },
           { key: 'output_tokens', label: 'Output', className: 'fill-muted-foreground' },
         ]} />
-        <DailyBars title="Cost" days={days} format={usd} layers={[{ key: 'cost_usd', label: 'Cost', className: 'fill-primary' }]} />
+        <DailyBars title="Reported cost" days={days} format={usd} layers={[{ key: 'cost_usd', label: 'Cost', className: 'fill-primary' }]} />
       </section>
 
       <section aria-label="Where turns came from">
@@ -102,7 +104,7 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
         <table className="w-full min-w-[720px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="analytics-agents">
           <thead className="text-left text-muted-foreground">
             <tr><th className="py-1 font-medium">Agent</th><NumHead>Turns</NumHead><NumHead>Failed or lost</NumHead><NumHead>Chats</NumHead>
-              <NumHead>Messages</NumHead><NumHead>People</NumHead><NumHead>Input</NumHead><NumHead>Output</NumHead><NumHead>Cost</NumHead>
+              <NumHead>Messages</NumHead><NumHead>People</NumHead><NumHead>Input</NumHead><NumHead>Output</NumHead><NumHead>Reported cost</NumHead>
               <th className="font-medium">Last activity</th></tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -125,7 +127,7 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
           <thead className="text-left text-muted-foreground">
             <tr><th className="py-1 font-medium">Person</th><NumHead>Active days</NumHead><NumHead>Messages</NumHead><NumHead>Turns</NumHead>
               <NumHead>Chats</NumHead><NumHead>Settings changed</NumHead><NumHead>MCP calls</NumHead><NumHead>Agents</NumHead>
-              <th className="font-medium">Uses most</th><NumHead>Tokens</NumHead><NumHead>Cost</NumHead>
+              <th className="font-medium">Uses most</th><NumHead>Tokens</NumHead><NumHead>Reported cost</NumHead>
               <th className="font-medium">Last active</th></tr>
           </thead>
           <tbody className="divide-y divide-border">

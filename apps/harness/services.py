@@ -1146,6 +1146,9 @@ def finish_turn(
     from apps.events import activity
 
     activity.for_turn(activity.TURN_FINISHED, turn, at=now)
+    from apps.events import usage as turn_usage
+
+    transaction.on_commit(lambda: turn_usage.record_for_turn(turn))
     _finish_riders(turn)
     if stop_ignored:
         # SAY IT WHERE THE PERSON WHO PRESSED STOP IS LOOKING. A `status` event
