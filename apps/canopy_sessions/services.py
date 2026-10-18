@@ -1844,6 +1844,119 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
     return binding, turn
 
 
+#: Where a fork records what its first turn must copy (`resolve_session` hands it
+#: to the runner): the source's Claude session, how many of its transcript records
+#: to keep, the canopy session it came from, and `worktree_of` — the session whose
+#: directory it runs in on a cloud runner (the root of a chain of forks).
+FORK_KEY = "fork"
+
+
+def fork_runner_supported(runner) -> bool:
+    """Whether `runner` can cut a fork from a session's transcript: one that runs
+    Claude itself, so it can write a trimmed copy of the transcript and resume it —
+    a cloud runner, or a laptop on the `claude-cli` runtime. emdash and the Claude
+    app own their sessions."""
+    from apps.harness.models import Runner
+
+    return runner is not None and (runner.kind == Runner.CLOUD or runner.engine == Runner.ENGINE_CLAUDE_CLI)
+
+
+def fork_session(*, session: Session, turn_index: int, user) -> Session:
+    """A new session holding `session`'s conversation up to the end of the turn
+    that `turn_index` belongs to, running in the SAME worktree on the same runner.
+
+    The cut is always a turn boundary — just before the next prompt a person sent —
+    so the fork never holds a tool call without its result. The history is copied
+    now so it shows at once; the transcript is cut by the runner on the fork's
+    first turn (`resolve_session` returns `fork`), and its first ship replaces these
+    rows with ones derived from that copy (`ensure_transcript_identity`).
+
+    Files are shared, not forked: both sessions edit the one worktree.
+
+    Raises LookupError when there is no such message, ValueError when the session
+    cannot be forked (no Claude session, a runner that cannot, a message from
+    before a transfer), RuntimeError when the cut would fall in a turn still running.
+    """
+    binding = getattr(session, "runner_binding", None)
+    if binding is None or not binding.session_key or binding.runner is None:
+        raise ValueError("this session has no Claude session on a runner to fork")
+    if not transcript_sourced(session):
+        raise ValueError("this session's history is not a Claude transcript, so it cannot be forked")
+    if not fork_runner_supported(binding.runner):
+        raise ValueError(f"forking needs a cloud runner or one on the Claude CLI runtime; "
+                         f"{binding.runner.name} runs {binding.runner.engine}")
+    offset = binding.index_offset
+    clicked = Message.objects.filter(session=session, turn_index=turn_index).first()
+    if clicked is None:
+        raise LookupError("no such message in this session")
+    if turn_index < offset:
+        raise ValueError("that message is from before this session moved runners; "
+                         "its transcript is not on this runner")
+    next_prompt = (Message.objects.filter(session=session, role=Message.USER, turn_index__gt=turn_index)
+                   .order_by("turn_index").first())
+    if next_prompt is not None:
+        records = (next_prompt.turn_index - offset) // BLOCK_STRIDE
+    else:
+        if Turn.objects.filter(chat_session=session, status__in=list(Turn.NON_TERMINAL)).exists():
+            raise RuntimeError("the last turn is still running — fork from an earlier message, "
+                               "or wait for it to finish")
+        high = Message.objects.filter(session=session).aggregate(m=Max("turn_index"))["m"]
+        records = (int(high) - offset) // BLOCK_STRIDE + 1
+
+    title = (session.title or "").strip() or "session"
+    with transaction.atomic():
+        fork = create_session(
+            workspace=session.workspace, created_by=user, agent=session.agent,
+            project=session.project, title=f"Fork of {title}"[:200],
+            metadata={
+                FORK_KEY: {"session_key": binding.session_key, "records": records,
+                           "from_session": str(session.id),
+                           "worktree_of": worktree_of(session)},
+                # The fork's first turn must reach the box holding the transcript.
+                "requested_runner_id": str(binding.runner_id),
+                # Its history is a cut of a transcript, whatever the executor.
+                TRANSCRIPT_SOURCED: True,
+            },
+        )
+        fork.parent_session = session
+        fork.parent_claude_session = binding.session_key
+        fork.ordinal_scheme = session.ordinal_scheme
+        fork.save(update_fields=["parent_session", "parent_claude_session", "ordinal_scheme"])
+        Message.objects.bulk_create([
+            Message(session=fork, turn_index=m.turn_index - offset, role=m.role, content=m.content,
+                    plaintext=m.plaintext, author=m.author, source_turn_id=m.source_turn_id)
+            for m in Message.objects.filter(
+                session=session, turn_index__gte=offset,
+                turn_index__lt=offset + records * BLOCK_STRIDE)
+        ])
+        session_activity.rebuild(Session.objects.select_for_update().get(pk=fork.pk))
+    return fork
+
+
+def worktree_of(session) -> str:
+    """The canopy session whose directory `session` runs in on a cloud runner: its
+    own, or for a fork the one its source runs in."""
+    return ((session.metadata or {}).get(FORK_KEY) or {}).get("worktree_of") or str(session.id)
+
+
+def fork_plan(thread_key: str) -> tuple[dict | None, str]:
+    """For a forked chat: the cut its first turn must make (None once the runner has
+    recorded the fork's own Claude session — later turns resume it like any other),
+    and the session whose directory it runs in. (None, "") for anything else."""
+    try:
+        sid = uuid.UUID(thread_key)
+    except (TypeError, ValueError):
+        return None, ""
+    session = Session.objects.filter(pk=sid).select_related("runner_binding").first()
+    fork = ((session.metadata or {}).get(FORK_KEY) if session is not None else None)
+    if not fork:
+        return None, ""
+    binding = getattr(session, "runner_binding", None)
+    pending = None if binding is not None and binding.session_key else {
+        "session_key": fork["session_key"], "records": int(fork["records"])}
+    return pending, worktree_of(session)
+
+
 def claim_pending_attachments(session, message=None, user=None) -> list[dict]:
     """Mark the SENDER's un-sent attachments on this session as sent, and
     describe them for the runner.

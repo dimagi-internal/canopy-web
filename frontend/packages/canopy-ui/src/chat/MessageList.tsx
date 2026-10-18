@@ -8,7 +8,7 @@ import { MessageItem, ThinkingIndicator } from "./MessageItem";
 import { ToolCallPair } from "./ToolCallPair";
 import { AppView } from "./mcpApps/AppView";
 import { pairToolMessages } from "./pairToolMessages";
-import { groupToolRuns, runHasError, runIsActive, summariseRun } from "./groupToolRuns";
+import { groupToolRuns, lastTurnIndex, runHasError, runIsActive, summariseRun } from "./groupToolRuns";
 
 interface Props {
   messages: Message[];
@@ -111,6 +111,7 @@ export function MessageList({
             return (
               <details
                 key={row.key}
+                data-turn-index={lastTurnIndex(row.rows)}
                 open={forceToolOpen ?? (failed || undefined)}
                 className="group my-1 rounded border border-border bg-muted/40 text-sm"
               >

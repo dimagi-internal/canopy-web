@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { clsx } from 'clsx'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
@@ -30,6 +30,8 @@ import {
   uploadAttachment,
   deleteAttachment,
   appHostFor,
+  forkSession,
+  type ChatSession,
 } from '@/api/chat'
 import {
   CLOSE_POLL_MS,
@@ -39,6 +41,7 @@ import {
   closeResultMessage,
 } from '@/components/chat/closeAction'
 import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
+import { MessageContextMenu, forkBlockedReason, turnIndexAt } from '@/components/chat/MessageContextMenu'
 import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
@@ -96,8 +99,14 @@ const BACKFILL_TIMEOUT_MS = 30_000
  * navigation: a closed session drops back to the tree instead of out of /ide,
  * and a move between workspaces keeps the /ide URL (it names no workspace).
  * `compact` is /ide's denser header: title, target and status on one line.
+ * `sessionPath` is where another session opens (a fork made here); /ide keeps
+ * it in /ide.
  */
-export function ChatPage({ onLeave, compact = false }: { onLeave?: () => void; compact?: boolean } = {}) {
+export function ChatPage({
+  onLeave,
+  compact = false,
+  sessionPath,
+}: { onLeave?: () => void; compact?: boolean; sessionPath?: (s: ChatSession) => string } = {}) {
   const { id = '' } = useParams()
   const appHost = useMemo(() => appHostFor(id), [id])
   const navigate = useNavigate()
@@ -257,6 +266,44 @@ export function ChatPage({ onLeave, compact = false }: { onLeave?: () => void; c
   // The bound runner's fleet row — the id `Resume` needs, and the `paused` /
   // `can_manage` flags that decide whether resuming is even on offer here.
   const boundRunner = findBoundRunner(meta?.runner_name, fleetRunners)
+
+  // Right-click a message: "Fork from here".
+  const [messageMenu, setMessageMenu] = useState<{ x: number; y: number; turnIndex: number } | null>(null)
+  const [forking, setForking] = useState(false)
+  const [forkError, setForkError] = useState<string | null>(null)
+  const closeMessageMenu = useCallback(() => {
+    setMessageMenu(null)
+    setForkError(null)
+  }, [])
+  const onMessageContextMenu = (e: ReactMouseEvent) => {
+    const turnIndex = turnIndexAt(e.target)
+    // A row not yet in the transcript (your own line, still sending) has a
+    // placeholder index; leave the browser's own menu there.
+    if (turnIndex == null || !socket.state.messages.some((m) => m.turn_index === turnIndex && m.status !== 'pending')) {
+      return
+    }
+    e.preventDefault()
+    setForkError(null)
+    setMessageMenu({ x: e.clientX, y: e.clientY, turnIndex })
+  }
+  const forkHere = async () => {
+    if (!messageMenu || !id) return
+    setForking(true)
+    setForkError(null)
+    try {
+      const fork = await forkSession(id, messageMenu.turnIndex)
+      setMessageMenu(null)
+      navigate(
+        sessionPath
+          ? sessionPath(fork)
+          : `/w/${encodeURIComponent(fork.workspace)}/chat/${encodeURIComponent(fork.id)}`,
+      )
+    } catch (err) {
+      setForkError(err instanceof ChatApiError ? err.message : 'Could not fork this session')
+    } finally {
+      setForking(false)
+    }
+  }
   const boundPaused = boundOffline && Boolean(boundRunner?.paused)
 
   // Answering the dialog a blocked agent is waiting on. The clear is optimistic
@@ -902,7 +949,18 @@ export function ChatPage({ onLeave, compact = false }: { onLeave?: () => void; c
           )}
         </div>
       </div>
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1" onContextMenu={onMessageContextMenu}>
+        {messageMenu && (
+          <MessageContextMenu
+            x={messageMenu.x}
+            y={messageMenu.y}
+            blocked={forkBlockedReason(meta?.runner_name, fleetRunners)}
+            busy={forking}
+            error={forkError}
+            onFork={forkHere}
+            onDismiss={closeMessageMenu}
+          />
+        )}
         <ChatPanel
           state={socket.state}
           connected={socket.connected}

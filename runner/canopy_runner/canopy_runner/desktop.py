@@ -44,6 +44,15 @@ was in and re-hides Claude: Claude holds the front ~60ms per NEW session or wake
 That is a mitigation, not a fix: a keystroke typed in that window can land in
 Claude. Follow-ups into a live session open no URL at all.
 
+THE `claude-cli` RUNTIME is this backend with the app taken out (headless.py): a new
+thread gets the same worktree, settings, mod and index entry, but the runner runs
+the turn itself over ACP and opens no claude:// link — so nothing ever takes the
+focus. A person brings the session into the app from its resume picker when they
+want it there; once the mod reports the app's process `alive`, follow-ups go in
+through the mod exactly as above, and when that process is gone the runner runs
+them headless again. One live process per session either way (headless.py says
+why). Never a deep link: a Claude CLI session the app does not hold runs headless.
+
 TURN LIFECYCLE matches the emdash backend: an agent/project turn finishes once
 its prompt is delivered (the work continues in the visible session, and the
 session's transcript streams through the usual session-stream path); a chat turn
@@ -72,7 +81,8 @@ logger = logging.getLogger("canopy_runner.desktop")
 
 EMDASH = "emdash"
 CLAUDE_DESKTOP = "claude-desktop"
-RUNTIMES = (EMDASH, CLAUDE_DESKTOP)
+CLAUDE_CLI = "claude-cli"
+RUNTIMES = (EMDASH, CLAUDE_DESKTOP, CLAUDE_CLI)
 
 MARKETPLACE = "canopy-desktop"
 PLUGIN = f"canopy-desktop@{MARKETPLACE}"
@@ -138,11 +148,16 @@ def observe(me: dict | None) -> None:
         logger.info("session runtime: %s -> %s (new sessions only; live ones stay put)",
                     _current, engine)
         _current = engine
-        if engine == CLAUDE_DESKTOP:
+        if engine in (CLAUDE_DESKTOP, CLAUDE_CLI):
             try:
                 ensure_mod()
             except Exception:  # noqa: BLE001 — a turn will say so if the mod is missing
                 logger.warning("could not register the canopy-desktop mod", exc_info=True)
+        if engine == CLAUDE_CLI:
+            # An npm install can take a minute; the heartbeat must not wait on it.
+            from . import headless
+            threading.Thread(target=headless.ensure_adapter, daemon=True,
+                             name="claude-cli-adapter").start()
 
 
 def in_flight() -> list[str]:
@@ -174,10 +189,11 @@ def _index(cfg) -> dict:
         return {}
 
 
-def _remember(cfg, sid: str, wt: Path, project: str) -> None:
+def _remember(cfg, sid: str, wt: Path, project: str, runtime: str = CLAUDE_DESKTOP) -> None:
     with _lock:
         data = _index(cfg)
-        data[sid] = {"worktree": str(wt), "project": project, "created_at": int(time.time())}
+        data[sid] = {"worktree": str(wt), "project": project, "created_at": int(time.time()),
+                     "runtime": runtime}
         path = _index_path(cfg)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
@@ -191,6 +207,10 @@ def worktree_for(cfg, sid: str) -> Path | None:
         return None
     wt = Path(entry["worktree"])
     return wt if wt.exists() else None
+
+
+def is_cli_session(cfg, sid: str) -> bool:
+    return (_index(cfg).get(sid or "") or {}).get("runtime") == CLAUDE_CLI
 
 
 def is_desktop_session(cfg, sid: str) -> bool:
@@ -229,14 +249,16 @@ def close(cfg, sid: str) -> str:
     if not entry or entry.get("closed_at"):
         return "absent"
     wt = Path(entry.get("worktree", ""))
-    if wt.exists() and channel_alive(wt / CHANNEL):
+    if wt.exists() and channel_held_for(wt / CHANNEL, sid):
         try:
             res = stop(cfg, sid)
             logger.info("desktop close %s: stop -> %s", sid, res.get("action"))
         except Exception:  # noqa: BLE001 — a failed stop must not keep it open
             logger.warning("desktop close %s: stop failed; closing anyway", sid, exc_info=True)
     _mark_closed(cfg, sid)
-    if wt.exists():
+    if wt.exists() and _shared_worktree(cfg, wt):
+        logger.info("desktop close %s: worktree %s kept (another open session uses it)", sid, wt)
+    elif wt.exists():
         # The runtime's own files are excluded from status (make_worktree), so
         # anything listed is the session's work. A status that FAILED (not a
         # checkout, a broken one) prints nothing too — it vouches for nothing, so
@@ -254,6 +276,40 @@ def close(cfg, sid: str) -> str:
             logger.info("desktop close %s: worktree %s (branch kept)", sid,
                         "removed" if not wt.exists() else "could not be removed")
     return "closed"
+
+
+def _shared_worktree(cfg, wt: Path) -> bool:
+    """Another open session runs in `wt` (a fork and its source share one)."""
+    return any(not e.get("closed_at") and Path(e.get("worktree", "")) == wt
+               for e in _index(cfg).values())
+
+
+class ForkError(RuntimeError):
+    """A fork could not be cut on this box; the message says why."""
+
+
+def fork_session(cfg, source: str, records: int, project: str) -> str:
+    """Start a new Claude CLI session from the first `records` records of `source`'s
+    transcript, in the same worktree, and return its id. Records are counted as
+    canopy_transcript.read_records counts them, which is how canopy-web's ordinals
+    count them. The copy sits beside the source (same cwd, same project directory),
+    so resuming it from the worktree finds it."""
+    from canopy_transcript import read_records
+
+    wt = worktree_for(cfg, source)
+    if wt is None or not is_cli_session(cfg, source):
+        raise ForkError(f"session {source} is not a Claude CLI session with a worktree on this box")
+    src = transcript_path(source)
+    if src is None:
+        raise ForkError(f"session {source} has no transcript on this box")
+    kept = read_records(src)[:records]
+    if len(kept) < records:
+        raise ForkError(f"session {source}'s transcript has {len(kept)} records, not {records}")
+    sid = str(uuid.uuid4())
+    lines = [json.dumps({**r, "sessionId": sid} if "sessionId" in r else r) for r in kept]
+    (src.parent / f"{sid}.jsonl").write_text("".join(f"{line}\n" for line in lines))
+    _remember(cfg, sid, wt, project, runtime=CLAUDE_CLI)
+    return sid
 
 
 def transcript_path(sid: str, claude_home: Path | None = None) -> Path | None:
@@ -279,10 +335,10 @@ def transcript_for(session_key: str, *, home: Path, claude_home: Path) -> Path |
 # ── project checkouts ───────────────────────────────────────────────────────
 
 def project_repo(cfg, project: str) -> tuple[Path, str]:
-    """(checkout, base ref) for a project — the repo emdash already registers for
-    it, so this runtime drives exactly the projects the runner reports. A
-    `desktop_projects` map in runner.json overrides (name -> path)."""
-    override = (getattr(cfg, "desktop_projects", None) or {}).get(project)
+    """(checkout, base ref) for a project: runner.json's `project_paths` first,
+    else the repo emdash registers for it — the same two sources the heartbeat
+    reports (sessions.reported_projects), so a claimed turn always finds one."""
+    override = project_paths(cfg).get(project)
     if override:
         return Path(os.path.expanduser(override)), "HEAD"
     db = getattr(cfg, "emdash_db", "")
@@ -298,6 +354,52 @@ def project_repo(cfg, project: str) -> tuple[Path, str]:
         if row and row[0]:
             return Path(row[0]), (row[1] or "HEAD")
     raise RuntimeError(f"no checkout for project '{project}' on this runner")
+
+
+def local_projects(cfg) -> list[str]:
+    """The project names runner.json's `project_paths` adds — only where the
+    runtime makes its own worktrees; emdash can drive only the projects it holds."""
+    if _current == EMDASH:
+        return []
+    return sorted(n for n, path in project_paths(cfg).items() if n and path)
+
+
+def project_paths(cfg) -> dict:
+    """runner.json's `project_paths`, read from the file each time so that
+    `canopy-runner projects add` reaches the running daemon on its next tick."""
+    path = getattr(cfg, "config_path", "")
+    if path:
+        try:
+            return dict(json.loads(Path(path).read_text()).get("project_paths") or {})
+        except (OSError, ValueError, AttributeError):
+            pass
+    return dict(getattr(cfg, "project_paths", None) or {})
+
+
+def set_project_path(config_path: str, name: str, checkout: str | None) -> dict:
+    """Add (or, with None, remove) one entry of runner.json's `project_paths`,
+    atomically and keeping the file's permissions. Returns the new map."""
+    path = Path(config_path)
+    raw = json.loads(path.read_text())
+    paths = dict(raw.get("project_paths") or {})
+    if checkout is None:
+        paths.pop(name, None)
+    else:
+        paths[name] = checkout
+    raw["project_paths"] = paths
+    tmp = path.with_suffix(".json.projects")
+    tmp.write_text(json.dumps(raw, indent=2) + "\n")
+    os.chmod(tmp, path.stat().st_mode & 0o777)
+    os.replace(tmp, path)
+    return paths
+
+
+def needs_emdash() -> bool:
+    """Whether a turn this box claims can need emdash. `claude-cli` runs Claude
+    itself, so a box on it claims with emdash closed or absent (Windows, or a
+    laptop that never installed it); a follow-up on a thread still held by an
+    emdash session then fails with emdash's own error rather than waiting."""
+    return _current != CLAUDE_CLI
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> str:
@@ -355,7 +457,8 @@ def worktree_settings(allow: list[str], existing: dict | None = None) -> dict:
 def _cli_candidates() -> list[Path]:
     home = Path.home()
     found = [shutil.which("claude")]
-    found += [str(home / ".local" / "bin" / "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+    found += [str(home / ".local" / "bin" / "claude"), str(home / ".local" / "bin" / "claude.exe"),
+              "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
     # The CLI the desktop app bundles for its own sessions — always present where
     # the app is, so the runtime works even on a box that never installed the CLI.
     bundled = glob.glob(str(home / "Library" / "Application Support" / "Claude" / "claude-code"
@@ -385,7 +488,7 @@ def _cli_env(cli: Path) -> dict:
     home = Path.home()
     extra = [str(cli.parent), str(home / ".local" / "bin"), "/opt/homebrew/bin", "/usr/local/bin"]
     path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-    return {**os.environ, "PATH": ":".join(extra + [path])}
+    return {**os.environ, "PATH": os.pathsep.join(extra + [path])}
 
 
 def prepare_settings(cfg, wt: Path) -> None:
@@ -567,6 +670,16 @@ def channel_alive(channel: Path) -> bool:
         return False
 
 
+def channel_held_for(channel: Path, sid: str) -> bool:
+    """The app's process holds THIS session's channel. A worktree can hold more than
+    one session (a fork shares its source's), and the channel is the one seeded
+    for — so another session's live process is not this one's."""
+    try:
+        return channel_alive(channel) and (channel / "seeded").read_text().strip() == sid
+    except OSError:
+        return False
+
+
 def read_events(channel: Path) -> list[dict]:
     evs = []
     for p in channel.glob("ev-*.json"):
@@ -595,12 +708,17 @@ def stop(cfg, session_key: str, wait: float = STOP_WAIT_SECONDS) -> dict:
 
     The mod does the stopping (`$.turn.abort` on the turn it saw start) and says
     what happened in a `stopped` event. A session whose process is down has
-    nothing running, which is `idle` — the honest answer, not a failure."""
+    nothing running, which is `idle` — the honest answer, not a failure.
+    A Claude CLI session's turn running headless is cancelled over ACP instead."""
+    from . import headless
+
+    if headless.cancel(session_key):
+        return {"action": "interrupted", "reason": "", "killed": 0}
     wt = worktree_for(cfg, session_key)
     if wt is None:
         return {"action": "unreadable", "reason": "no worktree for this desktop session"}
     channel = wt / CHANNEL
-    if not channel_alive(channel):
+    if not channel_held_for(channel, session_key):
         return {"action": "idle", "reason": "the session's process is not running"}
     # Kill the running turn's shells FIRST, then abort. The other order leaves the
     # command backgrounded by the abort, and killing a BACKGROUND task makes Claude
@@ -662,7 +780,13 @@ def _etime_seconds(etime: str) -> int:
 
 
 def _processes() -> list[tuple[int, int, float, str]]:
-    """(pid, ppid, started_at, command) for this user's processes."""
+    """(pid, ppid, started_at, command) for this user's processes. Empty on
+    Windows: only a Claude desktop session's stop reads them, a runtime written
+    for macOS (`claude-cli` stops over ACP instead)."""
+    from .platform_jobs import is_windows
+
+    if is_windows():
+        return []
     out = subprocess.run(["ps", "-U", str(os.getuid()), "-o", "pid=,ppid=,etime=,command="],
                          capture_output=True, text=True).stdout
     now, rows = time.time(), []
@@ -721,12 +845,15 @@ def kill_turn_shells(sid: str, since: float) -> int:
 
 # ── the session report ──────────────────────────────────────────────────────
 
-def _agent_status(channel: Path) -> str:
+def _agent_status(channel: Path, sid: str = "") -> str:
     """emdash's vocabulary, from the mod's events: `working` while a model turn
     runs, `awaiting-input` when it raised a permission ask since that turn
-    started, "" when idle or the session's process is down."""
-    if not channel_alive(channel):
-        return ""
+    started, "" when idle or the session's process is down. A Claude CLI session
+    with a turn running headless is `working`."""
+    if not (channel_held_for(channel, sid) if sid else channel_alive(channel)):
+        from . import headless
+
+        return "working" if sid and headless.is_running(sid) else ""
     started = asked = 0
     for e in read_events(channel):
         kind, t = e.get("kind"), e.get("t", 0)
@@ -761,7 +888,7 @@ def open_sessions(cfg) -> list[dict]:
         except OSError:
             continue
         rows.append({"emdash_task": sid, "project": entry.get("project", ""),
-                     "status": "in_progress", "agent_status": _agent_status(wt / CHANNEL),
+                     "status": "in_progress", "agent_status": _agent_status(wt / CHANNEL, sid),
                      "last_interacted_at": last.isoformat()})
     return sorted(rows, key=lambda r: r["last_interacted_at"], reverse=True)
 
@@ -823,14 +950,21 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
                                   project=turn.get("project") or "",
                                   workspace=turn.get("workspace_slug") or "")
     key = plan.get("emdash_task_id") if plan.get("reuse") else ""
+    fork = plan.get("fork") if not key else None
+    if fork:
+        return _start_fork(cfg, client, runner_id, turn, thread_key, plan, fork)
     if key and (_index(cfg).get(key) or {}).get("closed_at"):
         # The thread's session was closed from the web: start a new DESKTOP
         # session, not hand an id emdash never had to the emdash backend.
         key = ""
     if key and is_desktop_session(cfg, key):
         run = TurnRun(cfg, client, runner_id, turn, thread_key, plan, reuse=key)
-    elif key or _current != CLAUDE_DESKTOP:
+    elif key or _current not in (CLAUDE_DESKTOP, CLAUDE_CLI):
         return None  # an emdash thread continues in emdash
+    elif _current == CLAUDE_CLI and _adapter_missing():
+        logger.error("claude-cli runtime: the ACP adapter is not installed on this runner — turn %s "
+                     "runs on emdash instead", turn.get("id"))
+        return None
     elif claude_cli() is None:
         # A new desktop session needs the CLI (seed + mod install). Without it the
         # turn would only crash, so it runs on emdash instead — loudly: readiness
@@ -845,6 +979,35 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
         IN_FLIGHT[str(turn["id"])] = th
     th.start()
     return f"desktop:{'reuse' if key else 'create'}:{turn['id']}"
+
+
+def _start_fork(cfg, client, runner_id: str, turn: dict, thread_key: str, plan: dict,
+                fork: dict) -> str:
+    """A forked chat's first turn: cut its transcript, point its thread at the new
+    session, and run the turn there as a resume. A fork that cannot be cut fails the
+    turn, saying why — never a fresh session that has lost the conversation."""
+    target = turn.get("agent_slug") or turn.get("project") or ""
+    try:
+        sid = fork_session(cfg, fork["session_key"], int(fork["records"]), target)
+    except ForkError as exc:
+        client.fail_turn(str(turn["id"]), f"Could not fork: {exc}")
+        return f"desktop:fork-failed:{turn['id']}"
+    client.record_session(
+        runner_id, turn.get("agent_slug") or "", thread_key,
+        project=turn.get("project") or "", workspace=turn.get("workspace_slug") or "",
+        emdash_task_id=sid, session_id=sid, summary=None)
+    run = TurnRun(cfg, client, runner_id, turn, thread_key, plan, reuse=sid)
+    th = threading.Thread(target=run.run, daemon=True, name=f"desktop-{str(turn['id'])[:8]}")
+    with _lock:
+        IN_FLIGHT[str(turn["id"])] = th
+    th.start()
+    return f"desktop:fork:{turn['id']}"
+
+
+def _adapter_missing() -> bool:
+    from . import headless
+
+    return headless.adapter_argv() is None
 
 
 class TurnRun:
@@ -898,6 +1061,9 @@ class TurnRun:
                 logger.exception("desktop turn=%s: could not report the failure", self.id)
 
     def _run(self) -> None:
+        if (is_cli_session(self.cfg, self.reuse) if self.reuse else _current == CLAUDE_CLI):
+            self._run_cli()
+            return
         if not ensure_app():
             self.client.start(self.id)
             self.finish(False, "Claude.app is not running and could not be started")
@@ -955,7 +1121,94 @@ class TurnRun:
             self.status("created_session", runtime=CLAUDE_DESKTOP, session=sid, worktree=str(wt))
         self._follow(sid, channel, which, offset)
 
-    def _follow(self, sid: str, channel: Path, which: str, offset: int) -> None:
+    def _run_cli(self) -> None:
+        """A `claude-cli` turn: into the app's process through the mod when the app
+        holds the session, else headless on this box. Never a deep link."""
+        prompt = self._prompt()
+        if self.reuse:
+            sid = self.reuse
+            wt = worktree_for(self.cfg, sid)
+            if wt is None:
+                self.client.start(self.id, sid)
+                self.finish(False, f"session {sid} has no worktree on this box any more", sid)
+                return
+            channel = wt / CHANNEL
+            path = transcript_path(sid)
+            offset = path.stat().st_size if path else 0
+            if channel_held_for(channel, sid):
+                # The person opened it in the app: its process owns the session.
+                n = next_followup_index(channel)
+                (channel / f"fu-{n}.txt").write_text(prompt)
+                self.client.start(self.id, sid)
+                self.status("reused_session", runtime=CLAUDE_CLI, session=sid, held_by="claude-desktop")
+                self._follow(sid, channel, f"fu-{n}", offset, wait_for_completion=True)
+                return
+            self.client.start(self.id, sid)
+            self.status("reused_session", runtime=CLAUDE_CLI, session=sid, held_by="runner")
+
+            def resumed(new: str) -> None:
+                if new != sid:
+                    # The session could not load; the turn runs in a fresh one,
+                    # and the thread follows it there.
+                    self._adopt(new, wt, self.target)
+
+            self._headless(prompt, wt, resume=sid, offset=offset, on_session=resumed)
+            return
+        repo, base = project_repo(self.cfg, self.target)
+        name = session_naming.build_task_name(self.target, self.turn)
+        wt = make_worktree(self.cfg, repo, base, name)
+        prepare_settings(self.cfg, wt)
+        (wt / CHANNEL).mkdir(exist_ok=True)
+        summary = self.plan.get("summary") or ""
+        if summary:
+            prompt = (f"[Continuing prior work on this thread — context from earlier sessions "
+                      f"(a fresh session, possibly a different machine):]\n{summary}\n\n{prompt}")
+
+        def created(sid: str) -> None:
+            self.client.start(self.id, sid)
+            self._adopt(sid, wt, name)
+            self.status("created_session", runtime=CLAUDE_CLI, session=sid, worktree=str(wt))
+
+        self._headless(prompt, wt, resume=None, offset=0, on_session=created)
+
+    def _adopt(self, sid: str, wt: Path, title: str) -> None:
+        """Make `sid` this thread's Claude CLI session, before its prompt goes in: the
+        mod claims the channel by this id once the app holds the session, and
+        canopy-web routes the thread's next turn here."""
+        (wt / CHANNEL / "seeded").write_text(sid)
+        _remember(self.cfg, sid, wt, self.target, runtime=CLAUDE_CLI)
+        self.client.record_session(
+            self.rid, self.turn.get("agent_slug") or "", self.thread_key,
+            project=self.turn.get("project") or "",
+            workspace=self.turn.get("workspace_slug") or "",
+            emdash_task_id=sid, session_id=sid, summary=None, title=title)
+
+    def _headless(self, prompt: str, wt: Path, *, resume: str | None, offset: int,
+                  on_session=None) -> None:
+        from . import headless
+
+        def emit(events: list[dict]) -> None:
+            self.client.post_events(self.id, events)
+
+        cli = claude_cli()
+        try:
+            ok, text, sid = headless.run_turn(
+                prompt, cwd=wt, emit=emit, resume=resume, on_session=on_session,
+                env=_cli_env(cli) if cli else None,
+                cancelled=lambda: self.id in CANCELLED_TURNS, timeout=CHAT_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001 — reported as the turn's failure
+            sid = getattr(exc, "session_id", "") or resume or ""
+            ok, text = False, f"headless turn failed: {exc}"
+        if sid:
+            self._ship(sid, offset, events=False)
+        if text == "cancelled":
+            CANCELLED_TURNS.discard(self.id)
+            self.client.finish(self.id, "cancelled by user", status="cancelled", emdash_task_id=sid)
+            return
+        self.finish(ok, text, sid)
+
+    def _follow(self, sid: str, channel: Path, which: str, offset: int,
+                wait_for_completion: bool = False) -> None:
         submit_by = time.time() + SUBMIT_TIMEOUT_SECONDS
         deadline = time.time() + CHAT_TIMEOUT_SECONDS
         submitted_at = None
@@ -973,7 +1226,7 @@ class TurnRun:
                 if hit:
                     submitted_at = hit["t"]
                     self.status("submitted", session=sid)
-                    if not self.chat:
+                    if not self.chat and not wait_for_completion:
                         # Agent/project turn: delivered is done, as on emdash — the
                         # work continues in the visible session.
                         self.finish(True, f"delivered to Claude desktop session {sid}", sid)
@@ -1015,7 +1268,9 @@ class TurnRun:
             time.sleep(2)
         self.finish(False, "turn timed out; the session keeps running in the Claude app", sid)
 
-    def _ship(self, sid: str, offset: int) -> int:
+    def _ship(self, sid: str, offset: int, events: bool = True) -> int:
+        """Post the transcript from `offset` on; with `events`, also as turn events
+        (a headless turn streamed its own already)."""
         path = transcript_path(sid)
         if path is None:
             return offset
@@ -1028,12 +1283,14 @@ class TurnRun:
         lines = [ln for ln in complete.decode(errors="replace").splitlines() if ln.strip()]
         for batch in batches(lines):
             self.client.post_transcript(self.id, batch, batch_id=uuid.uuid4().hex)
-        events: list[dict] = []
+        if not events:
+            return offset + len(complete)
+        found: list[dict] = []
         for ln in lines:
             try:
-                events += events_from_record(json.loads(ln))
+                found += events_from_record(json.loads(ln))
             except ValueError:
                 continue
-        if events:
-            self.client.post_events(self.id, events)
+        if found:
+            self.client.post_events(self.id, found)
         return offset + len(complete)

@@ -1125,8 +1125,8 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
 @router.put("/runners/{runner_id}/engine", response=RunnerOut,
             summary="Choose the session runtime a laptop runner opens new sessions in")
 def set_runner_engine(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerEngineIn):
-    """Set the runtime (`emdash` or `claude-desktop`) a laptop runner opens new
-    sessions in. Takes effect on the runner's next heartbeat; sessions already
+    """Set the runtime (`emdash`, `claude-desktop` or `claude-cli`) a laptop runner
+    opens new sessions in. Takes effect on the runner's next heartbeat; sessions already
     running stay where they are."""
     # canopy-web#1188. The runner reads `engine` off its heartbeat response, so a
     # flip needs no restart and no shell on the box, and is safe while sessions are

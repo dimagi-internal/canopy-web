@@ -37,6 +37,7 @@ export function ToolCallPair({ use, result, forceOpen }: Props) {
 
   return (
     <details
+      data-turn-index={use.turn_index}
       // ``open`` controls the row when forceOpen is set; otherwise
       // ``open={undefined}`` lets the native toggle take over so single
       // rows still expand/collapse on click.

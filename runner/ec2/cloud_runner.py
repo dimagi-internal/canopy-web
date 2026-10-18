@@ -1755,190 +1755,50 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         _log(f"turn {turn_id[:8]}: ACP requested but unavailable — using claude -p")
         return run_claude(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
                           resume_session_id=resume_session_id)
+    from canopy_acp.turn import TurnError, drive_turn  # noqa: PLC0415 — lazy, like _acp_core
 
     workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
     workdir.mkdir(parents=True, exist_ok=True)
+    resume = (resume_session_id
+              if resume_session_id and _resume_target_exists(workdir, resume_session_id) else None)
 
-    reducer = core.UpdateReducer()
-    # Guards the batch against the reader thread: updates arrive on the ACP
-    # reader, the flush happens on this one.
-    lock = threading.Lock()
-    batch: list = []
-    started: set = set()
-    seen_complete: set = set()
-    # `session/load` REPLAYS the entire prior conversation as ordinary updates.
-    # Emitting those would append the whole history to the ledger again on every
-    # resumed turn, and fold it into this turn's result text. Observed directly:
-    # a resumed turn re-emitted the previous turn's tool call and reply.
-    state = {"replaying": False}
-    # The reply text of the message being streamed. ACP sends a reply as many
-    # `agent_message_chunk` fragments — often a few characters each — and every
-    # assistant event becomes one row everywhere downstream: a Slack post, a
-    # chat line. So fragments are joined here and the message is emitted WHOLE,
-    # when the agent moves on to a tool call or the turn ends — the same unit
-    # the CLI executor emits. Observed 2026-10-06: one Eva reply posted to Slack
-    # as 85 messages split mid-word.
-    message: list = []
-
-    def _close_message():
-        """Emit the message being streamed, if any. Caller holds `lock`."""
-        text = "".join(message)
-        message.clear()
-        if text.strip():
-            batch.append({"kind": "assistant", "payload": {"text": text}})
-
-    def _emit_tool_start(call_id, call):
-        """One tool_start per call, carrying real arguments.
-
-        `tool_call` opens with `rawInput: {}` — the arguments arrive on a later
-        patch — so emitting on the opener ships a Bash row with no command.
-        Wait for the first update that HAS input, or for the call to finish
-        (a genuinely argument-less tool), whichever comes first. Ordering is
-        still guaranteed: on completion the start is appended before the end.
-        """
-        if call_id in started:
-            return
-        if not call.raw_input and not call.is_complete:
-            return
-        started.add(call_id)
-        batch.append({"kind": "tool_start", "payload": {
-            "id": call_id,
-            "name": call.tool_name or call.kind,
-            "input": call.raw_input,
-        }})
-
-    def on_update(_session_id, update):
-        if state["replaying"]:
-            return
-        kind = reducer.apply(update)
-        if kind is None:
-            return
-        with lock:
-            if kind == "agent_message_chunk":
-                text = _content_text_of(update)
-                if text:
-                    message.append(text)
-            elif kind in ("tool_call", "tool_call_update"):
-                _close_message()
-                call_id = update.get("toolCallId") or ""
-                call = reducer.tool_call(call_id)
-                if call is None:
-                    return
-                _emit_tool_start(call_id, call)
-                # Emit tool_end ONCE, when the call actually reaches a terminal
-                # status — `tool_call_update` is a sparse patch and several
-                # arrive per call (see canopy_acp.updates).
-                if call.is_complete and call_id not in seen_complete:
-                    seen_complete.add(call_id)
-                    batch.append({"kind": "tool_end", "payload": {
-                        "tool_use_id": call_id,
-                        "is_error": call.is_error,
-                        "content": call.result_text,
-                    }})
-
-    def flush(final=False):
-        with lock:
-            if final:
-                _close_message()
-            if not batch:
-                return
-            pending, batch[:] = list(batch), []
-        try:
-            emit(pending)
-        except Exception as exc:  # noqa: BLE001 — the live stream may never cost a turn
-            _log(f"warn: could not emit ACP events for {turn_id[:8]}: {exc}")
-
-    agent = None
-    try:
-        agent = core.AcpAgent(cwd=workdir, env=_agent_env(agent_slug), on_update=on_update)
-        agent.start()
-        # Reachable by the WS thread from here on — see `stop_turn`.
-        _acp_register(turn_id, agent)
-        session_id = ""
-        if resume_session_id and _resume_target_exists(workdir, resume_session_id):
-            state["replaying"] = True
-            try:
-                agent.load_session(resume_session_id, timeout=ACP_SESSION_START_TIMEOUT_SECONDS)
-                session_id = resume_session_id
-            except Exception as exc:  # noqa: BLE001
-                _log(f"turn {turn_id[:8]}: session/load failed ({exc}); starting fresh")
-            finally:
-                state["replaying"] = False
-                # Belt and braces: a replay update that lands just after the
-                # load reply would otherwise seed this turn's reply text with
-                # the last one's.
-                reducer.reset_stream_state()
-        if not session_id:
-            session_id = agent.new_session(timeout=ACP_SESSION_START_TIMEOUT_SECONDS)
+    def on_session(session_id: str) -> None:
         _announce_session(turn_id, session_id)
         _log(f"exec: acp (turn {turn_id[:8]}) in {workdir} session={session_id[:8]}")
 
-        pending = agent.prompt(prompt)
-        if stop_requested(turn_id):
-            # The stop arrived while the session was starting, when there was
-            # no prompt yet to cancel.
-            agent.cancel()
-        result = None
-        while True:
-            try:
-                result = pending.result(timeout=TRANSCRIPT_FLUSH_SECONDS)
-                break
-            except TimeoutError:
-                flush()          # stream while the turn is still running
-        flush(final=True)
-
-        stop = (result or {}).get("stopReason", "")
-        ok = stop in ("end_turn", "max_tokens")
-        final_text = reducer.assistant_text.strip() or f"turn ended: {stop or 'unknown'}"
-        if reducer.rate_limit:
-            _log(f"turn {turn_id[:8]}: rate limit {reducer.rate_limit.get('status')} "
-                 f"({reducer.rate_limit.get('rateLimitType')})")
-            if reducer.rate_limit.get("status") == "rejected":
-                # The adapter can end a capped turn with a clean `end_turn`, so the
-                # meta is the reliable signal. Fail the turn with cap wording so
-                # `execute_prompt` runs its cascade, and keep the exact reset.
-                ok = False
-                if not _is_usage_cap(final_text):
-                    final_text = (f"{final_text}\n\nYou've hit your "
-                                  f"{reducer.rate_limit.get('rateLimitType') or 'usage'} limit")
-                resets = reducer.rate_limit.get("resetsAt")
-                if isinstance(resets, (int, float)) and resets > 0:
-                    _CAP_RESET_HINT[turn_id] = float(resets)
-        return ok, final_text, session_id
-    except Exception as exc:  # noqa: BLE001 — a turn must fail, never crash the runner
-        flush(final=True)
-        # Why the adapter went away, when it did — without this a crash, an OOM
-        # kill and a clean exit all read "connection closed" and nobody can tell
-        # them apart afterwards. Best-effort: older canopy_acp has no exit_report.
-        why = ""
-        try:
-            why = agent.exit_report() if agent is not None else ""
-        except Exception:  # noqa: BLE001
-            pass
-        detail = f"{exc} ({why})" if why else f"{exc}"
-        _log(f"turn {turn_id[:8]}: ACP executor failed: {detail}")
-        return False, f"runner error (acp): {detail}", (agent.session_id if agent else "")
-    finally:
+    try:
+        # The loop itself — events, replay, wedge guard, releasing the session —
+        # is canopy_acp.drive_turn, shared with the laptop's `claude-cli` runtime.
+        # Hooks: reachable by the WS thread (`stop_turn`) while it runs, and
         # Unregister BEFORE close: a stop/cancel that arrives in the gap would
         # otherwise reach a closed connection and raise inside the WS thread.
-        _acp_unregister(turn_id)
-        if agent is not None:
-            try:
-                agent.close()
-            except Exception:  # noqa: BLE001
-                pass
-
-
-def _content_text_of(update: dict) -> str:
-    """The text of an `agent_message_chunk`, tolerant of both block shapes."""
-    content = update.get("content")
-    if isinstance(content, dict):
-        text = content.get("text")
-        return text if isinstance(text, str) else ""
-    if isinstance(content, list):
-        return "".join(b.get("text", "") for b in content
-                       if isinstance(b, dict) and isinstance(b.get("text"), str))
-    return ""
+        res = drive_turn(
+            prompt, make_agent=core.AcpAgent, reducer=core.UpdateReducer(), emit=emit,
+            cwd=workdir, env=_agent_env(agent_slug), resume=resume,
+            on_start=lambda agent: _acp_register(turn_id, agent),
+            on_session=on_session,
+            on_end=lambda agent: _acp_unregister(turn_id),
+            cancelled=lambda: stop_requested(turn_id),
+            session_start_timeout=ACP_SESSION_START_TIMEOUT_SECONDS,
+            flush_seconds=TRANSCRIPT_FLUSH_SECONDS, clock=time.time, log=_log)
+    except TurnError as exc:
+        _log(f"turn {turn_id[:8]}: ACP executor failed: {exc.detail}")
+        return False, f"runner error (acp): {exc.detail}", exc.session_id
+    final_text = res.text
+    limit = res.rate_limit
+    if limit:
+        _log(f"turn {turn_id[:8]}: rate limit {limit.get('status')} ({limit.get('rateLimitType')})")
+        if limit.get("status") == "rejected":
+            # The adapter can end a capped turn with a clean `end_turn`; drive_turn
+            # fails it on the meta. Cap wording so `execute_prompt` runs its
+            # cascade, and keep the exact reset.
+            if not _is_usage_cap(final_text):
+                final_text = (f"{final_text}\n\nYou've hit your "
+                              f"{limit.get('rateLimitType') or 'usage'} limit")
+            resets = limit.get("resetsAt")
+            if isinstance(resets, (int, float)) and resets > 0:
+                _CAP_RESET_HINT[turn_id] = float(resets)
+    return res.ok, final_text, res.session_id
 
 
 def _execute_once(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
@@ -2888,9 +2748,13 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     (`_ensure_agent_clone`). Everything else — project turns, or an agent whose
     bootstrap failed — keeps the original scratch-dir behavior.
 
+    A FORKED chat runs in its source's directory (`_worktree_of`, from
+    resolve-session), so the two share one worktree and the fork's transcript
+    sits beside the one it was cut from.
+
     `env` is the turn's own environment: its git fetches and pulls use the
     turn's GitHub identity, since this box holds none of its own."""
-    session_id = _chat_session_id(turn)
+    session_id = turn.get("_worktree_of") or _chat_session_id(turn)
     slug = _turn_agent_slug(turn)
     if slug:
         _ensure_agent_clone(slug)
@@ -3449,17 +3313,21 @@ def _install_acp_adapter() -> None:
     if existing:
         _log(f"ACP adapter already on PATH ({existing})")
         return
-    if shutil.which("node") is None or shutil.which("npm") is None:
-        _log("warn: node/npm not on PATH; the ACP executor will fall back to claude -p")
+    core = _acp_core()
+    if core is None:
+        _log("warn: canopy_acp unavailable; the ACP executor will fall back to claude -p")
         return
-    prefix = str(pathlib.Path.home() / ".local")
-    try:
-        subprocess.run(["npm", "install", "-g", "--prefix", prefix, ACP_ADAPTER_PACKAGE],
-                       check=True, timeout=300,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # The install itself is canopy_acp's, shared with the laptop runner.
+    prefix = pathlib.Path.home() / ".local"
+    outcome = core.install_adapter(prefix)
+    if outcome == "installed":
         _log(f"installed {ACP_ADAPTER_PACKAGE} into {prefix}")
-    except Exception as exc:  # noqa: BLE001
-        _log(f"warn: could not install the ACP adapter ({exc}); "
+    elif outcome == "present":
+        _log(f"ACP adapter already installed under {prefix}")
+    elif outcome == "no-node":
+        _log("warn: node/npm not on PATH; the ACP executor will fall back to claude -p")
+    else:
+        _log(f"warn: could not install the ACP adapter ({outcome}); "
              "the ACP executor will fall back to claude -p")
 
 
@@ -5336,6 +5204,40 @@ def _adopt_resume_transcript(cwd: pathlib.Path, session_id: str, agent_slug: str
     return True
 
 
+class ForkError(RuntimeError):
+    """A fork could not be cut on this box; the message says why."""
+
+
+def _cut_fork(cwd: pathlib.Path, fork: dict, agent_slug: str) -> str:
+    """Start a forked chat's Claude session: the first `fork["records"]` records of
+    the source session's transcript (counted as canopy_transcript.read_records
+    counts them — canopy-web's ordinals), written under a new session id in this
+    cwd's project directory, where `--resume` / `session/load` look. Returns the id.
+
+    The source ran in this same directory (`_turn_cwd` keys a fork on it), so its
+    transcript is here — or, for a session an agent turn started and no chat reply
+    has adopted yet, in that turn's worktree."""
+    ct = _transcript_core()
+    source, records = fork.get("session_key") or "", int(fork.get("records") or 0)
+    if ct is None:
+        raise ForkError("canopy_transcript is not installed on this runner")
+    src = ct.resolve_cli_transcript(cwd, source, claude_home=CLAUDE_PROJECTS_HOME)
+    if src is None and agent_slug and _safe_session_dirname(agent_slug) == agent_slug:
+        src = _agent_session_transcript(agent_slug, source)
+    if src is None:
+        raise ForkError(f"session {source} has no transcript on this box")
+    kept = ct.read_records(src)[:records]
+    if len(kept) < records:
+        raise ForkError(f"session {source}'s transcript has {len(kept)} records, not {records}")
+    sid = str(uuid.uuid4())
+    dst = CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{sid}.jsonl"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text("".join(json.dumps({**r, "sessionId": sid} if "sessionId" in r else r) + "\n"
+                           for r in kept))
+    _log(f"forked session {source[:8]} at {records} records into {sid[:8]} in {cwd}")
+    return sid
+
+
 def _resume_target_exists(cwd: pathlib.Path, session_id: str) -> bool:
     """Whether claude actually has a transcript to `--resume` for (cwd, session_id)
     — the cheap, local equivalent of runner/canopy_runner/execute.py's
@@ -5387,6 +5289,12 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
     status, plan = _api("POST", f"/runners/{runner_id}/resolve-session", body)
     if status != 200 or not plan:
         return ""
+    # A forked chat: which chat's directory it runs in (its source's, so they share
+    # a worktree), and on its first turn the cut to start from (_cut_fork).
+    if plan.get("worktree_of"):
+        turn["_worktree_of"] = plan["worktree_of"]
+    if plan.get("fork"):
+        turn["_fork"] = plan["fork"]
     key = plan.get("session_key") or plan.get("emdash_task_id") or ""
     if plan.get("reuse") and key:
         return key
@@ -5635,8 +5543,24 @@ def _session_transcript_path(session_id: str, session_key: str, project: str = "
     if path is not None:
         return path
     if project and _safe_session_dirname(project) == project:
-        return _agent_session_transcript(project, session_key)
-    return None
+        if (path := _agent_session_transcript(project, session_key)) is not None:
+            return path
+    return _forked_chat_transcript(session_key)
+
+
+def _forked_chat_transcript(session_key: str) -> pathlib.Path | None:
+    """A forked chat runs in its SOURCE's directory (`_turn_cwd`), not its own, so
+    its transcript is looked for by name across the chat directories — and only
+    there: a Claude session uuid is unique on this box, and nothing outside
+    WORK_DIR/sessions is reachable this way."""
+    if not session_key or _safe_session_dirname(session_key) != session_key:
+        return None
+    chats = _encode_project_dir(pathlib.Path(WORK_DIR) / "sessions")
+    try:
+        found = sorted(CLAUDE_PROJECTS_HOME.glob(f"{chats}-*/{session_key}.jsonl"))
+    except OSError:
+        return None
+    return found[0] if found else None
 
 
 def _post_stream_rows(runner_id: str, session_id: str, rows: list,
@@ -6188,6 +6112,16 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                      {"status": "failed", "result_note": f"a caller's turn was not run: {exc}"})
                 _log(f"turn {turn_id[:8]} NOT run — cannot confine: {exc}")
                 return
+
+        if turn.get("_fork") and not resume_id and not confined and cwd is not None:
+            try:
+                resume_id = _cut_fork(cwd, turn["_fork"], _turn_agent_slug(turn))
+            except ForkError as exc:
+                _api("POST", f"/turns/{turn_id}/finish",
+                     {"status": "failed", "result_note": f"Could not fork: {exc}"})
+                _log(f"turn {turn_id[:8]} NOT run — could not fork: {exc}")
+                return
+            _record_session_resume(runner_id, turn, resume_id)
 
         if resume_id and cwd is not None:
             _adopt_resume_transcript(cwd, resume_id, _turn_agent_slug(turn))

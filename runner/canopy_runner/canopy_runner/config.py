@@ -11,7 +11,8 @@ class Config:
     base_url: str
     token: str
     runner_id: str
-    emdash_db: str
+    # Empty on a box with no emdash: a `claude-cli` runner needs none.
+    emdash_db: str = ""
     # Claim cadence — how fast a queued turn (e.g. a phone "Continue this session")
     # gets picked up. Kept low so delivery feels near-immediate; the claim + heartbeat
     # are cheap HTTP. The heavier session report is throttled separately below.
@@ -87,6 +88,11 @@ class Config:
     # so a project-grouped list doesn't show tails on some rows and not others. The
     # bounded tail-read (TAIL_BYTES) keeps ~30 transcript reads/tick cheap.
     session_tail_count: int = 30
+    # The repos this box drives itself, {project name: checkout path}, for the
+    # runtimes that make their own worktrees (claude-desktop, claude-cli). Added to
+    # emdash's projects, and wins over them on a name both hold; on a box with no
+    # emdash it is the whole list. `canopy-runner projects add` writes it.
+    project_paths: dict = field(default_factory=dict)
     # Where this config was read from — not stored in it. The runner rewrites its
     # own base_url here when canopy has moved (rebase.py).
     config_path: str = ""

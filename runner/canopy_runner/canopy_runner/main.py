@@ -599,7 +599,8 @@ def run_once(cfg: Config, client: Client) -> str:
     from .cdp_control import cdp_healthy, host_id
 
     global _cdp_down_ticks, _cdp_down_signalled
-    healthy = cdp_healthy(port=cfg.cdp_port)
+    # A claude-cli box runs Claude itself: emdash being down costs it nothing.
+    healthy = not desktop.needs_emdash() or cdp_healthy(port=cfg.cdp_port)
     host = host_id()
     if healthy:
         if _cdp_down_signalled:
@@ -767,7 +768,7 @@ def drain_one(cfg: Config, client: Client) -> str:
 
     # Same self-heal as the loop: claiming with emdash down would immediately fail (=burn)
     # the turn. Refuse instead — the caller re-runs once emdash is back on its debug port.
-    if not cdp_healthy(port=cfg.cdp_port):
+    if desktop.needs_emdash() and not cdp_healthy(port=cfg.cdp_port):
         logger.warning("emdash CDP unreachable on :%s — refusing to claim a turn (it would "
                        "immediately fail). Launch emdash with --remote-debugging-port=%s.",
                        cfg.cdp_port, cfg.cdp_port)
@@ -914,13 +915,28 @@ def _build_parser() -> argparse.ArgumentParser:
 
     runtime_parser = subparsers.add_parser(
         "runtime",
-        help="show or set where this runner opens NEW sessions: emdash or claude-desktop "
+        help="show or set where this runner opens NEW sessions: emdash, claude-desktop or "
+             "claude-cli (the runner runs Claude headless; open a session in the Claude app "
+             "from its resume picker) "
              "(the same switch as canopy-web → Supervisor → this runner → Session runtime; "
              "takes effect on the next heartbeat, no restart; live sessions stay put)",
     )
     runtime_parser.add_argument("action", nargs="?", choices=["show", "set"], default="show")
     runtime_parser.add_argument("engine", nargs="?", choices=list(desktop.RUNTIMES))
     runtime_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
+
+    projects_parser = subparsers.add_parser(
+        "projects",
+        help="list, add or remove the repos this box drives itself (runner.json "
+             "project_paths) — for the claude-cli and claude-desktop runtimes, and the "
+             "whole list on a box with no emdash. The running daemon reports the change "
+             "on its next tick",
+    )
+    projects_parser.add_argument("action", nargs="?", choices=["list", "add", "remove"],
+                                 default="list")
+    projects_parser.add_argument("name", nargs="?", help="the project's name on canopy-web")
+    projects_parser.add_argument("path", nargs="?", help="add: the repo's checkout")
+    projects_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
 
     close_parser = subparsers.add_parser(
         "close-sessions",
@@ -965,7 +981,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def runtime_cmd(args) -> int:
-    """`canopy-runner runtime [show | set emdash|claude-desktop]`.
+    """`canopy-runner runtime [show | set emdash|claude-desktop|claude-cli]`.
 
     Reads/writes the ONE switch canopy-web holds for this runner (the same one its
     Supervisor toggle flips), with this runner's own credential. Nothing local is
@@ -975,8 +991,18 @@ def runtime_cmd(args) -> int:
     client = Client(cfg.base_url, RunnerCredential.for_config(cfg))
     if args.action == "set":
         if not args.engine:
-            print("usage: canopy-runner runtime set emdash|claude-desktop", file=sys.stderr)
+            print("usage: canopy-runner runtime set emdash|claude-desktop|claude-cli", file=sys.stderr)
             return 2
+        if args.engine == desktop.CLAUDE_CLI:
+            from canopy_acp import ADAPTER_PACKAGE
+
+            from . import headless
+
+            print("checking the ACP adapter (installs it under ~/.canopy/acp if missing)…")
+            if not headless.ensure_adapter():
+                print(f"could not install {ADAPTER_PACKAGE}; the runtime was not changed",
+                      file=sys.stderr)
+                return 1
         row = client.set_engine(cfg.runner_id, args.engine)
         print(f"{row.get('name', cfg.runner_id)}: new sessions now open in "
               f"{row.get('engine', args.engine)} (live sessions stay where they are)")
@@ -984,6 +1010,33 @@ def runtime_cmd(args) -> int:
     row = next((r for r in client.list_runners() if r.get("id") == cfg.runner_id), {})
     print(f"{row.get('name', cfg.runner_id)}: {row.get('engine', 'emdash')}")
     print(desktop.describe_app_features(desktop.app_features()))
+    return 0
+
+
+def projects_cmd(args) -> int:
+    """`canopy-runner projects [list | add NAME PATH | remove NAME]`."""
+    cfg = Config.load(Path(args.config))
+    if args.action == "list":
+        paths = desktop.project_paths(cfg)
+        found = emdash.list_projects(cfg.emdash_db) if cfg.emdash_db else []
+        for name in sorted(set(paths) | set(found)):
+            print(f"{name}\t{paths.get(name) or 'emdash'}")
+        if not paths and not found:
+            print("no projects — `canopy-runner projects add <name> <checkout>`")
+        return 0
+    if not args.name or (args.action == "add" and not args.path):
+        print("usage: canopy-runner projects add NAME PATH | remove NAME", file=sys.stderr)
+        return 2
+    if args.action == "remove":
+        desktop.set_project_path(cfg.config_path, args.name, None)
+        print(f"{args.name}: removed")
+        return 0
+    checkout = Path(args.path).expanduser().resolve()
+    if not (checkout / ".git").exists():
+        print(f"{checkout} is not a git checkout", file=sys.stderr)
+        return 1
+    desktop.set_project_path(cfg.config_path, args.name, str(checkout))
+    print(f"{args.name}: {checkout} (driven by the claude-cli and claude-desktop runtimes)")
     return 0
 
 
@@ -1219,6 +1272,9 @@ def main() -> None:
 
     if command == "runtime":
         raise SystemExit(runtime_cmd(args))
+
+    if command == "projects":
+        raise SystemExit(projects_cmd(args))
 
     if command == "close-sessions":
         raise SystemExit(close_sessions_cmd(args))

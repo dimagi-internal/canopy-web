@@ -82,6 +82,14 @@ blank project makes the runner skip the session silently. `RunnerBinding` caches
 as `emdash_project`, half of the unique key `(runner, emdash_project, session_key)`:
 an emdash task name alone is not an identity.
 
+## Forking a session from a message
+
+- Right-click a message in a chat (also /ide's pane) → "Fork from here" → `POST /api/canopy-sessions/{id}/fork` (`services.fork_session`). The fork keeps everything up to the end of that message's turn — the cut is always just before the next prompt a person sent, so it never holds a tool call without its result.
+- The server copies the rows (rebased below `index_offset`) and stamps `metadata.fork` = `{session_key, records, from_session}`; `resolve_session` returns `fork` until the fork records a Claude session of its own. The runner then writes the first `records` records (as `canopy_transcript.read_records` counts them) beside the source as a new session id and resumes it (laptop `desktop.fork_session`, cloud `cloud_runner._cut_fork`); its first ship replaces the copied rows.
+- **Same worktree.** Files are shared, not forked. The app channel (`.canopy-desktop`) belongs to the session named in `seeded`, so a fork never takes the source's channel (`desktop.channel_held_for`), and closing one keeps a worktree another open session still uses.
+- On a cloud runner every turn of a fork runs in its SOURCE's directory: `resolve_session` returns `worktree_of` (the root of a chain of forks) and `_turn_cwd` keys on it. The stream finds a fork's transcript by its session uuid, since it is not in the fork's own directory.
+- Cloud runners and the laptop `claude-cli` runtime only (`services.fork_runner_supported`): emdash and the Claude app own their sessions.
+
 ## Several people in one chat: drafts and authorship
 
 - **One draft per (session, author)** (`Draft`). A person's own `draft.updated` /

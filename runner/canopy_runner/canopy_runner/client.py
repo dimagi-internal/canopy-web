@@ -248,7 +248,7 @@ class Client:
         return payload or {}
 
     def set_engine(self, runner_id: str, engine: str) -> dict:
-        """Set this runner's session runtime on canopy-web (emdash|claude-desktop).
+        """Set this runner's session runtime on canopy-web (emdash|claude-desktop|claude-cli).
         The loop picks it up off its next heartbeat — see desktop.observe."""
         _, payload = self._call("PUT", f"/runners/{runner_id}/engine", {"engine": engine})
         return payload or {}

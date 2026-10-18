@@ -19,6 +19,9 @@ dependencies = [
     # Both runners had independently written the same functions before this
     # package existed; see the 2026-07-27 convergence spec.
     "canopy-transcript",
+    # The ACP client the cloud runner drives Claude headless with — the `claude-cli`
+    # session runtime (desktop.py) runs the same executor on a laptop.
+    "canopy-acp",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +41,7 @@ realtime = ["websocket-client>=1.8,<2"]
 # package so `uv run` here works without publishing to an index.
 canopy-cron = { path = "../../packages/canopy_cron", editable = true }
 canopy-transcript = { path = "../../packages/canopy_transcript", editable = true }
+canopy-acp = { path = "../canopy_acp", editable = true }
 
 [project.scripts]
 canopy-runner = "canopy_runner.main:main"

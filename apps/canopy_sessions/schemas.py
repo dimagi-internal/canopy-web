@@ -79,6 +79,13 @@ class TransferIn(Schema):
     brief: str = ""
 
 
+class ForkIn(Schema):
+    """Body for POST /{session_id}/fork."""
+    # The message to fork at (`MessageOut.turn_index`). The fork keeps everything
+    # up to the end of the turn this message belongs to.
+    turn_index: int
+
+
 class TransferOut(Schema):
     session_id: str
     runner: str

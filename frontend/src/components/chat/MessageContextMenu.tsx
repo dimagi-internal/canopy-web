@@ -1,0 +1,123 @@
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { RunnerOut } from '@/api/harness'
+
+/**
+ * The right-click menu on a chat message. Its one action, "Fork from here",
+ * starts a new session holding the conversation up to the end of that message's
+ * turn (`POST /canopy-sessions/{id}/fork`); the page runs it and opens the fork.
+ */
+
+/** Why this session cannot be forked, or null when it can. Mirrors the server's
+ *  own refusal (`services.fork_runner_supported`), which stays the authority:
+ *  a cloud runner, or a laptop on the Claude CLI runtime, can cut a fork. */
+export function forkBlockedReason(
+  runnerName: string | null | undefined,
+  runners: readonly RunnerOut[],
+): string | null {
+  if (!runnerName) return 'This session has not run on a runner yet'
+  const runner = runners.find((r) => r.name === runnerName)
+  if (!runner) return `${runnerName} is not one of your runners`
+  if (runner.kind !== 'cloud' && runner.engine !== 'claude-cli') {
+    return `Forking needs a cloud runner or the Claude CLI runtime; ${runner.name} runs ${runner.engine}`
+  }
+  return null
+}
+
+/** The message a right-click landed on: every chat row carries its `turn_index`
+ *  as `data-turn-index` (canopy-ui MessageList). */
+export function turnIndexAt(target: EventTarget | null): number | null {
+  if (!(target instanceof Element)) return null
+  const raw = target.closest('[data-turn-index]')?.getAttribute('data-turn-index')
+  const n = raw == null || raw === '' ? NaN : Number(raw)
+  return Number.isInteger(n) && n >= 0 ? n : null
+}
+
+export function MessageContextMenu({
+  x,
+  y,
+  blocked,
+  busy,
+  error,
+  onFork,
+  onDismiss,
+}: {
+  x: number
+  y: number
+  blocked: string | null
+  busy: boolean
+  error: string | null
+  onFork: () => void
+  onDismiss: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ left: x, top: y })
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const { width, height } = el.getBoundingClientRect()
+    setPos({
+      left: Math.max(4, Math.min(x, window.innerWidth - width - 4)),
+      top: Math.max(4, Math.min(y, window.innerHeight - height - 4)),
+    })
+  }, [x, y, error])
+
+  useEffect(() => {
+    const away = (e: Event) => {
+      if (ref.current && e.target instanceof Node && ref.current.contains(e.target)) return
+      onDismiss()
+    }
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onDismiss()
+    }
+    // Armed on the next tick, as in the /ide row menu: the opening contextmenu
+    // event is still bubbling and would otherwise close the menu it opened.
+    const arm = window.setTimeout(() => {
+      document.addEventListener('mousedown', away)
+      document.addEventListener('contextmenu', away)
+      document.addEventListener('keydown', key)
+      window.addEventListener('blur', onDismiss)
+      window.addEventListener('resize', onDismiss)
+    }, 0)
+    return () => {
+      window.clearTimeout(arm)
+      document.removeEventListener('mousedown', away)
+      document.removeEventListener('contextmenu', away)
+      document.removeEventListener('keydown', key)
+      window.removeEventListener('blur', onDismiss)
+      window.removeEventListener('resize', onDismiss)
+    }
+  }, [onDismiss])
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      data-testid="message-context-menu"
+      style={{ left: pos.left, top: pos.top }}
+      className="fixed z-50 w-64 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="message-menu-fork"
+        disabled={Boolean(blocked) || busy}
+        title={
+          blocked ??
+          'A new session with the conversation up to the end of this turn. It runs in the same worktree, so both sessions see and edit the same files.'
+        }
+        onClick={onFork}
+        className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px] text-foreground enabled:hover:bg-muted disabled:cursor-default disabled:opacity-40"
+      >
+        {busy ? 'Forking…' : 'Fork from here'}
+      </button>
+      {blocked && <div className="px-2 pb-1 text-[11px] text-muted-foreground">{blocked}</div>}
+      {error && (
+        <div role="alert" className="px-2 pb-1 text-[11px] text-destructive">
+          {error}
+        </div>
+      )}
+    </div>
+  )
+}

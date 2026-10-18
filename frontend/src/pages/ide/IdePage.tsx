@@ -398,6 +398,10 @@ export function IdePage() {
           await navigator.clipboard.writeText(url)
           setNote({ text: 'Link copied', error: false })
           return
+        case 'open-desktop':
+          window.location.href = a.href
+          setNote({ text: `Opening “${label(s)}” in Claude desktop`, error: false })
+          return
         case 'stop': {
           const r = await stopSession(s.id)
           setNote({ text: r.cancelled ? `Stopped “${label(s)}”` : `Asked ${s.runner_name ?? 'its runner'} to interrupt “${label(s)}”`, error: false })
@@ -755,7 +759,12 @@ export function IdePage() {
       )}
       <div className="ide-dense min-h-0 min-w-0 flex-1">
         {id ? (
-          <ChatPage key={id} compact onLeave={() => navigate('/ide', { replace: true })} />
+          <ChatPage
+            key={id}
+            compact
+            onLeave={() => navigate('/ide', { replace: true })}
+            sessionPath={(s) => `/ide/${encodeURIComponent(s.id)}`}
+          />
         ) : (
           <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
             Pick a session on the left.

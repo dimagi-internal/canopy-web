@@ -74,6 +74,13 @@ def test_the_owner_switches_to_claude_desktop_and_back(owner, runner):
     assert _put(c, runner, "emdash").json()["engine"] == "emdash"
 
 
+def test_the_owner_switches_to_claude_cli(owner, runner):
+    r = _put(_client(owner), runner, "claude-cli")
+    assert r.status_code == 200 and r.json()["engine"] == "claude-cli"
+    runner.refresh_from_db()
+    assert runner.engine == Runner.ENGINE_CLAUDE_CLI
+
+
 def test_a_runner_admin_may_switch_it(admin, runner):
     assert _put(_client(admin), runner, "claude-desktop").status_code == 200
 

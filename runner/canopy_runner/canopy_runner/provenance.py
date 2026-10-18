@@ -40,7 +40,7 @@ def version() -> str:
 #: The SAME list is in .github/workflows/deploy-labs.yml (what the server expects)
 #: and install-runner.sh (what an install stamps); tests/test_runner_code_paths.py
 #: fails if the three drift, because a mismatch is a box marked stale forever.
-CODE_PATHS = ('runner/canopy_runner/canopy_runner', 'runner/canopy_runner/scripts', 'runner/menubar', 'runner/device-key', 'assets/brand', 'packages/canopy_cron', 'packages/canopy_transcript')
+CODE_PATHS = ('runner/canopy_runner/canopy_runner', 'runner/canopy_runner/scripts', 'runner/menubar', 'runner/device-key', 'assets/brand', 'packages/canopy_cron', 'packages/canopy_transcript', 'runner/canopy_acp')
 
 
 def runner_src_dir() -> Path:

@@ -61,11 +61,13 @@ def mark_ok(cfg) -> None:
 
 
 def compute(cfg) -> tuple[bool, str]:
-    """(ready, ready_note). Not ready if emdash's CDP is unreachable, or a recent turn
-    failed and hasn't been cleared by a clean run."""
-    if not cdp_control.cdp_healthy(port=getattr(cfg, "cdp_port", 9222)):
-        return False, "emdash CDP unreachable"
+    """(ready, ready_note). Not ready if the runtime cannot start a session (emdash's
+    CDP unreachable; claude-cli without its CLI or adapter), or a recent turn failed
+    and hasn't been cleared by a clean run."""
     from . import desktop
+
+    if desktop.needs_emdash() and not cdp_control.cdp_healthy(port=getattr(cfg, "cdp_port", 9222)):
+        return False, "emdash CDP unreachable"
 
     if desktop.current() == desktop.CLAUDE_DESKTOP and desktop.claude_cli() is None:
         # Switched to Claude desktop but cannot open a session there: new threads
@@ -73,6 +75,15 @@ def compute(cfg) -> tuple[bool, str]:
         # runner, not only in a log nobody reads.
         return False, ("runtime is Claude desktop but no Claude Code CLI was found "
                        "(PATH, ~/.local/bin, Homebrew, the app's bundled copy) — new sessions open in emdash")
+    if desktop.current() == desktop.CLAUDE_CLI:
+        from canopy_acp import ADAPTER_PACKAGE
+
+        from . import headless
+
+        if desktop.claude_cli() is None or headless.adapter_argv() is None:
+            return False, ("runtime is claude-cli but the Claude Code CLI or the ACP adapter "
+                           f"({ADAPTER_PACKAGE}) is missing — `canopy-runner runtime set "
+                           "claude-cli` installs the adapter")
     marker = _marker(cfg)
     try:
         note = marker.read_text().strip()

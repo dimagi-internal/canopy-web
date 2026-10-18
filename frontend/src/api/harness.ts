@@ -61,7 +61,7 @@ export async function unpauseRunner(runnerId: string): Promise<RunnerOut> {
 
 // The session runtime a laptop runner opens NEW sessions in (canopy-web#1188).
 // The runner picks it up off its next heartbeat; live sessions stay where they are.
-export type RunnerEngine = 'emdash' | 'claude-desktop'
+export type RunnerEngine = 'emdash' | 'claude-desktop' | 'claude-cli'
 
 export async function setRunnerEngine(runnerId: string, engine: RunnerEngine): Promise<RunnerOut> {
   const res = await apiV2.PUT('/api/harness/runners/{runner_id}/engine', {

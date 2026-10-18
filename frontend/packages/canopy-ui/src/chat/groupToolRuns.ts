@@ -72,6 +72,16 @@ export function summariseRun(rows: ChatRow[]): string {
   return kinds ? `${rows.length} tool ${plural} · ${kinds}` : `${rows.length} tool ${plural}`;
 }
 
+/** The run's last message, which a host reads off the row's `data-turn-index`
+ *  (every chat row carries one, so a right-click can name the message it hit). */
+export function lastTurnIndex(rows: ChatRow[]): number | undefined {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row.kind === "tool_pair") return (row.result ?? row.use).turn_index;
+  }
+  return undefined;
+}
+
 /** True when any call in the run failed — a collapsed run must not hide an
  *  error, or you'd scroll past the one thing worth stopping for. */
 export function runHasError(rows: ChatRow[]): boolean {

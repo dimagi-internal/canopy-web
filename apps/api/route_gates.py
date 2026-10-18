@@ -381,6 +381,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "canopy_sessions_send": ("session-acl",),  # write
     "place": ("session-acl",),  # write
     "transfer": ("session-acl",),  # write
+    "fork_session": ("session-acl",),  # write
     "export_session": ("session-acl", "self"),  # visible AND you started it
     "answer_menu": ("session-acl",),  # write
     "close_session": ("session-acl",),  # write
@@ -947,7 +948,7 @@ NOT_SETTINGS: dict[str, str] = {
     "canopy_sessions_declare_page_state": "conversation", "place": "conversation",
     "reset_session": "conversation", "declare_run_input": "conversation", "share_secret": "conversation",
     "delete_secret": "conversation", "canopy_sessions_send": "conversation",
-    "stop_session_turn": "conversation", "transfer": "conversation", "unarchive_session": "conversation",
+    "stop_session_turn": "conversation", "transfer": "conversation", "fork_session": "conversation", "unarchive_session": "conversation",
     "start_session": "conversation", "contact_app_view_call": "conversation",
     "contact_app_view_context": "conversation", "contact_app_view_message": "conversation",
     "contact_app_view_read": "conversation", "contact_archive_session": "conversation",

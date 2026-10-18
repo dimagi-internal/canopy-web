@@ -2,11 +2,16 @@ import { useState, type JSX } from 'react'
 import { setRunnerEngine, type RunnerEngine as Engine, type RunnerOut } from '@/api/harness'
 
 // The session runtime switch (canopy-web#1188): whether this laptop runner opens
-// NEW sessions in emdash or in the Claude desktop app's Code tab. The runner reads
-// the setting off its next heartbeat (a few seconds), so there is nothing to
-// restart; sessions already running keep going where they are, and routing is
-// the same either way. Owner or runner admins, like flags.
-const LABEL: Record<Engine, string> = { emdash: 'emdash', 'claude-desktop': 'Claude desktop' }
+// NEW sessions in emdash, in the Claude desktop app's Code tab, or runs them
+// itself headless (`claude-cli`, which a person can later open in the desktop
+// app). The runner reads the setting off its next heartbeat (a few seconds), so
+// there is nothing to restart; sessions already running keep going where they
+// are, and routing is the same either way. Owner or runner admins, like flags.
+const LABEL: Record<Engine, string> = {
+  emdash: 'emdash',
+  'claude-desktop': 'Claude desktop',
+  'claude-cli': 'Claude CLI',
+}
 
 export function RunnerEngine({
   runner,

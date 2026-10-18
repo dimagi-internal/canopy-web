@@ -51,7 +51,7 @@ def fresh_runtime(monkeypatch):
 @pytest.fixture
 def cfg(tmp_path):
     return SimpleNamespace(desktop_dir=str(tmp_path / "desktop"), emdash_db="",
-                           desktop_projects={}, desktop_allow=None, desktop_model="")
+                           project_paths={}, desktop_allow=None, desktop_model="")
 
 
 def _turn(**kw):
@@ -212,7 +212,7 @@ def _channel_of(cfg, name_part: str) -> Path:
 
 
 def test_a_chat_turn_runs_to_completion_in_a_new_session(cfg, tmp_path, no_app):
-    cfg.desktop_projects = {"scratch": str(_repo(tmp_path))}
+    cfg.project_paths = {"scratch": str(_repo(tmp_path))}
     turn = _turn(origin_ref={"thread_key": "th", "chat_session_id": "chat-1"})
     client = FakeClient()
     run = desktop.TurnRun(cfg, client, "r", turn, "th", {"reuse": False}, reuse="")
@@ -259,7 +259,7 @@ def test_a_chat_turns_attachments_reach_the_desktop_session(cfg, tmp_path, monke
 
 
 def test_an_agent_turn_finishes_once_delivered(cfg, tmp_path, no_app):
-    cfg.desktop_projects = {"hal": str(_repo(tmp_path))}
+    cfg.project_paths = {"hal": str(_repo(tmp_path))}
     turn = _turn(project="", agent_slug="hal", prompt="")
     client = FakeClient()
     run = desktop.TurnRun(cfg, client, "r", turn, "th", {"reuse": False}, reuse="")
@@ -297,6 +297,7 @@ def _live_channel(cfg, tmp_path, sid="sid-5") -> Path:
     wt = tmp_path / "wt-stop"
     ch = wt / desktop.CHANNEL
     ch.mkdir(parents=True)
+    (ch / "seeded").write_text(sid)
     (ch / "alive").write_text(str(int(time.time() * 1000)))
     desktop._remember(cfg, sid, wt, "scratch")
     return ch
@@ -407,6 +408,7 @@ def test_desktop_sessions_join_the_session_report(cfg, tmp_path, monkeypatch):
     live = tmp_path / "wt-live"
     ch = live / desktop.CHANNEL
     ch.mkdir(parents=True)
+    (ch / "seeded").write_text("sid-live")
     (ch / "alive").write_text(str(int(time.time() * 1000)))
     t = int(time.time() * 1000)
     (ch / f"ev-{t}-1-turn.start.json").write_text(json.dumps({"t": t, "kind": "turn.start"}))
@@ -424,7 +426,7 @@ def test_desktop_sessions_join_the_session_report(cfg, tmp_path, monkeypatch):
 
 
 def test_a_new_sessions_turn_transcript_skips_the_seed(cfg, tmp_path, no_app, monkeypatch):
-    cfg.desktop_projects = {"scratch": str(_repo(tmp_path))}
+    cfg.project_paths = {"scratch": str(_repo(tmp_path))}
     seed_file = tmp_path / "proj" / "sid-1.jsonl"
     seed_file.parent.mkdir()
     seed_file.write_text(json.dumps({"type": "assistant", "message": {"content": [
@@ -507,7 +509,7 @@ def test_drop_seed_removes_only_the_seed_exchange():
 
 
 def test_a_new_desktop_session_is_recorded_with_its_task_name(cfg, tmp_path, no_app):
-    cfg.desktop_projects = {"scratch": str(_repo(tmp_path))}
+    cfg.project_paths = {"scratch": str(_repo(tmp_path))}
     turn = _turn(origin_ref={"thread_key": "th", "chat_session_id": "c"})
     client = FakeClient()
     run = desktop.TurnRun(cfg, client, "r", turn, "th", {"reuse": False}, reuse="")

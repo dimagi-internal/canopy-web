@@ -105,7 +105,7 @@ class RunnerFlagsIn(Schema):
 
 
 class RunnerEngineIn(Schema):
-    # emdash | claude-desktop (Runner.ENGINE_CHOICES). Validated in the view so the
+    # emdash | claude-desktop | claude-cli (Runner.ENGINE_CHOICES). Validated in the view so the
     # error names the choices rather than a pydantic literal mismatch.
     engine: str
 
@@ -114,8 +114,8 @@ class RunnerOut(Schema):
     id: uuid.UUID
     name: str
     kind: str
-    # The session runtime this (laptop) runner opens NEW sessions in — emdash or
-    # claude-desktop. The runner reads it off its own heartbeat response, so this
+    # The session runtime this (laptop) runner opens NEW sessions in — emdash,
+    # claude-desktop or claude-cli. The runner reads it off its own heartbeat response, so this
     # field is also how a flip reaches the box (canopy-web#1188).
     engine: str = "emdash"
     status: str
@@ -447,6 +447,13 @@ def adopt_legacy_session_key(model):
     return model
 
 
+class ForkPlanOut(Schema):
+    # The source's Claude session, and how many of its transcript records (as
+    # canopy_transcript.read_records counts them) the fork starts from.
+    session_key: str
+    records: int
+
+
 class ResolveSessionOut(Schema):
     reuse: bool
     new_thread: bool
@@ -459,6 +466,11 @@ class ResolveSessionOut(Schema):
     # Why reuse was refused although this runner owns the session: it is mid-turn
     # (another turn executing in it, or the engine reports it working). "" otherwise.
     busy: str = ""
+    # A forked chat with no Claude session yet: start it from a cut of another.
+    fork: ForkPlanOut | None = None
+    # For every turn of a forked chat: the chat whose directory a cloud runner runs
+    # it in (the source's, so they share a worktree). "" otherwise.
+    worktree_of: str = ""
 
 
 class RecordSessionIn(Schema):
