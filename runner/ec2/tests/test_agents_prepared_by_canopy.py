@@ -106,7 +106,7 @@ def test_the_fleet_bootstrap_reads_as_the_box_not_with_runner_envs_pat(cloud_run
     monkeypatch.setattr(mod, "sync_runner_src", lambda: True)
     monkeypatch.setattr(mod, "ensure_updater_clone", lambda: True)
     monkeypatch.setenv("CANOPY_TOKEN", "revoked_pat")
-    monkeypatch.setattr(mod, "_bearer", lambda: "crt_box")
+    monkeypatch.setattr(mod, "_bearer", lambda **kw: "crt_box")
     seen = {}
     monkeypatch.setattr(mod, "_run_teed",
                         lambda cmd, env, timeout: (seen.update(env=env) or (0, [])))

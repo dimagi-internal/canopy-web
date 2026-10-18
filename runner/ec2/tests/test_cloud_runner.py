@@ -2396,25 +2396,9 @@ def test_the_exchange_sends_only_the_device_proof(cloud_runner, monkeypatch):
 
 
 # ── the agent bootstrap runs as this box, on a token canopy-web accepts ───────
-# 2026-10-18: bootstrap_agents.sh ran with the service env's CANOPY_TOKEN (a revoked
-# PAT), so every agent's readiness report 401'd; and at 02:28 a bootstrap ran inside
-# a 16-minute refusal of the box's token, failing every agent's prepare at once.
-
-def test_the_bootstrap_hands_prepare_this_boxs_own_token(cloud_runner, monkeypatch, tmp_path):
-    _keyless(cloud_runner, monkeypatch, exchange=True)
-    src = tmp_path / "src"
-    script = src / "runner" / "ec2" / "bootstrap_agents.sh"
-    script.parent.mkdir(parents=True)
-    script.write_text("exit 0\n")
-    monkeypatch.setattr(cloud_runner, "RUNNER_SRC_DIR", str(src))
-    monkeypatch.setattr(cloud_runner, "sync_runner_src", lambda: True)
-    monkeypatch.setenv("CANOPY_TOKEN", "owner-pat")
-    seen = {}
-    monkeypatch.setattr(cloud_runner, "_run_teed",
-                        lambda cmd, env, timeout: (seen.update(env) or (0, [])))
-    cloud_runner._run_bootstrap()
-    assert seen["CANOPY_TOKEN"] == "crt_1", "prepare must post its report as the box, not a PAT"
-
+# 2026-10-18 02:28: a bootstrap ran inside a 16-minute refusal of the box's token,
+# failing every agent's prepare at once. (That it hands prepare the box's token, not
+# runner.env's PAT, is test_agents_prepared_by_canopy.py's.)
 
 def test_a_token_too_close_to_expiry_for_the_bootstrap_is_renewed_first(cloud_runner, monkeypatch):
     calls = _keyless(cloud_runner, monkeypatch, exchange=True)
