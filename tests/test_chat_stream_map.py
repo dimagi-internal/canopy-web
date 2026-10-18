@@ -135,3 +135,22 @@ def test_an_activity_without_a_menu_is_unchanged():
     the frame must not grow a null menu the client has to special-case."""
     frames = turn_event_to_frames({"kind": "activity:blocked", "seq": -1, "payload": {}}, _rid)
     assert frames == [{"event": "session.activity", "data": {"state": "blocked"}}]
+
+
+def test_live_tool_rows_are_named_by_their_own_call_not_seq_minus_one():
+    """Hook/ACP rows all carry seq -1, and `seq:-1` was every live row's id — so
+    the client upserted each new call into the first row still holding it,
+    rendering a running tool above the previous reply."""
+    def live(kind, payload):
+        return turn_event_to_frames({"seq": -1, "kind": kind, "payload": payload}, lambda s: f"seq:{s}")[0]["data"]
+
+    a = live("tool_use", {"id": "toolu_A", "name": "Bash"})
+    b = live("tool_use", {"id": "toolu_B", "name": "Read"})
+    r = live("tool_result", {"tool_use_id": "toolu_A"})
+    assert (a["tool_message_id"], b["tool_message_id"], r["tool_message_id"]) == (
+        "live:use:toolu_A", "live:use:toolu_B", "live:result:toolu_A")
+    # No ordinal rather than -1, which would sort above the whole conversation.
+    assert a["turn_index"] is None
+
+    durable = turn_event_to_frames({"seq": 64, "kind": "tool_use", "payload": {"id": "toolu_A"}}, _rid)[0]["data"]
+    assert (durable["tool_message_id"], durable["turn_index"]) == ("m:64", 64)

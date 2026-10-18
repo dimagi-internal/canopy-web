@@ -453,6 +453,36 @@ describe("sessionReducer — live/durable reconciliation", () => {
     expect(next.messages).toHaveLength(2)
   })
 
+  it("a new live call never rewrites an earlier row that still holds seq:-1", () => {
+    // Every live row from an older server is `seq:-1`. Matching on that id put
+    // the running call into the FIRST such row — above the previous reply.
+    const reply = {
+      event: "chat.stream_start",
+      data: { message_id: "a1", turn_index: 200 },
+    } as WsEvent
+    const nextCall = {
+      event: "chat.tool_use",
+      data: {
+        parent_message_id: null,
+        tool_message_id: "seq:-1",
+        turn_index: -1,
+        block: { id: "toolu_NEXT", name: "", input: {}, status: "pending" },
+      },
+    } as WsEvent
+    const s = [liveToolUse, reply, nextCall].reduce(sessionReducer, makeState())
+    expect(s.messages.map((m) => m.id)).toEqual(["seq:-1", "a1", "seq:-1"])
+    expect((s.messages[0].content as { id: string }).id).toBe("toolu_9")
+    expect((s.messages[2].content as { id: string }).id).toBe("toolu_NEXT")
+    expect(s.messages[2].turn_index).toBe(201)
+  })
+
+  it("a late live frame does not hand a settled row back its placeholder id", () => {
+    const s = [durableToolUse, liveToolUse].reduce(sessionReducer, makeState())
+    expect(s.messages).toHaveLength(1)
+    expect(s.messages[0].id).toBe("42")
+    expect(s.messages[0].turn_index).toBe(128)
+  })
+
   it("a row with no correlation id still falls back to matching on message id", () => {
     const noId = {
       event: "chat.tool_use",

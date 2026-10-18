@@ -52,6 +52,10 @@ function num(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function ordinal(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 /**
  * One AG-UI event → zero or more canopy frames.
  *
@@ -137,7 +141,9 @@ export function fromAgui(frame: AguiFrame): WsEvent[] {
       pendingCalls.set(str(frame.toolCallId), {
         name: str(frame.toolCallName),
         parentMessageId: str(frame.parentMessageId),
-        turnIndex: num(m.turn_index),
+        // Absent for a live row, and absent must stay absent: 0 is an ordinal,
+        // and would pin a running call above the whole conversation.
+        turnIndex: ordinal(m.turn_index),
         block: m.block as Record<string, unknown> | undefined,
       });
       return [];
@@ -185,7 +191,7 @@ export function fromAgui(frame: AguiFrame): WsEvent[] {
           data: {
             parent_message_id: (m.parent_message_id as string | undefined) ?? null,
             tool_message_id: str(frame.toolCallId),
-            turn_index: num(m.turn_index),
+            turn_index: ordinal(m.turn_index),
             block: (m.block as Record<string, unknown> | undefined) ?? { content: frame.content },
             // MCP Apps: the server says this result has a View.
             ...(m.app ? { app: m.app as MessageAppRef } : {}),
@@ -267,7 +273,7 @@ const pendingCalls = new Map<
   {
     name: string;
     parentMessageId: string;
-    turnIndex: number;
+    turnIndex: number | undefined;
     block?: Record<string, unknown>;
   }
 >();
