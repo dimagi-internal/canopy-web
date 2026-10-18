@@ -1830,12 +1830,15 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
     """
     attempted: list[str] = []
     resets: list[float] = []      # each capped credential's reset, epoch seconds
-    saw_dead_credential = False
+    capped_labels: list[str] = []
+    dead_labels: list[str] = []
+    cap_line = ""                 # the first cap message, kept for the final note
     while True:
         ok, text, session_id = _execute_once(
             prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
             resume_session_id=resume_session_id)
-        attempted.append(_claude_cred_label())
+        label = _claude_cred_label()
+        attempted.append(label)
         if stop_requested(turn_id):
             # A person stopped it: never fail over and run it again.
             return ok, text, session_id
@@ -1849,15 +1852,30 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             if ok:
                 _promote_working_subscription(turn_id)
             return ok, text, session_id
-        if dead:
+        if capped:
+            capped_labels.append(label)
+            cap_line = cap_line or next(
+                (ln.strip() for ln in text.splitlines() if _is_usage_cap(ln)), "")
+            _log(f"turn {turn_id[:8]}: {label} is at its usage cap")
+        elif capped_labels and _is_bare_acp_refusal(text):
+            # Investigation 9 (turn 7d230f39, ACE on cloud-ec2-2, 2026-10-18): the
+            # box login capped, then the setup-token answered ACP's bare
+            # `auth_required`. Every credential was out of usage, but this was
+            # read as "not signed in": a false alert, and a note telling a person
+            # to re-mint a token that would reset on its own. ACP gives the same
+            # bare refusal for a capped token and a dead one, so once this turn
+            # has seen a cap it counts as capped. A token that is really dead
+            # still shows up as dead on the first turn after the caps reset.
+            capped_labels.append(label)
+            _log(f"turn {turn_id[:8]}: {label} refused the session after a cap — "
+                 "counted as capped")
+        else:
             # An unusable credential either way, so it advances the same as a cap
             # — but the REASON is carried to the terminal message below, because
             # "wait for the reset" is wrong advice for a token that has none.
-            saw_dead_credential = True
-            _log(f"turn {turn_id[:8]}: {_claude_cred_label()} is not signed in")
-            _notify_auth_required(_claude_cred_label(), turn_id)
-        else:
-            _log(f"turn {turn_id[:8]}: {_claude_cred_label()} is at its usage cap")
+            dead_labels.append(label)
+            _log(f"turn {turn_id[:8]}: {label} is not signed in")
+            _notify_auth_required(label, turn_id)
         if not _advance_claude_credential(turn_id=turn_id):
             # Before giving up: re-read the bundle. An operator who just ran
             # `canopy runner credential` to rescue a stuck box should not also
@@ -1872,7 +1890,7 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             # bare cap message names a reset time but never says the fleet has
             # run out of credentials entirely, which is the thing a human has to
             # act on.
-            if saw_dead_credential:
+            if not capped_labels:
                 # Deliberately does NOT mention waiting: this is the state that
                 # never clears on its own, and telling an operator a cap will
                 # reset is how a box sits dead for a day.
@@ -1881,12 +1899,18 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
                         f"someone has to re-authenticate the subscription and set the "
                         f"token (`canopy runner credential`).")
             else:
-                until = _park_until_cap_resets(resets, text, turn_id)
-                note = (f"[runner] every Claude credential on this box is exhausted "
-                        f"(tried: {', '.join(attempted)}). This runner has paused "
+                until = _park_until_cap_resets(resets, cap_line or text, turn_id)
+                _notify_out_of_usage(capped_labels, dead_labels, until, turn_id)
+                note = (f"[runner] out of Claude usage — every Claude credential on "
+                        f"this box is exhausted (tried: {', '.join(attempted)})."
+                        f"{' ' + cap_line if cap_line else ''} This runner has paused "
                         f"itself until {until} so other runners take its work; it "
                         f"resumes on its own then, or sooner if a new credential is "
                         f"set (`canopy runner credential`) and it is unpaused.")
+                if dead_labels:
+                    note += (f" Separately, {', '.join(dead_labels)} is not signed in "
+                             f"and will NOT clear on its own — someone has to "
+                             f"re-authenticate it.")
             return ok, f"{text}\n\n{note}", session_id
         # `--resume` is deliberately dropped on the retry: the failed attempt may
         # have written a partial session, and resuming it under a different
@@ -3926,6 +3950,18 @@ def _is_auth_required(text: str) -> bool:
             or low.lstrip().startswith(_ACP_AUTH_REQUIRED_NOTE))
 
 
+def _is_bare_acp_refusal(text: str) -> bool:
+    """True when the only sign of a dead credential is ACP's bare `auth_required`.
+
+    The ACP adapter answers it for a token that is out of usage as well as for one
+    that is signed out, so on its own it does not say which (investigation 9). The
+    CLI's own sentences (`_AUTH_REQUIRED_MARKERS`) do say, and win.
+    """
+    low = (text or "").lower()
+    return (low.lstrip().startswith(_ACP_AUTH_REQUIRED_NOTE)
+            and not any(m in low for m in _AUTH_REQUIRED_MARKERS))
+
+
 #: turn id -> the reset (epoch s) the ACP adapter reported in `_claude/rateLimit`
 #: meta. Exact where the text form is a parse; popped by `execute_prompt`.
 _CAP_RESET_HINT: dict[str, float] = {}
@@ -4089,6 +4125,40 @@ def _notify_api_key_fallback(label: str, turn_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 — notifying must never break the turn
         _log(f"warn: could not notify about API-key fallback ({exc}) — metered billing "
              "has started and nobody has been told")
+
+
+def _notify_out_of_usage(capped: list[str], dead: list[str], until: str,
+                         turn_id: str) -> None:
+    """Tell canopy-web that every Claude credential on this box is out of usage.
+
+    Running out is expected and clears on its own, but nothing on this box runs
+    until it does, and before this the only sign was the runner quietly pausing.
+    So it is an alert with the reset time in it: a person can see why the work
+    stopped and when it starts again, without reading a turn's note
+    (investigation 9). Best-effort and logged on failure, like its siblings.
+    """
+    summary = (f"{RUNNER_NAME or 'This runner'} is out of Claude usage: every "
+               f"credential is at its cap ({', '.join(capped)}). It has paused itself "
+               f"and resumes on its own at {until}.")
+    if dead:
+        summary += f" {', '.join(dead)} is also not signed in and needs a person."
+    body = {
+        "items": [{
+            "source": "runner.credential",
+            "kind": "claude_usage_exhausted",
+            "level": "error",
+            "summary": summary,
+            # One row per runner per day, like the other credential alerts.
+            "key": f"usage-exhausted:{RUNNER_NAME}",
+        }],
+    }
+    try:
+        status, _ = _api("POST", "/", body, prefix="/api/events")
+        if status not in (200, 201):
+            _log(f"warn: out-of-usage notify returned {status} — a human may not know "
+                 "that this box has stopped until its caps reset")
+    except Exception as exc:  # noqa: BLE001 — notifying must never break the turn
+        _log(f"warn: could not notify that the box is out of usage ({exc})")
 
 
 def _notify_auth_required(label: str, turn_id: str) -> None:

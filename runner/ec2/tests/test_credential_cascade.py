@@ -303,3 +303,85 @@ def test_a_cap_the_next_credential_survives_does_not_pause(cr, monkeypatch):
 
 def test_the_real_cap_text_parses_to_a_reset(cr):
     assert cr._cap_reset_epoch("You've hit your session limit · resets 2:30am (America/Denver)")
+
+
+# --- out of usage: an alert, and ACP's bare refusal after a cap --------------
+def _two_creds_after_a_cap(cr, monkeypatch, second_text):
+    import time as _time
+    calls = _capture_pause(cr, monkeypatch)
+    alerts = {"auth": [], "usage": []}
+    monkeypatch.setattr(cr, "_notify_auth_required",
+                        lambda label, tid: alerts["auth"].append(label))
+    monkeypatch.setattr(cr, "_notify_out_of_usage",
+                        lambda capped, dead, until, tid: alerts["usage"].append((capped, dead)))
+    monkeypatch.setattr(cr, "_cap_reset_epoch", lambda text: _time.time() + 5400)
+    cr._CLAUDE_CREDS[:] = [("box-login:a44d94c3", "", ""),
+                           ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
+    outcomes = iter([
+        (False, "You've hit your session limit · resets 10:50pm (UTC)", "s1"),
+        (False, second_text, ""),
+    ])
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: next(outcomes))
+    cr._apply_claude_credential(0)
+    ok, text, _ = cr.execute_prompt("do it", "turn-7d230f39", lambda e: None)
+    return ok, text, calls, alerts
+
+
+def test_a_bare_acp_refusal_after_a_cap_is_out_of_usage_not_signed_out(cr, monkeypatch):
+    """Investigation 9 (turn 7d230f39, ACE on cloud-ec2-2, 2026-10-18): every
+    credential was out of usage, but the setup-token's cap came back as ACP's bare
+    "Authentication required" and the note called the box "not signed in"."""
+    ok, text, calls, alerts = _two_creds_after_a_cap(
+        cr, monkeypatch, "runner error (acp): Authentication required")
+
+    assert ok is False
+    assert "not signed in" not in text
+    assert "out of Claude usage" in text
+    assert "You've hit your session limit" in text
+    assert "paused itself until" in text
+    assert [c for c in calls if c[1] == "/runners/rid-1/pause"]
+    assert alerts == {"auth": [],
+                      "usage": [(["box-login:a44d94c3", "subscription-1"], [])]}
+
+
+def test_a_signed_out_token_after_a_cap_still_says_so(cr, monkeypatch):
+    """The CLI's own sentence says which it is, so it is not folded into the cap."""
+    ok, text, calls, alerts = _two_creds_after_a_cap(
+        cr, monkeypatch, "runner error (acp): Authentication required\nOAuth session expired")
+
+    assert "out of Claude usage" in text
+    assert "subscription-1 is not signed in" in text
+    assert alerts == {"auth": ["subscription-1"],
+                      "usage": [(["box-login:a44d94c3"], ["subscription-1"])]}
+
+
+def test_a_bare_acp_refusal_with_no_cap_is_not_signed_in(cr, monkeypatch):
+    calls = _capture_pause(cr, monkeypatch)
+    alerts = {"auth": [], "usage": []}
+    monkeypatch.setattr(cr, "_notify_auth_required",
+                        lambda label, tid: alerts["auth"].append(label))
+    monkeypatch.setattr(cr, "_notify_out_of_usage",
+                        lambda *a: alerts["usage"].append(a))
+    cr._CLAUDE_CREDS[:] = [("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (
+        False, "runner error (acp): Authentication required", ""))
+    cr._apply_claude_credential(0)
+
+    ok, text, _ = cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
+
+    assert "this box is not signed in" in text
+    assert alerts == {"auth": ["subscription-1"], "usage": []}
+    assert not [c for c in calls if c[1] == "/runners/rid-1/pause"]
+
+
+def test_running_out_of_usage_posts_an_alert_with_the_reset(cr, monkeypatch):
+    posted = []
+    monkeypatch.setattr(cr, "RUNNER_NAME", "cloud-ec2-2")
+    monkeypatch.setattr(cr, "_api", lambda m, p, b=None, **kw: (posted.append(b) or (201, {})))
+    cr._notify_out_of_usage(["box-login:a44d94c3", "subscription-1"], [],
+                            "2026-10-18T22:50:00Z", "turn-7d230f39")
+    item = posted[0]["items"][0]
+    assert item["kind"] == "claude_usage_exhausted" and item["level"] == "error"
+    assert "out of Claude usage" in item["summary"]
+    assert "2026-10-18T22:50:00Z" in item["summary"]
+    assert item["key"] == "usage-exhausted:cloud-ec2-2"
