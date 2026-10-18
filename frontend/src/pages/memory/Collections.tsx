@@ -100,7 +100,7 @@ export function CollectionsPanel({
       </p>
       {collections.length === 0 && !adding ? (
         <p className="mt-2 rounded-xl border border-dashed border-border px-4 py-4 text-center text-xs text-muted-foreground">
-          No collections yet. Every agent reads its own organisation's memory.
+          No collections yet. An agent you allow reads its own organisation&apos;s memory.
         </p>
       ) : (
         <ul className="mt-2 grid gap-3 sm:grid-cols-2">
