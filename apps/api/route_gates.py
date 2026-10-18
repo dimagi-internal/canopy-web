@@ -60,6 +60,9 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``device-proof`` — no session or token: a proof from an ACTIVE runner device key
   (DPoP, or an EC2 instance role's signed STS call) bound to this request is the
   authority (``apps/harness/api_runner_sessions.py``).
+* ``owner-token-and-key`` — no session: a token the runner's OWNER minted (revoked
+  within 30 days is accepted) plus a proof of the key being registered; it only ever
+  creates a PENDING key (``apps/harness/api_device_key_requests.py``).
 * ``signed-link`` — a signed token in the URL is the authority (drill report,
   invite token, OAuth state).
 * ``beta-reviewer`` — ``apps/beta_requests/services.may_review``: a superuser or
@@ -88,7 +91,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
-    "hcp-grant", "device-proof",
+    "hcp-grant", "device-proof", "owner-token-and-key",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -224,6 +227,7 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/harness/api_device_keys.py (Canopy Vault device keys)
     "register_runner_device_key": ("runner-admin",),  # lands pending; approval is separate
     "create_runner_session": ("device-proof",),  # anonymous door; an ACTIVE key's proof is the authority
+    "request_runner_device_key": ("owner-token-and-key",),  # stranded box: lands pending, owner told
     "list_runner_device_keys": ("runner-admin",),
     "approve_runner_device_key": ("runner-admin",),  # browser session only (+ passkey step-up)
     "revoke_runner_device_key": ("runner-admin",),
@@ -884,6 +888,8 @@ NOT_SETTINGS: dict[str, str] = {
     "register_runner_device_key": "runner-protocol",
     # a box trading its approved device key's proof for an hour-long runner token
     "create_runner_session": "ephemeral-credential",
+    # a stranded box (revoked token) asking for a key: lands `pending`, like the above
+    "request_runner_device_key": "runner-protocol",
     "refresh_mail_domain": "action",
     "reply_mail_thread": "conversation", "send_mail": "conversation", "set_mail_thread_state": "conversation",
     # content

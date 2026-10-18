@@ -8473,6 +8473,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/runner-device-key-requests/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A runner with a revoked token asks for a (pending) device key
+         * @description Prove a token of the runner's owner (revoked within 30 days is fine) and the
+         *     key being registered; get a PENDING key and its `approve_url`. The owner is
+         *     emailed and pushed the link.
+         */
+        readonly post: operations["request_runner_device_key"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/huddles/": {
         readonly parameters: {
             readonly query?: never;
@@ -24978,6 +25000,44 @@ export interface components {
              */
             readonly runner: string;
         };
+        /** RunnerDeviceKeyRequestIn */
+        readonly RunnerDeviceKeyRequestIn: {
+            /**
+             * Runner
+             * Format: uuid
+             */
+            readonly runner: string;
+            /** Public Jwk */
+            readonly public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "secure-enclave" | "tpm" | "software" | "aws-iam";
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Role Arn
+             * @default
+             */
+            readonly role_arn: string;
+            /**
+             * Proof
+             * @default
+             */
+            readonly proof: string;
+            /** Owner Token */
+            readonly owner_token: string;
+        };
         /** HuddleSummaryOut */
         readonly HuddleSummaryOut: {
             /** Id */
@@ -38956,6 +39016,39 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerSessionOut"];
+                };
+            };
+        };
+    };
+    readonly request_runner_device_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerDeviceKeyRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDeviceKeyCreatedOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDeviceKeyCreatedOut"];
                 };
             };
         };
