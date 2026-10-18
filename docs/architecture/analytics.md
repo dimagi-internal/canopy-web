@@ -14,7 +14,7 @@ it in `apps/events/analytics.py`.
 |---|---|---|
 | `Activity` | `apps/events/models.py` | Append-only fact: workspace (NOT NULL), `at`, dotted `kind`, `actor_kind` (user/agent/contact/runner/system), `actor`, `agent` + `agent_slug`, `surface`, `ref`, small `meta`. Indexed (workspace, at), (workspace, kind, at), (actor, at), (kind, ref). Never holds content; retention and `prune_events` do not touch it. |
 | `emit` / `for_turn` | `apps/events/activity.py` | The one writer. Own savepoint; a failure is logged and swallowed, never undoes the action. A fact with no workspace is dropped. `for_turn` derives tenancy (`Turn.tenant_slug`), agent (`acting_agent`), person (`initiator_user`, else `enqueued_by`) and surface (origin) once. |
-| `TurnUsage` | `apps/events/models.py`, `apps/events/usage.py` | Tokens + cost per turn, summed from every `{"type":"result"}` record in the turn's uploaded `claude -p` transcript. Derived on commit of a transcript batch carrying a result (`ledger.append_transcript`) — no runner change. Keeps its own workspace/agent/person so it outlives the turn and the transcript. A turn with no uploaded transcript has no row: "not reported", never zero (`totals.turns_with_usage`). |
+| `TurnUsage` | `apps/events/models.py`, `apps/events/usage.py` | Tokens (+ cost when reported) per turn, from whichever record of its model calls exists: a `claude -p` transcript's `{"type":"result"}` records (the only source that reports COST, `runs > 0`); an interactive transcript's per-message `message.usage`, once per message id; or a chat session's rows, which carry the same usage on each assistant record's first row (`canopy_transcript.record_usage`, the one reader of `message.usage`) and are credited to the person's message they answer (`usage.record_for_chat`, from `persist_transcript_rows`; its turn when it has one, else `chat:<session>:<index>`). Every path re-derives and upserts; a cost-reported row is never replaced by an estimate. Keeps its own workspace/agent/person so it outlives the turn. Nothing seen = no row ("not reported", never zero): `totals.turns_with_usage` / `turns_with_cost`. |
 | `Event` | `apps/events/models.py` | The OPERATIONAL log (faults, actions). It coalesces repeats into a count, so it is never counted from. |
 
 ## Kinds and producers
@@ -28,6 +28,13 @@ it in `apps/events/analytics.py`.
 
 Active people = distinct `actor` with `actor_kind=user` that day. An agent acting with
 its own login is `agent`, not a person.
+
+## Shipping a change to the shared transcript core
+
+`packages/canopy_transcript` (and `canopy_cron`, `runner/canopy_acp`) run on the
+boxes. They are in the runner code-sha paths (`provenance.CODE_PATHS`, the
+installers, `update_runner.sh`, `up.sh`, `deploy-labs.yml`), so a change marks
+every box stale and the auto-updater ships it after the next deploy.
 
 ## History
 
