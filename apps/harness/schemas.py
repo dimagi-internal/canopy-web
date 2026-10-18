@@ -468,6 +468,9 @@ class ResolveSessionOut(Schema):
     busy: str = ""
     # A forked chat with no Claude session yet: start it from a cut of another.
     fork: ForkPlanOut | None = None
+    # For every turn of a forked chat: the chat whose directory a cloud runner runs
+    # it in (the source's, so they share a worktree). "" otherwise.
+    worktree_of: str = ""
 
 
 class RecordSessionIn(Schema):

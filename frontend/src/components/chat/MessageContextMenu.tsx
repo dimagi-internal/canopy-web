@@ -9,7 +9,7 @@ import type { RunnerOut } from '@/api/harness'
 
 /** Why this session cannot be forked, or null when it can. Mirrors the server's
  *  own refusal (`services.fork_runner_supported`), which stays the authority:
- *  only a laptop runner on the Claude CLI runtime can cut a fork. */
+ *  a cloud runner, or a laptop on the Claude CLI runtime, can cut a fork. */
 export function forkBlockedReason(
   runnerName: string | null | undefined,
   runners: readonly RunnerOut[],
@@ -17,9 +17,8 @@ export function forkBlockedReason(
   if (!runnerName) return 'This session has not run on a runner yet'
   const runner = runners.find((r) => r.name === runnerName)
   if (!runner) return `${runnerName} is not one of your runners`
-  if (runner.kind === 'cloud') return 'Forking is not available on cloud runners yet'
-  if (runner.engine !== 'claude-cli') {
-    return `Forking needs the Claude CLI runtime; ${runner.name} runs ${runner.engine}`
+  if (runner.kind !== 'cloud' && runner.engine !== 'claude-cli') {
+    return `Forking needs a cloud runner or the Claude CLI runtime; ${runner.name} runs ${runner.engine}`
   }
   return null
 }

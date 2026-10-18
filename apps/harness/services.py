@@ -1515,14 +1515,17 @@ def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = ""
 
     `fork` ({session_key, records} or None) is set for a forked chat that has no
     Claude session yet: the runner starts it from the first `records` records of
-    `session_key`'s transcript (`canopy_sessions.services.fork_session`)."""
-    from apps.canopy_sessions.services import pending_fork
+    `session_key`'s transcript (`canopy_sessions.services.fork_session`).
+    `worktree_of` names, for every turn of a fork, the chat whose directory a cloud
+    runner runs it in — the source's, so both share one worktree. "" otherwise."""
+    from apps.canopy_sessions.services import fork_plan
 
-    fork = pending_fork(thread_key)
+    fork, worktree = fork_plan(thread_key)
     binding = _binding_for_thread(agent, project, workspace, thread_key)
     if binding is None:
         return {"reuse": False, "session_key": "", "emdash_task_id": "", "agent_task_ext_id": "",
-                "summary": "", "link_id": None, "new_thread": True, "busy": "", "fork": fork}
+                "summary": "", "link_id": None, "new_thread": True, "busy": "", "fork": fork,
+                "worktree_of": worktree}
     reuse = binding.reusable_by(runner)
     busy = ""
     if reuse and turn_id is not None:
@@ -1541,6 +1544,7 @@ def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = ""
         "link_id": str(binding.session_id),
         "new_thread": False,
         "fork": fork,
+        "worktree_of": worktree,
     }
 
 

@@ -11,14 +11,14 @@ const runner = (name: string, over: Partial<RunnerOut> = {}) =>
 afterEach(cleanup)
 
 describe('forkBlockedReason', () => {
-  it('allows a laptop on the Claude CLI runtime', () => {
+  it('allows a cloud runner, or a laptop on the Claude CLI runtime', () => {
     expect(forkBlockedReason('mbp', [runner('mbp')])).toBeNull()
+    expect(forkBlockedReason('ec2', [runner('ec2', { kind: 'cloud', engine: 'emdash' })])).toBeNull()
   })
 
   it('says why anything else cannot fork', () => {
     expect(forkBlockedReason('', [runner('mbp')])).toMatch(/not run on a runner/)
     expect(forkBlockedReason('gone', [runner('mbp')])).toMatch(/not one of your runners/)
-    expect(forkBlockedReason('ec2', [runner('ec2', { kind: 'cloud' })])).toMatch(/cloud runners/)
     expect(forkBlockedReason('mbp', [runner('mbp', { engine: 'emdash' })])).toMatch(/Claude CLI runtime; mbp runs emdash/)
   })
 })
@@ -43,11 +43,11 @@ describe('MessageContextMenu', () => {
 
   it('shows why it is blocked, and the server refusal', () => {
     render(
-      <MessageContextMenu x={5} y={5} blocked="Forking is not available on cloud runners yet" busy={false}
+      <MessageContextMenu x={5} y={5} blocked="Forking needs a cloud runner or the Claude CLI runtime; mbp runs emdash" busy={false}
         error="the last turn is still running" onFork={() => {}} onDismiss={() => {}} />,
     )
     expect(screen.getByTestId('message-menu-fork')).toHaveProperty('disabled', true)
-    expect(screen.getByText(/cloud runners/)).toBeTruthy()
+    expect(screen.getByText(/mbp runs emdash/)).toBeTruthy()
     expect(screen.getByRole('alert').textContent).toMatch(/still running/)
   })
 })

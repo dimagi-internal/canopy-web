@@ -2748,9 +2748,13 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     (`_ensure_agent_clone`). Everything else — project turns, or an agent whose
     bootstrap failed — keeps the original scratch-dir behavior.
 
+    A FORKED chat runs in its source's directory (`_worktree_of`, from
+    resolve-session), so the two share one worktree and the fork's transcript
+    sits beside the one it was cut from.
+
     `env` is the turn's own environment: its git fetches and pulls use the
     turn's GitHub identity, since this box holds none of its own."""
-    session_id = _chat_session_id(turn)
+    session_id = turn.get("_worktree_of") or _chat_session_id(turn)
     slug = _turn_agent_slug(turn)
     if slug:
         _ensure_agent_clone(slug)
@@ -5200,6 +5204,40 @@ def _adopt_resume_transcript(cwd: pathlib.Path, session_id: str, agent_slug: str
     return True
 
 
+class ForkError(RuntimeError):
+    """A fork could not be cut on this box; the message says why."""
+
+
+def _cut_fork(cwd: pathlib.Path, fork: dict, agent_slug: str) -> str:
+    """Start a forked chat's Claude session: the first `fork["records"]` records of
+    the source session's transcript (counted as canopy_transcript.read_records
+    counts them — canopy-web's ordinals), written under a new session id in this
+    cwd's project directory, where `--resume` / `session/load` look. Returns the id.
+
+    The source ran in this same directory (`_turn_cwd` keys a fork on it), so its
+    transcript is here — or, for a session an agent turn started and no chat reply
+    has adopted yet, in that turn's worktree."""
+    ct = _transcript_core()
+    source, records = fork.get("session_key") or "", int(fork.get("records") or 0)
+    if ct is None:
+        raise ForkError("canopy_transcript is not installed on this runner")
+    src = ct.resolve_cli_transcript(cwd, source, claude_home=CLAUDE_PROJECTS_HOME)
+    if src is None and agent_slug and _safe_session_dirname(agent_slug) == agent_slug:
+        src = _agent_session_transcript(agent_slug, source)
+    if src is None:
+        raise ForkError(f"session {source} has no transcript on this box")
+    kept = ct.read_records(src)[:records]
+    if len(kept) < records:
+        raise ForkError(f"session {source}'s transcript has {len(kept)} records, not {records}")
+    sid = str(uuid.uuid4())
+    dst = CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{sid}.jsonl"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text("".join(json.dumps({**r, "sessionId": sid} if "sessionId" in r else r) + "\n"
+                           for r in kept))
+    _log(f"forked session {source[:8]} at {records} records into {sid[:8]} in {cwd}")
+    return sid
+
+
 def _resume_target_exists(cwd: pathlib.Path, session_id: str) -> bool:
     """Whether claude actually has a transcript to `--resume` for (cwd, session_id)
     — the cheap, local equivalent of runner/canopy_runner/execute.py's
@@ -5251,6 +5289,12 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
     status, plan = _api("POST", f"/runners/{runner_id}/resolve-session", body)
     if status != 200 or not plan:
         return ""
+    # A forked chat: which chat's directory it runs in (its source's, so they share
+    # a worktree), and on its first turn the cut to start from (_cut_fork).
+    if plan.get("worktree_of"):
+        turn["_worktree_of"] = plan["worktree_of"]
+    if plan.get("fork"):
+        turn["_fork"] = plan["fork"]
     key = plan.get("session_key") or plan.get("emdash_task_id") or ""
     if plan.get("reuse") and key:
         return key
@@ -5499,8 +5543,24 @@ def _session_transcript_path(session_id: str, session_key: str, project: str = "
     if path is not None:
         return path
     if project and _safe_session_dirname(project) == project:
-        return _agent_session_transcript(project, session_key)
-    return None
+        if (path := _agent_session_transcript(project, session_key)) is not None:
+            return path
+    return _forked_chat_transcript(session_key)
+
+
+def _forked_chat_transcript(session_key: str) -> pathlib.Path | None:
+    """A forked chat runs in its SOURCE's directory (`_turn_cwd`), not its own, so
+    its transcript is looked for by name across the chat directories — and only
+    there: a Claude session uuid is unique on this box, and nothing outside
+    WORK_DIR/sessions is reachable this way."""
+    if not session_key or _safe_session_dirname(session_key) != session_key:
+        return None
+    chats = _encode_project_dir(pathlib.Path(WORK_DIR) / "sessions")
+    try:
+        found = sorted(CLAUDE_PROJECTS_HOME.glob(f"{chats}-*/{session_key}.jsonl"))
+    except OSError:
+        return None
+    return found[0] if found else None
 
 
 def _post_stream_rows(runner_id: str, session_id: str, rows: list,
@@ -6052,6 +6112,16 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                      {"status": "failed", "result_note": f"a caller's turn was not run: {exc}"})
                 _log(f"turn {turn_id[:8]} NOT run — cannot confine: {exc}")
                 return
+
+        if turn.get("_fork") and not resume_id and not confined and cwd is not None:
+            try:
+                resume_id = _cut_fork(cwd, turn["_fork"], _turn_agent_slug(turn))
+            except ForkError as exc:
+                _api("POST", f"/turns/{turn_id}/finish",
+                     {"status": "failed", "result_note": f"Could not fork: {exc}"})
+                _log(f"turn {turn_id[:8]} NOT run — could not fork: {exc}")
+                return
+            _record_session_resume(runner_id, turn, resume_id)
 
         if resume_id and cwd is not None:
             _adopt_resume_transcript(cwd, resume_id, _turn_agent_slug(turn))

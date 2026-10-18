@@ -71,7 +71,7 @@ def test_fork_keeps_the_clicked_turn_and_drops_what_follows():
     assert fork.agent_id == s.agent_id and fork.workspace_id == s.workspace_id
     assert list(fork.messages.values_list("turn_index", flat=True)) == [0, S, 2 * S, 3 * S, 3 * S + 1]
     assert fork.metadata[chat.FORK_KEY] == {"session_key": "src-sid", "records": 4,
-                                            "from_session": str(s.id)}
+                                            "from_session": str(s.id), "worktree_of": str(s.id)}
     assert fork.metadata["requested_runner_id"] == str(runner.id)
     # The source is untouched.
     assert s.messages.count() == len(ROWS)
@@ -96,6 +96,7 @@ def test_resolve_session_hands_the_cut_to_the_runner_until_the_fork_has_its_own(
                                             workspace=ws)
     assert plan["fork"] == {"session_key": "src-sid", "records": 4}
     assert plan["reuse"] is False
+    assert plan["worktree_of"] == str(s.id)
 
     RunnerBinding.objects.create(session=fork, runner=runner, session_key="fork-sid",
                                  emdash_project="canopy-web", host=runner.host,
@@ -104,9 +105,12 @@ def test_resolve_session_hands_the_cut_to_the_runner_until_the_fork_has_its_own(
                                             workspace=ws)
     assert plan["fork"] is None
     assert plan["reuse"] is True and plan["session_key"] == "fork-sid"
+    # Every later turn still runs in the source's directory on a cloud runner.
+    assert plan["worktree_of"] == str(s.id)
     # An ordinary chat never carries one.
-    assert harness_services.resolve_session(None, str(s.id), runner, project="canopy-web",
-                                            workspace=ws)["fork"] is None
+    plain = harness_services.resolve_session(None, str(s.id), runner, project="canopy-web",
+                                             workspace=ws)
+    assert plain["fork"] is None and plain["worktree_of"] == ""
 
 
 def test_fork_after_a_transfer_rebases_onto_the_current_transcript():
@@ -132,12 +136,9 @@ def test_fork_refuses_a_cut_inside_a_running_turn():
     assert _fork(c, s, 0).status_code == 200  # an earlier turn is finished
 
 
-@pytest.mark.parametrize("engine,kind", [
-    (Runner.ENGINE_EMDASH, Runner.EMDASH),
-    (Runner.ENGINE_CLAUDE_DESKTOP, Runner.EMDASH),
-    (Runner.ENGINE_CLAUDE_CLI, Runner.CLOUD),
-])
-def test_fork_needs_a_claude_cli_runner(engine, kind):
+@pytest.mark.parametrize("engine", [Runner.ENGINE_EMDASH, Runner.ENGINE_CLAUDE_DESKTOP])
+def test_fork_needs_a_runner_that_runs_claude_itself(engine):
+    kind = Runner.EMDASH
     user, ws, runner, c = _ctx(engine=engine, kind=kind)
     s = _session(ws, runner, user)
 
@@ -156,3 +157,17 @@ def test_fork_404s_an_unknown_message_and_a_stranger():
     other = Client()
     other.force_login(stranger)
     assert _fork(other, s, 0).status_code == 404
+
+
+def test_a_cloud_runner_can_fork_and_a_fork_of_a_fork_shares_the_root_directory():
+    user, ws, runner, c = _ctx(engine=Runner.ENGINE_EMDASH, kind=Runner.CLOUD)
+    s = _session(ws, runner, user)
+    fork = Session.objects.get(pk=_fork(c, s, 0).json()["id"])
+    RunnerBinding.objects.create(session=fork, runner=runner, session_key="fork-sid",
+                                 emdash_project="canopy-web", host=runner.host,
+                                 thread_key=str(fork.id))
+
+    again = Session.objects.get(pk=_fork(c, fork, 0).json()["id"])
+
+    assert again.metadata[chat.FORK_KEY]["worktree_of"] == str(s.id)
+    assert again.metadata[chat.FORK_KEY]["session_key"] == "fork-sid"

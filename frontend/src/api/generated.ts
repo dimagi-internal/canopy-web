@@ -24731,6 +24731,11 @@ export interface components {
              */
             readonly busy: string;
             readonly fork?: components["schemas"]["ForkPlanOut"] | null;
+            /**
+             * Worktree Of
+             * @default
+             */
+            readonly worktree_of: string;
         };
         /** ResolveSessionIn */
         readonly ResolveSessionIn: {
