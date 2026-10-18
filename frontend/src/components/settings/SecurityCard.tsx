@@ -32,9 +32,13 @@ export function SecurityCard({ machines }: { machines: ReactNode }) {
     <div id="security" className="rounded-xl border border-border bg-card p-5 space-y-5" data-testid="settings-security">
       <div>
         <h2 className="text-sm font-semibold text-foreground">Security</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Your agents&rsquo; secrets can be read only by you, people you let in, and machines you approve — not by
-          canopy-web.
+        <p className="mt-1 text-sm text-foreground-secondary" data-testid="security-summary">
+          Your agents&rsquo; secrets can be opened by: <strong className="font-medium text-foreground">you</strong> (your
+          passkey) · <strong className="font-medium text-foreground">machines you approve</strong> · not canopy-web.
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          canopy-web stores each agent&rsquo;s secrets locked. A copy of the key goes to you and to each machine you
+          approve; a machine&rsquo;s copy is kept inside its own hardware and can&rsquo;t be copied off it.
         </p>
       </div>
 
@@ -43,7 +47,10 @@ export function SecurityCard({ machines }: { machines: ReactNode }) {
         <RecoveryRow />
       </Row>
 
-      <Row id="your-machines" title="Your machines">{machines}</Row>
+      <Row id="your-machines" title="Your machines"
+           hint="Each can open the agents it runs. Approving a machine — one passkey tap — hands it its copy of the key.">
+        {machines}
+      </Row>
 
       <Row id="your-agents" title="Your agents">
         <ZkAgentsPanel />
@@ -52,11 +59,12 @@ export function SecurityCard({ machines }: { machines: ReactNode }) {
   )
 }
 
-function Row({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+function Row({ id, title, hint, children }: { id: string; title: string; hint?: string; children: ReactNode }) {
   return (
     <section id={id} className="space-y-2 border-t border-border pt-4 first-of-type:border-t-0 first-of-type:pt-0"
              data-testid={`security-${id}`}>
       <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {children}
     </section>
   )
@@ -199,10 +207,14 @@ function RecoveryRow() {
           </div>
         )
       ) : hasRecoveryCode(ks) ? (
-        <p className="text-success" data-testid="security-recovery-ok">Recovery code saved ✓</p>
+        <p data-testid="security-recovery-ok">
+          <span className="text-foreground">Recovery code</span>{' '}
+          <span className="text-success">saved ✓</span>
+          <span className="text-muted-foreground"> — your spare: if you lose your passkey, this code gets you back in.</span>
+        </p>
       ) : !made && (
         <div className="flex flex-wrap items-center gap-2" data-testid="security-recovery-missing">
-          <span className="text-warning">No recovery code yet.</span>
+          <span className="text-warning">No recovery code yet — your spare if you lose your passkey.</span>
           <Button size="sm" variant="outline" disabled={busy} onClick={() => void create()} data-testid="security-recovery-create">
             {busy ? 'Working…' : 'Create your recovery code'}
           </Button>
@@ -214,7 +226,7 @@ function RecoveryRow() {
              data-testid="security-recovery-code">
           <p className="font-medium text-foreground">Your recovery code — shown once</p>
           <p className="text-muted-foreground">
-            If you lose your passkey and passphrase, this gets you back into every agent you hold. canopy-web does
+            Your spare: if you lose your passkey, this code gets you back into every agent you hold. canopy-web does
             not keep a copy — save it in your password manager.
           </p>
           <code className="block select-all break-all font-mono text-foreground">{made.code}</code>

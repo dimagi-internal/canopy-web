@@ -34,7 +34,7 @@ from apps.passkeys import stepup
 from . import device_key_notify, device_keys
 from .models import Runner, RunnerAdmin, RunnerDeviceKey
 from .runners import can_administer_runner
-from .schemas import RunnerDeviceKeyCreatedOut, RunnerDeviceKeyIn, RunnerDeviceKeyOut
+from .schemas import DeviceKeyAgentOut, RunnerDeviceKeyCreatedOut, RunnerDeviceKeyIn, RunnerDeviceKeyOut
 
 router = Router(auth=session_auth, tags=["harness"])
 
@@ -61,9 +61,10 @@ def approve_url(key: RunnerDeviceKey) -> str:
 
 def key_out(key: RunnerDeviceKey, *, can_manage: bool) -> RunnerDeviceKeyOut:
     return RunnerDeviceKeyOut(
-        id=key.pk, runner=key.runner_id, runner_name=key.runner.name, jkt=key.jkt,
+        id=key.pk, runner=key.runner_id, runner_name=key.runner.name,
+        runner_host=key.runner.host, runner_kind=key.runner.kind, jkt=key.jkt,
         kind=key.kind, label=key.label, role_arn=key.role_arn, status=key.status,
-        ecdh_jkt=key.ecdh_jkt, ecdh_public_jwk=key.ecdh_public_jwk or {},
+        ecdh_jkt=key.ecdh_jkt, ecdh_public_jwk=key.ecdh_public_jwk or {}, ecdh_store=key.ecdh_store,
         reapproval=key.status == RunnerDeviceKey.PENDING and key.approved_at is not None,
         ecdh_waiting=key.ecdh_waiting,
         created_at=key.created_at,
@@ -100,26 +101,49 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
             raise HttpError(422, str(exc)) from exc
         jkt = device_keys.thumbprint(jwk)
     ecdh_jwk, ecdh_jkt = _ecdh(payload)
+    store = payload.ecdh_store if ecdh_jwk is not None and payload.ecdh_store in ECDH_STORES else ""
 
     existing = RunnerDeviceKey.objects.filter(jkt=jkt).first()
     if existing is not None:
         if existing.runner_id != runner.pk:
             raise HttpError(409, "this key is already registered to a different runner")
-        _set_ecdh(existing, ecdh_jwk, ecdh_jkt)
+        _set_ecdh_and_store(existing, ecdh_jwk, ecdh_jkt, store)
         return 200, _created(existing)
     try:
         with transaction.atomic():
             key = RunnerDeviceKey.objects.create(
                 runner=runner, public_jwk=jwk, role_arn=role_arn, jkt=jkt, kind=payload.kind,
                 label=payload.label.strip(), created_by=request.user,
-                ecdh_public_jwk=ecdh_jwk or {}, ecdh_jkt=ecdh_jkt,
+                ecdh_public_jwk=ecdh_jwk or {}, ecdh_jkt=ecdh_jkt, ecdh_store=store,
             )
     except IntegrityError:  # a concurrent identical POST won the race
         key = RunnerDeviceKey.objects.get(jkt=jkt)
-        _set_ecdh(key, ecdh_jwk, ecdh_jkt)
+        _set_ecdh_and_store(key, ecdh_jwk, ecdh_jkt, store)
         return 200, _created(key)
     device_key_notify.notify_pending_on_commit(key)
     return 201, _created(key)
+
+
+#: Where a box may say its ECDH private key lives (`RunnerDeviceKey.ecdh_store`).
+ECDH_STORES = frozenset({"secure-enclave", "tpm", "aws-kms", "software"})
+
+
+def _set_ecdh_and_store(key: RunnerDeviceKey, jwk: dict | None, jkt: str, store: str) -> None:
+    """`_set_ecdh`, then record where the box says the key's CURRENT ECDH key
+    lives. Display only, so it changes no status and needs no approval. A new
+    ECDH key without a word about it clears the old label rather than inherit
+    it; a claim is only ever taken alongside the ECDH key it describes."""
+    before = key.ecdh_jkt
+    _set_ecdh(key, jwk, jkt)
+    if key.ecdh_jkt != before:
+        new = store
+    elif store and jkt and jkt == key.ecdh_jkt:
+        new = store
+    else:
+        return
+    if new != key.ecdh_store:
+        key.ecdh_store = new
+        key.save(update_fields=["ecdh_store"])
 
 
 def _created(key: RunnerDeviceKey) -> RunnerDeviceKeyCreatedOut:
@@ -199,9 +223,11 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
             Q(runner__owner=request.user) | Q(runner_id__in=admin_of),
         ).exclude(runner__status=Runner.RETIRED)
     qs = qs.select_related("runner", "approved_by").order_by("-created_at")
+    agents = vault_agents_of(request.user)
     out = []
     for k in qs:
         row = key_out(k, can_manage=True)
+        row.can_open = agents_key_opens(k, agents)
         if k.status == RunnerDeviceKey.PENDING or k.ecdh_waiting:
             # What approving it will leave waiting on a vault-key wrap, so the
             # browser can approve AND wrap in one passkey touch (canopy-web#1550).
@@ -264,6 +290,27 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
         if agent.is_admin(user) and device_keys.runner_serves_agent(key.runner, agent)
         and zk.device_waits(agent, key)
     )
+
+
+def vault_agents_of(user) -> list:
+    """The agents whose secrets live in the canopy-web vault that `user`
+    administers — what a key's `can_open` is drawn from."""
+    from apps.agents.models import Agent
+
+    return [a for a in Agent.objects.filter(zk_enabled=True, credential_source="canopy-web")
+            .select_related("workspace", "owner").order_by("name", "slug") if a.is_admin(user)]
+
+
+def agents_key_opens(key: RunnerDeviceKey, agents: list) -> list[DeviceKeyAgentOut]:
+    """Of `agents`, the ones this key can open right now: its decryption key is
+    approved, the box serves the agent, and nothing of the agent's is still
+    waiting on it (`zk.device_waits`) — "can open Hal, Eva" on Settings."""
+    if not key.ecdh_ready:
+        return []
+    from apps.agents import zk
+
+    return [DeviceKeyAgentOut(slug=a.slug, name=a.name or a.slug) for a in agents
+            if device_keys.runner_serves_agent(key.runner, a) and not zk.device_waits(a, key)]
 
 
 @router.delete("/{key_id}", response=RunnerDeviceKeyOut, summary="Revoke a device key")

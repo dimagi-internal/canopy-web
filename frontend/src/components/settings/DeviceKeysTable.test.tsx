@@ -20,6 +20,7 @@ const KEY = {
   label: 'laptop', role_arn: '', status: 'pending' as const, created_at: '2026-10-16T00:00:00Z', approved_at: null,
   approved_by_email: '', revoked_at: null, last_used_at: null, can_manage: true,
   ecdh_jkt: '', ecdh_public_jwk: {}, zk_pending_agents: [] as string[], reapproval: false, ecdh_waiting: false,
+  runner_host: '', runner_kind: 'emdash', ecdh_store: '', can_open: [] as { slug: string; name: string }[],
 }
 
 afterEach(() => {
@@ -33,7 +34,7 @@ describe('DeviceKeysTable', () => {
     approveAndGrant.mockResolvedValue({ key: { ...waiting, ecdh_waiting: false }, granted: ['hal', 'eva'], failed: [] })
     render(<DeviceKeysTable keys={[waiting]} onChange={vi.fn()} />)
     expect(screen.getByTestId('device-key-ecdh-waiting-k1').textContent).toMatch(/New key waiting/)
-    expect(screen.getByText('active')).toBeTruthy()
+    expect(screen.getByTestId('device-key-status-k1').textContent).not.toMatch(/Waiting for your approval/)
     expect(screen.queryByTestId('device-key-give-k1')).toBeNull()
     fireEvent.click(screen.getByTestId('device-key-approve-k1'))
     await waitFor(() => expect(approveAndGrant).toHaveBeenCalledWith('k1', ['hal', 'eva'], expect.any(Function)))
@@ -47,7 +48,7 @@ describe('DeviceKeysTable', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...KEY, status: 'active' }))
     expect(approveAndGrant).toHaveBeenCalledWith('k1', ['eva'], expect.any(Function))
     expect(approveRunnerDeviceKey).not.toHaveBeenCalled()
-    expect(await screen.findByText(/this machine can now read eva/)).toBeTruthy()
+    expect(await screen.findByText(/this machine can now open eva/)).toBeTruthy()
     expect(screen.queryByTestId('device-key-zk-grant-button')).toBeNull()
   })
 
@@ -75,7 +76,7 @@ describe('DeviceKeysTable', () => {
     expect((await screen.findByTestId('device-key-zk-grant')).textContent).toContain('eva')
     fireEvent.click(screen.getByTestId('device-key-zk-grant-button'))
     await waitFor(() => expect(giveAccess).toHaveBeenCalledWith('eva', expect.any(Function)))
-    expect((await screen.findByText(/this machine can now read eva/))).toBeTruthy()
+    expect((await screen.findByText(/this machine can now open eva/))).toBeTruthy()
   })
 
   it('an approved machine agents still wait on: one click gives it access', async () => {
@@ -89,9 +90,34 @@ describe('DeviceKeysTable', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...k, zk_pending_agents: [] }))
   })
 
-  it('says a re-approval is an encryption key added, not a new box', () => {
-    render(<DeviceKeysTable keys={[{ ...KEY, reapproval: true, ecdh_jkt: 'j' }]} onChange={vi.fn()} />)
-    expect(screen.getByTestId('device-key-reapproval-k1').textContent).toBe('re-approval: encryption key added')
+  it('says plainly that a new machine waits for your approval, and what approving does', () => {
+    render(<DeviceKeysTable keys={[KEY]} onChange={vi.fn()} />)
+    expect(screen.getByTestId('device-key-status-k1').textContent).toMatch(/^Waiting for your approval — approving gives it a copy/)
+  })
+
+  it('one line per machine: which one, where its key lives, what it can open', () => {
+    const mac = { ...KEY, status: 'active' as const, runner_name: 'acedimagi-mbp-cdp',
+      runner_host: 'acedimagi@Jonathans-MacBook-Pro.local', approved_by_email: 'jj@dimagi.com',
+      can_open: [{ slug: 'hal', name: 'Hal' }, { slug: 'eva', name: 'Eva' }] }
+    const cloud = { ...KEY, id: 'k2', status: 'active' as const, kind: 'aws-iam' as const, runner_name: 'cloud-ec2-2',
+      runner_host: 'cloud-ec2-2', runner_kind: 'cloud', ecdh_store: 'aws-kms', can_open: [{ slug: 'hal', name: 'Hal' }] }
+    render(<DeviceKeysTable keys={[mac, cloud]} onChange={vi.fn()} />)
+    expect(screen.getByTestId('device-key-line-k1').textContent).toBe(
+      'acedimagi-mbp-cdp — MacBook Pro, acedimagi account · key locked in the security chip · can open Hal, Eva')
+    expect(screen.getByTestId('device-key-line-k2').textContent).toBe(
+      'cloud-ec2-2 — AWS server · key held by AWS · can open Hal')
+    expect(screen.getByTestId('device-key-status-k1').textContent).toBe('Approved by jj@dimagi.com')
+    // No table, no key kinds or thumbprints on the page.
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/secure-enclave|aws-iam|abcdefghijkl/)
+  })
+
+  it('keeps revoked keys out of the way until asked for', () => {
+    const old = { ...KEY, id: 'k0', status: 'revoked' as const }
+    render(<DeviceKeysTable keys={[{ ...KEY, status: 'active' }, old]} onChange={vi.fn()} />)
+    expect(screen.queryByTestId('device-key-k0')).toBeNull()
+    fireEvent.click(screen.getByTestId('device-keys-show-revoked'))
+    expect(screen.getByTestId('device-key-status-k0').textContent).toMatch(/^Revoked/)
   })
 
   it('revokes after confirming', async () => {
@@ -107,7 +133,8 @@ describe('DeviceKeysTable', () => {
   it('keeps an EC2 box’s instance role on hover, not on the page (canopy-web#1549)', () => {
     const arn = 'arn:aws:iam::123456789012:role/canopy-runner'
     render(<DeviceKeysTable keys={[{ ...KEY, kind: 'aws-iam', label: '', role_arn: arn }]} onChange={vi.fn()} />)
-    expect(screen.getByText('aws-iam').getAttribute('title')).toBe(arn)
+    expect(screen.getByTestId('device-key-line-k1').getAttribute('title')).toBe(arn)
+    expect(screen.getByTestId('device-key-line-k1').textContent).toMatch(/AWS server · key kept on the server/)
     expect(screen.queryByText(/123456789012/)).toBeNull()
   })
 

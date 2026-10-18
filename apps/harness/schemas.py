@@ -1601,6 +1601,16 @@ class RunnerDeviceKeyIn(Schema):
     label: str = Field(default="", max_length=120)
     role_arn: str = Field(default="", max_length=300)
     proof: str = Field(default="", max_length=20000)
+    #: Where the ECDH private key lives ("secure-enclave", "tpm", "aws-kms",
+    #: "software"), for people to read on Settings. Self-reported; display only.
+    ecdh_store: str = Field(default="", max_length=16)
+
+
+class DeviceKeyAgentOut(Schema):
+    """An agent a device key can open right now, for people to read."""
+
+    slug: str
+    name: str
 
 
 class RunnerDeviceKeyCreatedOut(Schema):
@@ -1619,6 +1629,10 @@ class RunnerDeviceKeyOut(Schema):
     id: uuid.UUID
     runner: uuid.UUID
     runner_name: str
+    #: The runner's host (`user@machine`) and kind ("emdash", "cloud") — so a
+    #: person sees WHICH machine, not just the runner's name.
+    runner_host: str = ""
+    runner_kind: str = ""
     jkt: str
     kind: DeviceKeyKind
     label: str = ""
@@ -1644,3 +1658,8 @@ class RunnerDeviceKeyOut(Schema):
     #: On approve only: zero-knowledge agents the caller administers that this
     #: key now waits on a vault-key grant for (offer "Grant" right away).
     zk_pending_agents: list[str] = []
+    #: Where the box says its ECDH private key lives (see RunnerDeviceKeyIn).
+    ecdh_store: str = ""
+    #: On the list: agents the caller administers whose secrets this key can
+    #: open right now ("can open Hal, Eva").
+    can_open: list[DeviceKeyAgentOut] = []

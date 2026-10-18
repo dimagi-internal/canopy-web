@@ -19241,6 +19241,16 @@ export interface components {
             readonly created_at: string;
         };
         /**
+         * DeviceKeyAgentOut
+         * @description An agent a device key can open right now, for people to read.
+         */
+        readonly DeviceKeyAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
+        /**
          * RunnerDeviceKeyOut
          * @description A device key and its state. Public material only — there is no secret.
          */
@@ -19257,6 +19267,16 @@ export interface components {
             readonly runner: string;
             /** Runner Name */
             readonly runner_name: string;
+            /**
+             * Runner Host
+             * @default
+             */
+            readonly runner_host: string;
+            /**
+             * Runner Kind
+             * @default
+             */
+            readonly runner_kind: string;
             /** Jkt */
             readonly jkt: string;
             /**
@@ -19327,6 +19347,16 @@ export interface components {
              * @default []
              */
             readonly zk_pending_agents: readonly string[];
+            /**
+             * Ecdh Store
+             * @default
+             */
+            readonly ecdh_store: string;
+            /**
+             * Can Open
+             * @default []
+             */
+            readonly can_open: readonly components["schemas"]["DeviceKeyAgentOut"][];
         };
         /**
          * AgentCredentialAlertOut
@@ -24977,6 +25007,11 @@ export interface components {
              * @default
              */
             readonly proof: string;
+            /**
+             * Ecdh Store
+             * @default
+             */
+            readonly ecdh_store: string;
         };
         /**
          * RunnerSessionOut
@@ -25046,6 +25081,11 @@ export interface components {
              * @default
              */
             readonly proof: string;
+            /**
+             * Ecdh Store
+             * @default
+             */
+            readonly ecdh_store: string;
             /** Owner Token */
             readonly owner_token: string;
         };

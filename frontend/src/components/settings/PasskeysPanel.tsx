@@ -74,14 +74,60 @@ export function PasskeysPanel() {
     }
   }
 
+  const synced = (keys ?? []).some((k) => k.backed_up)
   return (
-    // A row of the Security card: how you confirm it's you (Touch ID, a
-    // device PIN, a phone, a security key). One confirmation covers 5 minutes.
-    <div id="passkeys" className="space-y-3" data-testid="settings-passkeys">
+    // A row of the Security card: what your passkey is for, then each one as
+    // one plain line. Adding another is tucked below — most people need one.
+    <div id="passkeys" className="space-y-2" data-testid="settings-passkeys">
+      <p className="text-xs text-muted-foreground" data-testid="passkeys-explain">
+        <span className="text-foreground">Your passkey</span>
+        {synced ? ' (saved in your password manager)' : ''} — confirms it&rsquo;s you and unlocks your agents&rsquo;
+        secrets in this browser.
+      </p>
 
-      {!supported ? (
-        <p className="text-sm text-destructive">This browser does not support passkeys.</p>
-      ) : keys !== null && keys.length > 0 && !adding ? (
+      {!supported && <p className="text-sm text-destructive">This browser does not support passkeys.</p>}
+
+      {keys === null ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : keys.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No passkeys yet.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {keys.map((k) => (
+            <li key={k.id} className="flex items-start justify-between gap-3 py-1.5" data-testid={`passkey-${k.id}`}>
+              <div className="min-w-0 text-[13px]">
+                <p className="text-foreground">
+                  {k.label || 'passkey'}
+                  {sealedBy?.has(k.credential_id) && (
+                    <span className="ml-2 text-success" data-testid={`passkey-unlocks-vault-${k.id}`}>
+                      opens your agents&rsquo; secrets ✓
+                    </span>
+                  )}
+                </p>
+                <p className="text-[12px] text-muted-foreground">
+                  {k.backed_up ? 'In your password manager (synced)' : 'On this device only'} · added{' '}
+                  {k.created_at.slice(0, 10)} · {k.last_used_at ? `last used ${relativeAge(k.last_used_at)}` : 'never used'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void onDelete(k)}
+                disabled={busy}
+                className="shrink-0 text-[12px] text-destructive hover:underline disabled:opacity-40"
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {sealedBy !== null && hasPassphrase && (
+        <p className="text-xs text-muted-foreground" data-testid="passkeys-vault-status">
+          Your passphrase and Secret Key also open your agents&rsquo; secrets.
+        </p>
+      )}
+
+      {!supported ? null : keys !== null && keys.length > 0 && !adding ? (
         <button type="button" onClick={() => setAdding(true)} className="text-xs text-primary hover:underline"
                 data-testid="passkey-add-another">
           Add another passkey
@@ -100,54 +146,6 @@ export function PasskeysPanel() {
         </form>
       )}
       {error && <p className="text-sm text-destructive">{error}</p>}
-
-      {keys === null ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : keys.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No passkeys yet.</p>
-      ) : (
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-left text-muted-foreground">
-              <th className="py-1 font-medium">Passkey</th>
-              <th className="py-1 font-medium">Added</th>
-              <th className="py-1 font-medium">Last used</th>
-              <th className="py-1 font-medium">Kind</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {keys.map((k) => (
-              <tr key={k.id} className="border-t border-border" data-testid={`passkey-${k.id}`}>
-                <td className="py-1.5 text-foreground-secondary">
-                  {k.label || 'passkey'}
-                  {sealedBy?.has(k.credential_id) && (
-                    <span className="ml-2 text-success" data-testid={`passkey-unlocks-vault-${k.id}`}>Unlocks your vault ✓</span>
-                  )}
-                </td>
-                <td className="py-1.5 text-muted-foreground">{k.created_at.slice(0, 10)}</td>
-                <td className="py-1.5 text-muted-foreground">{k.last_used_at ? relativeAge(k.last_used_at) : 'never'}</td>
-                <td className="py-1.5 text-muted-foreground">{k.backed_up ? 'synced' : 'this device only'}</td>
-                <td className="py-1.5 text-right">
-                  <button
-                    type="button"
-                    onClick={() => void onDelete(k)}
-                    disabled={busy}
-                    className="text-destructive hover:underline disabled:opacity-40"
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {sealedBy !== null && hasPassphrase && (
-        <p className="text-xs text-muted-foreground" data-testid="passkeys-vault-status">
-          Your passphrase and Secret Key also unlock your vault.
-        </p>
-      )}
     </div>
   )
 }

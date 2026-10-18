@@ -1305,6 +1305,9 @@ def enroll_aws_device_key(runner_id: str) -> dict:
                    "proof": aws_proof(BASE_URL + path, creds=creds)}
         if ecdh:
             payload["ecdh_public_jwk"] = ecdh["jwk"]
+            # Where its private half lives ("aws-kms" or "software"), so Settings
+            # can say "key held by AWS". Display only.
+            payload["ecdh_store"] = ecdh.get("kind", "")
         status, body = _api("POST", "/", payload, prefix="/api/runner-device-keys")
     except Exception as exc:  # noqa: BLE001 — never take the runner down over its key
         _log(f"device key: aws-iam enrollment failed ({exc.__class__.__name__}: {exc})")
