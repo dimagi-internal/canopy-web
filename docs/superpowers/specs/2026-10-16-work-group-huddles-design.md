@@ -1,6 +1,6 @@
 # Work-group huddles on a multi-player project foundation
 
-**Date:** 2026-10-16 · **Status:** approved (Jonathan) · **Owner:** Ada
+**Date:** 2026-10-16 · **Status:** approved (Jonathan); layer 3 superseded by `2026-10-17-project-check-ins-design.md` · **Owner:** Ada
 
 ## What Jonathan asked for
 
