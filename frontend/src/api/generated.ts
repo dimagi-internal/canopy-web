@@ -3430,6 +3430,33 @@ export interface paths {
         readonly patch: operations["set_turn_mode"];
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/repository": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Point an agent at its GitHub repository
+         * @description Set the repository (and optionally the branch) its runners clone and run —
+         *     the one field the setup checklist's first step asks for, without the create
+         *     wizard. A github.com URL in any spelling; stored as `https://github.com/owner/repo`.
+         *
+         *     The agent's owner or an admin (`_agent_for_admin`): the repo is what a box
+         *     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
+         *     cloud boxes that take its turns are asked to re-run their bootstrap, as a
+         *     repo change through the upsert does.
+         */
+        readonly patch: operations["set_repository"];
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/credential-source": {
         readonly parameters: {
             readonly query?: never;
@@ -17012,6 +17039,19 @@ export interface components {
             readonly turn_mode: "manual" | "auto";
         };
         /**
+         * RepositoryIn
+         * @description Point an agent at its GitHub repository — the code its runners clone.
+         */
+        readonly RepositoryIn: {
+            /** Repo Url */
+            readonly repo_url: string;
+            /**
+             * Repo Ref
+             * @default
+             */
+            readonly repo_ref: string;
+        };
+        /**
          * CredentialSourceIn
          * @description Choose where `canopy cred` resolves this agent's secrets from (canopy#850).
          *
@@ -22088,6 +22128,15 @@ export interface components {
             readonly open_tasks: number;
             /** Waiting Tasks */
             readonly waiting_tasks: number;
+            /** Active Sessions */
+            readonly active_sessions: number;
+            /** Last Session At */
+            readonly last_session_at?: string | null;
+            /**
+             * Recent Sessions
+             * @default []
+             */
+            readonly recent_sessions: readonly components["schemas"]["HealthSessionOut"][];
             /**
              * Created At
              * Format: date-time
@@ -22130,6 +22179,22 @@ export interface components {
             readonly zero_knowledge: boolean;
             /** Machines Waiting */
             readonly machines_waiting: readonly string[];
+        };
+        /** HealthSessionOut */
+        readonly HealthSessionOut: {
+            /** Id */
+            readonly id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * At
+             * Format: date-time
+             */
+            readonly at: string;
+            /** Active */
+            readonly active: boolean;
         };
         /** HealthStepOut */
         readonly HealthStepOut: {
@@ -32689,6 +32754,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["TurnModeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
+    readonly set_repository: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RepositoryIn"];
             };
         };
         readonly responses: {

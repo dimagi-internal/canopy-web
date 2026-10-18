@@ -875,3 +875,13 @@ export async function recordEngagementView(
   const body = 'project' in target ? { project: target.project, huddle_id: '' } : { huddle_id: target.huddle_id }
   await apiV2.POST('/api/engagement/view', { ...pin(target.workspace), body })
 }
+
+// Point an agent at its GitHub repository (owner or admin) — the one field the
+// setup checklist's first step asks for, without the create wizard.
+export async function setAgentRepository(slug: string, repoUrl: string, repoRef = ''): Promise<AgentDetailOut> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/repository', {
+    params: { path: { slug } },
+    body: { repo_url: repoUrl, repo_ref: repoRef },
+  })
+  return normalizeAgentDetail(unwrap(res, 'setAgentRepository'))
+}

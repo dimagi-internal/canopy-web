@@ -11,7 +11,6 @@ import datetime as dt
 import uuid
 
 from django.db.models import Max
-from django.db.models.functions import Coalesce
 
 from django.conf import settings
 from django.http import Http404, HttpRequest
@@ -377,7 +376,7 @@ def _filtered_sessions(
     `_opening` annotated. Unordered — each route orders it its own way. The
     list and the search route share it so a filter (and, above all, the
     delegated-app scoping) cannot exist on one and not the other."""
-    from django.db.models import Max, Q
+    from django.db.models import Q
 
     if state not in ("active", "archived", "all"):
         raise HttpError(422, "state must be one of: active, archived, all")
@@ -468,11 +467,9 @@ def _filtered_sessions(
             rows = rows.filter(session_activity.filter_q(branch=branch, pr=pr))
         except ValueError as exc:
             raise HttpError(422, str(exc)) from exc
-    rows = services.with_opening(rows.annotate(_last_msg_at=Max("messages__created_at"))).distinct()
-    # The SAME rule as services.last_activity_at (binding > newest message >
-    # created), in SQL, so a window and a cursor can be applied to it.
-    rows = rows.annotate(_activity=Coalesce(
-        "runner_binding__last_interacted_at", "_last_msg_at", "created_at"))
+    # `_activity` is services.last_activity_at's rule in SQL, so a window and a
+    # cursor can be applied to it.
+    rows = services.with_activity(services.with_opening(rows)).distinct()
     if since is not None:
         rows = rows.filter(_activity__gte=_aware(since))
     if until is not None:

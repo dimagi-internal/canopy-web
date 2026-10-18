@@ -112,13 +112,14 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
           <span>Open a row for each step and its fix.</span>
         </p>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-agents">
+          <table className="w-full min-w-[1180px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-agents">
             <thead className="text-left text-muted-foreground">
               <tr>
                 <th className="py-1 font-medium">Agent</th><th className="font-medium">Setup</th>
                 <th className="font-medium">Vault</th><th className="font-medium">Owner</th>
                 <th className="font-medium">Workspace</th><th className="font-medium">Last turn</th>
                 <th className="font-medium text-right">Turns, 30 days</th>
+                <th className="font-medium" title="Open sessions, and when any of its sessions last did something">Sessions</th>
                 <th className="font-medium text-right">Projects</th>
                 <th className="font-medium text-right" title="Suggested or in progress">Open tasks</th>
                 <th className="font-medium text-right" title="Open tasks with an unanswered ask, or parked on a person">Waiting on people</th>
@@ -153,6 +154,10 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                     <td className="font-mono text-foreground-secondary">{a.workspace}</td>
                     <td className="text-foreground-secondary">{a.last_turn_at ? relativeTime(a.last_turn_at, now) : 'never'}</td>
                     <td className="text-right tabular-nums">{a.turns_30d}</td>
+                    <td className="whitespace-nowrap text-foreground-secondary">
+                      {a.active_sessions ? <span className="text-foreground">{a.active_sessions} open</span> : '0 open'}
+                      {a.last_session_at && <span className="text-muted-foreground"> · {relativeTime(a.last_session_at, now)}</span>}
+                    </td>
                     <td className="text-right tabular-nums">
                       <CountLink n={a.projects} to={`/w/${a.workspace}/agents/${a.slug}`} label="projects" />
                     </td>
@@ -172,7 +177,7 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                     </td>
                   </tr>
                   {open === a.slug && (
-                    <tr><td colSpan={14} className="bg-muted/30 p-3"><AgentDetail agent={a} /></td></tr>
+                    <tr><td colSpan={15} className="bg-muted/30 p-3"><AgentDetail agent={a} /></td></tr>
                   )}
                 </Fragment>
               ))}
@@ -267,7 +272,34 @@ function AgentDetail({ agent }: { agent: AgentHealthOut }): JSX.Element {
         {v.machines_waiting.length > 0 && (
           <p className="mt-2 text-muted-foreground">Waiting to be let in: {v.machines_waiting.join(', ')}</p>
         )}
+        <RecentSessions agent={agent} />
       </div>
+    </div>
+  )
+}
+
+/** Its latest sessions — only those the viewer may open (the server filters). */
+function RecentSessions({ agent }: { agent: AgentHealthOut }): JSX.Element {
+  const now = new Date()
+  return (
+    <div className="mt-4 border-t border-border pt-3" data-testid="recent-sessions">
+      <p className="mb-1 font-semibold text-foreground">Latest sessions</p>
+      {agent.recent_sessions.length === 0
+        ? <p className="text-muted-foreground">{agent.last_session_at ? 'None you can open.' : 'None yet.'}</p>
+        : (
+          <ul className="space-y-1">
+            {agent.recent_sessions.map((s) => (
+              <li key={s.id} className="flex items-baseline justify-between gap-2">
+                <Link to={`/w/${s.workspace}/chat/${s.id}`} className="min-w-0 truncate text-primary hover:underline">
+                  {s.title || 'Untitled session'}
+                </Link>
+                <span className="shrink-0 text-muted-foreground">
+                  {s.active && <span className="mr-1 text-success">open ·</span>}{relativeTime(s.at, now)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
     </div>
   )
 }

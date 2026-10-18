@@ -339,3 +339,62 @@ def test_health_counts_projects_open_tasks_and_waits_like_the_agent_pages(tree):
     row = next(a for a in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["agents"] if a["slug"] == "hal")
     assert (row["projects"], row["open_tasks"], row["waiting_tasks"]) == (1, 2, 1)
     assert (row["has_interface"], row["capabilities"]) == (True, 1)
+
+
+def test_health_shows_open_sessions_and_only_the_latest_ones_the_viewer_may_open(tree):
+    from apps.canopy_sessions.models import Session
+
+    hal = tree["hal"]
+    Session.objects.create(workspace_id="connect", agent=hal, created_by=tree["builder"], title="builder's chat")
+    Session.objects.create(workspace_id="connect", agent=hal, created_by=tree["builder"], title="old",
+                           status=Session.ARCHIVED)
+    body = _get(tree["builder"], "/api/workspaces/connect/health")
+    # The builder is an editor of connect: health is the admin tier.
+    assert body.status_code in (403, 404)
+    row = next(a for a in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["agents"] if a["slug"] == "hal")
+    assert row["active_sessions"] == 1 and row["last_session_at"] is not None
+    from apps.canopy_sessions import access
+
+    readable = set(access.readable_sessions(tree["ceo"]).filter(agent=hal).values_list("title", flat=True))
+    assert {s["title"] for s in row["recent_sessions"]} == readable & {"builder's chat", "old"}
+    assert all(s["active"] == (s["title"] == "builder's chat") for s in row["recent_sessions"])
+
+
+# ---- fixing one field: the repository ----------------------------------------
+
+
+def _patch(user, path, body):
+    c = Client()
+    c.force_login(user)
+    return c.patch(path, data=json.dumps(body), content_type="application/json")
+
+
+def test_the_repository_step_links_to_its_own_field_not_the_create_wizard(tree):
+    muse = Agent.objects.create(slug="muse", name="Muse", workspace_id="dimagi")
+    step = next(s for s in setup_steps(muse) if s["key"] == "repo")
+    assert step["href"] == "/w/dimagi/agents/muse/settings#repository"
+    assert step["action"] == "Set its repository" and "agents/new" not in step["href"]
+    # And an ownerless agent's GitHub step says so, rather than "its owner, its owner".
+    github = next(s for s in setup_steps(muse) if s["key"] == "github")
+    assert "its owner, its owner" not in github["detail"] and github["href"].endswith("#operators")
+
+
+def test_an_admin_sets_just_the_repository_and_it_is_audited(tree):
+    from apps.events.models import SettingChange
+
+    muse = Agent.objects.create(slug="muse", name="Muse", workspace_id="dimagi", owner=tree["ceo"])
+    r = _patch(tree["ceo"], "/api/agents/muse/repository", {"repo_url": "git@github.com:dimagi/muse.git"})
+    assert r.status_code == 200, r.content
+    muse.refresh_from_db()
+    assert muse.repo_url == "https://github.com/dimagi/muse"
+    assert next(s for s in setup_steps(muse) if s["key"] == "repo")["status"] == "done"
+    change = SettingChange.objects.get(operation="set_repository")
+    assert change.changes[0]["after"]["repo_url"] == "https://github.com/dimagi/muse"
+
+
+def test_only_its_admins_set_the_repository_and_only_to_github(tree):
+    Agent.objects.create(slug="muse", name="Muse", workspace_id="dimagi", owner=tree["ceo"])
+    assert _patch(tree["staff"], "/api/agents/muse/repository",
+                  {"repo_url": "https://github.com/x/evil"}).status_code == 403
+    assert _patch(tree["ceo"], "/api/agents/muse/repository",
+                  {"repo_url": "https://gitlab.com/x/y"}).status_code == 422

@@ -220,8 +220,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `apps/agents/vault_health.py`) and properties — active projects, open tasks
   (`AgentTask.LIVE_STATUSES`) and those waiting on a person (`services.waiting_q`),
   each linking to the agent's page; who can use it (admins only, or the
-  capabilities its interface publishes) and its turn mode; every workspace's
-  shared vault.
+  capabilities its interface publishes) and its turn mode; open sessions and
+  last session activity (`staleness.active`, `services.with_activity`) with its
+  latest sessions the viewer may open (`access.readable_sessions`); every
+  workspace's shared vault.
   An agent's row opens its steps — linked when the viewer is its owner or an admin
   (`can_fix`), else an email to the owner listing what is left. Renders, never decides.
 - **`/analytics`** — the second tab of Health (same gate). Turns, how they ended,

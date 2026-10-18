@@ -14,6 +14,8 @@ function agent(slug: string, over: Partial<AgentHealthOut> = {}): AgentHealthOut
     slug, name: slug.toUpperCase(), workspace: 'connect', owner_email: `${slug}@x.org`, can_fix: true, email: '',
     repo_url: '', turn_mode: 'manual', has_interface: false, capabilities: 0, skills: 2, schedules: 0,
     projects: 1, open_tasks: 3, waiting_tasks: 1, created_at: '2026-10-01T00:00:00Z',
+    active_sessions: 1, last_session_at: '2026-10-17T00:00:00Z',
+    recent_sessions: [{ id: 's1', workspace: 'connect', title: `${slug} chat`, at: '2026-10-17T00:00:00Z', active: true }],
     last_turn_at: null, turns_30d: 0, left: 1,
     vault: { source: 'canopy-web', state: 'moving', declared: 2, refs: [{ name: 'gh', status: 'stored' }, { name: 'old', status: '1password' }],
       stored: ['gh'], in_1password: ['old'], missing: [], op_vault: '', op_key_set: false, zero_knowledge: true, machines_waiting: [] },
@@ -66,6 +68,9 @@ describe('WorkspaceHealthPage', () => {
     expect(screen.getAllByRole('link', { name: '1 projects' })[0].getAttribute('href')).toBe('/w/connect/agents/hal')
     expect(screen.getAllByText('Admins only').length).toBe(3)
     expect(screen.getAllByText('Manual · asks first').length).toBe(3)
+    expect(screen.getAllByText('1 open').length).toBe(3)
+    fireEvent.click(screen.getByText('HAL'))
+    expect(screen.getByRole('link', { name: 'hal chat' }).getAttribute('href')).toBe('/w/connect/chat/s1')
   })
 
   it('links the fix when the viewer may make it, and offers the owner an email when not', async () => {

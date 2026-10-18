@@ -42,14 +42,17 @@ def _step(key, title, status, detail, *, where="web", href="", action="", comman
 
 def _github(agent: Agent, settings: str) -> dict:
     verdict, detail = delegations.readiness(agent)
-    owner = agent.owner.email if agent.owner_id else "its owner"
+    owner = agent.owner.email if agent.owner_id else ""
     return _step(
         "github", "Lend it a GitHub identity",
         DONE if verdict in ("ok", "warn") else TODO,
         detail[:1].upper() + detail[1:] if verdict != "fail" else
-        f"Its turns push code and open pull requests as its owner, {owner}. Only the owner "
-        "can add that GitHub token.",
-        href=f"{settings}#credentials", action="Add a GitHub token")
+        (f"Its turns push code and open pull requests as its owner, {owner}. Only the owner "
+         "can add that GitHub token.") if agent.owner_id else
+        "Its turns push code and open pull requests as its owner, and it has none. A workspace "
+        "owner gives it one under People and roles; then the owner adds the GitHub token.",
+        href=f"{settings}#credentials" if agent.owner_id else f"{settings}#operators",
+        action="Add a GitHub token" if agent.owner_id else "Give it an owner")
 
 
 def _mailbox(agent: Agent, settings: str) -> dict:
@@ -271,11 +274,14 @@ def setup_steps(agent: Agent) -> list[dict]:
     settings = f"{base}/settings"
     repo = delegations.agent_repo(agent)
     return [
-        _step("repo", "Create its repository", DONE if agent.repo_url else TODO,
+        _step("repo", "Give it a repository", DONE if agent.repo_url else TODO,
               f"Code lives in {repo or agent.repo_url}." if agent.repo_url else
-              "It has no repository, so a runner has nothing to run.",
-              href=agent.repo_url or f"/w/{agent.workspace_id}/agents/new",
-              action="Open on GitHub" if agent.repo_url else "Create it"),
+              "It has no repository, so a runner has nothing to run. Point it at the one "
+              "it already has, or make an empty one on GitHub first.",
+              # Its own field on Settings — never the create wizard, which makes a
+              # whole new agent.
+              href=agent.repo_url or f"{settings}#repository",
+              action="Open on GitHub" if agent.repo_url else "Set its repository"),
         _github(agent, settings),
         _mailbox(agent, settings),
         _vault(agent, settings),

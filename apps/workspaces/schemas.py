@@ -467,6 +467,15 @@ class AgentVaultHealthOut(StrictModel):
     machines_waiting: list[str]
 
 
+class HealthSessionOut(StrictModel):
+    id: str
+    workspace: str
+    title: str
+    at: dt.datetime
+    # Still open (`state=active`).
+    active: bool
+
+
 class AgentHealthOut(StrictModel):
     slug: str
     name: str
@@ -491,6 +500,12 @@ class AgentHealthOut(StrictModel):
     projects: int
     open_tasks: int
     waiting_tasks: int
+    # Open sessions (the chat list's `state=active`) and when any of its sessions
+    # last did something — over all its sessions.
+    active_sessions: int
+    last_session_at: dt.datetime | None = None
+    # Its latest sessions, only those the viewer may open.
+    recent_sessions: list[HealthSessionOut] = []
     created_at: dt.datetime
     last_turn_at: dt.datetime | None = None
     turns_30d: int
