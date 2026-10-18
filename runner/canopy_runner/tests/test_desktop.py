@@ -297,6 +297,7 @@ def _live_channel(cfg, tmp_path, sid="sid-5") -> Path:
     wt = tmp_path / "wt-stop"
     ch = wt / desktop.CHANNEL
     ch.mkdir(parents=True)
+    (ch / "seeded").write_text(sid)
     (ch / "alive").write_text(str(int(time.time() * 1000)))
     desktop._remember(cfg, sid, wt, "scratch")
     return ch
@@ -407,6 +408,7 @@ def test_desktop_sessions_join_the_session_report(cfg, tmp_path, monkeypatch):
     live = tmp_path / "wt-live"
     ch = live / desktop.CHANNEL
     ch.mkdir(parents=True)
+    (ch / "seeded").write_text("sid-live")
     (ch / "alive").write_text(str(int(time.time() * 1000)))
     t = int(time.time() * 1000)
     (ch / f"ev-{t}-1-turn.start.json").write_text(json.dumps({"t": t, "kind": "turn.start"}))

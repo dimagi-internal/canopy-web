@@ -282,6 +282,22 @@ export function transferSession(id: string, runner: string, brief = ""): Promise
   });
 }
 
+/**
+ * Start a new session from this one's conversation up to the end of the turn
+ * `turnIndex` belongs to, on the same runner and in the same worktree.
+ *
+ * Throws `ChatApiError`: 422 when the session cannot be forked (its runner is not
+ * on the Claude CLI runtime, or the message predates a transfer), 409 when the cut
+ * would fall inside a turn that is still running, 404 for an unknown message.
+ */
+export function forkSession(id: string, turnIndex: number): Promise<ChatSession> {
+  return request<ChatSession>(`/api/canopy-sessions/${encodeURIComponent(id)}/fork`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ turn_index: turnIndex }),
+  });
+}
+
 export type CloseResult = { ok: boolean; closing: boolean; reason: string };
 
 /**

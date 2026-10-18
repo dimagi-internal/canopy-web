@@ -249,14 +249,16 @@ def close(cfg, sid: str) -> str:
     if not entry or entry.get("closed_at"):
         return "absent"
     wt = Path(entry.get("worktree", ""))
-    if wt.exists() and channel_alive(wt / CHANNEL):
+    if wt.exists() and channel_held_for(wt / CHANNEL, sid):
         try:
             res = stop(cfg, sid)
             logger.info("desktop close %s: stop -> %s", sid, res.get("action"))
         except Exception:  # noqa: BLE001 — a failed stop must not keep it open
             logger.warning("desktop close %s: stop failed; closing anyway", sid, exc_info=True)
     _mark_closed(cfg, sid)
-    if wt.exists():
+    if wt.exists() and _shared_worktree(cfg, wt):
+        logger.info("desktop close %s: worktree %s kept (another open session uses it)", sid, wt)
+    elif wt.exists():
         # The runtime's own files are excluded from status (make_worktree), so
         # anything listed is the session's work. A status that FAILED (not a
         # checkout, a broken one) prints nothing too — it vouches for nothing, so
@@ -274,6 +276,40 @@ def close(cfg, sid: str) -> str:
             logger.info("desktop close %s: worktree %s (branch kept)", sid,
                         "removed" if not wt.exists() else "could not be removed")
     return "closed"
+
+
+def _shared_worktree(cfg, wt: Path) -> bool:
+    """Another open session runs in `wt` (a fork and its source share one)."""
+    return any(not e.get("closed_at") and Path(e.get("worktree", "")) == wt
+               for e in _index(cfg).values())
+
+
+class ForkError(RuntimeError):
+    """A fork could not be cut on this box; the message says why."""
+
+
+def fork_session(cfg, source: str, records: int, project: str) -> str:
+    """Start a new Claude CLI session from the first `records` records of `source`'s
+    transcript, in the same worktree, and return its id. Records are counted as
+    canopy_transcript.read_records counts them, which is how canopy-web's ordinals
+    count them. The copy sits beside the source (same cwd, same project directory),
+    so resuming it from the worktree finds it."""
+    from canopy_transcript import read_records
+
+    wt = worktree_for(cfg, source)
+    if wt is None or not is_cli_session(cfg, source):
+        raise ForkError(f"session {source} is not a Claude CLI session with a worktree on this box")
+    src = transcript_path(source)
+    if src is None:
+        raise ForkError(f"session {source} has no transcript on this box")
+    kept = read_records(src)[:records]
+    if len(kept) < records:
+        raise ForkError(f"session {source}'s transcript has {len(kept)} records, not {records}")
+    sid = str(uuid.uuid4())
+    lines = [json.dumps({**r, "sessionId": sid} if "sessionId" in r else r) for r in kept]
+    (src.parent / f"{sid}.jsonl").write_text("".join(f"{line}\n" for line in lines))
+    _remember(cfg, sid, wt, project, runtime=CLAUDE_CLI)
+    return sid
 
 
 def transcript_path(sid: str, claude_home: Path | None = None) -> Path | None:
@@ -634,6 +670,16 @@ def channel_alive(channel: Path) -> bool:
         return False
 
 
+def channel_held_for(channel: Path, sid: str) -> bool:
+    """The app's process holds THIS session's channel. A worktree can hold more than
+    one session (a fork shares its source's), and the channel is the one seeded
+    for — so another session's live process is not this one's."""
+    try:
+        return channel_alive(channel) and (channel / "seeded").read_text().strip() == sid
+    except OSError:
+        return False
+
+
 def read_events(channel: Path) -> list[dict]:
     evs = []
     for p in channel.glob("ev-*.json"):
@@ -672,7 +718,7 @@ def stop(cfg, session_key: str, wait: float = STOP_WAIT_SECONDS) -> dict:
     if wt is None:
         return {"action": "unreadable", "reason": "no worktree for this desktop session"}
     channel = wt / CHANNEL
-    if not channel_alive(channel):
+    if not channel_held_for(channel, session_key):
         return {"action": "idle", "reason": "the session's process is not running"}
     # Kill the running turn's shells FIRST, then abort. The other order leaves the
     # command backgrounded by the abort, and killing a BACKGROUND task makes Claude
@@ -804,7 +850,7 @@ def _agent_status(channel: Path, sid: str = "") -> str:
     runs, `awaiting-input` when it raised a permission ask since that turn
     started, "" when idle or the session's process is down. A Claude CLI session
     with a turn running headless is `working`."""
-    if not channel_alive(channel):
+    if not (channel_held_for(channel, sid) if sid else channel_alive(channel)):
         from . import headless
 
         return "working" if sid and headless.is_running(sid) else ""
@@ -904,6 +950,9 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
                                   project=turn.get("project") or "",
                                   workspace=turn.get("workspace_slug") or "")
     key = plan.get("emdash_task_id") if plan.get("reuse") else ""
+    fork = plan.get("fork") if not key else None
+    if fork:
+        return _start_fork(cfg, client, runner_id, turn, thread_key, plan, fork)
     if key and (_index(cfg).get(key) or {}).get("closed_at"):
         # The thread's session was closed from the web: start a new DESKTOP
         # session, not hand an id emdash never had to the emdash backend.
@@ -930,6 +979,29 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
         IN_FLIGHT[str(turn["id"])] = th
     th.start()
     return f"desktop:{'reuse' if key else 'create'}:{turn['id']}"
+
+
+def _start_fork(cfg, client, runner_id: str, turn: dict, thread_key: str, plan: dict,
+                fork: dict) -> str:
+    """A forked chat's first turn: cut its transcript, point its thread at the new
+    session, and run the turn there as a resume. A fork that cannot be cut fails the
+    turn, saying why — never a fresh session that has lost the conversation."""
+    target = turn.get("agent_slug") or turn.get("project") or ""
+    try:
+        sid = fork_session(cfg, fork["session_key"], int(fork["records"]), target)
+    except ForkError as exc:
+        client.fail_turn(str(turn["id"]), f"Could not fork: {exc}")
+        return f"desktop:fork-failed:{turn['id']}"
+    client.record_session(
+        runner_id, turn.get("agent_slug") or "", thread_key,
+        project=turn.get("project") or "", workspace=turn.get("workspace_slug") or "",
+        emdash_task_id=sid, session_id=sid, summary=None)
+    run = TurnRun(cfg, client, runner_id, turn, thread_key, plan, reuse=sid)
+    th = threading.Thread(target=run.run, daemon=True, name=f"desktop-{str(turn['id'])[:8]}")
+    with _lock:
+        IN_FLIGHT[str(turn["id"])] = th
+    th.start()
+    return f"desktop:fork:{turn['id']}"
 
 
 def _adapter_missing() -> bool:
@@ -1063,7 +1135,7 @@ class TurnRun:
             channel = wt / CHANNEL
             path = transcript_path(sid)
             offset = path.stat().st_size if path else 0
-            if channel_alive(channel):
+            if channel_held_for(channel, sid):
                 # The person opened it in the app: its process owns the session.
                 n = next_followup_index(channel)
                 (channel / f"fu-{n}.txt").write_text(prompt)

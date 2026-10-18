@@ -9549,6 +9549,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/fork": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Fork a session from a message
+         * @description Start a new session from this one's conversation up to the end of the turn
+         *     `turn_index` belongs to. The new session runs on the same runner, in the same
+         *     worktree, so both see the same files. Its own transcript is cut on the runner
+         *     when its first message is sent; until then it holds a copy of the history.
+         *
+         *     Needs a runner on the Claude CLI runtime (422 otherwise). 404 for an unknown
+         *     message; 409 when the cut would fall inside a turn that is still running.
+         */
+        readonly post: operations["fork_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/transfer": {
         readonly parameters: {
             readonly query?: never;
@@ -20430,20 +20456,11 @@ export interface components {
         };
         /**
          * ForkIn
-         * @description Fork a run at a step boundary.
+         * @description Body for POST /{session_id}/fork.
          */
         readonly ForkIn: {
-            /** At Step */
-            readonly at_step: string;
-            /**
-             * Mode
-             * @default keep-overrides-only
-             */
-            readonly mode: string;
-            /** Edits */
-            readonly edits?: {
-                readonly [key: string]: unknown;
-            };
+            /** Turn Index */
+            readonly turn_index: number;
         };
         /** RunDocOut */
         readonly RunDocOut: {
@@ -24685,6 +24702,13 @@ export interface components {
             /** Chat Key */
             readonly chat_key?: string | null;
         };
+        /** ForkPlanOut */
+        readonly ForkPlanOut: {
+            /** Session Key */
+            readonly session_key: string;
+            /** Records */
+            readonly records: number;
+        };
         /** ResolveSessionOut */
         readonly ResolveSessionOut: {
             /** Reuse */
@@ -24706,6 +24730,7 @@ export interface components {
              * @default
              */
             readonly busy: string;
+            readonly fork?: components["schemas"]["ForkPlanOut"] | null;
         };
         /** ResolveSessionIn */
         readonly ResolveSessionIn: {
@@ -40969,6 +40994,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TurnOutMinimal"];
+                };
+            };
+        };
+    };
+    readonly fork_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ForkIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionOut"];
                 };
             };
         };

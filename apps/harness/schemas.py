@@ -447,6 +447,13 @@ def adopt_legacy_session_key(model):
     return model
 
 
+class ForkPlanOut(Schema):
+    # The source's Claude session, and how many of its transcript records (as
+    # canopy_transcript.read_records counts them) the fork starts from.
+    session_key: str
+    records: int
+
+
 class ResolveSessionOut(Schema):
     reuse: bool
     new_thread: bool
@@ -459,6 +466,8 @@ class ResolveSessionOut(Schema):
     # Why reuse was refused although this runner owns the session: it is mid-turn
     # (another turn executing in it, or the engine reports it working). "" otherwise.
     busy: str = ""
+    # A forked chat with no Claude session yet: start it from a cut of another.
+    fork: ForkPlanOut | None = None
 
 
 class RecordSessionIn(Schema):

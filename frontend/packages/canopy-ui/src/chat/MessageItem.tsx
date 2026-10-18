@@ -181,6 +181,7 @@ export function MessageItem({
     // space on a phone (2026-09-24). Tables and code blocks keep their own
     // horizontal scroll; this only affects running text.
     <div
+      data-turn-index={message.turn_index}
       className={`my-2 min-w-0 max-w-[80%] rounded-2xl px-4 py-2 [overflow-wrap:anywhere] ${bubbleClass}`}
       aria-live={isStreaming || isPending ? "polite" : undefined}
     >
@@ -248,6 +249,7 @@ function SystemSeedRow({
     <details
       className="group my-2 mr-auto max-w-[80%] rounded-2xl border border-border bg-muted/40 px-3 py-1.5 text-sm"
       data-testid={testId}
+      data-turn-index={message.turn_index}
       {...(openProp !== undefined ? { open: openProp } : {})}
     >
       <summary className="flex cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-foreground select-none list-none [&::-webkit-details-marker]:hidden">

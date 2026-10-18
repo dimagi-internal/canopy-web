@@ -60,6 +60,7 @@ from .schemas import (
     PageStateOut,
     RunAgentInputIn,
     RunAgentInputOut,
+    ForkIn,
     PlaceIn,
     ResetIn,
     ResetOut,
@@ -1150,6 +1151,28 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return turn
+
+
+@router.post("/{session_id}/fork", response=SessionOut, summary="Fork a session from a message")
+def fork_session(request: HttpRequest, session_id: uuid.UUID, payload: ForkIn):
+    """Start a new session from this one's conversation up to the end of the turn
+    `turn_index` belongs to. The new session runs on the same runner, in the same
+    worktree, so both see the same files. Its own transcript is cut on the runner
+    when its first message is sent; until then it holds a copy of the history.
+
+    Needs a runner on the Claude CLI runtime (422 otherwise). 404 for an unknown
+    message; 409 when the cut would fall inside a turn that is still running."""
+    session = _session_or_404(request, session_id, write=True)
+    try:
+        fork = services.fork_session(session=session, turn_index=payload.turn_index,
+                                     user=request.user)
+    except LookupError as exc:
+        raise HttpError(404, str(exc))
+    except RuntimeError as exc:
+        raise HttpError(409, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _out(fork)
 
 
 @router.post(

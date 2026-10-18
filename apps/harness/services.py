@@ -1511,11 +1511,18 @@ def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = ""
     runner then creates a fresh session, as it does for one that is gone. A CHAT
     turn is exempt: its session IS the conversation, which claim already
     serializes and a rider (#1153) joins on purpose. Without `turn_id` (a runner
-    predating it) the answer is unchanged."""
+    predating it) the answer is unchanged.
+
+    `fork` ({session_key, records} or None) is set for a forked chat that has no
+    Claude session yet: the runner starts it from the first `records` records of
+    `session_key`'s transcript (`canopy_sessions.services.fork_session`)."""
+    from apps.canopy_sessions.services import pending_fork
+
+    fork = pending_fork(thread_key)
     binding = _binding_for_thread(agent, project, workspace, thread_key)
     if binding is None:
         return {"reuse": False, "session_key": "", "emdash_task_id": "", "agent_task_ext_id": "",
-                "summary": "", "link_id": None, "new_thread": True, "busy": ""}
+                "summary": "", "link_id": None, "new_thread": True, "busy": "", "fork": fork}
     reuse = binding.reusable_by(runner)
     busy = ""
     if reuse and turn_id is not None:
@@ -1533,6 +1540,7 @@ def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = ""
         "summary": binding.summary,
         "link_id": str(binding.session_id),
         "new_thread": False,
+        "fork": fork,
     }
 
 

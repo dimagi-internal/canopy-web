@@ -274,3 +274,75 @@ def test_drain_one_claims_on_claude_cli_with_emdash_down(cfg, tmp_path, monkeypa
     assert main_mod.drain_one(cfg, client) == "claimed"
     assert beats[0]["ready"] is True and beats[0]["projects"] == ["scratch"]
 
+
+# ── forking: a new session cut from another's transcript, in the same worktree ──
+
+def _source_with_transcript(cfg, runs, tmp_path, monkeypatch, records=6):
+    """A Claude CLI session `sid-new` whose transcript has `records` records."""
+    import json
+
+    _go(cfg, FakeClient(), _turn())
+    project_dir = tmp_path / "claude-projects" / "-wt"
+    project_dir.mkdir(parents=True)
+    src = project_dir / "sid-new.jsonl"
+    src.write_text("".join(json.dumps({"sessionId": "sid-new", "n": i}) + "\n" for i in range(records))
+                   + "not json\n")
+    monkeypatch.setattr(desktop, "transcript_path",
+                        lambda sid, claude_home=None: p if (p := project_dir / f"{sid}.jsonl").exists() else None)
+    return project_dir
+
+
+def test_a_forks_first_turn_cuts_the_transcript_and_resumes_the_cut(cfg, runs, tmp_path, monkeypatch):
+    import json
+
+    project_dir = _source_with_transcript(cfg, runs, tmp_path, monkeypatch)
+    client = FakeClient(plan={"reuse": False, "fork": {"session_key": "sid-new", "records": 4}})
+
+    _go(cfg, client, _turn(id="turn-2", prompt="try it the other way"))
+
+    fork_sid = client.of("record_session")[0][2]["session_id"]
+    assert fork_sid != "sid-new"
+    cut = [json.loads(line) for line in (project_dir / f"{fork_sid}.jsonl").read_text().splitlines()]
+    assert [r["n"] for r in cut] == [0, 1, 2, 3]
+    assert {r["sessionId"] for r in cut} == {fork_sid}
+    assert runs[-1] == {"prompt": "try it the other way", "cwd": runs[0]["cwd"], "resume": fork_sid}
+    index = desktop._index(cfg)
+    assert index[fork_sid]["worktree"] == index["sid-new"]["worktree"]
+    assert index[fork_sid]["runtime"] == desktop.CLAUDE_CLI
+    # The source keeps its transcript and its claim on the app channel.
+    assert len((project_dir / "sid-new.jsonl").read_text().splitlines()) == 7
+    channel = Path(index["sid-new"]["worktree"]) / desktop.CHANNEL
+    assert (channel / "seeded").read_text() == "sid-new"
+
+
+def test_a_fork_that_cannot_be_cut_fails_its_turn(cfg, runs, tmp_path, monkeypatch):
+    _source_with_transcript(cfg, runs, tmp_path, monkeypatch, records=2)
+    client = FakeClient(plan={"reuse": False, "fork": {"session_key": "sid-new", "records": 4}})
+
+    desktop.maybe_execute(cfg, client, "rid", _turn(id="turn-2"), "th")
+
+    assert "has 2 records, not 4" in client.of("fail_turn")[0][1][1]
+    assert len(runs) == 1 and not client.of("record_session")
+
+
+def test_a_fork_is_not_handed_to_the_app_holding_its_source(cfg, runs, tmp_path, monkeypatch):
+    _source_with_transcript(cfg, runs, tmp_path, monkeypatch)
+    channel = Path(desktop._index(cfg)["sid-new"]["worktree"]) / desktop.CHANNEL
+    (channel / "alive").write_text(str(int(time.time() * 1000)))  # the source is open in the app
+    client = FakeClient(plan={"reuse": False, "fork": {"session_key": "sid-new", "records": 4}})
+
+    _go(cfg, client, _turn(id="turn-2", prompt="fork prompt"))
+
+    assert not list(channel.glob("fu-*.txt"))
+    assert runs[-1]["resume"] == client.of("record_session")[0][2]["session_id"]
+
+
+def test_closing_a_fork_keeps_the_worktree_its_source_still_uses(cfg, runs, tmp_path, monkeypatch):
+    _source_with_transcript(cfg, runs, tmp_path, monkeypatch)
+    fork_sid = desktop.fork_session(cfg, "sid-new", 4, "scratch")
+    wt = Path(desktop._index(cfg)["sid-new"]["worktree"])
+
+    assert desktop.close(cfg, fork_sid) == "closed"
+    assert wt.exists()
+    assert desktop.close(cfg, "sid-new") == "closed"
+    assert not wt.exists()

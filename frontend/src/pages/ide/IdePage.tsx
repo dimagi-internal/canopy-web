@@ -759,7 +759,12 @@ export function IdePage() {
       )}
       <div className="ide-dense min-h-0 min-w-0 flex-1">
         {id ? (
-          <ChatPage key={id} compact onLeave={() => navigate('/ide', { replace: true })} />
+          <ChatPage
+            key={id}
+            compact
+            onLeave={() => navigate('/ide', { replace: true })}
+            sessionPath={(s) => `/ide/${encodeURIComponent(s.id)}`}
+          />
         ) : (
           <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
             Pick a session on the left.
