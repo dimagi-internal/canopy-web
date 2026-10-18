@@ -262,6 +262,7 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
     # retype blind: a message that lands late would then arrive twice. The only
     # retype is `_recover_delivery`'s, into a composer it has just seen empty.
     _TYPED_TURNS[turn_id] = time.monotonic()
+    _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=agent)
     if _undelivered(client, turn_id, task, verifier, work_prompt,
                     port=cfg.cdp_port, project=agent):
         caller.clear_pending(task)
@@ -389,6 +390,56 @@ RECOVERY_ATTEMPTS = 2
 #: prompt submitted into an idle session lands in a second or two, and the claim
 #: loop is blocked while we wait.
 RECOVERY_CONFIRM_TIMEOUT = 10.0
+#: How long recovery waits for a BUSY session to go idle before looking again.
+#: 2026-10-18 (turn 79313c1f, failure investigation 2 recurring): Jonathan's chat
+#: message to ACE was typed ~20s before a background-agent notification started a
+#: turn; at the look the composer was empty and Claude was running, so recovery
+#: left it and the message was lost. Busy is not a verdict, only "not yet": once
+#: the session is idle its queue has drained into the transcript, so a message
+#: still missing then was lost, and a retype cannot double it. Bounded because the
+#: claim loop waits with us; past it we fail as before.
+BUSY_WAIT_TIMEOUT = 180.0
+BUSY_WAIT_POLL = 3.0
+#: Look at the composer once right after the first send, as evidence of what it
+#: held when Enter went out. Nothing decides on it; it is posted on the turn so the
+#: next lost message shows whether the text was ever in the box.
+SNAPSHOT_AFTER_SEND = True
+
+
+def _snapshot_after_send(client, turn_id: str, task: str, *, port: int, project: str) -> None:
+    """Best-effort: post what the composer holds just after our Enter. Never raises."""
+    if not SNAPSHOT_AFTER_SEND:
+        return
+    try:
+        state = cdp_control.read_composer(task, port=port, project=project)
+    except Exception as exc:  # noqa: BLE001 — evidence only; never blocks delivery
+        state = {"found": False, "error": str(exc)[:200]}
+    _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
+        "status": "delivery_snapshot", "task": task, "found": bool(state.get("found")),
+        "running": bool(state.get("running")), "line": _preview(state.get("typed") or ""),
+        **({"detail": state["error"]} if state.get("error") else {})}}])
+
+
+def _await_idle(verifier, prompt: str, task: str, *, port: int, project: str,
+                clock=time.monotonic, sleep=time.sleep):
+    """Wait for a busy session to go idle, watching the transcript the whole time.
+
+    Returns "landed" if a prompt reached the transcript meanwhile (the original was
+    just queued behind the busy turn), the idle look's state dict once Claude stops
+    running, or None if it is still busy (or unreadable) at the deadline."""
+    deadline = clock() + BUSY_WAIT_TIMEOUT
+    while clock() < deadline:
+        sleep(BUSY_WAIT_POLL)
+        if _landed(verifier, prompt):
+            return "landed"
+        try:
+            state = cdp_control.read_composer(task, port=port, project=project)
+        except cdp_control.CDPError:
+            return None
+        if state.get("found") and not state.get("running"):
+            # One last transcript read: the drain that made it idle may have been ours.
+            return "landed" if _landed(verifier, prompt) else state
+    return None
 
 
 def _landed(verifier, prompt: str) -> bool:
@@ -416,6 +467,8 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
       our text is on screen    → it was submitted; believe it, never retype
       composer empty, idle, no trace anywhere → retype (after one last transcript
                                  check, so a late original is never doubled)
+      session busy             → wait (bounded) for idle, watching the transcript;
+                                 then look again and apply these same rules
       anything else            → leave it; fail as before
 
     This runs inside the one claim of this turn. `_TYPED_TURNS` was set before the
@@ -440,6 +493,20 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
                 "detail": str(exc)[:200]}}])
             return False
         action, reason = delivery.recovery_action(state, prompt)
+        if (action, reason) == (delivery.LEAVE, "session_busy"):
+            _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
+                "status": "delivery_wait_idle", "task": task, "attempt": attempt,
+                "max_seconds": BUSY_WAIT_TIMEOUT}}])
+            idle = _await_idle(verifier, prompt, task, port=port, project=project)
+            if idle == "landed":
+                _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
+                    "status": "delivery_late", "task": task, "attempt": attempt}}])
+                return True
+            if idle is None:
+                reason = "session_busy_timeout"
+            else:
+                state = idle
+                action, reason = delivery.recovery_action(state, prompt)
         logger.info("delivery recovery on '%s' (turn=%s) attempt %d: %s (%s)",
                     task, turn_id, attempt, action, reason)
         _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
@@ -909,6 +976,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         # 2026-10-02). Never retype blind: a late landing would arrive twice (the one
         # retype is `_recover_delivery`'s, into a composer it has just seen empty).
         _TYPED_TURNS[turn_id] = time.monotonic()
+        _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=target)
         if _undelivered(client, turn_id, task, verifier, prompt,
                         port=cfg.cdp_port, project=target):
             caller.clear_pending(task)
