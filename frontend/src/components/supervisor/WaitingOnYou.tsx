@@ -9,7 +9,6 @@ import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 // On a phone the ranked queue matters more than per-agent grouping, so each card
 // is tagged with its agent instead. Fully actionable in place — no linking out.
 
-// eslint-disable-next-line react-refresh/only-export-components -- the queue's one fetch, beside its only renderer
 export function loadWaitingOnYou(): Promise<TaskOut[]> {
   return listFleetTasks({ waiting: 'me' })
 }

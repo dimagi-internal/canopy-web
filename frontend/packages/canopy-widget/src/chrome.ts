@@ -420,7 +420,8 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       options.onToggle(false)
     },
     toggle() {
-      api.isOpen() ? api.close() : api.open()
+      if (api.isOpen()) api.close()
+      else api.open()
     },
     dismiss() {
       // Closes first, so dismissing while open does not leave a panel on

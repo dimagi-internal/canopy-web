@@ -337,11 +337,12 @@ describe('AgentProjectPage', () => {
       { initialEntries: ['/w/x/agents/eva/projects/P1'] },
     )
     render(<RouterProvider router={router} />)
-    // The route is lazy: under a full parallel run the chunk import alone can
-    // outlast findBy's 1s default.
-    expect(await screen.findByRole('heading', { name: 'Connect Enterprise' }, { timeout: 5000 })).toBeTruthy()
+    // The route is lazy: under a full parallel run importing the whole route
+    // table plus the chunk can outlast findBy's 1s default AND the test's own
+    // 5s timeout (it failed intermittently that way). Both get headroom.
+    expect(await screen.findByRole('heading', { name: 'Connect Enterprise' }, { timeout: 20_000 })).toBeTruthy()
     expect(getProject).toHaveBeenCalledWith('eva', 'P1')
-  })
+  }, 30_000)
 
   it('the old team-view address lands on the project page, a person’s on theirs', async () => {
     const { ProjectPageRedirect } = await import('@/router')

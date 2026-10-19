@@ -46,7 +46,7 @@ export default function DddReleasePage() {
     return () => {
       live = false
     }
-  }, [runId, token])
+  }, [runId, token, workspace])
 
   if (state.kind === 'loading') return <Centered>Loading…</Centered>
   if (state.kind === 'not_found')
