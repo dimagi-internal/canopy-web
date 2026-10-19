@@ -9,7 +9,7 @@ import {
   type PendingAttachment,
   type PlacementRunner,
 } from 'canopy-ui/chat'
-import { Markdown } from '@/components/Markdown'
+import { renderChatMarkdown } from '@/components/chat/renderChatMarkdown'
 import { wsUrl } from '@/lib/wsUrl'
 import {
   getSession,
@@ -67,14 +67,6 @@ import {
   shouldShowLoadFull,
 } from './chatPageLogic'
 
-/** Render assistant/system message text through canopy's shared Markdown (the
- *  same renderer used across every AI-output surface — so it picks up remark-gfm
- *  AND remark-breaks, i.e. single newlines become line breaks instead of
- *  collapsing). Injected into the kit via its `renderMarkdown` seam so the kit
- *  itself stays free of react-markdown. */
-function renderMarkdown(text: string) {
-  return <Markdown className="text-sm leading-relaxed">{text}</Markdown>
-}
 
 /**
  * "Load full session" WAITS for the rows, it does not guess at them.
@@ -1038,7 +1030,7 @@ export function ChatPage({
           onDiscard={socket.discardDraft}
           // "Others see" moved into the ⋯ menu (ChatSessionMenu, above) — not
           // passed here, so the composer control disappears.
-          renderMarkdown={renderMarkdown}
+          renderMarkdown={renderChatMarkdown}
           // Keep a half-typed message across a route change or a closed tab.
           // Nothing else holds it: alone in a session the body is never
           // mirrored to the server until the moment you send.
