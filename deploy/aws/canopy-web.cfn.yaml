@@ -521,8 +521,8 @@ Resources:
             # Set up 2026-10-18 in GCP project canopy-494811 (number 270508200508):
             # caching disabled, a service account holding only predict + read the
             # cache setting, and a federation pool only canopy-web-task-role can
-            # use. Not secrets. Off until the model below is set.
-            - { Name: HCP_EMBEDDINGS_MODEL, Value: "" }
+            # use. Not secrets. Turned on 2026-10-18 (only Jonathan's memory so far).
+            - { Name: HCP_EMBEDDINGS_MODEL, Value: vertex/gemini-embedding-001 }
             - { Name: HCP_VERTEX_PROJECT, Value: canopy-494811 }
             - { Name: HCP_VERTEX_LOCATION, Value: us-central1 }
             - { Name: HCP_VERTEX_WIF_AUDIENCE, Value: "//iam.googleapis.com/projects/270508200508/locations/global/workloadIdentityPools/canopy-aws/providers/canopy-web" }
