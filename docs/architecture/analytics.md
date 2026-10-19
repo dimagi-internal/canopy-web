@@ -19,6 +19,7 @@ it in `apps/events/analytics.py`.
 
 ## Kinds and producers
 
+- Every turn fact's `meta` also names, when it has them, its `thread` (`session:<uuid>`, or `mail:<uuid>` for an email turn whose session could not be made), the `contact` who asked and the agent that asked (`by_agent`: `initiator_agent`, else the agent whose own login the actor is) — `activity.who_and_where`. Ids only, never content. Facts written before this were filled from their turns (`events/0007`).
 - `turn.finished` — `harness.services.finish_turn` and `harness.claim.sweep_expired_leases` (lost/cancelled); `meta.status`, and `meta.runner`/`meta.runner_kind` — the box that ran it, by name (Health's "Ran on").
 - `turn.enqueued` and `chat.session.created` come from the rows themselves (`harness/signals.py`, the post-save creation receiver beside provenance's), so every creation path — raw `Session.objects.create`s, the runner's report sweep, Slack, a refused email turn — counts.
 - `chat.message` — `canopy_sessions.services.send_message` (both paths), `ref` = the turn.
@@ -35,6 +36,18 @@ a repository (`project`, `activity.repo_of`: a repo turn's project, or the proje
 of a session no agent runs — a person's own Claude Code session in a repo). The
 analytics tables are one aggregation (`analytics._breakdown`) over agents,
 repositories and people.
+
+## Network
+
+`analytics.network` (`GET /api/workspaces/{slug}/network`, page `/w/:ws/network`, a tab of
+Health) draws who works with whom from `turn.enqueued` facts alone: each thread links to
+whoever wrote in it — a person (`actor_kind=user`, even when they wrote by email), else
+the contact, else the asking agent — and to the agent that answered it. A turn in no
+thread (a schedule, a bare API dispatch) is not drawn. Totals include the pairs of people
+or contacts who wrote in the same thread. At most `MAX_THREADS` threads, busiest first
+(most writers, then most turns). Labels are names; a chat's title is shown, and the thread
+opens, only where `canopy_sessions.access.visible_session_q` lets the viewer read it. Each
+node carries its workspace, so the page can colour or cluster by workspace.
 
 ## Missing sessions
 

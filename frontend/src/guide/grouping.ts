@@ -36,12 +36,13 @@ function navMatch(surfacePath: string, navPath: string): boolean {
 /**
  * Detail pages with no list of their own, filed under the nav item a reader
  * reaches them from: an agent thread (a direct agent→agent conversation) is
- * opened from the huddle it settles; Analytics is a tab of Health.
+ * opened from the huddle it settles; Analytics and Network are tabs of Health.
  */
 const NAV_HOME: Record<string, string> = {
   '/w/:workspace/threads/:id': '/w/:workspace/huddles/:id',
-  // The Health page's second tab.
+  // The Health page's other tabs.
   '/w/:workspace/analytics': '/w/:workspace/health',
+  '/w/:workspace/network': '/w/:workspace/health',
   // Listed on the Agents page, above the agents.
   '/w/:workspace/projects/:handle': '/w/:workspace/agents',
 }

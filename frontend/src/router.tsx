@@ -37,6 +37,7 @@ import { SlackSettingsPage } from '@/pages/SlackSettingsPage'
 import { DddPage } from './pages/DddPage'
 import { TimelinePage } from './pages/TimelinePage'
 import { WorkspaceAnalyticsPage } from './pages/health/WorkspaceAnalyticsPage'
+import { WorkspaceNetworkPage } from './pages/health/WorkspaceNetworkPage'
 import { WorkspaceHealthPage } from './pages/health/WorkspaceHealthPage'
 import { SystemPage } from './pages/SystemPage'
 import { SessionsPage } from './pages/SessionsPage'
@@ -329,6 +330,7 @@ export const routeTable: RouteObject[] = [
       // Is everything in this workspace tree set up right, and how is it used.
       { path: '/w/:workspace/health', element: <WorkspaceHealthPage /> },
       { path: '/w/:workspace/analytics', element: <WorkspaceAnalyticsPage /> },
+      { path: '/w/:workspace/network', element: <WorkspaceNetworkPage /> },
       { path: '/w/:workspace/shareouts', element: <ShareoutsPage /> },
       { path: '/w/:workspace/shareouts/:period', element: <ShareoutsPage /> },
       { path: '/w/:workspace/walkthroughs', element: <WalkthroughsPage /> },

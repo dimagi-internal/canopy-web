@@ -175,3 +175,135 @@ def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
         "repositories": repos,
         "users": users,
     }
+
+
+# ---- the network: who talks to whom, through which threads ------------------------
+
+#: The most threads one network draws. Busiest first (most people, then most turns),
+#: so a cap drops one-person threads before shared ones.
+MAX_THREADS = 3000
+
+
+def network(workspace_slugs: list[str], *, viewer, days: int = 30, now=None) -> dict:
+    """People, contacts and agents, linked through the threads they wrote in — a chat
+    (where a bound Slack thread lives too) or an email thread — over `window(days)`.
+
+    Read from `turn.enqueued` facts alone: each names its thread, who asked (a person,
+    a contact, or an agent) and the agent that answered (`activity.who_and_where`).
+    A thread's title is shown only when `viewer` may open that chat; everything else
+    is ids, names and counts, never content."""
+    from django.contrib.auth import get_user_model
+
+    from apps.agents.models import Agent
+    from apps.canopy_sessions.access import visible_session_q
+    from apps.canopy_sessions.models import Session
+    from apps.contacts.models import Contact
+
+    days, _, since = window(days, now)
+    facts = (Activity.objects.filter(workspace_id__in=workspace_slugs, at__gte=since,
+                                     kind=activity.TURN_ENQUEUED, meta__has_key="thread")
+             .order_by().values_list("workspace_id", "actor_kind", "actor_id", "agent_slug",
+                                     "surface", "meta"))
+    threads: dict[str, dict] = {}
+    for ws, actor_kind, actor_id, agent_slug, surface, meta in facts.iterator():
+        key = meta["thread"]
+        t = threads.setdefault(key, {"workspace": ws, "agent": agent_slug, "turns": 0,
+                                     "surfaces": {}, "writers": {}})
+        t["turns"] += 1
+        t["agent"] = t["agent"] or agent_slug
+        t["surfaces"][surface] = t["surfaces"].get(surface, 0) + 1
+        # A member who wrote by email is a person (their contact rides along);
+        # an agent's own login is never a person (`activity._actor_kind`).
+        writer = (f"person:{actor_id}" if actor_kind == Activity.USER and actor_id
+                  else f"contact:{meta['contact']}" if meta.get("contact")
+                  else f"agent:{meta['by_agent']}" if meta.get("by_agent") else None)
+        if writer:
+            t["writers"][writer] = t["writers"].get(writer, 0) + 1
+
+    def humans(t):
+        return [w for w in t["writers"] if not w.startswith("agent:")]
+
+    ranked = sorted(threads.items(), key=lambda kv: (-len(humans(kv[1])), -kv[1]["turns"], kv[0]))
+    kept = dict(ranked[:MAX_THREADS])
+
+    # Pairs of people (or contacts) who wrote in the same thread — the figure the
+    # network is for: is an agent a room people meet in, or a private line?
+    pairs = set()
+    for t in kept.values():
+        h = sorted(humans(t))
+        pairs.update((a, b) for i, a in enumerate(h) for b in h[i + 1:])
+
+    # ---- labels -------------------------------------------------------------------
+    ids = {"person": set(), "contact": set(), "agent": set()}
+    for t in kept.values():
+        for w in t["writers"]:
+            kind, _, pk = w.partition(":")
+            ids[kind].add(pk)
+        if t["agent"]:
+            ids["agent"].add(t["agent"])
+    users = {str(u.pk): (u.get_full_name() or u.email or u.get_username())
+             for u in get_user_model().objects.filter(pk__in=[int(i) for i in ids["person"] if i.isdigit()])}
+    contacts = {str(pk): (name or email or f"{source} contact") for pk, name, email, source in (
+        Contact.objects.filter(pk__in=[int(i) for i in ids["contact"] if str(i).isdigit()])
+        .values_list("pk", "display_name", "email", "source"))}
+    agents = {slug: (name, ws) for slug, name, ws in Agent.objects.filter(slug__in=ids["agent"])
+              .values_list("slug", "name", "workspace_id")}
+    session_ids = [k.partition(":")[2] for k in kept if k.startswith("session:")]
+    titles = dict(Session.objects.filter(visible_session_q(viewer), pk__in=session_ids)
+                  .values_list("pk", "title"))
+    titles = {str(pk): title for pk, title in titles.items()}
+
+    # ---- nodes and links ------------------------------------------------------------
+    nodes: dict[str, dict] = {}
+    links: list[dict] = []
+
+    def actor(node_id: str, kind: str, label: str, ws: str, turns: int) -> None:
+        n = nodes.setdefault(node_id, {"id": node_id, "kind": kind, "label": label, "workspace": ws,
+                                       "workspaces": [], "turns": 0, "threads": 0, "channel": "",
+                                       "ref": "", "openable": False})
+        n["turns"] += turns
+        n["threads"] += 1
+        if ws not in n["workspaces"]:
+            n["workspaces"].append(ws)
+
+    for key, t in kept.items():
+        kind, _, ref = key.partition(":")
+        channel = max(t["surfaces"], key=t["surfaces"].get) if t["surfaces"] else ""
+        agent_name = agents.get(t["agent"], (t["agent"], ""))[0] or t["agent"]
+        title = titles.get(ref, "") if kind == "session" else ""
+        fallback = f"{'Email' if kind == 'mail' else channel.capitalize() or 'Chat'}"
+        nodes[key] = {"id": key, "kind": "thread", "label": title or (
+            f"{fallback} with {agent_name}" if agent_name else fallback),
+            "workspace": t["workspace"], "workspaces": [t["workspace"]], "turns": t["turns"],
+            "threads": 1, "channel": "email" if kind == "mail" else channel, "ref": ref,
+            "agent": t["agent"], "openable": kind == "mail" or ref in titles}
+        for writer, turns in t["writers"].items():
+            wkind, _, pk = writer.partition(":")
+            label = (users.get(pk) if wkind == "person" else contacts.get(pk) if wkind == "contact"
+                     else agents.get(pk, (pk, ""))[0]) or writer
+            actor(writer, wkind, label, t["workspace"], turns)
+            links.append({"source": writer, "target": key, "turns": turns, "kind": "wrote"})
+        if t["agent"]:
+            agent_id = f"agent:{t['agent']}"
+            actor(agent_id, "agent", agent_name, t["workspace"], t["turns"])
+            if t["agent"] not in (w.partition(":")[2] for w in t["writers"] if w.startswith("agent:")):
+                links.append({"source": key, "target": agent_id, "turns": t["turns"], "kind": "answered"})
+    for slug, (_, home) in agents.items():
+        if f"agent:{slug}" in nodes and home:
+            nodes[f"agent:{slug}"]["workspace"] = home
+            nodes[f"agent:{slug}"]["ref"] = slug
+
+    count = {k: sum(1 for n in nodes.values() if n["kind"] == k)
+             for k in ("person", "contact", "agent", "thread")}
+    return {
+        "days": days,
+        "since": since,
+        "workspaces": sorted(workspace_slugs),
+        "nodes": list(nodes.values()),
+        "links": links,
+        "totals": {"people": count["person"], "contacts": count["contact"], "agents": count["agent"],
+                   "threads": count["thread"], "shared_pairs": len(pairs),
+                   "shared_threads": sum(1 for t in kept.values() if len(humans(t)) > 1),
+                   "threads_seen": len(threads)},
+        "truncated": len(threads) > len(kept),
+    }

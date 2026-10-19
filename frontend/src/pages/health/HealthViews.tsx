@@ -2,10 +2,11 @@ import type { JSX } from 'react'
 import { NavLink, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
 
-/** The two halves of one dashboard: is everything set up right, and how is it used. */
+/** One dashboard: is everything set up right, how is it used, and who works with whom. */
 const VIEWS = [
   { to: 'health', label: 'Health' },
   { to: 'analytics', label: 'Analytics' },
+  { to: 'network', label: 'Network' },
 ]
 
 export function HealthViews({ title }: { title: string }): JSX.Element {
@@ -37,7 +38,7 @@ export function HealthViews({ title }: { title: string }): JSX.Element {
   )
 }
 
-/** Shown to a non-admin: both reads are the admin tier, like the topology. */
+/** Shown to a non-admin: every view is the admin tier, like the topology. */
 export function AdminOnly({ what }: { what: string }): JSX.Element {
   return (
     <p className="text-[13px] text-muted-foreground" data-testid="health-forbidden">

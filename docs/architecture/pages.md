@@ -247,6 +247,13 @@ Every browser-facing address canopy-web serves. The SPA route table is
   repositories (work no agent ran) and people — no cost
   (`GET /api/workspaces/{slug}/analytics`, `apps/events/analytics.py`) —
   see `docs/architecture/analytics.md`.
+- **`/network`** — the third tab of Health (same gate). Every person, contact and agent
+  as a dot, linked to each thread they wrote in (a chat — a bound Slack thread is one —
+  or an email thread) and each thread to its answering agent, over 7/30/90 days; totals
+  of threads with 2+ people and of pairs who wrote in the same thread. Colour by who,
+  channel or workspace; group by workspace. Click a dot for its threads in a side table;
+  a thread opens (and shows its title) only if the viewer may open that chat
+  (`GET /api/workspaces/{slug}/network`, `analytics.network`).
 - **`/shareouts`** (+ `/:period`, a permalink to one briefing) — dated
   teammate-facing work briefings posted by `/canopy:shareout`.
 - **`/walkthroughs`** — demos uploaded from `/canopy:walkthrough`.
