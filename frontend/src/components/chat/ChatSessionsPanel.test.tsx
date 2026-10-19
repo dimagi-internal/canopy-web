@@ -451,6 +451,20 @@ describe('ChatSessionsPanel — close a session', () => {
   })
 })
 
+/** Open a row's transfer menu, and keep it open. On a loaded CI runner one click
+ *  on the trigger once left it closed (`aria-expanded="false"`, no picker, after a
+ *  5 s wait — run 39278903566) while it never failed locally; the click is
+ *  re-sent, against the trigger as it is NOW, only while the menu still reads
+ *  closed, so an open menu is never toggled shut. */
+async function openTransferMenu(id: string) {
+  await screen.findByTestId(`transfer-session-${id}`)
+  await waitFor(() => {
+    const trigger = screen.getByTestId(`transfer-session-${id}`)
+    if (trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger)
+    expect(screen.getByTestId('transfer-runner-select')).toBeTruthy()
+  })
+}
+
 describe('ChatSessionsPanel — transfer a session', () => {
   // A once-value a failed test never consumed would leak into the next test.
   afterEach(() => listSessions.mockReset())
@@ -466,8 +480,8 @@ describe('ChatSessionsPanel — transfer a session', () => {
 
     renderPanel([agent()])
 
-    fireEvent.click(await screen.findByTestId('transfer-session-s1'))
-    const select = (await screen.findByTestId('transfer-runner-select')) as HTMLSelectElement
+    await openTransferMenu('s1')
+    const select = screen.getByTestId('transfer-runner-select') as HTMLSelectElement
     await screen.findByRole('option', { name: 'Cloud' })  // runners load on open
     fireEvent.change(select, { target: { value: 'b' } })
     await act(async () => {
