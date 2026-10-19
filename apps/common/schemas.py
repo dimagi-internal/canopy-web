@@ -9,6 +9,7 @@ Conventions:
 from __future__ import annotations
 
 import datetime as dt
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -76,6 +77,23 @@ class PresencePreferenceIn(StrictModel):
     """Request body for PATCH /api/me/presence-preference/."""
 
     show_presence: bool
+
+
+RunnerAppPage = Literal["supervisor", "ide"]
+
+
+class RunnerAppPreferenceOut(StrictModel):
+    """Response for GET/PATCH /api/me/runner-app/."""
+
+    opens_on: RunnerAppPage = Field(
+        description="The page the Canopy Runner desktop app opens on."
+    )
+
+
+class RunnerAppPreferenceIn(StrictModel):
+    """Request body for PATCH /api/me/runner-app/."""
+
+    opens_on: RunnerAppPage
 
 
 class SessionWorkspaceChoice(StrictModel):

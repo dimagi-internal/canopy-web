@@ -1703,3 +1703,32 @@ class FleetHold(models.Model):
     @classmethod
     def is_held(cls) -> bool:
         return cls.objects.filter(pk=cls.SINGLETON_PK, held=True).exists()
+
+
+class RunnerAppPreference(models.Model):
+    """Which page the Canopy Runner desktop app opens on, for one person.
+
+    The app loads `/runner-app/` (`apps/harness/views.py::runner_app_home`), which
+    redirects here — so a new page is a new choice, with no change on the box.
+    No row means the supervisor.
+    """
+
+    SUPERVISOR, IDE = "supervisor", "ide"
+    #: choice -> the page it opens (root paths; the view adds the script prefix)
+    PAGES = {SUPERVISOR: "/supervisor", IDE: "/ide"}
+    CHOICES = [(SUPERVISOR, "Supervisor"), (IDE, "IDE")]
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                                related_name="runner_app_preference")
+    opens_on = models.CharField(max_length=32, choices=CHOICES, default=SUPERVISOR)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "runner_app_preferences"
+
+    @classmethod
+    def opens_on_for(cls, user) -> str:
+        if not getattr(user, "pk", None):
+            return cls.SUPERVISOR
+        row = cls.objects.filter(user=user).first()
+        return row.opens_on if row and row.opens_on in cls.PAGES else cls.SUPERVISOR

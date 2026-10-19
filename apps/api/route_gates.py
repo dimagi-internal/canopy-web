@@ -613,6 +613,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "me": ("authenticated",),
     "get_presence_preference": ("self",),
     "set_presence_preference": ("self",),
+    "get_runner_app_preference": ("self",),
+    "set_runner_app_preference": ("self",),
     "get_session_workspace_preference": ("self",),
     "set_session_workspace_preference": ("self",),  # target needs content.write (filing.set_default)
     # --- apps/events/api.py
@@ -875,6 +877,7 @@ SETTINGS: frozenset[str] = frozenset({
     # a person's own settings: credentials, grants, preferences, memory
     "create_token", "revoke_token", "tokens_disconnect_app", "github_disconnect",
     "set_presence_preference", "set_session_workspace_preference", "set_preferences",
+    "set_runner_app_preference",
     "set_my_agent_memory", "set_my_grant_collection",
     "finish_passkey_registration", "delete_passkey",  # the second factor a step-up asks for
     "put_vault_keyset",  # the person's zero-knowledge vault key
