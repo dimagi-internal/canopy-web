@@ -344,3 +344,100 @@ def test_a_failed_mint_returns_to_the_same_prefixed_page(fleet, monkeypatch, set
     res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
     assert res["Location"].startswith("https://labs.connect.dimagi.com/canopy/w/connect/")
     assert res["Location"].endswith("?google=no-refresh-token#credentials")
+
+
+# --- only what the agent needs, and from the right account ------------------------
+
+GMAIL = "https://www.googleapis.com/auth/gmail"
+
+
+def _id_token_for(email: str) -> str:
+    import base64
+    import json
+
+    payload = base64.urlsafe_b64encode(json.dumps({"email": email}).encode())
+    return "h." + payload.rstrip(b"=").decode() + ".sig"
+
+
+def _hosted(agent, address="family@marshellis.com"):
+    """Give `agent` an address on a canopy-hosted domain of its own workspace (apps/mail)."""
+    from apps.mail.models import MailDomain
+
+    MailDomain.objects.create(workspace=agent.workspace, name=address.split("@")[1], status="verified")
+    agent.email = address
+    agent.save(update_fields=["email"])
+    return agent
+
+
+def _gmail(agent, address="ace@dimagi-ai.com"):
+    agent.email = address
+    agent.save(update_fields=["email"])
+    return agent
+
+
+def _mint(fleet, monkeypatch, resp):
+    monkeypatch.setattr(g, "exchange_code", lambda **kw: resp)
+    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
+    return fleet["client"].get(CALLBACK, {"code": "c", "state": state})
+
+
+@pytest.mark.django_db
+def test_a_gmail_agent_is_asked_for_everything(fleet):
+    assert g.scopes_for(_gmail(fleet["agent"])) == g.FLEET_SCOPES
+
+
+@pytest.mark.django_db
+def test_a_canopy_hosted_agent_is_never_asked_for_gmail(fleet):
+    """Its mail runs through canopy (SES), so a Gmail grant would be a line on the
+    consent screen for nothing — and access to whatever inbox the account has."""
+    agent = _hosted(fleet["agent"])
+    scopes = g.scopes_for(agent)
+    assert not [s for s in scopes if s.startswith(GMAIL)]
+    assert set(g.services_for(scopes)) == {"calendar", "docs", "drive", "forms", "sheets", "slides"}
+    assert {"openid", "email"} <= set(scopes)
+
+    from urllib.parse import parse_qs, urlparse
+
+    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
+    q = parse_qs(urlparse(url).query)
+    assert GMAIL not in q["scope"][0]
+    # The hosted address is not a Google account, so there is nothing to hint.
+    assert "login_hint" not in q
+
+
+@pytest.mark.django_db
+def test_a_gmail_agent_is_hinted_at_its_own_address(fleet):
+    _gmail(fleet["agent"], "Scout@Example.org")
+    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
+    assert "login_hint=scout%40example.org" in url
+    assert "gmail.modify" in url
+
+
+@pytest.mark.django_db
+def test_a_consent_from_another_google_account_is_refused_and_nothing_stored(fleet, monkeypatch):
+    """The runner reads a Gmail agent's mailbox by its address (`gog --account
+    <agent.email>`), so a token for any other account can never serve it — storing one
+    would read as "connected" while every mail turn fails."""
+    agent = _gmail(fleet["agent"])
+    res = _mint(fleet, monkeypatch, {**_google_response(), "id_token": _id_token_for("jj@gmail.com")})
+    assert res.status_code == 302
+    assert res["Location"].endswith("?google=wrong-account&account=jj%40gmail.com#credentials")
+    assert not AgentCredential.objects.filter(agent=agent, name="gog-token").exists()
+
+
+@pytest.mark.django_db
+def test_the_account_check_ignores_case(fleet, monkeypatch):
+    _gmail(fleet["agent"], "ACE@dimagi-ai.com")
+    assert _mint(fleet, monkeypatch, _google_response())["Location"].endswith("?google=ok#credentials")
+
+
+@pytest.mark.django_db
+def test_a_hosted_agent_may_use_any_google_account(fleet, monkeypatch):
+    """A canopy-hosted address is not a Google account, so the agent's Google identity
+    (for Drive, Docs, Calendar) is whatever account its people give it — there is no
+    address it must match."""
+    agent = _hosted(fleet["agent"])
+    resp = {**_google_response(scope=["openid", "email", "https://www.googleapis.com/auth/drive"]),
+            "id_token": _id_token_for("marshellis.agent@gmail.com")}
+    assert _mint(fleet, monkeypatch, resp)["Location"].endswith("?google=ok#credentials")
+    assert AgentCredential.objects.filter(agent=agent, name="gog-token").exists()

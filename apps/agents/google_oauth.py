@@ -88,6 +88,37 @@ _DECLARED_BEYOND_THE_FLEET: tuple[str, ...] = (
 
 FLEET_SCOPES: tuple[str, ...] = _BASE_SCOPES + _DECLARED_BEYOND_THE_FLEET
 
+_GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail"
+
+
+def mailbox_kind(agent) -> str:
+    """"google" when `agent.email` is a Google mailbox the runner reads with gog,
+    "hosted" when it is on a canopy-hosted domain (apps/mail, SES), "none" without one."""
+    from . import mailbox
+
+    return mailbox.describe(agent)["kind"]
+
+
+def scopes_for(agent) -> tuple[str, ...]:
+    """What to ask Google for on THIS agent's behalf. An agent whose mail is
+    canopy-hosted reads and sends it through canopy, so its Google login is for Drive,
+    Docs, Sheets, Slides, Forms and Calendar only — asking it for Gmail too would grant
+    access to an inbox nothing reads."""
+    if mailbox_kind(agent) == "hosted":
+        return tuple(s for s in FLEET_SCOPES if not s.startswith(_GMAIL_SCOPE))
+    return FLEET_SCOPES
+
+
+def expected_account(agent) -> str:
+    """The Google account a consent must come from, or "" when any will do.
+
+    A Google-mailbox agent's token is only any use for `agent.email`: the runner finds
+    the token by that address (`gog auth tokens list` keys are `<client>:<mailbox>`,
+    mailbox_probe.py) and reads mail with `--account <agent.email>`. A hosted-mail
+    agent's address is not a Google account at all, so nothing names the account its
+    Drive/Docs login must be; an agent with no address has nothing to compare with."""
+    return agent.email.strip().lower() if mailbox_kind(agent) == "google" else ""
+
 # gog's short service names, keyed by the scope-path prefix that implies them.
 # Ordered longest-prefix-first is unnecessary here because no key is a prefix of
 # another, but the map is checked by test rather than trusted.
@@ -165,12 +196,13 @@ def unsign_state(state: str) -> dict:
     return signing.loads(state, salt=STATE_SALT, max_age=STATE_MAX_AGE)
 
 
-def authorize_url(*, client_id: str, state: str, login_hint: str = "") -> str:
+def authorize_url(*, client_id: str, state: str, login_hint: str = "",
+                  scopes: tuple[str, ...] = FLEET_SCOPES) -> str:
     params = {
         "client_id": client_id,
         "redirect_uri": callback_url(),
         "response_type": "code",
-        "scope": " ".join(FLEET_SCOPES),
+        "scope": " ".join(scopes),
         # Both are required to get a refresh_token back. `access_type=offline`
         # asks for one; `prompt=consent` forces one to be RE-ISSUED even when the
         # account has approved this client before — without it a re-mint returns

@@ -22,9 +22,24 @@ export function declaresMailbox(rows: readonly { name: string }[], email?: strin
   return Boolean(email?.trim()) || rows.some((r) => r.name === GOG_TOKEN_REF)
 }
 
+/** What the return trip carried besides its status, for the outcomes that name names. */
+export interface MintContext {
+  /** `?account=`: the Google account that consented (sent with `wrong-account`). */
+  account?: string | null
+  /** The agent's own address — the account a Gmail agent must be signed in as. */
+  agentEmail?: string | null
+}
+
+export interface MintOutcome {
+  tone: 'ok' | 'error'
+  text: string
+  /** Where the fix is, when it is somewhere else. */
+  link?: { href: string; label: string }
+}
+
 /** What `?google=<status>` on the return trip means, in the operator's terms.
  *  `null` = nothing to say (no param, or one we do not recognise). */
-export function mintOutcome(status: string | null): { tone: 'ok' | 'error'; text: string } | null {
+export function mintOutcome(status: string | null, ctx: MintContext = {}): MintOutcome | null {
   switch (status) {
     case 'ok':
       return { tone: 'ok', text: 'Mailbox connected. The token is stored and a runner will pick it up on its next bootstrap.' }
@@ -40,6 +55,16 @@ export function mintOutcome(status: string | null): { tone: 'ok' | 'error'; text
       return { tone: 'error', text: 'Google did not return which mailbox consented, so nothing was stored.' }
     case 'exchange-failed':
       return { tone: 'error', text: 'The token exchange with Google failed. Nothing was stored — try again.' }
+    case 'wrong-account': {
+      // The runner reads a Gmail agent's mail as agent.email, so a token for any other
+      // account would never serve it; the server stored nothing.
+      const who = ctx.account?.trim() || 'a different account'
+      const agent = ctx.agentEmail?.trim() || 'its own mailbox'
+      return {
+        tone: 'error',
+        text: `Google signed in as ${who}, but this agent is ${agent}. Sign in to Google as the agent and try again.`,
+      }
+    }
     case 'zk-no-recipients':
       // A zero-knowledge agent: the token is sealed to its devices and members,
       // and it has neither yet (canopy-web#1550).
