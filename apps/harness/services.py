@@ -1778,7 +1778,7 @@ def _reported_project(s) -> str:
     return getattr(s, "project", "") or ""
 
 
-def _agent_for_project(project: str):
+def _agent_for_project(project: str, runner):
     """The agent a reported emdash PROJECT belongs to, or None.
 
     The wholesale sweep (`POST /runners/{id}/sessions`) reports every open task a
@@ -1798,12 +1798,17 @@ def _agent_for_project(project: str):
 
     Returns None for a real repo checkout that is nobody's agent (canopy-web,
     connect-labs). Those keep the runner's workspace, which is right for them.
+
+    Only agents inside the RUNNER's tenant (`runner_tenant_slugs`) count: a slug
+    is global, so a box in one tree that happens to have a checkout named after
+    another tree's agent must not file its session into that other tree.
     """
     from apps.agents.models import Agent
 
     if not project:
         return None
-    return Agent.objects.select_related("workspace").filter(slug=project).first()
+    return (Agent.objects.select_related("workspace")
+            .filter(slug=project, workspace_id__in=runner_tenant_slugs(runner)).first())
 
 
 def session_home(runner, project: str, fallback=None):
@@ -1812,7 +1817,7 @@ def session_home(runner, project: str, fallback=None):
     else the project, in the runner owner's default (`canopy_sessions.filing`),
     else `fallback` (the runner's workspace). The one rule, for the report sweep and
     a missing session sent up from Health (`events.usage.send_up`)."""
-    owner = _agent_for_project(project)
+    owner = _agent_for_project(project, runner)
     if owner is not None:
         # A session targets an agent XOR a project (chat_session_not_agent_and_project).
         return owner, "", owner.workspace
