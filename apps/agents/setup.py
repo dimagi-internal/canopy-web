@@ -148,7 +148,7 @@ def _canopy_vault(agent: Agent, settings: str, vh: dict) -> dict:
     if agent.zk_enabled:
         from . import zk_seal
 
-        if not zk_seal.recipients_for(agent):
+        if not zk_seal.has_recipients(agent):
             # Every value is sealed to the vault's readers (its approved runners'
             # device keys, its admins' vault keys). With none, nothing can be stored —
             # connecting Google ends in `zk-no-recipients` — so this comes first.
@@ -262,7 +262,7 @@ def request_setup(agent: Agent) -> list[str]:
     return asked
 
 
-def _runner(agent: Agent, settings: str, viewer=None) -> dict:
+def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False) -> dict:
     from apps.harness.models import Runner
 
     from .models import AgentBootstrapReport
@@ -305,9 +305,8 @@ def _runner(agent: Agent, settings: str, viewer=None) -> dict:
     # Pairing is offered only to someone whose own box could then hold the agent: a
     # runner runs an agent only when its owner is one of the agent's admins
     # (`runner_may_hold_agent`), so anyone else's new box would still take nothing.
-    can_pair = viewer is not None and agent.is_admin(viewer)
     return _step("runner", title, TODO, detail, href=f"{settings}#running", action="Pick a runner",
-                 links=[PAIR_LAPTOP, PAIR_CLOUD_BOX] if can_pair else [])
+                 links=[PAIR_LAPTOP, PAIR_CLOUD_BOX] if viewer_is_admin else [])
 
 
 #: Where a laptop runner expects an agent's checkout (runner/canopy_runner/README.md;
@@ -348,9 +347,10 @@ def _first_turn(agent: Agent, base: str) -> dict:
                  action="See its turns" if done else "Ask it something")
 
 
-def setup_steps(agent: Agent, viewer=None) -> list[dict]:
-    """The ordered checklist. Links are paths inside the agent's workspace. `viewer`,
-    when given, adds the choices only that person can act on (pairing a runner)."""
+def setup_steps(agent: Agent, *, viewer_is_admin: bool = False) -> list[dict]:
+    """The ordered checklist. Links are paths inside the agent's workspace.
+    `viewer_is_admin` (`agent.is_admin(viewer)`, which the caller has usually asked
+    already) adds the choices only an admin can act on (pairing a runner)."""
     base = f"/w/{agent.workspace_id}/agents/{agent.slug}"
     settings = f"{base}/settings"
     repo = delegations.agent_repo(agent)
@@ -371,7 +371,7 @@ def setup_steps(agent: Agent, viewer=None) -> list[dict]:
               action="Open on GitHub" if agent.repo_url else "Set its repository"),
         _github(agent, settings),
         *([*vault, mailbox] if zk_first else [mailbox, *vault]),
-        _runner(agent, settings, viewer),
+        _runner(agent, settings, viewer_is_admin),
         _job(agent),
         _first_turn(agent, base),
     ]
