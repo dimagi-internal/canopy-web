@@ -26,7 +26,7 @@ export function declaresMailbox(rows: readonly { name: string }[], email?: strin
 export interface MintContext {
   /** `?account=`: the Google account that consented (sent with `wrong-account`). */
   account?: string | null
-  /** The agent's own address — the account a Gmail agent must be signed in as. */
+  /** The account the agent must be signed in as (`?expected=`, else its address). */
   agentEmail?: string | null
 }
 

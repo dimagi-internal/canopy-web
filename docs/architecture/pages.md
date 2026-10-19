@@ -127,8 +127,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
     Reveal encrypt/decrypt locally). The Google mint (`Connect the mailbox`)
     asks for Gmail only when the agent's address is a Google mailbox; for a
     canopy-hosted address it asks for Drive, Docs, Sheets, Slides, Forms and
-    Calendar. A Google-mailbox agent's consent must come from `agent.email`
-    (else `?google=wrong-account&account=<x>`, nothing stored); a
+    Calendar. The consent must come from the agent's `google_account`, else
+    from `agent.email` when that is a Google mailbox (else
+    `?google=wrong-account&account=<x>&expected=<y>`, nothing stored); a
     `zk-no-recipients` result links to `/settings#vault-key`.
   - The setup checklist (`apps/agents/setup.py`, `GET …/setup`) on Settings: a
     zero-knowledge agent's vault step comes before its mailbox, and is todo

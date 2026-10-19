@@ -54,15 +54,12 @@ def start_google_mint(request: HttpRequest, slug: str, login_hint: str = "") -> 
     if not client_id:
         raise HttpError(503, "this deployment has no Google OAuth client configured")
     state = google_oauth.sign_state(agent_slug=agent.slug, user_pk=request.user.pk)
-    # Default the account picker to the agent's Google account (`google_identity`: its
-    # own `google_account`, else its mailbox when that is Google). A hint, not the
-    # check: the account can still be changed on Google's side, and the callback
-    # refuses one that is not the expected account (`expected_account`). A canopy-hosted
-    # address is not a Google account, so with no `google_account` it gets no hint; an
-    # agent with no address keeps the fleet's convention as a guess.
-    kind = google_oauth.mailbox_kind(agent)
-    hint = login_hint or agent.google_identity() or (
-        "" if kind == "hosted" else f"{agent.slug}@dimagi-ai.com")
+    # Default the account picker to the account the callback will insist on
+    # (`expected_account`: its `google_account`, else its mailbox when that is Google),
+    # else the fleet's convention as a guess — a hosted-mail agent commonly signs in to
+    # Google as <slug>@dimagi-ai.com. A hint, not the check: the account can still be
+    # changed on Google's side.
+    hint = login_hint or google_oauth.expected_account(agent) or f"{agent.slug}@dimagi-ai.com"
     return GoogleMintStartOut(
         url=google_oauth.authorize_url(client_id=client_id, state=state, login_hint=hint,
                                        scopes=google_oauth.scopes_for(agent))
@@ -137,7 +134,7 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
         # Refused before anything is stored: a token for another account can never read
         # this agent's mailbox, and stored it would read as "connected". The page names
         # the account Google signed in as, so the person can tell which one they used.
-        return done(agent, "wrong-account", account=email)
+        return done(agent, "wrong-account", account=email, expected=expected)
 
     token = google_oauth.build_gog_token(
         email=email,
