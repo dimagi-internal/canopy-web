@@ -237,6 +237,37 @@ if [[ -n "$AGENTS" ]]; then
 fi
 
 # ── Step 1: discover (or accept) the fresh runner ───────────────────────────────
+# A box paired by invitation names itself: up.sh records the invitation in
+# <stack>-invitation.json, and canopy-web says which runner consumed it.
+INVITE_FILE="${KEY_DIR:-.}/$(stack_for_name "$RUNNER_NAME")-invitation.json"
+if [[ -z "$RUNNER_ID" && -f "$INVITE_FILE" ]]; then
+  INV_ID=$(python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("id") or "")
+except Exception:
+    print("")' "$INVITE_FILE")
+  if [[ -n "$INV_ID" ]]; then
+    api GET "/api/harness/runner-invitations/${INV_ID}" > "$TMP/invitation.json" || true
+    INV=$(NAME="$RUNNER_NAME" python3 - "$TMP/invitation.json" <<'PY'
+import json, os, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    d = {}
+if not isinstance(d, dict) or d.get("name") != os.environ["NAME"]:
+    print("unknown -")
+else:
+    print(d.get("status") or "unknown", d.get("runner_id") or "-")
+PY
+)
+    if [[ "${INV%% *}" == "consumed" && "${INV#* }" != "-" ]]; then
+      RUNNER_ID="${INV#* }"
+      echo ">> runner from invitation $INV_ID ($INVITE_FILE)"
+    else
+      echo "   invitation $INV_ID is ${INV%% *}, not consumed — discovering instead"
+    fi
+  fi
+fi
 if [[ -z "$RUNNER_ID" ]]; then
   echo ">> waiting up to ${DISCOVER_MINUTES} min for a fresh '$RUNNER_NAME' cloud runner (paired, no credential staged)…"
   for _ in $(seq 1 $(( DISCOVER_MINUTES * 12 ))); do

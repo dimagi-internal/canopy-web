@@ -7,7 +7,10 @@ HTTP server standing in for canopy-web, asserting on the calls it makes:
     the box claims nothing it is not explicitly handed;
   * the seed goes up as parts THEN manifest, and parts left over from a larger
     publish are removed;
-  * every one-time human prerequisite is checked BEFORE anything is written;
+  * every one-time human prerequisite is checked BEFORE anything is written —
+    the operator's own workbench token first;
+  * a new box names its workspace (--workspace), holds no PAT, and is invited:
+    up.sh prints the approve link and waits for the box to pair;
   * an update that would stop/start or replace the instance is refused without
     --allow-instance-change — on the live stack, a plain re-run after any
     template change would otherwise bounce (or replace) production silently.
@@ -24,8 +27,12 @@ import pytest
 
 EC2 = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = EC2 / "up.sh"
-STAGED = ["canopy/cloud-runner/canopy-pat", "canopy/cloud-runner/claude-oauth-token",
-          "canopy/cloud-runner/gog-keyring-password"]
+STAGED = ["canopy/cloud-runner/claude-oauth-token", "canopy/cloud-runner/gog-keyring-password"]
+ROLE_ARN = "arn:aws:iam::123456789012:role/canopy-cloud-runner-test-RunnerRole-X"
+INV_ID = "0b4f7f8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
+RID = "6f1c0d3e-0000-4000-8000-000000000001"
+# A P-256 SubjectPublicKeyInfo, base64 — what `kms get-public-key` prints.
+SPKI = ("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE" + "A" * 86 + "==")
 
 INSTANCE_CHANGE = {"Changes": [{"ResourceChange": {
     "Action": "Modify", "LogicalResourceId": "Instance", "Replacement": "True",
@@ -37,18 +44,47 @@ SG_ONLY = {"Changes": [{"ResourceChange": {
 
 @pytest.fixture
 def canopy():
-    """A canopy-web that answers the PAT check; `.code` sets the status."""
+    """A canopy-web standing in for the token check, the workspace list, the
+    runner list and the pairing invitation. `.code` is the token check's status;
+    `.runners` the runner list; `.states` the invitation's status on each GET."""
     class H(http.server.BaseHTTPRequestHandler):
         code = 200
+        runners: list = []
+        states: list = ["pending", "consumed"]
+        posted: list = []
+        auth: list = []
+
+        def _send(self, code, obj):
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(obj).encode())
 
         def do_GET(self):  # noqa: N802
-            self.send_response(H.code)
-            self.end_headers()
-            self.wfile.write(b"[]")
+            H.auth.append(self.headers.get("Authorization", ""))
+            if self.path.startswith("/api/harness/runners"):
+                return self._send(H.code, H.runners if H.code == 200 else {"detail": "no"})
+            if self.path.startswith("/api/workspaces"):
+                return self._send(200, [{"slug": "dimagi"}, {"slug": "connect"}])
+            if self.path.startswith(f"/api/harness/runner-invitations/{INV_ID}"):
+                state = H.states.pop(0) if len(H.states) > 1 else H.states[0]
+                return self._send(200, {"id": INV_ID, "name": "cloud-ec2-test", "status": state,
+                                        "runner_id": RID if state == "consumed" else None})
+            return self._send(404, {})
+
+        def do_POST(self):  # noqa: N802
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            H.posted.append((self.path, body))
+            if self.path == "/api/harness/runner-invitations/":
+                return self._send(201, {"id": INV_ID, "status": "pending", "runner_id": None,
+                                        "approve_url": f"https://canopy.example/w/{body['workspace']}"
+                                                       f"/runner-invitations/{INV_ID}"})
+            return self._send(404, {})
 
         def log_message(self, *a):
             pass
 
+    H.runners, H.posted, H.auth, H.states = [], [], [], ["pending", "consumed"]
     srv = http.server.HTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     srv.handler = H
@@ -57,12 +93,12 @@ def canopy():
 
 
 def _fake(tmp: pathlib.Path, *, stack_status=None, change_set=None, secrets=STAGED,
-          old_parts=0) -> pathlib.Path:
+          old_parts=0, stack_workspace="dimagi") -> pathlib.Path:
     state = tmp / "state"
     state.mkdir()
     (state / "calls").write_text("")
     cfg = {"stack_status": stack_status, "change_set": change_set, "secrets": list(secrets),
-           "old_parts": old_parts}
+           "old_parts": old_parts, "stack_workspace": stack_workspace, "role_arn": ROLE_ARN, "spki": SPKI}
     (state / "cfg.json").write_text(json.dumps(cfg))
     bin_ = tmp / "bin"
     bin_.mkdir()
@@ -87,6 +123,16 @@ elif "describe-stacks" in a and "StackStatus" in arg("--query"):
     if not cfg["stack_status"]:
         sys.exit(255)
     print(cfg["stack_status"])
+elif "describe-stacks" in a and "RunnerWorkspace" in arg("--query"):
+    print(cfg["stack_workspace"])
+elif "describe-stacks" in a and "EcdhKeyArn" in arg("--query"):
+    print("arn:aws:kms:us-east-1:123456789012:key/k-1")
+elif "describe-stack-resource" in a:
+    print("canopy-cloud-runner-test-RunnerRole-X")
+elif "get-role" in a:
+    print(cfg["role_arn"])
+elif "get-public-key" in a:
+    print(cfg["spki"])
 elif "describe-stacks" in a:
     print(json.dumps([{{"OutputKey": "PublicIp", "OutputValue": "1.2.3.4"}},
                       {{"OutputKey": "KeyPairId", "OutputValue": "key-1"}}]))
@@ -98,16 +144,20 @@ elif "describe-change-set" in a:
 elif "get-parameter" in a:
     print("PRIVATE KEY")
 ''')
-    (bin_ / "curl").write_text("#!/bin/sh\necho 1.2.3.4\n")
+    # Only the public-IP lookup is faked; canopy-web calls go to the local server.
+    (bin_ / "curl").write_text('#!/bin/sh\ncase "$*" in *checkip*) echo 1.2.3.4 ;; '
+                               '*) exec /usr/bin/curl "$@" ;; esac\n')
+    (bin_ / "sleep").write_text("#!/bin/sh\nexit 0\n")
     for f in bin_.iterdir():
         f.chmod(0o755)
     return state
 
 
-def _up(tmp, canopy, *args) -> subprocess.CompletedProcess:
+def _up(tmp, canopy, *args, token_text: str | None = "t\n") -> subprocess.CompletedProcess:
     home = tmp / "home"
     (home / ".claude" / "canopy").mkdir(parents=True, exist_ok=True)
-    (home / ".claude" / "canopy" / "workbench-token").write_text("t\n")
+    if token_text is not None:
+        (home / ".claude" / "canopy" / "workbench-token").write_text(token_text)
     base = f"http://127.0.0.1:{canopy.server_address[1]}"
     # Each run's key file in its OWN dir: under xdist several tests run up.sh at
     # once with the same stack name, and a shared ./<stack>-key.pem was written,
@@ -127,18 +177,18 @@ def _calls(state):
 
 def test_a_named_standby_box_creates_its_own_stack(tmp_path, canopy):
     state = _fake(tmp_path)
-    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--standby")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "connect", "--standby")
     assert res.returncode == 0, res.stdout + res.stderr
     deploy = next(c for c in _calls(state) if "cloudformation deploy" in c)
     assert "--stack-name canopy-cloud-runner-test" in deploy
-    for p in ("RunnerName=cloud-ec2-test", "RunnerProjects=", "RunnerSessions=0"):
+    for p in ("RunnerName=cloud-ec2-test", "RunnerWorkspace=connect", "RunnerProjects=", "RunnerSessions=0"):
         assert f" {p} " in deploy + " ", (p, deploy)
     assert "--no-execute-changeset" not in deploy, "a CREATE has nothing to review"
 
 
 def test_the_seed_is_parts_then_manifest_and_stale_parts_go(tmp_path, canopy):
     state = _fake(tmp_path, old_parts=6)
-    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi")
     assert res.returncode == 0, res.stdout + res.stderr
     writes = [c for c in _calls(state) if "create-secret" in c or "put-secret-value" in c]
     ids = [c.split("--name ")[-1].split()[0] if "create-secret" in c
@@ -154,29 +204,101 @@ def test_the_seed_is_parts_then_manifest_and_stale_parts_go(tmp_path, canopy):
 @pytest.mark.parametrize("missing", STAGED)
 def test_a_missing_staged_secret_stops_before_anything_is_written(tmp_path, canopy, missing):
     state = _fake(tmp_path, secrets=[s for s in STAGED if s != missing])
-    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi")
     assert res.returncode != 0 and missing in res.stderr and "secrets.sh" in res.stderr
     assert not any("put-secret" in c or "create-secret" in c or "deploy" in c
                    for c in _calls(state))
 
 
-def test_a_dead_canopy_pat_stops_before_anything_is_written(tmp_path, canopy):
-    canopy.handler.code = 401
+def test_no_canopy_pat_secret_is_needed(tmp_path, canopy):
+    """A new box pairs by invitation and holds no PAT, so up.sh neither checks
+    for canopy/cloud-runner/canopy-pat nor reads it."""
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not any("canopy-pat" in c for c in _calls(state))
+
+
+@pytest.mark.parametrize("token", ["dead", "missing"])
+def test_dead_workbench_token_stops_before_aws_writes(tmp_path, canopy, token):
+    state = _fake(tmp_path)
+    if token == "dead":
+        canopy.handler.code = 401
+        res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi")
+    else:
+        res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi", token_text=None)
+    assert res.returncode != 0
+    assert "workbench token" in res.stderr and "/canopy:canopy-web-pat-mint" in res.stderr
+    assert _calls(state) == [], "nothing at all was asked of AWS"
+
+
+def test_new_stack_without_workspace_refuses(tmp_path, canopy):
     state = _fake(tmp_path)
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
-    assert res.returncode != 0 and "does not authenticate" in res.stderr
-    assert not any("create-secret" in c or "deploy" in c for c in _calls(state))
+    assert res.returncode != 0
+    assert "--workspace" in res.stderr and "dimagi connect" in res.stderr, res.stderr
+    assert not any("put-secret" in c or "create-secret" in c or "deploy" in c for c in _calls(state))
 
 
-def test_an_existing_keyless_box_updates_with_a_dead_pat(tmp_path, canopy):
-    """A box that exists signs in with its device key (canopy-web#1594); its owner
-    revokes the PAT afterwards. That must not block every later update."""
-    canopy.handler.code = 401
-    state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY)
+def test_a_workspace_you_are_not_in_is_refused(tmp_path, canopy):
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "elsewhere")
+    assert res.returncode != 0 and "not a member" in res.stderr
+    assert not any("deploy" in c for c in _calls(state))
+
+
+def test_creates_invitation_and_prints_approve_url(tmp_path, canopy):
+    import base64
+
+    _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "connect")
+    assert res.returncode == 0, res.stdout + res.stderr
+    (path, body), = [p for p in canopy.handler.posted if p[0] == "/api/harness/runner-invitations/"]
+    assert body["name"] == "cloud-ec2-test" and body["workspace"] == "connect"
+    assert body["role_arn"] == ROLE_ARN
+    # The -ecdh stack's KMS public key, as a JWK: the one approval covers it.
+    der = base64.b64decode(SPKI)
+    b64u = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()  # noqa: E731
+    assert body["ecdh_public_jwk"] == {"kty": "EC", "crv": "P-256", "x": b64u(der[-64:-32]), "y": b64u(der[-32:])}
+    assert f"approve: https://canopy.example/w/connect/runner-invitations/{INV_ID}" in res.stdout
+    assert f"paired: runner {RID}" in res.stdout
+    saved = json.loads((tmp_path / "keys" / "canopy-cloud-runner-test-invitation.json").read_text())
+    assert saved == {"id": INV_ID, "runner_id": RID}
+    assert all(a == "Bearer t" for a in canopy.handler.auth), "up.sh speaks as the operator"
+
+
+def test_an_invitation_that_expires_says_rerun(tmp_path, canopy):
+    canopy.handler.states = ["pending", "expired"]
+    _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "connect")
+    assert res.returncode != 0 and "expired" in res.stderr and "up.sh" in res.stderr
+
+
+def test_update_keeps_existing_workspace(tmp_path, canopy):
+    canopy.handler.runners = [{"id": RID, "kind": "cloud", "name": "cloud-ec2-test", "status": "online"}]
+    state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect")
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
     assert res.returncode == 0, res.stdout + res.stderr
-    assert "device key" in res.stdout
-    assert any("execute-change-set" in c for c in _calls(state))
+    deploy = next(c for c in _calls(state) if "cloudformation deploy" in c and "runner.cfn.yaml" in c)
+    assert " RunnerWorkspace=connect " in deploy + " ", deploy
+    # Its runner exists, so a replaced instance re-attaches by its role: no invitation.
+    assert not canopy.handler.posted
+    assert "already paired" in res.stdout
+
+
+def test_an_update_cannot_move_the_box_to_another_workspace(tmp_path, canopy):
+    state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi")
+    assert res.returncode != 0 and "keeps its workspace" in res.stderr
+    assert not any("deploy" in c for c in _calls(state))
+
+
+def test_an_existing_stack_whose_box_never_paired_is_invited(tmp_path, canopy):
+    _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
+    assert res.returncode == 0, res.stdout + res.stderr
+    (path, body), = [p for p in canopy.handler.posted if p[0] == "/api/harness/runner-invitations/"]
+    assert body["workspace"] == "connect"
 
 
 def test_an_update_that_touches_the_instance_is_refused(tmp_path, canopy):
