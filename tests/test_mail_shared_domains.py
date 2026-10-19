@@ -97,7 +97,7 @@ def test_shared_workspace_routes_its_agent_and_mail_lands_in_its_workspace(w, mo
     domain, got = domains.resolve("eva@dimagi.ai")
     assert got == route
     assert _c(w.cadmin).get("/api/mail/resolve", {"address": "eva@dimagi.ai"}).json() == {
-        "backend": "ses", "workspace": "connect", "agent": "eva"}
+        "backend": "ses", "workspace": "connect", "agent": "eva", "address": "eva@dimagi.ai"}
     # the owner sees its domain, but not another tenant's address on it
     assert _c(w.jj).get("/api/mail/domains/labs").json()["items"][0]["routes"] == []
 

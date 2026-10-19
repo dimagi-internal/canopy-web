@@ -9,7 +9,9 @@ Both are FIXED TEXT, never written by a model — no session ever ran.
   canopy/another agent; and at most once per thread per 24 hours. Off until a
   workspace admin turns it on (`AdmissionSettings`, on the Admission rules
   page): the notice is still recorded, as `held`, so turning it on later
-  changes nothing else. canopy-web sends it
+  changes nothing else. A canopy-hosted (SES) thread is answered from the
+  thread's own address through the mail app (`agents.mailbox.reply`). On Gmail
+  canopy-web sends it
   itself when it can (`gmail.py`); when it cannot — the mailbox's token is on
   the desktop `canopy` client, or Google refuses — the notice is left PENDING
   and the agent's runner sends it on its next mailbox poll
@@ -103,7 +105,10 @@ def _why_not_reply(turn, agent, sender: str) -> str:
         return "the sender is canopy or another agent"
     if _NOREPLY.search(sender.partition("@")[0]):
         return "a no-reply address"
+    from apps.agents import mailbox
+
     own = {a.lower() for a in InboundMailbox.objects.filter(agent=agent).values_list("address", flat=True)}
+    own |= {a["address"] for a in mailbox.addresses(agent)}
     if agent.user_id and agent.user.email:
         own.add(agent.user.email.lower())
     if sender in own:
@@ -146,9 +151,25 @@ def _sender_notice(turn, rule, agent) -> None:
     if not AdmissionSettings.sender_notices_on(agent.workspace_id):
         return record(AdmissionNotice.HELD,
                       "automatic replies are off in this workspace (Settings → Admission rules)")
+    message_id, subject, body = str(ref.get("message_id") or ""), str(ref.get("subject") or ""), sender_text(agent)
+    if ref.get("backend") == "ses":
+        # A canopy-hosted thread: `thread_id` is a MailThread uuid, not a Gmail id, so the
+        # reply goes out through the mail app from the thread's own address. A refusal
+        # sent nothing, and no runner reads this mailbox, so it ends here.
+        from apps.agents import mailbox
+
+        try:
+            sent_id = mailbox.reply(agent, thread_id=thread_id, to=sender, body=body)
+        except mailbox.ReplyRefused as exc:
+            return record(AdmissionNotice.FAILED, f"not sent: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("admission: hosted-mail send failed for turn %s", turn.pk)
+            return record(AdmissionNotice.FAILED,
+                          f"not known to be sent: the send failed ({type(exc).__name__}) and "
+                          "is not retried, so the sender is never answered twice")
+        return record(AdmissionNotice.SENT, f"replied on the thread (message {sent_id})")
     from . import gmail
 
-    message_id, subject, body = str(ref.get("message_id") or ""), str(ref.get("subject") or ""), sender_text(agent)
     try:
         sent_id = gmail.send_reply(agent, thread_id=thread_id, message_id=message_id,
                                    to=sender, subject=subject, body=body)
@@ -159,7 +180,8 @@ def _sender_notice(turn, rule, agent) -> None:
         # client it CAN send from: leave the reply to it rather than give up.
         return record(AdmissionNotice.PENDING,
                       f"canopy-web could not send it ({exc}); left for the agent's runner",
-                      mailbox=(agent.email or "")[:320], message_id=message_id[:64],
+                      mailbox=str(ref.get("mailbox") or agent.email or "")[:320],
+                      message_id=message_id[:64],
                       subject=subject[:998], body=body)
     except Exception as exc:  # noqa: BLE001
         # The send call itself failed in a way that does not say whether Gmail
@@ -188,8 +210,12 @@ def fix_links(turn, rule, agent) -> list[dict]:
     if rule.reach:
         links.insert(1, {"label": "The runners (resume one, or check why it is down)",
                          "url": wsvc.public_url("/supervisor?tab=runners")})
-    thread_id = str((turn.origin_ref or {}).get("thread_id") or "")
-    if thread_id:
+    ref = turn.origin_ref or {}
+    thread_id = str(ref.get("thread_id") or "")
+    if thread_id and ref.get("backend") == "ses":
+        links.append({"label": f"The email thread (in {agent.slug}'s mail)",
+                      "url": wsvc.scoped_url(ws, f"/agents/{agent.slug}/mail")})
+    elif thread_id:
         links.append({"label": f"The Gmail thread (in {agent.slug}'s mailbox)",
                       "url": f"https://mail.google.com/mail/u/0/#all/{thread_id}"})
     return links

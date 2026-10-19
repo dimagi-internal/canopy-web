@@ -318,6 +318,33 @@ def agent_mailbox(agent) -> dict:
             "route": "mine" if mine else ("taken" if route is not None else "none")}
 
 
+def agent_addresses(agent) -> list[dict]:
+    """Every address `agent` has, `[{"address", "backend": "ses"|"gmail", "primary"}]`:
+    its own (`Agent.email`, primary), then its enabled agent routes, then its Gmail push
+    mailboxes — lowercase, each once. An agent may hold several (ada@dimagi-ai.com in
+    Gmail and ada@dimagi.ai here); which one is its Google login is `google_identity`."""
+    from apps.inbound.models import InboundMailbox
+
+    out: dict[str, dict] = {}
+
+    def add(address: str, backend: str, primary: bool = False) -> None:
+        a = (address or "").strip().lower()
+        if a and a not in out:
+            out[a] = {"address": a, "backend": backend, "primary": primary}
+
+    if agent.email:
+        add(agent.email, "ses" if agent_mailbox(agent)["kind"] == "hosted" else "gmail", True)
+    routes = (MailRoute.objects.filter(agent=agent, kind=MailRoute.AGENT, enabled=True,
+                                       workspace=agent.workspace_id)
+              .exclude(local_part=MailRoute.CATCH_ALL).select_related("domain")
+              .order_by("domain__name", "local_part"))
+    for r in routes:
+        add(r.address, "ses")
+    for a in InboundMailbox.objects.filter(agent=agent).order_by("address").values_list("address", flat=True):
+        add(a, "gmail")
+    return list(out.values())
+
+
 def ensure_agent_route(agent, *, by) -> str:
     """Give an agent whose address is on a canopy-hosted domain its mailbox route, so mail to
     it becomes its email turn with no further step. Returns what happened: "created",
@@ -356,6 +383,37 @@ class MailboxProvider:
 
     def ensure_route(self, agent, *, by) -> str:
         return ensure_agent_route(agent, by=by)
+
+    def addresses(self, agent) -> list[dict]:
+        return agent_addresses(agent)
+
+    def reply(self, agent, *, thread_id: str, to: str, subject: str = "", body: str) -> str:
+        """Reply on one of `agent`'s canopy-hosted threads from the thread's own address
+        (`agent_mail.send`). Returns the sent Message-ID; raises `mailbox.ReplyRefused`
+        when nothing was sent."""
+        import uuid as uuidlib
+
+        from apps.agents import mailbox
+
+        from . import agent_mail
+        from .models import MailThread
+
+        try:
+            key = uuidlib.UUID(str(thread_id))
+        except ValueError:
+            raise mailbox.ReplyRefused("not a canopy-hosted thread") from None
+        t = (MailThread.objects.filter(uuid=key, workspace=agent.workspace_id)
+             .select_related("route__agent", "route__domain", "route__workspace").first())
+        if t is None:
+            raise mailbox.ReplyRefused("no such thread")
+        r = t.route
+        if r is None or not r.enabled or r.kind != MailRoute.AGENT or r.agent_id != agent.pk:
+            raise mailbox.ReplyRefused("this address no longer routes to the agent")
+        try:
+            m = agent_mail.send(r, to=[to], text=body, subject=subject, thread=t)
+        except agent_mail.SendRefused as exc:
+            raise mailbox.ReplyRefused(str(exc)) from None
+        return m.message_id
 
 
 def verified_domain_owner(domain: str):

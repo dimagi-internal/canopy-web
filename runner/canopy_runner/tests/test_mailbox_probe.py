@@ -138,6 +138,32 @@ def test_a_runner_json_entry_overrides_its_agent_and_is_probed_too():
     assert ("canopy", ACE) not in gog.searches(), "the override's agent is not re-discovered"
 
 
+def test_every_readable_mailbox_of_an_agent_is_kept_and_read(monkeypatch, tmp_path):
+    """Two mailboxes for one agent: the second no longer overwrites the first, and the
+    inbox tick reads both."""
+    from canopy_runner import inbox as inbox_mod
+    from canopy_runner import main
+
+    second = "ace@dimagi.ai"
+    rows = [{"address": ACE, "agent_slug": "ace", "watch_topic": ""},
+            {"address": second, "agent_slug": "ace", "watch_topic": ""}]
+    gog = Gog(tokens=[("canopy", ACE), ("canopy", second)],
+              works=[("canopy", ACE), ("canopy", second)])
+    mailbox_probe.maybe_probe(_cfg(), FakeClient(rows), now_fn=lambda: 0, runner=gog)
+    assert mailbox_probe.all_mailboxes(_cfg()) == {"ace": [{"account": ACE, "client": "canopy"},
+                                                           {"account": second, "client": "canopy"}]}
+    assert mailbox_probe.effective_mailboxes(_cfg()) == {"ace": {"account": ACE, "client": "canopy"}}
+    assert mailbox_probe.readable() == sorted([ACE, second])
+    checked = []
+    monkeypatch.setattr(inbox_mod, "check_inbox",
+                        lambda client, agent, **kw: checked.append((agent, kw["mailbox"])) or {
+                            "new": [], "seen": []})
+    cfg = SimpleNamespace(mailboxes={}, state_path=str(tmp_path / "runner-state.json"),
+                          inbox_poll_seconds=300, inbox_max_threads=8, runner_id="r1")
+    main._maybe_check_inboxes(cfg, client=None, now_fn=lambda: 10_000)
+    assert checked == [("ace", ACE), ("ace", second)]
+
+
 def test_an_empty_runner_json_entry_overrides_nothing():
     cfg = _cfg({"ace": {}})
     gog = Gog(tokens=[("canopy", ACE)], works=[("canopy", ACE)])

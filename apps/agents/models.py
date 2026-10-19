@@ -21,6 +21,13 @@ class Agent(models.Model):
     description = models.TextField(blank=True, default="")
     persona = models.TextField(blank=True, default="", help_text="Who the agent is / its remit.")
     email = models.EmailField(blank=True, default="", help_text="The agent's own mailbox, if any.")
+    #: The Google account the agent signs in to Drive, Docs and gog with — apart from
+    #: `email`, which may be a canopy-hosted address (`ada@dimagi.ai`) no Google account
+    #: holds. Blank means "the same as `email`" when that is a Google mailbox
+    #: (`google_identity`), so every agent that predates the split keeps working.
+    google_account = models.EmailField(
+        blank=True, default="",
+        help_text="The agent's Google account (Drive, Docs, gog), when it is not its mailbox.")
     avatar_url = models.URLField(blank=True, default="", max_length=500)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -199,6 +206,19 @@ class Agent(models.Model):
     slack_enabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def google_identity(self) -> str:
+        """The Google account this agent signs in to Google with, or "".
+
+        `google_account` when set; else `email` when that is a Google mailbox — not a
+        canopy-hosted address, which no Google account holds; else nothing."""
+        if self.google_account:
+            return self.google_account.strip().lower()
+        if not self.email:
+            return ""
+        from . import mailbox
+
+        return self.email.strip().lower() if mailbox.describe(self)["kind"] == "google" else ""
 
     def is_admin(self, user) -> bool:
         """The agent's owner, a WORKSPACE owner, or an explicit admin who is

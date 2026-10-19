@@ -766,7 +766,11 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Which mail backend serves an address */
+        /**
+         * Which mail backend serves an address or a thread
+         * @description `?address=` — the SES mailbox an address is; `?thread=` — the SES thread a turn's
+         *     `thread_id` names (404 for a Gmail thread id, or one the caller may not see).
+         */
         readonly get: operations["resolve_mail_address"];
         readonly put?: never;
         readonly post?: never;
@@ -12396,6 +12400,23 @@ export interface components {
             readonly workspace: string;
             /** Agent */
             readonly agent: string;
+            /**
+             * Address
+             * @default
+             */
+            readonly address: string;
+        };
+        /** AgentAddressOut */
+        readonly AgentAddressOut: {
+            /** Address */
+            readonly address: string;
+            /** Backend */
+            readonly backend: string;
+            /**
+             * Primary
+             * @default false
+             */
+            readonly primary: boolean;
         };
         /**
          * AgentMailboxOut
@@ -12431,6 +12452,11 @@ export interface components {
              * @default
              */
             readonly route: string;
+            /**
+             * Addresses
+             * @default []
+             */
+            readonly addresses: readonly components["schemas"]["AgentAddressOut"][];
             /**
              * Hosted Domains
              * @default []
@@ -12586,6 +12612,8 @@ export interface components {
              * @default
              */
             readonly html: string;
+            /** From Address */
+            readonly from_address?: string | null;
         };
         /** MailThreadStateIn */
         readonly MailThreadStateIn: {
@@ -17032,6 +17060,11 @@ export interface components {
             readonly persona: string;
             /** Email */
             readonly email: string;
+            /**
+             * Google Account
+             * @default
+             */
+            readonly google_account: string;
             /** Avatar Url */
             readonly avatar_url: string;
             /**
@@ -17128,6 +17161,8 @@ export interface components {
              * @default
              */
             readonly email: string;
+            /** Google Account */
+            readonly google_account?: string | null;
             /**
              * Avatar Url
              * @default
@@ -17299,6 +17334,11 @@ export interface components {
              */
             readonly mailbox: string;
             /**
+             * Google Account
+             * @default
+             */
+            readonly google_account: string;
+            /**
              * Stakeholders
              * @default
              */
@@ -17353,6 +17393,11 @@ export interface components {
             readonly persona: string;
             /** Email */
             readonly email: string;
+            /**
+             * Google Account
+             * @default
+             */
+            readonly google_account: string;
             /** Avatar Url */
             readonly avatar_url: string;
             /**
@@ -19506,6 +19551,11 @@ export interface components {
              * @default
              */
             readonly mailbox_backend: string;
+            /**
+             * Google Account
+             * @default
+             */
+            readonly google_account: string;
             /**
              * Zk
              * @default false
@@ -30642,8 +30692,9 @@ export interface operations {
     };
     readonly resolve_mail_address: {
         readonly parameters: {
-            readonly query: {
-                readonly address: string;
+            readonly query?: {
+                readonly address?: string;
+                readonly thread?: string;
             };
             readonly header?: never;
             readonly path?: never;

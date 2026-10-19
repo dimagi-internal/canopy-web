@@ -142,6 +142,9 @@ class MailSendIn(Schema):
     subject: str
     text: str
     html: str = ""
+    from_address: str | None = None
+    """Which of the agent's addresses to send from (one of its live routes here). Omitted:
+    the route for the agent's own address, else its first."""
 
 
 class MailThreadStateIn(Schema):
@@ -153,6 +156,15 @@ class MailResolveOut(Schema):
     backend: str
     workspace: str
     agent: str
+    address: str = ""
+
+
+class AgentAddressOut(Schema):
+    address: str
+    backend: str
+    """"ses" (a canopy-hosted route) or "gmail" (a Google mailbox)."""
+    primary: bool = False
+    """The agent's own address (`Agent.email`)."""
 
 
 class AgentMailboxOut(Schema):
@@ -166,6 +178,9 @@ class AgentMailboxOut(Schema):
     verified: bool = False
     live: bool = False
     route: str = ""
+    addresses: list[AgentAddressOut] = []
+    """Every address the agent has: its own (primary), its canopy-hosted routes and its
+    Gmail push mailboxes, lowercase, each once."""
     hosted_domains: list[str] = []
     """The canopy-hosted domains this agent's workspace may give it an address on."""
     can_route: bool = False

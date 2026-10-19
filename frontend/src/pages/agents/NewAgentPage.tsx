@@ -44,6 +44,7 @@ export function NewAgentPage(): JSX.Element {
   const [slugEdited, setSlugEdited] = useState(false)
   const [mandate, setMandate] = useState('')
   const [mailbox, setMailbox] = useState('')
+  const [googleAccount, setGoogleAccount] = useState('')
   const hostedDomains = useHostedDomains(workspace)
   const [stakeholders, setStakeholders] = useState('')
   const [owner, setOwnerState] = useState(rememberedOwner)
@@ -109,7 +110,8 @@ export function NewAgentPage(): JSX.Element {
   const create = async () => {
     const agent = {
       workspace, slug: effectiveSlug, name: name.trim(), mandate: mandate.trim(),
-      mailbox: mailbox.trim(), stakeholders: stakeholders.trim(), repo, token: token.trim(),
+      mailbox: mailbox.trim(), google_account: googleAccount.trim(), stakeholders: stakeholders.trim(),
+      repo, token: token.trim(),
     }
     setCreateError(null)
     try {
@@ -172,9 +174,14 @@ export function NewAgentPage(): JSX.Element {
             placeholder="Find good first issues for new contributors."
           />
         </Field>
-        <Field label="Mailbox (optional)" hint={mailboxHint(mailbox, hostedDomains)}>
+        <Field label="Mailbox (optional — Google or canopy-hosted)" hint={mailboxHint(mailbox, hostedDomains)}>
           <Input value={mailbox} onChange={(e) => setMailbox(e.target.value)}
             placeholder={`${effectiveSlug || 'scout'}@${hostedDomains[0] ?? 'example.org'}`} />
+        </Field>
+        <Field label="Google account (optional)"
+          hint="The Google login it uses for Drive, Docs and gog, when that is not the mailbox — e.g. beside a canopy-hosted address. Blank: the mailbox, if it is Google.">
+          <Input value={googleAccount} onChange={(e) => setGoogleAccount(e.target.value)}
+            placeholder={`${effectiveSlug || 'scout'}@dimagi-ai.com`} aria-label="Google account" />
         </Field>
         <Field label="Who it serves (optional)">
           <Input value={stakeholders} onChange={(e) => setStakeholders(e.target.value)} placeholder="the contributor team" />

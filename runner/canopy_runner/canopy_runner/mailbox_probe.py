@@ -59,14 +59,22 @@ def readable() -> list[str] | None:
     return None if r is None else list(r)
 
 
-def effective_mailboxes(cfg) -> dict:
-    """``{agent_slug: {"account", "client", ["query"]}}`` — what to read this tick.
+def all_mailboxes(cfg) -> dict:
+    """``{agent_slug: [{"account", "client", ["query"]}, ...]}`` — every mailbox to read
+    this tick. An agent may have several (each readable one is kept, in candidate order).
 
     The discovered map, with every NON-EMPTY ``runner.json`` entry laid over it:
     an explicit entry is an override for its agent (a custom query, a pinned
-    client), so it wins. An empty entry overrides nothing.
+    client), so it wins — and replaces that agent's list. An empty entry overrides nothing.
     """
-    return {**_state["discovered"], **_overrides(cfg)}
+    return {**_state["discovered"], **{slug: [box] for slug, box in _overrides(cfg).items()}}
+
+
+def effective_mailboxes(cfg) -> dict:
+    """``{agent_slug: {"account", "client", ["query"]}}`` — each agent's FIRST mailbox,
+    for callers keyed by agent (due timers, the startup log). Reading mail iterates
+    ``all_mailboxes`` so a second mailbox is not skipped."""
+    return {slug: boxes[0] for slug, boxes in all_mailboxes(cfg).items() if boxes}
 
 
 def _overrides(cfg) -> dict:
@@ -167,7 +175,9 @@ def probe(candidates: list[dict], overrides: dict, *, runner=subprocess.run) -> 
         for client in _client_order(clients, slug):
             err = confirm(address, client)
             if not err:
-                discovered[slug] = {"account": address, "client": client}
+                boxes = discovered.setdefault(slug, [])
+                if all(b["account"] != address for b in boxes):
+                    boxes.append({"account": address, "client": client})
                 readable.add(address)
                 logger.info("mailbox %s: readable via client %s", address, client)
                 break

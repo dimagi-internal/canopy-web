@@ -602,8 +602,10 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
         # Grading one message's verdict against another message's sender would
         # attribute a pass to the wrong person, so the two must come as a pair.
         frm = facts.newest_from_header or t.get("from", "")
-        origin_ref = {"thread_id": tid, "from": frm, "subject": subj,
-                      "discovered_by": discovered_by, "message_count": count}
+        # `backend`/`mailbox` say which of the agent's mailboxes this thread is in — an
+        # agent may have several, and a Gmail thread id means nothing without its account.
+        origin_ref = {"thread_id": tid, "backend": "gmail", "mailbox": box, "from": frm,
+                      "subject": subj, "discovered_by": discovered_by, "message_count": count}
         if facts.message_id:
             origin_ref["message_id"] = facts.message_id
         if verdict is not None:

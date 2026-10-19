@@ -71,10 +71,14 @@ def _on_turn_created(sender, instance: Turn, created: bool, **kwargs) -> None:
 
 
 def _mailbox_for(turn: Turn) -> InboundMailbox | None:
+    """The mailbox the turn's message arrived in. An agent may have several, so the
+    runner's `origin_ref.mailbox` picks it; a turn from a runner that predates it falls
+    back to the agent's first."""
     if not turn.agent_id:
         return None
-    return (
-        InboundMailbox.objects.select_related("agent", "agent__workspace")
-        .filter(agent_id=turn.agent_id, enabled=True)
-        .first()
-    )
+    rows = (InboundMailbox.objects.select_related("agent", "agent__workspace")
+            .filter(agent_id=turn.agent_id, enabled=True).order_by("pk"))
+    named = str((turn.origin_ref or {}).get("mailbox") or "").strip()
+    if named:
+        return rows.filter(address__iexact=named).first()
+    return rows.first()

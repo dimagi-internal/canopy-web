@@ -66,13 +66,14 @@ describe('AgentSettingsSection', () => {
     expect(where('Who can reach it', 'Callers')).toBeTruthy()
     expect(where('Who can reach it', 'Slack')).toBeTruthy()
     expect(where('Who can reach it', 'Email')).toBeTruthy()
+    expect(where('Who can reach it', 'Google account')).toBeTruthy()
     // Turn mode and runners are one table now: a rule can set both.
     expect(where('How it runs', 'Routing')).toBeTruthy()
 
     // Who may change each one is said to someone who cannot (this viewer is
     // not an admin), not discovered by an error.
     expect(within(screen.getByRole('region', { name: 'Who can reach it' }))
-      .getAllByText("Only Hal's admins can change this.")).toHaveLength(3)
+      .getAllByText("Only Hal's admins can change this.")).toHaveLength(4)
 
     const credentials = screen.getByRole('region', { name: 'Credentials' })
     expect(await within(credentials).findByTestId('cred-CANOPY_PAT')).toBeTruthy()

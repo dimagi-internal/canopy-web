@@ -362,27 +362,65 @@ def _counterpart(direction, from_addr, to) -> str:
     return ""
 
 
-def _agent_route(ws, slug: str) -> MailRoute | None:
-    """The agent's own address here: never the catch-all, and the same one every time."""
+def _agent_routes(ws, slug: str):
+    """Every address the agent holds here (an agent may have several): never the catch-all."""
     return (MailRoute.objects.filter(workspace=ws, kind=MailRoute.AGENT, agent__slug=slug,
                                      enabled=True)
             .exclude(local_part=MailRoute.CATCH_ALL)
-            .select_related("domain", "agent").order_by("domain__name", "local_part").first())
+            .select_related("domain", "agent", "workspace").order_by("domain__name", "local_part"))
 
 
-@router.get("/resolve", response=MailResolveOut, summary="Which mail backend serves an address")
-def resolve_mail_address(request: HttpRequest, address: str) -> dict:
+def _agent_route(ws, slug: str) -> MailRoute | None:
+    """The agent's default From here, the same one every time: the route for its own
+    address (`Agent.email`) when it has one, else the first by domain then local part."""
+    routes = list(_agent_routes(ws, slug))
+    if not routes:
+        return None
+    email = (routes[0].agent.email or "").strip().lower()
+    return next((r for r in routes if r.address == email), routes[0])
+
+
+def _from_route(ws, slug: str, from_address: str | None) -> MailRoute | None:
+    """The route a new thread is sent from: `from_address` when given — one of this agent's
+    own live addresses here, else 422 — or the agent's default From."""
+    if not from_address:
+        return _agent_route(ws, slug)
+    want = from_address.strip().lower()
+    route = next((r for r in _agent_routes(ws, slug) if r.address == want), None)
+    if route is None or not domains.route_is_live(route):
+        raise HttpError(422, f"{from_address!r} is not one of this agent's addresses")
+    return route
+
+
+@router.get("/resolve", response=MailResolveOut, summary="Which mail backend serves an address or a thread")
+def resolve_mail_address(request: HttpRequest, address: str = "", thread: str = "") -> dict:
+    """`?address=` — the SES mailbox an address is; `?thread=` — the SES thread a turn's
+    `thread_id` names (404 for a Gmail thread id, or one the caller may not see)."""
+    mine = wsvc.user_workspace_slugs(request.user)
+    if thread:
+        try:
+            key = uuidlib.UUID(thread)
+        except ValueError:
+            raise HttpError(404, "not an SES thread") from None
+        t = MailThread.objects.filter(uuid=key).first()
+        if t is None or t.workspace_id not in mine:
+            raise HttpError(404, "not an SES thread")
+        return {"backend": "ses", "workspace": t.workspace_id, "agent": t.agent_slug,
+                "address": t.address}
+    if not address:
+        raise HttpError(422, "give an address or a thread")
     domain, route = domains.resolve(address)
-    if (route is None or route.kind != MailRoute.AGENT
-            or route.workspace_id not in wsvc.user_workspace_slugs(request.user)):
+    if route is None or route.kind != MailRoute.AGENT or route.workspace_id not in mine:
         raise HttpError(404, "not an SES mailbox")
-    return {"backend": "ses", "workspace": route.workspace_id, "agent": route.agent.slug}
+    return {"backend": "ses", "workspace": route.workspace_id, "agent": route.agent.slug,
+            "address": route.address}
 
 
 def _mailbox_out(request: HttpRequest, agent) -> dict:
     from apps.workspaces import permissions as wperms
 
     return {**domains.agent_mailbox(agent),
+            "addresses": domains.agent_addresses(agent),
             "hosted_domains": [d.name for d in domains.usable_domains(agent.workspace)],
             "can_route": wperms.can(request.user, agent.workspace, wperms.INTEGRATIONS)}
 
@@ -500,7 +538,7 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
 def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict:
     ws = _ws(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
-    route = _agent_route(ws, payload.agent)
+    route = _from_route(ws, payload.agent, payload.from_address)
     if route is None:
         raise HttpError(404, f"agent {payload.agent!r} has no mail address here")
     _agent_full(request.user, route)

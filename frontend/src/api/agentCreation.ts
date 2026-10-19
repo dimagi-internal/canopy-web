@@ -40,6 +40,8 @@ export interface NewAgent {
   name: string
   mandate: string
   mailbox: string
+  /** Its Google login (Drive, Docs, gog) when it is not `mailbox`, e.g. beside a canopy-hosted address. */
+  google_account?: string
   stakeholders: string
   repo: string
   /** The person's fine-grained token: pushes the scaffold, then becomes the agent's GitHub identity. */
@@ -47,7 +49,7 @@ export interface NewAgent {
 }
 
 export async function scaffoldAgent(body: NewAgent): Promise<AgentScaffoldOut> {
-  const res = await apiV2.POST('/api/agents/scaffold', { body })
+  const res = await apiV2.POST('/api/agents/scaffold', { body: { ...body, google_account: body.google_account ?? '' } })
   if (!res.response.ok || !res.data) fail(res.error, 'Could not push the scaffold.')
   return res.data
 }
@@ -61,6 +63,7 @@ export async function registerAgent(agent: NewAgent, pushed: AgentScaffoldOut): 
       description: agent.mandate,
       persona: '',
       email: agent.mailbox,
+      ...(agent.google_account ? { google_account: agent.google_account } : {}),
       avatar_url: '',
       workspace: agent.workspace,
       repo_url: pushed.repo_url,

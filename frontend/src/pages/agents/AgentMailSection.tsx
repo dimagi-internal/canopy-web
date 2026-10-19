@@ -4,9 +4,12 @@ import { WorkbenchSkeleton, WorkbenchSubHeader } from 'canopy-ui'
 import {
   fetchMailThread,
   fetchMailThreads,
+  getAgentMailbox,
+  type AgentMailboxOut,
   type MailMessageOut,
   type MailThreadOut,
 } from '@/api/mail'
+import { AgentAddressList } from '@/components/agents/AgentAddressList'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
@@ -95,6 +98,17 @@ export function AgentMailSection() {
   const [openId, setOpenId] = useState<string | null>(null)
   const [thread, setThread] = useState<MailThreadOut | null>(null)
   const [threadError, setThreadError] = useState<string | null>(null)
+  const [addresses, setAddresses] = useState<AgentMailboxOut['addresses']>([])
+
+  useEffect(() => {
+    let alive = true
+    getAgentMailbox(agent.slug)
+      .then((b) => alive && setAddresses(b.addresses ?? []))
+      .catch(() => undefined) // the list is a nicety; the threads below still load
+    return () => {
+      alive = false
+    }
+  }, [agent.slug])
 
   useEffect(() => {
     let alive = true
@@ -128,6 +142,9 @@ export function AgentMailSection() {
   return (
     <div className="px-6 py-8">
       <WorkbenchSubHeader title="Mail" count={threads?.length} />
+      <div className="mb-4">
+        <AgentAddressList addresses={addresses} />
+      </div>
       {error ? (
         <p role="alert" className="text-[13px] text-destructive">{error}</p>
       ) : threads === null ? (
