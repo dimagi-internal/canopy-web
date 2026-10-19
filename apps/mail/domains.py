@@ -235,7 +235,7 @@ def _restart_failed(domain: MailDomain, status: ses.IdentityStatus, now) -> ses.
     """Start over whatever SES gave up on, when its records now check out in live DNS.
 
     At most once per `_RESTART_COOLDOWN` per domain. Restarting changes no configuration:
-    DKIM re-puts Easy DKIM with no new key and MAIL FROM re-puts the same attributes. If SES
+    DKIM re-puts Easy DKIM with the key length it has and MAIL FROM the same attributes. If SES
     nevertheless answers with different DKIM tokens, the row takes them (the page then lists
     the new records) and the note says so. Returns the status as it stands afterwards."""
     dkim_failed = status.dkim == "FAILED" and domain.status == MailDomain.PENDING
@@ -255,9 +255,12 @@ def _restart_failed(domain: MailDomain, status: ses.IdentityStatus, now) -> ses.
                           for p in ("mail-from-mx", "mail-from-spf"))
     did, waiting, notes = [], [], []
     dkim, mail_from, tokens = status.dkim, status.mail_from, status.tokens
-    try:
-        if dkim_failed and dkim_ready:
-            new = ses.restart_dkim(domain.name)
+    if dkim_failed and dkim_ready:
+        try:
+            new = ses.restart_dkim(domain.name, key_length=status.key_length)
+        except (ClientError, BotoCoreError) as exc:
+            notes.append(_refused_restart("DKIM", domain, exc))
+        else:
             did.append("DKIM")
             dkim = "PENDING"
             if new and sorted(new) != sorted(domain.dkim_tokens or []):
@@ -265,17 +268,18 @@ def _restart_failed(domain: MailDomain, status: ses.IdentityStatus, now) -> ses.
                              "of the old ones.")
                 domain.dkim_tokens = tokens = new
                 cache.delete(_cache_key(domain))
-        elif dkim_failed:
-            waiting.append("DKIM")
-        if mail_from_failed and mail_from_ready:
+    elif dkim_failed:
+        waiting.append("DKIM")
+    if mail_from_failed and mail_from_ready:
+        try:  # its own call: a DKIM refusal must not keep MAIL FROM from restarting
             ses.restart_mail_from(domain.name, mail_from=f"{domain.mail_from_subdomain}.{domain.name}")
+        except (ClientError, BotoCoreError) as exc:
+            notes.append(_refused_restart("MAIL FROM", domain, exc))
+        else:
             did.append("MAIL FROM")
             mail_from = "PENDING"
-        elif mail_from_failed:
-            waiting.append("MAIL FROM")
-    except (ClientError, BotoCoreError) as exc:
-        log.warning("mail: restarting verification of %s failed", domain.name, exc_info=True)
-        notes.append(f"SES refused to restart verification: {_reason(exc)}.")
+    elif mail_from_failed:
+        waiting.append("MAIL FROM")
     if did:
         domain.verification_restarted_at = now
         notes.insert(0, f"Restarted SES verification of {' and '.join(did)}; "
@@ -284,6 +288,14 @@ def _restart_failed(domain: MailDomain, status: ses.IdentityStatus, now) -> ses.
         notes.append(f"{' and '.join(waiting)} not restarted: its records are not all green yet.")
     domain.restart_note = " ".join(notes)
     return ses.IdentityStatus(dkim=dkim, mail_from=mail_from, tokens=tokens)
+
+
+def _refused_restart(what: str, domain: MailDomain, exc) -> str:
+    log.warning("mail: restarting %s verification of %s failed", what, domain.name, exc_info=True)
+    detail = ""
+    if isinstance(exc, ClientError):
+        detail = str(exc.response.get("Error", {}).get("Message") or "")[:160]
+    return f"SES refused to restart {what} verification: {_reason(exc)}" + (f" ({detail})." if detail else ".")
 
 
 def _ago(delta: dt.timedelta) -> str:

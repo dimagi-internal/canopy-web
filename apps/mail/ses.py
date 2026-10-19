@@ -80,6 +80,8 @@ class IdentityStatus:
     dkim: str
     mail_from: str
     tokens: list[str]
+    key_length: str = ""
+    """Easy DKIM's NextSigningKeyLength (RSA_1024_BIT / RSA_2048_BIT), "" when SES gave none."""
 
 
 def identity_status(domain: str) -> IdentityStatus:
@@ -89,23 +91,28 @@ def identity_status(domain: str) -> IdentityStatus:
     mail_from = out.get("MailFromAttributes") or {}
     return IdentityStatus(dkim=str(dkim.get("Status") or ""),
                           mail_from=str(mail_from.get("MailFromDomainStatus") or ""),
-                          tokens=list(dkim.get("Tokens") or []))
+                          tokens=list(dkim.get("Tokens") or []),
+                          key_length=str(dkim.get("NextSigningKeyLength")
+                                         or dkim.get("CurrentSigningKeyLength") or ""))
 
 
 def identity_verified(domain: str) -> bool:
     return identity_status(domain).dkim == "SUCCESS"
 
 
-def restart_dkim(domain: str) -> list[str]:
+def restart_dkim(domain: str, *, key_length: str = "") -> list[str]:
     """Start Easy DKIM verification over on an identity SES gave up on (DKIM FAILED: the
     records were not found within its 72 h window, and SES never looks again by itself).
 
-    Re-puts the identity's own signing origin (Easy DKIM, `AWS_SES`) and passes no
-    `SigningAttributes`, so it asks for no new key; SES sets the status back to PENDING. Returns the tokens SES answers with — the
-    caller compares them with the ones it stored, since only those are published in DNS."""
+    Re-puts the identity's own signing origin (Easy DKIM, `AWS_SES`) with the key length
+    it already has — SES refuses the call without one ("Signing key length parameter is
+    null or empty") — so no different key is asked for; SES sets the status back to
+    PENDING. Returns the tokens SES answers with: the caller compares them with the ones
+    it stored, since only those are published in DNS."""
     _guard()
     out = _sesv2().put_email_identity_dkim_signing_attributes(
-        EmailIdentity=domain, SigningAttributesOrigin="AWS_SES")
+        EmailIdentity=domain, SigningAttributesOrigin="AWS_SES",
+        SigningAttributes={"NextSigningKeyLength": key_length or "RSA_2048_BIT"})
     return list(out.get("DkimTokens") or [])
 
 
