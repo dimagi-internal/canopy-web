@@ -4479,6 +4479,123 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/secret-requests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ask a person for one of this agent's declared secrets
+         * @description For the agent itself (its own login) or an admin. `name` must be declared
+         *     in the agent's runtime.yaml. The chat this is called from shows the person a
+         *     card that seals the value in their browser and stores ciphertext only — you
+         *     never receive the value, and must not ask for it in the chat. Read the
+         *     request back (`get_agent_secret_request`) for `status: fulfilled`, then
+         *     resolve the secret the usual way.
+         */
+        readonly post: operations["request_agent_secret"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/secret-requests/{request_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A secret request's status (never its value)
+         * @description `status` is open, fulfilled, cancelled or expired; `has_value` says
+         *     whether the agent now holds a value for the name. For the agent, its admins
+         *     and whoever can read the chat it was asked from.
+         */
+        readonly get: operations["get_agent_secret_request"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/secret-requests/{request_id}/value": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Answer a secret request with a value sealed in the browser (zks1)
+         * @description `value_zk` must be `zks1:` — sealed to the agent's readers before it left
+         *     the page — at the agent's current `kv`. An admin may fill or replace; a
+         *     person who can write to the request's chat may fill a MISSING value only
+         *     (409 `value_exists`). An agent's own login can never answer. A browser
+         *     needs a passkey step-up.
+         */
+        readonly put: operations["fulfil_agent_secret_request"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/zk/recipients": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who a sealed value is for, and who vouched for each (public keys only)
+         * @description For an admin, or for someone who may answer the open request named by
+         *     `secret_request`. Verify each recipient's endorsement against a key you
+         *     already trust BEFORE sealing to it (zk-v1 §7): this list is canopy-web's
+         *     claim, the endorsements are not.
+         */
+        readonly get: operations["get_agent_zk_recipients"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/zk/endorsements": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Vouch, with your own vault key, that keys may read this agent
+         * @description `{endorsements: [{kind, target, key_jkt, by_jkt, sig}]}` — each a zk-v1
+         *     §7 signature by YOUR vault key over a CURRENT recipient's current key. The
+         *     browser makes them whenever you wrap the vault key to someone (turn on,
+         *     grant, rotate) or confirm who can read the agent.
+         */
+        readonly post: operations["add_agent_zk_endorsements"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/sender-trust": {
         readonly parameters: {
             readonly query?: never;
@@ -14530,6 +14647,7 @@ export interface components {
              */
             readonly created_at: string;
             readonly app?: components["schemas"]["MessageAppOut"] | null;
+            readonly secret_request?: components["schemas"]["MessageSecretRequestOut"] | null;
         };
         /**
          * MessagePageOut
@@ -14540,6 +14658,18 @@ export interface components {
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Has More Before */
             readonly has_more_before: boolean;
+        };
+        /**
+         * MessageSecretRequestOut
+         * @description An agent's request for one of its declared secrets (no value — ever).
+         */
+        readonly MessageSecretRequestOut: {
+            /** Id */
+            readonly id: string;
+            /** Agent */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
         };
         /**
          * PageStateOut
@@ -20266,6 +20396,172 @@ export interface components {
             readonly wraps: readonly components["schemas"]["ZkWrapIn"][];
             /** Values */
             readonly values?: readonly components["schemas"]["ZkValueIn"][];
+        };
+        /**
+         * SecretRequestOut
+         * @description A request carries NO value — a name, a reason and a status.
+         */
+        readonly SecretRequestOut: {
+            /** Id */
+            readonly id: string;
+            /** Secret Request Id */
+            readonly secret_request_id: string;
+            /** Agent */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+            /** Status */
+            readonly status: string;
+            /** Has Value */
+            readonly has_value: boolean;
+            /** Session Id */
+            readonly session_id?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Fulfilled At */
+            readonly fulfilled_at?: string | null;
+            /**
+             * Fulfilled By Email
+             * @default
+             */
+            readonly fulfilled_by_email: string;
+            /**
+             * Message
+             * @default
+             */
+            readonly message: string;
+        };
+        /** SecretRequestIn */
+        readonly SecretRequestIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+        };
+        /** SecretRequestValueIn */
+        readonly SecretRequestValueIn: {
+            /** Kv */
+            readonly kv: number;
+            /** Value Zk */
+            readonly value_zk: string;
+        };
+        /**
+         * ZkEndorsementOut
+         * @description A person's §7 signature that `key_jkt` may read this agent.
+         */
+        readonly ZkEndorsementOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member";
+            /** Target */
+            readonly target: string;
+            /** Key Jkt */
+            readonly key_jkt: string;
+            /** By */
+            readonly by: string;
+            /**
+             * By Email
+             * @default
+             */
+            readonly by_email: string;
+            /** By Jkt */
+            readonly by_jkt: string;
+            /** By Public Jwk */
+            readonly by_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Sig */
+            readonly sig: string;
+        };
+        /**
+         * ZkRecipientOut
+         * @description A principal a `zks1` value may be sealed to (zk-v1 §6). `target` is what
+         *     the seal binds: a device's ECDH thumbprint, or a member's user id.
+         */
+        readonly ZkRecipientOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member";
+            /** Target */
+            readonly target: string;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Key Jkt */
+            readonly key_jkt: string;
+        };
+        /**
+         * ZkRecipientsOut
+         * @description Everything a writer needs to seal a value without the vault key: who may
+         *     read the agent, and who vouched for each. Public keys and signatures only.
+         */
+        readonly ZkRecipientsOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Agent Id */
+            readonly agent_id: string;
+            /** Kv */
+            readonly kv: number;
+            /** Recipients */
+            readonly recipients: readonly components["schemas"]["ZkRecipientOut"][];
+            /** Endorsements */
+            readonly endorsements: readonly components["schemas"]["ZkEndorsementOut"][];
+            /** Declared */
+            readonly declared: readonly string[];
+            /** Stored */
+            readonly stored: readonly string[];
+        };
+        /** ZkEndorsementsOut */
+        readonly ZkEndorsementsOut: {
+            /** Stored */
+            readonly stored: number;
+        };
+        /** ZkEndorsementIn */
+        readonly ZkEndorsementIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member";
+            /** Target */
+            readonly target: string;
+            /** Key Jkt */
+            readonly key_jkt: string;
+            /** By Jkt */
+            readonly by_jkt: string;
+            /** Sig */
+            readonly sig: string;
+        };
+        /** ZkEndorsementsIn */
+        readonly ZkEndorsementsIn: {
+            /** Endorsements */
+            readonly endorsements: readonly components["schemas"]["ZkEndorsementIn"][];
         };
         /** SenderTrustOut */
         readonly SenderTrustOut: {
@@ -36553,6 +36849,132 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly request_agent_secret: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SecretRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SecretRequestOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_secret_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SecretRequestOut"];
+                };
+            };
+        };
+    };
+    readonly fulfil_agent_secret_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SecretRequestValueIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SecretRequestOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_zk_recipients: {
+        readonly parameters: {
+            readonly query?: {
+                readonly secret_request?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkRecipientsOut"];
+                };
+            };
+        };
+    };
+    readonly add_agent_zk_endorsements: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkEndorsementsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkEndorsementsOut"];
                 };
             };
         };

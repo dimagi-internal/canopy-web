@@ -91,6 +91,23 @@ PUBLIC key — no secret of the newcomer is needed. Removing access = rotate VK.
    A reader finds its own entry by (kind, target), derives K the same way, and
    opens ct. A vault-key holder "settles" a zks1 value by re-encrypting the
    plaintext under VK as §2 zk1 at the current kv (enable/rotate require it).
+
+7. ENDORSEMENT of a recipient — a person's signed "this key may read this agent",
+   made in their browser when they wrap VK to it (or confirm it). The publicly
+   checkable twin of a wrap: a writer who holds no VK seals a §6 value only to
+   recipients endorsed by a key it already trusts, so a server cannot add its own.
+            msg  = "canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}"
+                   (kind/target as in §6; key_jkt = jkt of the recipient's public JWK —
+                    for a device, equal to target)
+            sig  = ECDSA-P256-SHA256(utf8(msg)) by the endorser's person key (the
+                   same P-256 scalar as their §4 keyset: the fixed prefix keeps the
+                   signed message out of every ECDH derivation), IEEE P1363 r||s
+                   (64 bytes) — WebCrypto's native encoding
+            endorsement = {"kind","target","key_jkt","by":endorser user_id,
+                           "by_jkt":jkt(endorser public key),"sig":b64u(sig)}
+   ECDSA is randomized: the vector pins the message and ONE valid signature
+   (RFC 6979 deterministic) that every verifier must accept, and a tampered field
+   it must refuse — not a signature every signer must reproduce.
 """
 from __future__ import annotations
 
@@ -337,6 +354,39 @@ def open_sealed_value(stored, agent_id, name, kind, target, recipient_priv) -> s
     return AESGCM(k).decrypt(blob[:12], blob[12:], value_aad(agent_id, name, body["kv"])).decode()
 
 
+# --- 7. endorsements ------------------------------------------------------------------------
+def endorse_msg(agent_id, kind, target, key_jkt) -> str:
+    return f"canopy-vault/v1/endorse|{agent_id}|{kind}|{target}|{key_jkt}"
+
+
+def endorse(agent_id, kind, target, recipient_pub, endorser_priv, endorser_user_id) -> dict:
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+    key_jkt = jkt(recipient_pub)
+    der = endorser_priv.sign(endorse_msg(agent_id, kind, target, key_jkt).encode(),
+                             ec.ECDSA(hashes.SHA256(), deterministic_signing=True))
+    r, s = decode_dss_signature(der)
+    return {"kind": kind, "target": target, "key_jkt": key_jkt, "by": endorser_user_id,
+            "by_jkt": jkt(endorser_priv.public_key()),
+            "sig": b64u(r.to_bytes(32, "big") + s.to_bytes(32, "big"))}
+
+
+def verify_endorsement(e, agent_id, endorser_pub) -> bool:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+
+    raw = unb64u(e["sig"])
+    if len(raw) != 64 or e["by_jkt"] != jkt(endorser_pub):
+        return False
+    der = encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
+    try:
+        endorser_pub.verify(der, endorse_msg(agent_id, e["kind"], e["target"], e["key_jkt"]).encode(),
+                            ec.ECDSA(hashes.SHA256()))
+    except InvalidSignature:
+        return False
+    return True
+
+
 # --- vectors ----------------------------------------------------------------------------
 def _priv(scalar_hex: str) -> ec.EllipticCurvePrivateKey:
     return ec.derive_private_key(int(scalar_hex, 16), ec.SECP256R1())
@@ -402,6 +452,16 @@ def vectors() -> dict:
             continue
         raise AssertionError("seal binding not enforced")
 
+    # §7: the person (user) endorses the device for agent 42.
+    endorsement = endorse(agent_id, "device", djkt, device.public_key(), user, user_id)
+    assert verify_endorsement(endorsement, agent_id, user.public_key())
+    for bad in ({**endorsement, "key_jkt": jkt(user.public_key())},
+                {**endorsement, "target": "someone-else"},
+                {**endorsement, "kind": "member"}):
+        assert not verify_endorsement(bad, agent_id, user.public_key()), "endorsement binding not enforced"
+    assert not verify_endorsement(endorsement, "43", user.public_key())
+    assert not verify_endorsement(endorsement, agent_id, device.public_key())
+
     # Self-checks: every round trip, the person path end to end, and binding.
     assert decrypt_value(vk, agent_id, "kindora-service-key", kv, value) == "s3cr3t-value"
     assert unwrap_ecdh_es(dwrap, device, device_info(agent_id, kv, djkt)) == vk
@@ -452,6 +512,8 @@ def vectors() -> dict:
             "secret_key_code": sk_code,
             "sealed_value": sealed,
             "user_key_seal_recovery": urseal,
+            "endorse_msg": endorse_msg(agent_id, "device", djkt, djkt),
+            "endorsement": endorsement,
         },
     }
 

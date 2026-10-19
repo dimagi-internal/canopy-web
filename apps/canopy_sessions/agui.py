@@ -328,6 +328,8 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                     block=block,
                     # MCP Apps (spec 2026-10-08 §3): this result has a View.
                     app=data.get("app"),
+                    # It asked for one of the agent's secrets: the seal card.
+                    secret_request=data.get("secret_request"),
                 ),
             )
         ]

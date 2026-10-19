@@ -147,6 +147,13 @@ class MessageAppOut(Schema):
     path: str = ""
 
 
+class MessageSecretRequestOut(Schema):
+    """An agent's request for one of its declared secrets (no value — ever)."""
+    id: str
+    agent: str
+    name: str
+
+
 class MessageOut(Schema):
     turn_index: int
     role: str
@@ -158,6 +165,9 @@ class MessageOut(Schema):
     #: — `{tool_call_id, site, tool, resource_uri, path}`. Decided server-side;
     #: a client never guesses which tools have Views.
     app: MessageAppOut | None = None
+    #: Set on a tool_result that opened a request for one of the agent's
+    #: secrets (`agents.secret_requests.annotate`): the chat shows the seal card.
+    secret_request: MessageSecretRequestOut | None = None
 
 
 class MessagePageOut(Schema):

@@ -82,6 +82,15 @@
       "s": "oKGio6SlpqeoqaqrrK2urw",
       "n": "AAECAwQFBgcICQoL",
       "ct": "l8AtIAL6HvUTyiCzD63ZsKZEhZKMP5gmCuk71lHhfsw6HePtyoki1vXy1ig5H4eV"
+    },
+    "endorse_msg": "canopy-vault/v1/endorse|42|device|PypibSbF5m1Gccn93S70AQoOITKZeDXpPTyfRY-cAHc|PypibSbF5m1Gccn93S70AQoOITKZeDXpPTyfRY-cAHc",
+    "endorsement": {
+      "kind": "device",
+      "target": "PypibSbF5m1Gccn93S70AQoOITKZeDXpPTyfRY-cAHc",
+      "key_jkt": "PypibSbF5m1Gccn93S70AQoOITKZeDXpPTyfRY-cAHc",
+      "by": "7",
+      "by_jkt": "Ny3BdCDPLVykMhfBcwXfqI5i95Spg32h-3X1HNCLdH4",
+      "sig": "ab5cp9TztG9n3f4PDuLUHGErHkhYlaumiO5xiwE7zd2yJfGCa84j3M2h5wjTfLGoALzN4n-lu6M46AsbfoEicQ"
     }
   }
 }
