@@ -29,7 +29,11 @@ wire.
 - `bootstrap_agents.sh` — idempotent bootstrap of the BOX (tooling, gog's keyring, the canopy plugin + CLI, Claude Code itself, caches); each agent is prepared by canopy's `canopy agent prepare --runner`. Runs ON the box, from the runner's own `canopy-web` clone (`RUNNER_SRC_DIR`) — not baked into the template. See "Bootstrap" below.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
 - `up.sh` — preflight every one-time prerequisite, publish the seed, `cloudformation deploy` (updates via a reviewed change set); pulls the private key from SSM for SSH.
+<<<<<<< HEAD
 - `wire.sh` — operator-side: stage the fresh runner's credential bundle, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else; `--test` stages credentials and stops. Run this after `up.sh`.
+=======
+- `wire.sh` — operator-side: stage the fresh runner's credential bundle, wait for the box to prove one credential works, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else. Run this after `up.sh`.
+>>>>>>> 8d7971f8 (docs: the credential probe, self-pause, alerts that reach a person, wire.sh's source order and probe wait)
 - `down.sh` — delete the stack, remove the SSH key, retire the runner row (dropping every route to it); `--keep-runner` for a recycle, `--purge-secrets` to also remove the shared secrets.
 
 `*.pem` and the rendered template are gitignored.
@@ -87,18 +91,38 @@ retires the runner row — only a row that has STOPPED heartbeating, so a same-n
 replacement that is still alive is never touched — then checks no agent's list or
 rules still name it. Secrets stay (they are shared by every runner stack).
 
-**Which Claude logins a new box gets.** `wire.sh` copies the whole credential bundle
-(primary + fallback login, API key, their labels) from a live runner — `--credential-from
-<name|id>`, else the same-name predecessor, else `cloud-ec2-1` — and only falls back to
-Secrets Manager's `claude-oauth-token` when there is none. That is the design: the
-fleet's logins live on the runner page and travel box to box; the Secrets Manager
-token is a rarely-used build fallback for a fleet with no live runner, so it being old
-or at its usage cap is expected and not a defect.
+**Which Claude credentials a new box gets.** `wire.sh` copies the long-lived tokens and
+API key (with their labels) from a runner, in this order: `--credential-from
+<name|id>`; else the same-name predecessor (a rebuild keeps its own bundle); else the
+live cloud box — not retired, online, ready, not paused, latest heartbeat; else
+Secrets Manager's `claude-oauth-token`. It prints which source it used and why, and
+what it copied, by name. That is the design: the fleet's tokens live on the runner
+page and travel box to box; the Secrets Manager token is a rarely-used build fallback
+for a fleet with no live runner, so it being old or at its usage cap is expected.
 
-`wire.sh --runner-id <uuid>` skips discovery; `wire.sh --agents ace,echo` narrows which
+**Full logins never travel.** Their refresh token rotates, so a copy breaks both
+boxes. `wire.sh` prints each signed-in full login on the source it did not copy
+("… — full logins stay on the box they were made on") and the new box's credentials
+link (`/supervisor?tab=runners&runner=<id>`), where "+ Add a login" signs one in.
+
+**A credential has to work before anything routes to it.** After staging, the box
+probes each credential with one short prompt (`claude.probe.<label>` health checks,
+see `docs/architecture/runners.md`). `wire.sh` waits up to `--probe-minutes` (default
+5; `0` skips) for one to be `ok`, prints every probe, and when none is, exits
+non-zero with the "+ Add a login" link before it retires, swaps or adds anything.
+
+**Finding the new box.** `wire.sh --runner-id <uuid>` skips discovery. Otherwise it
+takes the non-retired cloud runner with that name that has **no credential staged**
+(`GET …/credential/status`: no token, no API key, no signed-in login), most recent
+heartbeat first — a box waiting for its bundle already heartbeats (online, not ready),
+so it is found by what it lacks. `wire.sh --agents ace,echo` narrows which
 agents' lists a (non-standby) wire swaps. `wire.sh` waits up to 15 min for the box to
 pair (`--discover-minutes`) and, with `--drill`, up to 40 min for its first bootstrap
 before drilling — a drill fired earlier just queues behind the bootstrap.
+
+**A box that serves no agents prepares none.** `bootstrap_agents.sh` provisions what
+`GET /runners/{id}/agents` answers, an empty list included ("this box serves no agents
+yet"); only no answer falls back to the registry.
 
 Watch it come up / work:
 ```bash
@@ -590,7 +614,7 @@ Either, when convenient:
 - **Blue/green (recommended)** — `./up.sh --allow-instance-change && ./wire.sh --drill`.
   The volume change makes CloudFormation REPLACE the instance: it boots the new one
   (fresh cloud-init, new seed format, 40 GB), then terminates the old. `wire.sh`
-  finds the new never-heartbeated `cloud-ec2-1`, retires the old row and swaps every
+  finds the new, not-yet-staged `cloud-ec2-1`, retires the old row and swaps every
   agent row, rule and workspace order onto it, then drills. Expect a few minutes in
   which cloud work queues.
 - **Grow in place, no new runner row** — `aws ec2 modify-volume --volume-id <vol> --size 40`,
