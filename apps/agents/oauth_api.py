@@ -54,10 +54,11 @@ def start_google_mint(request: HttpRequest, slug: str, login_hint: str = "") -> 
     if not client_id:
         raise HttpError(503, "this deployment has no Google OAuth client configured")
     state = google_oauth.sign_state(agent_slug=agent.slug, user_pk=request.user.pk)
-    # Default the account picker to the agent's own mailbox. It is a HINT, not a
+    # Default the account picker to the agent's Google account (`google_identity`: its
+    # own `google_account`, else its mailbox when that is Google). It is a HINT, not a
     # constraint — whoever is signing in can still choose another account, and the
     # token records whichever mailbox actually consented.
-    hint = login_hint or f"{agent.slug}@dimagi-ai.com"
+    hint = login_hint or agent.google_identity() or f"{agent.slug}@dimagi-ai.com"
     return GoogleMintStartOut(
         url=google_oauth.authorize_url(client_id=client_id, state=state, login_hint=hint)
     )

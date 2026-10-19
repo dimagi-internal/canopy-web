@@ -9,6 +9,7 @@ import { AgentRepositoryControl } from '@/components/agents/AgentRepositoryContr
 import { AgentRouting } from '@/components/agents/AgentRouting'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import { AgentMailboxControl } from '@/components/agents/AgentMailboxControl'
+import { AgentGoogleAccountControl } from '@/components/agents/AgentGoogleAccountControl'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
 import { AgentSetupChecklist } from '@/components/agents/AgentSetupChecklist'
@@ -160,9 +161,17 @@ export function AgentSettingsSection() {
             title="Email"
             who={admins}
             canEdit={isAdmin}
-            description={`The address ${agent.name} sends and reads mail as.`}
+            description={`The address ${agent.name} sends and reads mail as — a Google mailbox, or a canopy-hosted one (e.g. @dimagi.ai) with nothing to sign in.`}
           >
             <AgentMailboxControl slug={agent.slug} workspace={agent.workspace ?? ''} canEdit={isAdmin} />
+          </Setting>
+          <Setting
+            title="Google account"
+            who={admins}
+            canEdit={isAdmin}
+            description={`The Google login ${agent.name} uses for Drive, Docs and gog, when it is not the mailbox.`}
+          >
+            <AgentGoogleAccountControl agent={agent} canEdit={isAdmin} />
           </Setting>
         </div>
       </Section>

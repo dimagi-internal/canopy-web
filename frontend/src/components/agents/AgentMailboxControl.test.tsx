@@ -20,6 +20,17 @@ describe('AgentMailboxControl', () => {
     expect((await screen.findByTestId('mailbox-hosted-live')).textContent).toMatch(/nothing to sign in/)
   })
 
+  it('lists the other addresses the agent holds', async () => {
+    mail.getAgentMailbox.mockResolvedValue({ kind: 'google', address: 'ada@dimagi-ai.com', hosted_domains: [],
+      can_route: true, addresses: [
+        { address: 'ada@dimagi-ai.com', backend: 'gmail', primary: true },
+        { address: 'ada@dimagi.ai', backend: 'ses', primary: false },
+      ] })
+    render(<AgentMailboxControl slug="ada" workspace="fleet" canEdit />)
+    const list = await screen.findByTestId('agent-addresses')
+    expect(list.textContent).toBe('ada@dimagi.ai (canopy-hosted)')
+  })
+
   it('adds a hosted address in one step', async () => {
     mail.getAgentMailbox.mockResolvedValue({ kind: 'none', hosted_domains: ['marshellis.com'], can_route: true })
     mail.setAgentMailbox.mockResolvedValue({ kind: 'hosted', address: 'scout@marshellis.com', live: true,

@@ -148,6 +148,22 @@ export async function getAgent(slug: string): Promise<AgentDetailOut> {
   return normalizeAgentDetail(unwrap(res, 'getAgent'))
 }
 
+/** Set the agent's Google account ("" = the same as its mailbox, if that is Google).
+ *  Through the ordinary upsert, which rewrites name/description/persona/email/avatar,
+ *  so those are sent back exactly as they are. Returns the stored value. */
+export async function setAgentGoogleAccount(agent: AgentDetailOut, googleAccount: string): Promise<string> {
+  const res = await apiV2.POST('/api/agents/', {
+    body: {
+      slug: agent.slug, name: agent.name, description: agent.description, persona: agent.persona,
+      email: agent.email, avatar_url: agent.avatar_url, google_account: googleAccount,
+      // "" keeps it where it is; naming another workspace would MOVE it.
+      workspace: '',
+    },
+  })
+  const out = unwrap(res, 'setAgentGoogleAccount')
+  return out.google_account ?? ''
+}
+
 export async function listAgentSyncs(
   slug: string,
   params: ListAgentsParams = {},

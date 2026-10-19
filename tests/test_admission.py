@@ -317,6 +317,73 @@ def test_a_mailbox_canopy_cannot_send_from_is_left_for_the_agents_runner(
     assert notice.body == notices.sender_text(fleet["hal"])
 
 
+def test_a_canopy_hosted_thread_is_answered_from_its_own_address_not_gmail(
+        fleet, django_capture_on_commit_callbacks, settings, monkeypatch):
+    # An SES turn's thread_id is a MailThread uuid: Gmail would answer the wrong thread
+    # (or none). The reply goes out through the mail app, from the thread's address.
+    from apps.mail import ses
+    from apps.mail.models import MailDomain, MailMessage, MailRoute, MailThread
+
+    settings.MAIL_ENABLED = True
+    sent = []
+    monkeypatch.setattr(ses, "send_raw", lambda **kw: sent.append(kw) or "ses-1")
+    _replies_on(fleet)
+    hal = fleet["hal"]
+    d = MailDomain.objects.create(workspace=fleet["ws"], name="dimagi.ai", status="verified")
+    r = MailRoute.objects.create(domain=d, local_part="hal", kind="agent", agent=hal)
+    t = MailThread.objects.create(workspace=fleet["ws"], route=r, subject="Can Hal help?",
+                                  message_count=1)
+    MailMessage.objects.create(thread=t, workspace=fleet["ws"], direction="in", mailbox=r.address,
+                               message_id="<in-1@dimagi.com>", from_addr=VIKRAM, subject="Can Hal help?")
+    _route(hal, fleet["cloud"])
+    turn, _ = services.enqueue_turn(
+        agent=hal, origin=Turn.ORIGIN_EMAIL, idempotency_key=f"email-hal-{t.uuid}-1",
+        origin_ref={"from": VIKRAM, "subject": "Can Hal help?", "thread_id": str(t.uuid),
+                    "backend": "ses", "mailbox": r.address, "message_id": "<in-1@dimagi.com>",
+                    "headers": VERIFIED})
+    with mock.patch.object(gmail, "send_reply") as gmail_send:
+        _claim(fleet["cloud"], django_capture_on_commit_callbacks)
+    gmail_send.assert_not_called()
+    notice = AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.SENDER)
+    assert notice.status == AdmissionNotice.SENT, notice.detail
+    assert sent[0]["from_addr"] == "hal@dimagi.ai" and sent[0]["to"] == [VIKRAM]
+    assert b"In-Reply-To: <in-1@dimagi.com>" in sent[0]["raw"]
+    out = MailMessage.objects.get(direction="out")
+    assert out.thread == t and "automatic reply" in out.text
+
+
+def test_a_hosted_reply_the_mail_app_refuses_is_failed_not_left_for_a_runner(
+        fleet, django_capture_on_commit_callbacks):
+    # No runner reads an SES mailbox, so PENDING would wait forever.
+    _replies_on(fleet)
+    _route(fleet["hal"], fleet["cloud"])
+    turn, _ = services.enqueue_turn(
+        agent=fleet["hal"], origin=Turn.ORIGIN_EMAIL, idempotency_key="email-hal-x-1",
+        origin_ref={"from": VIKRAM, "subject": "s", "backend": "ses", "headers": VERIFIED,
+                    "thread_id": "00000000-0000-0000-0000-000000000000"})
+    with mock.patch.object(gmail, "send_reply") as gmail_send:
+        _claim(fleet["cloud"], django_capture_on_commit_callbacks)
+    gmail_send.assert_not_called()
+    notice = AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.SENDER)
+    assert notice.status == AdmissionNotice.FAILED and "no such thread" in notice.detail
+
+
+def test_a_pending_gmail_notice_keeps_the_mailbox_the_turn_came_in_on(
+        fleet, django_capture_on_commit_callbacks):
+    _replies_on(fleet)
+    fleet["hal"].email = "hal@dimagi-ai.com"
+    fleet["hal"].save(update_fields=["email"])
+    _route(fleet["hal"], fleet["cloud"])
+    turn, _ = services.enqueue_turn(
+        agent=fleet["hal"], origin=Turn.ORIGIN_EMAIL, idempotency_key="email-hal-g-1",
+        origin_ref={"from": VIKRAM, "subject": "s", "thread_id": "g-1", "message_id": "m-1",
+                    "backend": "gmail", "mailbox": "hal.alt@dimagi-ai.com", "headers": VERIFIED})
+    with mock.patch.object(gmail, "send_reply", side_effect=gmail.Unavailable("desktop client")):
+        _claim(fleet["cloud"], django_capture_on_commit_callbacks)
+    notice = AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.SENDER)
+    assert notice.status == AdmissionNotice.PENDING and notice.mailbox == "hal.alt@dimagi-ai.com"
+
+
 # --- the runner sends what canopy-web could not (canopy-web#1416) --------------------
 
 @pytest.fixture

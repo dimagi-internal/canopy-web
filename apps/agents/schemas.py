@@ -32,6 +32,10 @@ class AgentIn(StrictModel):
     description: str = ""
     persona: str = ""
     email: str = Field(default="", max_length=254)
+    # The agent's Google account (Drive, Docs, gog) when it is not `email` — e.g. a
+    # canopy-hosted `<slug>@dimagi.ai` mailbox beside a `<slug>@dimagi-ai.com` Google
+    # login. None leaves it unchanged (re-upserts omit it); "" clears it.
+    google_account: str | None = Field(default=None, max_length=254)
     avatar_url: str = Field(default="", max_length=500)
     # Optional explicit home: a workspace slug. Setting it on an already-homed
     # agent MOVES it — the whole move, history included (apps/agents/move.py, the
@@ -100,6 +104,9 @@ class AgentScaffoldIn(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     mandate: str = Field(min_length=1, max_length=500)
     mailbox: str = Field(default="", max_length=254)
+    # The agent's Google account, when it differs from `mailbox`. Not stamped into the
+    # repo: it is the instance's, set by the `upsert_agent` that follows.
+    google_account: str = Field(default="", max_length=254)
     stakeholders: str = Field(default="", max_length=300)
     # `owner/name`, or its github.com URL. The person creates it, empty; canopy only pushes.
     repo: str = Field(min_length=3, max_length=200)
@@ -407,6 +414,8 @@ class AgentOut(StrictModel):
     description: str
     persona: str
     email: str
+    # The agent's Google account as stored ("" = the same as `email`, if that is Google).
+    google_account: str = ""
     avatar_url: str
     created_at: dt.datetime
     updated_at: dt.datetime
@@ -1641,6 +1650,9 @@ class AgentCredentialsResolveOut(StrictModel):
     # Where that mailbox lives: "ses" = canopy-hosted (no Gmail sign-in; mail goes through
     # canopy-web), "google" = a Google mailbox the box signs in with gog, "" = none.
     mailbox_backend: str = ""
+    # The Google account the box signs in to Drive/Docs/gog as (`Agent.google_identity`):
+    # `google_account` when set, else `mailbox` when that is a Google mailbox, else "".
+    google_account: str = ""
     # Zero-knowledge (canopy-web#1550). When `zk`, `values` hold `zk1:`
     # ciphertext under the agent's vault key at version `kv`, and `wrap` is that
     # key wrapped to the proving device's ECDH key (docs/vault/zk-v1/). A value

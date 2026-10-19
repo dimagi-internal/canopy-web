@@ -16,6 +16,14 @@ class MailboxProvider(Protocol):
 
     def ensure_route(self, agent, *, by) -> str: ...
 
+    def addresses(self, agent) -> list[dict]: ...
+
+    def reply(self, agent, *, thread_id: str, to: str, subject: str = "", body: str) -> str: ...
+
+
+class ReplyRefused(Exception):
+    """Nothing was sent: hosted mail is not installed, or it refused the reply."""
+
 
 _provider: MailboxProvider | None = None
 
@@ -38,3 +46,20 @@ def describe(agent) -> dict:
 def ensure_route(agent, *, by) -> str:
     """Route a hosted address to the agent; a no-op ("not-hosted") without a provider."""
     return _provider.ensure_route(agent, by=by) if _provider is not None else "not-hosted"
+
+
+def addresses(agent) -> list[dict]:
+    """Every address the agent has (`[{"address", "backend", "primary"}]`); without a
+    provider, just its own, as a Google mailbox."""
+    if _provider is not None:
+        return _provider.addresses(agent)
+    email = (agent.email or "").strip().lower()
+    return [{"address": email, "backend": "gmail", "primary": True}] if email else []
+
+
+def reply(agent, *, thread_id: str, to: str, subject: str = "", body: str) -> str:
+    """Reply on a canopy-hosted thread as the agent, from the thread's own address.
+    Returns the sent Message-ID; raises ReplyRefused when nothing was sent."""
+    if _provider is None:
+        raise ReplyRefused("hosted mail is not installed")
+    return _provider.reply(agent, thread_id=thread_id, to=to, subject=subject, body=body)

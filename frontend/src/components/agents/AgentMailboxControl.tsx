@@ -1,12 +1,14 @@
 import { useEffect, useState, type JSX } from 'react'
 import { Button, Input } from 'canopy-ui/ui'
 import { getAgentMailbox, setAgentMailbox, type AgentMailboxOut } from '@/api/mail'
+import { AgentAddressList } from './AgentAddressList'
 
 /**
  * The agent's email address, and where it lives. On one of the workspace's
  * canopy-hosted domains there is nothing to sign in: saving the address routes
  * it to the agent (apps/mail/domains.ensure_agent_route). Anywhere else it is a
- * Google mailbox, connected under Credentials.
+ * Google mailbox, connected under Credentials. Any other addresses the agent holds
+ * (more canopy-hosted routes, Gmail mailboxes) are listed under it.
  */
 export function AgentMailboxControl({ slug, workspace, canEdit }: {
   slug: string
@@ -69,7 +71,7 @@ export function AgentMailboxControl({ slug, workspace, canEdit }: {
         <div className="flex flex-wrap items-center gap-2">
           <Input value={draft} onChange={(e) => setDraft(e.target.value)} className="w-full sm:w-72"
                  placeholder={box.hosted_domains?.length ? `${slug}@${box.hosted_domains[0]}` : `${slug}@example.org`}
-                 aria-label="Agent email address" data-testid="agent-mailbox-input" />
+                 aria-label="Agent email address (Google or canopy-hosted)" data-testid="agent-mailbox-input" />
           <Button size="sm" disabled={busy} onClick={() => void save()} data-testid="agent-mailbox-save">
             {busy ? 'Saving…' : 'Save'}
           </Button>
@@ -77,6 +79,12 @@ export function AgentMailboxControl({ slug, workspace, canEdit }: {
         </div>
       )}
       <p className="text-[12px]">{status}</p>
+      {(box.addresses?.some((a) => !a.primary) ?? false) && (
+        <div className="space-y-1">
+          <p className="text-[12px] text-muted-foreground">Also receives and sends as:</p>
+          <AgentAddressList addresses={box.addresses} skipPrimary />
+        </div>
+      )}
       {editing && (box.hosted_domains?.length ?? 0) > 0 && (
         <p className="text-[12px] text-muted-foreground">
           Canopy-hosted here: {box.hosted_domains?.map((d) => `@${d}`).join(', ')} — no sign-in needed.

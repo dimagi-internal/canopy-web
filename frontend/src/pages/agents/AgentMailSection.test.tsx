@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
-const { fetchMailThreads, fetchMailThread } = vi.hoisted(() => ({
+const { fetchMailThreads, fetchMailThread, getAgentMailbox } = vi.hoisted(() => ({
   fetchMailThreads: vi.fn(),
   fetchMailThread: vi.fn(),
+  getAgentMailbox: vi.fn(),
 }))
-vi.mock('@/api/mail', () => ({ fetchMailThreads, fetchMailThread }))
+vi.mock('@/api/mail', () => ({ fetchMailThreads, fetchMailThread, getAgentMailbox }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useOutletContext: () => ({ agent: { slug: 'echo', name: 'Echo', workspace: 'connect' } }),
@@ -16,6 +17,7 @@ vi.mock('react-router-dom', async (orig) => ({
 const { AgentMailSection, sandboxedSrcDoc } = await import('./AgentMailSection')
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
+beforeEach(() => { getAgentMailbox.mockResolvedValue({ kind: 'none', addresses: [] }) })
 
 const thread = {
   thread_id: 't1', address: 'echo@mail.example.org', agent: 'echo', subject: 'Grant question',
@@ -102,6 +104,18 @@ describe('AgentMailSection', () => {
     fireEvent.click(await screen.findByText('Grant question'))
     const link = await screen.findByRole('link', { name: /budget\.pdf/ })
     expect(link.getAttribute('href')).toBe('https://s3/budget?sig=1')
+  })
+
+  it('lists every address the agent has', async () => {
+    getAgentMailbox.mockResolvedValue({ kind: 'google', addresses: [
+      { address: 'echo@dimagi-ai.com', backend: 'gmail', primary: true },
+      { address: 'echo@dimagi.ai', backend: 'ses', primary: false },
+    ] })
+    fetchMailThreads.mockResolvedValue({ items: [], agent_address: 'echo@dimagi.ai' })
+    renderMail()
+    const list = await screen.findByTestId('agent-addresses')
+    expect(list.textContent).toContain('echo@dimagi-ai.com (Gmail, primary)')
+    expect(list.textContent).toContain('echo@dimagi.ai (canopy-hosted)')
   })
 
   it('explains an agent with no address and links to email settings', async () => {

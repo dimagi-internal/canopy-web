@@ -353,6 +353,9 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # workspace the caller is actually in, or 422s when that is ambiguous.
     existing = services.get_agent(payload.slug)
     explicit = (payload.workspace or "").strip()
+    google = (payload.google_account or "").strip()
+    if google and ("@" not in google or google.startswith("@") or google.endswith("@")):
+        raise HttpError(422, "google_account is not an email address")
     if existing is not None:
         home = existing.workspace
     elif explicit:
@@ -2378,6 +2381,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
         salesforce_creds=delegations.salesforce_creds_for(agent) if extra("salesforce_creds") else "",
         mailbox=agent.email or "",
         mailbox_backend=_mailbox_backend(agent),
+        google_account=agent.google_identity(),
         zk=agent.zk_enabled, kv=agent.zk_kv if agent.zk_enabled else None, wrap=zk_wrap,
         agent_id=str(agent.pk) if agent.zk_enabled else "",
     )

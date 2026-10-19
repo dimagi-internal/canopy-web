@@ -115,6 +115,15 @@ def test_the_turn_carries_how_it_was_discovered():
     assert client.enqueued[0]["origin_ref"]["discovered_by"] == "push"
 
 
+def test_the_turn_names_its_backend_and_mailbox():
+    """An agent may have several mailboxes: the turn says which one the thread is in."""
+    client = FakeClient()
+    r = _runner([{"id": "t1", "from": "x@y.com", "subject": "s", "messageCount": 1}])
+    inbox.check_inbox(client, "eva", mailbox="Eva@dimagi-ai.com", gog_client="c", runner=r)
+    ref = client.enqueued[0]["origin_ref"]
+    assert ref["backend"] == "gmail" and ref["mailbox"] == "eva@dimagi-ai.com"
+
+
 def test_poll_is_the_default_tag():
     client = FakeClient()
     r = _runner([{"id": "t1", "from": "x@y.com", "subject": "s", "messageCount": 1}])

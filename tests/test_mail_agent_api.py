@@ -44,7 +44,8 @@ def _reply(w, body, user=None):
 
 def test_resolve_names_the_ses_backend_for_members_only(w):
     r = _c(w.owner).get("/api/mail/resolve", {"address": "ada@marshellis.com"})
-    assert r.json() == {"backend": "ses", "workspace": "marshellis", "agent": "mada"}
+    assert r.json() == {"backend": "ses", "workspace": "marshellis", "agent": "mada",
+                        "address": "ada@marshellis.com"}
     stranger = User.objects.create_user("s", "s@s.com", "pw")
     assert _c(stranger).get("/api/mail/resolve", {"address": "ada@marshellis.com"}).status_code == 404
     assert _c(w.owner).get("/api/mail/resolve", {"address": "eva@dimagi-ai.com"}).status_code == 404

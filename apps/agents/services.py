@@ -67,6 +67,10 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
         value = getattr(data, field, None)
         if value is not None:
             defaults[field] = value
+    # Same rule for the Google account: the plugin's re-upserts omit it.
+    google_account = getattr(data, "google_account", None)
+    if google_account is not None:
+        defaults["google_account"] = google_account.strip().lower()
     agent, _ = Agent.objects.update_or_create(
         slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace, "owner": owner,
                                                             **born_zk_fields(owner)}
@@ -303,6 +307,7 @@ def agent_detail(agent: Agent) -> dict:
         "description": agent.description,
         "persona": agent.persona,
         "email": agent.email,
+        "google_account": agent.google_account,
         "avatar_url": agent.avatar_url,
         "workspace_id": agent.workspace_id,
         "definition": _definition_summary(agent),

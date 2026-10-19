@@ -188,6 +188,8 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
     boxes = mailbox_probe.effective_mailboxes(cfg)
     if not boxes:
         return
+    # An agent may have several readable mailboxes: each is read on the agent's tick.
+    every = mailbox_probe.all_mailboxes(cfg)
     stamp = Path(cfg.state_path).with_name("inbox-last.json") if cfg.state_path else Path("inbox-last.json")
     try:
         stamps = json.loads(stamp.read_text())
@@ -205,7 +207,7 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
         return
     rung_slugs = {
         slug for slug in due_slugs
-        if (boxes[slug].get("account") or "").strip().lower() in rung
+        if any((b.get("account") or "").strip().lower() in rung for b in every.get(slug) or [])
     }
 
     from . import inbox as inbox_mod
@@ -215,8 +217,7 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
     # (#714). Sibling of inbox-last.json / gmail-watch.json.
     alarm_state = (Path(cfg.state_path).with_name("alarm-incidents.json")
                    if cfg.state_path else Path("alarm-incidents.json"))
-    for agent in due_slugs:
-        box = boxes[agent]
+    for agent, box in ((a, b) for a in due_slugs for b in every.get(a) or [boxes[a]]):
         if paused and agent in paused:
             continue
         try:
@@ -274,10 +275,12 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
     try:
         from . import admission_notices
 
-        admission_notices.deliver(
-            client, cfg.runner_id,
-            {a: boxes[a] for a in due_slugs if not (paused and a in paused)},
-            log=logger.info)
+        # One call per mailbox position: `deliver` takes one mailbox per agent.
+        live = [a for a in due_slugs if not (paused and a in paused)]
+        for i in range(max((len(every.get(a) or [boxes[a]]) for a in live), default=0)):
+            layer = {a: (every.get(a) or [boxes[a]])[i] for a in live
+                     if i < len(every.get(a) or [boxes[a]])}
+            admission_notices.deliver(client, cfg.runner_id, layer, log=logger.info)
     except Exception as exc:  # noqa: BLE001 — a notice never costs the inbox tick
         logger.warning("admission notices: %s", exc)
     try:
@@ -378,7 +381,8 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time, *,
 
     now = now or dt.datetime.now(dt.UTC)
     changed = False
-    for agent, box in boxes.items():
+    every = mailbox_probe.all_mailboxes(cfg)
+    for agent, box in ((a, b) for a, bs in every.items() for b in bs):
         address = box.get("account") or ""
         if not address:
             continue
