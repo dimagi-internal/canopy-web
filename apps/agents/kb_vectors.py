@@ -45,6 +45,10 @@ BATCH = 256
 #: Passages fetched per semantic search: one item can own several of the nearest,
 #: and canopy_kb keeps one per item, so ask for more than the items wanted.
 PASSAGES_PER_ITEM = 3
+#: HNSW candidate list per search. Measured on the GiveWell KB (140k passages,
+#: golden set, kb_eval): 150 and 400 lost neighbours an exact scan finds (hybrid
+#: MRR 0.496 / 0.524); 1000 matches the exact scan (0.554) at tens of ms.
+EF_SEARCH = 1000
 #: How hard a bulk embed tries one passage before leaving it for the next run.
 ATTEMPTS = 6
 #: Namespace of the advisory lock that keeps two syncs of one project apart.
@@ -110,7 +114,7 @@ def search(project, query: str, *, types=None, since: str = "", until: str = "",
             # Filtered HNSW: keep scanning until `want` rows pass the filters,
             # instead of returning whatever survives of the first ef_search.
             cur.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
-            cur.execute("SET LOCAL hnsw.ef_search = %s", [max(100, want)])
+            cur.execute("SET LOCAL hnsw.ef_search = %s", [max(EF_SEARCH, want)])
             hits = list(rows.annotate(distance=CosineDistance("embedding", HalfVector(_unit(got[0]))))
                         .order_by("distance").values_list("item_id", "ord", "distance")[:want])
     except DatabaseError:
