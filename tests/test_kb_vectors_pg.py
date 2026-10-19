@@ -2,7 +2,7 @@
 filtered nearest-neighbour query, and hybrid search through the project's MCP tool.
 
 Skipped on SQLite (the default test DB); CI's `Backend pytest (PostgreSQL)` job runs
-it against a pgvector/pgvector service (config/settings/test_pg.py)."""
+it against a pgvector/pgvector service (config/settings/pgtest.py)."""
 from __future__ import annotations
 
 import io
