@@ -214,6 +214,32 @@ def test_an_agents_stance_comes_from_it_or_the_projects_agent(world):
     assert _back(world["eva"].user, "backs").status_code == 422
 
 
+def test_the_huddles_leader_records_a_members_stance_on_the_leads_project(world):
+    # The survivor is filed on eva's board (she leads it); ada led the huddle.
+    body = {"name": "Prompt library", "outcome": "Twenty tested prompts in one doc.",
+            "why": "The champions keep rewriting the same prompts.",
+            "plan": ["Collect prompts"], "partners": ["echo"], "source_url": HUDDLE}
+    assert _client(world["ada"].user).post(f"{AGENTS}/eva/projects/propose/", body,
+                                           content_type="application/json").status_code == 201
+    url = f"{AGENTS}/eva/projects/P1/backings/agents/echo/"
+    cosign = {"stance": "backs", "huddle_id": "h1"}
+    # No huddle h1 led by ada yet: refused.
+    assert _client(world["ada"].user).put(url, cosign, content_type="application/json").status_code == 403
+    Turn.objects.create(agent=world["ada"], idempotency_key="anchor", cli_session_id="huddle:h1",
+                        origin_ref={"kind": "huddle", "huddle": "h1", "leader": "ada",
+                                    "members": ["eva", "echo"]})
+    r = _client(world["ada"].user).put(url, cosign, content_type="application/json")
+    assert r.status_code == 200 and r.json()["backer"]["agent"] == "echo" and r.json()["source"] == "huddle"
+    # Without the huddle id, or for a huddle echo was not in, the leader may not.
+    assert _client(world["ada"].user).put(url, {"stance": "backs"},
+                                          content_type="application/json").status_code == 403
+    assert _client(world["ada"].user).put(url, {"stance": "backs", "huddle_id": "h2"},
+                                          content_type="application/json").status_code == 403
+    # Another member is not the leader.
+    assert _client(world["eva"].user).put(f"{AGENTS}/ada/projects/P1/backings/agents/echo/", cosign,
+                                          content_type="application/json").status_code in (403, 404)
+
+
 # --- expiry ----------------------------------------------------------------------
 
 
