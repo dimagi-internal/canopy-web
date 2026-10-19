@@ -208,7 +208,8 @@ def test_the_reranker_location_picks_its_host(settings, monkeypatch):
     for loc, host in (("global", "discoveryengine"), ("eu", "eu-discoveryengine")):
         settings.KB_RERANK_LOCATION = loc
         kb_vectors.reranker()("q", [{"title": "a", "text": "b"}])
-        assert session.sent[-1][0].startswith(f"https://{host}.googleapis.com/") and f"/locations/{loc}/" in session.sent[-1][0]
+        url = session.sent[-1][0]
+        assert url.startswith(f"https://{host}.googleapis.com/") and f"/locations/{loc}/" in url
 
 
 def test_a_failed_rerank_answers_none(settings, monkeypatch):
