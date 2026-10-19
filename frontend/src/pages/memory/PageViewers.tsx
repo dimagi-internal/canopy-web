@@ -4,7 +4,7 @@ import { addMyViewer, listMyViewers, removeMyViewer } from '../../api/people'
 import type { MemoryViewers } from '../../api/people'
 
 /** "Who can see this page": agents you let read everything on it, read-only. */
-export function PageViewers() {
+export function PageViewers({ onChange }: { onChange?: (v: MemoryViewers) => void } = {}) {
   const [data, setData] = useState<MemoryViewers | null>(null)
   const [pick, setPick] = useState('')
   const [busy, setBusy] = useState(false)
@@ -12,15 +12,20 @@ export function PageViewers() {
 
   useEffect(() => {
     listMyViewers()
-      .then(setData)
+      .then((v) => {
+        setData(v)
+        onChange?.(v)
+      })
       .catch((e: Error) => setError(e.message))
-  }, [])
+  }, []) // once, on mount
 
   const act = async (work: () => Promise<MemoryViewers>) => {
     setBusy(true)
     setError(null)
     try {
-      setData(await work())
+      const v = await work()
+      setData(v)
+      onChange?.(v)
       setPick('')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -34,8 +39,7 @@ export function PageViewers() {
     <div className="rounded-xl border border-border p-4">
       <h3 className="text-sm font-semibold text-foreground">Who can see this page</h3>
       <p className="text-xs text-muted-foreground">
-        An agent you add here can read everything on this page — what is held, who can read it, what happened and how agents
-        searched it — through its own login. It cannot change anything. Each time it looks shows in What happened.
+        Let an agent read this whole page, so it can help you with it. Read-only; each look shows in Changes and access.
       </p>
       {data.viewers.length > 0 && (
         <ul className="mt-3 space-y-2">

@@ -28586,6 +28586,28 @@ export interface components {
             /** @description Use my memory: agents may read your memory (read). */
             readonly use: components["schemas"]["MemoryFeatureOut"];
         };
+        /**
+         * FactUseOut
+         * @description How often agents were actually told an entry — over its whole history, not a page of it.
+         */
+        readonly FactUseOut: {
+            /**
+             * Conversations
+             * @description Distinct turns an agent was told it in.
+             * @default 0
+             */
+            readonly conversations: number;
+            /**
+             * Last At
+             * @description The last time an agent was told it.
+             */
+            readonly last_at?: string | null;
+            /**
+             * By
+             * @description Agent slugs that were told it.
+             */
+            readonly by?: readonly string[];
+        };
         /** MemoryFeatureOut */
         readonly MemoryFeatureOut: {
             /**
@@ -28678,6 +28700,7 @@ export interface components {
              * @default active
              */
             readonly status: string;
+            readonly used?: components["schemas"]["FactUseOut"];
             /**
              * Workspace
              * @description The workspace it was written in; null for a personal entry.

@@ -114,11 +114,39 @@ def people_me(request: HttpRequest) -> dict:
     return _me_payload(person)
 
 
+def _uses(person: Person) -> dict:
+    """entry uuid → how often agents were told it, over all time. The page used to
+    count its first 50 audit rows, which said "used 9×" of an entry told in 84
+    conversations."""
+    from django.db.models import Count, Max, Q
+
+    from .models import PersonAuditEvent
+
+    reads = (PersonAuditEvent.objects
+             .filter(person=person, event_type="preference.read", actor_type="agent", entry_id__isnull=False)
+             .order_by())  # no default ordering in the GROUP BY
+    out: dict = {}
+    # A read outside any turn (an API look-up) counts as its own conversation.
+    for row in reads.values("entry_id").annotate(n=Count("turn", distinct=True),
+                                                 loose=Count("pk", filter=Q(turn__isnull=True)),
+                                                 last=Max("timestamp")):
+        out[row["entry_id"]] = {"conversations": row["n"] + row["loose"],
+                                "last_at": row["last"].isoformat(), "by": []}
+    for row in reads.values("entry_id", "actor_id").distinct():
+        # "agent:ace" or "agent:ace/model:x" → "ace" (words.ts `actorSlug`).
+        slug = row["actor_id"].removeprefix("agent:").split("/")[0]
+        if slug and slug not in out[row["entry_id"]]["by"]:
+            out[row["entry_id"]]["by"].append(slug)
+    return out
+
+
 def _me_payload(person: Person) -> dict:
     facts = []
     places: dict[str, dict] = {}
+    uses = _uses(person)
     for f in people.live_facts(person).select_related("asserted_by_agent", "asserted_by_user"):
         d = people.fact_dict(f)
+        d["used"] = uses.get(f.entry_id, {"conversations": 0, "last_at": None, "by": []})
         d["workspace"] = f.workspace_id
         if f.workspace_id:
             if f.workspace_id not in places:

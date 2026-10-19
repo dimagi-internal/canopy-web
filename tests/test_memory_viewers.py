@@ -123,3 +123,19 @@ def test_revoking_ends_it_at_once(w):
     kinds = list(PersonAuditEvent.objects.filter(person=w["person"], event_type__startswith="viewer.")
                  .order_by("pk").values_list("event_type", flat=True))
     assert kinds == ["viewer.granted", "viewer.revoked"]
+
+
+def test_each_entry_says_how_often_agents_were_told_it_over_all_time(w):
+    """The page used to count only its first page of audit rows ("used 9×" of an
+    entry told in 84 conversations); the count now comes from the server."""
+    from apps.contacts import hcp
+
+    fact = w["person"].facts.get()
+    for _ in range(3):                      # three looks outside any turn
+        hcp.audit(w["person"], "preference.read", actor=hcp.agent_actor(w["ace"]), entry=fact, purpose="t")
+    _let_in(w)
+    page = _as(w["hal"].user).get(f"/api/people/{w['person'].pk}/page/").json()
+    used = page["me"]["facts"][0]["used"]
+    assert used["conversations"] == 3 and used["by"] == ["ace"] and used["last_at"]
+    mine = _as(w["lili"]).get("/api/people/me/").json()
+    assert mine["facts"][0]["used"]["conversations"] == 3

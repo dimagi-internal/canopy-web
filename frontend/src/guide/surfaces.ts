@@ -62,6 +62,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Read, correct or retract anything held about you', 'Add something about yourself', 'Turn Learn from me and Use my memory on or off', 'See and revoke which agents and apps may read it', 'Download everything, with your audit log'],
   },
   {
+    path: '/people/:personId/page',
+    title: 'Someone’s memory page',
+    audience: 'An agent a person let see their memory page',
+    what: 'A person’s memory page, read-only, as they let this agent see it from their own /people/me: what is remembered and how often agents were given it, the conversations that used it, who can read it, and what changed. Each look is in their log. Anyone they did not let in sees nothing here.',
+    needsFirst: 'The person adds this agent under “Who can see this page” on /people/me.',
+    actions: ['Read what agents know about them, and how it was used'],
+  },
+  {
     path: '/hcp-clients',
     title: 'HCP service clients',
     audience: 'canopy administrators',
