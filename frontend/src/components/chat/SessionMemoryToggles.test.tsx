@@ -28,6 +28,10 @@ const feature = (available: boolean, def: boolean, override: boolean | null = nu
 })
 
 const ADA = { slug: 'ada', name: 'Ada' }
+
+/** The chip, found by what its dots say (green on / red off). */
+const chip = (summary: string) =>
+  screen.findByRole('button', { name: `Your memory in this conversation: ${summary}` })
 const CATS = ['work_context', 'general_preferences']
 
 describe('SessionMemoryToggles', () => {
@@ -41,7 +45,7 @@ describe('SessionMemoryToggles', () => {
   it('shows only available features, with their effective state', async () => {
     getSessionMemory.mockResolvedValue({ session_id: 's1', record: feature(true, true), use: feature(false, false) })
     render(<SessionMemoryToggles sessionId="s1" />)
-    await waitFor(() => expect(screen.getByText('Learn ✓')).toBeTruthy())
+    await chip('Learn on')
     expect(screen.queryByText(/Use/)).toBeNull()
   })
 
@@ -60,16 +64,16 @@ describe('SessionMemoryToggles', () => {
     setSessionMemory.mockResolvedValueOnce({ session_id: 's1', record: feature(true, false), use: feature(true, false, true) })
     render(<SessionMemoryToggles sessionId="s1" />)
     // One compact chip; clicking it opens the panel with a switch per feature.
-    fireEvent.click(await screen.findByText('Learn – · Use –'))
+    fireEvent.click(await chip('Learn off, Use off'))
     const use = () => screen.getByRole('switch', { name: 'Use my memory in this conversation' })
     expect(use().getAttribute('aria-checked')).toBe('false')
     fireEvent.click(use())
-    await waitFor(() => expect(screen.getByText('Learn – · Use ✓')).toBeTruthy())
+    await chip('Learn off, Use on')
     expect(use().getAttribute('aria-checked')).toBe('true')
     expect(setSessionMemory).toHaveBeenLastCalledWith('s1', { use: 'on' })
     setSessionMemory.mockResolvedValueOnce({ session_id: 's1', record: feature(true, false), use: feature(true, false) })
     fireEvent.click(use())
-    await waitFor(() => expect(screen.getByText('Learn – · Use –')).toBeTruthy())
+    await chip('Learn off, Use off')
     expect(setSessionMemory).toHaveBeenLastCalledWith('s1', { use: 'inherit' })
   })
 
@@ -85,7 +89,7 @@ describe('SessionMemoryToggles', () => {
       grant: vi.fn(),
     }
     render(<SessionMemoryToggles sessionId="s1" source={source} />)
-    fireEvent.click(await screen.findByText('Learn ✓ · Use –'))
+    fireEvent.click(await chip('Learn on, Use off'))
     expect(screen.getByRole('dialog', { name: 'Your memory in this conversation' })).toBeTruthy()
     expect(screen.queryByRole('switch')).toBeNull()
     expect(save).not.toHaveBeenCalled()
@@ -104,9 +108,9 @@ describe('SessionMemoryToggles', () => {
       grant: vi.fn(),
     }
     render(<SessionMemoryToggles sessionId="s1" source={source} />)
-    fireEvent.click(await screen.findByText('Learn ✓'))
+    fireEvent.click(await chip('Learn on'))
     fireEvent.click(screen.getByRole('switch'))
-    await waitFor(() => expect(screen.getByText('Learn –')).toBeTruthy())
+    await chip('Learn off')
     expect(source.save).toHaveBeenCalledWith({ record: 'off' })
     expect(getSessionMemory).not.toHaveBeenCalled()
     expect(setSessionMemory).not.toHaveBeenCalled()
@@ -126,63 +130,61 @@ describe('SessionMemoryToggles', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('asks the person — agent, categories, actions, duration — before anything is granted', async () => {
+  it('never pops up to ask: an ungranted agent just reads as off (red), no "?"', async () => {
     getSessionMemory.mockResolvedValue({
       session_id: 's1', agent: ADA, categories: CATS, session_grant_hours: 24, org: 'Dimagi',
-      record: feature(true, true, null, false), use: feature(false, false),
-    })
-    render(<SessionMemoryToggles sessionId="s1" />)
-    const dialog = await screen.findByRole('dialog', { name: 'Grant Ada access' })
-    expect(dialog.textContent).toContain('Ada would like to learn from you')
-    expect(dialog.textContent).toContain('work context, general preferences · write · for this conversation only')
-    expect(screen.getByText('Learn ?')).toBeTruthy() // on, but waiting for the person's OK
-    expect(grantSessionAgent).not.toHaveBeenCalled() // nothing preselected or sent
-  })
-
-  it('allowing is for this session; keeping it is a separate act asked afterwards', async () => {
-    getSessionMemory.mockResolvedValue({
-      session_id: 's1', agent: ADA, categories: CATS,
-      record: feature(true, true, null, false), use: feature(false, false),
-    })
-    grantSessionAgent.mockResolvedValue({
-      session_id: 's1', agent: ADA, categories: CATS,
-      record: feature(true, true, null, true), use: feature(false, false),
-    })
-    render(<SessionMemoryToggles sessionId="s1" />)
-    await screen.findByRole('dialog', { name: 'Grant Ada access' })
-    expect(screen.queryByText(/Keep allowing/)).toBeNull() // never in the same act
-    fireEvent.click(screen.getByText('Allow for this conversation'))
-    await waitFor(() => expect(grantSessionAgent).toHaveBeenCalledWith('s1', ['record'], 'session', 'chat'))
-    const keep = await screen.findByRole('dialog', { name: 'Keep allowing Ada' })
-    expect(keep.textContent).toContain('until you turn') // what persistent means, first
-    fireEvent.click(screen.getByText('Keep allowing until I turn it off'))
-    await waitFor(() => expect(grantSessionAgent).toHaveBeenLastCalledWith('s1', ['record'], 'always', 'chat'))
-  })
-
-  it('"Just this session" and "Not now" grant nothing more', async () => {
-    getSessionMemory.mockResolvedValue({
-      session_id: 's1', agent: ADA, categories: CATS,
       record: feature(true, true, null, false), use: feature(true, true, null, false),
     })
-    grantSessionAgent.mockResolvedValue({
-      session_id: 's1', agent: ADA, categories: CATS,
-      record: feature(true, true), use: feature(true, true),
-    })
-    const { unmount } = render(<SessionMemoryToggles sessionId="s1" />)
-    fireEvent.click(await screen.findByText('Allow for this conversation'))
-    fireEvent.click(await screen.findByText('Just this conversation'))
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(grantSessionAgent).toHaveBeenCalledTimes(1)
-    expect(grantSessionAgent).toHaveBeenCalledWith('s1', ['record', 'use'], 'session', 'chat')
-    unmount()
-    grantSessionAgent.mockClear()
     render(<SessionMemoryToggles sessionId="s1" />)
-    fireEvent.click(await screen.findByText('Not now'))
+    await chip('Learn off, Use off')
     expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.body.textContent).not.toContain('?')
     expect(grantSessionAgent).not.toHaveBeenCalled()
   })
 
-  it('a read-only viewer is told it is not granted and sent to canopy, never asked', async () => {
+  it('turning an ungranted feature on allows this agent for the session in one click', async () => {
+    getSessionMemory.mockResolvedValue({
+      session_id: 's1', agent: ADA, categories: CATS,
+      record: feature(true, true, null, false), use: feature(false, false),
+    })
+    grantSessionAgent.mockResolvedValueOnce({
+      session_id: 's1', agent: ADA, categories: CATS,
+      record: { ...feature(true, true), grant: { type: 'session' } }, use: feature(false, false),
+    })
+    render(<SessionMemoryToggles sessionId="s1" />)
+    fireEvent.click(await chip('Learn off'))
+    fireEvent.click(screen.getByRole('switch', { name: 'Learn from me in this conversation' }))
+    await chip('Learn on')
+    expect(grantSessionAgent).toHaveBeenCalledWith('s1', ['record'], 'session', 'chat')
+    expect(setSessionMemory).not.toHaveBeenCalled() // already on by default — only the grant was missing
+    // Keeping it is the person's separate act, offered in the panel, never popped up.
+    grantSessionAgent.mockResolvedValueOnce({
+      session_id: 's1', agent: ADA, categories: CATS,
+      record: { ...feature(true, true), grant: { type: 'persistent' } }, use: feature(false, false),
+    })
+    fireEvent.click(screen.getByText('Allow Ada in every conversation'))
+    await waitFor(() => expect(grantSessionAgent).toHaveBeenLastCalledWith('s1', ['record'], 'always', 'chat'))
+  })
+
+  it('turning on a feature that is off switches it on, then allows the agent', async () => {
+    getSessionMemory.mockResolvedValue({
+      session_id: 's1', agent: ADA, record: feature(true, false, null, false), use: feature(false, false),
+    })
+    setSessionMemory.mockResolvedValueOnce({
+      session_id: 's1', agent: ADA, record: feature(true, false, true, false), use: feature(false, false),
+    })
+    grantSessionAgent.mockResolvedValueOnce({
+      session_id: 's1', agent: ADA, record: feature(true, false, true, true), use: feature(false, false),
+    })
+    render(<SessionMemoryToggles sessionId="s1" />)
+    fireEvent.click(await chip('Learn off'))
+    fireEvent.click(screen.getByRole('switch'))
+    await chip('Learn on')
+    expect(setSessionMemory).toHaveBeenCalledWith('s1', { record: 'on' })
+    expect(grantSessionAgent).toHaveBeenCalledWith('s1', ['record'], 'session', 'chat')
+  })
+
+  it('a read-only viewer sees it off and is sent to canopy, never asked', async () => {
     const source = {
       load: vi.fn().mockResolvedValue({
         state: { session_id: 's1', agent: ADA, categories: CATS, record: feature(true, true, null, false), use: feature(false, false) },
@@ -193,9 +195,8 @@ describe('SessionMemoryToggles', () => {
       grant: vi.fn(),
     }
     render(<SessionMemoryToggles sessionId="s1" source={source} />)
-    fireEvent.click(await screen.findByText('Learn ?'))
-    const panel = screen.getByRole('dialog', { name: 'Your memory in this conversation' })
-    expect(panel.textContent).toContain('Ada not allowed yet')
+    fireEvent.click(await chip('Learn off'))
+    expect(screen.queryByRole('switch')).toBeNull()
     expect(screen.queryByText(/Allow/)).toBeNull()
     expect((screen.getByText('Change in canopy') as HTMLAnchorElement).href).toBe('https://canopy.example/w/connect/chat/s1')
     expect(source.grant).not.toHaveBeenCalled()

@@ -43,7 +43,7 @@ import {
 } from '@/components/chat/closeAction'
 import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
 import { MessageContextMenu, canFork, turnIndexAt } from '@/components/chat/MessageContextMenu'
-import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
+import { useSessionMemory } from '@/components/chat/SessionMemoryToggles'
 import { TitleInput } from '@/components/chat/TitleInput'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
@@ -185,6 +185,8 @@ export function ChatPage({
   }, [])
   const [placeInfo, setPlaceInfo] = useState<string | null>(null)
   const [placeError, setPlaceError] = useState<string | null>(null)
+  // Your memory in this session lives in the ⋯ menu; null hides it.
+  const memory = useSessionMemory(id)
 
   // AG-UI on the wire, canopy frames in memory: `fromAgui` turns the protocol
   // back into the same `WsEvent`s the reducer has always consumed, and
@@ -952,7 +954,6 @@ export function ChatPage({
           {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
           {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
           {slackNote && <span className="text-[12px] text-muted-foreground">{slackNote}</span>}
-          {id && <SessionMemoryToggles sessionId={id} />}
           {id && (
             <ChatSessionMenu
               sessionId={id}
@@ -994,6 +995,7 @@ export function ChatPage({
               workspace={meta?.workspace}
               moveTargets={canMove ? moveTargets : undefined}
               onMove={canMove ? moveToWorkspace : undefined}
+              memory={memory}
             />
           )}
         </div>
