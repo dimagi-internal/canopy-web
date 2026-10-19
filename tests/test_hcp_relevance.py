@@ -178,6 +178,16 @@ def test_with_embeddings_on_an_entry_is_found_by_meaning(w, embeddings_on):
     assert embeddings_on == [("query", 1)]
 
 
+def test_the_similarity_every_entry_gets_does_not_admit_it(w, embeddings_on, monkeypatch):
+    # gemini-embedding-001 scores an unrelated question ~0.5 against anything; at that
+    # floor meaning alone would hand over the whole memory.
+    _add(w, "Owns the quarterly dashboard.")
+    monkeypatch.setattr(embeddings, "similarity", lambda a, b: 0.55)
+    assert _said(_search(w, _turn(w, "g2"), "recipe for banana bread")) == []
+    monkeypatch.setattr(embeddings, "similarity", lambda a, b: 0.7)
+    assert _said(_search(w, _turn(w, "g3"), "recipe for banana bread")) == ["Owns the quarterly dashboard."]
+
+
 def test_a_vector_is_cleared_when_its_version_stops_being_served(w, embeddings_on,
                                                                  django_capture_on_commit_callbacks):
     with django_capture_on_commit_callbacks(execute=True):
