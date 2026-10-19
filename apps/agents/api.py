@@ -1892,6 +1892,7 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
         proposal=(proposals.card(project, request.user) if proposals.is_proposal(project) else None),
         proposed_tasks=[ProposedTaskOut(**proposals.task_card(t, request.user))
                         for t in proposals.proposed_tasks_of(project).filter(status="suggested")],
+        board_readable=project.agent.workspace_id in _visible_agent_workspace_ids(request),
     )
 
 

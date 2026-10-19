@@ -1,17 +1,21 @@
 import { useEffect, useState, type JSX } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 
-import { AgentApiError, getWorkspaceProject, listWorkspaceProjects, type ProjectOut } from '@/api/agents'
+import { AgentApiError, getWorkspaceProject, listWorkspaceProjects, type ProjectDetailOut, type ProjectOut } from '@/api/agents'
 
 // WORKSPACE PROJECTS — owned by the workspace rather than one agent (a funder
 // knowledge base many agents read), each kept current by a steward agent and
 // addressed `<workspace>/<handle>`. Their page is the steward's project page;
 // the address below is the link to share, because it survives a change of steward.
 
-/** `/w/:workspace/projects/:handle` → the project's page on its steward's board. */
+/** `/w/:workspace/projects/:handle` → the project's page on its steward's board, or —
+ *  for a reader who cannot open that board (a division member reading a project its
+ *  parent's agent keeps) — the project itself, read-only, at its address. */
 export function WorkspaceProjectRedirect(): JSX.Element {
   const { workspace = '', handle = '' } = useParams()
-  const [target, setTarget] = useState<{ key: string; to: string | null; error: string | null } | null>(null)
+  const [target, setTarget] = useState<
+    { key: string; to: string | null; project?: ProjectDetailOut; error: string | null } | null
+  >(null)
   const key = `${workspace}/${handle}`
 
   useEffect(() => {
@@ -19,7 +23,7 @@ export function WorkspaceProjectRedirect(): JSX.Element {
     getWorkspaceProject(workspace, handle)
       .then((p) => {
         if (!cancelled)
-          setTarget({ key, to: p.board_url, error: null })
+          setTarget(p.board_readable === false ? { key, to: null, project: p, error: null } : { key, to: p.board_url, error: null })
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -38,8 +42,44 @@ export function WorkspaceProjectRedirect(): JSX.Element {
 
   const fresh = target?.key === key ? target : null
   if (fresh?.to) return <Navigate to={fresh.to} replace />
+  if (fresh?.project) return <WorkspaceProjectReadOnly project={fresh.project} />
   if (fresh?.error) return <p className="p-6 text-sm text-destructive">{fresh.error}</p>
   return <p className="p-6 text-sm text-muted-foreground">Opening {key}…</p>
+}
+
+/** A workspace project for a reader outside its steward's workspace: what it is and its tasks. */
+function WorkspaceProjectReadOnly({ project }: { project: ProjectDetailOut }): JSX.Element {
+  const tasks = project.tasks ?? []
+  return (
+    <div className="p-6 max-w-3xl">
+      <h1 className="text-lg font-semibold text-foreground">{project.name}</h1>
+      <WorkspaceProjectLine project={project} />
+      {project.outcome && <p className="text-[13px] text-foreground-secondary mt-3">{project.outcome}</p>}
+      {project.drive_folder_url && (
+        <p className="text-[12px] mt-2">
+          <a href={project.drive_folder_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            Drive folder
+          </a>
+        </p>
+      )}
+      <h2 className="text-sm font-semibold text-foreground mt-6 mb-2">
+        Tasks · {project.open_task_count} open of {project.task_count}
+      </h2>
+      {tasks.length === 0 ? (
+        <p className="text-[12px] text-muted-foreground">No tasks yet.</p>
+      ) : (
+        <ul className="divide-y divide-border border border-border rounded-lg">
+          {tasks.map((t) => (
+            <li key={`${t.agent_slug}/${t.ext_id}`} className="px-3 py-2 text-[13px] flex gap-3">
+              <span className="flex-1 min-w-0 truncate text-foreground">{t.title}</span>
+              <span className="text-muted-foreground font-mono text-[11px]">{t.agent_slug}</span>
+              <span className="text-muted-foreground text-[11px]">{t.status}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 /** The workspace's shared projects, above its agents. Renders nothing when there are none. */
