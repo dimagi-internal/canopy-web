@@ -162,3 +162,30 @@ def test_offered_cloud_box_is_one_the_sender_administers(team):
     session = Session.objects.create(workspace=ws, created_by=bob, project="canopy-web")
     assert chat.available_cloud_runner(session, user=bob) is None
     assert chat.available_cloud_runner(session, user=alice).name == "alice-cloud"
+
+
+def test_the_cloud_offer_never_names_a_directed_box(team):
+    """A test box takes work only when someone chooses it: the automatic "move it
+    to a cloud box" offer skips it (the explicit pickers still list it)."""
+    alice, _bob, ws = team
+    _box(alice, "a-test-box", directed=True)
+    session = Session.objects.create(workspace=ws, created_by=alice, project="canopy-web")
+    assert chat.available_cloud_runner(session, user=alice) is None
+    _box(alice, "cloud-ec2-2")
+    assert chat.available_cloud_runner(session, user=alice).name == "cloud-ec2-2"
+
+
+def test_slack_move_to_cloud_offers_a_project_chat_its_senders_box(team):
+    """`_move_to_cloud` asks for the offer AS the person moving it; without the
+    user every project chat read as "no cloud runner"."""
+    from apps.slack import services as slack
+
+    alice, _bob, ws = team
+    cloud = _box(alice, "cloud-ec2-2")
+    session = Session.objects.create(workspace=ws, created_by=alice, project="canopy-web")
+    turn = _chat(ws, alice, "q")
+    Turn.objects.filter(pk=turn.pk).update(chat_session=session)
+    out = slack._move_to_cloud(session, alice, "slack")
+    assert out.status == slack.MOVED, out
+    turn.refresh_from_db()
+    assert turn.pinned_runner_id == cloud.pk

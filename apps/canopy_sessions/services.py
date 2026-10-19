@@ -2431,12 +2431,14 @@ def available_cloud_runner(session: Session, user=None):
     or None. Same `_placeable_runner` gate as every other placement, so the
     answer is never a box that would leave the turn pinned and unclaimable — and,
     for a project chat, one `user` (who sent it) may place it on
-    (`may_place_project_chat`), so the offer is never one the click refuses."""
+    (`may_place_project_chat`), so the offer is never one the click refuses. A
+    directed-only box (a test box) is never offered unasked: it takes work only
+    when someone chooses it (the pickers still list it)."""
     from apps.harness.models import Runner
 
     for runner in (Runner.objects.filter(kind=Runner.CLOUD, owner__isnull=False)
                    .exclude(status=Runner.RETIRED).order_by("name")):
-        if runner.live_status != Runner.ONLINE:
+        if runner.live_status != Runner.ONLINE or runner.directed_only():
             continue
         if (_placeable_runner(session, str(runner.id)) is not None
                 and may_place_project_chat(user, session, runner)):

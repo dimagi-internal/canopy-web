@@ -181,7 +181,23 @@ def test_a_chat_with_no_repo_still_needs_the_order_or_your_box(team):
     assert _claimed(alices) == turn.pk
 
 
-CASES = ["no_repo", "order_rank0", "order_unlisted", "no_order_other", "no_order_mine",
+def test_a_listed_box_that_takes_no_chats_is_no_better_rank(team):
+    """A box in the order with the repo but no `sessions` can never take a chat
+    turn, so it must not hold back the box after it until the grace — nor make
+    the readers say LIVE while nothing claims."""
+    alice, bob, ws = team
+    no_chats = enrolled(Runner.objects.create(
+        name="laptop", kind=Runner.EMDASH, host="laptop", owner=bob, status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(), capabilities={"projects": ["canopy-web"]}))
+    taker = _box(alice, "cloud")
+    _order(ws, no_chats, taker)
+    turn = _chat(ws, alice)
+    reach = claim.turn_reach(turn)
+    assert [r.pk for r in reach.runners] == [taker.pk]
+    assert _claimed(taker) == turn.pk
+
+
+CASES = ["no_repo", "order_rank0", "order_no_sessions", "order_unlisted", "no_order_other", "no_order_mine",
          "contact", "bound", "pinned", "admin"]
 
 
@@ -199,6 +215,12 @@ def test_reach_and_claim_agree(team, case):
     elif case == "order_rank0":
         box = _box(bob, "x")
         _order(ws, box, _box(alice, "y"))
+        turn = _chat(ws, alice, age_seconds=old)
+    elif case == "order_no_sessions":
+        box = _box(bob, "x")
+        _order(ws, enrolled(Runner.objects.create(
+            name="y", kind=Runner.EMDASH, host="y", owner=bob, status=Runner.ONLINE,
+            last_heartbeat_at=timezone.now(), capabilities={"projects": ["canopy-web"]})), box)
         turn = _chat(ws, alice, age_seconds=old)
     elif case == "order_unlisted":
         box = _box(alice, "x")

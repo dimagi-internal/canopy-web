@@ -435,7 +435,8 @@ def load_workspace_orders(ws_ids) -> dict:
     return out
 
 
-def order_for(workspace_id, project: str, orders: dict, *, requires: frozenset) -> list | None:
+def order_for(workspace_id, project: str, orders: dict, *, requires: frozenset,
+              sessions: bool = False) -> list | None:
     """THE ordered runner list a workspace's runner order gives one piece of
     repo work — a repo turn or an unbound project chat — or None when that
     workspace has no order. Pure: no queries, no clock.
@@ -444,12 +445,15 @@ def order_for(workspace_id, project: str, orders: dict, *, requires: frozenset) 
     requirements are kept, and ranks are renumbered over what is left — a
     better-ranked runner that could never take this work must not count as a
     blocker for one that can. A directed-only box takes no routed work, so it is
-    never in the list (`Runner.directed_only`)."""
+    never in the list (`Runner.directed_only`). `sessions`: the work is a chat
+    turn, so only a session-capable box can take it — kept, any other would read
+    as an available better rank and hold back the box that can, until the grace."""
     listed = orders.get(workspace_id)
     if not listed:
         return None
     return [r for r in listed
             if not r.directed_only()
+            and (not sessions or r.session_capable())
             and (not project or project in r.project_names())
             and rr.satisfies(r.flags, requires)]
 
@@ -507,7 +511,7 @@ def project_session_rows(turn: Turn, orders: dict, *, requires: frozenset | None
     session's workspace and repo), or None when the workspace has none."""
     sess = turn.chat_session
     reqs = rr.requirements_of(turn) if requires is None else requires
-    return order_for(sess.workspace_id, sess.project, orders, requires=reqs)
+    return order_for(sess.workspace_id, sess.project, orders, requires=reqs, sessions=True)
 
 
 def _chatter_administers(runner: Runner, turn: Turn, admins: dict | None) -> bool:
