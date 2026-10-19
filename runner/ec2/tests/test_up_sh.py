@@ -66,13 +66,13 @@ def canopy():
             if self.path.startswith("/api/harness/runners"):
                 return self._send(H.code, H.runners if H.code == 200 else {"detail": "no"})
             if self.path.startswith("/api/workspaces"):
-                return self._send(200, [{"slug": "dimagi"}, {"slug": "connect"}, {"slug": "readonly"}])
+                return self._send(200, [{"slug": s} for s in ("dimagi", "connect", "canopy", "readonly")])
             if self.path.startswith("/api/harness/runner-invitations/check"):
                 ws = self.path.split("workspace=", 1)[-1]
                 H.checked.append(ws)
                 if ws == "readonly":
                     return self._send(403, {"detail": "needs permission to run work there"})
-                if ws in ("dimagi", "connect"):
+                if ws in ("dimagi", "connect", "canopy"):
                     return self._send(200, {"workspace": ws})
                 return self._send(404, {"detail": "not found"})
             if self.path.startswith(f"/api/harness/runner-invitations/{INV_ID}"):
