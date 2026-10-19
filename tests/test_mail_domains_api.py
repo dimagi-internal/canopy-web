@@ -579,7 +579,8 @@ def test_a_failed_verification_is_surfaced_and_the_lazy_refresh_never_restarts_i
     body = _c(owner).get("/api/mail/domains/marshellis").json()["items"][0]
     assert body["status"] == "pending"  # status values unchanged
     assert "SES gave up verifying" in body["verification_error"]
-    assert "72 hours" in body["verification_error"] and "bounce.marshellis.com" in body["verification_error"]
+    assert "72 hours" in body["verification_error"]
+    assert "the MAIL FROM records on bounce.marshellis.com weren't found" in body["verification_error"]
     assert calls == []
 
 
