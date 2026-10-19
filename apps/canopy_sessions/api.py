@@ -348,6 +348,18 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
                 "admins, or for someone who administers that runner; start the chat "
                 "without a runner and the agent's routing places it",
             )
+    if payload.runner_id and agent is None:
+        from apps.harness.models import Runner
+
+        # A project chat on a chosen box: only someone who administers it may
+        # choose it (`services.may_place_project_chat`) — the stash is consumed on
+        # the first send without asking again. An id that names no runner is left
+        # as before, and the message does not say whether it names one.
+        requested = Runner.objects.filter(pk=payload.runner_id).first()
+        if requested is not None and not services.may_place_project_chat(
+                request.user, Session(project=payload.project), requested):
+            raise HttpError(403, services.PROJECT_CHAT_PLACEMENT_REFUSED.format(
+                runner="a chosen runner"))
     if payload.runner_id:
         # Directed new chat: stashed for the session's first send to pin onto
         # (as long as it's still unbound at that point) — see services.send_message.
@@ -1148,7 +1160,8 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     # on create / `placement` on send, which only apply to a turn at enqueue time).
     session = _session_or_404(request, session_id, write=True)
     try:
-        turn = services.place_queued_turn(session=session, placement=payload.placement)
+        turn = services.place_queued_turn(session=session, placement=payload.placement,
+                                          user=request.user)
     except LookupError as exc:
         raise HttpError(404, str(exc))
     except ValueError as exc:

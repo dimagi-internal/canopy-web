@@ -15,7 +15,7 @@ re-exports every name here.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from django.db.models import Q
 
@@ -74,6 +74,8 @@ class InheritedOrder:
     runners: list  # usable, in rank order
     missing_repo: list  # laptops in the order that do not have the agent's repo
     cannot_hold: list  # boxes whose owner is not one of the agent's admins
+    # directed-only boxes in the order (`Runner.directed_only`): take no routed work
+    directed: list = field(default_factory=list)
 
 
 #: `Runner.capabilities` key for the agents a box REPORTS it tried to set up and
@@ -120,6 +122,8 @@ def agents_following_runner(runner: Runner, among=None) -> set:
 
     if among is not None and not among:
         return set()
+    if runner.directed_only():
+        return set()  # takes no routed work, an inherited order's included
     listed = set(WorkspaceRunnerOrder.objects.filter(runner=runner, enabled=True)
                  .values_list("workspace_id", flat=True))
     if not listed:
@@ -155,7 +159,7 @@ def runner_routes_agent(runner: Runner, agent) -> bool:
     """Could `runner` ever claim a turn of `agent`? See the block above."""
     from apps.agents.services import runner_may_hold_agent
 
-    if runner.status == Runner.RETIRED or not runner.owner_id:
+    if runner.status == Runner.RETIRED or not runner.owner_id or runner.directed_only():
         return False
     if agent.workspace_id not in runner_tenant_slugs(runner):
         return False
@@ -172,7 +176,7 @@ def agents_routed_to(runner: Runner):
     from apps.agents.models import Agent
     from apps.agents.services import runner_may_hold_agent
 
-    if runner.status == Runner.RETIRED or not runner.owner_id:
+    if runner.status == Runner.RETIRED or not runner.owner_id or runner.directed_only():
         return Agent.objects.none()
     tenant = runner_tenant_slugs(runner)
     if not tenant:
@@ -236,9 +240,10 @@ def inherited_orders(agent_ids) -> dict:
     The order is followed live, never copied: replacing a cloud box means
     editing one workspace's list, not every agent (2026-10-03).
 
-    Two kinds of listed runner are dropped for an agent rather than kept — kept,
+    Three kinds of listed runner are dropped for an agent rather than kept — kept,
     each would read as an available better rank and stall the agent behind a box
     that can never take its work, until the cascade grace:
+      - a directed-only box (`Runner.directed_only`), which takes no routed work.
       - a laptop that does not have the agent's repo (it reports the emdash
         projects it has, and an agent's project is its slug). A cloud runner sets
         agents up itself and is never dropped for this.
@@ -273,7 +278,9 @@ def inherited_orders(agent_ids) -> dict:
             continue
         inh = InheritedOrder(workspace=source, runners=[], missing_repo=[], cannot_hold=[])
         for r in orders[source]:
-            if r.kind == Runner.EMDASH and agent.slug not in r.project_names():
+            if r.directed_only():
+                inh.directed.append(r)
+            elif r.kind == Runner.EMDASH and agent.slug not in r.project_names():
                 inh.missing_repo.append(r)
             elif not may_hold(r, agent):
                 inh.cannot_hold.append(r)
@@ -303,6 +310,10 @@ def assignment_rows_for(
     `serves` is the agent's slug: a runner that reports it cannot run that agent
     (`cannot_serve`) is dropped the same way, so it neither claims a turn only to
     fail it nor counts as a better-ranked blocker. Empty: not asked.
+
+    A directed-only box (`Runner.directed_only`) is always dropped, after the
+    strict truncation: it takes no routed work, so a strict rule naming only it
+    leaves the turn waiting, visibly.
     """
     base = defaults.get(agent_id) or []
     exact = priorities.get((agent_id, origin, actor)) if actor else None
@@ -337,6 +348,7 @@ def assignment_rows_for(
         # AFTER the strict truncation, so a strict rule whose runners all lack the
         # flag leaves an empty list — the turn waits, it does not fall through.
         out = [r for r in out if rr.satisfies(r.flags, requires)]
+    out = [r for r in out if not r.directed_only()]
     if serves:
         # The same FLOOR, after the strict truncation for the same reason: a strict
         # rule whose every box reports it cannot run the agent leaves an empty list,
@@ -690,7 +702,12 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q
     class of drift that made REST and the WebSocket show different transcripts.
     The claim path layers routing_q, the pin arm, the availability cascade, and
     the per-candidate refinements on top; this is the coarse target match.
+
+    A directed-only box (`Runner.directed_only`) targets only the sessions bound
+    to it; the claim adds the turns pinned to it. Nothing routed reaches it.
     """
+    if runner.directed_only():
+        return Q(chat_session__isnull=False, chat_session__runner_binding__runner=runner)
     # Both conditions on the SAME assignment row (a single Q, not two ANDed Qs)
     # so they share the join — a disabled row for this runner must not match
     # via some OTHER enabled row on the same agent.
@@ -713,7 +730,7 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q
         # bound session whose holder is gone claims NOWHERE until the user places
         # it (chat offers wait/continue). Unbound sessions are open here and
         # refined per-candidate in the claim loop (agent sessions follow the
-        # assignment cascade; project sessions stay any-sessions-capable).
+        # assignment cascade; project sessions `project_session_allows`).
         #
         # Deliberately NOT relaxed to "stale bindings fail over automatically"
         # (spec 2026-07-24): continuing elsewhere means a FRESH emdash session with

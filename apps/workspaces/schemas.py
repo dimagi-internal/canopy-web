@@ -222,7 +222,8 @@ class TopologyRouteOut(StrictModel):
     """One `RunnerAssignment` row. `source` "" = the agent's default ordered list
     (`rank` orders it); non-empty = a source rule (optionally narrowed to one
     `actor`). `can_claim` is False when the runner's OWNER is not in the agent's
-    workspace — the row routes on paper and the turn is never claimed."""
+    workspace, or the runner is directed-only — the row routes on paper and the
+    turn is never claimed."""
 
     runner_id: uuid.UUID
     rank: int
@@ -240,11 +241,13 @@ class TopologyRouteOut(StrictModel):
 class TopologyFollowsOut(StrictModel):
     """An agent with no default order of its own follows `workspace`'s. Runners
     in that order the agent cannot use are listed here, not routed: laptops
-    without the agent's repo, and boxes whose owner cannot hold the agent."""
+    without the agent's repo, boxes whose owner cannot hold the agent, and
+    directed-only boxes, which take no routed work."""
 
     workspace: str
     missing_repo: list[uuid.UUID]
     cannot_hold: list[uuid.UUID]
+    directed: list[uuid.UUID] = []
 
 
 class TopologyAgentOut(StrictModel):
@@ -305,6 +308,9 @@ class TopologyRunnerOut(StrictModel):
     owner_email: str | None
     flags: list[str]
     agent_count: int
+    # Directed-only (`capabilities.directed`): it takes turns pinned to it and
+    # chats bound to it, never routed work — an order or list naming it is skipped.
+    directed: bool = False
     # Running the code the deployed server expects for its kind? None = unknown
     # (either side never reported) — never read as stale.
     code_current: bool | None = None

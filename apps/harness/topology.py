@@ -96,7 +96,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
     # nearest ancestor's) — drawn as routes marked `inherited`.
     following = inherited_orders([a.pk for a in agents])
     for inh in following.values():
-        for r in [*inh.runners, *inh.missing_repo, *inh.cannot_hold]:
+        for r in [*inh.runners, *inh.missing_repo, *inh.cannot_hold, *inh.directed]:
             runners.setdefault(r.pk, r)
     own_orders: dict[str, list] = {}
     for row in (WorkspaceRunnerOrder.objects.filter(workspace_id__in=slugs)
@@ -125,7 +125,10 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
             "turn_mode": a.turn_mode,
             "can_claim": None,  # filled below, once the agent's workspace is known
         })
-        serves.setdefault(a.runner_id, set()).add(a.agent_id)
+        # A directed-only box listed on an agent never takes its routed work:
+        # drawn (it is a row on the agent's list) but not counted as serving.
+        if not a.runner.directed_only():
+            serves.setdefault(a.runner_id, set()).add(a.agent_id)
     for agent_id, inh in following.items():
         for rank, r in enumerate(inh.runners):
             routes_by_agent.setdefault(agent_id, []).append({
@@ -138,7 +141,8 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
     for agent in agents:
         routes = routes_by_agent.get(agent.pk, [])
         for route in routes:
-            route["can_claim"] = agent.workspace_id in tenants.get(route["runner_id"], set())
+            route["can_claim"] = (agent.workspace_id in tenants.get(route["runner_id"], set())
+                                  and not runners[route["runner_id"]].directed_only())
         agents_by_ws.setdefault(agent.workspace_id, []).append({
             "slug": agent.slug,
             "name": agent.name,
@@ -148,6 +152,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
                 "workspace": following[agent.pk].workspace,
                 "missing_repo": [r.pk for r in following[agent.pk].missing_repo],
                 "cannot_hold": [r.pk for r in following[agent.pk].cannot_hold],
+                "directed": [r.pk for r in following[agent.pk].directed],
             } if agent.pk in following else None),
             "repo_url": agent.repo_url or "",
         })
@@ -187,6 +192,8 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
             "in_tree": r.workspace_id in slugs,
             "owner_email": r.owner.email if r.owner_id else None,
             "flags": sorted(f.flag for f in r.declared_flags.all()),
+            # Takes only what is put on it (`Runner.directed_only`): never routed work.
+            "directed": r.directed_only(),
             "agent_count": len(serves.get(r.pk, ())),
             "code_current": code_current(r),
             "code_sha": r.code_sha,

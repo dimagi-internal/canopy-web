@@ -350,12 +350,13 @@ def reach_and_cloud(turn: Turn):
 
     if turn.status != Turn.QUEUED:
         if turn.chat_session_id and (runner_gone(turn) or movable_lost(turn)):
-            return None, session_services.available_cloud_runner(turn.chat_session)
+            return None, session_services.available_cloud_runner(turn.chat_session,
+                                                                  user=turn.enqueued_by)
         return None, None
     reach = harness.turn_reach(turn)
     cloud = None
     if reach.kind != harness.LIVE and turn.chat_session_id:
-        cloud = session_services.available_cloud_runner(turn.chat_session)
+        cloud = session_services.available_cloud_runner(turn.chat_session, user=turn.enqueued_by)
     return reach, cloud
 
 

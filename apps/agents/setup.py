@@ -271,6 +271,9 @@ def _runner(agent: Agent, settings: str) -> dict:
     if inherited and inherited.cannot_hold:
         why.append(f"{', '.join(r.name for r in inherited.cannot_hold)} belongs to someone who is "
                    "not one of its admins")
+    if inherited and inherited.directed:
+        why.append(f"{', '.join(r.name for r in inherited.directed)} takes only work put on it "
+                   "(directed only)")
     detail = ("; ".join(why).capitalize() + "." if why else
               "A runner is the computer that runs its turns, and none is set to take its work. "
               "Pick one, or pair a runner of your own first.")

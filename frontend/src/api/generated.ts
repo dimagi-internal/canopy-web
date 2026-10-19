@@ -17685,8 +17685,9 @@ export interface components {
          *     own ordered list, the same rows as `GET /runners`. Otherwise it follows `workspace`'s default order —
          *     `runners` is that order as it applies to this agent, and two kinds of listed
          *     runner are left out, each named so a screen can say why: laptops without the
-         *     agent's repo (`missing_repo`) and boxes whose owner cannot hold the agent
-         *     (`cannot_hold`). With `own` True, `workspace` names the order it WOULD
+         *     agent's repo (`missing_repo`), boxes whose owner cannot hold the agent
+         *     (`cannot_hold`) and directed-only boxes, which take no routed work
+         *     (`directed`). With `own` True, `workspace` names the order it WOULD
          *     follow if its own list were cleared. `workspace` None: nothing to follow.
          */
         readonly AgentDefaultOrderOut: {
@@ -17709,6 +17710,11 @@ export interface components {
              * @default []
              */
             readonly cannot_hold: readonly string[];
+            /**
+             * Directed
+             * @default []
+             */
+            readonly directed: readonly string[];
             /**
              * Repo Url
              * @default
@@ -22683,7 +22689,8 @@ export interface components {
          * TopologyFollowsOut
          * @description An agent with no default order of its own follows `workspace`'s. Runners
          *     in that order the agent cannot use are listed here, not routed: laptops
-         *     without the agent's repo, and boxes whose owner cannot hold the agent.
+         *     without the agent's repo, boxes whose owner cannot hold the agent, and
+         *     directed-only boxes, which take no routed work.
          */
         readonly TopologyFollowsOut: {
             /** Workspace */
@@ -22692,6 +22699,11 @@ export interface components {
             readonly missing_repo: readonly string[];
             /** Cannot Hold */
             readonly cannot_hold: readonly string[];
+            /**
+             * Directed
+             * @default []
+             */
+            readonly directed: readonly string[];
         };
         /** TopologyOrderRowOut */
         readonly TopologyOrderRowOut: {
@@ -22708,7 +22720,8 @@ export interface components {
          * @description One `RunnerAssignment` row. `source` "" = the agent's default ordered list
          *     (`rank` orders it); non-empty = a source rule (optionally narrowed to one
          *     `actor`). `can_claim` is False when the runner's OWNER is not in the agent's
-         *     workspace — the row routes on paper and the turn is never claimed.
+         *     workspace, or the runner is directed-only — the row routes on paper and the
+         *     turn is never claimed.
          */
         readonly TopologyRouteOut: {
             /**
@@ -22775,6 +22788,11 @@ export interface components {
             readonly flags: readonly string[];
             /** Agent Count */
             readonly agent_count: number;
+            /**
+             * Directed
+             * @default false
+             */
+            readonly directed: boolean;
             /** Code Current */
             readonly code_current?: boolean | null;
             /**

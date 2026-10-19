@@ -175,6 +175,7 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     # A pin trumps everything below it (claim_next_turn's `pinned_here`).
     if t.pinned_runner_id == r.id:
         return True
+    directed = r.directed_only()
     if t.chat_session_id:
         # STICKINESS, mirroring the claim loop's bound_to_me short-circuit: a
         # session bound to this runner claims on it regardless of assignments.
@@ -189,6 +190,8 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
         routed_agent = t.chat_session.agent_id
     else:
         routed_agent = t.agent_id
+    if directed:
+        return False  # a directed-only box takes pins and its bindings, nothing routed
     if not routed_agent:
         if _is_repo_turn(t):
             # A repo turn follows its workspace's runner order when it has one:
@@ -634,7 +637,13 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         RunnerAssignment.objects.filter(runner=runner).exists()
         or WorkspaceRunnerOrder.objects.filter(runner=runner, enabled=True).exists()
     )
-    if not has_assignments and not projects and not session_capable and not has_pins:
+    if runner.directed_only():
+        # Takes only what is put on it: a pin, or a session bound to it.
+        from apps.canopy_sessions.models import RunnerBinding
+
+        if not has_pins and not RunnerBinding.objects.filter(runner=runner).exists():
+            return None
+    elif not has_assignments and not projects and not session_capable and not has_pins:
         return None
     routing_q = Q(routing__in=[Turn.PREFER_LOCAL, Turn.LOCAL_ONLY, Turn.ANY])
     if runner.kind == Runner.CLOUD:
