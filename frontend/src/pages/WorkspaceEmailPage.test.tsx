@@ -9,7 +9,8 @@ import * as workspacesApi from '@/api/workspaces'
 
 const domain = {
   id: 1, name: 'marshellis.com', status: 'pending', receiving: false, mx_provider: 'Zoho',
-  suspended_reason: '', daily_send_cap: 200, can_manage: true,
+  suspended_reason: '', verification_error: '', verification_restarted_at: null as string | null, restart_note: '',
+  daily_send_cap: 200, can_manage: true,
   owned: true, owner_workspace: 'marshellis', can_share: false, shares: [] as { workspace: string; daily_send_cap: number }[],
   sign_in: false, can_set_sign_in: true, mx_points_at_google: false,
   records: [
@@ -30,6 +31,7 @@ vi.mock('@/api/mail', async (orig) => ({
   removeMailDomain: vi.fn(async () => undefined),
   shareMailDomain: vi.fn(async () => domain),
   updateMailDomain: vi.fn(async () => domain),
+  refreshMailDomain: vi.fn(async () => domain),
 }))
 vi.mock('@/api/agents', () => ({ listAgents: vi.fn(async () => ({ items: [{ slug: 'hal', name: 'Hal', workspace: 'marshellis' }] })) }))
 vi.mock('@/api/workspaces', async (orig) => ({
@@ -86,6 +88,20 @@ describe('WorkspaceEmailPage', () => {
     })
     renderPage()
     expect((await screen.findByTestId('mail-mx-elsewhere')).textContent).toMatch(/goes to Gmail, not here/)
+  })
+  it('shows why SES gave up verifying and that Re-check restarts it', async () => {
+    const error = "SES gave up verifying — the DKIM records weren't found within 72 hours"
+    vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
+      enabled: true, can_manage: true, items: [{ ...domain, verification_error: error }],
+    })
+    vi.mocked(mail.refreshMailDomain).mockResolvedValueOnce({
+      ...domain, verification_error: '', restart_note: 'Restarted SES verification of DKIM.',
+    })
+    renderPage()
+    expect((await screen.findByTestId('mail-verification-error')).textContent).toMatch(/Re-check restarts SES verification/)
+    fireEvent.click(screen.getByRole('button', { name: 'Re-check and restart verification' }))
+    expect((await screen.findByTestId('mail-restart-note')).textContent).toBe('Restarted SES verification of DKIM.')
+    expect(screen.queryByTestId('mail-verification-error')).toBeNull()
   })
   it('forwards only to a chosen member, never a typed email', async () => {
     renderPage()

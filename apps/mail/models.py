@@ -31,6 +31,11 @@ class MailDomain(models.Model):
     suspended_reason = models.TextField(blank=True, default="")
     daily_send_cap = models.PositiveIntegerField(default=200)
     checked_at = models.DateTimeField(null=True, blank=True)
+    verification_error = models.TextField(blank=True, default="")
+    """Why SES stopped verifying (its DKIM or MAIL FROM status is FAILED), from the last
+    SES read; "" while it is verifying or verified. Status stays `pending` meanwhile."""
+    verification_restarted_at = models.DateTimeField(null=True, blank=True)
+    """When a Re-check last asked SES to start verifying again (rate-limits restarts)."""
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                    on_delete=models.SET_NULL, related_name="+")

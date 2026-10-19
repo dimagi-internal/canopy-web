@@ -6,6 +6,7 @@ Credentials come from the ECS task role (deploy/aws/canopy-mail.cfn.yaml).
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from urllib.parse import quote
 
 from django.conf import settings
@@ -72,10 +73,47 @@ def create_identity(domain: str, *, mail_from: str) -> list[str]:
     return list((out.get("DkimAttributes") or {}).get("Tokens") or [])
 
 
-def identity_verified(domain: str) -> bool:
+@dataclass(frozen=True)
+class IdentityStatus:
+    """What SES says about one identity. `dkim` and `mail_from` are SES's own status words
+    (PENDING, SUCCESS, FAILED, TEMPORARY_FAILURE, NOT_STARTED); "" when SES gave none."""
+    dkim: str
+    mail_from: str
+    tokens: list[str]
+
+
+def identity_status(domain: str) -> IdentityStatus:
     _guard()
     out = _sesv2().get_email_identity(EmailIdentity=domain)
-    return (out.get("DkimAttributes") or {}).get("Status") == "SUCCESS"
+    dkim = out.get("DkimAttributes") or {}
+    mail_from = out.get("MailFromAttributes") or {}
+    return IdentityStatus(dkim=str(dkim.get("Status") or ""),
+                          mail_from=str(mail_from.get("MailFromDomainStatus") or ""),
+                          tokens=list(dkim.get("Tokens") or []))
+
+
+def identity_verified(domain: str) -> bool:
+    return identity_status(domain).dkim == "SUCCESS"
+
+
+def restart_dkim(domain: str) -> list[str]:
+    """Start Easy DKIM verification over on an identity SES gave up on (DKIM FAILED: the
+    records were not found within its 72 h window, and SES never looks again by itself).
+
+    Re-puts the identity's own signing origin (Easy DKIM, `AWS_SES`) and passes no
+    `SigningAttributes`, so it asks for no new key; SES sets the status back to PENDING. Returns the tokens SES answers with — the
+    caller compares them with the ones it stored, since only those are published in DNS."""
+    _guard()
+    out = _sesv2().put_email_identity_dkim_signing_attributes(
+        EmailIdentity=domain, SigningAttributesOrigin="AWS_SES")
+    return list(out.get("DkimTokens") or [])
+
+
+def restart_mail_from(domain: str, *, mail_from: str) -> None:
+    """Start MAIL FROM verification over by putting the same attributes again."""
+    _guard()
+    _sesv2().put_email_identity_mail_from_attributes(
+        EmailIdentity=domain, MailFromDomain=mail_from, BehaviorOnMxFailure="USE_DEFAULT_VALUE")
 
 
 def delete_identity(domain: str) -> None:

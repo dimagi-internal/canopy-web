@@ -15,4 +15,5 @@ class Command(BaseCommand):
             except Exception as exc:  # one bad domain must not stop the rest
                 self.stderr.write(f"{d.name}: failed: {exc!r}")
                 continue
-            self.stdout.write(f"{d.name}: {d.status} receiving={d.receiving} mx={d.mx_provider}")
+            self.stdout.write(f"{d.name}: {d.status} receiving={d.receiving} mx={d.mx_provider}"
+                              + (f" error={d.verification_error}" if d.verification_error else ""))

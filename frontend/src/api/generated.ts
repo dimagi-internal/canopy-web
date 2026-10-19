@@ -665,7 +665,12 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Re-check a domain's DNS and verification now */
+        /**
+         * Re-check a domain's DNS and verification now
+         * @description Re-check now. When SES gave up verifying (DKIM or MAIL FROM FAILED: the records were
+         *     not found within 72 hours) and those records now check out, this also restarts SES
+         *     verification, at most once every 10 minutes per domain; `restart_note` says what it did.
+         */
         readonly post: operations["refresh_mail_domain"];
         readonly delete?: never;
         readonly options?: never;
@@ -12273,6 +12278,18 @@ export interface components {
             readonly mx_provider: string;
             /** Suspended Reason */
             readonly suspended_reason: string;
+            /**
+             * Verification Error
+             * @default
+             */
+            readonly verification_error: string;
+            /** Verification Restarted At */
+            readonly verification_restarted_at?: string | null;
+            /**
+             * Restart Note
+             * @default
+             */
+            readonly restart_note: string;
             /** Daily Send Cap */
             readonly daily_send_cap: number;
             /** Records */

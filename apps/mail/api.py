@@ -105,6 +105,10 @@ def _domain_out(d: MailDomain, user, ws=None) -> dict:
     routes = d.routes.filter(workspace=ws).select_related("agent", "forward_to", "domain")
     out = {"id": d.pk, "name": d.name, "status": d.status, "receiving": d.receiving,
            "mx_provider": d.mx_provider, "suspended_reason": d.suspended_reason,
+           "verification_error": d.verification_error if owned else "",
+           "verification_restarted_at": (d.verification_restarted_at.isoformat()
+                                         if owned and d.verification_restarted_at else None),
+           "restart_note": getattr(d, "restart_note", "") if owned else "",
            "daily_send_cap": d.daily_send_cap if owned else share.daily_send_cap,
            "records": [asdict(r) for r in domains.records(d)] if owned else [],
            "routes": [_route_out(r) for r in routes],
@@ -163,8 +167,25 @@ def add_mail_domain(request: HttpRequest, workspace: str, payload: MailDomainIn)
 @router.post("/domains/{workspace}/{domain_id}/refresh", response=MailDomainOut,
              summary="Re-check a domain's DNS and verification now")
 def refresh_mail_domain(request: HttpRequest, workspace: str, domain_id: int) -> dict:
+    """Re-check now. When SES gave up verifying (DKIM or MAIL FROM FAILED: the records were
+    not found within 72 hours) and those records now check out, this also restarts SES
+    verification, at most once every 10 minutes per domain; `restart_note` says what it did."""
     ws = _ws(request.user, workspace)
-    return _domain_out(domains.refresh(_domain(ws, domain_id), force=True), request.user)
+    d = _domain(ws, domain_id)
+    before = {"dkim_tokens": list(d.dkim_tokens or []),
+              "verification_restarted_at": _iso(d.verification_restarted_at)}
+    d = domains.refresh(d, force=True, restart=True)
+    # A restart is recorded like any domain write; a plain re-check changes nothing, so it
+    # notes before == after and no row is written.
+    audit.note_change(scope=f"mail.domain:{d.name}", before=before,
+                      after={"dkim_tokens": list(d.dkim_tokens or []),
+                             "verification_restarted_at": _iso(d.verification_restarted_at)},
+                      summary=f"restarted SES verification of {d.name}: {d.restart_note}"[:500])
+    return _domain_out(d, request.user)
+
+
+def _iso(when) -> str | None:
+    return when.isoformat() if when else None
 
 
 @router.patch("/domains/{workspace}/{domain_id}", response=MailDomainOut,
