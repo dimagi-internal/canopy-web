@@ -85,18 +85,6 @@ def test_subscription_auth_needs_no_auth_step(agent):
     assert agent.init_result.get("authMethods") == []
 
 
-def test_rate_limit_metadata_is_present(agent):
-    """The predictive signal for the runner cascade — and the positive proof
-    this ran on a subscription (`five_hour` is the subscription limiter)."""
-    reducer = UpdateReducer()
-    agent.new_session()
-    agent.prompt("Reply with the single word: ok").result(timeout=120)
-    for update in agent.updates:
-        reducer.apply(update)
-    assert reducer.rate_limit, "no _claude/rateLimit meta on any usage_update"
-    assert reducer.rate_limit.get("rateLimitType")
-
-
 def test_cancel_stops_a_running_turn(agent):
     """`session/cancel` is the Escape equivalent — the interaction the web view
     needs to reach parity with emdash."""

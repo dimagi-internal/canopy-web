@@ -315,6 +315,9 @@ export interface SessionState {
 export type WsAction =
   | { action: "chat.send"; data: Record<string, never> }
   | { action: "chat.stop"; data: { message_id: string } }
+  /** Withdraw one of your own sends while it is still QUEUED (not yet claimed
+   *  by a runner). Refused with `session.error` `unqueue_refused` otherwise. */
+  | { action: "chat.unqueue"; data: { turn_id: string } }
   | { action: "draft.update"; data: { version: number; body: string } }
   // The mode is its OWN idempotent frame, not a field on the version-guarded
   // `draft.update` above — applied unconditionally server-side (no version

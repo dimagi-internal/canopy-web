@@ -17,7 +17,7 @@ import { onlineSessionCapableRunners, repoChoices, reportedRepos, type RepoChoic
 
 // The "Run on" picker's pending target — set when the user picks an agent or
 // project from the menu, before they've confirmed a runner + Start.
-type PendingTarget =
+export type NewChatTarget =
   | { kind: 'agent'; agent: AgentOut }
   | { kind: 'project'; project: RepoChoice }
 
@@ -31,7 +31,9 @@ type PendingTarget =
  * report (`repoChoices`) — the set a project chat can actually be claimed on.
  * `runners` may be passed by a caller that already loaded them; otherwise the
  * menu loads them itself. `onCreated` replaces the default of opening the new
- * chat at `/w/<ws>/chat/<id>` (/ide opens it in place).
+ * chat at `/w/<ws>/chat/<id>` (/ide opens it in place). `target` skips the
+ * list and opens straight on the "Run on" step for that agent or repo (/ide's
+ * per-project +); with no `label` the trigger is the + alone.
  */
 export function NewChatMenu({
   agents,
@@ -39,6 +41,8 @@ export function NewChatMenu({
   onError,
   onCreated,
   label = 'New chat',
+  target,
+  title,
   className,
 }: {
   agents: readonly AgentOut[]
@@ -46,6 +50,8 @@ export function NewChatMenu({
   onError: (message: string) => void
   onCreated?: (session: ChatSession) => void
   label?: string
+  target?: NewChatTarget
+  title?: string
   className?: string
 }) {
   const navigate = useNavigate()
@@ -54,7 +60,7 @@ export function NewChatMenu({
   const projects = useMemo(() => repoChoices(fleetRunners ?? []), [fleetRunners])
   const [creating, setCreating] = useState(false)
   const [open, setOpen] = useState(false)
-  const [pending, setPending] = useState<PendingTarget | null>(null)
+  const [pending, setPending] = useState<NewChatTarget | null>(null)
   const [agentRunnerOptions, setAgentRunnerOptions] = useState<AgentRunnerOut[]>([])
   const [runnersLoading, setRunnersLoading] = useState(false)
   const [selectedRunnerId, setSelectedRunnerId] = useState('')
@@ -165,19 +171,24 @@ export function NewChatMenu({
       onOpenChange={(next: boolean) => {
         setOpen(next)
         if (!next) resetPending()
+        else if (target?.kind === 'agent') pickAgent(target.agent)
+        else if (target?.kind === 'project') pickProject(target.project)
       }}
     >
       <DropdownMenuTrigger
         render={
           <Button
             size="sm"
-            disabled={creating || (agents.length === 0 && projects.length === 0)}
+            variant={label ? 'default' : 'ghost'}
+            disabled={creating || (!target && agents.length === 0 && projects.length === 0)}
             data-testid="new-chat"
+            title={title}
+            aria-label={label ? undefined : title}
             className={className}
           />
         }
       >
-        <Plus className="mr-1 h-4 w-4" />
+        <Plus className={label ? 'mr-1 h-4 w-4' : 'h-3.5 w-3.5'} />
         {label}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
@@ -244,13 +255,15 @@ export function NewChatMenu({
               <Button size="sm" disabled={creating} onClick={confirmStart}>
                 Start chat
               </Button>
-              <button
-                type="button"
-                onClick={resetPending}
-                className="text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                Back
-              </button>
+              {!target && (
+                <button
+                  type="button"
+                  onClick={resetPending}
+                  className="text-[11px] text-muted-foreground hover:text-foreground"
+                >
+                  Back
+                </button>
+              )}
             </div>
           </div>
         )}

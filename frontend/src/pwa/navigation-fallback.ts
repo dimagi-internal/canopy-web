@@ -138,7 +138,6 @@ export function navigationMatcher(): (arg: {
   request: { mode: string }
   url: URL
 }) => boolean {
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   return new Function('{ request, url }', navigationMatcherSource()) as (arg: {
     request: { mode: string }
     url: URL

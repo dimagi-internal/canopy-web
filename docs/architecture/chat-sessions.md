@@ -107,6 +107,14 @@ an emdash task name alone is not an identity.
 - **A send only enqueues.** `services.queued_messages` (derived, never stored) shows
   every watcher the sends not yet in the transcript; REST and contact sends carry a
   `client_id` so the sender's optimistic row dedupes against the queued entry.
+- **Stop cancels every live turn; Cancel withdraws one send.** Stop (the button, or
+  Esc in the composer while the agent has the floor) is `services.stop_session`.
+  The socket action `chat.unqueue {turn_id}` is `services.unqueue_send`: your OWN
+  send, only while still `QUEUED` (a claimed one may already be in the agent's
+  input), finished CANCELLED and the queued list re-sent; anything else is refused
+  with `session.error` `unqueue_refused`. The Cancel sits on your queued line
+  (`ChatPanel` → `MessageList`/`QueuedRows`). Only transcript-sourced sessions have
+  queued lines: a ledger send writes its Message at once.
 - Pending attachments are scoped to their uploader (`uploaded_by`): one person's
   send must not carry another's staged files.
 - **A runner fetches attachments through the turn it holds, never through the
@@ -115,6 +123,14 @@ an emdash task name alone is not an identity.
   claim is what entitles the box to the chat's sent files. Both runners name any
   file that failed to download in the prompt, so the agent never answers as if
   it had seen it; a confined cloud session is told of files it is not given.
+- **A pasted file is typed into the message where it was pasted, as `[Image #N]`**
+  (`[File #N]` for a non-image; `SendBox`), N being its place among the staged
+  files. Removing a chip removes its placeholder and renumbers the rest; the host
+  uploads one file at a time so the server's order (`Attachment` by `created_at`)
+  is that N. The message is sent as typed. Each runner saves file N as
+  `<turn>/N-<name>` (pasted screenshots are all `image.png`) and its trailing
+  note leads each path with its placeholder (`- [Image #2] /…/2-image.png`;
+  `execute.attachment_lines`, mirrored in `cloud_runner._attachment_lines`).
 - **Authorship is matched server-side, never carried on the wire.** The prompt
   reaches the agent exactly as typed (the agent learns who is asking from the
   caller envelope via the `caller_context` hook). `persist_transcript_rows` links a

@@ -70,7 +70,6 @@ export function useStickyBottom<T>(
     // dep is intentionally the only signal that triggers a follow;
     // it should change whenever the message list grows (length or
     // the last message's content length).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dep, enabled]);
 
   return { containerRef, onScroll, scrollToBottom };

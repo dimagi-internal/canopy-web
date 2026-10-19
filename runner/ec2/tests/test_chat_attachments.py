@@ -72,7 +72,7 @@ def test_a_chats_files_are_fetched_through_the_turn_and_read(cr, net, tmp_path):
     prompt = calls["exec"]["prompt"]
     assert prompt.startswith("review the deck")
     assert "Read them with the Read tool" in prompt
-    shot = tmp_path / "attachments" / TID / "slide-01.jpg"
+    shot = tmp_path / "attachments" / TID / "1-slide-01.jpg"
     assert str(shot) in prompt and shot.read_bytes() == b"JPG1"
 
 
@@ -116,7 +116,7 @@ def test_an_unfetchable_attachment_never_crashes_the_turn(cloud_runner, monkeypa
     monkeypatch.setattr(cloud_runner, "ATTACHMENT_DIR", tmp_path / "attachments")
     paths, missing = cloud_runner._fetch_attachments(
         "r-1", {"id": TID, "origin_ref": {"attachments": [{"id": "a1", "filename": "x.png"}]}})
-    assert paths == [] and missing == ["x.png"]
+    assert paths == [] and missing == ["1-x.png"]
 
 
 def test_a_hostile_filename_stays_under_the_attachment_dir(cloud_runner):

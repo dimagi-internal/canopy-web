@@ -54,8 +54,8 @@ export function WalkthroughViewerPage() {
       const next = w.visibility === 'link' ? 'private' : 'link'
       const updated = await patchWalkthrough(w.id, { visibility: next })
       setW(updated)
-    } catch (e: any) {
-      setError({ status: null, message: String(e?.message || e) })
+    } catch (e) {
+      setError({ status: null, message: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(false)
     }
@@ -71,8 +71,8 @@ export function WalkthroughViewerPage() {
       await navigator.clipboard.writeText(shareUrl)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (e: any) {
-      setError({ status: null, message: String(e?.message || e) })
+    } catch (e) {
+      setError({ status: null, message: e instanceof Error ? e.message : String(e) })
     }
   }
 
@@ -83,8 +83,8 @@ export function WalkthroughViewerPage() {
     try {
       const updated = await rotateWalkthroughToken(w.id)
       setW(updated)
-    } catch (e: any) {
-      setError({ status: null, message: String(e?.message || e) })
+    } catch (e) {
+      setError({ status: null, message: e instanceof Error ? e.message : String(e) })
     } finally {
       setBusy(false)
     }
@@ -97,8 +97,8 @@ export function WalkthroughViewerPage() {
     try {
       await deleteWalkthrough(w.id)
       navigate('/walkthroughs')
-    } catch (e: any) {
-      setError({ status: null, message: String(e?.message || e) })
+    } catch (e) {
+      setError({ status: null, message: e instanceof Error ? e.message : String(e) })
       setBusy(false)
     }
   }

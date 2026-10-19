@@ -58,6 +58,11 @@ def request_close_report(task_name: str) -> None:
     _PENDING_CLOSED.add(task_name)
 
 
+def close_report_pending(task_name: str) -> bool:
+    """Whether `task_name` was closed here and its report has not gone out yet."""
+    return task_name in _PENDING_CLOSED
+
+
 def session_changed(cfg: Config, sessions: list[dict]) -> bool:
     """True if any SHOWN session's transcript grew, or a new session appeared, since
     the last check. This is the LIVE signal — cheap (a byte-offset read of only the

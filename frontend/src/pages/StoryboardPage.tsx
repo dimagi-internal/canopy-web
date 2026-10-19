@@ -71,7 +71,7 @@ export default function StoryboardPage() {
     return () => {
       live = false
     }
-  }, [slug, token, reloads])
+  }, [slug, token, workspace, reloads])
 
   if (state.kind === 'loading') return <Centered>Loading…</Centered>
   if (state.kind === 'not_found')

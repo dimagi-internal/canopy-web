@@ -26,6 +26,12 @@ def cr(cloud_runner, monkeypatch):
     ])
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # No box login, whatever machine runs this: the cascade puts a signed-in
+    # login on disk (CLAUDE_CONFIG_DIR, ~/.claude) ahead of the bundle, so on a
+    # box that has one — any cloud runner — a re-read picked the box's REAL
+    # login instead of the token this file stages, and the suite failed there
+    # while passing in CI.
+    monkeypatch.setattr(cloud_runner, "box_login_ready", lambda *a, **k: False)
     return cloud_runner
 
 

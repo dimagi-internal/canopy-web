@@ -587,6 +587,40 @@ async def test_stop_with_nothing_to_cancel_does_not_broadcast():
     await a.disconnect()
 
 
+async def test_unqueue_withdraws_only_my_queued_send():
+    """chat.unqueue takes back ONE queued send — the sender's own — where Stop
+    cancels every live turn. A teammate's attempt is refused, out loud."""
+    owner, teammate, session = await database_sync_to_async(_seed)()
+
+    def _two_sends():
+        session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
+        session.save(update_fields=["metadata"])
+        _m, first = chat.send_message(session=session, text="first", user=owner, client_id="c1")
+        _m, second = chat.send_message(session=session, text="second", user=owner, client_id="c2")
+        return first, second
+
+    first, second = await database_sync_to_async(_two_sends)()
+    b = await _connect(session, teammate)
+    assert (await b.connect())[0]
+    await b.send_json_to({"action": "chat.unqueue", "data": {"turn_id": str(first.pk)}})
+    refused = await _recv_match(b, lambda f: f.get("event") == "session.error")
+    assert refused["data"]["code"] == "unqueue_refused"
+    await b.disconnect()
+
+    a = await _connect(session, owner)
+    assert (await a.connect())[0]
+    await a.send_json_to({"action": "chat.unqueue", "data": {"turn_id": str(first.pk)}})
+    # Everyone's queued list is re-sent without it.
+    frame = await _recv_match(a, lambda f: f.get("event") == "session.queued"
+                              and [q["text"] for q in f["data"]["queued"]] == ["second"])
+    assert frame
+    await database_sync_to_async(first.refresh_from_db)()
+    await database_sync_to_async(second.refresh_from_db)()
+    assert first.status == Turn.CANCELLED
+    assert second.status == Turn.QUEUED
+    await a.disconnect()
+
+
 async def test_snapshot_falls_back_to_the_binding_tail():
     """A local runner session has NO Message rows — the panel must still open populated.
 

@@ -356,7 +356,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
   mode, archived), kept in `localStorage`, and nothing is ranked or labelled
   "stuck"; the foot of the list says how many sessions the filters hide, with
   **Show all**. **New session** (the shared `NewChatMenu`: an agent, or a repo a
-  runner reports) opens the new chat in place. The rail header is two lines: the state totals (which are the
+  runner reports) opens the new chat in place; each project row's **+** is the
+  same menu opened straight on "Run on" for that agent or repo (shown only when
+  the name is an agent you can see or a repo an online runner holds). A delete
+  the list called unconfirmed that then lands takes its error back. The rail header is two lines: the state totals (which are the
   state toggles), search, a **Filters** menu (runners, Alt-click to solo; mode;
   archived) whose button says how many are off, and `⋯` (collapse all, hide
   the list, hide the app bar). The ☰ folds the app bar away

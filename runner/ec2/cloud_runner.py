@@ -2405,11 +2405,13 @@ def _fetch_attachments(runner_id: str, turn: dict) -> tuple[list[pathlib.Path], 
     turn_id = str(turn.get("id", ""))
     paths: list[pathlib.Path] = []
     missing: list[str] = []
-    for ref in refs:
+    for n, ref in enumerate(refs, start=1):
         aid = ref.get("id")
         if not aid:
             continue
-        name = _attachment_name(ref.get("filename", ""))
+        # Numbered by position, as canopy_runner.execute.fetch_attachments: two
+        # pasted screenshots are both "image.png" and overwrote each other.
+        name = f"{n}-{_attachment_name(ref.get('filename', ''))}"
         dest = ATTACHMENT_DIR / turn_id / name
         url = (f"{BASE_URL}/api/harness/runners/{runner_id}/turns/{turn_id}"
                f"/attachments/{aid}/content")
@@ -2430,16 +2432,33 @@ def _fetch_attachments(runner_id: str, turn: dict) -> tuple[list[pathlib.Path], 
     return paths, missing
 
 
+_ATTACHMENT_PLACEHOLDER = re.compile(r"\[(?:Image|File) #(\d+)\]")
+
+
+def _attachment_lines(prompt: str, paths: list[pathlib.Path]) -> tuple[str, bool]:
+    """Mirrors canopy_runner.execute.attachment_lines: each path led by the
+    composer's "[Image #N]" when the message has one; the message is untouched."""
+    placed = {m.group(1): m.group(0) for m in _ATTACHMENT_PLACEHOLDER.finditer(prompt or "")}
+    lines, any_placed = [], False
+    for p in paths:
+        token = placed.get(p.name.split("-", 1)[0])
+        any_placed = any_placed or bool(token)
+        lines.append(f"- {token} {p}" if token else f"- {p}")
+    return "\n".join(lines), any_placed
+
+
 def _with_attachments(prompt: str, paths: list[pathlib.Path], missing: list[str]) -> str:
     """Name the files for the agent to READ, and the ones that never arrived.
     Same wording as canopy_runner.execute.prompt_with_attachments, so an agent
     behaves the same whichever box serves it."""
     out = prompt
     if paths:
-        lines = "\n".join(f"- {p}" for p in paths)
+        lines, placed = _attachment_lines(prompt, paths)
         noun = "file" if len(paths) == 1 else "files"
         out = (f"{out}\n\nThe user attached the following {noun}. "
                f"Read {'it' if len(paths) == 1 else 'them'} with the Read tool before replying:\n{lines}")
+        if placed:
+            out += "\n([Image #N] in the message marks where the user placed that file.)"
     if missing:
         names = ", ".join(missing[:10]) + (f" and {len(missing) - 10} more" if len(missing) > 10 else "")
         out = (f"{out}\n\n{len(missing)} attached file{'' if len(missing) == 1 else 's'} could not be "

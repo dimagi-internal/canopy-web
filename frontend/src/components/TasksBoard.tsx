@@ -68,7 +68,6 @@ function isPastDue(due: string): boolean {
 
 /** `jarvis` → `Jarvis`. Slugs are lowercase `[a-z0-9-]`, so capitalising the
  *  first letter is the agent's display name in every case the fleet has. */
-// eslint-disable-next-line react-refresh/only-export-components -- tested pure helper beside its only caller
 export function agentDisplayName(slug: string): string {
   return slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'Agent'
 }
@@ -95,7 +94,6 @@ function isLive(task: TaskOut): boolean {
   return task.status === 'suggested' || task.status === 'in_progress'
 }
 
-// eslint-disable-next-line react-refresh/only-export-components -- the card's action rule, exported for its tests
 export function availableActions(task: TaskOut, canEdit: boolean): TaskAction[] {
   if (!isLive(task)) return []
   const kind = (task.ask_kind || '').trim()
@@ -209,7 +207,6 @@ function TaskLinkChip({ label, url }: { label: string; url: string }): JSX.Eleme
 // `/w/:workspace/agents/:slug/projects/:ref`. Off a workspace route (the fleet
 // queue at /supervisor) the caller names the task's workspace; failing that,
 // `/agents/*` resolves the active workspace (TenantRedirect).
-// eslint-disable-next-line react-refresh/only-export-components -- tested pure helper beside its only caller
 export function projectHref(task: TaskOut, workspace?: string): string {
   const tail = `agents/${task.agent_slug}/projects/${task.project_ext_id}`
   return workspace ? `/w/${workspace}/${tail}` : `/${tail}`
@@ -277,7 +274,6 @@ function FolderChip({ task }: { task: TaskOut }): JSX.Element | null {
  *  A task whose parent is IN the list nests under it; one whose parent is
  *  not (a filtered view, another status column) stays a card of its own and
  *  says whose subtask it is. Order within each parent follows the list. */
-// eslint-disable-next-line react-refresh/only-export-components -- tested pure helper beside its only callers
 export function nestTasks(tasks: TaskOut[]): { roots: TaskOut[]; childrenOf: Map<string, TaskOut[]> } {
   const present = new Set(tasks.map((t) => t.ext_id))
   const childrenOf = new Map<string, TaskOut[]>()

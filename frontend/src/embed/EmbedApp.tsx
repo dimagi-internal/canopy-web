@@ -958,6 +958,7 @@ function EmbedChat({
           currentUserId={socket.state.current_user_id}
           onSend={isContact ? socket.sendChat : onSend}
           onStop={isContact ? () => undefined : socket.stopChat}
+          onUnqueue={isContact ? undefined : socket.unqueueChat}
           // `socket.awaitingReply` on BOTH paths now. It used to be `sending`
           // for a contact, which tracked the HTTP request and so cleared the
           // instant the POST returned — an indicator for ~200ms, then silence

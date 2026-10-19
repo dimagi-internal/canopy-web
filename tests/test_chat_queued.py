@@ -113,3 +113,38 @@ def test_a_send_without_a_client_id_reports_none():
     owner, session = _runner_session()
     chat.send_message(session=session, text="first", user=owner)
     assert chat.queued_messages(session)[0]["client_id"] == ""
+
+
+# ── withdrawing one queued send ────────────────────────────────────────────────
+
+def test_you_can_withdraw_your_own_queued_send_and_only_that_one():
+    owner, session = _runner_session()
+    _m, first = chat.send_message(session=session, text="first", user=owner, client_id="c1")
+    chat.send_message(session=session, text="second", user=owner, client_id="c2")
+    assert chat.unqueue_send(session, first.pk, owner, by="Jon") is True
+    first.refresh_from_db()
+    assert first.status == Turn.CANCELLED
+    assert [e["text"] for e in chat.queued_messages(session)] == ["second"]
+
+
+def test_a_claimed_send_cannot_be_withdrawn():
+    """Once a runner holds it the words may already be in the agent's input."""
+    owner, session = _runner_session()
+    _m, turn = chat.send_message(session=session, text="first", user=owner, client_id="c1")
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED)
+    assert chat.unqueue_send(session, turn.pk, owner) is False
+    turn.refresh_from_db()
+    assert turn.status == Turn.CLAIMED
+
+
+def test_a_teammates_queued_send_is_theirs_to_withdraw():
+    owner, session = _runner_session()
+    mate = User.objects.create_user("mate", "mate@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=mate, workspace=session.workspace,
+                                       role=WorkspaceMembership.OWNER)
+    _m, turn = chat.send_message(session=session, text="first", user=owner, client_id="c1")
+    assert chat.unqueue_send(session, turn.pk, mate) is False
+    assert chat.unqueue_send(session, "not-a-uuid", owner) is False
+    assert chat.unqueue_send(session, uuid.uuid4(), owner) is False
+    turn.refresh_from_db()
+    assert turn.status == Turn.QUEUED

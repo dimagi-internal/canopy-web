@@ -18,6 +18,7 @@ Supervisor says "Close failed: <reason>" beside the session that stayed open.
 from __future__ import annotations
 
 import logging
+import threading
 
 from . import cdp_control, desktop, emdash, session_target, sessions
 
@@ -96,6 +97,25 @@ def report_results(cfg, client, results: list[dict]) -> None:
 # Keys already warned about, so a refusal retried every poll tick logs once.
 _warned: set[str] = set()
 
+# Closes under way, by task name. A close from the web arrives twice — the
+# control frame (wake-listener thread) and `close_requested` on the next poll
+# tick (streams.drain_closes) — and the second used to run alongside the first:
+# its sidebar search missed the row the first was deleting while emdash's DB
+# still held it, so it reported CloseFailed for a close that then succeeded.
+_IN_FLIGHT: set[str] = set()
+_IN_FLIGHT_LOCK = threading.Lock()
+
+#: What close_session returns when another thread is already closing the task.
+IN_FLIGHT = "in-flight"
+
+
+def settled_or_in_flight(session_key: str) -> bool:
+    """Whether this box is closing `session_key` right now, or has closed it and
+    is waiting for the next report to say so. Either way there is nothing for
+    another attempt to do, and an attempt now can only race the first."""
+    with _IN_FLIGHT_LOCK:
+        return session_key in _IN_FLIGHT or sessions.close_report_pending(session_key)
+
 
 def close_session(session_key: str, *, project: str = "", cdp_port: int = 9222,
                   emdash_db: str | None = None, cfg=None) -> str:
@@ -112,7 +132,25 @@ def close_session(session_key: str, *, project: str = "", cdp_port: int = 9222,
     (see session_target) — never a delete by name alone. Raises CDPError if the
     delete could not be completed, and CloseFailed if the sidebar called
     the task absent while emdash's DB still holds it. The caller logs either and moves on.
+
+    Returns IN_FLIGHT, touching nothing, while another thread is closing the same
+    task: two deletes at once make the loser report a failure that is not one.
     """
+    with _IN_FLIGHT_LOCK:
+        if session_key in _IN_FLIGHT:
+            logger.info("close %s: already being closed — not starting a second", session_key)
+            return IN_FLIGHT
+        _IN_FLIGHT.add(session_key)
+    try:
+        return _close_session(session_key, project=project, cdp_port=cdp_port,
+                              emdash_db=emdash_db, cfg=cfg)
+    finally:
+        with _IN_FLIGHT_LOCK:
+            _IN_FLIGHT.discard(session_key)
+
+
+def _close_session(session_key: str, *, project: str, cdp_port: int,
+                   emdash_db: str | None, cfg) -> str:
     if cfg is not None and desktop.is_desktop_session(cfg, session_key):
         # A Claude desktop session has no emdash task: it is open for as long as the
         # runner's desktop index names it (desktop.open_sessions). Looking for an
