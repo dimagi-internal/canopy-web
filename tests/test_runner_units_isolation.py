@@ -20,10 +20,16 @@ from apps.agents.models import Agent
 from apps.harness import device_keys, runner_auth
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey
 from tests.test_canopy_vault_phase1b import sts  # noqa: F401 — sts is a fixture
-from tests.test_runner_invitations import _fresh_cache, _pat_client, org  # noqa: F401
+from tests.test_runner_invitations import _fresh_cache, _pat_client  # noqa: F401
+from tests.test_runner_invitations import make_org
 from tests.test_runner_units_pairing import BOX, _approve, _invite, _pair_units
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts")]
+
+
+@pytest.fixture
+def org():
+    return make_org()
 
 RESOLVE = "/api/agents/eva/credentials/resolve"
 HTU = f"http://testserver{RESOLVE}"

@@ -65,6 +65,12 @@ def _person(username: str):
 
 @pytest.fixture
 def org():
+    return make_org()
+
+
+def make_org() -> dict:
+    """jj, owner of `connect`, signed in with a fresh passkey step-up, and a PAT.
+    A plain function so other modules can build the same fixture under their own."""
     jj = _person("jj")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)

@@ -417,7 +417,7 @@ def test_the_ecdh_stack_gives_each_extra_unit_its_own_key():
 
 @pytest.mark.parametrize("template", ["runner.cfn.yaml", "ecdh-kms.cfn.yaml"])
 def test_templates_pass_cfn_lint(template):
-    cfnlint = pytest.importorskip("cfnlint.api")
+    pytest.importorskip("cfnlint.api")
     from cfnlint.api import lint_file
 
     matches = [m for m in lint_file(EC2 / template) if m.rule.id.startswith("E")]

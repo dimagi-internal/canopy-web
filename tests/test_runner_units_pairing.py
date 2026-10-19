@@ -18,9 +18,15 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.test_canopy_vault_phase1b import ROLE, sts  # noqa: F401 — sts is a fixture
 from tests.test_runner_invitations import (INVITES, PAIR, PAIR_HTU, _fresh_cache, _pat_client,  # noqa: F401
-                                           _person, _proof, org)
+                                           _person, _proof)
+from tests.test_runner_invitations import make_org
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts")]
+
+
+@pytest.fixture
+def org():
+    return make_org()
 
 MACHINE = ROLE  # canonical role ARN == the machine id
 BOX = "cloud-ec2-9"
