@@ -79,6 +79,13 @@ the rule, its claim/schedule parity test and the routing hint:
   tree only (422 otherwise); a box serving two trees runs a runner (an isolation
   unit) per tree. A laptop may span trees and says so on its runner row.
   → [runners.md § Isolation units](runners.md#isolation-units-one-runner-per-unit-on-a-cloud-box)
+- **On the box, a unit is a Unix user.** Each unit's secrets, logins, mail tokens,
+  transcripts and worktrees are its user's (home 0700); IMDS is root's, so a unit
+  cannot act as the box; its device key and its KMS ECDH key are its own, so one
+  unit's token or proof never reads another unit's agents, and an agent's vault key
+  is wrapped only to the units that run it. Inside a unit, agents share a user: the
+  unit, not a rail, is the boundary. Root on the box is trusted.
+  → [runners.md § Units on the box](runners.md#units-on-the-box-runnerunits)
 - **Sessions a runner reports are filed inside its tenant.** A new agent-less
   session names its agent only among agents in `runner_tenant_slugs(runner)`
   (`harness.services._agent_for_project`: `Agent.slug` is global). A session whose
