@@ -975,6 +975,15 @@ def pair_or_load() -> str:
                 _api("PATCH", f"/runners/{rid}",
                      {"capabilities": {k: v for k, v in RUNNER_CAPS.items() if k != "projects"}})
                 return rid
+    if not TOKEN:
+        # A new box holds no PAT: it pairs by the invitation up.sh made for its
+        # instance role, once the operator approves it with a passkey.
+        rid = pair_by_role()
+        if not rid:
+            _log("FATAL: could not pair by invitation (no EC2 instance role, or stopped).")
+            sys.exit(1)
+        return rid
+    # An old stack (CANOPY_TOKEN set, no state yet) pairs with its PAT, as before.
     body = {"name": RUNNER_NAME, "kind": "cloud", "capabilities": RUNNER_CAPS, "host": RUNNER_HOST}
     if RUNNER_WORKSPACE:
         body["workspace"] = RUNNER_WORKSPACE
@@ -986,6 +995,76 @@ def pair_or_load() -> str:
     STATE_FILE.write_text(json.dumps({"runner_id": rid}))
     _log(f"paired new runner {rid} ({RUNNER_NAME}, caps={RUNNER_CAPS})")
     return rid
+
+
+PAIR_BY_ROLE_PATH = "/api/harness/runners/pair-by-role"
+
+
+def _post_unauthenticated(url: str, body: dict) -> tuple[int, dict | None]:
+    """POST JSON with NO Authorization header: pair-by-role takes no token, and an
+    empty `Bearer` would be read as a bad credential."""
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-Canopy-Client", "canopy-cloud-runner")
+    req.add_header("User-Agent", f"canopy-cloud-runner host={socket.gethostname()}")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        try:
+            return exc.code, (json.loads(raw) if raw else None)
+        except ValueError:
+            return exc.code, None
+    except (urllib.error.URLError, OSError) as exc:
+        _log(f"pair-by-role: could not reach canopy-web ({exc})")
+        return 0, None
+
+
+def pair_by_role() -> str | None:
+    """Pair this box by its EC2 instance role and the invitation `up.sh` made for
+    it (spec 2026-10-19 #9) — no PAT. Asks until a person approves the
+    invitation: 202 means waiting, 401 means no approved invitation matches this
+    role and name (yet). 201 paired / 200 reattached (a replaced instance of an
+    approved role) → the state file is written and the runner id returned. None
+    when the box has no instance role to prove, or it is stopping."""
+    url = BASE_URL + PAIR_BY_ROLE_PATH
+    ecdh: dict | None = None
+    role = ""
+    while not _stop:
+        creds = _aws_instance_credentials()
+        if not creds:
+            _log("pair-by-role: no EC2 instance role here — this box cannot pair without a token")
+            return None
+        if ecdh is None:
+            ecdh = _ecdh_public_key()
+        body = {"name": RUNNER_NAME, "kind": "cloud", "capabilities": RUNNER_CAPS, "host": RUNNER_HOST,
+                "proof": aws_proof(url, creds=creds)}
+        if ecdh:
+            body["ecdh_public_jwk"] = ecdh["jwk"]
+            body["ecdh_store"] = ecdh.get("kind", "")
+        status, reply = _post_unauthenticated(url, body)
+        rid = (reply or {}).get("runner_id") if isinstance(reply, dict) else None
+        if status in (200, 201) and rid:
+            STATE_FILE.write_text(json.dumps({"runner_id": rid}))
+            how = "re-attached to" if status == 200 else "paired as new"
+            _log(f"pair-by-role: {how} runner {rid} ({RUNNER_NAME}, caps={RUNNER_CAPS})")
+            return rid
+        if status == 202:
+            _log(f"pair-by-role: waiting for the pairing invitation to be approved ({RUNNER_NAME})")
+        elif status == 401:
+            if not role:
+                try:
+                    role = _aws_role_arn(creds)
+                except Exception:  # noqa: BLE001 — only for the log line
+                    role = "this box's instance role"
+            _log(f"pair-by-role: no approved pairing invitation for {role} / {RUNNER_NAME} — run up.sh "
+                 f"(it creates one and prints its approve link); asking again in {POLL_SECONDS}s")
+        else:
+            _log(f"pair-by-role: HTTP {status}; asking again in {POLL_SECONDS}s")
+        time.sleep(POLL_SECONDS)
+    return None
 
 
 # Session-identity markers Claude Code exports into its own child processes.
@@ -7042,9 +7121,10 @@ def run_over_ws(runner_id: str) -> bool:
 
 
 def main() -> None:
-    if not BASE_URL or not (TOKEN or STATE_FILE.exists()):
-        # A paired box signs in with its device key; only pairing needs a PAT.
-        _log("FATAL: CANOPY_BASE_URL is required, and CANOPY_TOKEN until this box has paired")
+    if not BASE_URL:
+        # A paired box signs in with its device key, and a new one pairs by its
+        # instance role (pair_by_role): neither needs CANOPY_TOKEN.
+        _log("FATAL: CANOPY_BASE_URL is required")
         sys.exit(1)
     runner_id = pair_or_load()
     global _RUNNER_ID

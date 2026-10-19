@@ -3,10 +3,15 @@
 #
 #   aws sso login --profile labs
 #   ./up.sh                                  # the live box: stack canopy-cloud-runner, runner cloud-ec2-1
-#   ./up.sh --name cloud-ec2-test --standby  # a second box: stack canopy-cloud-runner-test
-#   ./up.sh --name cloud-ec2-fork --test --workspace canopy   # a test box: takes only what is put on it
+#   ./up.sh --name cloud-ec2-test --workspace dimagi --standby   # a NEW box needs --workspace
+#   ./up.sh --name cloud-ec2-fork --test --workspace canopy      # a test box: takes only what is put on it
 #   ./wire.sh --name <same> [--standby --agents a,b] --drill   # then wire it
 #   ./down.sh --name <same>                  # tear it down (stack + canopy-web runner row)
+#
+# A new box holds no PAT. up.sh invites it (POST /api/harness/runner-invitations/,
+# with YOUR workbench token) into the workspace you name, bound to the stack's
+# instance role, prints the approve link and waits: you approve it in the browser
+# with one passkey touch, and the box pairs by proving its role.
 #
 # Everything a human must have done ONCE is checked before anything is written —
 # see preflight below; each failure names the one command that fixes it.
@@ -29,12 +34,18 @@ VOLUME_SIZE=""
 INSTANCE_TYPE=""
 ALLOW_INSTANCE_CHANGE=0
 ALLOW_DIRTY=0
+APPROVE_MINUTES=30
+TOKEN_FILE="$HOME/.claude/canopy/workbench-token"
 
 usage() {
   cat <<'USAGE'
 usage: ./up.sh [options]
 
   --name <runner-name>      Runner.name the box pairs as (default cloud-ec2-1, the live box)
+  --workspace <slug>        the workspace a NEW box pairs into (required to create a stack;
+                            an update keeps the stack's own RunnerWorkspace)
+  --approve-minutes <n>     how long to wait for you to approve the pairing invitation (default 30;
+                            the invitation itself expires after an hour)
   --stack <stack>           CloudFormation stack (default: derived from --name —
                             cloud-ec2-1 -> canopy-cloud-runner, cloud-ec2-X -> canopy-cloud-runner-X)
   --standby                 a box that claims NOTHING it is not explicitly given: no repo
@@ -45,7 +56,6 @@ usage: ./up.sh [options]
                             (RunnerAgents=''), takes chats (RunnerSessions=1) for --projects.
                             Not for the live name; needs --workspace. Then: ./wire.sh --test
   --projects <a,b>          the repos a --test box holds (default canopy-web)
-  --workspace <slug>        the workspace the box pairs into (RunnerWorkspace)
   --volume-size <GiB>       root volume (template default 40)
   --instance-type <type>    EC2 type (template default t3.medium)
   --base-url <url>          canopy-web (default https://canopy.dimagi.com)
@@ -62,11 +72,12 @@ USAGE
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --name) NAME="$2"; shift 2 ;;
+    --workspace) WORKSPACE="$2"; shift 2 ;;
+    --approve-minutes) APPROVE_MINUTES="$2"; shift 2 ;;
     --stack) STACK_ARG="$2"; shift 2 ;;
     --standby) STANDBY=1; shift ;;
     --test) TEST=1; shift ;;
     --projects) PROJECTS="$2"; shift 2 ;;
-    --workspace) WORKSPACE="$2"; shift 2 ;;
     --volume-size) VOLUME_SIZE="$2"; shift 2 ;;
     --instance-type) INSTANCE_TYPE="$2"; shift 2 ;;
     --base-url) BASE_URL="${2%/}"; shift 2 ;;
@@ -99,14 +110,36 @@ for tool in aws python3 git curl; do
   command -v "$tool" >/dev/null 2>&1 || die "'$tool' is not on PATH"
 done
 
+# YOUR canopy-web token: up.sh invites the new box with it, and wire.sh / down.sh
+# use it too. Checked first, so a dead one stops everything before AWS is touched.
+CANOPY_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE" 2>/dev/null || true)"
+canopy() {  # canopy METHOD PATH [json-body] — body to stdout, HTTP code to $TMPC/code
+  local method="$1" path="$2" body="${3:-}"
+  local args=(-sS -o "$TMPC/body" -w '%{http_code}' -X "$method" "${BASE_URL}${path}"
+              -H "Authorization: Bearer ${CANOPY_TOKEN}")
+  [[ -n "$body" ]] && args+=(-H 'Content-Type: application/json' --data "$body")
+  curl "${args[@]}" > "$TMPC/code" 2>/dev/null || echo 000 > "$TMPC/code"
+  cat "$TMPC/body" 2>/dev/null || true
+}
+TMPC="$(mktemp -d)"
+trap 'rm -rf "$TMPC"' EXIT
+TOKEN_CODE=000
+if [[ -n "$CANOPY_TOKEN" ]]; then
+  canopy GET /api/harness/runners/ > /dev/null
+  TOKEN_CODE="$(cat "$TMPC/code")"
+fi
+[[ "$TOKEN_CODE" == "200" ]] \
+  || die "your workbench token at ~/.claude/canopy/workbench-token is dead or missing (HTTP $TOKEN_CODE from $BASE_URL) — run /canopy:canopy-web-pat-mint"
+echo ">> canopy-web token ok"
+
 echo ">> account"
 "${AWS[@]}" sts get-caller-identity --query Account --output text \
   || die "AWS credentials for profile '$PROFILE' are not valid — run: aws sso login --profile $PROFILE"
 
 # The secrets every box reads at boot. They are SHARED by every runner stack —
 # a second box reuses the live box's — so a missing one is a one-time human step.
-for pair in "canopy/cloud-runner/canopy-pat|./secrets.sh canopy <file>   (a canopy-web PAT for the user the runner pairs as)" \
-            "canopy/cloud-runner/claude-oauth-token|./secrets.sh claude <file>   (the build FALLBACK — only read when no live runner has logins for wire.sh to copy; must exist, may be old)" \
+# No canopy PAT among them: a new box pairs by invitation and holds none.
+for pair in "canopy/cloud-runner/claude-oauth-token|./secrets.sh claude <file>   (the build FALLBACK — only read when no live runner has logins for wire.sh to copy; must exist, may be old)" \
             "canopy/cloud-runner/gog-keyring-password|./secrets.sh gog <file>   (any strong password; without it no agent has Gmail)"; do
   s="${pair%%|*}"; fix="${pair#*|}"
   "${AWS[@]}" secretsmanager describe-secret --secret-id "$s" >/dev/null 2>&1 \
@@ -123,31 +156,40 @@ case "$STACK_STATUS" in
 esac
 echo ">> stack status: $STACK_STATUS"
 
-# A NEW box pairs with this PAT, so it must still authenticate or the box pairs with
-# nothing and sits there. A box that already exists signs in with its device key
-# (keyless, canopy-web#1594) and never needs it — its owner revokes the PAT once the
-# box is keyless, so a dead PAT on an update is the expected state, not an error.
-# The secret itself must still EXIST: canopy-fetch-env reads it on every start.
-PAT_CODE=$("${AWS[@]}" secretsmanager get-secret-value --secret-id canopy/cloud-runner/canopy-pat \
-  --query SecretString --output text | python3 -c "
-import sys, urllib.request, urllib.error
-req = urllib.request.Request('$BASE_URL/api/harness/runners/',
-                             headers={'Authorization': 'Bearer ' + sys.stdin.read().strip()})
+# The workspace the box pairs into. A NEW stack must be told (a box that lands in
+# the CloudFormation default serves the wrong tenant); an update keeps the
+# stack's own value, so rebuilding the live box needs no new flag.
+my_workspaces() {
+  canopy GET /api/workspaces/ | python3 -c 'import json,sys
 try:
-    print(urllib.request.urlopen(req, timeout=20).status)
-except urllib.error.HTTPError as e:
-    print(e.code)
+    print(" ".join(w["slug"] for w in json.load(sys.stdin)))
 except Exception:
-    print(0)
-")
-if [[ "$PAT_CODE" != "200" ]]; then
-  [[ "$STACK_STATUS" == "NONE" ]] \
-    && die "canopy/cloud-runner/canopy-pat does not authenticate against $BASE_URL (HTTP $PAT_CODE) — a new box pairs with it: mint a short-lived PAT and: ./secrets.sh canopy <file>"
-  echo "   note: canopy-pat does not authenticate (HTTP $PAT_CODE) — fine for an existing box, which signs in with its device key"
+    pass'
+}
+if [[ "$STACK_STATUS" == "NONE" ]]; then
+  if [[ -z "$WORKSPACE" ]]; then
+    die "a new box needs --workspace <slug>: the workspace it pairs into. Yours: $(my_workspaces)"
+  fi
+  # The invitation's own gates (member, and may run work there), asked now —
+  # before anything is written to AWS — since the invitation itself can only be
+  # made once the stack's role exists.
+  canopy GET "/api/harness/runner-invitations/check?workspace=${WORKSPACE}" > "$TMPC/check.json"
+  case "$(cat "$TMPC/code")" in
+    200) ;;
+    403) die "you may not run work in workspace '$WORKSPACE' (an invitation needs it): $(cat "$TMPC/check.json")" ;;
+    404) die "you are not a member of workspace '$WORKSPACE'. Yours: $(my_workspaces)" ;;
+    *) die "canopy-web could not check workspace '$WORKSPACE' (HTTP $(cat "$TMPC/code")): $(cat "$TMPC/check.json")" ;;
+  esac
+else
+  CURRENT_WS=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
+    --query "Stacks[0].Parameters[?ParameterKey=='RunnerWorkspace'].ParameterValue" --output text 2>/dev/null || true)
+  [[ "$CURRENT_WS" == "None" ]] && CURRENT_WS=""
+  if [[ -n "$WORKSPACE" && -n "$CURRENT_WS" && "$WORKSPACE" != "$CURRENT_WS" ]]; then
+    die "stack $STACK pairs into '$CURRENT_WS', not '$WORKSPACE'. An existing box keeps its workspace (enroll it in another from the runner page). Nothing was changed."
+  fi
+  WORKSPACE="${CURRENT_WS:-$WORKSPACE}"
 fi
-
-[[ -f "$HOME/.claude/canopy/workbench-token" ]] \
-  || echo "   WARN: no ~/.claude/canopy/workbench-token — wire.sh and down.sh need it (/canopy:canopy-web-pat-mint)"
+echo ">> workspace: ${WORKSPACE:-<the stack default>}"
 
 # Provenance of the bytes about to be published: the SAME quantity
 # deploy-labs.yml computes for the server's `expected_code_sha`, over the same
@@ -182,7 +224,7 @@ put_secret() {  # <id> <file> <description>
   fi
 }
 SEED_DIR="$(mktemp -d)"
-trap 'rm -rf "$SEED_DIR"' EXIT
+trap 'rm -rf "$SEED_DIR" "$TMPC"' EXIT
 PARTS=$(python3 seed.py build cloud_runner.py "$SEED_DIR" --sha "$CODE_SHA" --committed-at "${CODE_AT:-0}")
 echo ">> publishing cloud_runner.py seed ${CODE_SHA:0:12} -> $SEED_SECRET ($PARTS part(s))"
 for (( i = 0; i < PARTS; i++ )); do
@@ -206,6 +248,7 @@ echo ">> validating template"
 "${AWS[@]}" cloudformation validate-template --template-body "file://runner.cfn.yaml" >/dev/null
 
 PARAMS=("SshCidr=${MYIP}/32" "RunnerName=${NAME}")
+[[ -n "$WORKSPACE" ]] && PARAMS+=("RunnerWorkspace=${WORKSPACE}")
 [[ -n "$VOLUME_SIZE" ]] && PARAMS+=("VolumeSize=${VOLUME_SIZE}")
 [[ -n "$INSTANCE_TYPE" ]] && PARAMS+=("InstanceType=${INSTANCE_TYPE}")
 if [[ "$STANDBY" == "1" ]]; then
@@ -214,7 +257,6 @@ fi
 if [[ "$TEST" == "1" ]]; then
   PARAMS+=("RunnerAgents=" "RunnerProjects=${PROJECTS:-canopy-web}" "RunnerSessions=1" "RunnerDirected=1")
 fi
-[[ -n "$WORKSPACE" ]] && PARAMS+=("RunnerWorkspace=${WORKSPACE}")
 # shellcheck disable=SC2206 # EXTRA_PARAMS is documented as space-separated Key=Val
 [[ -n "${EXTRA_PARAMS:-}" ]] && PARAMS+=(${EXTRA_PARAMS})
 echo ">> parameters: ${PARAMS[*]}"
@@ -294,12 +336,100 @@ KEYFILE="${KEY_DIR:-.}/${STACK}-key.pem"
   --query 'Parameter.Value' --output text > "$KEYFILE"
 chmod 600 "$KEYFILE"
 
+# ── the pairing invitation (a new box holds no PAT) ──────────────────────────────
+# Needed when no live runner of this name exists yet: a new stack, or one whose box
+# never paired (or was retired). A replaced instance of an existing runner needs
+# none — its role is already that runner's approved key, so it re-attaches.
+INVITE_FILE="${KEY_DIR:-.}/${STACK}-invitation.json"
+RUNNER_ID=""
+NEED_INVITE=1
+if [[ "$STACK_STATUS" != "NONE" ]]; then
+  PAT_SECRET=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
+    --query "Stacks[0].Parameters[?ParameterKey=='CanopyTokenSecret'].ParameterValue" --output text 2>/dev/null || true)
+  [[ "$PAT_SECRET" == "None" ]] && PAT_SECRET=""
+fi
+if [[ "$STACK_STATUS" != "NONE" && -n "${PAT_SECRET:-}" ]]; then
+  # An older stack hands its box a PAT (CanopyTokenSecret), and a box with a
+  # token pairs the old way: it would never use an invitation.
+  NEED_INVITE=0
+  echo ">> no pairing invitation: stack $STACK still names a PAT secret ($PAT_SECRET), so its box pairs with that"
+elif [[ "$STACK_STATUS" != "NONE" ]]; then
+  canopy GET /api/harness/runners/ > "$TMPC/runners.json"
+  if NAME="$NAME" python3 - "$TMPC/runners.json" <<'PY'
+import json, os, sys
+try:
+    rows = json.load(open(sys.argv[1]))
+except Exception:
+    rows = []
+sys.exit(0 if any(r.get("kind") == "cloud" and r.get("name") == os.environ["NAME"]
+                  and r.get("status") != "retired" for r in rows if isinstance(r, dict)) else 1)
+PY
+  then
+    NEED_INVITE=0
+    echo ">> runner '$NAME' is already paired — no invitation needed (a replaced instance re-attaches by its role)"
+  fi
+fi
+
+if [[ "$NEED_INVITE" == "1" ]]; then
+  [[ -n "$WORKSPACE" ]] || die "no workspace to invite '$NAME' into — pass --workspace <slug>. Yours: $(my_workspaces)"
+  # The box's zero-knowledge ECDH public key (KMS GetPublicKey on the -ecdh stack's
+  # key), so the one approval covers it too. Omitted when it cannot be read.
+  ECDH_ARN=$("${AWS[@]}" cloudformation describe-stacks --stack-name "${STACK}-ecdh" \
+    --query "Stacks[0].Outputs[?OutputKey=='EcdhKeyArn'].OutputValue" --output text 2>/dev/null || true)
+  ECDH_DER=""
+  if [[ -n "$ECDH_ARN" && "$ECDH_ARN" != "None" ]]; then
+    ECDH_DER=$("${AWS[@]}" kms get-public-key --key-id "$ECDH_ARN" --query PublicKey --output text 2>/dev/null || true)
+  fi
+  BODY=$(NAME="$NAME" WS="$WORKSPACE" ROLE="$ROLE_ARN" DER="$ECDH_DER" python3 - <<'PY'
+import base64, json, os
+body = {"name": os.environ["NAME"], "workspace": os.environ["WS"], "role_arn": os.environ["ROLE"]}
+try:
+    der = base64.b64decode(os.environ.get("DER", "").strip() or "")
+except Exception:
+    der = b""
+# A P-256 SubjectPublicKeyInfo ends in the uncompressed point 04 || X || Y.
+if len(der) >= 65 and der[-65] == 4:
+    b64u = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    body["ecdh_public_jwk"] = {"kty": "EC", "crv": "P-256", "x": b64u(der[-64:-32]), "y": b64u(der[-32:])}
+print(json.dumps(body))
+PY
+)
+  canopy POST /api/harness/runner-invitations/ "$BODY" > "$TMPC/invitation.json"
+  [[ "$(cat "$TMPC/code")" == "201" ]] \
+    || die "canopy-web refused the pairing invitation (HTTP $(cat "$TMPC/code")): $(cat "$TMPC/invitation.json")"
+  INV_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$TMPC/invitation.json")
+  APPROVE_URL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["approve_url"])' "$TMPC/invitation.json")
+  printf '{"id": "%s", "runner_id": null}\n' "$INV_ID" > "$INVITE_FILE"
+  echo ""
+  echo ">> pairing invitation for '$NAME' in '$WORKSPACE' (role $ROLE_ARN)"
+  echo "   approve: $APPROVE_URL"
+  echo "   (one passkey touch; also emailed to you. Waiting up to ${APPROVE_MINUTES} min for the box to pair…)"
+  STATUS=""
+  for _ in $(seq 1 $(( APPROVE_MINUTES * 6 ))); do
+    canopy GET "/api/harness/runner-invitations/${INV_ID}" > "$TMPC/inv-state.json"
+    STATUS=$(python3 -c 'import json,sys
+try:
+    d = json.load(open(sys.argv[1])); print(d.get("status", ""), d.get("runner_id") or "")
+except Exception:
+    print("")' "$TMPC/inv-state.json")
+    case "$STATUS" in
+      consumed*) RUNNER_ID="${STATUS#consumed }"; break ;;
+      expired*) die "the invitation expired before the box paired — re-run ./up.sh for a new one" ;;
+    esac
+    sleep 10
+  done
+  if [[ -z "$RUNNER_ID" ]]; then
+    die "the box did not pair within ${APPROVE_MINUTES} min (invitation: ${STATUS%% *}). Approve it at $APPROVE_URL, then run ./wire.sh --name $NAME; or re-run ./up.sh for a new invitation."
+  fi
+  printf '{"id": "%s", "runner_id": "%s"}\n' "$INV_ID" "$RUNNER_ID" > "$INVITE_FILE"
+  echo "==> paired: runner $RUNNER_ID ($INVITE_FILE)"
+fi
+
 WIRE="./wire.sh --name $NAME --drill"
 [[ "$STANDBY" == "1" ]] && WIRE="./wire.sh --name $NAME --standby --agents <a,b> --drill"
 [[ "$TEST" == "1" ]] && WIRE="./wire.sh --name $NAME --test"
 echo ""
-echo "==> UP. stack=$STACK runner=$NAME ip=$IP"
+echo "==> UP. stack=$STACK runner=$NAME${RUNNER_ID:+ ($RUNNER_ID)} ip=$IP"
 echo "    next: $WIRE"
 echo "    ssh:  ssh -i $KEYFILE ubuntu@$IP"
 echo "    logs: ssh -i $KEYFILE ubuntu@$IP 'journalctl -u canopy-runner -f'"
-echo "    cloud-init boots the runner automatically (~5 min to pair; wire.sh waits for it)."

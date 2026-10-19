@@ -63,6 +63,10 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``owner-token-and-key`` — no session: a token the runner's OWNER minted (revoked
   within 30 days is accepted) plus a proof of the key being registered; it only ever
   creates a PENDING key (``apps/harness/api_device_key_requests.py``).
+* ``invited-role`` — no session or token: an EC2 instance role's signed STS call
+  bound to this request, matched to a pairing invitation its creator APPROVED
+  behind a passkey (or to that role's existing, approved runner of the same name)
+  (``apps/harness/api_runner_invitations.py``).
 * ``signed-link`` — a signed token in the URL is the authority (drill report,
   invite token, OAuth state).
 * ``beta-reviewer`` — ``apps/beta_requests/services.may_review``: a superuser or
@@ -91,7 +95,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
-    "hcp-grant", "device-proof", "owner-token-and-key",
+    "hcp-grant", "device-proof", "owner-token-and-key", "invited-role",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -240,6 +244,14 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_runner_device_keys": ("runner-admin",),
     "approve_runner_device_key": ("runner-admin",),  # browser session only (+ passkey step-up)
     "revoke_runner_device_key": ("runner-admin",),
+    # --- apps/harness/api_runner_invitations.py (a new cloud box pairs by invitation)
+    "create_runner_invitation": ("agent.work",),  # member (else 404) with agent.work in the named workspace
+    "check_runner_invitation": ("agent.work",),  # the same gates as create, changing nothing (up.sh's pre-check)
+    "get_runner_invitation": ("self",),  # the invitation's creator only
+    "approve_runner_invitation": ("self",),  # its creator, browser session + passkey step-up; a token is refused
+    # anonymous door: the box's instance-role proof, plus an invitation its creator
+    # approved (or that role's existing, approved runner); one uniform 401 otherwise
+    "pair_runner_by_role": ("invited-role",),
     "turn_github_token": ("runner", "runner-holds-agent"),  # turn must be claimed by this box
     "turn_attachment_content": ("runner", "runner-holds-agent"),  # an attachment of the chat a turn this box holds belongs to
     "runner_github_readiness": ("runner",),
@@ -916,6 +928,12 @@ NOT_SETTINGS: dict[str, str] = {
     "create_runner_session": "ephemeral-credential",
     # a stranded box (revoked token) asking for a key: lands `pending`, like the above
     "request_runner_device_key": "runner-protocol",
+    # a new cloud box's pairing invitation: asking for it, and its creator saying
+    # yes (passkey-gated). Recorded as activity (runner.invited / .approved); the
+    # runner it lets pair is a new row, not a changed setting.
+    "create_runner_invitation": "request", "approve_runner_invitation": "action",
+    # the invited box pairing: only what its creator approved (runner.paired activity)
+    "pair_runner_by_role": "runner-protocol",
     "refresh_mail_domain": "action",
     "reply_mail_thread": "conversation", "send_mail": "conversation", "set_mail_thread_state": "conversation",
     # content

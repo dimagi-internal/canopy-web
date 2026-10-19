@@ -6930,6 +6930,122 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runner-invitations/check": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * May you invite a runner into this workspace? (changes nothing)
+         * @description The same gates as creating an invitation, without creating one: 404 not a
+         *     member, 403 no permission to run work there. `up.sh` asks before it writes
+         *     anything to AWS, since the box's role (which an invitation names) exists
+         *     only after the stack does.
+         */
+        readonly get: operations["check_runner_invitation"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-invitations/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Invite a new cloud runner to pair by its instance role
+         * @description Invite one box, named, bound to its EC2 instance role, into a workspace
+         *     where you may run work. It pairs only once you approve it at `approve_url`
+         *     with a passkey, and only within an hour. Inviting the same role and name
+         *     again replaces the earlier invitation.
+         */
+        readonly post: operations["create_runner_invitation"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-invitations/{invitation_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A pairing invitation and its state
+         * @description `pending` until you approve it, `approved` until the box pairs, then
+         *     `consumed` with the runner's id; `expired` an hour after it was made.
+         */
+        readonly get: operations["get_runner_invitation"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-invitations/{invitation_id}/approve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve a pairing invitation (browser session + passkey step-up)
+         * @description Let the invited box pair: it will be your runner, in the invitation's
+         *     workspace, signing in with its instance role. Only the invitation's creator,
+         *     from a browser, after a fresh passkey touch; a token is refused. An expired or
+         *     already-used invitation cannot be approved (409); approving twice is a no-op.
+         */
+        readonly post: operations["approve_runner_invitation"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/pair-by-role": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A new cloud box pairs by its instance role (no token)
+         * @description Prove this box's EC2 instance role (`proof`, bound to this URL). With an
+         *     APPROVED, unexpired, unused invitation for that role and `name`: 201
+         *     `paired` — a new runner owned by the invitation's creator, in its
+         *     workspace, whose instance role is already its approved device key. A role
+         *     whose runner already exists under that name: 200 `reattached` (a replaced
+         *     instance; nothing is made). An invitation not yet approved: 202 `waiting`.
+         *     Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`.
+         */
+        readonly post: operations["pair_runner_by_role"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/": {
         readonly parameters: {
             readonly query?: never;
@@ -24221,6 +24337,137 @@ export interface components {
             readonly sections: readonly components["schemas"]["SharedSectionOut"][];
         };
         /**
+         * RunnerInvitationCheckOut
+         * @description You may invite a runner into `workspace`.
+         */
+        readonly RunnerInvitationCheckOut: {
+            /** Workspace */
+            readonly workspace: string;
+        };
+        /**
+         * RunnerInvitationOut
+         * @description A pairing invitation and where it stands. `approve_url` is the page where
+         *     its creator approves it with a passkey; `runner_id` is set once the box has
+         *     paired (status `consumed`).
+         */
+        readonly RunnerInvitationOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Role Arn */
+            readonly role_arn: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "approved" | "consumed" | "expired";
+            /** Approve Url */
+            readonly approve_url: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /**
+             * Created By Email
+             * @default
+             */
+            readonly created_by_email: string;
+            /** Approved At */
+            readonly approved_at?: string | null;
+            /**
+             * Has Ecdh Key
+             * @default false
+             */
+            readonly has_ecdh_key: boolean;
+            /** Runner Id */
+            readonly runner_id?: string | null;
+        };
+        /**
+         * RunnerInvitationIn
+         * @description Invite one new cloud box, by the name it will pair as and its EC2 instance
+         *     role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
+         *     public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it.
+         */
+        readonly RunnerInvitationIn: {
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Role Arn */
+            readonly role_arn: string;
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+        };
+        /**
+         * RunnerPairByRoleOut
+         * @description `paired` (a new runner), `reattached` (this role's existing runner — a
+         *     replaced instance), or `waiting` (the invitation is not approved yet; ask
+         *     again on the next poll).
+         */
+        readonly RunnerPairByRoleOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "paired" | "reattached" | "waiting";
+            /** Runner Id */
+            readonly runner_id?: string | null;
+        };
+        /**
+         * RunnerPairByRoleIn
+         * @description A new cloud box pairs by proving its EC2 instance role: `proof` is an
+         *     `X-Canopy-Aws-Proof` value (a signed, unsent `sts:GetCallerIdentity`) whose
+         *     htu is this URL. It needs no token. `ecdh_public_jwk`/`ecdh_store` are its
+         *     zero-knowledge ECDH key, as `POST /api/runner-device-keys/` takes them.
+         */
+        readonly RunnerPairByRoleIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Kind
+             * @default cloud
+             * @constant
+             */
+            readonly kind: "cloud";
+            /**
+             * Capabilities
+             * @default {}
+             */
+            readonly capabilities: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Host
+             * @default
+             */
+            readonly host: string;
+            /** Proof */
+            readonly proof: string;
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Ecdh Store
+             * @default
+             */
+            readonly ecdh_store: string;
+        };
+        /**
          * HealthCheck
          * @description One feature a runner checked on itself. `warn` is "works, but a person
          *     should know" (one Claude credential, no fallback); `fail` is "this feature
@@ -38791,6 +39038,138 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SharedViewOut"];
+                };
+            };
+        };
+    };
+    readonly check_runner_invitation: {
+        readonly parameters: {
+            readonly query: {
+                readonly workspace: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerInvitationCheckOut"];
+                };
+            };
+        };
+    };
+    readonly create_runner_invitation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerInvitationIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerInvitationOut"];
+                };
+            };
+        };
+    };
+    readonly get_runner_invitation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly invitation_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerInvitationOut"];
+                };
+            };
+        };
+    };
+    readonly approve_runner_invitation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly invitation_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerInvitationOut"];
+                };
+            };
+        };
+    };
+    readonly pair_runner_by_role: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerPairByRoleIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairByRoleOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairByRoleOut"];
+                };
+            };
+            /** @description Accepted */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairByRoleOut"];
                 };
             };
         };

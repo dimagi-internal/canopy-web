@@ -1747,3 +1747,71 @@ class SendUpIn(Schema):
 class SendUpOut(Schema):
     # The canopy sessions they were filed as.
     sessions: list[str]
+
+
+#: A runner name usable as a Runner.name AND inside a CloudFormation stack name —
+#: the same rule as `runner/ec2/_lib.sh::runner_name_ok`.
+RUNNER_NAME_PATTERN = r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"
+
+RunnerInvitationStatus = Literal["pending", "approved", "consumed", "expired"]
+
+
+class RunnerInvitationIn(Schema):
+    """Invite one new cloud box, by the name it will pair as and its EC2 instance
+    role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
+    public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it."""
+
+    name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
+    workspace: str = Field(min_length=1, max_length=100)
+    role_arn: str = Field(min_length=1, max_length=300)
+    ecdh_public_jwk: dict[str, Any] | None = None
+
+
+class RunnerInvitationCheckOut(Schema):
+    """You may invite a runner into `workspace`."""
+
+    workspace: str
+
+
+class RunnerInvitationOut(Schema):
+    """A pairing invitation and where it stands. `approve_url` is the page where
+    its creator approves it with a passkey; `runner_id` is set once the box has
+    paired (status `consumed`)."""
+
+    id: uuid.UUID
+    name: str
+    workspace: str
+    role_arn: str
+    status: RunnerInvitationStatus
+    approve_url: str
+    created_at: dt.datetime
+    expires_at: dt.datetime
+    created_by_email: str = ""
+    approved_at: dt.datetime | None = None
+    #: Whether the box's ECDH key is part of what approving covers.
+    has_ecdh_key: bool = False
+    runner_id: uuid.UUID | None = None
+
+
+class RunnerPairByRoleIn(Schema):
+    """A new cloud box pairs by proving its EC2 instance role: `proof` is an
+    `X-Canopy-Aws-Proof` value (a signed, unsent `sts:GetCallerIdentity`) whose
+    htu is this URL. It needs no token. `ecdh_public_jwk`/`ecdh_store` are its
+    zero-knowledge ECDH key, as `POST /api/runner-device-keys/` takes them."""
+
+    name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
+    kind: Literal["cloud"] = "cloud"
+    capabilities: dict = {}
+    host: str = Field(default="", max_length=200)
+    proof: str = Field(min_length=1, max_length=20000)
+    ecdh_public_jwk: dict[str, Any] | None = None
+    ecdh_store: str = Field(default="", max_length=16)
+
+
+class RunnerPairByRoleOut(Schema):
+    """`paired` (a new runner), `reattached` (this role's existing runner — a
+    replaced instance), or `waiting` (the invitation is not approved yet; ask
+    again on the next poll)."""
+
+    status: Literal["paired", "reattached", "waiting"]
+    runner_id: uuid.UUID | None = None
