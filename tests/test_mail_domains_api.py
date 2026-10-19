@@ -551,10 +551,12 @@ def failed(ws, monkeypatch):
     state = {"dkim": "FAILED", "mail_from": "FAILED", "tokens": ["t1", "t2", "t3"]}
     calls = []
     monkeypatch.setattr(ses, "identity_status",
-                        lambda d: ses.IdentityStatus(state["dkim"], state["mail_from"], list(state["tokens"])))
+                        lambda d: ses.IdentityStatus(state["dkim"], state["mail_from"], list(state["tokens"]),
+                                                     key_length="RSA_2048_BIT"))
 
-    def restart_dkim(d):
+    def restart_dkim(d, key_length=""):
         calls.append(("dkim", d))
+        state["key_length"] = key_length
         state["dkim"] = "PENDING"
         return list(state["tokens"])
 
@@ -586,7 +588,7 @@ def test_a_failed_verification_is_surfaced_and_the_lazy_refresh_never_restarts_i
 
 def test_recheck_restarts_failed_verification_keeping_the_tokens(owner, failed):
     from apps.events.models import SettingChange
-    d, _, calls = failed
+    d, state, calls = failed
     body = _recheck(owner, d)
     assert calls == [("dkim", "marshellis.com"), ("mail_from", "marshellis.com", "bounce.marshellis.com")]
     assert body["status"] == "pending" and body["verification_error"] == ""
@@ -594,6 +596,7 @@ def test_recheck_restarts_failed_verification_keeping_the_tokens(owner, failed):
     assert "new DKIM records" not in body["restart_note"]
     d.refresh_from_db()
     assert d.dkim_tokens == ["t1", "t2", "t3"] and d.verification_restarted_at is not None
+    assert state["key_length"] == "RSA_2048_BIT"  # the identity's own: no different key
     row = SettingChange.objects.get(operation="refresh_mail_domain")
     assert "restarted SES verification of marshellis.com" in row.summary
 
@@ -624,7 +627,7 @@ def test_recheck_does_not_restart_while_records_are_missing(owner, failed, monke
 
 def test_recheck_takes_new_tokens_when_ses_issues_them(owner, failed, monkeypatch):
     d, state, calls = failed
-    monkeypatch.setattr(ses, "restart_dkim", lambda name: ["n1", "n2", "n3"])
+    monkeypatch.setattr(ses, "restart_dkim", lambda name, key_length="": ["n1", "n2", "n3"])
     body = _recheck(owner, d)
     assert "new DKIM records" in body["restart_note"]
     assert {r["name"] for r in body["records"] if r["purpose"].startswith("dkim-")} == {
@@ -642,12 +645,15 @@ def test_recheck_restarts_only_mail_from_on_a_verified_domain(owner, failed):
 
 
 def test_recheck_reports_an_ses_refusal_without_failing(owner, failed, monkeypatch):
-    d, _, _ = failed
+    d, _, calls = failed
     monkeypatch.setattr(ses, "restart_dkim",
-                        lambda name: (_ for _ in ()).throw(_client_error("TooManyRequestsException")))
+                        lambda name, key_length="": (_ for _ in ()).throw(_client_error("BadRequestException")))
     body = _recheck(owner, d)
-    assert "SES refused to restart verification: TooManyRequestsException" in body["restart_note"]
-    assert "SES gave up verifying" in body["verification_error"]
+    assert "SES refused to restart DKIM verification: BadRequestException (no)." in body["restart_note"]
+    # a DKIM refusal does not keep MAIL FROM from restarting
+    assert calls == [("mail_from", "marshellis.com", "bounce.marshellis.com")]
+    assert "Restarted SES verification of MAIL FROM" in body["restart_note"]
+    assert "the DKIM records" in body["verification_error"]
 
 
 def test_a_plain_recheck_writes_no_audit_row(owner, ws):

@@ -129,21 +129,29 @@ def test_identity_verified_reads_dkim_status(on, sesv2):
 
 def test_identity_status_reads_dkim_and_mail_from(on, sesv2):
     sesv2.add_response("get_email_identity",
-                       {"DkimAttributes": {"Status": "FAILED", "Tokens": ["t1", "t2", "t3"]},
+                       {"DkimAttributes": {"Status": "FAILED", "Tokens": ["t1", "t2", "t3"],
+                                           "NextSigningKeyLength": "RSA_2048_BIT"},
                         "MailFromAttributes": {"MailFromDomain": "bounce.marshellis.com",
                                                "MailFromDomainStatus": "FAILED",
                                                "BehaviorOnMxFailure": "USE_DEFAULT_VALUE"}},
                        {"EmailIdentity": "marshellis.com"})
-    assert ses.identity_status("marshellis.com") == ses.IdentityStatus("FAILED", "FAILED", ["t1", "t2", "t3"])
+    assert ses.identity_status("marshellis.com") == ses.IdentityStatus(
+        "FAILED", "FAILED", ["t1", "t2", "t3"], key_length="RSA_2048_BIT")
 
 
-def test_restart_dkim_reputs_easy_dkim_with_no_new_key(on, sesv2):
-    # Stubber checks the call against botocore's own SESv2 model: the operation and its
-    # params exist, and only the origin is sent (no SigningAttributes, so no key change).
+def test_restart_dkim_reputs_easy_dkim_with_the_key_length_it_has(on, sesv2):
+    # Stubber checks the call against botocore's own SESv2 model. Live SES refuses this call
+    # without a key length ("Signing key length parameter is null or empty"), so the
+    # identity's own length is passed back: no different key is asked for.
     sesv2.add_response("put_email_identity_dkim_signing_attributes",
                        {"DkimStatus": "PENDING", "DkimTokens": ["t1", "t2", "t3"]},
-                       {"EmailIdentity": "marshellis.com", "SigningAttributesOrigin": "AWS_SES"})
-    assert ses.restart_dkim("marshellis.com") == ["t1", "t2", "t3"]
+                       {"EmailIdentity": "marshellis.com", "SigningAttributesOrigin": "AWS_SES",
+                        "SigningAttributes": {"NextSigningKeyLength": "RSA_1024_BIT"}})
+    assert ses.restart_dkim("marshellis.com", key_length="RSA_1024_BIT") == ["t1", "t2", "t3"]
+    sesv2.add_response("put_email_identity_dkim_signing_attributes", {"DkimTokens": []},
+                       {"EmailIdentity": "marshellis.com", "SigningAttributesOrigin": "AWS_SES",
+                        "SigningAttributes": {"NextSigningKeyLength": "RSA_2048_BIT"}})
+    ses.restart_dkim("marshellis.com")  # SES named none: its Easy DKIM default
     sesv2.assert_no_pending_responses()
 
 
