@@ -211,7 +211,7 @@ struct RunnerCLI {
 }
 
 // ── the app ───────────────────────────────────────────────────────────────────────
-final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
+final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate, WKUIDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var baseTree: NSImage?
     var timer: Timer?
@@ -272,6 +272,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()
         web = WKWebView(frame: NSRect(x: 0, y: 0, width: 420, height: 640), configuration: cfg)
+        // Without a UI delegate WKWebView answers every window.confirm() with false and
+        // drops alert()/prompt()/window.open() — so "Delete session…" in the IDE silently
+        // did nothing here while working in a browser. See the WKUIDelegate methods below.
+        web.uiDelegate = self
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -284,6 +288,57 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         win.delegate = self
         win.center()
         window = win
+    }
+
+    // ── JS dialogs (WKUIDelegate) ───────────────────────────────────────────────────
+    // The deployed app asks with window.confirm()/alert()/prompt() and opens links with
+    // window.open(); a browser shows those, a bare WKWebView does not. Each is a sheet on
+    // the panel window, falling back to a modal when the window is not up.
+
+    private func present(_ alert: NSAlert, _ done: @escaping (NSApplication.ModalResponse) -> Void) {
+        if let win = window, win.isVisible {
+            alert.beginSheetModal(for: win, completionHandler: done)
+        } else {
+            done(alert.runModal())
+        }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        present(alert) { _ in completionHandler() }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        present(alert) { completionHandler($0 == .alertFirstButtonReturn) }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+                 defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (String?) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = prompt
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.stringValue = defaultText ?? ""
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        present(alert) { completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
+    }
+
+    // window.open / target=_blank: open in the default browser rather than nowhere.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url { NSWorkspace.shared.open(url) }
+        return nil
     }
 
     @objc func statusClicked() {
