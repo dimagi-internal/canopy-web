@@ -36,20 +36,24 @@ class Command(BaseCommand):
         from canopy_kb.hybrid import MODES
 
         target = project_from(project)
-        path = Path(golden) if golden else GOLDEN_DIR / f"{project.replace('/', '--')}.json"
-        if not path.exists():
-            raise CommandError(f"no golden set at {path}")
-        questions = json.loads(path.read_text(encoding="utf-8"))
+        paths = [Path(golden)] if golden else sorted(GOLDEN_DIR.glob(f"{project.replace('/', '--')}*.json"))
+        if not paths or not all(p.exists() for p in paths):
+            raise CommandError(f"no golden set at {paths or GOLDEN_DIR}")
+        questions = [q for p in paths for q in json.loads(p.read_text(encoding="utf-8"))]
         wanted = [m.strip() for m in modes.split(",") if m.strip()]
         if bad := [m for m in wanted if m not in MODES]:
             raise CommandError(f"unknown mode(s) {bad}; have {list(MODES)}")
         semantic = kb_vectors.semantic_for(target)
         if semantic is None or not target.kb_passages.filter(embedding_model=kb_vectors.model()).exists():
             self.stderr.write("no vectors for this project here: semantic and hybrid are lexical")
+        # With a reranker configured, each mode is scored without it and with it.
+        runs = [(m, None) for m in wanted]
+        if (rerank := kb_vectors.reranker()) is not None:
+            runs += [(f"{m}+rerank", rerank) for m in wanted]
         kb = kb_store.open_kb(target)
         try:
-            results = {m: score(questions, lambda q, m=m: [r["id"] for r in kb.search(
-                q, limit=max(KS), mode=m, semantic=semantic)]) for m in wanted}
+            results = {label: score(questions, lambda q, m=label.split("+")[0], rr=rr: [r["id"] for r in kb.search(
+                q, limit=max(KS), mode=m, semantic=semantic, rerank=rr)]) for label, rr in runs}
         finally:
             kb.db.close()
         if as_json:

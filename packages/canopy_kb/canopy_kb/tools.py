@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from canopy_kb.hybrid import MODES, Semantic
+from canopy_kb.hybrid import MODES, Rerank, Semantic
 from canopy_kb.kb import KB, KBError
 
 PROTOCOL = "2025-06-18"
@@ -70,12 +70,13 @@ def table_tools(kb: KB) -> list[dict]:
     return out
 
 
-def call_tool(kb: KB, name: str, args: dict, tables: dict[str, dict], semantic: Semantic | None = None):
+def call_tool(kb: KB, name: str, args: dict, tables: dict[str, dict], semantic: Semantic | None = None,
+              rerank: Rerank | None = None):
     if name == "kb_info":
         return kb.info()
     if name == "search":
         return kb.search(args["query"], args.get("types"), args.get("since", ""), args.get("until", ""),
-                         int(args.get("limit", 10)), args.get("mode") or "hybrid", semantic)
+                         int(args.get("limit", 10)), args.get("mode") or "hybrid", semantic, rerank)
     if name == "get":
         return kb.get(args["ref"], int(args.get("max_chars", 20000)), args.get("passage"),
                       args.get("grep", ""), int(args.get("context", 1)))
@@ -100,8 +101,9 @@ def tool_specs(kb: KB) -> list[dict]:
     return _base_tools() + [{k: v for k, v in t.items() if k != "_table"} for t in table_tools(kb)]
 
 
-def run(kb: KB, name: str, args: dict, semantic: Semantic | None = None):
+def run(kb: KB, name: str, args: dict, semantic: Semantic | None = None, rerank: Rerank | None = None):
     """Call one tool by name: the result is JSON-serialisable; raises KBError (or
     KeyError/ValueError/TypeError on bad arguments). `semantic` is the host's
-    nearest-passages lookup (`hybrid.Semantic`); without it `search` is lexical."""
-    return call_tool(kb, name, args or {}, {t["name"]: t for t in table_tools(kb)}, semantic)
+    nearest-passages lookup (`hybrid.Semantic`); without it `search` is lexical.
+    `rerank` is the host's reranker (`hybrid.Rerank`); without it, no rescoring."""
+    return call_tool(kb, name, args or {}, {t["name"]: t for t in table_tools(kb)}, semantic, rerank)

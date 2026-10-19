@@ -38,12 +38,21 @@ import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
-from canopy_kb.hybrid import CANDIDATES, MODES, embedding_text, passage_sha, rrf
+from canopy_kb.hybrid import (CANDIDATES, DENSE_WEIGHT, MODES, RERANK_DEPTH, embedding_text, passage_sha,
+                              rrf)
 
 if TYPE_CHECKING:
-    from canopy_kb.hybrid import Semantic
+    from canopy_kb.hybrid import Rerank, Semantic
 
 CHUNK_CHARS = 1800
+#: English function words dropped from a search query (not from the index).
+STOPWORDS = frozenset("""a about above after again against all am an and any are as at be because been before
+being below between both but by can could did do does doing down during each few for from further had has
+have having he her here hers herself him himself his how i if in into is it its itself just me more most my
+myself no nor not now of off on once only or other our ours ourselves out over own same she should so some
+such than that the their theirs them themselves then there these they this those through to too under until
+up very was we were what when where which while who whom why will with would you your yours yourself
+yourselves""".split())
 #: A semantic hit has no matched words to show around, so its row shows the
 #: start of the passage instead.
 SNIPPET_CHARS = 300
@@ -225,37 +234,64 @@ class KB:
         phrases = re.findall(r'"([^"]+)"', q)
         rest = re.sub(r'"[^"]+"', " ", q)
         terms = [t for t in re.findall(r"[\w$%.-]+", rest) if len(t) > 1 or t.isdigit()]
+        # Words that carry no topic: a question's "what are the …" would otherwise make
+        # the OR fallback match nearly every passage. Kept if the query is nothing else.
+        content = [t for t in terms if t.lower().strip(".-") not in STOPWORDS]
+        terms = content or terms
         parts = ['"' + p.replace('"', "") + '"' for p in phrases]
         parts += ['"' + t.strip(".-") + '"' for t in terms if t.strip(".-")]
         return f" {mode} ".join(parts)
 
     def search(self, query: str, types: list[str] | None = None, since: str = "",
                until: str = "", limit: int = 10, mode: str = "hybrid",
-               semantic: "Semantic | None" = None) -> list[dict]:
+               semantic: "Semantic | None" = None, rerank: "Rerank | None" = None,
+               dense_weight: float = DENSE_WEIGHT) -> list[dict]:
         """Best passages for a question, one per item.
 
         `lexical` is BM25 over the FTS index; `semantic` is the host's nearest
         passages by meaning (`semantic`, see `hybrid.py`); `hybrid` fuses the two
-        by reciprocal rank. Without a `semantic` callable, or when it has no
-        vectors to ask (returns None), every mode is lexical."""
+        by reciprocal rank, the meaning list weighted `dense_weight` and the words
+        list 1 - `dense_weight`. Without a `semantic` callable, or when it has no
+        vectors to ask (returns None), every mode is lexical. A `rerank` callable
+        then rescores the top RERANK_DEPTH against the question; when it cannot,
+        the order stands."""
         if not query.strip():
             raise KBError("empty query")
         if mode not in MODES:
             raise KBError(f"mode must be one of {', '.join(MODES)}")
+        depth = max(limit, CANDIDATES, RERANK_DEPTH if rerank else 0)
+        ranked = self._ranked(query, types, since, until, depth, mode, semantic, dense_weight)
+        if rerank is not None and len(ranked) > 1:
+            ranked = self._reranked(query, ranked[:RERANK_DEPTH], rerank)
+        return ranked[:limit]
+
+    def _ranked(self, query, types, since, until, depth, mode, semantic, dense_weight) -> list[dict]:
         if mode == "lexical" or semantic is None:
-            return self._lexical(query, types, since, until, limit)
-        depth = max(limit, CANDIDATES)
+            return self._lexical(query, types, since, until, depth)
         near = semantic(query, types=types or None, since=since, until=until, limit=depth)
         if near is None:
-            return self._lexical(query, types, since, until, limit)
+            return self._lexical(query, types, since, until, depth)
         by_meaning = self._passage_rows(near)
         if mode == "semantic":
-            return by_meaning[:limit]
+            return by_meaning
         by_words = self._lexical(query, types, since, until, depth)
         rows = {r["id"]: r for r in by_meaning}
         rows.update({r["id"]: r for r in by_words})  # BM25's snippet marks the matched words
-        fused = rrf([[r["id"] for r in by_words], [r["id"] for r in by_meaning]])
-        return [rows[i] for i in fused[:limit]]
+        fused = rrf([[r["id"] for r in by_words], [r["id"] for r in by_meaning]],
+                    weights=[1.0 - dense_weight, dense_weight])
+        return [rows[i] for i in fused]
+
+    def _reranked(self, query: str, rows: list[dict], rerank: "Rerank") -> list[dict]:
+        docs = []
+        for r in rows:
+            body = self.db.execute("SELECT body FROM chunks WHERE item_id = ? AND ord = ?",
+                                   (r["id"], r["passage"])).fetchone()
+            docs.append({"title": r["title"] or "", "text": (body[0] if body else "") or r["snippet"] or ""})
+        order = list(rerank(query, docs) or [])
+        if not order or len(set(order)) != len(order) or any(not 0 <= i < len(rows) for i in order):
+            return rows  # no answer, or one that does not describe what was sent: the order stands
+        rest = [r for i, r in enumerate(rows) if i not in set(order)]
+        return [rows[i] for i in order] + rest
 
     def _passage_rows(self, hits: Iterable[tuple[str, int]]) -> list[dict]:
         """Search rows for (item_id, passage) pairs, best first, one per item. A pair

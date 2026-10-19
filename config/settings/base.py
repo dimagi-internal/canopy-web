@@ -342,10 +342,14 @@ HCP_VERTEX_SERVICE_ACCOUNT = env("HCP_VERTEX_SERVICE_ACCOUNT", default="")
 
 # --- Knowledge-base search by meaning (apps/agents/kb_vectors.py) ---
 # The model a workspace project's KB passages are embedded with; same identity,
-# same zero-retention gate as memory. Only a `vertex/` model (768-d) fits the
-# halfvec(768) column; anything else, or no PostgreSQL `vector` extension, means
+# same zero-retention gate as memory. Only a `vertex/` model (asked for 3072-d) fits
+# the halfvec(3072) column; anything else, or no PostgreSQL `vector` extension, means
 # KB search stays lexical. Defaults to memory's model.
 KB_EMBEDDINGS_MODEL = env("KB_EMBEDDINGS_MODEL", default=HCP_EMBEDDINGS_MODEL)
+# A reranker over KB search's top 50: Vertex AI ranking API model (e.g.
+# `semantic-ranker-default@latest`), same identity. Empty = off. Needs the Discovery
+# Engine API enabled in HCP_VERTEX_PROJECT and the service account allowed to rank.
+KB_RERANK_MODEL = env("KB_RERANK_MODEL", default="")
 # A bulk embed (`manage.py kb_embed`, the sync after a publish): parallel calls,
 # and a ceiling on calls a minute across them (gemini-embedding-001 takes one
 # text per call). A 429 backs everyone off; failures are left for the next run.

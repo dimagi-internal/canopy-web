@@ -3,8 +3,8 @@ pgvector, kept in step with the published KB file.
 
 * **What is embedded** is `canopy_kb.hybrid.embedding_text` for each passage of the
   file (a title/type/date header, then the passage), with
-  `settings.KB_EMBEDDINGS_MODEL` (Vertex `gemini-embedding-001`, 768-d,
-  `RETRIEVAL_DOCUMENT`) through the same adapter, identity and zero-retention
+  `settings.KB_EMBEDDINGS_MODEL` (Vertex `gemini-embedding-001` at its full
+  3072 dimensions, `RETRIEVAL_DOCUMENT`) through the same adapter, identity and zero-retention
   gate as memory (`apps/contacts/embeddings.py`). The KB is a publisher's public
   material; the gate holds anyway.
 * **Sync** (`sync`) diffs the file against `KbPassage` by each passage's sha256:
@@ -16,9 +16,14 @@ pgvector, kept in step with the published KB file.
 * **Search** (`semantic_for`) embeds the question (`RETRIEVAL_QUERY`) and asks
   the HNSW index for the nearest passages of THIS project, filtered by type and
   date during the scan (pgvector 0.8 iterative scan). `canopy_kb` fuses them with
-  BM25 by reciprocal rank.
+  BM25 by weighted reciprocal rank.
+* **Rerank** (`reranker`, off unless `KB_RERANK_MODEL` is set): the Vertex AI
+  ranking API rescores the fused top 50, reading question and passage together.
+  Before turning it on, confirm what the ranking API retains — Google's ranking
+  page says nothing about it, and nothing here checks it the way `retention_ok`
+  checks the embedding model.
 
-Every way this can be missing — SQLite, no `vector` extension, a non-768-d model,
+Every way this can be missing — SQLite, no `vector` extension, a non-Vertex model,
 no rows yet, the embedding call failing — answers None, and the search is lexical.
 Nothing breaks before the first sync.
 """
@@ -39,7 +44,9 @@ from .models import KbPassage
 
 logger = logging.getLogger(__name__)
 
-DIMENSIONS = 768
+#: gemini-embedding-001's full size. Smaller sizes are truncations of it (Matryoshka);
+#: the full vector is its best, and halfvec indexes up to 4,000 dimensions.
+DIMENSIONS = 3072
 #: Rows written per round trip; also how much work an interrupted run loses.
 BATCH = 256
 #: Passages fetched per semantic search: one item can own several of the nearest,
@@ -58,7 +65,7 @@ _extension = {"checked": False, "ok": False}
 
 
 def model() -> str:
-    """The KB embedding model, or "" when it cannot fill the halfvec(768) column."""
+    """The KB embedding model, or "" when it cannot fill the halfvec(3072) column."""
     m = (getattr(settings, "KB_EMBEDDINGS_MODEL", "") or "").strip()
     return m if m.startswith(embeddings.VERTEX_PREFIX) else ""
 
@@ -96,7 +103,7 @@ def search(project, query: str, *, types=None, since: str = "", until: str = "",
     rows = KbPassage.objects.filter(project=project, embedding_model=model_id)
     if not rows.exists():
         return None
-    got = embeddings.embed([query], purpose="query", model_id=model_id)
+    got = embeddings.embed([query], purpose="query", model_id=model_id, dimensions=DIMENSIONS)
     if not got:
         return None
     from pgvector import HalfVector
@@ -135,6 +142,33 @@ def semantic_for(project) -> Callable | None:
     return semantic
 
 
+# --- rerank -----------------------------------------------------------------------
+
+
+def _rank(query: str, docs: list[dict]) -> list[int] | None:
+    """Vertex AI ranking API (Discovery Engine `rank`) over the candidates: a model
+    that reads the question and each passage together, which neither the BM25 index
+    nor a passage vector computed before the question existed can do. Indices into
+    `docs`, best first; None on any failure (the fused order stands)."""
+    url = ("https://discoveryengine.googleapis.com/v1/projects/"
+           f"{settings.HCP_VERTEX_PROJECT}/locations/global/rankingConfigs/default_ranking_config:rank")
+    records = [{"id": str(i), "title": d["title"][:500], "content": d["text"]} for i, d in enumerate(docs)]
+    try:
+        resp = embeddings._vertex_session().post(
+            url, json={"model": settings.KB_RERANK_MODEL, "query": query[:2000], "records": records,
+                       "topN": len(records)}, timeout=(2, 5))
+        resp.raise_for_status()
+        return [int(r["id"]) for r in resp.json().get("records", [])]
+    except Exception:  # noqa: BLE001 — reranking improves a usable order; it never costs one
+        logger.warning("kb rerank: %s failed; keeping the fused order", settings.KB_RERANK_MODEL, exc_info=True)
+        return None
+
+
+def reranker() -> Callable | None:
+    """The `rerank` callable `canopy_kb` search takes, when KB_RERANK_MODEL names one."""
+    return _rank if (getattr(settings, "KB_RERANK_MODEL", "") or "").strip() else None
+
+
 # --- sync -------------------------------------------------------------------------
 
 
@@ -169,7 +203,7 @@ def _embed_one(text: str, model_id: str, pace: _Pace) -> list[float] | None:
     for _ in range(ATTEMPTS):
         pace.wait()
         try:
-            vector = embeddings.invoke(model_id, [text], "document")[0]
+            vector = embeddings.invoke(model_id, [text], "document", dimensions=DIMENSIONS)[0]
         except Exception as exc:  # noqa: BLE001 — a timeout, a 429, a 5xx: wait and retry
             if getattr(getattr(exc, "response", None), "status_code", None) == 429:
                 pace.back_off(delay)

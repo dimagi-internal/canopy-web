@@ -55,7 +55,7 @@ def test_sync_embeds_every_passage_with_its_header_once(project, calls):
     row = KbPassage.objects.get(project=project, item_id="doc:ocv")
     assert (row.item_type, row.date, row.url, row.embedding_model) == ("gdoc", "2025-01-02", "https://gw/ocv",
                                                                        kb_fakes.MODEL)
-    assert len(row.embedding) == 768
+    assert len(row.embedding) == 3072
     assert calls[0] == ("document", "Title: Oral cholera vaccines\nType: gdoc\nDate: 2025-01-02\n\n"
                                     "OCV stockpiles are limited.")
     calls.clear()
@@ -111,7 +111,7 @@ def test_nothing_is_sent_to_a_provider_that_keeps_what_it_is_sent(project, calls
     assert calls == []
 
 
-def test_only_a_768_d_vertex_model_turns_kb_vectors_on(settings):
+def test_only_a_vertex_model_turns_kb_vectors_on(settings):
     settings.KB_EMBEDDINGS_MODEL = "cohere.embed-v4:0"
     assert kb_vectors.model() == ""
     settings.KB_EMBEDDINGS_MODEL = "vertex/gemini-embedding-001"
@@ -159,3 +159,59 @@ def test_kb_embed_says_why_it_cannot_run_here(project):
         call_command("kb_embed", "connect/givewell-kb")
     with pytest.raises(CommandError, match="no workspace project"):
         call_command("kb_embed", "connect/nope")
+
+
+class _RankSession:
+    def __init__(self, records=None, fail=False):
+        self.sent, self.records, self.fail = [], records, fail
+
+    def post(self, url, json, timeout):
+        self.sent.append((url, json))
+        if self.fail:
+            raise TimeoutError("ranking API timed out")
+        records = self.records
+
+        class R:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"records": records}
+        return R()
+
+
+def test_no_reranker_unless_one_is_configured(settings):
+    settings.KB_RERANK_MODEL = ""
+    assert kb_vectors.reranker() is None
+    settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
+    assert kb_vectors.reranker() is not None
+
+
+def test_the_reranker_sends_each_passage_and_reads_back_the_order(settings, monkeypatch):
+    settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
+    session = _RankSession([{"id": "1", "score": 0.9}, {"id": "0", "score": 0.2}])
+    monkeypatch.setattr("apps.contacts.embeddings._vertex_session", lambda: session)
+
+    order = kb_vectors.reranker()("jab shortage", [{"title": "Lead", "text": "paint"}, {"title": "OCV", "text": "scarce"}])
+
+    assert order == [1, 0]
+    url, body = session.sent[0]
+    assert url.endswith("/rankingConfigs/default_ranking_config:rank")
+    assert body["model"] == "semantic-ranker-default@latest" and body["records"][1]["content"] == "scarce"
+
+
+def test_a_failed_rerank_answers_none(settings, monkeypatch):
+    settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
+    monkeypatch.setattr("apps.contacts.embeddings._vertex_session", lambda: _RankSession(fail=True))
+    assert kb_vectors.reranker()("q", [{"title": "a", "text": "b"}]) is None
+
+
+def test_the_mcp_search_reranks_when_a_reranker_is_set(project, calls, settings, monkeypatch):
+    from apps.mcp.projects import _call
+
+    settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
+    seen = []
+    monkeypatch.setattr(kb_vectors, "reranker", lambda: lambda q, docs: seen.append(docs) or list(reversed(range(len(docs)))))
+    monkeypatch.setattr("apps.mcp.projects.readable_project", lambda user, ws, h: project)
+    hits = _call("connect", "givewell-kb", "search", {"query": "lead chlorine", "mode": "lexical"})
+    assert seen and [h["id"] for h in hits] == ["blog:wash", "page:lead"]

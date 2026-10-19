@@ -1091,7 +1091,7 @@ class KbPassage(models.Model):
     date = models.CharField(max_length=32, blank=True, default="")
     title = models.TextField(blank=True, default="")
     url = models.URLField(max_length=1000, blank=True, default="")
-    embedding = HalfVectorField(dimensions=768)
+    embedding = HalfVectorField(dimensions=3072)
     embedding_model = models.CharField(max_length=100)
     updated_at = models.DateTimeField(auto_now=True)
 

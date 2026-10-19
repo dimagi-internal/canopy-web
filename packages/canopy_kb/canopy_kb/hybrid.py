@@ -20,6 +20,14 @@ from typing import Callable, Iterable, Optional, Sequence
 #: What one search may run: BM25 only, vectors only, or both fused.
 MODES = ("hybrid", "lexical", "semantic")
 RRF_K = 60
+#: The meaning list's share of the fusion (BM25 gets the rest); 0.5 is plain RRF.
+#: Measured on the GiveWell KB (312 questions, kb_eval): BM25 is weak on paraphrased
+#: questions, and an equal share let documents both lists half-liked outrank the one
+#: the meaning list put first (MRR 0.453 at 0.5, 0.508 at 0.7, 0.530 at 0.8), while
+#: every weight from 0.6 up puts the same 280/312 right answers in the top 50 a
+#: reranker sees. 0.7 (Open Chat Studio's default too) keeps the hand-written
+#: questions, where BM25 still earns its share, at their best.
+DENSE_WEIGHT = 0.7
 #: How deep each list goes before fusing. A good passage ranked 40th by one
 #: method and 3rd by the other should still make the fused top 10.
 CANDIDATES = 50
@@ -31,6 +39,12 @@ TITLE_MAX = 200
 #: `semantic(query, types=, since=, until=, limit=)` → [(item_id, passage_ord)]
 #: nearest first, or None when there are no vectors to ask.
 Semantic = Callable[..., Optional[Sequence[tuple[str, int]]]]
+#: `rerank(query, documents)` → indices into `documents`, best first, or None when
+#: it could not answer (the fused order then stands). A document is a dict with
+#: `title` and `text` (the passage the row points at).
+Rerank = Callable[[str, list[dict]], Optional[Sequence[int]]]
+#: How many fused candidates a reranker rescores. OCS reranks its top 50 too.
+RERANK_DEPTH = 50
 
 
 def embedding_text(title: str, type_: str, date: str, body: str) -> str:
@@ -54,12 +68,16 @@ def passage_sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def rrf(rankings: Iterable[Sequence[str]], k: int = RRF_K) -> list[str]:
-    """Reciprocal rank fusion of ranked id lists, best first. Ties keep the order
+def rrf(rankings: Iterable[Sequence[str]], k: int = RRF_K,
+        weights: Sequence[float] | None = None) -> list[str]:
+    """Reciprocal rank fusion of ranked id lists, best first: each list adds
+    weight / (k + rank) per id (weights default to 1 each). Ties keep the order
     in which an id was first met (the first list wins)."""
+    rankings = list(rankings)
+    weights = list(weights) if weights is not None else [1.0] * len(rankings)
     score: dict[str, float] = {}
-    for ranking in rankings:
+    for ranking, weight in zip(rankings, weights, strict=True):
         for rank, key in enumerate(ranking, 1):
-            score[key] = score.get(key, 0.0) + 1.0 / (k + rank)
+            score[key] = score.get(key, 0.0) + weight / (k + rank)
     order = {key: i for i, key in enumerate(score)}
     return sorted(score, key=lambda key: (-score[key], order[key]))
