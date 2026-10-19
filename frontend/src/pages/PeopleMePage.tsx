@@ -18,6 +18,7 @@ import type { HcpAuditEvent, HcpGrant, MemoryCollections, PersonFactDetail, Pers
 import { listWorkspaces } from '../api/workspaces'
 import type { WorkspaceOut } from '../api/workspaces'
 import { AgentReadsPicker, CollectionsPanel } from './memory/Collections'
+import { SearchPreview } from './memory/SearchPreview'
 import {
   activeAccess,
   agentName,
@@ -441,6 +442,9 @@ export function PeopleMePage() {
           )}
         </div>
       </section>
+
+      {/* --- how agents find it -------------------------------------------------- */}
+      {enabled && allFacts.length > 0 && <SearchPreview />}
 
       {/* --- who can read it ----------------------------------------------------- */}
       <section id="who" aria-label="Who can read it" className="scroll-mt-6">

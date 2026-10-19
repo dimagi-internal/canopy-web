@@ -324,3 +324,17 @@ export async function updateHcpClient(
   if (error) throw registryError(error, 'Failed to update the client')
   return data as unknown as HcpClientRow
 }
+
+export type SearchPreview = components['schemas']['SearchPreviewOut']
+export type SearchPreviewEntry = SearchPreview['entries'][number]
+
+/** Score every entry you hold against a question the way an agent's search does,
+ *  with the reason each would or would not come back. `floor` previews another
+ *  cutoff; agents keep the live one. Changes nothing. */
+export async function previewMySearch(query: string, floor?: number): Promise<SearchPreview> {
+  const { data, error } = await apiV2.POST('/api/people/me/memory-search-preview/', {
+    body: { query, floor: floor ?? null, limit: 8 },
+  })
+  if (error) throw new Error((error as { detail?: string }).detail || 'Search preview failed')
+  return data as SearchPreview
+}
