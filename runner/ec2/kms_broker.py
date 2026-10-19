@@ -255,8 +255,9 @@ class Broker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
     def __init__(self, path: str, kms, keys_loader=load_keys, uid_of=peer_uid,
-                 max_connections: int = MAX_CONNECTIONS):
+                 max_connections: int = MAX_CONNECTIONS, deadline: float | None = None):
         self.kms, self.keys_loader, self.uid_of = kms, keys_loader, uid_of
+        self.deadline = CONNECTION_DEADLINE_SECONDS if deadline is None else deadline
         # Any local process may connect: a bound on threads, so a flood of idle
         # connections cannot exhaust root's broker for every unit.
         self._slots = threading.BoundedSemaphore(max_connections)
@@ -283,18 +284,52 @@ class Broker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
             self._slots.release()
 
 
-class _Handler(socketserver.StreamRequestHandler):
-    #: An idle connection holds one of the slots: it is cut after this long.
-    timeout = 5
+#: The WHOLE connection — reading the request, KMS, the reply — from accept. A
+#: per-read timeout would let a client drip one byte every few seconds and hold a
+#: slot forever; this deadline does not reset.
+CONNECTION_DEADLINE_SECONDS = 5.0
 
+
+class ConnectionDeadline(Exception):
+    """The client did not send one whole request line in time."""
+
+
+def read_request(sock, deadline: float) -> bytes | None:
+    """One request line by `deadline` (a monotonic time). None when it is too long;
+    raises ConnectionDeadline when time runs out first."""
+    buf = b""
+    while b"\n" not in buf:
+        if len(buf) > MAX_REQUEST:
+            return None
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise ConnectionDeadline()
+        sock.settimeout(left)
+        try:
+            chunk = sock.recv(4096)
+        except (socket.timeout, TimeoutError):
+            raise ConnectionDeadline() from None
+        if not chunk:
+            break
+        buf += chunk
+    line = buf.split(b"\n", 1)[0]
+    return None if len(line) > MAX_REQUEST else line
+
+
+class _Handler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         server: Broker = self.server  # type: ignore[assignment]
+        deadline = time.monotonic() + server.deadline
         try:
             uid = server.uid_of(self.request)
         except OSError:
             uid = -1
-        line = self.rfile.readline(MAX_REQUEST + 1)
-        if len(line) > MAX_REQUEST:
+        try:
+            line = read_request(self.request, deadline)
+        except ConnectionDeadline:
+            _log(f"uid {uid}: no whole request within {server.deadline:g}s — closed")
+            return
+        if line is None:
             reply = {"error": "request too long"}
         else:
             # units.json is re-read per request: a unit added by --setup-units is
@@ -302,7 +337,11 @@ class _Handler(socketserver.StreamRequestHandler):
             reply = answer(line.strip(), uid, server.keys_loader(), server.kms)
         if "error" in reply:
             _log(f"uid {uid}: {reply['error']}")
-        self.wfile.write((json.dumps(reply) + "\n").encode())
+        try:
+            self.request.settimeout(max(0.5, deadline - time.monotonic()))
+            self.request.sendall((json.dumps(reply) + "\n").encode())
+        except OSError:
+            pass
 
 
 def serve(path: str = SOCKET_PATH) -> None:

@@ -699,12 +699,14 @@ is the boundary).
 ## Moving a box to units (operator steps — NOT automatic)
 
 A box built before units keeps running as it is: one `canopy-runner.service` as
-`ubuntu`, its runner id, bindings and wraps. New runner code changes it only in two
-ways: its turns' secrets move to tmpfs once its canopy CLI is >= 0.2.736 (the
-`secrets` health check says which path it is on; to keep the files, a systemd drop-in
-— `systemctl edit canopy-runner` → `Environment=RUNNER_SECRET_FILES=1` — since
-runner.env is rewritten on every start), and a box paired by invitation never falls
-back to a PAT.
+`ubuntu`, its runner id, bindings, wraps and its agents' `~/.<slug>/.env` files. New
+runner code does NOT move its secrets off disk on its own: that is on by default only
+for an isolation unit. To opt a box without units in (canopy CLI >= 0.2.736), add a
+systemd drop-in — `systemctl edit canopy-runner` → `Environment=RUNNER_SECRET_FILES=0`
+(runner.env is rewritten on every start, so not there) — and restart; the `secrets`
+health check says which path it is on. Each agent's legacy files are removed only after
+one of its off-disk turns has succeeded. A box paired by invitation never falls back to
+a PAT.
 
 Moving it to units is a deliberate step, **only with Jonathan's approval**, and it
 keeps the runner: the unit of the box's own workspace is named as the box, so
@@ -729,7 +731,9 @@ sudo RUNNER_UNITS=tree:dimagi,tree:marshellis,agent:eva python3 /opt/canopy-runn
 #    replaces the old canopy-fetch-env (it re-wrote the PAT/Claude token/gog password),
 #    and starts canopy-units, the broker, canopy-pair and one canopy-runner@<unit> each.
 # 3. watch: journalctl -u canopy-pair -u 'canopy-runner@*' -f
-#    the box-named unit re-attaches (same runner id); the new units pair.
+#    the box-named unit re-attaches (same runner id); the new units pair. As units,
+#    every unit is off disk by default (no RUNNER_SECRET_FILES=0 needed); a drop-in
+#    with RUNNER_SECRET_FILES=0 on the old canopy-runner.service no longer applies.
 # 4. ./wire.sh --name cloud-ec2-2 --unit marshellis --standby --agents <…>   (each new unit)
 # 5. grant each zero-knowledge agent's vault key to the unit that now runs it.
 ```

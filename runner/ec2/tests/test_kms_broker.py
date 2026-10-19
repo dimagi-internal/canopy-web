@@ -193,6 +193,49 @@ def test_concurrent_connections_are_bounded(kb):
         os.rmdir(d)
 
 
+def test_a_slow_drip_client_is_cut_at_the_connection_deadline(kb):
+    """One byte at a time, each well inside any per-read timeout, never finishes a
+    request: the deadline counts from accept and does not reset, so the slot frees."""
+    import time
+
+    d = tempfile.mkdtemp(prefix="kb", dir="/tmp")
+    path = os.path.join(d, "sock")
+    server = kb.Broker(path, FakeKms(), keys_loader=lambda: KEYS, uid_of=lambda sock: 2001,
+                       max_connections=1, deadline=0.6)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        drip = socket.socket(socket.AF_UNIX)
+        drip.connect(path)
+        start = time.monotonic()
+        closed = False
+        for ch in b'{"op": "public_key"':      # never the newline
+            try:
+                drip.sendall(bytes([ch]))
+            except OSError:
+                closed = True
+                break
+            time.sleep(0.1)
+            if time.monotonic() - start > 1.5:
+                break
+        drip.settimeout(1)
+        try:
+            closed = closed or drip.recv(100) == b""
+        except OSError:
+            closed = True
+        drip.close()
+        assert closed, "the drip connection was held past the deadline"
+        time.sleep(0.1)
+        with socket.socket(socket.AF_UNIX) as c:     # the slot came back
+            c.connect(path)
+            c.sendall(b'{"op": "public_key"}\n')
+            assert "jwk" in json.loads(c.makefile().readline())
+    finally:
+        server.shutdown()
+        server.server_close()
+        os.unlink(path)
+        os.rmdir(d)
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="SO_PEERCRED is Linux")
 def test_peer_uid_is_the_kernels_word(kb):
     a, b = socket.socketpair(socket.AF_UNIX)

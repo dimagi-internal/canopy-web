@@ -121,20 +121,29 @@ Spec: `docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md`.
 - A unit's token reaches only its own runner and the agents that runner serves:
   `tests/test_runner_units_isolation.py`.
 
-### Secrets off disk (every cloud runner)
+### Secrets off disk
 
+- **On by default on an isolation unit only** (`CANOPY_UNIT`, or a box with
+  `/etc/canopy-runner/units.json`). A box built before units keeps its
+  `~/.<slug>/.env` files until an operator opts it in with `RUNNER_SECRET_FILES=0`
+  (a systemd drop-in); `RUNNER_SECRET_FILES=1` keeps the files anywhere. Also gated on
+  the installed canopy CLI (>= 0.2.736, `cloud_runner.OFF_DISK_MIN_CLI`): an older CLI
+  cannot read `CANOPY_AGENT_ENV_FILE`, so the files stay. The `secrets` health check
+  says which path a box is on and why.
 - A turn's env is resolved in memory (`canopy cred env --runner --print-json`, cached per
   agent for 5 minutes), written 0600 to `/run/canopy/<uid>/<turn>/env` (a box without
-  units: `/dev/shm/canopy-<uid>`), and handed to the turn as `CANOPY_AGENT_ENV_FILE`; it
-  is removed in the turn's `finally` and swept at start. A turn whose env cannot be
-  resolved (nothing cached) or written is not run: it fails with `[runner] could not
-  resolve <slug>'s credentials: <why>` and no session, which canopy-web re-queues. `canopy agent prepare --runner`
-  gets `CANOPY_TURN_ENV_ROOT` and writes no `~/.<slug>/.env`, `<clone>/.env` or
-  `.gws-sa-key.json`; the runner removes the ones an older runner left — for an agent only after one of its
-  off-disk turns has succeeded (`~/.canopy-runner/off-disk-ok/<slug>`).
-- Gated on the installed canopy CLI (>= 0.2.736, `cloud_runner.OFF_DISK_MIN_CLI`): an
-  older CLI cannot read `CANOPY_AGENT_ENV_FILE`, so the legacy files stay and the
-  `secrets` health check says why. `RUNNER_SECRET_FILES=1` keeps them on purpose.
+  units that opted in: `/dev/shm/canopy-<uid>`), and handed to the turn as
+  `CANOPY_AGENT_ENV_FILE`; it is removed in the turn's `finally` and swept at start. An
+  agent with nothing to resolve (no `.env.tpl`, not canopy-web-sourced — canopy's "n/a")
+  has an empty env. A turn whose env has a source but cannot be resolved (nothing
+  cached), or cannot be written, is not run: it fails with `[runner] could not resolve
+  <slug>'s credentials: <why>` and no session, which canopy-web re-queues; the box then
+  stops claiming that agent (the claim's `paused` list, REST and WS) for 1, 2, 5, then
+  10 minutes, reset by the next good resolve, so the re-queue is not spent at once.
+- `canopy agent prepare --runner` gets `CANOPY_TURN_ENV_ROOT` and writes no
+  `~/.<slug>/.env`, `<clone>/.env` or `.gws-sa-key.json`; the runner removes the ones an
+  older runner left — for an agent only after one of its off-disk turns has succeeded
+  (`~/.canopy-runner/off-disk-ok/<slug>`).
 - **gog.** Each agent has its own `GOG_HOME=~/.gog/<slug>` and keyring password
   `HKDF-SHA256(unit secret, "gog:"+slug)` (`cloud_runner.gog_env`, the same derivation as
   canopy's `gog_home`). The inbox poller, full turns and a confined turn's mail capability
