@@ -54,18 +54,22 @@ jobs:
   # for anyone, and any future backend job joins `needs:` below rather than
   # the ruleset.
   #
-  # `Backend pytest` is a matrix of 4 shards (conftest.py's PYTEST_SHARD
-  # hook: whole files, balanced by test count, union = the whole suite). One
-  # runner took ~5 min even with `-n auto`; four take ~1.5. The fast static
-  # gates before it run on shard 1 only — once is enough.
+  # `Backend pytest` is a matrix of 2 shards (conftest.py's PYTEST_SHARD
+  # hook: whole files, balanced by test count, union = the whole suite), run
+  # with `--nomigrations`. Of the ~5 min one runner used to take, ~2.5 was each
+  # xdist worker replaying 400+ migrations to build its test DB; building the
+  # tables from the models takes seconds. Migrations are still applied in full
+  # by `Backend pytest (PostgreSQL)` (on the production engine) and by
+  # `Backend pytest (migrations)`, and `makemigrations --check` runs on shard 1
+  # with the other fast static gates — once is enough.
   test-backend:
-    name: Backend pytest (${{ matrix.shard }}/4)
+    name: Backend pytest (${{ matrix.shard }}/2)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
 
@@ -172,8 +176,8 @@ jobs:
         # in-memory test DB, so the suite is isolated per worker; serially it was
         # ~160s here, nearly all of it single-threaded.
         env:
-          PYTEST_SHARD: ${{ matrix.shard }}/4
-        run: uv run pytest -n auto
+          PYTEST_SHARD: ${{ matrix.shard }}/2
+        run: uv run pytest -n auto --nomigrations -m "not needs_migrations"
 
   # The standalone in-repo packages. None of them touches Django or a
   # database: each runs from its own dir against its own declared deps.
@@ -428,9 +432,34 @@ jobs:
           done
           exit $failed
 
+  # The tests that walk the real migration graph (marked needs_migrations),
+  # which the `--nomigrations` suite above cannot run. One process: the DB is
+  # built once, with every migration, which also proves they apply on SQLite.
+  test-backend-migrations:
+    name: Backend pytest (migrations)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Run the migration tests
+        run: uv run pytest -m needs_migrations
+
   test-backend-gate:
     name: Backend tests
-    needs: [test-backend, test-runner-packages, test-backend-postgres, pr-guards]
+    needs: [test-backend, test-backend-migrations, test-runner-packages, test-backend-postgres, pr-guards]
     # always(): without it a failed `needs` SKIPS this job, and a skipped
     # required check counts as passing — the gate would wave failures through.
     if: always()
