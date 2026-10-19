@@ -376,7 +376,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/settings`** — your account: runners you administer (each linking to
   `/supervisor?tab=runners&runner=<id>`, where a box's Claude login and admins
   live), Runner app (the page the Canopy Runner desktop window opens on —
-  Supervisor or IDE; it loads `/runner-app/`, a bare view that redirects to the
+  Supervisor or IDE, also settable from the app's right-click menu → Opens on; it loads `/runner-app/`, a bare view that redirects to the
   choice, `RunnerAppPreference`), presence, GitHub, connected apps (OAuth MCP clients, disconnectable,
   plus the MCP address and `claude mcp add` line), personal access tokens, and
   runner device keys (`#device-keys`, shown when you have any or arrive by a

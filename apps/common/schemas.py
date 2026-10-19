@@ -82,11 +82,19 @@ class PresencePreferenceIn(StrictModel):
 RunnerAppPage = Literal["supervisor", "ide"]
 
 
+class RunnerAppChoice(StrictModel):
+    value: RunnerAppPage
+    label: str
+
+
 class RunnerAppPreferenceOut(StrictModel):
     """Response for GET/PATCH /api/me/runner-app/."""
 
     opens_on: RunnerAppPage = Field(
         description="The page the Canopy Runner desktop app opens on."
+    )
+    choices: list[RunnerAppChoice] = Field(
+        description="Every page it can open on, in menu order."
     )
 
 

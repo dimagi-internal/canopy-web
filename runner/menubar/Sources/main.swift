@@ -211,7 +211,7 @@ struct RunnerCLI {
 }
 
 // ── the app ───────────────────────────────────────────────────────────────────────
-final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var baseTree: NSImage?
     var timer: Timer?
@@ -230,6 +230,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         rebuild()
+        refreshOpensOn()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             self?.rebuild()
         }
@@ -280,6 +281,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Reused across opens: closing HIDES it (see applicationShouldTerminateAfterLastWindowClosed),
         // so it must not be deallocated on close or the next open dereferences a freed window.
         win.isReleasedWhenClosed = false
+        win.delegate = self
         win.center()
         window = win
     }
@@ -288,6 +290,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
             // Show the local-controls menu, then clear it so left-click still opens the panel.
+            refreshOpensOn()  // lands before the "Opens on" submenu is opened
             statusItem.menu = buildMenu(currentState())
             statusItem.button?.performClick(nil)
             DispatchQueue.main.async { self.statusItem.menu = nil }
@@ -301,6 +304,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // to. First open mints + injects the session cookie; after that the cookie is set,
         // so we just reload it (cheap, no re-mint).
         if authed { loadHome() } else { authenticateThenLoad() }
+        if window?.isVisible != true { applyFrame() }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -453,6 +457,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(closeItem)
         menu.addItem(.separator())
 
+        let opensItem = NSMenuItem(title: "Opens on", action: nil, keyEquivalent: "")
+        let opens = NSMenu(title: "Opens on")
+        opens.delegate = self
+        opensOnMenu = opens
+        opensItem.submenu = opens
+        menu.addItem(opensItem)
+
         add(menu, "Open Supervisor in browser…", #selector(openSupervisor))
         add(menu, "Reload panel", #selector(reloadPanel))
         add(menu, "Force refresh (clear cache)", #selector(forceRefresh))
@@ -511,6 +522,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var closeMenu: NSMenu?
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === opensOnMenu { fillOpensOn(menu); return }
         guard menu === closeMenu else { return }
         menu.removeAllItems()
         func note(_ title: String) {
@@ -580,6 +592,128 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
     }
+    // -- opens on --
+    // The page the window opens on is a canopy setting (Settings → Runner app), not a
+    // local one, so it follows the person to every box. The menu lists the pages canopy
+    // offers (GET /api/me/runner-app/ → choices), so a new page needs no change here.
+    var opensOnMenu: NSMenu?
+    var opensOn: (current: String, choices: [(value: String, label: String)])?
+
+    func refreshOpensOn() {
+        runnerAppRequest("GET", body: nil) { [weak self] pref in
+            guard let self, let pref else { return }
+            let changed = pref.current != self.opensOn?.current
+            self.opensOn = pref
+            // The window opened before canopy answered (first launch) or the choice
+            // changed on another box: size it for the page it is actually showing.
+            if changed && self.window?.isVisible == true { self.applyFrame() }
+        }
+    }
+
+    func fillOpensOn(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let pref = opensOn else {
+            let item = NSMenuItem(title: "Open the window and sign in first", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            return
+        }
+        for choice in pref.choices {
+            let item = NSMenuItem(title: choice.label, action: #selector(setOpensOn(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = choice.value
+            item.state = choice.value == pref.current ? .on : .off
+            menu.addItem(item)
+        }
+    }
+
+    @objc func setOpensOn(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String,
+              let body = try? JSONSerialization.data(withJSONObject: ["opens_on": value]) else { return }
+        runnerAppRequest("PATCH", body: body) { [weak self] pref in
+            guard let self, let pref else { return }
+            self.saveFrame()  // keep the old page's size before switching
+            self.opensOn = pref
+            if self.window?.isVisible == true {  // show the new page now, at its own size
+                self.applyFrame()
+                self.loadHome()
+            }
+        }
+    }
+
+    // -- window size per page --
+    // Each page keeps its own frame: the supervisor is phone-sized, the IDE wants a big
+    // window. The frame is saved as you move or resize it and restored the next time the
+    // window opens on that page; the first time, it gets the page's default size.
+    var framePage: String { opensOn?.current ?? "supervisor" }
+
+    func applyFrame() {
+        guard let win = window else { return }
+        let page = framePage
+        if win.setFrameUsingName("CanopyRunner.\(page)") { return }
+        let screen = (win.screen ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = page == "supervisor"
+            ? NSSize(width: 420, height: 640)
+            : NSSize(width: (screen.width * 0.85).rounded(), height: (screen.height * 0.85).rounded())
+        win.setFrame(NSRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
+                            width: size.width, height: size.height), display: true)
+    }
+
+    func saveFrame() {
+        guard let win = window, win.isVisible else { return }
+        win.saveFrame(usingName: "CanopyRunner.\(framePage)")
+    }
+
+    func windowDidEndLiveResize(_ n: Notification) { saveFrame() }
+    func windowDidMove(_ n: Notification) { saveFrame() }
+    func windowWillClose(_ n: Notification) { saveFrame() }
+
+    // GET/PATCH /api/me/runner-app/ as the person: with the runner PAT when the box has
+    // one, else with the window's own signed-in session (its cookies, plus the CSRF
+    // token Django wants on a PATCH). Completes on the main queue; nil on any failure.
+    func runnerAppRequest(_ method: String, body: Data?,
+                          done: @escaping ((current: String, choices: [(value: String, label: String)])?) -> Void) {
+        guard let url = URL(string: baseURL() + "/api/me/runner-app/") else { done(nil); return }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = method
+        req.httpBody = body
+        req.httpShouldHandleCookies = false
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        func send() {
+            URLSession.shared.dataTask(with: req) { data, resp, _ in
+                var pref: (current: String, choices: [(value: String, label: String)])?
+                if (resp as? HTTPURLResponse)?.statusCode == 200, let data,
+                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let current = obj["opens_on"] as? String,
+                   let choices = obj["choices"] as? [[String: Any]] {
+                    pref = (current, choices.compactMap { c in
+                        guard let v = c["value"] as? String, let l = c["label"] as? String else { return nil }
+                        return (v, l)
+                    })
+                }
+                DispatchQueue.main.async { done(pref) }
+            }.resume()
+        }
+        if let token = readToken() {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            send(); return
+        }
+        guard let host = url.host else { done(nil); return }
+        web.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+            let mine = cookies.filter { c in
+                let domain = c.domain.hasPrefix(".") ? String(c.domain.dropFirst()) : c.domain
+                return host == domain || host.hasSuffix("." + domain)
+            }
+            for (k, v) in HTTPCookie.requestHeaderFields(with: mine) { req.setValue(v, forHTTPHeaderField: k) }
+            if let csrf = mine.first(where: { $0.name.hasPrefix("csrftoken") }) {
+                req.setValue(csrf.value, forHTTPHeaderField: "X-CSRFToken")
+            }
+            req.setValue("\(url.scheme ?? "https")://\(host)", forHTTPHeaderField: "Origin")
+            req.setValue(baseURL() + "/", forHTTPHeaderField: "Referer")
+            send()
+        }
+    }
+
     @objc func openSupervisor() {
         if let url = URL(string: baseURL() + "/supervisor") { NSWorkspace.shared.open(url) }
     }
