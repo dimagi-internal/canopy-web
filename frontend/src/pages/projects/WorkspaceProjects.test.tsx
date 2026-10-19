@@ -22,7 +22,8 @@ afterEach(() => {
 
 const kb = {
   id: 1, agent_slug: 'eva', workspace: 'dimagi', scope: 'workspace', handle: 'givewell-kb', steward_slug: 'eva',
-  address: 'dimagi/givewell-kb', url: '/w/dimagi/projects/givewell-kb', ext_id: 'P12', name: 'GiveWell Knowledge Base',
+  address: 'dimagi/givewell-kb', url: '/w/dimagi/projects/givewell-kb',
+  board_url: '/w/dimagi/agents/eva/projects/P12', ext_id: 'P12', name: 'GiveWell Knowledge Base',
   outcome: 'Everything GiveWell publishes, cited', status: 'active', task_count: 3, open_task_count: 1,
 } as never
 
@@ -61,6 +62,21 @@ describe('WorkspaceProjectRedirect', () => {
     at('/w/dimagi/projects/givewell-kb')
     expect(await screen.findByText('steward page')).toBeTruthy()
     expect(getWorkspaceProject).toHaveBeenCalledWith('dimagi', 'givewell-kb')
+  })
+
+  it("goes to the steward's own workspace when it keeps a division's project", async () => {
+    getWorkspaceProject.mockResolvedValue({
+      ...(kb as object), workspace: 'connect', address: 'connect/givewell-kb',
+    } as never)
+    render(
+      <MemoryRouter initialEntries={['/w/connect/projects/givewell-kb']}>
+        <Routes>
+          <Route path="/w/:workspace/projects/:handle" element={<WorkspaceProjectRedirect />} />
+          <Route path="/w/dimagi/agents/:agent/projects/:ref" element={<p>dimagi board</p>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('dimagi board')).toBeTruthy()
   })
 
   it('says so when there is no such project', async () => {

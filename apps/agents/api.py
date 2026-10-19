@@ -1907,6 +1907,16 @@ def patch_project(request: HttpRequest, slug: str, ref: str,
     return AgentProjectOut.model_validate(apply_project_patch(request, project, data))
 
 
+def _require_workspace_editor(request: HttpRequest, workspace: str, steward) -> None:
+    """Placing a project in a workspace other than its steward's makes it that
+    workspace's, so the caller must be able to edit there too — writing the
+    steward is not enough. Same 404 as a missing workspace for a non-member."""
+    if not workspace or workspace == steward.workspace_id:
+        return
+    if not wsvc.has_role_at_least(request.user, workspace, "editor"):
+        raise HttpError(404, f"workspace '{workspace}' not found")
+
+
 def apply_project_patch(request: HttpRequest, project, data: dict):
     """A PATCH body against one project, from either address. `handle` promotes
     it to a workspace project; `steward` hands a workspace project on — and the
@@ -1917,10 +1927,14 @@ def apply_project_patch(request: HttpRequest, project, data: dict):
         ref_ = (data.pop("spawned_from") or "").strip()
         project.spawned_from = resolve_task_ref(request, ref_) if ref_ else None
     handle, steward = data.pop("handle", None), data.pop("steward", None)
+    workspace = (data.pop("workspace", None) or "").strip()
+    if workspace and handle is None:
+        raise HttpError(422, "workspace is set with handle, when the project is promoted")
+    _require_workspace_editor(request, workspace, project.agent)
     try:
         with transaction.atomic():
             if handle is not None:
-                project = services.promote_project(project, handle)
+                project = services.promote_project(project, handle, workspace)
             if steward is not None:
                 project = services.set_steward(project, _agent_for_write(request, steward.strip()))
             project = services.patch_project(project, data)

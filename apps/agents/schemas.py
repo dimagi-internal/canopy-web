@@ -861,15 +861,20 @@ class AgentProjectPatch(StrictModel):
     #: Make it a WORKSPACE project addressed `<workspace>/<handle>`, this agent as
     #: steward. One-way: a handle is an address other agents hold.
     handle: str | None = Field(default=None, max_length=60)
+    #: With `handle`: the workspace that owns it — the agent's own (default) or
+    #: one below it ("connect" for a dimagi agent).
+    workspace: str | None = Field(default=None, max_length=100)
     #: Hand a workspace project to another agent of its workspace.
     steward: str | None = Field(default=None, max_length=100)
 
 
 class WorkspaceProjectIn(AgentProjectIn):
-    """Create a workspace project directly: owned by the steward's workspace."""
+    """Create a workspace project directly: owned by `workspace` — the steward's
+    own (default) or one below it."""
 
     handle: str = Field(min_length=3, max_length=60)
     steward: str = Field(min_length=1, max_length=100)
+    workspace: str = Field(default="", max_length=100)
 
 
 class SpawnedFromOut(StrictModel):
@@ -903,6 +908,9 @@ class AgentProjectOut(StrictModel):
     address: str = ""
     #: Its page.
     url: str = ""
+    #: Its page on its agent's board, in the agent's workspace (`url` for an
+    #: agent project; where a workspace project's address redirects to).
+    board_url: str = ""
     ext_id: str
     name: str
     outcome: str

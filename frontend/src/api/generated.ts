@@ -18128,6 +18128,11 @@ export interface components {
              * @default
              */
             readonly url: string;
+            /**
+             * Board Url
+             * @default
+             */
+            readonly board_url: string;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -18284,6 +18289,11 @@ export interface components {
              * @default
              */
             readonly url: string;
+            /**
+             * Board Url
+             * @default
+             */
+            readonly board_url: string;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -18580,6 +18590,8 @@ export interface components {
             readonly spawned_from?: string | null;
             /** Handle */
             readonly handle?: string | null;
+            /** Workspace */
+            readonly workspace?: string | null;
             /** Steward */
             readonly steward?: string | null;
         };
@@ -21933,7 +21945,8 @@ export interface components {
         };
         /**
          * WorkspaceProjectIn
-         * @description Create a workspace project directly: owned by the steward's workspace.
+         * @description Create a workspace project directly: owned by `workspace` — the steward's
+         *     own (default) or one below it.
          */
         readonly WorkspaceProjectIn: {
             /** Name */
@@ -21989,6 +22002,11 @@ export interface components {
             readonly handle: string;
             /** Steward */
             readonly steward: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
         };
         /** WorkspaceOut */
         readonly WorkspaceOut: {

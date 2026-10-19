@@ -30,7 +30,7 @@ What does NOT move, deliberately, and is reported as `left_behind`:
 - **Audit** (`events.Event`, `SettingChange`) stays where it happened.
 
 What REFUSES the move: a workspace project the agent stewards. It is the
-workspace's and stays there, and its steward must be in its workspace, so the
+workspace's and stays there, and its steward must be in its workspace or one above it, so the
 move waits until each one is handed to another steward.
 
 What follows the agent with no write at all — tasks, projects, skills,
