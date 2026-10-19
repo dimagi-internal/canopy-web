@@ -191,6 +191,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Approve at a role', 'Deny with a reason', "Change an approved person's role", 'Remove them'],
   },
   {
+    path: '/w/:workspace/runner-invitations/:invitationId',
+    title: 'Approve a new cloud runner',
+    audience: 'The person who ran up.sh for a new cloud box (the link it prints and emails)',
+    what: "One pairing invitation: the runner's name, the workspace it joins, the EC2 instance role it proves, who asked and when it expires (an hour after up.sh made it). Approving, with a passkey, lets that box pair as your runner, signing in with its instance role and holding no token. Only the invitation's creator can open or approve it; a token cannot.",
+    needsFirst: 'up.sh creating the invitation, and a passkey on this device.',
+    actions: ['Approve the box with one passkey touch', 'See whether it has paired'],
+  },
+  {
     path: '/w/:workspace/settings/connected-apps',
     title: 'Connected sites',
     audience: 'Workspace owner embedding an agent in a website',

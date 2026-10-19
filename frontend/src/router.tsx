@@ -29,6 +29,7 @@ import { TopologyMapPage } from './pages/topology/TopologyMapPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
 import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage'
 import { AccessRequestPage } from './pages/AccessRequestPage'
+import { RunnerInvitationApprovePage } from './pages/RunnerInvitationApprovePage'
 import { BetaRequestPage, BetaRequestsPage } from './pages/BetaRequestsPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
@@ -327,6 +328,8 @@ export const routeTable: RouteObject[] = [
       ...['topology', 'email', 'access-requests', 'secrets', 'retention', 'admission-rules'].map((to) => (
         { path: `/w/:workspace/${to}`, element: <SettingsRedirect to={to} /> })),
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
+      // The approve link up.sh prints for a new cloud box (one passkey touch).
+      { path: '/w/:workspace/runner-invitations/:invitationId', element: <RunnerInvitationApprovePage /> },
       // Is everything in this workspace tree set up right, and how is it used.
       { path: '/w/:workspace/health', element: <WorkspaceHealthPage /> },
       { path: '/w/:workspace/analytics', element: <WorkspaceAnalyticsPage /> },

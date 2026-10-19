@@ -216,6 +216,13 @@ Every browser-facing address canopy-web serves. The SPA route table is
   (tenant twin of root `/schedules`).
 - **`/activity`** — the fleet turn log scoped to this workspace.
 - **`/timeline`** — team activity feed across apps (link-out only).
+- **`/runner-invitations/:invitationId`** — approve a new cloud runner: the link
+  `runner/ec2/up.sh` prints and the invitation email carries. Shows the runner's
+  name, the workspace, the EC2 instance role, who asked and when it expires (an
+  hour), and one Approve button; the passkey step-up is the API client's
+  (`auth/stepUp.ts`). Only the invitation's creator can open it (404 otherwise)
+  or approve it, and a token cannot (`apps/harness/api_runner_invitations.py`,
+  `docs/architecture/runners.md` § How a runner signs in).
 - **`/health`** — admin+ (`logs.read`, per descendant). What is not set up right
   across this workspace and every one below it (`GET /api/workspaces/{slug}/health`,
   `apps/agents/health.py`): every agent with its setup checklist (the SAME steps

@@ -97,6 +97,12 @@ const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
     match: (p) => p === '/hcp-clients',
   },
   {
+    // The link up.sh prints (and emails) for a new cloud box. In no menu: only
+    // the person who ran up.sh opens it.
+    label: 'Approving a new cloud runner',
+    match: (p) => p === '/w/:workspace/runner-invitations/:invitationId',
+  },
+  {
     // The desktop session IDE, opened from your account menu (it spans
     // workspaces, so it is in no workspace nav).
     label: 'Session IDE (desktop)',
