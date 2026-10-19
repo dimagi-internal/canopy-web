@@ -9,6 +9,10 @@ Where canopy-web runs, how a change gets from a PR to production, and the AWS/IA
 - Runtime settings: `config/settings/connectlabs.py` (extends `production.py`; no `FORCE_SCRIPT_NAME` — setting it would serve canopy under a prefix everywhere).
 - Infra: `deploy/aws/canopy-web.cfn.yaml` (CloudFormation).
 
+### The vector extension
+
+KB search by meaning (`apps/agents/kb_vectors.py`) needs pgvector ≥ 0.8 (iterative index scans) in the `canopy_web` database. `vector` is not a trusted extension, so canopy-web's own role (`canopy_web`, not `rds_superuser`) cannot create it, and migration `agents/0064` only runs `CREATE EXTENSION IF NOT EXISTS vector` — a no-op once it exists. On `labs-jj-postgres` (PostgreSQL 16.13, pgvector 0.8.1) it was created once by the RDS master user `connectadmin` (password: Secrets Manager `labs-jj-db-password`), from inside the canopy-web task over ECS Exec since the RDS is not public. To redo it on a new database: connect as the master user to `canopy_web` and run `CREATE EXTENSION IF NOT EXISTS vector;`, then check with `SELECT extversion FROM pg_extension WHERE extname = 'vector'`. CI's PostgreSQL job and `docker compose` use the `pgvector/pgvector:pg16` image, where the superuser creates it in the migration. On a PostgreSQL without pgvector installed, migration 0064 fails at the `halfvec` column.
+
 ### The old address still serves machines
 
 The old address `https://labs.connect.dimagi.com/canopy/` (now `https://canopy.dimagi.com/`) still reaches the same container through the ALB's `/canopy/*` rule. `config/asgi_prefix.py` strips the prefix (`CANOPY_STRIP_PREFIX`, read in `config/asgi.py`) and `apps/common/legacy_prefix.py` decides:

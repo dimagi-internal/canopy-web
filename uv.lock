@@ -476,6 +476,7 @@ dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
     { name = "orjson" },
+    { name = "pgvector" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic", extra = ["email"] },
     { name = "pyjwt", extra = ["crypto"] },
@@ -526,6 +527,7 @@ requires-dist = [
     { name = "google-api-python-client", specifier = ">=2.120,<3.0" },
     { name = "google-auth", specifier = ">=2.29,<3.0" },
     { name = "orjson", specifier = ">=3.10" },
+    { name = "pgvector", specifier = ">=0.4,<1.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1,<4.0" },
     { name = "pydantic", specifier = ">=2.8,<3.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.8,<3.0" },
@@ -2021,6 +2023,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/66/f3/5a20387de9bcd0607871bfc2198ee0e15836da7baa4592ccd7f24c27c986/pathable-0.6.0.tar.gz", hash = "sha256:6404b8b82aef5ff0fd478934137128b99b12212ba35afdde5525ca4f8388ea58", size = 18970, upload-time = "2026-05-19T18:15:11.911Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/e8/6d75ffd9784bce2e93d1ae4415649427e39a53bb172d4672b2b59c6f0a7b/pathable-0.6.0-py3-none-any.whl", hash = "sha256:82c4ca6c98c502ad12e0d4e9779b6210afee93c38990988c8c5d1b49bdcdf566", size = 18983, upload-time = "2026-05-19T18:15:10.728Z" },
+]
+
+[[package]]
+name = "pgvector"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/23/96aa38899fbf8e103766db608d6e42acac269a96e08f3003fe9da3396fed/pgvector-0.5.1.tar.gz", hash = "sha256:94998a54b801b1075d623b8fa677fcb8210a7977b88f8e2203ab115c155af2e4", size = 35714, upload-time = "2026-10-09T01:50:22.779Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/8d/a9c2a531da0ebb54b4a7174450e8534a39db112a141ae3a437de28420111/pgvector-0.5.1-py3-none-any.whl", hash = "sha256:ec5bcd5ffaefe6ecb2dcc9564ca921d284564b969183bc837a144604773af8ea", size = 31056, upload-time = "2026-10-09T01:50:21.614Z" },
 ]
 
 [[package]]

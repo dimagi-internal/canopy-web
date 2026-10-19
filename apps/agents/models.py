@@ -10,6 +10,7 @@ self-grades for the feed; the body lives in the doc.
 from django.conf import settings
 from django.db import models
 from django.db.models.functions import Lower
+from pgvector.django import HalfVectorField
 
 
 class Agent(models.Model):
@@ -1066,6 +1067,42 @@ class AgentProject(models.Model):
         from apps.agents.services import waiting_q
 
         return self.tasks.filter(waiting_q()).count()
+
+
+class KbPassage(models.Model):
+    """One passage of a workspace project's published knowledge base, as the
+    semantic half of its `search` needs it: where it is, what its vector was made
+    from (`sha256` of `canopy_kb.hybrid.embedding_text`) and the vector.
+
+    The passage text stays in the KB file (`kb_store`); a search maps a nearest
+    (item_id, ord) back to its row there. Rows are written only by
+    `kb_vectors.sync`, which diffs the file by `sha256` and embeds only what is
+    new or changed. A row whose `embedding_model` is not the current one counts
+    as missing. On PostgreSQL an HNSW index (cosine) serves the nearest-neighbour
+    query, filtered by project and type with pgvector's iterative scan
+    (migration 0064); there is no vector search on SQLite."""
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="kb_passages")
+    item_id = models.CharField(max_length=300)
+    ord = models.IntegerField()
+    sha256 = models.CharField(max_length=64)
+    item_type = models.CharField(max_length=64, blank=True, default="")
+    #: As the KB has it: "YYYY-MM-DD", or "" when the item has no date.
+    date = models.CharField(max_length=32, blank=True, default="")
+    title = models.TextField(blank=True, default="")
+    url = models.URLField(max_length=1000, blank=True, default="")
+    embedding = HalfVectorField(dimensions=768)
+    embedding_model = models.CharField(max_length=100)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["project", "item_id", "ord"], name="kb_passage_unique"),
+        ]
+        indexes = [models.Index(fields=["project", "item_type"], name="kb_passage_type")]
+
+    def __str__(self):
+        return f"kb:{self.project_id}:{self.item_id}#{self.ord}"
 
 
 class ProjectParticipant(models.Model):

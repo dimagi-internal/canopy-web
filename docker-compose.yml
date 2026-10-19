@@ -1,6 +1,7 @@
 services:
   db:
-    image: postgres:16
+    # pgvector for KB search by meaning (migration agents/0064 creates the extension).
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: canopy_web
       POSTGRES_USER: canopy

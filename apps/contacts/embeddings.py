@@ -1,5 +1,10 @@
 """Vectors for finding memory by meaning (docs/architecture/hcp-service.md § Retrieval).
 
+The provider adapter and the zero-retention gate here are shared: a workspace
+project's knowledge base embeds its passages through `embed(..., model_id=)` /
+`invoke` with the same identity and the same gate (`apps/agents/kb_vectors.py`).
+Everything else in this module is memory's.
+
 Off unless `settings.HCP_EMBEDDINGS_MODEL` names a model:
 
 * `vertex/<model>` — Google Vertex AI (e.g. `vertex/gemini-embedding-001`), reached
@@ -53,6 +58,7 @@ RETENTION_TTL = 900
 VERTEX_PREFIX = "vertex/"
 
 _clients: dict = {}
+_thread = threading.local()
 _retention: dict = {"model": None, "ok": False, "why": "not checked", "at": 0.0}
 _lock = threading.Lock()
 
@@ -128,22 +134,30 @@ class _TaskRoleCredentials:
 
 def _vertex_session():
     """An authorized HTTP session to Vertex as the configured service account, by
-    workload identity federation from the task's AWS role. No stored Google key."""
-    if "vertex" not in _clients:
-        from google.auth import aws
-        from google.auth.transport.requests import AuthorizedSession
+    workload identity federation from the task's AWS role. No stored Google key.
 
-        sa = settings.HCP_VERTEX_SERVICE_ACCOUNT
-        creds = aws.Credentials(
-            audience=settings.HCP_VERTEX_WIF_AUDIENCE,
-            subject_token_type="urn:ietf:params:aws:token-type:aws4_request",
-            aws_security_credentials_supplier=_TaskRoleCredentials(),
-            service_account_impersonation_url=(
-                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
-                f"{sa}:generateAccessToken"),
-            scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        _clients["vertex"] = AuthorizedSession(creds)
-    return _clients["vertex"]
+    One per thread: a bulk embed (`kb_vectors.sync`) calls from a pool, and a
+    `requests` session is not safe to share across threads."""
+    session = getattr(_thread, "vertex", None)
+    if session is None:
+        session = _thread.vertex = _new_vertex_session()
+    return session
+
+
+def _new_vertex_session():
+    from google.auth import aws
+    from google.auth.transport.requests import AuthorizedSession
+
+    sa = settings.HCP_VERTEX_SERVICE_ACCOUNT
+    creds = aws.Credentials(
+        audience=settings.HCP_VERTEX_WIF_AUDIENCE,
+        subject_token_type="urn:ietf:params:aws:token-type:aws4_request",
+        aws_security_credentials_supplier=_TaskRoleCredentials(),
+        service_account_impersonation_url=(
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
+            f"{sa}:generateAccessToken"),
+        scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    return AuthorizedSession(creds)
 
 
 def _vertex_base() -> str:
@@ -173,6 +187,12 @@ def _invoke(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
     return _invoke_bedrock(model_id, texts, purpose)
 
 
+def invoke(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
+    """Raw vectors, raising on any failure — for a bulk caller that retries and
+    counts its own failures. Check `retention_ok(model_id=)` before the first call."""
+    return _invoke(model_id, texts, purpose)
+
+
 # --- zero retention ---------------------------------------------------------------
 
 
@@ -191,9 +211,10 @@ def _check_retention(model_id: str) -> tuple[bool, str]:
     return False, "Bedrock model-invocation logging is on for the account; it would keep memory text"
 
 
-def retention_ok(*, force: bool = False) -> tuple[bool, str]:
-    """Is the current provider verified to keep nothing? Cached for RETENTION_TTL."""
-    model_id = model()
+def retention_ok(*, force: bool = False, model_id: str | None = None) -> tuple[bool, str]:
+    """Is the provider of `model_id` (default: memory's model) verified to keep
+    nothing? Cached for RETENTION_TTL."""
+    model_id = model() if model_id is None else model_id
     if not model_id:
         return False, "embeddings are off"
     with _lock:
@@ -210,13 +231,13 @@ def retention_ok(*, force: bool = False) -> tuple[bool, str]:
         return ok, why
 
 
-def embed(texts: list[str], *, purpose: str = "document") -> list[bytes] | None:
-    """Packed, unit-length vectors for `texts`, or None when off, unverified, or on
-    any failure."""
-    model_id = model()
+def embed(texts: list[str], *, purpose: str = "document", model_id: str | None = None) -> list[bytes] | None:
+    """Packed, unit-length vectors for `texts` from `model_id` (default: memory's
+    model), or None when off, unverified, or on any failure."""
+    model_id = model() if model_id is None else model_id
     if not model_id or not texts:
         return None
-    if not retention_ok()[0]:
+    if not retention_ok(model_id=model_id)[0]:
         return None
     try:
         vectors = _invoke(model_id, [t[:TEXT_MAX] for t in texts], purpose)
