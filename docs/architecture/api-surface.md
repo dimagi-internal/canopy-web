@@ -281,6 +281,18 @@ The runner evaluates crons with the Django-free `canopy_cron` library (`packages
 
 How the runner software is installed, updated and versioned (`expected_code_sha`), and what the cloud runner does each tick: [`runners.md`](runners.md) → "The runner software".
 
+### Local use (`apps/harness/api_local.py`) — a person's private runner and its local turns
+
+What and why: [`access.md`](access.md) → "Local use of an agent".
+
+- `POST /api/private-runners/` (`{name, host}`) — Register one of YOUR machines (201; 200 when that name exists — idempotent, and it revives a retired one). `GET /api/private-runners/` — yours. `POST /api/private-runners/{id}/retire`. Only ever the caller's own rows.
+- `POST /api/harness/local-turns/` (`{agent, private_runner, claude_session_id, cwd, turn_mode}`) — Open the local turn for a Claude Code session on your private runner: a RUNNING `origin=local` turn, never claimed or routed, with you as its initiator. 404 for a non-member or someone else's private runner; 403 when `access.decide` does not give you the whole agent. `turn_mode: auto` is honoured only for an agent admin. Idempotent per Claude session while the turn is live (200); a session whose turn ended gets a new one (201). Returns `{turn_id, turn_mode, turn_mode_basis, url, envelope}` — the envelope a runner would have received at claim.
+- `POST /api/harness/local-turns/{id}/renew` — Push its 8-hour lease out (the prompt hook calls it, throttled). Its initiator only.
+- A local turn is finished and its transcript appended through the ordinary `POST /api/harness/turns/{id}/finish` and `/transcript`, which accept a local turn's initiator — and nobody else, not even an editor.
+- `GET /api/private-runners/used?workspace=<slug>` — The private runners local turns on that workspace's agents ran on (whose, which agents, how many turns, last seen), for the runners page. Members only.
+- `GET /api/agents/{slug}/licenses` — Who uses the agent locally: every license (`active`, `requested`, `revoked`) with its basis, private runners, local turns, credential reads and last use. Any member. `POST /api/agents/{slug}/licenses/{user_id}/revoke` (`{note}`) and `…/approve` — agent admins; approve answers 409 unless the caller list gives the person the whole agent. Both are settings changes (audited).
+- `/credentials/resolve` and `/credentials/access` take a third principal, `via: "license"`: an active license plus the caller's own running local turn named in `X-Canopy-Turn-Id` (see the resolve route's own description).
+
 ### The HCP service (`apps/contacts/hcp_oauth_views.py`, `hcp_api.py`, `hcp_clients_api.py`) — OAuth for apps canopy does not operate
 
 Issuer `<origin>/api/hcp`; design, flow and judgment calls in [`hcp-service.md`](hcp-service.md). Internal only (`HCP_SERVICE_AUDIENCE`). Errors on `/v1/` are `application/problem+json` with an HCP problem type; a mismatched `HCP-Version` header is refused.
@@ -345,6 +357,7 @@ A `Session` is a durable conversation with an agent (or, agentless, with a repo 
 - `POST /api/canopy-sessions/{id}/answer-menu` — Answer a blocked agent's dialog: `option` (`null` = refuse/Escape), `selections` (one list per question for an AskUserQuestion), `texts`. Relayed to the runner; refusal is a 200 `ok:false` + `reason` (`unbound`, `unavailable`, …). Mechanics: `blocked-agent-menus.md`.
 - `POST /api/canopy-sessions/{id}/attach` · `/detach` · `/backfill` — Register / unregister a live viewer (the bound runner tails and ships view-only rows while one is attached); ask the runner for full history.
 - `POST /api/canopy-sessions/{id}/attachments` (201, multipart) · `GET /api/canopy-sessions/attachments/{id}/content` · `DELETE /api/canopy-sessions/attachments/{id}` — Composer attachments: uploaded unbound (the send binds it), type-allowlisted and size-capped (422), 503 when storage is unconfigured. Content is gated on reading the session, served inline with `nosniff` + `CSP: sandbox`; a runner fetches through the turn it holds instead (harness `…/turns/{turn_id}/attachments/{id}/content`). Delete only while unsent (409 once sent).
+- `PUT /api/canopy-sessions/{id}/title` — `{title}` (owner/editor): rename it in canopy (the emdash task keeps its name). Whitespace collapses; blank clears, so it is named again like an untitled one. A typed title is never replaced by the runner's task name or autotitle (`harness.services._title_is_derived`); publishes `session.title_updated`.
 - `PUT /api/canopy-sessions/{id}/notify` — `{every_completion}`: push on every finished turn instead of once the chat goes quiet (served as `notify_every_completion`).
 - `POST|GET /api/canopy-sessions/{id}/secrets` · `DELETE …/secrets/{name}` — Share a secret with one chat (write-only; list returns names + expiry, never values); nothing is posted into the chat. A secret lives 30 min from sharing (re-sharing restarts it).
 - `GET /api/session-secrets/key` · `GET /api/session-secrets/key/{name}` — The agent half (`canopy secret list|exec`): present the chat's key in `X-Canopy-Chat-Key` (minted when a runner claims the chat's turn and handed only to that chat's session). No route takes a chat id, so a key reaches only its own chat's secrets. Bearer only; no/wrong/expired key → 404. Each read is a `session.secret.resolved` event. The same key scopes the MCP page tools to that chat's page.

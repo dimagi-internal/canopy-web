@@ -9,7 +9,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("harness", "0086_runner_invitation_units"),
+        ("harness", "0087_local_turns_private_runner"),
         ("workspaces", "0013_system_accounts"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]

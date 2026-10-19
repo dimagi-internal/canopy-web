@@ -59,6 +59,8 @@ class Box:
         self.api_body.write_text("[]")
         self._write_stub("curl", f'echo "$@" >> "{self.curl_log}"\ncat "{self.api_body}"\n')
         self._write_stub("fake-restart", f'echo "$@" >> "{self.restart_log}"\n')
+        (tmp_path / "etc-needrestart" / "conf.d").mkdir(parents=True)
+        self.needrestart_conf = tmp_path / "etc-needrestart" / "conf.d" / "50-canopy-runner.conf"
         self.seed_repo(GOOD_RUNNER)
 
     def _write_stub(self, name: str, body: str) -> None:
@@ -125,6 +127,8 @@ class Box:
                 "CANOPY_WEB_REPO_DIR": str(self.repo),
                 "STATE_FILE": str(self.root / "state.json"),
                 "RESTART_CMD": str(self.bin / "fake-restart"),
+                "NEEDRESTART_CONF": str(self.needrestart_conf),
+                "PRIV_CMD": "",
             },
         )
 
@@ -571,7 +575,8 @@ class UnitsBox(Box):
                  "RUNNER_HOME": str(self.home), "CANOPY_WEB_REPO_DIR": str(self.repo),
                  "RESTART_CMD": str(self.bin / "fake-restart"), "UNITS_FILE": str(self.etc / "units.json"),
                  "BOX_ENV_FILE": str(self.etc / "box.env"), "UNIT_ETC": str(self.etc),
-                 "AS_UNIT": str(self.bin / "fake-as-unit")})
+                 "AS_UNIT": str(self.bin / "fake-as-unit"),
+                 "NEEDRESTART_CONF": str(self.needrestart_conf), "PRIV_CMD": ""})
 
 
 @pytest.fixture
@@ -619,3 +624,78 @@ def test_units_each_refreshes_its_credentials_as_itself(units_box):
         # …the unit's own process read it from its own file.
         assert (units_box.home_of(uid) / "refreshed-with").read_text().strip() == \
             f"crt_{uid} --credentials-only"
+
+
+# --- needrestart ------------------------------------------------------------
+# Ubuntu's unattended-upgrades runs needrestart, which restarts every service
+# using an upgraded library. It restarted canopy-runner.service 25 minutes into a
+# turn on cloud-ec2-2 (failure investigation 7) and killed it. This updater
+# refuses to restart a busy runner; needrestart does not check, so it is told to
+# skip every canopy unit. Boxes already up never re-run cloud-init, so the
+# updater is what lays the rule down — on every tick, legacy box and units alike.
+NEEDRESTART_RULE = "$nrconf{override_rc}->{qr(^canopy-)} = 0;"
+
+
+def test_every_tick_tells_needrestart_to_skip_every_canopy_unit(box):
+    sha = box.seed_repo(GOOD_RUNNER)
+    box.stamp(sha)
+    box.expect(sha)
+    box.busy(count=1)  # mid-turn is exactly when it matters
+    assert box.run().returncode == 0
+    assert NEEDRESTART_RULE in box.needrestart_conf.read_text()
+
+
+def test_a_box_of_units_gets_the_same_rule(units_box):
+    assert units_box.run().returncode == 0
+    assert NEEDRESTART_RULE in units_box.needrestart_conf.read_text()
+
+
+def test_the_rule_matches_the_runner_the_units_and_the_broker():
+    pattern = re.search(r"qr\((.*?)\)", NEEDRESTART_RULE).group(1)
+    for unit in ("canopy-runner.service", "canopy-runner@dimagi.service",
+                 "canopy-units.service", "canopy-kms-broker.service", "canopy-pair.service"):
+        assert re.search(pattern, unit), unit
+    assert not re.search(pattern, "irqbalance.service")
+
+
+def test_an_older_narrower_rule_is_replaced(box):
+    # cloud-ec2-2 got `qr(^canopy-runner)` by hand on 2026-10-16: it misses the
+    # broker, whose restart takes every unit's KMS calls down with it.
+    box.needrestart_conf.write_text("$nrconf{override_rc}->{qr(^canopy-runner)} = 0;\n")
+    box.run()
+    assert NEEDRESTART_RULE in box.needrestart_conf.read_text()
+
+
+def test_the_rule_is_written_once(box):
+    box.run()
+    box.needrestart_conf.write_text(NEEDRESTART_RULE + "\n# untouched\n")
+    box.run()
+    assert "# untouched" in box.needrestart_conf.read_text()
+
+
+def test_check_mode_writes_nothing(box):
+    box.run("--check")
+    assert not box.needrestart_conf.exists()
+
+
+def test_a_box_without_needrestart_is_left_alone(box):
+    box.needrestart_conf.parent.rmdir()
+    assert box.run().returncode == 0
+    assert not box.needrestart_conf.exists()
+
+
+def test_a_failed_write_never_fails_the_tick(box):
+    box.needrestart_conf.parent.chmod(0o500)
+    try:
+        out = box.run()
+    finally:
+        box.needrestart_conf.parent.chmod(0o755)
+    assert out.returncode == 0
+    assert "could not write" in out.stdout + out.stderr
+
+
+def test_new_boxes_get_the_same_rule_from_the_template():
+    text = (SCRIPT.parent / "runner.cfn.yaml").read_text()
+    assert "path: /etc/needrestart/conf.d/50-canopy-runner.conf" in text
+    assert NEEDRESTART_RULE in text
+    assert NEEDRESTART_RULE in SCRIPT.read_text()

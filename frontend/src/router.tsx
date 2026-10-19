@@ -43,7 +43,7 @@ import { WorkspaceNetworkPage } from './pages/health/WorkspaceNetworkPage'
 import { WorkspaceHealthPage } from './pages/health/WorkspaceHealthPage'
 import { SystemPage } from './pages/SystemPage'
 import { SessionsPage } from './pages/SessionsPage'
-import { PeopleMePage } from './pages/PeopleMePage'
+import { PeopleMePage, PersonPageView } from './pages/PeopleMePage'
 import { HcpClientsPage } from './pages/HcpClientsPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { WorkspaceProjectRedirect } from './pages/projects/WorkspaceProjects'
@@ -264,6 +264,7 @@ export const routeTable: RouteObject[] = [
       { path: '/get-started', element: <GetStartedPage /> },
       { path: '/sessions', element: <SessionsPage /> },
       { path: '/people/me', element: <PeopleMePage /> },
+      { path: '/people/:personId/page', element: <PersonPageView /> },
       { path: '/hcp-clients', element: <HcpClientsPage /> },
       { path: '/supervisor', element: <SupervisorPage /> },
       { path: '/ide', element: <LazySection><IdePage /></LazySection> },

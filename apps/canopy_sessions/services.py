@@ -1449,7 +1449,14 @@ def _inherit_participants(session: Session, created_by) -> None:
     Only from a parent the creator can read (naming a session id is not a way
     to pull its people in), only people who are members of the new session's
     workspace, and never as owner — the dispatcher owns what it started; a
-    parent viewer stays a viewer."""
+    parent viewer stays a viewer.
+
+    The person who asked joins too, even when the parent has no participant
+    rows: a session started in emdash is runner-discovered, so its person
+    reads it through the tenant leg and typing into it never writes a row
+    (#926). The asker is the parent TURN's initiator — only a turn in that
+    same parent, so naming some other turn is not a way in either
+    (2026-10-19: ACE's handover of a run from emdash task `fi` reached no one)."""
     from apps.workspaces import services as wsvc
 
     from . import access
@@ -1464,6 +1471,10 @@ def _inherit_participants(session: Session, created_by) -> None:
             continue
         role = SessionParticipant.VIEWER if p.role == SessionParticipant.VIEWER else SessionParticipant.EDITOR
         ensure_participant(session, p.user, role)
+    turn = session.parent_turn
+    asker = turn.initiator_user if turn is not None and turn.chat_session_id == parent.pk else None
+    if asker is not None and asker != created_by and wsvc.is_member(asker, session.workspace_id):
+        ensure_participant(session, asker, SessionParticipant.EDITOR)
 
 
 # Marks a session whose DURABLE record is its Claude transcript, keyed on each

@@ -463,11 +463,16 @@ class Turn(models.Model):
     # a real producer got named.
     ORIGIN_API, ORIGIN_ACE_WEB, ORIGIN_CANOPY_WEB_CHAT = "api", "ace_web", "canopy_web_chat"
     ORIGIN_CANOPY_SCHEDULER, ORIGIN_EMAIL, ORIGIN_SLACK = "canopy_scheduler", "email", "slack"
+    # A person's own Claude Code session on their private runner (`apps/harness/local.py`).
+    # Opened by the session itself, never claimed, never routed — so it is neither
+    # postable nor routable, and it does not serialize the agent (the constraint below).
+    ORIGIN_LOCAL = "local"
     ORIGIN_CHOICES = [
         (ORIGIN_API, "API"), (ORIGIN_ACE_WEB, "ace-web"),
         (ORIGIN_CANOPY_WEB_CHAT, "canopy-web chat"),
         (ORIGIN_CANOPY_SCHEDULER, "canopy scheduler"),
         (ORIGIN_EMAIL, "Email"), (ORIGIN_SLACK, "Slack"),
+        (ORIGIN_LOCAL, "Local"),
     ]
     # What an external caller may POST. The rest are set by exactly one in-repo
     # producer each, and letting a caller spell them would let it borrow another
@@ -566,6 +571,12 @@ class Turn(models.Model):
     pinned_runner = models.ForeignKey(
         Runner, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="pinned_turns",
+    )
+    # Where a LOCAL turn ran: the person's own machine (`PrivateRunner`), never a
+    # runner. Null for every other origin.
+    private_runner = models.ForeignKey(
+        "PrivateRunner", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="turns",
     )
     claimed_at = models.DateTimeField(null=True, blank=True)
     lease_expires_at = models.DateTimeField(null=True, blank=True)
@@ -758,9 +769,15 @@ class Turn(models.Model):
             # Project turns have agent=NULL and NULLs never compare equal, so they
             # do not participate here at all. That is load-bearing, not incidental,
             # so it has its own test.
+            #
+            # A LOCAL turn is excluded: it is a person's own session on their own
+            # machine, not the agent's one continuous session, so it neither waits
+            # behind the agent's runner turns nor holds them up — and two people
+            # may use the agent locally at once (`routing.busy_agent_ids` agrees).
             models.UniqueConstraint(
                 fields=["agent"],
-                condition=models.Q(status__in=["claimed", "running", "needs_human"]),
+                condition=(models.Q(status__in=["claimed", "running", "needs_human"])
+                           & ~models.Q(origin="local")),
                 name="one_executing_turn_per_agent",
             ),
             # A session serializes its own execution — one running turn per
@@ -1915,3 +1932,36 @@ class RunnerPairing(models.Model):
         if timezone.now() >= self.expires_at:
             return self.EXPIRED
         return self.APPROVED if self.approved_at is not None else self.PENDING
+
+class PrivateRunner(models.Model):
+    """A PERSON's own machine: plain Claude Code with the canopy plugin, no runner app.
+
+    It never claims a turn and nothing routes to it. It exists so a session a person
+    opens there with an agent is a real, recorded turn (`Turn.ORIGIN_LOCAL`,
+    `apps/harness/local.py`): who ran it, on which machine, under which license.
+    It belongs to the person, not to an agent or a workspace — one private runner serves
+    every agent they use. Deliberately not a `Runner` row: routing, reach, readiness
+    and the offline admission rules all iterate runners, and a machine that never
+    claims would have to be taught to each of them. canopy-web#1704.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                              related_name="private_runners")
+    #: What the person calls it (`canopy private-runner register --name`), e.g. aath-mbp.
+    name = models.CharField(max_length=100)
+    #: The hostname it registered from — a hint for the person, never an identity.
+    host = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    #: Last time a local turn opened or renewed from it.
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    retired_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["owner", "name"], name="one_private_runner_name_per_owner"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"private_runner:{self.name}"

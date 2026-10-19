@@ -9,7 +9,7 @@ import {
   type PendingAttachment,
   type PlacementRunner,
 } from 'canopy-ui/chat'
-import { Markdown } from '@/components/Markdown'
+import { renderChatMarkdown } from '@/components/chat/renderChatMarkdown'
 import { wsUrl } from '@/lib/wsUrl'
 import {
   getSession,
@@ -22,6 +22,7 @@ import {
   detachSessionFromSlack,
   sendMessage,
   setSessionNotify,
+  setSessionTitle,
   moveSession,
   placeTurn,
   answerMenu,
@@ -42,7 +43,8 @@ import {
 } from '@/components/chat/closeAction'
 import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
 import { MessageContextMenu, canFork, turnIndexAt } from '@/components/chat/MessageContextMenu'
-import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
+import { useSessionMemory } from '@/components/chat/SessionMemoryToggles'
+import { TitleInput } from '@/components/chat/TitleInput'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import { getAgent } from '@/api/agents'
@@ -65,14 +67,6 @@ import {
   shouldShowLoadFull,
 } from './chatPageLogic'
 
-/** Render assistant/system message text through canopy's shared Markdown (the
- *  same renderer used across every AI-output surface — so it picks up remark-gfm
- *  AND remark-breaks, i.e. single newlines become line breaks instead of
- *  collapsing). Injected into the kit via its `renderMarkdown` seam so the kit
- *  itself stays free of react-markdown. */
-function renderMarkdown(text: string) {
-  return <Markdown className="text-sm leading-relaxed">{text}</Markdown>
-}
 
 /**
  * "Load full session" WAITS for the rows, it does not guess at them.
@@ -106,11 +100,24 @@ export function ChatPage({
   onLeave,
   compact = false,
   sessionPath,
-}: { onLeave?: () => void; compact?: boolean; sessionPath?: (s: ChatSession) => string } = {}) {
+  editTitle = false,
+  onTitleChange,
+}: {
+  onLeave?: () => void
+  compact?: boolean
+  sessionPath?: (s: ChatSession) => string
+  /** Open with the title already being renamed — /ide's just-created session. */
+  editTitle?: boolean
+  /** A rename landed, from here or anywhere else (the socket says so). */
+  onTitleChange?: () => void
+} = {}) {
   const { id = '' } = useParams()
   const appHost = useMemo(() => appHostFor(id), [id])
   const navigate = useNavigate()
   const [meta, setMeta] = useState<ChatSessionDetail | null>(null)
+  const [renaming, setRenaming] = useState(editTitle)
+  const onTitleChangeRef = useRef(onTitleChange)
+  onTitleChangeRef.current = onTitleChange
   const [metaError, setMetaError] = useState<string | null>(null)
   // Scroll-back cursor, seeded from the REST detail (the WS `session.state`
   // snapshot doesn't carry it — it's frozen to the tail page it was built from).
@@ -178,6 +185,8 @@ export function ChatPage({
   }, [])
   const [placeInfo, setPlaceInfo] = useState<string | null>(null)
   const [placeError, setPlaceError] = useState<string | null>(null)
+  // Your memory in this session lives in the ⋯ menu; null hides it.
+  const memory = useSessionMemory(id)
 
   // AG-UI on the wire, canopy frames in memory: `fromAgui` turns the protocol
   // back into the same `WsEvent`s the reducer has always consumed, and
@@ -192,6 +201,14 @@ export function ChatPage({
       (text: string, clientId: string) => sendMessage(id, text, clientId),
       [id],
     ),
+    // A rename made elsewhere (the /ide list, another tab, autotitle): `meta` is
+    // fetched once, so re-read just the title.
+    onTitleUpdated: useCallback(() => {
+      getSession(id)
+        .then((m) => setMeta((prev) => (prev ? { ...prev, title: m.title } : prev)))
+        .catch(() => {})
+      onTitleChangeRef.current?.()
+    }, [id]),
   })
 
   // Session meta + scroll-back cursor seed.
@@ -404,6 +421,14 @@ export function ChatPage({
   // an owner/editor has a composer for it to describe; a viewer does not.
   const canEditTypingVisibility = meta?.my_role === 'owner' || meta?.my_role === 'editor'
   const canDetachSlack = canEditTypingVisibility
+  const canRename = canEditTypingVisibility
+  const renameTo = async (next: string) => {
+    if (!id) return
+    const s = await setSessionTitle(id, next)
+    setMeta((prev) => (prev ? { ...prev, title: s.title } : prev))
+    setRenaming(false)
+    onTitleChange?.()
+  }
   // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
   // (already online + session-capable) options above.
   const placementRunners: PlacementRunner[] = useMemo(
@@ -861,9 +886,30 @@ export function ChatPage({
         )}
       >
         <div className={clsx('min-w-0', compact && 'flex items-baseline gap-1.5')}>
-          <h1 className={clsx('truncate font-semibold text-foreground', compact ? 'text-[13px]' : 'text-sm')}>
-            {title}
-          </h1>
+          {renaming && meta && canRename ? (
+            <TitleInput
+              initial={meta.title ?? ''}
+              onSave={renameTo}
+              onCancel={() => setRenaming(false)}
+              className={clsx('w-64 font-semibold', compact ? 'text-[13px]' : 'text-sm')}
+            />
+          ) : canRename ? (
+            <h1 className={clsx('truncate font-semibold text-foreground', compact ? 'text-[13px]' : 'text-sm')}>
+              <button
+                type="button"
+                onClick={() => setRenaming(true)}
+                title="Rename this session"
+                data-testid="session-title"
+                className="max-w-full truncate rounded px-0.5 text-left hover:bg-muted"
+              >
+                {title}
+              </button>
+            </h1>
+          ) : (
+            <h1 className={clsx('truncate font-semibold text-foreground', compact ? 'text-[13px]' : 'text-sm')}>
+              {title}
+            </h1>
+          )}
           {targetLabel && (
             <p className="truncate text-[11px] text-muted-foreground">
               {compact && '· '}
@@ -908,7 +954,6 @@ export function ChatPage({
           {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
           {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
           {slackNote && <span className="text-[12px] text-muted-foreground">{slackNote}</span>}
-          {id && <SessionMemoryToggles sessionId={id} />}
           {id && (
             <ChatSessionMenu
               sessionId={id}
@@ -950,6 +995,7 @@ export function ChatPage({
               workspace={meta?.workspace}
               moveTargets={canMove ? moveTargets : undefined}
               onMove={canMove ? moveToWorkspace : undefined}
+              memory={memory}
             />
           )}
         </div>
@@ -986,7 +1032,7 @@ export function ChatPage({
           onDiscard={socket.discardDraft}
           // "Others see" moved into the ⋯ menu (ChatSessionMenu, above) — not
           // passed here, so the composer control disappears.
-          renderMarkdown={renderMarkdown}
+          renderMarkdown={renderChatMarkdown}
           // Keep a half-typed message across a route change or a closed tab.
           // Nothing else holds it: alone in a session the body is never
           // mirrored to the server until the moment you send.

@@ -1,8 +1,20 @@
 name: CI
 
-# Runs backend tests + frontend build on every PR and push to main.
-# Deploys are a separate, manual workflow: .github/workflows/deploy-labs.yml
-# (GitHub → AWS labs / ECS Fargate).
+# Runs backend tests + frontend build ONCE per change: in the merge queue (and
+# on push to main). Deploys are a separate, manual workflow:
+# .github/workflows/deploy-labs.yml (GitHub → AWS labs / ECS Fargate).
+#
+# Why not on the PR too (Jonathan, 2026-10-19). The ruleset requires
+# `Backend tests` and `Frontend build` green on the PR before it may ENTER the
+# queue, and the queue then runs them again on the PR merged onto the queue
+# head. That second run is the one that matters — it tests what will actually
+# land on main — so a full PR run only doubled every merge's wait (~6 min PR +
+# ~6 min queue) to re-prove what the queue proves anyway. On a PR the two
+# required names are now GATES that pass on the PR-only guards (`PR guards`:
+# version bumps measured against the PR base, which the queue cannot see);
+# the real suites run in `merge_group`. A failure there ejects the PR from the
+# queue with the same logs a PR run would have shown. `Secret scan` still runs
+# on the PR, where it is useful before a secret spreads.
 
 on:
   push:
@@ -41,9 +53,23 @@ jobs:
   # someone rebased it. Keeping the required name on a gate changes nothing
   # for anyone, and any future backend job joins `needs:` below rather than
   # the ruleset.
+  #
+  # `Backend pytest` is a matrix of 2 shards (conftest.py's PYTEST_SHARD
+  # hook: whole files, balanced by test count, union = the whole suite), run
+  # with `--nomigrations`. Of the ~5 min one runner used to take, ~2.5 was each
+  # xdist worker replaying 400+ migrations to build its test DB; building the
+  # tables from the models takes seconds. Migrations are still applied in full
+  # by `Backend pytest (PostgreSQL)` (on the production engine) and by
+  # `Backend pytest (migrations)`, and `makemigrations --check` runs on shard 1
+  # with the other fast static gates — once is enough.
   test-backend:
-    name: Backend pytest
+    name: Backend pytest (${{ matrix.shard }}/2)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
 
@@ -66,17 +92,20 @@ jobs:
       # isn't style-clean yet, and this gate is about correctness, not formatting.
       # F403/F405 are ignored: the settings modules use `from base import *` by design.
       - name: Lint (ruff — pyflakes only)
+        if: matrix.shard == 1
         run: uv run ruff check . --select F --ignore F403,F405
 
       # A model change without its migration is a class of bug this fast-moving repo
       # hits often; catch it before it reaches a deploy. Test settings = SQLite, no
       # DB server needed.
       - name: Check migrations are in sync
+        if: matrix.shard == 1
         run: uv run python manage.py makemigrations --check --dry-run
         env:
           DJANGO_SETTINGS_MODULE: config.settings.test
 
       - name: Django system checks
+        if: matrix.shard == 1
         run: uv run python manage.py check
         env:
           DJANGO_SETTINGS_MODULE: config.settings.test
@@ -109,10 +138,12 @@ jobs:
       # job: the uv env above is reused, and only the codegen package is
       # fetched.
       - uses: actions/setup-node@v7
+        if: matrix.shard == 1
         with:
           node-version: "20"
 
       - name: Check generated frontend types are in sync
+        if: matrix.shard == 1
         env:
           DJANGO_SETTINGS_MODULE: config.settings.test
         run: |
@@ -144,7 +175,9 @@ jobs:
         # -n auto: one worker per core (pytest-xdist). Each worker builds its own
         # in-memory test DB, so the suite is isolated per worker; serially it was
         # ~160s here, nearly all of it single-threaded.
-        run: uv run pytest -n auto
+        env:
+          PYTEST_SHARD: ${{ matrix.shard }}/2
+        run: uv run pytest -n auto --nomigrations -m "not needs_migrations"
 
   # The standalone in-repo packages. None of them touches Django or a
   # database: each runs from its own dir against its own declared deps.
@@ -155,14 +188,10 @@ jobs:
   # setup eight times over and hold eight runners per PR.
   test-runner-packages:
     name: Runner packages
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          # The dimagi-canopy version-bump guard below diffs a PR's merge
-          # commit against its first parent (the base it was merged onto),
-          # which needs exactly one commit of history.
-          fetch-depth: 2
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -274,35 +303,6 @@ jobs:
         working-directory: sdk/python
         run: uv run --extra test pytest -q
 
-      # A released SDK whose source moved without its version moving is the
-      # same silent failure as the npm guard in `Frontend build`: the
-      # `dimagi-canopy-v<version>` tag a host pins would name code that is no
-      # longer what that version means. Bumping the version IS the release
-      # (release-dimagi-canopy.yml). Diffed against the merge commit's first
-      # parent — the base this PR was merged onto — hence `fetch-depth: 2`.
-      - name: dimagi-canopy needs a version bump when its source changes
-        if: github.event_name == 'pull_request'
-        run: |
-          if git diff --quiet HEAD^1 HEAD -- sdk/python/src; then
-            echo "dimagi-canopy: src unchanged, no bump needed."
-            exit 0
-          fi
-          version() {
-            python3 -c "import sys, tomllib; print(tomllib.loads(sys.stdin.read())['project']['version'])"
-          }
-          after=$(version < sdk/python/pyproject.toml)
-          if ! before=$(git show HEAD^1:sdk/python/pyproject.toml 2>/dev/null | version); then
-            echo "dimagi-canopy: new package at $after."
-            exit 0
-          fi
-          if [ "$before" = "$after" ]; then
-            echo "::error file=sdk/python/pyproject.toml::sdk/python/src changed but the version is still $after."
-            echo "  The dimagi-canopy-v$after tag hosts pin would no longer describe this code."
-            echo "  Bump the version (and canopy_sdk.__version__, and CHANGELOG.md); merging it"
-            echo "  releases it (release-dimagi-canopy.yml runs on a version change to main)."
-            exit 1
-          fi
-          echo "dimagi-canopy: src changed and the version moved $before -> $after."
   # What SQLite cannot test: pgvector (KB search by meaning — the HNSW index, the
   # filtered nearest-neighbour query, hybrid search through the MCP tool). The
   # suite skips itself on SQLite, so `Backend pytest` alone would wave a broken
@@ -310,6 +310,7 @@ jobs:
   # on Postgres is minutes longer and adds nothing SQLite does not already cover).
   test-backend-postgres:
     name: Backend pytest (PostgreSQL)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -339,9 +340,126 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/canopy_web
         run: uv run pytest --ds=config.settings.pgtest tests/test_kb_vectors_pg.py tests/test_kb_vectors.py -q
 
+  # The checks that only make sense on a PR, because they compare against the
+  # PR's BASE — which a merge-group run does not have. On a PR these are the
+  # whole of what the two required gates wait for.
+  pr-guards:
+    name: PR guards
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The npm guard diffs against the PR base; the SDK guard against the
+          # merge commit's first parent.
+          fetch-depth: 0
+
+      # A released SDK whose source moved without its version moving is the
+      # same silent failure as the npm guard in `Frontend build`: the
+      # `dimagi-canopy-v<version>` tag a host pins would name code that is no
+      # longer what that version means. Bumping the version IS the release
+      # (release-dimagi-canopy.yml). Diffed against the merge commit's first
+      # parent — the base this PR was merged onto — hence `fetch-depth: 2`.
+      - name: dimagi-canopy needs a version bump when its source changes
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --quiet HEAD^1 HEAD -- sdk/python/src; then
+            echo "dimagi-canopy: src unchanged, no bump needed."
+            exit 0
+          fi
+          version() {
+            python3 -c "import sys, tomllib; print(tomllib.loads(sys.stdin.read())['project']['version'])"
+          }
+          after=$(version < sdk/python/pyproject.toml)
+          if ! before=$(git show HEAD^1:sdk/python/pyproject.toml 2>/dev/null | version); then
+            echo "dimagi-canopy: new package at $after."
+            exit 0
+          fi
+          if [ "$before" = "$after" ]; then
+            echo "::error file=sdk/python/pyproject.toml::sdk/python/src changed but the version is still $after."
+            echo "  The dimagi-canopy-v$after tag hosts pin would no longer describe this code."
+            echo "  Bump the version (and canopy_sdk.__version__, and CHANGELOG.md); merging it"
+            echo "  releases it (release-dimagi-canopy.yml runs on a version change to main)."
+            exit 1
+          fi
+          echo "dimagi-canopy: src changed and the version moved $before -> $after."
+
+      # A published package whose source moved without its version moving is a
+      # SILENT failure, the same class as the stale generated.ts guard above:
+      # everything here goes green, the `<pkg>-v*` tag never gets pushed, and
+      # the registry keeps serving old code under a version number that no
+      # longer describes it.
+      #
+      # Not hypothetical. On 2026-09-16 the registry's canopy-ui@0.7.0 was
+      # missing `agui.ts` and `useSessionSocket`'s `onUnknownEvent` seam, both
+      # in-repo at 0.7.0 for weeks. ace-web pinned "0.7.0", believed itself
+      # current, and could not receive a `page.invalidate` frame — with nothing
+      # anywhere to say why.
+      #
+      # Covers every publishable workspace rather than canopy-ui alone: the
+      # trap is a property of "published to npm", not of that one package, and
+      # a guard naming one package has to be remembered for the next.
+      # `canopy-widget` is deliberately absent — it is BUILT and served at
+      # /canopy/embed/widget.js, never installed, so it has no registry copy to
+      # go stale.
+      #
+      # `fetch-depth: 0` above is what lets this diff against the base.
+      - name: Published packages need a version bump when their source changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          failed=0
+          for pkg in canopy-ui canopy-client; do
+            dir="frontend/packages/$pkg"
+            if git diff --quiet "$BASE_SHA"...HEAD -- "$dir/src"; then
+              echo "$pkg: src unchanged, no bump needed."
+              continue
+            fi
+            before=$(git show "$BASE_SHA:$dir/package.json" \
+              | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+            after=$(node -p "require('./$dir/package.json').version")
+            if [ "$before" = "$after" ]; then
+              echo "::error file=$dir/package.json::$pkg/src changed but the version is still $after."
+              echo "  npm would keep serving the OLD $after, and every consumer pinned to it"
+              echo "  silently misses this change. Bump the version here; merging it"
+              echo "  publishes it (publish-$pkg.yml runs on a version change to main)."
+              failed=1
+            else
+              echo "$pkg: src changed and the version moved $before -> $after."
+            fi
+          done
+          exit $failed
+
+  # The tests that walk the real migration graph (marked needs_migrations),
+  # which the `--nomigrations` suite above cannot run. One process: the DB is
+  # built once, with every migration, which also proves they apply on SQLite.
+  test-backend-migrations:
+    name: Backend pytest (migrations)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Run the migration tests
+        run: uv run pytest -m needs_migrations
+
   test-backend-gate:
     name: Backend tests
-    needs: [test-backend, test-runner-packages, test-backend-postgres]
+    needs: [test-backend, test-backend-migrations, test-runner-packages, test-backend-postgres, pr-guards]
     # always(): without it a failed `needs` SKIPS this job, and a skipped
     # required check counts as passing — the gate would wave failures through.
     if: always()
@@ -351,15 +469,57 @@ jobs:
       - name: Every backend job passed
         env:
           RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
         run: |
           echo "$RESULTS" | python3 -c '
-          import json, sys
+          import json, os, sys
           needs = json.load(sys.stdin)
-          bad = {job: n["result"] for job, n in needs.items() if n["result"] != "success"}
+          # On a PR only pr-guards runs (the suites run in the merge queue —
+          # see the top of this file); everywhere else everything but it runs.
+          # A job that was expected must have SUCCEEDED: skipped is not passed.
+          on_pr = os.environ["EVENT"] == "pull_request"
+          bad = {}
           for job, n in needs.items():
-              print(f"{job}: {n["result"]}")
+              result = n["result"]
+              print(f"{job}: {result}")
+              expected = (job == "pr-guards") == on_pr
+              if result != "success" and (expected or result != "skipped"):
+                  bad[job] = result
           if bad:
-              print(f"::error::backend job(s) did not pass: {bad}")
+              print(f"::error::job(s) did not pass: {bad}")
+              sys.exit(1)
+          '
+
+  # `Frontend build` is the name the ruleset requires; like `Backend tests` it
+  # is a gate, so the suite itself can skip on a PR.
+  test-frontend-gate:
+    name: Frontend build
+    needs: [test-frontend, pr-guards]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every frontend job passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          echo "$RESULTS" | python3 -c '
+          import json, os, sys
+          needs = json.load(sys.stdin)
+          # On a PR only pr-guards runs (the suites run in the merge queue —
+          # see the top of this file); everywhere else everything but it runs.
+          # A job that was expected must have SUCCEEDED: skipped is not passed.
+          on_pr = os.environ["EVENT"] == "pull_request"
+          bad = {}
+          for job, n in needs.items():
+              result = n["result"]
+              print(f"{job}: {result}")
+              expected = (job == "pr-guards") == on_pr
+              if result != "success" and (expected or result != "skipped"):
+                  bad[job] = result
+          if bad:
+              print(f"::error::job(s) did not pass: {bad}")
               sys.exit(1)
           '
 
@@ -410,13 +570,11 @@ jobs:
             --log-opts="--no-merges ${BASE_SHA}..${HEAD_SHA}"
 
   test-frontend:
-    name: Frontend build
+    name: Frontend tests
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          # The canopy-ui version-bump guard below diffs against the PR base.
-          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
@@ -449,50 +607,3 @@ jobs:
       - name: Build the public site
         working-directory: site
         run: npm ci && npm run build
-
-      # A published package whose source moved without its version moving is a
-      # SILENT failure, the same class as the stale generated.ts guard above:
-      # everything here goes green, the `<pkg>-v*` tag never gets pushed, and
-      # the registry keeps serving old code under a version number that no
-      # longer describes it.
-      #
-      # Not hypothetical. On 2026-09-16 the registry's canopy-ui@0.7.0 was
-      # missing `agui.ts` and `useSessionSocket`'s `onUnknownEvent` seam, both
-      # in-repo at 0.7.0 for weeks. ace-web pinned "0.7.0", believed itself
-      # current, and could not receive a `page.invalidate` frame — with nothing
-      # anywhere to say why.
-      #
-      # Covers every publishable workspace rather than canopy-ui alone: the
-      # trap is a property of "published to npm", not of that one package, and
-      # a guard naming one package has to be remembered for the next.
-      # `canopy-widget` is deliberately absent — it is BUILT and served at
-      # /canopy/embed/widget.js, never installed, so it has no registry copy to
-      # go stale.
-      #
-      # `fetch-depth: 0` above is what lets this diff against the base.
-      - name: Published packages need a version bump when their source changes
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          failed=0
-          for pkg in canopy-ui canopy-client; do
-            dir="frontend/packages/$pkg"
-            if git diff --quiet "$BASE_SHA"...HEAD -- "$dir/src"; then
-              echo "$pkg: src unchanged, no bump needed."
-              continue
-            fi
-            before=$(git show "$BASE_SHA:$dir/package.json" \
-              | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
-            after=$(node -p "require('./$dir/package.json').version")
-            if [ "$before" = "$after" ]; then
-              echo "::error file=$dir/package.json::$pkg/src changed but the version is still $after."
-              echo "  npm would keep serving the OLD $after, and every consumer pinned to it"
-              echo "  silently misses this change. Bump the version here; merging it"
-              echo "  publishes it (publish-$pkg.yml runs on a version change to main)."
-              failed=1
-            else
-              echo "$pkg: src changed and the version moved $before -> $after."
-            fi
-          done
-          exit $failed

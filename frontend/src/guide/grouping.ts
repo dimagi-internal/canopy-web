@@ -97,6 +97,12 @@ const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
     match: (p) => p === '/hcp-clients',
   },
   {
+    // A person's memory page as they let one agent see it. In no menu: the agent
+    // opens it from the href /api/people/pages/shared-with-me/ hands it.
+    label: 'A memory page shared with an agent',
+    match: (p) => p === '/people/:personId/page',
+  },
+  {
     // The link up.sh prints (and emails) for a new cloud box, and the page
     // Canopy Runner opens after install. In no menu: only the person pairing
     // that box opens it.

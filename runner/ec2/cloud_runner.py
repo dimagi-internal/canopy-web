@@ -726,13 +726,289 @@ def _disk_check() -> None:
     detail = (f"{DISK_PATH} {pct:.0f}% used ({du.used / gib:.1f} of {du.total / gib:.1f} GiB, "
               f"{du.free / gib:.1f} GiB free)")
     if pct >= DISK_FAIL_PCT:
-        _set_check("disk", "fail", detail + ": turns will start failing on writes. "
-                   "Refresh this runner (bootstrap prunes the plugin/npm/uv caches) "
-                   "or grow the volume (VolumeSize)")
+        _set_check("disk", "fail", detail + ": turns will start failing on writes. The runner "
+                   "clears old scratch and caches on its own when idle; if this stays, what "
+                   "fills it is not scratch (see the `scratch` check) — grow the volume (VolumeSize)")
     elif pct >= DISK_WARN_PCT:
-        _set_check("disk", "warn", detail + ": refresh this runner to prune caches")
+        _set_check("disk", "warn", detail + ": the runner clears old scratch and caches "
+                   "at its next idle moment")
     else:
         _set_check("disk", "ok", detail)
+
+
+def _disk_pct() -> float:
+    try:
+        du = shutil.disk_usage(DISK_PATH)
+    except OSError:
+        return 0.0
+    return 100.0 * du.used / du.total if du.total else 0.0
+
+
+# ── disk hygiene: the scratch turns leave behind ────────────────────────────────
+# cloud-ec2-2's root reached 100% on 2026-10-19 (1Password could not write its
+# session file under /tmp; a turn crashed). Bootstrap's cache prune was not the
+# answer: agents' own scratch clones in /tmp (~3.4 GB, weeks old) and chat-session
+# worktrees under WORK_DIR/sessions were, and nothing ever removed either. So the
+# runner sweeps them itself, when idle (maybe_sweep_disk) — and keeps, and names,
+# anything holding git work that exists nowhere else.
+
+#: Where turns' ad-hoc scratch lands: agents write `/tmp/<name>` and `mktemp -d`.
+SCRATCH_ROOT = os.environ.get("SCRATCH_ROOT", tempfile.gettempdir())
+#: Untouched this long (newest mtime anywhere inside) and it is abandoned.
+SCRATCH_MAX_AGE_SECONDS = float(os.environ.get("SCRATCH_MAX_AGE_HOURS", "72")) * 3600
+#: A chat's worktree is re-made on its next turn, so this only bounds how long an
+#: idle conversation keeps a checkout; its transcript (the conversation) is kept.
+SESSION_DIR_MAX_AGE_SECONDS = float(os.environ.get("SESSION_DIR_MAX_AGE_HOURS", "168")) * 3600
+SWEEP_INTERVAL_SECONDS = 6 * 3600
+#: How soon after the last sweep a disk at warn sweeps again (and prunes caches).
+SWEEP_PRESSURE_SECONDS = 1800
+#: A sweep renames before it deletes; a crash in between leaves one of these.
+_TOMBSTONE = ".canopy-reaped-"
+#: Never scratch: hidden entries (.X11-unix, ...) and systemd's / snap's own.
+_SCRATCH_SKIP_PREFIXES = (".", "systemd-private-", "snap-private-tmp")
+#: Depth a scratch dir is searched for git repos (/tmp/x, /tmp/x/repo, /tmp/x/a/repo).
+_GIT_SEARCH_DEPTH = 2
+
+_SWEEP_STATE = {"at": 0.0, "thread": None}
+
+
+def _touched_since(path: pathlib.Path, cutoff: float) -> bool:
+    """Is the newest mtime anywhere under `path` at or after `cutoff`? A dir's own
+    mtime moves only when an entry is added or removed, so the whole tree is
+    asked; the walk stops at the first fresh entry."""
+    try:
+        if os.lstat(path).st_mtime >= cutoff:
+            return True
+    except OSError:
+        return True  # cannot tell: treat as in use
+    if not path.is_dir() or path.is_symlink():
+        return False
+    for root, dirs, files in os.walk(path, onerror=lambda e: None):
+        for name in dirs + files:
+            try:
+                if os.lstat(os.path.join(root, name)).st_mtime >= cutoff:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _git_repos_under(path: pathlib.Path, depth: int = _GIT_SEARCH_DEPTH) -> list[pathlib.Path]:
+    """`path` and every git repo or worktree at most `depth` levels below it."""
+    found: list[pathlib.Path] = []
+    level = [path]
+    for d in range(depth + 1):
+        nxt = []
+        for p in level:
+            if (p / ".git").exists():
+                found.append(p)
+                continue  # a repo's own subdirectories are its contents
+            if d < depth:
+                try:
+                    nxt.extend(c for c in p.iterdir() if c.is_dir() and not c.is_symlink()
+                               and c.name != "node_modules")
+                except OSError:
+                    continue
+        level = nxt
+    return found
+
+
+def _unsaved_git_work(path: pathlib.Path) -> str:
+    """Why `path` holds git work that exists nowhere else, or "". Fails CLOSED: a
+    repo git cannot read is unsaved. A worktree is judged by its own HEAD — it
+    shares refs with its clone, whose other branches are not its work."""
+    if not path.is_dir() or path.is_symlink():
+        return ""
+    for repo in _git_repos_under(path):
+        status = _git_out("-C", str(repo), "status", "--porcelain")
+        if status is None:
+            return f"{repo}: git cannot read it"
+        if status.strip():
+            return f"{repo}: uncommitted changes"
+        refs = ["HEAD"] if (repo / ".git").is_file() else ["HEAD", "--branches"]
+        sha = _git_out("-C", str(repo), "rev-list", "-n1", *refs, "--not", "--remotes")
+        if sha is None:
+            return f"{repo}: git cannot read it"
+        if sha.strip():
+            subject = (_git_out("-C", str(repo), "log", "-1", "--format=%s", sha.strip()) or "").strip()
+            return f"{repo}: commits on no remote ({subject[:120]})"
+    return ""
+
+
+def _entry_bytes(path: pathlib.Path) -> int:
+    try:
+        if path.is_symlink() or not path.is_dir():
+            return os.lstat(path).st_size
+    except OSError:
+        return 0
+    total = 0
+    for root, _dirs, files in os.walk(path, onerror=lambda e: None):
+        for f in files:
+            with contextlib.suppress(OSError):
+                total += os.lstat(os.path.join(root, f)).st_size
+    return total
+
+
+def _reap(path: pathlib.Path) -> bool:
+    """Rename, then delete: a turn that looks for this path now finds it gone (and
+    a session worktree is re-made) rather than half-deleted."""
+    tomb = path.with_name(f"{_TOMBSTONE}{path.name}-{int(time.time())}")
+    try:
+        os.rename(path, tomb)
+    except OSError as exc:
+        _log(f"disk sweep: could not move {path} aside ({exc}); left it")
+        return False
+    _remove_tree(tomb)
+    return True
+
+
+def _remove_tree(path: pathlib.Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        with contextlib.suppress(OSError):
+            path.unlink()
+
+
+def _protected_paths() -> set[pathlib.Path]:
+    """What a scratch sweep must never remove, even when it sits in SCRATCH_ROOT:
+    the runner's own work dir and clones (and anything containing them)."""
+    out = set()
+    for p in (WORK_DIR, AGENT_ROOT, RUNNER_SRC_DIR, str(pathlib.Path.home())):
+        with contextlib.suppress(OSError, ValueError):
+            out.add(pathlib.Path(p).resolve())
+    return out
+
+
+def _scratch_candidates(now: float) -> list[tuple[pathlib.Path, float]]:
+    """(path, max age) for everything a sweep may consider."""
+    out: list[tuple[pathlib.Path, float]] = []
+    root = pathlib.Path(SCRATCH_ROOT)
+    protected = _protected_paths()
+    uid = os.getuid()
+    with contextlib.suppress(OSError):
+        for entry in sorted(root.iterdir()):
+            if entry.name.startswith(_SCRATCH_SKIP_PREFIXES):
+                continue
+            try:
+                st = os.lstat(entry)
+                resolved = entry.resolve()
+            except OSError:
+                continue
+            if st.st_uid != uid or not (entry.is_dir() or entry.is_file()):
+                continue  # another user's, or a socket / fifo
+            if any(resolved == p or p.is_relative_to(resolved) for p in protected):
+                continue
+            out.append((entry, SCRATCH_MAX_AGE_SECONDS))
+    sessions = pathlib.Path(WORK_DIR) / "sessions"
+    with contextlib.suppress(OSError):
+        for entry in sorted(sessions.iterdir()):
+            if entry.is_dir() and not entry.is_symlink() and not entry.name.startswith("."):
+                out.append((entry, SESSION_DIR_MAX_AGE_SECONDS))
+    return out
+
+
+def _session_transcript_fresh(path: pathlib.Path, cutoff: float) -> bool:
+    """A chat's worktree can sit unchanged while the conversation goes on; its
+    transcript, keyed by this path, moves every turn."""
+    tdir = CLAUDE_PROJECTS_HOME / _encode_project_dir(path)
+    try:
+        return any(f.stat().st_mtime >= cutoff for f in tdir.iterdir())
+    except OSError:
+        return False
+
+
+def sweep_scratch(*, now: float | None = None) -> dict:
+    """One pass: remove abandoned scratch and idle chat worktrees; keep — and report
+    in the `scratch` check — any holding git work that exists nowhere else. Stops
+    the moment a turn is running. Never raises."""
+    now = time.time() if now is None else now
+    freed, removed, kept = 0, [], []
+    sessions = pathlib.Path(WORK_DIR) / "sessions"
+    try:
+        for root in (pathlib.Path(SCRATCH_ROOT), sessions):
+            with contextlib.suppress(OSError):
+                for tomb in root.glob(f"{_TOMBSTONE}*"):
+                    _remove_tree(tomb)
+        for path, max_age in _scratch_candidates(now):
+            if _in_flight_ids():
+                _log("disk sweep: a turn started; stopping here")
+                break
+            cutoff = now - max_age
+            if _touched_since(path, cutoff):
+                continue
+            if path.parent == sessions and _session_transcript_fresh(path, cutoff):
+                continue
+            why = _unsaved_git_work(path)
+            if why:
+                kept.append({"path": str(path), "reason": why})
+                continue
+            size = _entry_bytes(path)
+            if _reap(path):
+                freed += size
+                removed.append(str(path))
+                _log(f"disk sweep: removed {path} ({size / 2**20:.0f} MB)")
+        if removed:
+            # A session worktree's admin entry in its clone outlives the dir.
+            with contextlib.suppress(OSError):
+                for clone in pathlib.Path(AGENT_ROOT).iterdir():
+                    if (clone / ".git").is_dir():
+                        _git_quiet("-C", str(clone), "worktree", "prune")
+    except Exception as exc:  # noqa: BLE001 — a sweep must never cost the beat
+        _log(f"disk sweep: failed ({exc}); continuing")
+    if kept:
+        _set_check("scratch", "warn",
+                   f"kept {len(kept)} old dir(s) holding git work that exists nowhere else — "
+                   "push or discard it: " + "; ".join(k["reason"] for k in kept))
+    else:
+        _set_check("scratch", "ok", f"last sweep freed {freed / 2**20:.0f} MB")
+    return {"freed": freed, "removed": removed, "kept": kept}
+
+
+def _prune_caches() -> None:
+    """bootstrap's step 4b (prune_caches.py), run from the runner's clone."""
+    script = pathlib.Path(RUNNER_SRC_DIR) / "runner" / "ec2" / "prune_caches.py"
+    if not script.is_file():
+        _log(f"disk sweep: no {script}; caches left as they are")
+        return
+    try:
+        subprocess.run([sys.executable, str(script)], capture_output=True, timeout=1800)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"disk sweep: cache prune failed ({exc})")
+
+
+def _start_hygiene(target) -> None:
+    t = threading.Thread(target=target, name="disk-sweep", daemon=True)
+    _SWEEP_STATE["thread"] = t
+    t.start()
+
+
+def maybe_sweep_disk(*, now: float | None = None) -> bool:
+    """Start a disk sweep if one is due AND no turn is running: every
+    SWEEP_INTERVAL_SECONDS, or SWEEP_PRESSURE_SECONDS after the last when the disk
+    is at warn — and then the caches are pruned too. Called from the claiming
+    thread after a heartbeat; the sweep itself runs on its own thread, re-checks
+    for a running turn before each removal, and stops if one started. True when a
+    sweep was started. `DISK_SWEEP=0` turns it off."""
+    if os.environ.get("DISK_SWEEP", "1") == "0":
+        return False
+    now = time.time() if now is None else now
+    running = _SWEEP_STATE["thread"]
+    if (running is not None and running.is_alive()) or _in_flight_ids():
+        return False
+    full = _disk_pct() >= DISK_WARN_PCT
+    last = _SWEEP_STATE["at"]
+    if last and now - last < (SWEEP_PRESSURE_SECONDS if full else SWEEP_INTERVAL_SECONDS):
+        return False
+    _SWEEP_STATE["at"] = now
+
+    def _pass() -> None:
+        sweep_scratch()
+        if _disk_pct() >= DISK_WARN_PCT and not _in_flight_ids():
+            _prune_caches()
+
+    _start_hygiene(_pass)
+    return True
 
 
 def _version_of(cmd: list[str]) -> str:
@@ -8013,6 +8289,7 @@ def run_over_rest(runner_id: str) -> None:
         _observe_beat(beat)
         honour_stops(beat)
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
+        maybe_sweep_disk()
         # Attached viewers are served on this path too — a runner that fell back
         # to REST must not also silently stop being watchable.
         _sync_session_views(runner_id)
@@ -8234,6 +8511,7 @@ def run_over_ws(runner_id: str) -> bool:
             # This thread is the one that claims, so "idle" holds until the
             # restart; see maybe_self_refresh.
             maybe_self_refresh(bool((ack or {}).get("refresh_pending")))
+            maybe_sweep_disk()
 
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)

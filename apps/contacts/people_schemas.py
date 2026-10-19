@@ -34,8 +34,18 @@ class PersonFactOut(StrictModel):
     status: str = Field(default="active", description="active | deprecated | conflicted | deleted.")
 
 
+class FactUseOut(StrictModel):
+    """How often agents were actually told an entry — over its whole history, not a page of it."""
+
+    conversations: int = Field(default=0, description="Distinct turns an agent was told it in.")
+    last_at: str | None = Field(default=None, description="The last time an agent was told it.")
+    by: list[str] = Field(default_factory=list, description="Agent slugs that were told it.")
+
+
 class PersonFactDetailOut(PersonFactOut):
     """A fact as its subject sees it on their own page: where and who."""
+
+    used: FactUseOut = Field(default_factory=FactUseOut)
 
     workspace: str | None = Field(default=None, description="The workspace it was written in; "
                                                             "null for a personal entry.")

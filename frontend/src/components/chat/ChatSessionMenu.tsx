@@ -19,6 +19,7 @@ import { ChatPeoplePanel } from "./ChatPeople";
 import { ShareToSlackForm } from "./ShareToSlack";
 import { ShareSecretForm } from "./ShareSecret";
 import { MoveWorkspaceForm, type MoveTarget } from "./MoveWorkspaceForm";
+import { MemoryDots, SessionMemoryPanel, memorySummary, type SessionMemoryControl } from "./SessionMemoryToggles";
 
 /**
  * Everything you can DO to a chat, behind one button.
@@ -36,6 +37,10 @@ import { MoveWorkspaceForm, type MoveTarget } from "./MoveWorkspaceForm";
  * you almost never tap. The warning it can also carry (history unavailable —
  * runner offline) stays inline on the transcript, because that one is a fact
  * about what you're reading, not an action to take.
+ *
+ * Your memory in this conversation joined them too (Jonathan, 2026-10-19): a
+ * chip in the header gave a setting you rarely change top billing. The item
+ * carries its dots (green working, red not) so the state is one tap away.
  *
  * Ordered by how often each is used. Close is last and set apart, because it
  * is the one that cannot be undone (it deletes the emdash task).
@@ -65,6 +70,7 @@ export function ChatSessionMenu({
   workspace,
   moveTargets,
   onMove,
+  memory,
 }: {
   sessionId: string;
   myRole: string | null;
@@ -100,8 +106,10 @@ export function ChatSessionMenu({
    *  session is yours to move AND there is somewhere else to put it. */
   moveTargets?: MoveTarget[];
   onMove?: (workspace: string) => Promise<void>;
+  /** Agent memory for this session; null/undefined hides the item. */
+  memory?: SessionMemoryControl | null;
 }) {
-  const [panel, setPanel] = useState<"people" | "slack" | "secret" | "move" | null>(null);
+  const [panel, setPanel] = useState<"people" | "slack" | "secret" | "move" | "memory" | null>(null);
   const canMove = Boolean(onMove && workspace && moveTargets && moveTargets.some((t) => t.slug !== workspace));
   // Every item is inset to the checkbox item's gutter, so the list is one column.
 
@@ -143,6 +151,21 @@ export function ChatSessionMenu({
             </>
           )}
           <DropdownMenuItem inset onClick={() => setPanel("people")}>People…</DropdownMenuItem>
+          {memory && (
+            <DropdownMenuItem
+              inset
+              data-testid="session-memory"
+              aria-label={`Memory… ${memorySummary(memory)}`}
+              onClick={() => setPanel("memory")}
+            >
+              <span className="flex w-full items-center justify-between gap-2">
+                Memory…
+                <span className="text-[12px] text-muted-foreground">
+                  <MemoryDots memory={memory} />
+                </span>
+              </span>
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             inset
             disabled={Boolean(shareDisabledReason)}
@@ -216,6 +239,8 @@ export function ChatSessionMenu({
           <DialogTitle className="text-sm font-semibold text-foreground">
             {panel === "people"
               ? "People"
+              : panel === "memory"
+                ? "Your memory in this conversation"
               : panel === "secret"
                 ? "Secrets"
                 : panel === "move"
@@ -224,6 +249,11 @@ export function ChatSessionMenu({
           </DialogTitle>
           {panel === "secret" && (
             <ShareSecretForm sessionId={sessionId} onDone={() => setPanel(null)} />
+          )}
+          {panel === "memory" && memory && (
+            <div className="text-[12px]">
+              <SessionMemoryPanel memory={memory} />
+            </div>
           )}
           {panel === "people" && <ChatPeoplePanel sessionId={sessionId} myRole={myRole} />}
           {panel === "move" && canMove && (

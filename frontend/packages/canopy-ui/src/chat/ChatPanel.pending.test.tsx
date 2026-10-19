@@ -12,7 +12,7 @@
  */
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { ChatPanel } from "./ChatPanel";
 import type { Message, SessionState, TurnStatus } from "./protocol";
@@ -210,5 +210,23 @@ describe("the server's turn status", () => {
     panel({ state: state({ turn_status: status({ state: "blocked", stuck: true }) }) });
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByTestId("pending-reply")).toBeNull();
+  });
+});
+
+describe("Stop follows the same signal as the pending row", () => {
+  it("is offered while the agent is working with no reply row yet", () => {
+    // A runner turn busy in tools has no streaming message (the row exists only
+    // once text does) and `awaitingReply` has already cleared — the bubble said
+    // "Thinking…" while Stop and Esc did nothing.
+    const onStop = vi.fn();
+    panel({ state: state({ activity: "working" }), awaitingReply: false, onStop });
+    fireEvent.keyDown(screen.getByTestId("composer"), { key: "Escape" });
+    expect(onStop).toHaveBeenCalledWith(null);
+    expect(screen.getByRole("button", { name: /stopping/i })).not.toBeNull();
+  });
+
+  it("is absent once the agent is idle", () => {
+    panel({ state: state({ activity: "idle" }) });
+    expect(screen.queryByRole("button", { name: /^stop$/i })).toBeNull();
   });
 });

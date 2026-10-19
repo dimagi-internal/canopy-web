@@ -28,6 +28,7 @@ const FLAT_ALLOWED: Record<string, string> = {
   '/guide': 'personal/global: the self-documenting route registry',
   '/sessions': 'personal/global: YOUR shared transcripts, across your workspaces',
   '/people/me': 'personal/global: what agents know about you, the subject',
+  '/people/:personId/page': 'personal/global: a person\'s own memory page, read-only, for an agent they let see it',
   '/hcp-clients': 'global: the HCP service\'s client registry spans every person, not a workspace (superusers)',
   '/supervisor': 'personal/global: the cross-fleet Waiting on you — the fleet spans workspaces',
   '/ide': 'personal/global: the desktop session IDE — your sessions across every workspace and runner',

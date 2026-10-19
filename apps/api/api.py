@@ -221,6 +221,7 @@ from apps.harness.api_schedules import router as schedules_router  # noqa: E402
 from apps.harness.api_investigations import router as investigations_router  # noqa: E402
 from apps.harness.api_device_keys import router as device_keys_router  # noqa: E402
 from apps.harness.api_runner_sessions import router as runner_sessions_router  # noqa: E402
+from apps.harness.api_local import local_turns_router, private_runners_router  # noqa: E402
 from apps.harness.api_device_key_requests import router as device_key_requests_router  # noqa: E402
 from apps.harness.api_runner_invitations import pair_router as runner_pair_by_role_router  # noqa: E402
 from apps.harness.api_runner_invitations import router as runner_invitations_router  # noqa: E402
@@ -311,6 +312,10 @@ api.add_router("/harness/runners/pair-by-role", runner_pair_by_role_router)
 # 2026-10-19-runner-installers).
 api.add_router("/harness/runner-pairings", runner_pairings_router)
 api.add_router("/harness/runner-releases", runner_releases_router)
+
+# Local use (canopy-web#1704): a person's private runner and the turns its sessions open.
+api.add_router("/harness/local-turns", local_turns_router)
+api.add_router("/private-runners", private_runners_router)
 api.add_router("/harness", harness_router)
 # What the fleet's debugger agent reads and closes (apps/harness/auto_debug.py).
 api.add_router("/harness/failure-investigations", investigations_router)

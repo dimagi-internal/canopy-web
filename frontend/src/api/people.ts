@@ -374,3 +374,36 @@ export async function removeMyViewer(agent: string): Promise<MemoryViewers> {
   if (error) throw new Error('Failed to stop that agent seeing this page')
   return data as MemoryViewers
 }
+
+// --- someone's page, as they let this agent see it (apps/contacts/viewers.py) -----
+
+export type MemoryPage = components['schemas']['MemoryPageOut']
+
+/** A person's memory page for an agent whose own login they let see it.
+ *  Read-only; each look is in their audit. 404 for anyone else. */
+export async function getPersonPage(personId: number): Promise<MemoryPage> {
+  const { data, error } = await apiV2.GET('/api/people/{person_id}/page/', {
+    params: { path: { person_id: personId } },
+  })
+  if (error) throw new Error('This page isn’t shared with you')
+  return data as MemoryPage
+}
+
+export async function listPersonPageAudit(
+  personId: number,
+  cursor?: string,
+): Promise<{ events: HcpAuditEvent[]; nextCursor: string | null }> {
+  const { data, error } = await apiV2.GET('/api/people/{person_id}/page/audit/', {
+    params: { path: { person_id: personId }, query: cursor ? { cursor } : {} },
+  })
+  if (error) throw new Error('Failed to load what happened')
+  return data as unknown as { events: HcpAuditEvent[]; nextCursor: string | null }
+}
+
+export async function listPersonPageSearches(personId: number, before?: string): Promise<SearchHistory> {
+  const { data, error } = await apiV2.GET('/api/people/{person_id}/page/searches/', {
+    params: { path: { person_id: personId }, query: { before: before ?? null, limit: 30 } },
+  })
+  if (error) throw new Error('Failed to load how agents searched it')
+  return data as SearchHistory
+}

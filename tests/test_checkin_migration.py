@@ -14,7 +14,9 @@ import pytest
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 
-pytestmark = pytest.mark.django_db(transaction=True)
+# needs_migrations: it walks the real migration graph, so it cannot run under CI's
+# `--nomigrations` suite and has its own job (ci.yml, `Backend pytest (migrations)`).
+pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.needs_migrations]
 
 BEFORE = [("huddles", "0002_huddle_group_added_allowance"), ("agents", "0060_credential_alert_no_turn_check")]
 

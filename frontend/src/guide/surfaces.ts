@@ -62,6 +62,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Read, correct or retract anything held about you', 'Add something about yourself', 'Turn Learn from me and Use my memory on or off', 'See and revoke which agents and apps may read it', 'Download everything, with your audit log'],
   },
   {
+    path: '/people/:personId/page',
+    title: 'Someone’s memory page',
+    audience: 'An agent a person let see their memory page',
+    what: 'A person’s memory page, read-only, as they let this agent see it from their own /people/me: what is remembered and how often agents were given it, the conversations that used it, who can read it, and what changed. Each look is in their log. Anyone they did not let in sees nothing here.',
+    needsFirst: 'The person adds this agent under “Who can see this page” on /people/me.',
+    actions: ['Read what agents know about them, and how it was used'],
+  },
+  {
     path: '/hcp-clients',
     title: 'HCP service clients',
     audience: 'canopy administrators',
@@ -245,7 +253,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/settings/email',
     title: 'Email',
     audience: 'Workspace admin bringing their own domain to canopy',
-    what: "Run a domain's email through canopy instead of a mail provider. Add the domain, publish the DNS records shown (each is checked live), and once it verifies, choose where each address goes: an agent's mailbox (mail becomes that agent's email turn and it replies as that address), a member of this workspace (forwarded to their canopy login email), or dropped. `*` catches every address not listed. The page warns before the MX switch takes mail from your current provider, caps how much a domain sends per day, and suspends sending automatically if bounces or complaints climb.",
+    what: "Run a domain's email through canopy instead of a mail provider. Add the domain, publish the DNS records shown (each is checked live), and once it verifies, choose where each address goes: an agent's mailbox (mail becomes that agent's email turn and it replies as that address), a member of this workspace (forwarded to their canopy login email), or dropped. `*` catches every address not listed. Once every DNS record checks out, the addresses come first and the records fold away at the bottom. The page warns before the MX switch takes mail from your current provider, caps how much a domain sends per day, and suspends sending automatically if bounces or complaints climb.",
     actions: ['Add a domain and see its DNS records', 'Route an address to an agent or a member', 'Re-check DNS', 'Change the daily send cap or lift a suspension'],
   },
   {

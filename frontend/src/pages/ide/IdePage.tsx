@@ -18,6 +18,7 @@ import {
   archiveSession,
   closeSession,
   listSessions,
+  setSessionTitle,
   stopSession,
   transferSession,
   unarchiveSession,
@@ -31,6 +32,7 @@ import { wsUrl } from '@/lib/wsUrl'
 import { ChatPage } from '@/pages/ChatPage'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { closeResultMessage, settleClosing } from '@/components/chat/closeAction'
+import { TitleInput } from '@/components/chat/TitleInput'
 import { SessionContextMenu, type IdeAction } from './SessionContextMenu'
 import { useCloseReview } from './useCloseReview'
 import {
@@ -360,8 +362,15 @@ export function IdePage() {
     const project = repos.find((r) => r.slug === key)
     return project ? { kind: 'project', project } : null
   }
+  // A session made here opens with its title being named.
+  const [justCreated, setJustCreated] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  useEffect(() => {
+    if (justCreated && id !== justCreated) setJustCreated(null)
+  }, [id, justCreated])
   const onCreated = (s: ChatSession) => {
     void refresh()
+    setJustCreated(s.id)
     navigate(`/ide/${s.id}`)
   }
   const shown = useMemo(() => tree.flatMap((f) => f.sessions), [tree])
@@ -472,6 +481,9 @@ export function IdePage() {
         case 'copy-link':
           await navigator.clipboard.writeText(url)
           setNote({ text: 'Link copied', error: false })
+          return
+        case 'rename':
+          setRenamingId(s.id)
           return
         case 'open-desktop':
           window.location.href = a.href
@@ -789,6 +801,10 @@ export function IdePage() {
                           e.preventDefault()
                           setMenu({ session: s, x: e.clientX, y: e.clientY })
                         }}
+                        onDoubleClick={(e) => {
+                          e.preventDefault()
+                          setRenamingId(s.id)
+                        }}
                         title={[
                           s.title,
                           parent ? `${linkKind(s) === 'fork' ? 'forked' : 'started'} from ${label(parent)}` : '',
@@ -809,7 +825,20 @@ export function IdePage() {
                         style={{ paddingLeft: '1.75rem' }}
                       >
                         <StateDot state={st} />
-                        <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
+                        {renamingId === s.id ? (
+                          <TitleInput
+                            initial={s.title ?? ''}
+                            onSave={async (next) => {
+                              await setSessionTitle(s.id, next)
+                              setRenamingId(null)
+                              void refresh()
+                            }}
+                            onCancel={() => setRenamingId(null)}
+                            className="h-5 text-[13px]"
+                          />
+                        ) : (
+                          <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
+                        )}
                         <span className="max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground">
                           {s.runner_name ?? 'web'}
                         </span>
@@ -899,6 +928,8 @@ export function IdePage() {
           <ChatPage
             key={id}
             compact
+            editTitle={id === justCreated}
+            onTitleChange={() => void refresh()}
             onLeave={() => navigate('/ide', { replace: true })}
             sessionPath={(s) => `/ide/${encodeURIComponent(s.id)}`}
           />

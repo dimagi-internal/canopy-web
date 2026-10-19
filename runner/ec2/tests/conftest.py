@@ -71,3 +71,12 @@ def _no_credential_probe(monkeypatch):
     Off by default here, so no test spends usage or waits on a CLI;
     tests/test_credential_probe.py turns it back on with subprocess faked."""
     monkeypatch.setenv("CLAUDE_PROBE", "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_disk_sweep(monkeypatch):
+    """The heartbeat starts a disk sweep (maybe_sweep_disk), which deletes old
+    entries in the real /tmp. Off by default here, so no test that drives a beat
+    can touch the machine it runs on; tests/test_scratch_sweep.py turns it on with
+    its roots pointed into tmp_path."""
+    monkeypatch.setenv("DISK_SWEEP", "0")
