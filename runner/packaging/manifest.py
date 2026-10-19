@@ -34,7 +34,7 @@ def record(args) -> int:
     rec = {"platform": args.platform, "sha": args.sha,
            "installer": file_entry(Path(args.installer)), "update": file_entry(Path(args.update)),
            "signed": args.signed, "notarized": args.notarized}
-    Path(args.out).write_text(json.dumps(rec, indent=2) + "\n")
+    Path(args.out).write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(rec))
     return 0
 
@@ -42,7 +42,7 @@ def record(args) -> int:
 def assemble(args) -> int:
     artifacts = {}
     for path in sorted(Path(args.records).rglob("*.json")):
-        rec = json.loads(path.read_text())
+        rec = json.loads(path.read_text(encoding="utf-8"))
         if rec.get("platform") not in PLATFORMS:
             continue
         if rec.get("sha") != args.sha:
@@ -58,7 +58,7 @@ def assemble(args) -> int:
         raise SystemExit(f"no build record for {', '.join(missing)} — refusing a partial manifest")
     manifest = {"sha": args.sha, "committed_at": int(args.committed_at), "built_at": args.built_at,
                 "artifacts": {p: artifacts[p] for p in PLATFORMS}}
-    Path(args.out).write_text(json.dumps(manifest, indent=2) + "\n")
+    Path(args.out).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2))
     return 0
 

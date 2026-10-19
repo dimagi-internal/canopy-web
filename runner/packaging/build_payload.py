@@ -75,7 +75,7 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 def code_paths() -> list[str]:
     """provenance.CODE_PATHS, parsed rather than imported (the runner package is
     not importable from the CI's Python, and a fifth copy of the list would drift)."""
-    tree = ast.parse((REPO / RUNNER_SRC / "provenance.py").read_text())
+    tree = ast.parse((REPO / RUNNER_SRC / "provenance.py").read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "CODE_PATHS" for t in node.targets):
             return list(ast.literal_eval(node.value))
@@ -107,8 +107,7 @@ def stage_sources(tmp: Path, sha: str, built_at: str, committed_at: int, plat: s
         f'SHA = "{sha}"\n'
         f'BUILT_AT = "{built_at}"\n'
         f"COMMITTED_AT = {committed_at}\n"
-        f'PLATFORM = "{plat}"\n'
-    )
+        f'PLATFORM = "{plat}"\n', encoding="utf-8")
     return src
 
 
@@ -333,7 +332,7 @@ def install_sidecar(out: Path, plat: str, native: bool, cache: Path) -> None:
 
 def install_adapter(out: Path, plat: str, native: bool, cache: Path, versions: dict) -> None:
     spec = versions["acp_adapter"]
-    client = (REPO / "runner/canopy_acp/canopy_acp/client.py").read_text()
+    client = (REPO / "runner/canopy_acp/canopy_acp/client.py").read_text(encoding="utf-8")
     m = re.search(r'^ADAPTER_PACKAGE = "([^"]+)"', client, re.M)
     if not m or m.group(1) != spec["package"]:
         raise SystemExit(f"versions.json pins {spec['package']} but canopy_acp.client.ADAPTER_PACKAGE "
@@ -379,7 +378,7 @@ def write_shims(out: Path, plat: str) -> None:
         (bindir / "canopy-runner.cmd").write_bytes(CMD_SHIM.replace("\n", "\r\n").encode())
     else:
         shim = bindir / "canopy-runner"
-        shim.write_text(SH_SHIM)
+        shim.write_text(SH_SHIM, encoding="utf-8")
         shim.chmod(0o755)
 
 
@@ -407,7 +406,7 @@ def main() -> int:
             raise SystemExit(f"{out} exists (pass --clean to replace it)")
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    versions = json.loads((HERE / "versions.json").read_text())
+    versions = json.loads((HERE / "versions.json").read_text(encoding="utf-8"))
 
     sha, committed_at = resolve_provenance(args.ref)
     built_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -429,7 +428,7 @@ def main() -> int:
     release = {"sha": sha, "platform": args.platform, "built_at": built_at, "committed_at": committed_at,
                "python": versions["python"]["version"], "node": versions["node"]["version"],
                "acp_adapter": versions["acp_adapter"]["version"]}
-    (out / "release.json").write_text(json.dumps(release, indent=2) + "\n")
+    (out / "release.json").write_text(json.dumps(release, indent=2) + "\n", encoding="utf-8")
     log(f"payload ready at {out}")
     print(json.dumps(release))
     return 0
