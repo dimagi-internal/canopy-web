@@ -90,10 +90,12 @@ import urllib.parse
 import urllib.request
 import uuid
 
-#: Where a box that MOVED records its new address (maybe_rebase). Not runner.env:
-#: the unit's ExecStartPre (canopy-fetch-env) re-renders that from the stack
-#: parameter on EVERY start, so a rewrite there was undone by the very restart
-#: that applied it — a restart loop (2026-10-06). Nothing re-renders this file.
+#: A box's address when it differs from its stack parameter. Moving a box is
+#: manual: write the new https address here and restart the service. Not
+#: runner.env: the unit's ExecStartPre (canopy-fetch-env) re-renders that from the
+#: stack parameter on EVERY start. Nothing re-renders this file. cloud-ec2-2's
+#: stack still names labs.connect.dimagi.com/canopy, so this file is what keeps it
+#: on canopy.dimagi.com — do not delete it there.
 BASE_URL_OVERRIDE_FILE = os.environ.get("CANOPY_BASE_URL_OVERRIDE_FILE",
                                         "/opt/canopy-runner/base_url.override")
 
@@ -798,45 +800,6 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
 
 #: Addresses canopy has left (it moved to canopy.dimagi.com on 2026-10-05).
 FORMER_BASES = frozenset({"https://labs.connect.dimagi.com/canopy"})
-
-
-def maybe_rebase(advertised: str, runner_id: str) -> bool:
-    """Move this box off an address canopy has left: record the new address in
-    BASE_URL_OVERRIDE_FILE and restart; `_initial_base_url` reads it on start.
-    Same guards as the laptop runner's rebase.py — only off a FORMER address,
-    only to https, only once the new address answers as THIS runner, only while
-    idle. Returns True when a restart started."""
-    target = (advertised or "").rstrip("/")
-    current = BASE_URL.rstrip("/")
-    if current not in FORMER_BASES or not target.startswith("https://") or target == current:
-        return False
-    if _in_flight_ids():
-        return False
-    try:
-        req = urllib.request.Request(f"{target}/api/harness/runners/", method="GET")
-        req.add_header("Authorization", f"Bearer {_bearer()}")
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            rows = json.loads(resp.read() or b"[]")
-    except Exception as exc:  # noqa: BLE001
-        _log(f"rebase: {target} did not answer ({exc}); staying on {current}")
-        return False
-    if not runner_id or not any(str((r or {}).get("id")) == str(runner_id) for r in rows or []):
-        _log(f"rebase: {target} does not know runner {str(runner_id)[:8]}; staying on {current}")
-        return False
-    try:
-        pathlib.Path(BASE_URL_OVERRIDE_FILE).write_text(target + "\n")
-    except Exception as exc:  # noqa: BLE001
-        _log(f"rebase: could not write {BASE_URL_OVERRIDE_FILE} ({exc}); staying on {current}")
-        return False
-    _log(f"rebase: canopy moved to {target}; recorded in {BASE_URL_OVERRIDE_FILE} "
-         f"(was {current}); restarting")
-    try:
-        subprocess.run(["sudo", "-n", "systemctl", "restart", "canopy-runner.service"],
-                       capture_output=True, timeout=30, check=True)
-    except Exception as exc:  # noqa: BLE001
-        _log(f"rebase: restart failed ({exc})")
-        return False
-    return True
 
 
 def _chunk_transcript_lines(
@@ -6329,7 +6292,6 @@ def run_over_rest(runner_id: str) -> None:
         _, beat = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body(_in_flight_ids()))
         honour_stops(beat)
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
-        maybe_rebase((beat or {}).get("canonical_base_url", ""), runner_id)
         # Attached viewers are served on this path too — a runner that fell back
         # to REST must not also silently stop being watchable.
         _sync_session_views(runner_id)
@@ -6546,7 +6508,6 @@ def run_over_ws(runner_id: str) -> bool:
             # This thread is the one that claims, so "idle" holds until the
             # restart; see maybe_self_refresh.
             maybe_self_refresh(bool((ack or {}).get("refresh_pending")))
-            maybe_rebase((ack or {}).get("canonical_base_url", ""), runner_id)
 
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)
