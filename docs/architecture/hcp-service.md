@@ -418,7 +418,7 @@ Outside the rollout:
 - **Security review** of the consent screen and token endpoint by someone other than
   the author.
 
-## Retrieval: where search goes after keywords (built, off until turned on)
+## Retrieval: where search goes after keywords (on: Vertex gemini-embedding-001, 2026-10-18)
 
 **What runs today** (`hcp.rank`, `apps/contacts/embeddings.py`):
 - One search ranks everything the grant reaches together (`workspace_slugs`), so
