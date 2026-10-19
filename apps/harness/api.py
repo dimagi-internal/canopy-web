@@ -446,6 +446,14 @@ def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
         if mine is not None:
             return mine
     turn = _turn_or_404(request, turn_id)
+    if turn.origin == Turn.ORIGIN_LOCAL:
+        # A local turn has no box: the person whose session it is reports on it
+        # (apps/harness/local.py), and nobody else — not even an editor.
+        from . import local
+
+        if not local.is_initiator(turn, request.user):
+            raise HttpError(404, "turn not found")
+        return turn
     if turn.claimed_by_id is not None:
         if turn.claimed_by.owner_id != request.user.pk:
             raise HttpError(404, "turn not found")

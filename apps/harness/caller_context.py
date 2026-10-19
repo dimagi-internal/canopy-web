@@ -462,6 +462,9 @@ def _trigger(turn, ref: dict) -> dict:
         "message_id": ref.get("message_id"),
         "message_count": count,
         "runner": runner.name if runner is not None else None,
+        # A LOCAL turn runs on the person's own private runner, never a runner
+        # (apps/harness/local.py). Additive: null for every other origin.
+        "private_runner": turn.private_runner.name if getattr(turn, "private_runner_id", None) else None,
         "matched_classes": _matched_classes(turn),
     }
 

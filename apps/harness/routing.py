@@ -685,7 +685,10 @@ def busy_agent_ids():
     heartbeating and POST /claim returned 204, because two canopy-web project
     turns happened to be executing.
     """
-    return Turn.objects.filter(status__in=EXECUTING, agent__isnull=False).values("agent_id")
+    # A LOCAL turn (a person's own session on their private runner) never holds the
+    # agent: it is excluded from `one_executing_turn_per_agent` for the same reason.
+    return (Turn.objects.filter(status__in=EXECUTING, agent__isnull=False)
+            .exclude(origin=Turn.ORIGIN_LOCAL).values("agent_id"))
 
 
 def busy_session_ids():
@@ -781,7 +784,7 @@ def blocking_turn(turn: Turn) -> Turn | None:
             # runner holding it will claim it on its next tick.
             return None if may_ride(turn, held) else held
     if turn.agent_id:
-        return executing.filter(agent_id=turn.agent_id).first()
+        return executing.filter(agent_id=turn.agent_id).exclude(origin=Turn.ORIGIN_LOCAL).first()
     return None
     qs = Turn.objects.select_related("claimed_by")
     if turn.chat_session_id and Turn.objects.filter(

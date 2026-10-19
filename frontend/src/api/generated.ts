@@ -7062,6 +7062,90 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/local-turns/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Open the local turn for a Claude Code session on your private runner
+         * @description A session on your private runner is using `agent`: record it as a turn.
+         *
+         *     Allowed when `access.decide` gives you the WHOLE agent (its owner or an admin,
+         *     a `full:` rule in its caller list, or a workspace editor); a viewer or
+         *     contact gets 403 with what to ask for — they use the agent through canopy, on
+         *     its confined `ask` path. The turn runs `manual` unless you are an agent admin
+         *     and ask for `auto`. Idempotent per Claude session: a resumed session re-opens
+         *     its live turn. The response carries the caller envelope.
+         */
+        readonly post: operations["open_local_turn"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/local-turns/{turn_id}/renew": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Keep your local turn's lease alive */
+        readonly post: operations["renew_local_turn"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/private-runners/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Your private runners */
+        readonly get: operations["list_private_runners"];
+        readonly put?: never;
+        /**
+         * Register this machine as one of your private runners
+         * @description Idempotent per (you, name): registering the same machine again returns it
+         *     (and brings back a retired one). A private runner is yours, not an agent's or a
+         *     workspace's — one serves every agent you use locally. It never claims turns.
+         */
+        readonly post: operations["register_private_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/private-runners/{private_runner_id}/retire": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Retire one of your private runners */
+        readonly post: operations["retire_private_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/": {
         readonly parameters: {
             readonly query?: never;
@@ -24823,6 +24907,101 @@ export interface components {
              */
             readonly host: string;
         };
+        /** LocalTurnOut */
+        readonly LocalTurnOut: {
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            readonly turn_id: string;
+            /** Created */
+            readonly created: boolean;
+            /** Agent */
+            readonly agent: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Turn Mode */
+            readonly turn_mode: string;
+            /** Turn Mode Basis */
+            readonly turn_mode_basis: string;
+            /** Lease Expires At */
+            readonly lease_expires_at?: string | null;
+            /** Url */
+            readonly url: string;
+            /** Envelope */
+            readonly envelope: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * LocalTurnIn
+         * @description Open (or re-open) the local turn for one Claude Code session.
+         */
+        readonly LocalTurnIn: {
+            /** Agent */
+            readonly agent: string;
+            /**
+             * Private Runner
+             * Format: uuid
+             */
+            readonly private_runner: string;
+            /** Claude Session Id */
+            readonly claude_session_id: string;
+            /**
+             * Cwd
+             * @default
+             */
+            readonly cwd: string;
+            /**
+             * Turn Mode
+             * @default
+             * @enum {string}
+             */
+            readonly turn_mode: "" | "manual" | "auto";
+        };
+        /** LocalTurnRenewOut */
+        readonly LocalTurnRenewOut: {
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            readonly turn_id: string;
+            /** Status */
+            readonly status: string;
+            /** Lease Expires At */
+            readonly lease_expires_at?: string | null;
+        };
+        /** PrivateRunnerOut */
+        readonly PrivateRunnerOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Host */
+            readonly host: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Last Seen At */
+            readonly last_seen_at?: string | null;
+            /** Retired At */
+            readonly retired_at?: string | null;
+        };
+        /** PrivateRunnerIn */
+        readonly PrivateRunnerIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Host
+             * @default
+             */
+            readonly host: string;
+        };
         /**
          * HealthCheck
          * @description One feature a runner checked on itself. `warn` is "works, but a person
@@ -39630,6 +39809,136 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerPairByRoleOut"];
+                };
+            };
+        };
+    };
+    readonly open_local_turn: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LocalTurnIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalTurnOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalTurnOut"];
+                };
+            };
+        };
+    };
+    readonly renew_local_turn: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LocalTurnRenewOut"];
+                };
+            };
+        };
+    };
+    readonly list_private_runners: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["PrivateRunnerOut"][];
+                };
+            };
+        };
+    };
+    readonly register_private_runner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PrivateRunnerIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PrivateRunnerOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PrivateRunnerOut"];
+                };
+            };
+        };
+    };
+    readonly retire_private_runner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly private_runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PrivateRunnerOut"];
                 };
             };
         };
