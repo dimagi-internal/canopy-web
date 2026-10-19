@@ -19,7 +19,7 @@ export function WorkspaceProjectRedirect(): JSX.Element {
     getWorkspaceProject(workspace, handle)
       .then((p) => {
         if (!cancelled)
-          setTarget({ key, to: `/w/${workspace}/agents/${p.agent_slug}/projects/${encodeURIComponent(p.ext_id)}`, error: null })
+          setTarget({ key, to: p.board_url, error: null })
       })
       .catch((err: unknown) => {
         if (cancelled) return

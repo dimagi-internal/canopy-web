@@ -16,7 +16,8 @@ from apps.api.auth import session_auth
 from apps.api.pagination import DEFAULT_LIMIT_CAP, clamp_limit
 
 from . import services
-from .api import _agent_for_write, _listed_agent_workspace_ids, apply_project_patch, project_detail
+from .api import (_agent_for_write, _listed_agent_workspace_ids, _require_workspace_editor,
+                  _visible_agent_workspace_ids, apply_project_patch, project_detail)
 from .models import AgentProject, AgentTask
 from .schemas import (AgentProjectDetailOut, AgentProjectOut, AgentProjectPatch, AgentTaskOut,
                       WorkspaceProjectIn)
@@ -82,10 +83,11 @@ def list_fleet_projects(request: HttpRequest, status: str = "active",
 
 def _workspace_project_or_404(request: HttpRequest, workspace: str, handle: str) -> AgentProject:
     # Same 404 for "no such project" and "not your workspace": no oracle over names.
-    if workspace not in set(_listed_agent_workspace_ids(request)):
-        raise HttpError(404, f"workspace project {workspace}/{handle} not found")
+    # Readable from its workspace, and from its steward's (a dimagi agent keeping
+    # connect's project reads it as the dimagi member it is).
     project = services.get_workspace_project(workspace, handle)
-    if project is None:
+    if project is None or (workspace not in set(_listed_agent_workspace_ids(request))
+                           and project.agent.workspace_id not in _visible_agent_workspace_ids(request)):
         raise HttpError(404, f"workspace project {workspace}/{handle} not found")
     return project
 
@@ -95,7 +97,8 @@ def _workspace_project_or_404(request: HttpRequest, workspace: str, handle: str)
 def list_workspace_projects(request: HttpRequest, status: str = "") -> list[AgentProjectOut]:
     """Owned by a workspace rather than one agent, each with a steward agent that
     keeps it current. `status=` narrows; default all."""
-    projects = services.workspace_projects(_listed_agent_workspace_ids(request), status=status)
+    listed = _listed_agent_workspace_ids(request)
+    projects = services.workspace_projects(listed, status=status, steward_workspaces=listed)
     counts = {r["project_id"]: r for r in AgentTask.objects.filter(project__in=projects)
               .values("project_id").annotate(n=Count("id"),
                                              live=Count("id", filter=Q(status__in=services.LIVE_STATUSES)),
@@ -110,10 +113,11 @@ def list_workspace_projects(request: HttpRequest, status: str = "") -> list[Agen
              summary="Create a workspace project, owned by the steward's workspace")
 def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
     steward = _agent_for_write(request, payload.steward.strip())
+    _require_workspace_editor(request, payload.workspace.strip(), steward)
     try:
         with transaction.atomic():
             project = services.create_project(steward, payload)
-            project = services.promote_project(project, payload.handle)
+            project = services.promote_project(project, payload.handle, payload.workspace)
     except services.UnknownPersonError as exc:
         raise HttpError(422, str(exc)) from exc
     except services.ProjectScopeError as exc:

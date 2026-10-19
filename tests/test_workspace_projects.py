@@ -236,3 +236,126 @@ def test_its_counts_include_other_agents_tasks_on_the_stewards_board(client, eva
     row = client.get("/api/agents/eva/projects/").json()[0]
 
     assert row["task_count"] == 1
+
+
+# ---- a project of a workspace below its steward's (dimagi's Eva keeps connect's KB) ----
+
+
+@pytest.fixture()
+def connect(ws, owner):
+    return Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner, parent=ws)
+
+
+@pytest.fixture()
+def ace_in_connect(connect, owner):
+    return Agent.objects.create(slug="ace", name="ACE", workspace=connect, owner=owner)
+
+
+def _promote_into_connect(client):
+    return client.patch("/api/agents/eva/projects/P1/", {"handle": "givewell-kb", "workspace": "connect"},
+                        content_type=J)
+
+
+def test_a_parent_workspaces_agent_stewards_a_project_of_the_division(client, eva, connect):
+    _agent_project(client)
+    r = _promote_into_connect(client)
+
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert (body["address"], body["steward_slug"], body["url"]) == (
+        "connect/givewell-kb", "eva", "/w/connect/projects/givewell-kb")
+    assert body["board_url"] == "/w/dimagi/agents/eva/projects/P1"  # the steward's workspace, not connect
+    assert client.get("/api/workspace-projects/connect/givewell-kb/").status_code == 200
+
+
+def test_it_can_be_created_directly_in_the_division(client, eva, connect):
+    r = client.post("/api/workspace-projects/",
+                    {"name": "Gates KB", "handle": "gates-kb", "steward": "eva", "workspace": "connect"},
+                    content_type=J)
+    assert r.status_code == 201, r.content
+    assert r.json()["address"] == "connect/gates-kb"
+
+
+def test_a_steward_cannot_hold_a_project_above_or_beside_its_workspace(client, connect, ace_in_connect, owner):
+    other = Workspace.objects.create(slug="elsewhere", display_name="Else", created_by=owner)
+    WorkspaceMembership.objects.create(user=owner, workspace=other, role=WorkspaceMembership.OWNER)
+    _agent_project(client, slug="ace")
+
+    up = client.patch("/api/agents/ace/projects/P1/", {"handle": "kb", "workspace": "dimagi"}, content_type=J)
+    across = client.patch("/api/agents/ace/projects/P1/", {"handle": "kb", "workspace": "elsewhere"},
+                          content_type=J)
+
+    assert up.status_code == 422, up.content
+    assert across.status_code == 422, across.content
+
+
+def test_placing_it_in_another_workspace_needs_an_editor_there(eva, connect):
+    # A dimagi editor who is nobody in connect writes Eva, but cannot make connect own a project.
+    editor = User.objects.create_user("ed", "ed@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=editor, workspace=eva.workspace, role=WorkspaceMembership.EDITOR)
+    ec = Client()
+    ec.force_login(editor)
+    _agent_project(ec)
+
+    r = _promote_into_connect(ec)
+
+    assert r.status_code == 404, r.content
+    assert AgentProject.objects.get(ext_id="P1").scope == "agent"
+
+
+def test_the_divisions_agents_file_into_it_by_handle_and_the_steward_by_address(client, eva, connect,
+                                                                                ace_in_connect):
+    _agent_project(client)
+    _promote_into_connect(client)
+
+    by_ace = client.post("/api/agents/ace/tasks/",
+                         [{"ext_id": "T1", "title": "Pull the SMC parameters", "project": "givewell-kb"}],
+                         content_type=J)
+    by_eva = client.post("/api/agents/eva/tasks/",
+                         [{"ext_id": "T1", "title": "Weekly refresh", "project": "connect/givewell-kb"}],
+                         content_type=J)
+
+    assert by_ace.json()[0]["project_address"] == "connect/givewell-kb", by_ace.content
+    assert by_eva.json()[0]["project_address"] == "connect/givewell-kb", by_eva.content
+
+
+def test_an_org_agent_cannot_reach_a_divisions_project_by_bare_handle(client, eva, connect, ace_in_connect):
+    # A bare handle looks in the agent's workspace and UP its tree, never down:
+    # "givewell-kb" from a dimagi agent must not silently mean connect's.
+    client.post("/api/workspace-projects/",
+                {"name": "KB", "handle": "givewell-kb", "steward": "ace"}, content_type=J)
+    Agent.objects.create(slug="ada", name="Ada", workspace=eva.workspace, owner=eva.owner)
+
+    r = client.post("/api/agents/ada/tasks/", [{"ext_id": "T1", "title": "x", "project": "givewell-kb"}],
+                    content_type=J)
+
+    assert r.status_code == 201, r.content
+    assert r.json()[0]["project_address"] is None
+
+
+def test_the_steward_reads_it_though_it_is_no_member_of_the_division(eva, connect):
+    # Eva's own login is a dimagi member only; the tree withholds connect from it.
+    eva_user = User.objects.create_user("eva-bot", "eva@agents.test", "pw")
+    WorkspaceMembership.objects.create(user=eva_user, workspace=eva.workspace, role=WorkspaceMembership.EDITOR)
+    ec = Client()
+    ec.force_login(eva_user)
+    AgentProject.objects.create(agent=eva, ext_id="P1", name="GiveWell Knowledge Base",
+                                scope="workspace", owner_workspace=connect, handle="givewell-kb")
+
+    detail = ec.get("/api/workspace-projects/connect/givewell-kb/")
+    listed = ec.get("/api/workspace-projects/").json()
+
+    assert detail.status_code == 200, detail.content
+    assert [p["address"] for p in listed] == ["connect/givewell-kb"]
+
+
+def test_a_division_member_reads_it_without_seeing_the_parent(eva, connect):
+    member = User.objects.create_user("c", "c@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=member, workspace=connect, role=WorkspaceMembership.VIEWER)
+    mc = Client()
+    mc.force_login(member)
+    AgentProject.objects.create(agent=eva, ext_id="P1", name="KB", scope="workspace",
+                                owner_workspace=connect, handle="givewell-kb")
+
+    assert mc.get("/api/workspace-projects/connect/givewell-kb/").status_code == 200
+    assert mc.get("/api/agents/eva/").status_code == 404

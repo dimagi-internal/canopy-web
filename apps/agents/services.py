@@ -608,9 +608,12 @@ def get_project(agent: Agent, ref: str):
     """By `ext_id` ("P3") or by numeric id — the CLI and the board name projects
     differently, and a caller should not have to know which it holds.
 
-    Also a WORKSPACE project of the agent's workspace, by handle ("givewell-kb")
-    or address ("dimagi/givewell-kb"): any agent in the workspace may file a
-    task into one, which is most of what makes it the workspace's."""
+    Also a WORKSPACE project, by handle ("givewell-kb") or address
+    ("connect/givewell-kb"): any agent in the workspace may file a task into
+    one, which is most of what makes it the workspace's. A bare handle is looked
+    up in the agent's workspace, then up its tree (a division's agents use the
+    org's projects); an address may also name a workspace below the agent's,
+    where a steward from the parent keeps it."""
     ref = str(ref)
     qs = agent.projects.select_related("owner_user")
     project = qs.filter(ext_id__iexact=ref).first()
@@ -618,9 +621,29 @@ def get_project(agent: Agent, ref: str):
         project = qs.filter(pk=int(ref)).first()
     if project is None:
         ws, _, handle = ref.rpartition("/")
-        if not ws or ws == agent.workspace_id:
-            project = get_workspace_project(agent.workspace_id, handle)
+        lineage = [agent.workspace_id, *agent.workspace.ancestor_slugs()]
+        if ws:
+            if ws in lineage or may_hold_workspace_project(agent, ws):
+                project = get_workspace_project(ws, handle)
+        else:
+            for slug in lineage:
+                project = get_workspace_project(slug, handle)
+                if project is not None:
+                    break
     return project
+
+
+def may_hold_workspace_project(steward: Agent, workspace_slug: str) -> bool:
+    """May `steward` keep a project owned by `workspace_slug`? Its own workspace,
+    or one below it: an org's agent can curate a division's resource (Eva, of
+    dimagi, stewards `connect/givewell-kb`), but not the other way round, nor
+    across organisations."""
+    from apps.workspaces.models import Workspace
+
+    if workspace_slug == steward.workspace_id:
+        return True
+    ws = Workspace.objects.filter(slug=workspace_slug).first()
+    return ws is not None and steward.workspace_id in ws.ancestor_slugs()
 
 
 class ProjectScopeError(ValueError):
@@ -637,17 +660,25 @@ def get_workspace_project(workspace_slug: str, handle: str):
                     handle__iexact=(handle or "").strip()).first())
 
 
-def workspace_projects(workspace_slugs, status: str = "") -> list:
+def workspace_projects(workspace_slugs, status: str = "", steward_workspaces=()) -> list:
+    """Owned by any of `workspace_slugs` — or stewarded from any of
+    `steward_workspaces` (a parent's agent keeping a division's project)."""
+    from django.db.models import Q
+
     qs = (AgentProject.objects.select_related("agent", "owner_user")
-          .filter(scope=AgentProject.WORKSPACE_SCOPE, owner_workspace_id__in=list(workspace_slugs)))
+          .filter(Q(owner_workspace_id__in=list(workspace_slugs))
+                  | Q(agent__workspace_id__in=list(steward_workspaces)),
+                  scope=AgentProject.WORKSPACE_SCOPE))
     if status:
         qs = qs.filter(status=status)
     return list(qs.order_by("owner_workspace_id", "handle"))
 
 
-def promote_project(project: AgentProject, handle: str) -> AgentProject:
-    """Make an agent project the workspace's, with its agent as steward. Its
-    ext_id, tasks, Drive folder and history are untouched; it gains an address."""
+def promote_project(project: AgentProject, handle: str, workspace: str = "") -> AgentProject:
+    """Make an agent project a workspace's, with its agent as steward. Its
+    ext_id, tasks, Drive folder and history are untouched; it gains an address.
+    `workspace` defaults to the agent's own; it may be one below it
+    (`may_hold_workspace_project`)."""
     import re
 
     from django.db import IntegrityError, transaction
@@ -656,24 +687,29 @@ def promote_project(project: AgentProject, handle: str) -> AgentProject:
     if not re.match(AgentProject.HANDLE_RE, handle):
         raise ProjectScopeError("handle must be 3-60 characters of a-z, 0-9 and '-', "
                                 "starting and ending with a letter or digit")
+    workspace = (workspace or "").strip() or project.agent.workspace_id
     if project.is_workspace_project:
-        if project.handle == handle:
+        if project.handle == handle and project.owner_workspace_id == workspace:
             return project
         raise ProjectScopeError(f"already the workspace project '{project.address}'; "
-                                "renaming a handle would break every caller that names it", 409)
+                                "readdressing it would break every caller that names it", 409)
+    if not may_hold_workspace_project(project.agent, workspace):
+        raise ProjectScopeError(f"'{project.agent.slug}' can only steward a project of "
+                                f"'{project.agent.workspace_id}' or a workspace below it")
     project.scope = AgentProject.WORKSPACE_SCOPE
-    project.owner_workspace_id = project.agent.workspace_id
+    project.owner_workspace_id = workspace
     project.handle = handle
     try:
         with transaction.atomic():
             project.save(update_fields=["scope", "owner_workspace", "handle", "updated_at"])
     except IntegrityError:
-        raise ProjectScopeError(f"'{project.agent.workspace_id}/{handle}' is already taken", 409) from None
+        raise ProjectScopeError(f"'{workspace}/{handle}' is already taken", 409) from None
     return project
 
 
 def set_steward(project: AgentProject, steward: Agent) -> AgentProject:
-    """Hand a workspace project to another agent of the same workspace.
+    """Hand a workspace project to another agent of its workspace (or of one
+    above it — `may_hold_workspace_project`).
 
     The address (`<workspace>/<handle>`) is the identity, so callers notice
     nothing. The ext_id is the old steward's numbering, so it is re-issued from
@@ -681,8 +717,9 @@ def set_steward(project: AgentProject, steward: Agent) -> AgentProject:
     boards of the agents that own them."""
     if not project.is_workspace_project:
         raise ProjectScopeError("only a workspace project has a steward; promote it first")
-    if steward.workspace_id != project.owner_workspace_id:
-        raise ProjectScopeError(f"the steward must be an agent of '{project.owner_workspace_id}'")
+    if not may_hold_workspace_project(steward, project.owner_workspace_id):
+        raise ProjectScopeError(f"the steward must be an agent of '{project.owner_workspace_id}' "
+                                "or of a workspace above it")
     if steward.pk == project.agent_id:
         return project
     if steward.projects.filter(ext_id__iexact=project.ext_id).exists():

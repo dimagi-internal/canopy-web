@@ -857,7 +857,9 @@ class AgentProject(models.Model):
     `handle` unique there (`dimagi/givewell-kb`), and `agent` is its STEWARD:
     the one agent that keeps it current, whose Drive folder holds its files.
     The steward can change without the project's address changing, any agent
-    in the workspace can file tasks into it, and an agent cannot be moved or
+    in the workspace can file tasks into it, the steward may belong to the
+    workspace or one above it (an org's agent curating a division's resource:
+    `connect/givewell-kb`, stewarded by dimagi's Eva), and an agent cannot be moved or
     deleted out from under a workspace project it stewards
     (`services.set_steward`, `move.py`, `api.delete_agent`).
 
@@ -880,8 +882,8 @@ class AgentProject(models.Model):
     #: The owning agent of an agent project; the STEWARD of a workspace project.
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="projects")
     scope = models.CharField(max_length=16, choices=SCOPE_CHOICES, default=AGENT_SCOPE)
-    #: Set exactly when `scope` is workspace: the workspace that owns it. Always
-    #: the steward's workspace (`services.set_steward` keeps them equal).
+    #: Set exactly when `scope` is workspace: the workspace that owns it. The
+    #: steward's workspace or one below it (`services.may_hold_workspace_project`).
     owner_workspace = models.ForeignKey("workspaces.Workspace", null=True, blank=True,
                                         on_delete=models.CASCADE, related_name="workspace_projects")
     #: A workspace project's address, unique in its workspace ("givewell-kb").
@@ -992,6 +994,13 @@ class AgentProject(models.Model):
     def url(self) -> str:
         if self.is_workspace_project:
             return f"/w/{self.owner_workspace_id}/projects/{self.handle}"
+        return self.board_url
+
+    @property
+    def board_url(self) -> str:
+        """Its page on its agent's (steward's) board — in the AGENT's workspace,
+        which for a division's project stewarded from the parent is not the
+        project's (`connect/givewell-kb` → `/w/dimagi/agents/eva/projects/P12`)."""
         return f"/w/{self.agent.workspace_id}/agents/{self.agent.slug}/projects/{self.ext_id}"
 
     @property
