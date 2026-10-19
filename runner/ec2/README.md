@@ -28,7 +28,7 @@ wire.
 - `update_runner.sh` — the auto-updater: installs the DEPLOYED runner sha when this box is behind and idle. Run on a 30-minute systemd timer via a thin `/usr/local/bin/canopy-runner-update` shim, and read from the canopy-web clone so it ships by deploy like everything else.
 - `bootstrap_agents.sh` — idempotent bootstrap of the BOX (tooling, gog's keyring, the canopy plugin + CLI, Claude Code itself, caches); each agent is prepared by canopy's `canopy agent prepare --runner`. Runs ON the box, from the runner's own `canopy-web` clone (`RUNNER_SRC_DIR`) — not baked into the template. See "Bootstrap" below.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
-- `up.sh` — preflight every one-time prerequisite, publish the seed, `cloudformation deploy` (updates via a reviewed change set); pulls the private key from SSM for SSH.
+- `up.sh` — preflight every one-time prerequisite, publish the seed, `cloudformation deploy` (updates via a reviewed change set); pulls the private key from SSM for SSH; invites a new box to pair (prints the approve link) and waits for it.
 - `wire.sh` — operator-side: stage the fresh runner's credential bundle, wait for the box to prove one credential works, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else; `--test` stages credentials, waits for the proof and stops. Run this after `up.sh`.
 - `down.sh` — delete the stack, remove the SSH key, retire the runner row (dropping every route to it); `--keep-runner` for a recycle, `--purge-secrets` to also remove the shared secrets.
 
@@ -50,9 +50,24 @@ aws sso login --profile labs      # you, once per session
                                   # onto the new box, drill it (non-zero exit unless all PASS)
 ```
 
+**A new box pairs by invitation and holds no PAT.** Creating a stack needs
+`--workspace <slug>` (the workspace it pairs into; up.sh lists yours when it is
+missing). Once the stack's instance role exists, `up.sh` uses YOUR workbench token
+to create a pairing invitation for that role and name (with the `<stack>-ecdh` KMS
+public key), prints `approve: <link>` (also emailed to you) and waits up to
+`--approve-minutes` (default 30) for the box to pair. Open the link and approve with
+one passkey touch; only you, the invitation's creator, can, and no token can. The
+box proves its instance role at `POST /api/harness/runners/pair-by-role`, becomes
+your runner in that workspace with its role as an approved device key, and signs in
+keyless from then on. `up.sh` records `<stack>-invitation.json` (`{id, runner_id}`),
+from which `wire.sh --name` takes the runner id. An invitation expires after an hour;
+re-run `up.sh` for a new one. An update of a stack whose runner exists needs no
+invitation: a replaced instance re-attaches by its role. Flow and rules:
+`docs/architecture/runners.md` § How a runner signs in.
+
 **A second box, proven without routing any work to it** (what was run on 2026-10-04):
 ```bash
-./up.sh   --name cloud-ec2-test --standby                    # stack canopy-cloud-runner-test; claims no
+./up.sh   --name cloud-ec2-test --workspace dimagi --standby # stack canopy-cloud-runner-test; claims no
                                                              # repo or chat turns (RunnerProjects='', RunnerSessions=0)
 ./wire.sh --name cloud-ec2-test --standby --agents ada,eva --drill
                                                              # DISABLED row for ada+eva only, wait for the first
@@ -139,7 +154,9 @@ every box. `up.sh`/`wire.sh` check each before writing anything and print the fi
 | prerequisite | checked by | fix |
 |---|---|---|
 | AWS SSO session for `labs` | `up.sh`, `down.sh` | `aws sso login --profile labs` |
-| `canopy/cloud-runner/canopy-pat` exists (and authenticates, for a NEW box) | `up.sh` | mint a short-lived canopy-web PAT, `./secrets.sh canopy <file>` |
+| operator token `~/.claude/canopy/workbench-token` authenticates (checked FIRST, before AWS) | `up.sh` | `/canopy:canopy-web-pat-mint` |
+| a NEW box's workspace (`--workspace <slug>`, one you belong to) | `up.sh` (lists yours) | pass `--workspace`; an update keeps the stack's own `RunnerWorkspace` |
+| approving the new box's pairing invitation (one passkey touch) | `up.sh` (prints the link, waits `--approve-minutes`, default 30) | open the `approve:` link; it is also emailed to you |
 | `canopy/cloud-runner/claude-oauth-token` (build fallback — must exist, may be old) | `up.sh` | set once: `claude setup-token` as the subscription account, `./secrets.sh claude <file>`; read only when no live runner has logins to copy |
 | a live Claude login on some cloud runner (what new boxes copy) | `wire.sh` (prints its source) | `/supervisor` → Runners → the box → Claude login (a human `claude setup-token` per subscription) |
 | `canopy/cloud-runner/gog-keyring-password` | `up.sh` | any strong password, `./secrets.sh gog <file>` |
@@ -529,7 +546,7 @@ runner (or wait for its next bootstrap) and read `GET /api/agents/<slug>/readine
 The imported file is never left on disk (`shred -u`, falling back to `rm -f`).
 
 ## Secrets (in Secrets Manager, under `canopy/cloud-runner/`)
-- `canopy/cloud-runner/canopy-pat` — a canopy-web PAT a NEW box pairs and registers its device key with. Once the key is approved the box signs in as itself (keyless, `docs/architecture/runners.md`) and the PAT can be revoked; the secret must still exist (the boot script reads it). `up.sh` refuses a dead PAT only when creating a stack.
+- `canopy/cloud-runner/canopy-pat` — **no longer needed by a new box.** A new stack sets `CanopyTokenSecret=''`, so the box holds no PAT and pairs by invitation (below); `up.sh` neither checks nor reads it. A stack made before that keeps its `CanopyTokenSecret` on update, and its box (already paired, keyless) does not need the PAT either; the boot script tolerates a named secret that is gone. So the secret can be deleted once no stack reads it — a **human AWS step after the deploy** (`aws --profile labs secretsmanager delete-secret --secret-id canopy/cloud-runner/canopy-pat`), not done by any script.
 - `canopy/cloud-runner/claude-oauth-token` — the Claude **build fallback**: a long-lived, non-rotating `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN`). Must exist (`up.sh` checks), but is intentionally rarely used: a box runs on its credential bundle from the runner page, which `wire.sh` copies from a live runner, and this is read only when there is none — so an old or capped value here is expected. **Do not copy ace-web's live OAuth blob** — its refresh tokens rotate on every use, so a second consumer gets invalidated (verified: it 401s / can't refresh).
 - ~~`canopy/cloud-runner/op-service-account-token`~~ — **gone.** `wire.sh` no longer reads it, the credential bundle no longer carries it, and `RunnerCredential` no longer stores it. A box-wide 1Password key lived in the runner's environment, which every turn inherits: one credential that reads EVERY agent's vault, handed to each of them. Agent secrets are read with the per-agent and per-tenant keys canopy-web issues (see "Where secrets live"). The Secrets Manager entry can be deleted; nothing reads it.
 
@@ -575,15 +592,19 @@ entries server-side (`POST /api/harness/runners/{id}/retire`); `down.sh` then re
 every agent's list and rules back to confirm none still name it.
 
 ## Config (CloudFormation parameters)
-Flags: `--name` (→ `RunnerName`), `--standby` (→ `RunnerProjects=''`, `RunnerSessions=0`),
+Flags: `--name` (→ `RunnerName`), `--workspace` (→ `RunnerWorkspace`; required for a new
+stack and for `--test`, an update passes back the stack's own value, so the template default no longer
+decides where a box pairs), `--approve-minutes` (how long to wait for the invitation),
+`--standby` (→ `RunnerProjects=''`, `RunnerSessions=0`),
 `--test` (→ `RunnerDirected=1`, `RunnerSessions=1`, `RunnerAgents=''`, `RunnerProjects` from
-`--projects`), `--workspace` (→ `RunnerWorkspace`),
+`--projects`),
 `--volume-size` (→ `VolumeSize`, default **40** GiB — 20 filled up), `--instance-type`.
 Anything else: `EXTRA_PARAMS='Key=Val Key=Val' ./up.sh`:
 `InstanceType` (t3.medium), `CanopyBaseUrl`, `RunnerProjects`, `RunnerAgents`,
 `AgentSlugs` (`ace,ada,echo,eva,hal` — which agents `bootstrap_agents.sh`
 provisions; distinct from `RunnerAgents`, which is which agents this runner may
-CLAIM turns for), `RunnerWorkspace` (dimagi), `RunnerName`, `VolumeSize`. `SshCidr` is
+CLAIM turns for), `RunnerName`, `VolumeSize`, `CanopyTokenSecret` ('' — a new box
+holds no PAT; an older stack's value names the PAT secret it was made with). `SshCidr` is
 set to your IP automatically. Parameters not passed fall back to their defaults on
 EVERY update — that is why an update goes through a change set (next section).
 
