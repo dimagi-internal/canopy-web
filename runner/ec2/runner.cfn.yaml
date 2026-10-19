@@ -226,7 +226,7 @@ Resources:
                 R="${AWS::Region}"
                 secret() { aws --region "$R" secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text; }
                 umask 077
-                install -d -o ubuntu -g ubuntu /opt/canopy-runner
+                install -d -o root -g root /opt/canopy-runner
                 # cloud_runner.py lives in Secrets Manager, not UserData (16 KB cap).
                 # SEED ONLY — install it when there is nothing on disk, and never
                 # again. Past first boot the auto-updater owns this file and tracks
@@ -258,8 +258,8 @@ Resources:
                 json.dump({"sha": m.get("sha", ""), "committed_at": int(m.get("committed_at") or 0),
                            "ref": "seed"}, open(sys.argv[3], "w"))
                 PY
-                  chown ubuntu:ubuntu /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/build-info.json
-                  chmod 0755 /opt/canopy-runner/cloud_runner.py.new
+                  chown root:root /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/build-info.json
+                  chmod 0755 /opt/canopy-runner/cloud_runner.py.new; chmod 0644 /opt/canopy-runner/build-info.json
                   mv /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/cloud_runner.py
                   rm -rf "$SEED"
                 fi

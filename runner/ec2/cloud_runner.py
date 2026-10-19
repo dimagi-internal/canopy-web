@@ -1978,7 +1978,7 @@ def _git_root(*args: str, run=subprocess.run) -> subprocess.CompletedProcess:
 def install_broker(*, run=subprocess.run) -> bool:
     """`/opt/canopy-runner/kms_broker.py` at the sha this runner was installed from
     (build-info), from the root-owned canopy-web clone (a public repo: no token)."""
-    target = pathlib.Path(RUNNER_PY).with_name("kms_broker.py")
+    target = RUNNER_HOME / "kms_broker.py"
     repo = pathlib.Path(CANOPY_WEB_REPO_DIR)
     if not (repo / ".git").is_dir():
         run(["git", "clone", "--quiet", CANOPY_WEB_REPO_URL, str(repo)], capture_output=True, timeout=600)
@@ -2015,7 +2015,7 @@ def write_box_env_from_legacy(*, units_spec: str, legacy: pathlib.Path | None = 
     out = out or BOX_ENV_FILE
     if out.exists():
         return read_env_file(out)
-    old = read_env_file(legacy or pathlib.Path(RUNNER_PY).with_name("runner.env"))
+    old = read_env_file(legacy or RUNNER_HOME / "runner.env")
     box = {k: old[k] for k in BOX_ENV_KEYS if k in old}
     box["RUNNER_UNITS"] = units_spec or box.get("RUNNER_UNITS", "")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -2025,7 +2025,9 @@ def write_box_env_from_legacy(*, units_spec: str, legacy: pathlib.Path | None = 
     return box
 
 
-def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None) -> list[str]:
+def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None,
+                  fetch_env: pathlib.Path = pathlib.Path("/usr/local/bin/canopy-fetch-env"),
+                  sudoers: pathlib.Path = pathlib.Path("/etc/sudoers.d/canopy-runner-update")) -> list[str]:
     """ROOT: the systemd units for a box of isolation units, the legacy single runner
     retired, root ownership of the shared code, and everything enabled and started.
     Idempotent. Returns the runner services it enabled.
@@ -2035,7 +2037,6 @@ def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None) ->
     re-wrote runner.env's secrets on every start is replaced."""
     systemd = systemd or SYSTEMD_DIR
     write_box_env_from_legacy(units_spec=os.environ.get("RUNNER_UNITS", ""))
-    fetch_env = pathlib.Path("/usr/local/bin/canopy-fetch-env")
     try:
         if "runner.env" in fetch_env.read_text() and "box.env" not in fetch_env.read_text():
             fetch_env.write_text(_IN_PLACE_FETCH_ENV)
@@ -2044,13 +2045,32 @@ def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None) ->
     for name, text in SYSTEMD_UNITS.items():
         (systemd / name).write_text(text)
     # The shared, read-only parts: root's, so no unit can rewrite what the others run.
-    for path in (pathlib.Path(RUNNER_PY).parent, pathlib.Path(CANOPY_WEB_REPO_DIR)):
+    home = RUNNER_HOME
+    # The legacy single runner's credentials go first: they must never become
+    # readable by a unit (its runner.env held a PAT, the Claude token and the
+    # box-wide gog password; runner-token.json its runner token).
+    for stale in ("runner.env", "runner-token.json", "runner-token.json.tmp", "in-flight", "turn-env-root"):
+        try:
+            (home / stale).unlink()
+        except OSError:
+            pass
+    for path in (home, pathlib.Path(CANOPY_WEB_REPO_DIR)):
         if path.exists():
             run(["chown", "-R", "root:root", str(path)], capture_output=True)
+    run(["chmod", "-R", "go+rX,go-w", CANOPY_WEB_REPO_DIR], capture_output=True)   # a public repo
+    for name, mode in (("cloud_runner.py", 0o755), ("kms_broker.py", 0o755), ("build-info.json", 0o644)):
+        try:
+            os.chmod(home / name, mode)
+        except OSError:
+            pass
+    try:
+        os.chmod(home, 0o755)
+    except OSError:
+        pass
     # The legacy single runner (User=ubuntu, the box-wide runner.env) stops here;
     # its runner row is adopted by the unit that keeps the box's name.
     run(["systemctl", "disable", "--now", "canopy-runner.service"], capture_output=True)
-    for stale in (pathlib.Path("/etc/sudoers.d/canopy-runner-update"), pathlib.Path(RUNNER_PY).with_name("runner.env")):
+    for stale in (sudoers,):
         try:
             stale.unlink()
         except OSError:

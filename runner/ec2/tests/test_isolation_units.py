@@ -434,3 +434,44 @@ def test_an_in_place_move_writes_box_env_without_secrets(cloud_runner, tmp_path)
     # …and it is the live box's one default unit, named as the box.
     [unit] = cloud_runner.parse_units(box["RUNNER_UNITS"], workspace="dimagi", box="cloud-ec2-2")
     assert unit["name"] == "cloud-ec2-2"
+
+
+def test_install_units_moves_a_legacy_box_in_place(cloud_runner, monkeypatch, tmp_path):
+    """The operator step that moves a live box (README "Moving a box to units"): the
+    legacy service is stopped, its secrets are gone before anything is made readable,
+    box.env carries no secret, the old fetch-env that re-wrote them is replaced, and
+    every unit's runner is enabled."""
+    home = tmp_path / "opt" / "canopy-runner"
+    home.mkdir(parents=True)
+    (home / "runner.env").write_text("CANOPY_TOKEN=pat\nRUNNER_NAME=cloud-ec2-2\nRUNNER_WORKSPACE=dimagi\n"
+                                     "GOG_KEYRING_PASSWORD=pw\n")
+    (home / "runner-token.json").write_text('{"access_token": "crt_live"}')
+    (home / "build-info.json").write_text('{"sha": "abc"}')
+    (home / "build-info.json").chmod(0o600)
+    fetch_env = tmp_path / "canopy-fetch-env"
+    fetch_env.write_text("#!/bin/bash\ncat > /opt/canopy-runner/runner.env <<ENV\nCANOPY_TOKEN=...\nENV\n")
+    sudoers = tmp_path / "sudoers"
+    sudoers.write_text("ubuntu ALL=(root) NOPASSWD: ...")
+    systemd = tmp_path / "systemd"
+    systemd.mkdir()
+    etc = tmp_path / "etc"
+    monkeypatch.setattr(cloud_runner, "RUNNER_HOME", home)
+    monkeypatch.setattr(cloud_runner, "BOX_ENV_FILE", etc / "box.env")
+    monkeypatch.setattr(cloud_runner, "install_broker", lambda run=None: True)
+    monkeypatch.setattr(cloud_runner, "load_units",
+                        lambda path=None: {"units": [{"id": "dimagi"}, {"id": "agent-eva"}]})
+    monkeypatch.setenv("RUNNER_UNITS", "tree:dimagi,agent:eva")
+    calls = []
+    services = cloud_runner.install_units(run=lambda argv, **kw: calls.append(argv), systemd=systemd,
+                                          fetch_env=fetch_env, sudoers=sudoers)
+    assert services == ["canopy-runner@dimagi.service", "canopy-runner@agent-eva.service"]
+    assert ["systemctl", "disable", "--now", "canopy-runner.service"] in calls
+    assert not (home / "runner.env").exists() and not (home / "runner-token.json").exists()
+    assert not sudoers.exists()
+    assert "runner.env" not in fetch_env.read_text().split("exit 0")[-1] and "exit 0" in fetch_env.read_text()
+    box = cloud_runner.read_env_file(etc / "box.env")
+    assert box == {"RUNNER_NAME": "cloud-ec2-2", "RUNNER_WORKSPACE": "dimagi", "RUNNER_UNITS": "tree:dimagi,agent:eva"}
+    assert (home / "build-info.json").stat().st_mode & 0o777 == 0o644   # every unit reads its provenance
+    assert sorted(p.name for p in systemd.iterdir()) == sorted(cloud_runner.SYSTEMD_UNITS)
+    enable = next(c for c in calls if c[:3] == ["systemctl", "enable", "--now"] and "canopy-pair.service" in c)
+    assert "canopy-runner@agent-eva.service" in enable and "canopy-kms-broker.service" in enable
