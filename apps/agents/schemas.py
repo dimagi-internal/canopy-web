@@ -149,6 +149,11 @@ class RepoCheckOut(StrictModel):
     token_url: str = ""
 
 
+class SetupLinkOut(StrictModel):
+    href: str
+    action: str
+
+
 class AgentSetupStepOut(StrictModel):
     key: str
     title: str
@@ -162,6 +167,9 @@ class AgentSetupStepOut(StrictModel):
     # What following `href` does, as a button label: "Add a GitHub token".
     action: str = ""
     command: str = ""
+    # Further choices beside `href`, each a link with its own label — the runner
+    # step's "Pair your laptop" / "Stand up a cloud box" for someone who could pair one.
+    links: list[SetupLinkOut] = []
 
 
 class RunnerPreferenceIn(StrictModel):

@@ -7,6 +7,8 @@ const authState = vi.hoisted(() => ({ value: { status: 'anonymous', user: null }
 const listAgents = vi.hoisted(() => vi.fn())
 vi.mock('@/auth/AuthProvider', () => ({ useAuth: () => authState.value }))
 vi.mock('@/api/agents', () => ({ listAgents }))
+const active = vi.hoisted(() => ({ value: null as string | null }))
+vi.mock('@/workspace/WorkspaceProvider', () => ({ useActiveWorkspace: () => active.value }))
 
 const { GetStartedPage } = await import('./GetStartedPage')
 
@@ -18,7 +20,9 @@ function renderPage() {
   )
 }
 
-const commands = () => screen.getAllByRole('code').map((c) => c.textContent)
+// The agent commands; the runner's pairing command (#runner) names a base URL, not an agent.
+const commands = () =>
+  screen.getAllByRole('code').map((c) => c.textContent).filter((c) => !c?.includes('install-runner.sh'))
 
 function agent(slug: string, workspace: string, description = '', plugin: string | null = slug) {
   return {
@@ -29,6 +33,7 @@ function agent(slug: string, workspace: string, description = '', plugin: string
 
 beforeEach(() => {
   authState.value = { status: 'anonymous', user: null }
+  active.value = null
   listAgents.mockReset()
 })
 
@@ -134,5 +139,36 @@ describe('GetStartedPage', () => {
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: 'Copy /canopy:setup' }))
     expect(window.getSelection()?.toString()).toBe('/canopy:setup')
+  })
+
+  it('signed in with a workspace, links to creating an agent there', async () => {
+    authState.value = { status: 'authenticated', user: { email: 'a@dimagi.com' } }
+    active.value = 'marshellis'
+    listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 200 })
+    renderPage()
+    expect(screen.getByRole('link', { name: 'Create an agent' }).getAttribute('href')).toBe('/w/marshellis/agents/new')
+    await waitFor(() => expect(listAgents).toHaveBeenCalled())
+  })
+
+  it('signed out, says where creating an agent happens instead of linking', () => {
+    renderPage()
+    expect(screen.queryByRole('link', { name: 'Create an agent' })).toBeNull()
+    expect(screen.getByText(/Sign in and open a workspace to create one/)).toBeTruthy()
+  })
+
+  it('has a #runner section with the pairing command for the active workspace', async () => {
+    authState.value = { status: 'authenticated', user: { email: 'a@dimagi.com' } }
+    active.value = 'marshellis'
+    listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 200 })
+    const { container } = renderPage()
+    const runner = container.querySelector('#runner')
+    expect(runner?.textContent).toContain('Pair a runner')
+    expect(within(runner as HTMLElement).getAllByRole('code').map((c) => c.textContent)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/install-runner\.sh --workspace marshellis/)]),
+    )
+    expect(within(runner as HTMLElement).getByRole('link', { name: 'cloud runner guide' }).getAttribute('href')).toContain(
+      'runner/ec2/README.md',
+    )
+    await waitFor(() => expect(listAgents).toHaveBeenCalled())
   })
 })

@@ -9,6 +9,7 @@ import {
   requestWorkspaceAccess,
   type RequestableWorkspaceOut,
 } from '@/api/workspaces'
+import { scopedPath } from '@/lib/scopedLinks'
 import { firstRunState, shouldOfferCreateForm } from './firstRun'
 
 /**
@@ -21,7 +22,7 @@ import { firstRunState, shouldOfferCreateForm } from './firstRun'
  * asking for a slug.
  */
 export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: boolean }) {
-  const { workspaces, loading, refresh } = useWorkspace()
+  const { workspaces, loading, refresh, active } = useWorkspace()
   const { user } = useAuth()
   const memoryVisible = useMemoryVisible()
   const navigate = useNavigate()
@@ -149,6 +150,15 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
           </>
         )}
       </p>
+      {alreadyAMember && active && (
+        <p className="mt-3 text-[13px] leading-relaxed text-foreground-secondary">
+          Here for an agent rather than a workspace?{' '}
+          <Link to={scopedPath(active, '/agents/new')} className="font-medium text-primary hover:underline">
+            Create an agent
+          </Link>{' '}
+          in {workspaces.find((w) => w.slug === active)?.display_name ?? active}.
+        </p>
+      )}
       {!alreadyAMember && memoryVisible && (
         <p className="mt-3 text-[13px] leading-relaxed text-foreground-secondary">
           You don&apos;t need one to keep your own context: on{' '}

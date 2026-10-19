@@ -37,7 +37,7 @@ def _shared_vault(ws: Workspace) -> dict:
 
 
 def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: dict) -> dict:
-    steps = setup_steps(agent)
+    steps = setup_steps(agent, viewer=viewer)
     left = [s for s in steps if s["status"] not in (DONE, OPTIONAL)]
     last = last_turns.get(agent.slug) or {}
     c = counts.get(agent.pk) or {}

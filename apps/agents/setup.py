@@ -33,11 +33,24 @@ def scaffold_skill_names() -> set[str]:
     return {p.split("/")[1] for p in templates() if p.startswith("skills/") and p.endswith("/SKILL.md")}
 
 
-def _step(key, title, status, detail, *, where="web", href="", action="", command=""):
+def _step(key, title, status, detail, *, where="web", href="", action="", command="", links=()):
     """`action` names what `href` does ("Add a GitHub token"): several steps link to
-    the same Settings section, and a bare "Open" left a newcomer guessing."""
+    the same Settings section, and a bare "Open" left a newcomer guessing. `links` are
+    further `{href, action}` choices beside the main one."""
     return {"key": key, "title": title, "status": status, "detail": detail,
-            "where": where, "href": href, "action": action, "command": command}
+            "where": where, "href": href, "action": action, "command": command,
+            "links": list(links)}
+
+
+#: Pairing a new runner, for the runner step when nothing can take the agent. A laptop
+#: pairs with one command (`install-runner.sh`, on /get-started); a cloud box is stood
+#: up from the EC2 runner's README — that needs AWS rights canopy-web does not hold.
+PAIR_LAPTOP = {"href": "/get-started#runner", "action": "Pair your laptop"}
+PAIR_CLOUD_BOX = {
+    "href": "https://github.com/dimagi-internal/canopy-web/blob/main/runner/ec2/README.md"
+            "#lifecycle--commands-only",
+    "action": "Stand up a cloud box",
+}
 
 
 def _github(agent: Agent, settings: str) -> dict:
@@ -237,7 +250,7 @@ def request_setup(agent: Agent) -> list[str]:
     return asked
 
 
-def _runner(agent: Agent, settings: str) -> dict:
+def _runner(agent: Agent, settings: str, viewer=None) -> dict:
     from apps.harness.models import Runner
 
     from .models import AgentBootstrapReport
@@ -277,7 +290,12 @@ def _runner(agent: Agent, settings: str) -> dict:
     detail = ("; ".join(why).capitalize() + "." if why else
               "A runner is the computer that runs its turns, and none is set to take its work. "
               "Pick one, or pair a runner of your own first.")
-    return _step("runner", title, TODO, detail, href=f"{settings}#running", action="Pick a runner")
+    # Pairing is offered only to someone whose own box could then hold the agent: a
+    # runner runs an agent only when its owner is one of the agent's admins
+    # (`runner_may_hold_agent`), so anyone else's new box would still take nothing.
+    can_pair = viewer is not None and agent.is_admin(viewer)
+    return _step("runner", title, TODO, detail, href=f"{settings}#running", action="Pick a runner",
+                 links=[PAIR_LAPTOP, PAIR_CLOUD_BOX] if can_pair else [])
 
 
 #: Where a laptop runner expects an agent's checkout (runner/canopy_runner/README.md;
@@ -318,8 +336,9 @@ def _first_turn(agent: Agent, base: str) -> dict:
                  action="See its turns" if done else "Ask it something")
 
 
-def setup_steps(agent: Agent) -> list[dict]:
-    """The ordered checklist. Links are paths inside the agent's workspace."""
+def setup_steps(agent: Agent, viewer=None) -> list[dict]:
+    """The ordered checklist. Links are paths inside the agent's workspace. `viewer`,
+    when given, adds the choices only that person can act on (pairing a runner)."""
     base = f"/w/{agent.workspace_id}/agents/{agent.slug}"
     settings = f"{base}/settings"
     repo = delegations.agent_repo(agent)
@@ -336,7 +355,7 @@ def setup_steps(agent: Agent) -> list[dict]:
         _mailbox(agent, settings),
         _vault(agent, settings),
         *[s for s in [_canopy_login(agent, settings)] if s],
-        _runner(agent, settings),
+        _runner(agent, settings, viewer),
         _job(agent),
         _first_turn(agent, base),
     ]

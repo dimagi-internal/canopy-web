@@ -433,3 +433,32 @@ def test_registering_a_new_agent_asks_its_cloud_box_to_set_it_up(editor, ws):
     assert resp.status_code == 201, resp.content
     box.refresh_from_db()
     assert box.refresh_requested_at is not None
+
+
+def test_the_runner_step_offers_pairing_to_whoever_could_hold_the_agent(editor, ws):
+    """No runner can take it: an admin of the agent (whose own box could hold it) gets
+    links to pair a laptop or stand up a cloud box, beside "Pick a runner". A viewer's
+    box could never hold the agent (`runner_may_hold_agent`), so it gets none."""
+    agent = _agent(ws, editor)
+    runner = next(s for s in setup_steps(agent, viewer=editor) if s["key"] == "runner")
+    assert runner["status"] == "todo" and runner["action"] == "Pick a runner"
+    assert runner["links"] == [
+        {"href": "/get-started#runner", "action": "Pair your laptop"},
+        {"href": "https://github.com/dimagi-internal/canopy-web/blob/main/runner/ec2/README.md"
+                 "#lifecycle--commands-only", "action": "Stand up a cloud box"},
+    ]
+    viewer = a_member(ws, email="v@dimagi.com", role=WorkspaceMembership.VIEWER)
+    assert next(s for s in setup_steps(agent, viewer=viewer) if s["key"] == "runner")["links"] == []
+    assert next(s for s in setup_steps(agent) if s["key"] == "runner")["links"] == []
+
+    # Through the route, as the caller.
+    steps = _client(editor).get("/api/agents/scout/setup").json()
+    assert [link["action"] for link in next(s for s in steps if s["key"] == "runner")["links"]] == [
+        "Pair your laptop", "Stand up a cloud box"]
+
+    # Once a runner takes it, there is nothing to pair.
+    box = enrolled(Runner.objects.create(name="olive-cloud", kind=Runner.CLOUD, owner=editor,
+                                         status=Runner.ONLINE, last_heartbeat_at=timezone.now()), ws)
+    RunnerAssignment.objects.create(agent=agent, runner=box, rank=0)
+    AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud")
+    assert next(s for s in setup_steps(agent, viewer=editor) if s["key"] == "runner")["links"] == []

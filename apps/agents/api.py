@@ -3005,7 +3005,7 @@ def agent_setup(request: HttpRequest, slug: str) -> list[AgentSetupStepOut]:
     from .setup import setup_steps
 
     agent = _get_agent_or_404(request, slug)
-    return [AgentSetupStepOut(**s) for s in setup_steps(agent)]
+    return [AgentSetupStepOut(**s) for s in setup_steps(agent, viewer=request.user)]
 
 
 @router.post("/{slug}/bootstrap-report", response=BootstrapReportOut,

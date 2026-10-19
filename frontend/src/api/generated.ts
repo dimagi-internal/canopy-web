@@ -20388,6 +20388,18 @@ export interface components {
              * @default
              */
             readonly command: string;
+            /**
+             * Links
+             * @default []
+             */
+            readonly links: readonly components["schemas"]["SetupLinkOut"][];
+        };
+        /** SetupLinkOut */
+        readonly SetupLinkOut: {
+            /** Href */
+            readonly href: string;
+            /** Action */
+            readonly action: string;
         };
         /**
          * BootstrapReportIn
@@ -23185,6 +23197,13 @@ export interface components {
             /** Active */
             readonly active: boolean;
         };
+        /** HealthStepLinkOut */
+        readonly HealthStepLinkOut: {
+            /** Href */
+            readonly href: string;
+            /** Action */
+            readonly action: string;
+        };
         /** HealthStepOut */
         readonly HealthStepOut: {
             /** Key */
@@ -23218,6 +23237,11 @@ export interface components {
              * @default
              */
             readonly command: string;
+            /**
+             * Links
+             * @default []
+             */
+            readonly links: readonly components["schemas"]["HealthStepLinkOut"][];
         };
         /** HealthTotalsOut */
         readonly HealthTotalsOut: {
