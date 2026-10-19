@@ -144,7 +144,7 @@ describe('WorkspaceEmailPage', () => {
   it('shows the Add domain form only when the list says the caller may manage', async () => {
     vi.mocked(mail.listMailDomains).mockResolvedValueOnce({ enabled: true, can_manage: false, items: [] })
     const first = renderPage()
-    await screen.findByText(/Run your own domain/)
+    await screen.findByText(/Addresses on your own domain/)
     expect(screen.queryByRole('button', { name: 'Add domain' })).toBeNull()
     first.unmount()
     vi.mocked(mail.listMailDomains).mockResolvedValueOnce({ enabled: true, can_manage: true, items: [] })
@@ -243,5 +243,28 @@ describe('WorkspaceEmailPage', () => {
     renderPage()
     await screen.findByText('*@marshellis.com')
     expect(screen.queryByTestId('mail-shares')).toBeNull()
+  })
+
+  const headings = (c: HTMLElement) => [...c.querySelectorAll('h4')].map((h) => h.textContent)
+
+  // DNS is set once. While a record is missing it comes before the addresses; once every
+  // record checks out it folds away beneath them, and removing the domain is last.
+  it('puts DNS first while a record is missing', async () => {
+    const { container } = renderPage()
+    await screen.findByTestId('mail-records')
+    expect(headings(container).slice(0, 2)).toEqual(['DNS records', 'Addresses'])
+  })
+
+  it('folds the DNS records beneath the addresses once they all check out', async () => {
+    const live = { ...domain, status: 'verified', receiving: true, records: domain.records.map((r) => ({ ...r, ok: true })) }
+    vi.mocked(mail.listMailDomains).mockResolvedValueOnce({ enabled: true, can_manage: true, items: [live] } as never)
+    const { container } = renderPage()
+    expect((await screen.findByTestId('mail-records-summary')).textContent).toBe('All 2 in place')
+    expect(screen.queryByTestId('mail-records')).toBeNull()
+    expect(headings(container)).toEqual(['Addresses', 'Settings', 'DNS records'])
+    const text = container.textContent ?? ''
+    expect(text.indexOf('DNS records')).toBeLessThan(text.indexOf('Remove domain'))
+    fireEvent.click(screen.getByRole('button', { name: 'Show records' }))
+    expect(screen.getByTestId('mail-records')).toBeTruthy()
   })
 })

@@ -35,6 +35,8 @@ const primary =
 const secondary =
   'rounded-md border border-border px-2 py-0.5 text-[12px] text-foreground hover:bg-muted disabled:opacity-40'
 
+const heading = 'text-[11px] font-medium uppercase tracking-wide text-muted-foreground'
+
 type Kind = 'agent' | 'forward' | 'drop'
 
 const STATUS: Record<string, { label: string; cls: string }> = {
@@ -96,6 +98,9 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
   const [shareWith, setShareWith] = useState('')
   const status = STATUS[domain.status] ?? { label: domain.status, cls: 'text-muted-foreground' }
   const spfMany = domain.records.some((r) => r.purpose === 'spf' && manyFound(r.found))
+  // Every record found and SES agrees: nothing to do in DNS, so the table folds away.
+  const dnsOk = domain.status === 'verified' && domain.records.every((r) => r.ok)
+  const [showDns, setShowDns] = useState(false)
 
   async function run(fn: () => Promise<void>, fallback: string) {
     setBusy(true)
@@ -136,90 +141,29 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
 
   const canSave = local.trim() !== '' && (kind === 'drop' || (kind === 'agent' ? agent !== '' : member !== ''))
 
-  return (
-    <section className="flex flex-col gap-3" data-testid={`mail-domain-${domain.id}`}>
-      <div className="flex flex-wrap items-center gap-3 text-[13px]">
-        <h3 className="text-[14px] font-semibold text-foreground">{domain.name}</h3>
-        <span className={status.cls}>{status.label}</span>
-        <span className="text-muted-foreground">Receiving: {domain.receiving ? 'live' : 'not yet'}</span>
-        {!owned && (
-          <span className="text-muted-foreground" data-testid="mail-shared-from">
-            Shared from {domain.owner_workspace}
-          </span>
-        )}
-        {owned && (
-          <button type="button" className={secondary} disabled={busy}
-            title={domain.verification_error ? 'Re-check DNS and restart SES verification' : undefined}
-            onClick={() => void run(async () => onChange(await refreshMailDomain(workspace, domain.id)), 'Could not re-check')}>
-            {domain.verification_error ? 'Re-check and restart verification' : 'Re-check'}
-          </button>
-        )}
-        {manage && owned && (
-          <button type="button" className="px-2 text-[12px] text-destructive hover:underline" disabled={busy}
-            onClick={() => {
-              if (!window.confirm(`Remove ${domain.name}? Its addresses stop receiving mail. Existing threads are kept.`)) return
-              void run(async () => { await removeMailDomain(workspace, domain.id); onRemoved() }, 'Could not remove the domain')
-            }}>
-            Remove domain
-          </button>
-        )}
-      </div>
-
-      {owned && domain.verification_error && (
-        <p className="text-[12px] text-destructive" data-testid="mail-verification-error">
-          {domain.verification_error}
-          <span className="block text-muted-foreground">
-            Re-check restarts SES verification when the records below are green (at most every 10 minutes).
-          </span>
-        </p>
-      )}
-      {owned && domain.restart_note && (
-        <p className="text-[12px] text-muted-foreground" data-testid="mail-restart-note">{domain.restart_note}</p>
-      )}
-      {owned && !domain.receiving && domain.mx_provider && (
-        <p className="text-[12px] text-warning" data-testid="mail-mx-elsewhere">
-          {domain.mx_points_at_google
-            ? `This domain's MX points at Google, so its mail goes to Gmail, not here. Google Workspace sign-in and Drive work without Gmail — keep the MX record below (canopy) and the agents' mail stays here.`
-            : `${domain.mx_provider} currently receives mail for this domain — switching MX moves all of it here.`}
-        </p>
-      )}
-      {owned && (domain.can_set_sign_in || domain.sign_in) && (
-        <label className="flex items-start gap-2 text-[12px] text-foreground" data-testid="mail-sign-in">
-          <input type="checkbox" className="mt-0.5" checked={domain.sign_in}
-            disabled={busy || !domain.can_set_sign_in}
-            onChange={(e) => {
-              const on = e.target.checked
-              void run(async () => onChange(await updateMailDomain(workspace, domain.id, { sign_in: on })),
-                'Could not change who may sign in')
-            }} />
-          <span>
-            People with a Google account @{domain.name} (e.g. free Google Workspace logins) can sign in and ask to
-            join this workspace.
-            <span className="block text-muted-foreground">
-              They are let in at the workspace&rsquo;s auto-approve role, or an admin approves each one.
+  // Set up once: first while any record is missing, then folded at the bottom.
+  const dns = owned && (
+    <div>
+      <div className="flex flex-wrap items-center gap-3">
+        <h4 className={heading}>DNS records</h4>
+        {dnsOk && (
+          <>
+            <span className="text-[12px] text-success" data-testid="mail-records-summary">
+              {`All ${domain.records.length} in place`}
             </span>
-          </span>
-        </label>
-      )}
-      {spfMany && (
-        <p className="text-[12px] text-warning">
-          Only one SPF record may exist on a domain. This domain has several; replace them all with the value shown below.
-        </p>
-      )}
-      {domain.status === 'suspended' && (
-        <p className="flex items-center gap-2 text-[12px] text-destructive">
-          Sending suspended{domain.suspended_reason ? `: ${domain.suspended_reason}` : ''}
-          {manage && owned && (
-            <button type="button" className={secondary} disabled={busy}
-              onClick={() => void run(async () => onChange(await updateMailDomain(workspace, domain.id, { unsuspend: true })), 'Could not lift the suspension')}>
-              Lift suspension
+            <button type="button" className="text-[12px] text-primary hover:underline" aria-expanded={showDns}
+              onClick={() => setShowDns((v) => !v)}>
+              {showDns ? 'Hide records' : 'Show records'}
             </button>
-          )}
-        </p>
-      )}
-
-      {owned && <div>
-        <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">DNS records</h4>
+          </>
+        )}
+        <button type="button" className={secondary} disabled={busy}
+          title={domain.verification_error ? 'Re-check DNS and restart SES verification' : undefined}
+          onClick={() => void run(async () => onChange(await refreshMailDomain(workspace, domain.id)), 'Could not re-check')}>
+          {domain.verification_error ? 'Re-check and restart verification' : 'Re-check'}
+        </button>
+      </div>
+      {(!dnsOk || showDns) && (
         <table className="mt-1 w-full text-[12px]" data-testid="mail-records">
           <thead className="text-left text-muted-foreground">
             <tr className="border-b border-border">
@@ -252,10 +196,66 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
             ))}
           </tbody>
         </table>
-      </div>}
+      )}
+    </div>
+  )
+
+  return (
+    <section className="flex flex-col gap-4" data-testid={`mail-domain-${domain.id}`}>
+      <div className="flex flex-wrap items-center gap-3 text-[13px]">
+        <h3 className="text-[14px] font-semibold text-foreground">{domain.name}</h3>
+        <span className={status.cls}>{status.label}</span>
+        <span className="text-muted-foreground">Receiving: {domain.receiving ? 'live' : 'not yet'}</span>
+        {!owned && (
+          <span className="text-muted-foreground" data-testid="mail-shared-from">
+            Shared from {domain.owner_workspace}
+          </span>
+        )}
+      </div>
+
+      {/* What needs doing comes first: a problem with the domain, then the DNS records
+          while any is missing, then the addresses (the routine job here) and the domain's
+          settings. Once every record checks out, DNS folds away below them; removing the
+          domain is last. */}
+      {owned && domain.verification_error && (
+        <p className="text-[12px] text-destructive" data-testid="mail-verification-error">
+          {domain.verification_error}
+          <span className="block text-muted-foreground">
+            Re-check restarts SES verification when the DNS records are green (at most every 10 minutes).
+          </span>
+        </p>
+      )}
+      {owned && domain.restart_note && (
+        <p className="text-[12px] text-muted-foreground" data-testid="mail-restart-note">{domain.restart_note}</p>
+      )}
+      {owned && !domain.receiving && domain.mx_provider && (
+        <p className="text-[12px] text-warning" data-testid="mail-mx-elsewhere">
+          {domain.mx_points_at_google
+            ? `This domain's MX points at Google, so its mail goes to Gmail, not here. Google Workspace sign-in and Drive work without Gmail — keep canopy's MX record (under DNS records) and the agents' mail stays here.`
+            : `${domain.mx_provider} currently receives mail for this domain — switching MX moves all of it here.`}
+        </p>
+      )}
+      {spfMany && (
+        <p className="text-[12px] text-warning">
+          Only one SPF record may exist on a domain. This domain has several; replace them all with the SPF value under DNS records.
+        </p>
+      )}
+      {domain.status === 'suspended' && (
+        <p className="flex items-center gap-2 text-[12px] text-destructive">
+          Sending suspended{domain.suspended_reason ? `: ${domain.suspended_reason}` : ''}
+          {manage && owned && (
+            <button type="button" className={secondary} disabled={busy}
+              onClick={() => void run(async () => onChange(await updateMailDomain(workspace, domain.id, { unsuspend: true })), 'Could not lift the suspension')}>
+              Lift suspension
+            </button>
+          )}
+        </p>
+      )}
+
+      {!dnsOk && dns}
 
       <div>
-        <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Addresses</h4>
+        <h4 className={heading}>Addresses</h4>
         {domain.routes.length === 0 ? (
           <p className="mt-1 text-[12px] text-muted-foreground">No addresses yet.</p>
         ) : (
@@ -337,55 +337,94 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         )}
       </div>
 
-      {!owned && (
-        <p className="text-[12px] text-muted-foreground">
-          {`This workspace may send to ${domain.daily_send_cap} recipients a day from ${domain.name}.`}
-        </p>
-      )}
 
-      {domain.can_share && (
-        <div data-testid="mail-shares">
-          <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Shared with</h4>
-          <p className="mt-1 text-[12px] text-muted-foreground">
-            Each workspace listed, and every workspace below it, can add its own addresses here.
-          </p>
-          {(domain.shares ?? []).map((sh) => (
-            <p key={sh.workspace} className="mt-1 flex items-center gap-2 text-[12px] text-foreground">
-              {sh.workspace}
-              <span className="text-muted-foreground">{`${sh.daily_send_cap}/day each`}</span>
-              <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
-                onClick={() => {
-                  if (!window.confirm(`Stop sharing ${domain.name} with ${sh.workspace}? Its addresses stop working; nothing is deleted.`)) return
-                  void run(async () => onChange(await unshareMailDomain(workspace, domain.id, sh.workspace)), 'Could not stop sharing')
-                }}>
-                Stop sharing
-              </button>
+      {(!owned || manage || domain.can_share || domain.can_set_sign_in || domain.sign_in) && (
+        <div className="flex flex-col gap-3" data-testid="mail-settings">
+          <h4 className={heading}>Settings</h4>
+          {!owned && (
+            <p className="text-[12px] text-muted-foreground">
+              {`This workspace may send to ${domain.daily_send_cap} recipients a day from ${domain.name}.`}
             </p>
-          ))}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <input aria-label="Share with workspace" placeholder="workspace slug" value={shareWith}
-              onChange={(e) => setShareWith(e.target.value)} className={`${field} w-48`} />
-            <button type="button" className={secondary} disabled={busy || shareWith.trim() === ''}
-              onClick={() => void run(async () => {
-                onChange(await shareMailDomain(workspace, domain.id, shareWith.trim()))
-                setShareWith('')
-              }, 'Could not share the domain')}>
-              Share
-            </button>
-          </div>
+          )}
+
+          {manage && owned && (
+            <label className="flex items-center gap-2 text-[12px] text-muted-foreground">
+              Daily send cap
+              <input type="number" min={0} aria-label="Daily send cap" value={cap}
+                onChange={(e) => setCap(e.target.value)} className={`${field} w-24`} />
+              <button type="button" className={secondary} disabled={busy || cap === '' || Number(cap) === domain.daily_send_cap}
+                onClick={() => void run(async () => onChange(await updateMailDomain(workspace, domain.id, { daily_send_cap: Number(cap) })), 'Could not save the cap')}>
+                Save
+              </button>
+            </label>
+          )}
+
+          {owned && (domain.can_set_sign_in || domain.sign_in) && (
+            <label className="flex items-start gap-2 text-[12px] text-foreground" data-testid="mail-sign-in">
+              <input type="checkbox" className="mt-0.5" checked={domain.sign_in}
+                disabled={busy || !domain.can_set_sign_in}
+                onChange={(e) => {
+                  const on = e.target.checked
+                  void run(async () => onChange(await updateMailDomain(workspace, domain.id, { sign_in: on })),
+                    'Could not change who may sign in')
+                }} />
+              <span>
+                People with a Google account @{domain.name} (e.g. free Google Workspace logins) can sign in and ask to
+                join this workspace.
+                <span className="block text-muted-foreground">
+                  They are let in at the workspace&rsquo;s auto-approve role, or an admin approves each one.
+                </span>
+              </span>
+            </label>
+          )}
+          {domain.can_share && (
+            <div data-testid="mail-shares">
+              <h4 className={heading}>Shared with</h4>
+              <p className="mt-1 text-[12px] text-muted-foreground">
+                Each workspace listed, and every workspace below it, can add its own addresses here.
+              </p>
+              {(domain.shares ?? []).map((sh) => (
+                <p key={sh.workspace} className="mt-1 flex items-center gap-2 text-[12px] text-foreground">
+                  {sh.workspace}
+                  <span className="text-muted-foreground">{`${sh.daily_send_cap}/day each`}</span>
+                  <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
+                    onClick={() => {
+                      if (!window.confirm(`Stop sharing ${domain.name} with ${sh.workspace}? Its addresses stop working; nothing is deleted.`)) return
+                      void run(async () => onChange(await unshareMailDomain(workspace, domain.id, sh.workspace)), 'Could not stop sharing')
+                    }}>
+                    Stop sharing
+                  </button>
+                </p>
+              ))}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input aria-label="Share with workspace" placeholder="workspace slug" value={shareWith}
+                  onChange={(e) => setShareWith(e.target.value)} className={`${field} w-48`} />
+                <button type="button" className={secondary} disabled={busy || shareWith.trim() === ''}
+                  onClick={() => void run(async () => {
+                    onChange(await shareMailDomain(workspace, domain.id, shareWith.trim()))
+                    setShareWith('')
+                  }, 'Could not share the domain')}>
+                  Share
+                </button>
+              </div>
+            </div>
+          )}
+
         </div>
       )}
 
+      {dnsOk && dns}
+
       {manage && owned && (
-        <label className="flex items-center gap-2 text-[12px] text-muted-foreground">
-          Daily send cap
-          <input type="number" min={0} aria-label="Daily send cap" value={cap}
-            onChange={(e) => setCap(e.target.value)} className={`${field} w-24`} />
-          <button type="button" className={secondary} disabled={busy || cap === '' || Number(cap) === domain.daily_send_cap}
-            onClick={() => void run(async () => onChange(await updateMailDomain(workspace, domain.id, { daily_send_cap: Number(cap) })), 'Could not save the cap')}>
-            Save
+        <div className="border-t border-border pt-3">
+          <button type="button" className="text-[12px] text-destructive hover:underline" disabled={busy}
+            onClick={() => {
+              if (!window.confirm(`Remove ${domain.name}? Its addresses stop receiving mail. Existing threads are kept.`)) return
+              void run(async () => { await removeMailDomain(workspace, domain.id); onRemoved() }, 'Could not remove the domain')
+            }}>
+            Remove domain
           </button>
-        </label>
+        </div>
       )}
 
       {error && <p className="text-[12px] text-destructive" data-testid="mail-error">{error}</p>}
@@ -444,8 +483,8 @@ export function WorkspaceEmailPage(): JSX.Element {
       <section>
         <h2 className="text-[15px] font-semibold text-foreground">Email</h2>
         <p className="mt-1 max-w-3xl text-[13px] text-foreground-secondary">
-          Run your own domain&rsquo;s email through canopy. Publish the DNS records below, then choose where
-          each address goes: an agent, a member of this workspace, or nowhere.
+          Addresses on your own domain, and where each one goes: an agent, a member of this workspace, or
+          nowhere.
         </p>
       </section>
 
