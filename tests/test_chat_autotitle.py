@@ -152,3 +152,23 @@ def test_a_session_with_no_runner_still_autotitles():
     Message.objects.create(session=session, turn_index=0, role=Message.USER,
                            plaintext="hello there")
     assert autotitle.maybe_autotitle(session.pk) == "hello there"
+
+
+def test_a_cloud_session_is_named_from_its_first_message_not_its_uuid():
+    """A cloud runner's session key is a Claude session UUID — a key, not a name.
+    A session already stuck with that UUID as its title is renamed too."""
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.models import Runner
+
+    user = User.objects.create_user("t3", "t3@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w-title3", display_name="W", created_by=user)
+    runner = Runner.objects.create(name="cloud", workspace=ws, owner=user)
+    key = "1fb14aa8-7289-4e43-827a-e989df77a07a"
+    session = Session.objects.create(workspace=ws, created_by=user, title=key)
+    RunnerBinding.objects.create(session=session, runner=runner, session_key=key)
+    Message.objects.create(session=session, turn_index=0, role=Message.USER,
+                           plaintext="Fix the session name on supervisor launches")
+
+    assert autotitle.maybe_autotitle(session.pk) == "Fix the session name on supervisor launches"
+    session.refresh_from_db()
+    assert session.title == "Fix the session name on supervisor launches"

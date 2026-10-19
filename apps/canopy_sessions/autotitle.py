@@ -9,6 +9,8 @@ notification path.
 """
 from __future__ import annotations
 
+import uuid
+
 from django.db import transaction
 from django.dispatch import receiver
 
@@ -18,6 +20,17 @@ from apps.realtime import groups
 from .models import Message, Session
 
 TITLE_MAX = 80
+
+
+def names_nothing(key: str) -> bool:
+    """True when a session key is a bare UUID — a Claude CLI session id, which is
+    what a cloud runner reports. Unlike an emdash task name it means nothing to a
+    person, so it is never a title."""
+    try:
+        uuid.UUID((key or "").strip())
+    except ValueError:
+        return False
+    return True
 
 
 def _runner_binding(session):
@@ -42,7 +55,9 @@ def maybe_autotitle(session_id) -> str | None:
     realtime group when it actually sets one."""
     with transaction.atomic():
         session = Session.objects.select_for_update().get(pk=session_id)
-        if session.title:
+        # A bare-UUID title is a session key that stood in for a name (see
+        # names_nothing); the first message is a better one.
+        if session.title and not names_nothing(session.title):
             return None
         # A session a runner backs is ALREADY named — by the emdash task the
         # human sees in their own sidebar. That name is what they navigate by, so
@@ -55,8 +70,11 @@ def maybe_autotitle(session_id) -> str | None:
         # created on the phone still ends up driven by emdash, and the emdash name
         # is the right title either way. Origin says where it STARTED; the binding
         # says what is running it.
+        #
+        # A cloud runner's key is a Claude session UUID, not a name — fall
+        # through to the first message instead.
         binding = _runner_binding(session)
-        if binding is not None and binding.session_key:
+        if binding is not None and binding.session_key and not names_nothing(binding.session_key):
             if session.title != binding.session_key:
                 session.title = binding.session_key[:200]
                 session.save(update_fields=["title"])

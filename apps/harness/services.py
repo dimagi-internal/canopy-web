@@ -1691,7 +1691,11 @@ def record_session(
         #
         # A runner-supplied `title` beats the key: a cloud runner's key is a
         # Claude session UUID, which names nothing a person would recognise.
-        name = (title or "").strip() or session_key
+        # With no title, a UUID key is left for autotitle to name from the first
+        # message rather than written as the title.
+        from apps.canopy_sessions.autotitle import names_nothing
+
+        name = (title or "").strip() or ("" if names_nothing(session_key) else session_key)
         if name and _title_is_derived(binding.session, thread_key):
             binding.session.title = name[:200]
             binding.session.save(update_fields=["title"])
