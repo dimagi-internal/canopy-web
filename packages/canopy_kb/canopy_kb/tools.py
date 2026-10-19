@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 
+from canopy_kb.hybrid import MODES, Semantic
 from canopy_kb.kb import KB, KBError
 
 PROTOCOL = "2025-06-18"
@@ -23,11 +24,13 @@ def _base_tools() -> list[dict]:
     return [
         {"name": "kb_info", "description": "What this knowledge base holds: publisher, licence, item counts by type, tables, build date.",
          "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "search", "description": "Best-matching passages for a question across every source item, each with its source URL and date. Put exact phrases in double quotes.",
+        {"name": "search", "description": "Best-matching passages for a question across every source item, each with its source URL and date. Finds by words and by meaning, so a paraphrase works; put exact phrases in double quotes.",
          "inputSchema": {"type": "object", "required": ["query"], "properties": {
              "query": _STR, "types": {"type": "array", "items": _STR, "description": "limit to item types (see kb_info)"},
              "since": {**_STR, "description": "YYYY-MM-DD"}, "until": {**_STR, "description": "YYYY-MM-DD"},
-             "limit": {**_INT, "default": 10}}}},
+             "limit": {**_INT, "default": 10},
+             "mode": {**_STR, "enum": list(MODES), "default": "hybrid",
+                      "description": "hybrid (words and meaning, fused), lexical (words only: exact names, ids, numbers) or semantic (meaning only)"}}}},
         {"name": "get", "description": "One item's full text and metadata, by id or URL (from search results). Long items are truncated; pass passage to read one passage.",
          "inputSchema": {"type": "object", "required": ["ref"], "properties": {
              "ref": _STR, "max_chars": {**_INT, "default": 20000}, "passage": _INT,
@@ -67,11 +70,12 @@ def table_tools(kb: KB) -> list[dict]:
     return out
 
 
-def call_tool(kb: KB, name: str, args: dict, tables: dict[str, dict]):
+def call_tool(kb: KB, name: str, args: dict, tables: dict[str, dict], semantic: Semantic | None = None):
     if name == "kb_info":
         return kb.info()
     if name == "search":
-        return kb.search(args["query"], args.get("types"), args.get("since", ""), args.get("until", ""), int(args.get("limit", 10)))
+        return kb.search(args["query"], args.get("types"), args.get("since", ""), args.get("until", ""),
+                         int(args.get("limit", 10)), args.get("mode") or "hybrid", semantic)
     if name == "get":
         return kb.get(args["ref"], int(args.get("max_chars", 20000)), args.get("passage"),
                       args.get("grep", ""), int(args.get("context", 1)))
@@ -96,7 +100,8 @@ def tool_specs(kb: KB) -> list[dict]:
     return _base_tools() + [{k: v for k, v in t.items() if k != "_table"} for t in table_tools(kb)]
 
 
-def run(kb: KB, name: str, args: dict):
+def run(kb: KB, name: str, args: dict, semantic: Semantic | None = None):
     """Call one tool by name: the result is JSON-serialisable; raises KBError (or
-    KeyError/ValueError/TypeError on bad arguments)."""
-    return call_tool(kb, name, args or {}, {t["name"]: t for t in table_tools(kb)})
+    KeyError/ValueError/TypeError on bad arguments). `semantic` is the host's
+    nearest-passages lookup (`hybrid.Semantic`); without it `search` is lexical."""
+    return call_tool(kb, name, args or {}, {t["name"]: t for t in table_tools(kb)}, semantic)

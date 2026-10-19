@@ -303,9 +303,45 @@ jobs:
             exit 1
           fi
           echo "dimagi-canopy: src changed and the version moved $before -> $after."
+  # What SQLite cannot test: pgvector (KB search by meaning — the HNSW index, the
+  # filtered nearest-neighbour query, hybrid search through the MCP tool). The
+  # suite skips itself on SQLite, so `Backend pytest` alone would wave a broken
+  # vector path through. Runs only the PostgreSQL-specific files (the whole suite
+  # on Postgres is minutes longer and adds nothing SQLite does not already cover).
+  test-backend-postgres:
+    name: Backend pytest (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: canopy_web
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Run the PostgreSQL suites
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/canopy_web
+        run: uv run pytest --ds=config.settings.pgtest tests/test_kb_vectors_pg.py tests/test_kb_vectors.py -q
+
   test-backend-gate:
     name: Backend tests
-    needs: [test-backend, test-runner-packages]
+    needs: [test-backend, test-runner-packages, test-backend-postgres]
     # always(): without it a failed `needs` SKIPS this job, and a skipped
     # required check counts as passing — the gate would wave failures through.
     if: always()

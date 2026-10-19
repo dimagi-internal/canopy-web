@@ -23,6 +23,9 @@ Two artifacts, one direction:
 accumulates a dated history of what appeared or changed — that is what `whats_new`
 answers, and it survives rebuilds because each build carries the old rows forward.
 
+`search` is BM25 over the FTS index, fused with a host's nearest passages by meaning
+when the host keeps vectors (`hybrid.py`); the file itself holds no vectors.
+
 Every answer carries the item's source URL. A KB holds only what the publisher has
 published; relationship notes about the publisher live elsewhere and never merge in.
 """
@@ -33,9 +36,17 @@ import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, Iterator
+
+from canopy_kb.hybrid import CANDIDATES, MODES, embedding_text, passage_sha, rrf
+
+if TYPE_CHECKING:
+    from canopy_kb.hybrid import Semantic
 
 CHUNK_CHARS = 1800
+#: A semantic hit has no matched words to show around, so its row shows the
+#: start of the passage instead.
+SNIPPET_CHARS = 300
 # Passages are stored ONCE (they are the item's text: `get` rejoins them) and indexed by an
 # external-content FTS table, so a passage costs its text plus its index entry. Storing the
 # item's text, then each chunk, then FTS's own copy made the first GiveWell build 1.04 GB.
@@ -219,10 +230,68 @@ class KB:
         return f" {mode} ".join(parts)
 
     def search(self, query: str, types: list[str] | None = None, since: str = "",
-               until: str = "", limit: int = 10) -> list[dict]:
-        """Best passages for a question. AND first; falls back to OR when that is too narrow."""
+               until: str = "", limit: int = 10, mode: str = "hybrid",
+               semantic: "Semantic | None" = None) -> list[dict]:
+        """Best passages for a question, one per item.
+
+        `lexical` is BM25 over the FTS index; `semantic` is the host's nearest
+        passages by meaning (`semantic`, see `hybrid.py`); `hybrid` fuses the two
+        by reciprocal rank. Without a `semantic` callable, or when it has no
+        vectors to ask (returns None), every mode is lexical."""
         if not query.strip():
             raise KBError("empty query")
+        if mode not in MODES:
+            raise KBError(f"mode must be one of {', '.join(MODES)}")
+        if mode == "lexical" or semantic is None:
+            return self._lexical(query, types, since, until, limit)
+        depth = max(limit, CANDIDATES)
+        near = semantic(query, types=types or None, since=since, until=until, limit=depth)
+        if near is None:
+            return self._lexical(query, types, since, until, limit)
+        by_meaning = self._passage_rows(near)
+        if mode == "semantic":
+            return by_meaning[:limit]
+        by_words = self._lexical(query, types, since, until, depth)
+        rows = {r["id"]: r for r in by_meaning}
+        rows.update({r["id"]: r for r in by_words})  # BM25's snippet marks the matched words
+        fused = rrf([[r["id"] for r in by_words], [r["id"] for r in by_meaning]])
+        return [rows[i] for i in fused[:limit]]
+
+    def _passage_rows(self, hits: Iterable[tuple[str, int]]) -> list[dict]:
+        """Search rows for (item_id, passage) pairs, best first, one per item. A pair
+        the file no longer has (vectors a sync behind) is skipped."""
+        out: list[dict] = []
+        seen: set[str] = set()
+        for item_id, ord_ in hits:
+            if item_id in seen:
+                continue
+            r = self.db.execute(
+                "SELECT c.item_id, c.ord, c.body, i.type, i.title, i.url, i.date FROM chunks c "
+                "JOIN items i ON i.id = c.item_id WHERE c.item_id = ? AND c.ord = ?", (item_id, ord_)).fetchone()
+            if r is None:
+                continue
+            seen.add(item_id)
+            body = " ".join((r["body"] or "").split())
+            out.append({"id": r["item_id"], "passage": r["ord"], "type": r["type"], "title": r["title"],
+                        "url": r["url"], "date": r["date"],
+                        "snippet": body[:SNIPPET_CHARS] + (" …" if len(body) > SNIPPET_CHARS else "")})
+        return out
+
+    def passages(self) -> Iterator[dict]:
+        """Every passage with what its vector is made of (`hybrid.embedding_text`)
+        and keyed by (`hybrid.passage_sha`), in file order. For a host's sync."""
+        for r in self.db.execute(
+                "SELECT c.item_id, c.ord, c.body, i.type, i.title, i.url, i.date FROM chunks c "
+                "JOIN items i ON i.id = c.item_id ORDER BY c.id"):
+            text = embedding_text(r["title"] or "", r["type"] or "", r["date"] or "", r["body"] or "")
+            if not text:
+                continue
+            yield {"item_id": r["item_id"], "ord": r["ord"], "type": r["type"] or "", "title": r["title"] or "",
+                   "url": r["url"] or "", "date": r["date"] or "", "text": text, "sha256": passage_sha(text)}
+
+    def _lexical(self, query: str, types: list[str] | None, since: str, until: str,
+                 limit: int) -> list[dict]:
+        """BM25 over the FTS index. AND first; falls back to OR when that is too narrow."""
         out: list[dict] = []
         seen: set[tuple] = set()
         for mode in ("AND", "OR"):

@@ -339,6 +339,22 @@ HCP_VERTEX_PROJECT = env("HCP_VERTEX_PROJECT", default="")
 HCP_VERTEX_LOCATION = env("HCP_VERTEX_LOCATION", default="us-central1")
 HCP_VERTEX_WIF_AUDIENCE = env("HCP_VERTEX_WIF_AUDIENCE", default="")
 HCP_VERTEX_SERVICE_ACCOUNT = env("HCP_VERTEX_SERVICE_ACCOUNT", default="")
+
+# --- Knowledge-base search by meaning (apps/agents/kb_vectors.py) ---
+# The model a workspace project's KB passages are embedded with; same identity,
+# same zero-retention gate as memory. Only a `vertex/` model (768-d) fits the
+# halfvec(768) column; anything else, or no PostgreSQL `vector` extension, means
+# KB search stays lexical. Defaults to memory's model.
+KB_EMBEDDINGS_MODEL = env("KB_EMBEDDINGS_MODEL", default=HCP_EMBEDDINGS_MODEL)
+# A bulk embed (`manage.py kb_embed`, the sync after a publish): parallel calls,
+# and a ceiling on calls a minute across them (gemini-embedding-001 takes one
+# text per call). A 429 backs everyone off; failures are left for the next run.
+KB_EMBED_WORKERS = env.int("KB_EMBED_WORKERS", default=16)
+KB_EMBED_PER_MINUTE = env.int("KB_EMBED_PER_MINUTE", default=6000)
+# The sync a publish starts in the background embeds at most this many passages;
+# a bigger change (a KB's first publish: ~140k passages, ~$8) waits for
+# `manage.py kb_embed <ws>/<handle>`, run on purpose.
+KB_SYNC_MAX_EMBED = env.int("KB_SYNC_MAX_EMBED", default=5000)
 # How a search scores an entry (apps/contacts/hcp.py `score`): 1 per word shared
 # with the question, HCP_PROJECT_BOOST when it is from the turn's project, and
 # HCP_SEMANTIC_WEIGHT x its closeness in meaning — counted only at or above

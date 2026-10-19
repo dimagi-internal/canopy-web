@@ -93,7 +93,7 @@ def _specs(workspace: str, handle: str) -> list[dict]:
 
 
 def _call(workspace: str, handle: str, name: str, arguments: dict):
-    from apps.agents import kb_store
+    from apps.agents import kb_store, kb_vectors
     from canopy_kb import KBError
     from canopy_kb.tools import run
 
@@ -102,7 +102,10 @@ def _call(workspace: str, handle: str, name: str, arguments: dict):
         raise ToolError(f"no workspace project {workspace}/{handle} serving tools")
     kb = kb_store.open_kb(project)
     try:
-        return run(kb, name, arguments)
+        # `search` fuses BM25 with the project's vectors (pgvector) when it has
+        # them; with none yet, or no vector search here, it is lexical.
+        semantic = kb_vectors.semantic_for(project) if name == "search" else None
+        return run(kb, name, arguments, semantic)
     except (KBError, KeyError, ValueError, TypeError) as exc:
         raise ToolError(f"{name}: {exc}") from exc
     finally:

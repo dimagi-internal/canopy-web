@@ -179,4 +179,9 @@ def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPub
     project = _workspace_project_or_404(request, workspace, handle)
     _agent_for_write(request, project.agent.slug)
     project = _kb_call(lambda: kb_store.publish(project, payload.key, payload.sha256))
+    # Bring the semantic half of `search` in step with the new file, off the
+    # request (kb_vectors: a change bigger than KB_SYNC_MAX_EMBED waits for kb_embed).
+    from . import kb_vectors
+
+    kb_vectors.sync_after_publish(project)
     return AgentProjectOut.model_validate(project)
