@@ -17,6 +17,7 @@ Outputs (all committed, first-class):
     assets/brand/AppIcon.icns              compiled macOS app icon (all sizes)
     frontend/public/favicon.svg            web favicon
     frontend/public/icons/icon-*.png       PWA icons (+ maskable)
+    frontend/public/icons/badge-96.png     push-notification badge (glyph on transparent)
     frontend/src/brand/CanopyMark.tsx      the mark as a React component (currentColor)
     site/public/favicon.svg, site/src/assets/mark.svg   the public site's copies
 
@@ -45,6 +46,7 @@ import mark  # noqa: E402
 BARK = "#26211D"   # the tile
 GREEN = "#3FA374"  # the mark on the tile
 BLACK = "#000000"  # menu-bar template ink (tinted per status at runtime)
+WHITE = "#FFFFFF"  # notification badge ink (Android reads only its alpha)
 
 # The menu bar is short and the mark is wide, so its image is a landscape box (points).
 MENUBAR_PT = (24, 16)
@@ -139,6 +141,9 @@ def main() -> None:
     for px, name, fill in [(192, "icon-192.png", 0.72), (512, "icon-512.png", 0.72),
                            (512, "icon-maskable-512.png", 0.56)]:
         _png(tile(px, fill=fill, radius=0), WEB_PUBLIC / "icons" / name, px)
+    # Android paints the status-bar badge from the alpha channel alone, so it must be
+    # the bare glyph on transparent — an opaque tile renders as a solid white square.
+    _png(mark.svg(96, 96, WHITE, fill=0.92), WEB_PUBLIC / "icons" / "badge-96.png", 96)
 
     print("Done. Commit the changes under assets/brand/, frontend/ and site/.")
 
