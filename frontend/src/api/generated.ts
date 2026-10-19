@@ -23542,6 +23542,8 @@ export interface components {
              * @default false
              */
             readonly openable: boolean;
+            /** Last At */
+            readonly last_at?: string | null;
         };
         /** NetworkTotalsOut */
         readonly NetworkTotalsOut: {

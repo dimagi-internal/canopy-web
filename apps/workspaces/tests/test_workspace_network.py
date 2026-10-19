@@ -131,6 +131,23 @@ def test_the_network_links_writers_to_threads_and_threads_to_their_agent(tree, t
     assert body["truncated"] is False
 
 
+def test_an_agent_mailing_from_outside_the_workspace_is_drawn_as_that_agent(tree, traffic):
+    # Eva's mail to Hal is a contact in connect (Eva's login is no member there), which
+    # is right for access; the network still draws Eva, not a stranger.
+    tree["eva"].email = "eva@dimagi-ai.com"
+    tree["eva"].save(update_fields=["email"])
+    eva_mail = Contact.objects.create(workspace=tree["connect"], source="email", email="Eva@dimagi-ai.com")
+    _ask(tree["hal"], "m2", _initiator.for_contact(eva_mail, via="email"), origin=Turn.ORIGIN_EMAIL,
+         origin_ref={"thread_id": "7a3c0b52-0000-4000-8000-000000000002"})
+    body = _network(tree["ceo"]).json()
+    thread = f"session:{Turn.objects.get(idempotency_key='m2').chat_session_id}"
+    links = {(link["source"], link["target"]): link for link in body["links"]}
+    assert links[("agent:eva", thread)]["kind"] == "wrote"
+    assert f"contact:{eva_mail.pk}" not in {n["id"] for n in body["nodes"]}
+    assert body["totals"]["contacts"] == 1
+    assert {n["id"]: n for n in body["nodes"]}[thread]["last_at"]
+
+
 def test_a_thread_title_shows_only_to_someone_who_may_open_it(tree, traffic):
     nodes = {n["id"]: n for n in _network(tree["ceo"]).json()["nodes"]}
     own, shared = nodes[f"session:{traffic['own'].pk}"], nodes[f"session:{traffic['shared'].pk}"]
