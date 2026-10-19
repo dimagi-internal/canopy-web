@@ -9,6 +9,11 @@ vi.mock('@/api/runnerApp', () => ({ getRunnerAppPreference, setRunnerAppPreferen
 
 const { RunnerAppPanel } = await import('./RunnerAppPanel')
 
+const choices: RunnerAppPreference['choices'] = [
+  { value: 'supervisor', label: 'Supervisor' },
+  { value: 'ide', label: 'IDE' },
+]
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
@@ -16,8 +21,8 @@ afterEach(() => {
 
 describe('RunnerAppPanel', () => {
   it('shows the saved page and saves a new one', async () => {
-    getRunnerAppPreference.mockResolvedValue({ opens_on: 'supervisor' })
-    setRunnerAppPreference.mockResolvedValue({ opens_on: 'ide' })
+    getRunnerAppPreference.mockResolvedValue({ opens_on: 'supervisor', choices })
+    setRunnerAppPreference.mockResolvedValue({ opens_on: 'ide', choices })
     render(<RunnerAppPanel />)
     const select = (await screen.findByTestId('runner-app-select')) as HTMLSelectElement
     expect(select.value).toBe('supervisor')

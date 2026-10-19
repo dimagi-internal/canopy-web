@@ -105,7 +105,8 @@ export interface paths {
         /**
          * Get the page your Canopy Runner app opens on
          * @description The page the Canopy Runner desktop app's window opens on (it loads
-         *     `/runner-app/`, which redirects there). Unset: the supervisor.
+         *     `/runner-app/`, which redirects there), and the pages it can open on —
+         *     the app's menu-bar "Opens on" menu lists these. Unset: the supervisor.
          */
         readonly get: operations["get_runner_app_preference"];
         readonly put?: never;
@@ -11120,6 +11121,16 @@ export interface components {
             /** Show Presence */
             readonly show_presence: boolean;
         };
+        /** RunnerAppChoice */
+        readonly RunnerAppChoice: {
+            /**
+             * Value
+             * @enum {string}
+             */
+            readonly value: "supervisor" | "ide";
+            /** Label */
+            readonly label: string;
+        };
         /**
          * RunnerAppPreferenceOut
          * @description Response for GET/PATCH /api/me/runner-app/.
@@ -11131,6 +11142,11 @@ export interface components {
              * @enum {string}
              */
             readonly opens_on: "supervisor" | "ide";
+            /**
+             * Choices
+             * @description Every page it can open on, in menu order.
+             */
+            readonly choices: readonly components["schemas"]["RunnerAppChoice"][];
         };
         /**
          * RunnerAppPreferenceIn
