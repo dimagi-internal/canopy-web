@@ -43,6 +43,8 @@ _AWS_DEVICE_HOSTS = (
 )
 
 PROVIDERS = ("aws",)
+# AWS device codes expire after about ten minutes.
+SIGN_IN_TTL = 600
 
 
 class SignInRequestError(ValueError):
@@ -92,7 +94,10 @@ def push_sign_in_request(runner, *, provider: str, url: str, label: str = "",
     what = f"AWS sign-in ({label})" if label else "AWS sign-in"
     title = f"{who} needs {what}"
     body = f"On {runner.name}: {reason}. Tap to approve. The link expires in about 10 minutes."
-    sent = send_to_user(owner, title=title, body=body, url=url)
+    # High urgency wakes a dozing phone; the TTL matches the device code's own
+    # life, since an approval link delivered after it expires is useless.
+    sent = send_to_user(owner, title=title, body=body, url=url,
+                        ttl=SIGN_IN_TTL, urgency="high")
     # The audit trail for "who put an approval in front of me": an approved
     # device code is a credential grant, so every request is logged whether or
     # not it reached a device.

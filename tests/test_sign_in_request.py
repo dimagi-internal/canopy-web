@@ -64,6 +64,10 @@ def test_the_owner_is_pushed_a_tap_to_approve_link(owner, runner, sent):
     assert push["title"] == "hal needs AWS sign-in (labs)"
     assert push["body"].startswith(
         "On jj-mbp: confirm the 5xx alarm cause in /ecs/labs-jj-canopy-web.")
+    # A dozing phone must wake for it, and the push service holds it only as
+    # long as the device code lives.
+    assert push["urgency"] == "high"
+    assert push["ttl"] == 600
 
 
 @pytest.mark.parametrize("reason", ["", "   "])

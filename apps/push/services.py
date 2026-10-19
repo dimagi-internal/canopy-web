@@ -58,7 +58,22 @@ class _NoRedirectSession(requests.Session):
         return super().post(url, data=data, json=json, **kwargs)
 
 
-def _send_one(sub: PushSubscription, payload: dict) -> None:
+# How long the push service holds a push for a device it cannot reach right
+# now. pywebpush's default TTL is 0, which means deliver now or drop it. An Android
+# phone in Doze is not reachable "now", so pushes sent while it sat idle were
+# discarded by FCM while canopy-web counted them as sent: Jonathan never saw an
+# AWS sign-in request that had gone to his only, working subscription
+# (2026-10-19). Notifications collapse by title (sw-push.js), so a late
+# delivery replaces a stale one instead of stacking.
+DEFAULT_TTL = 12 * 3600
+# Normal urgency lets the device batch delivery to save battery. A push someone
+# must act on within minutes (a sign-in approval, a session asking a question)
+# passes "high", which wakes a dozing phone.
+URGENCIES = ("very-low", "low", "normal", "high")
+
+
+def _send_one(sub: PushSubscription, payload: dict, *, ttl: int = DEFAULT_TTL,
+              urgency: str = "normal") -> None:
     """The raw send. Patched in tests — keep it dependency-free and dumb."""
     webpush(
         subscription_info={
@@ -69,6 +84,8 @@ def _send_one(sub: PushSubscription, payload: dict) -> None:
         vapid_private_key=settings.VAPID_PRIVATE_KEY,
         vapid_claims={"sub": settings.VAPID_SUBJECT},
         requests_session=_NoRedirectSession(),
+        ttl=ttl,
+        headers={"Urgency": urgency},
         timeout=10,  # pywebpush's own default is dead code: send() pops a key that is
                      # always present, so None reaches requests.post. Unbounded here
                      # would hold a request thread forever — and the bare except below
@@ -76,8 +93,12 @@ def _send_one(sub: PushSubscription, payload: dict) -> None:
     )
 
 
-def send_to_user(user, title: str, body: str, url: str, count: int | None = None) -> int:
+def send_to_user(user, title: str, body: str, url: str, count: int | None = None, *,
+                 ttl: int = DEFAULT_TTL, urgency: str = "normal") -> int:
     """Push to every browser this user has registered. Returns sends that stuck.
+
+    A "stuck" send is one the push service ACCEPTED, not one the device showed:
+    it holds the push for `ttl` seconds when the device is offline or dozing.
 
     A subscription dies silently when the app is uninstalled — the push service
     starts returning 404/410. That is the only reliable signal we get, so we
@@ -91,13 +112,15 @@ def send_to_user(user, title: str, body: str, url: str, count: int | None = None
     """
     if not settings.VAPID_PRIVATE_KEY:
         return 0  # push not configured — stay silent rather than raise
+    if urgency not in URGENCIES:
+        raise ValueError(f"urgency must be one of {URGENCIES}, not {urgency!r}")
     payload = {"title": title, "body": body, "url": url}
     if count is not None:
         payload["count"] = count
     sent = 0
     for sub in list(user.push_subscriptions.all()):
         try:
-            _send_one(sub, payload)
+            _send_one(sub, payload, ttl=ttl, urgency=urgency)
             sent += 1
             # Logged on success too: without it "am I getting notifications?"
             # could not be answered from the logs — a working pipe and a
@@ -315,6 +338,7 @@ def notify_session_question(session, menu: dict) -> int:
             title=f"{session_label(session)} is asking",
             body=question,
             url=f"/w/{session.workspace_id}/chat/{session.id}",
+            urgency="high",
         )
     except Exception:  # noqa: BLE001 — never let a notification break the report
         logger.exception("push: session-question notify failed for %s", session.pk)
