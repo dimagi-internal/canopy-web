@@ -305,15 +305,18 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             turn = await self._claim()
             await self.send_json({"type": "claim.result", "turn": turn})
         elif action == "heartbeat":
-            refresh, cancel_ids = await self._heartbeat(content.get("active_turn_ids") or [], content)
+            refresh, cancel_ids, pause = await self._heartbeat(content.get("active_turn_ids") or [], content)
             # The ack carries the durable refresh request back, the same thing the
             # REST reply's RunnerOut.refresh_pending says — this is the cloud
             # runner's primary beat, so it is the path that has to answer.
             # And the stops this runner owes (services.cancel_requested_turn_ids):
             # the `cancel` frame is a doorbell a reconnecting socket can miss; this
             # re-delivers it every beat until the turn is finished.
+            # And whether it is paused, and why: a cloud box that paused itself
+            # (no working Claude credential) lifts only a pause whose note is
+            # its own, so it has to be told which kind it is under.
             await self.send_json({"type": "heartbeat.ack", "refresh_pending": bool(refresh),
-                                  "cancel_turn_ids": cancel_ids})
+                                  "cancel_turn_ids": cancel_ids, **pause})
         elif action == "start":
             ok = await self._start(content.get("turn_id"), content.get("session_id") or "")
             await self.send_json({"type": "start.ack", "ok": ok})
@@ -405,10 +408,16 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
                 caps[key] = 0
         runner = Runner.objects.filter(pk=self._runner_pk).first()
         if runner is None:
-            return False, []
+            return False, [], {}
+        # `ready` rides this frame as it rides the REST beat: a box that proved
+        # none of its Claude credentials answers says so, and dropping it here
+        # would reset it to ready every 20s. Absent (an older box) = ready.
+        ready = frame.get("ready", True) is not False
         harness_services.heartbeat(
             runner,
             active_turn_ids=active_turn_ids,
+            ready=ready,
+            ready_note=str(frame.get("ready_note") or "")[:200] if not ready else "",
             code_branch=str(frame.get("code_branch") or ""),
             code_version=str(frame.get("code_version") or ""),
             code_sha=str(frame.get("code_sha") or ""),
@@ -417,7 +426,8 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             agents_unprepared=_str_list(frame.get("agents_unprepared")),
             **caps,
         )
-        return runner.refresh_pending(), list(getattr(runner, "cancel_turn_ids", None) or [])
+        return (runner.refresh_pending(), list(getattr(runner, "cancel_turn_ids", None) or []),
+                {"paused": bool(runner.paused), "paused_note": runner.paused_note or ""})
 
     def _turn_owned_sync(self, turn_id):
         """A turn THIS runner claimed — the only ones it may start/append/finish.

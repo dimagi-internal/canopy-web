@@ -586,6 +586,12 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
     unprepared = agents_unprepared()
     if unprepared is not None:
         body["agents_unprepared"] = unprepared
+    # Omitted while any credential might work, so the server default (ready)
+    # stands; a box whose every credential was just proven not to answer says so.
+    ready, ready_note = _credential_readiness()
+    if not ready:
+        body["ready"] = False
+        body["ready_note"] = ready_note[:200]   # Runner.ready_note is 200 chars
     return {**body, **extra}
 
 
@@ -1826,16 +1832,23 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             return ok, text, session_id
         capped, dead = _is_usage_cap(text), _is_auth_required(text)
         hint = _CAP_RESET_HINT.pop(turn_id, None)
+        reset = None
         if capped and not ok:
             reset = hint or _cap_reset_epoch(text)
             if reset and reset > time.time():
                 resets.append(reset)
+            else:
+                reset = None
         if ok or not (capped or dead):
             if ok:
+                _record_outcome(label, "ok", detail="ran a turn")
                 _promote_working_subscription(turn_id)
             return ok, text, session_id
         if capped:
             capped_labels.append(label)
+            _record_outcome(label, "capped", detail=next(
+                (ln.strip() for ln in text.splitlines() if _is_usage_cap(ln)), ""),
+                reset=reset)
             cap_line = cap_line or next(
                 (ln.strip() for ln in text.splitlines() if _is_usage_cap(ln)), "")
             _log(f"turn {turn_id[:8]}: {label} is at its usage cap")
@@ -4001,7 +4014,7 @@ def _park_until_cap_resets(resets: list[float], text: str, turn_id: str) -> str:
     until = min(resets) if resets else time.time() + CAP_PAUSE_FALLBACK_SECONDS
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until))
     first = next((ln.strip() for ln in (text or "").splitlines() if _is_usage_cap(ln)), "")
-    note = (f"Claude usage cap — resumes {stamp}"
+    note = (f"{SELF_PAUSE_PREFIX}Claude usage cap — resumes {stamp}"
             + ("" if resets else " (reset unreadable; retrying then)")
             + (f": {first}" if first else ""))[:200]
     if _RUNNER_ID:
@@ -4009,6 +4022,7 @@ def _park_until_cap_resets(resets: list[float], text: str, turn_id: str) -> str:
             status, _ = _api("POST", f"/runners/{_RUNNER_ID}/pause",
                              {"note": note, "until": stamp})
             if status == 200:
+                _SELF_PAUSED["set"] = True
                 _log(f"turn {turn_id[:8]}: every credential capped — paused until {stamp}")
             else:
                 _log(f"warn: pausing for the usage cap returned {status}")
@@ -4157,6 +4171,155 @@ def _record_probe(result: dict) -> None:
                    f"could not check: {result.get('detail') or 'no answer'}")
 
 
+def _record_outcome(label: str, status: str, *, detail: str = "", reset: float | None = None) -> None:
+    """A turn's own outcome is a probe that cost nothing extra."""
+    if label and label != "none":
+        _record_probe({"label": label, "status": status, "detail": detail,
+                       "reset": reset, "at": time.time()})
+
+
+def _probe_all(labels: list[str] | None = None) -> None:
+    """Probe the named credentials (all when None), one after another."""
+    for entry in list(_CLAUDE_CREDS):
+        if labels is None or entry[0] in labels:
+            result = _probe_entry(entry)
+            _record_probe(result)
+            _log(f"claude credential probe: {entry[0]} {result['status']}"
+                 + (f" ({result['detail']})" if result["detail"] else ""))
+
+
+#: One probe thread at a time: two would spend usage asking the same question.
+_PROBE_RUNNING = threading.Lock()
+
+
+def _probe_job(labels: list[str]) -> None:
+    if not _PROBE_RUNNING.acquire(blocking=False):
+        return
+    try:
+        _probe_all(labels)
+    except Exception as exc:  # noqa: BLE001 — a probe never takes the box down
+        _log(f"warn: credential probe failed ({exc})")
+    finally:
+        _PROBE_RUNNING.release()
+
+
+def _probe_in_background(labels: list[str]) -> None:
+    threading.Thread(target=_probe_job, args=(labels,), daemon=True, name="claude-probe").start()
+
+
+def _probe_reset(p: dict) -> float:
+    """When a capped credential is worth asking again: its reset, or the fallback
+    window after the probe when the reset was unreadable."""
+    return p.get("reset") or (p.get("at", 0.0) + CAP_PAUSE_FALLBACK_SECONDS)
+
+
+def _credential_readiness(now: float | None = None) -> tuple[bool, str]:
+    """(ready, note). Not ready only when EVERY staged credential has been probed
+    and none is `ok`, `unknown`, or capped with its reset already passed — a box
+    that might work is never held back on a guess."""
+    now = time.time() if now is None else now
+    staged = [c[0] for c in _CLAUDE_CREDS]
+    if not staged:
+        return True, ""
+    with _PROBES_LOCK:
+        probes = {lb: dict(_PROBES[lb]) for lb in staged if lb in _PROBES}
+    if len(probes) < len(staged):
+        return True, ""
+    parts, resets = [], []
+    for lb in staged:
+        p = probes[lb]
+        if p["status"] in ("ok", "unknown"):
+            return True, ""
+        if p["status"] == "capped":
+            reset = _probe_reset(p)
+            if reset <= now:
+                return True, ""
+            resets.append(reset)
+            parts.append(f"{lb}: at its usage cap until {_iso(reset)}")
+        else:
+            parts.append(f"{lb}: not signed in")
+    note = "no working Claude credential — " + "; ".join(parts)
+    if len(resets) == len(staged):
+        note += f"; earliest reset {_iso(min(resets))}"
+    return False, note
+
+
+#: Marks a pause THIS box set (credentials, or the usage-cap park). The box lifts
+#: only a pause whose note starts with it; a person's pause is theirs to lift.
+SELF_PAUSE_PREFIX = "[box] "
+#: Whether this process set a pause it has not lifted — the fallback when a
+#: heartbeat reply does not say whether the runner is paused (an older server).
+_SELF_PAUSED = {"set": False}
+#: The last heartbeat reply (REST RunnerOut or the WS ack): pause state rides it.
+_LAST_BEAT: dict = {}
+
+
+def _sync_self_pause(beat: dict | None = None) -> None:
+    """Step aside when no credential works; step back when one does.
+
+    `ready` alone does not stop claims (it only lets a lower-ranked box go
+    first), so a box whose probes find nothing working PAUSES itself — what the
+    claim, the chat banner and turn_reach already understand. Until the earliest
+    reset when every credential is capped; open-ended when any is dead.
+    """
+    if not _RUNNER_ID:
+        return
+    beat = _LAST_BEAT if beat is None else (beat or {})
+    known = "paused" in beat
+    paused = bool(beat.get("paused")) if known else _SELF_PAUSED["set"]
+    mine = (str(beat.get("paused_note") or "").startswith(SELF_PAUSE_PREFIX)
+            if known else _SELF_PAUSED["set"])
+    ready, note = _credential_readiness()
+    try:
+        if not ready:
+            if paused:
+                return   # already parked — by itself, or by a person whose note stays
+            with _PROBES_LOCK:
+                probes = [dict(_PROBES[c[0]]) for c in _CLAUDE_CREDS if c[0] in _PROBES]
+            body: dict = {"note": (SELF_PAUSE_PREFIX + note)[:200]}
+            if probes and all(p["status"] == "capped" for p in probes):
+                body["until"] = _iso(min(_probe_reset(p) for p in probes))
+            status, _ = _api("POST", f"/runners/{_RUNNER_ID}/pause", body)
+            if status == 200:
+                _SELF_PAUSED["set"] = True
+                _log(f"paused: {note}")
+            else:
+                _log(f"warn: pausing for credentials returned {status}")
+            return
+        with _PROBES_LOCK:
+            proven = any(p["status"] == "ok" for p in _PROBES.values())
+        if paused and mine and proven:
+            status, _ = _api("POST", f"/runners/{_RUNNER_ID}/unpause")
+            if status == 200:
+                _SELF_PAUSED["set"] = False
+                _log("unpaused: a Claude credential answered a prompt again")
+            else:
+                _log(f"warn: unpausing after a working probe returned {status}")
+    except Exception as exc:  # noqa: BLE001 — never take the main loop down
+        _log(f"warn: could not sync the credential pause ({exc})")
+
+
+_CRED_TICK_AT = 0.0
+
+
+def _credential_tick(beat: dict | None = None) -> None:
+    """The main loop's credential step, at most once per POLL_SECONDS: ask a
+    capped credential again once its reset has passed, then pause or unpause."""
+    global _CRED_TICK_AT
+    now = time.monotonic()
+    if _CRED_TICK_AT and now - _CRED_TICK_AT < POLL_SECONDS:
+        return
+    _CRED_TICK_AT = now
+    wall = time.time()
+    with _PROBES_LOCK:
+        due = [lb for lb, p in _PROBES.items()
+               if p["status"] == "capped" and _probe_reset(p) <= wall
+               and p.get("at", 0.0) < _probe_reset(p)]
+    if due:
+        _probe_in_background(due)
+    _sync_self_pause(beat)
+
+
 def _advance_claude_credential(*, turn_id: str = "") -> bool:
     """Move to the next credential. False when the cascade is exhausted.
 
@@ -4207,6 +4370,15 @@ def _promote_working_subscription(turn_id: str = "") -> None:
     # not reset to index 0, which would now be the capped login again).
     (l1, v1, t1), (l2, v2, t2) = _CLAUDE_CREDS[base], _CLAUDE_CREDS[base + 1]
     _CLAUDE_CREDS[base], _CLAUDE_CREDS[base + 1] = (l1, v1, t2), (l2, v2, t1)
+    # A probe is about a VALUE, and the values just changed slots.
+    with _PROBES_LOCK:
+        p1, p2 = _PROBES.pop(l1, None), _PROBES.pop(l2, None)
+    for label, probe in ((l1, p2), (l2, p1)):
+        if probe is not None:
+            _record_probe({**probe, "label": label})
+        else:
+            with _HEALTH_LOCK:
+                _HEALTH.pop(f"claude.probe.{label}", None)
     _apply_claude_credential(base)
     _log(f"turn {turn_id[:8]}: the fallback login worked while the primary is capped "
          "— swapped them on canopy-web")
@@ -4331,10 +4503,20 @@ def _reload_claude_credentials() -> bool:
     fresh = _cascade_from(cred)
     if not fresh or [(c[0], c[2]) for c in fresh] == before:
         return False
+    changed = [c[0] for c in fresh if (c[0], c[2]) not in before]
+    with _PROBES_LOCK:
+        for label in changed:
+            _PROBES.pop(label, None)     # what the old value proved says nothing of the new
+    with _HEALTH_LOCK:
+        for label in changed:
+            _HEALTH.pop(f"claude.probe.{label}", None)
     _CLAUDE_CREDS.clear()
     _CLAUDE_CREDS.extend(fresh)
     _apply_claude_credential(0)
     _log("re-read credential bundle: " + ", ".join(c[0] for c in _CLAUDE_CREDS))
+    if changed:
+        # In the background: this runs on the main loop, or mid-turn.
+        _probe_in_background(changed)
     return True
 
 
@@ -4388,6 +4570,10 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
             # agent's key (`_agent_env`), and bootstrap reads each vault with
             # the key for that vault.
             _log("staged credential bundle from canopy-web (claude)")
+            # Before the first ready heartbeat, so "ready" means a credential
+            # answered. The box is not serving yet, so nothing waits on this; a
+            # hung CLI costs PROBE_TIMEOUT_SECONDS and reads `unknown`.
+            _probe_all()
             return True
         _log("waiting for this runner's credential bundle to be set on canopy-web…")
         _beat_while_waiting(runner_id)
@@ -6442,6 +6628,8 @@ def run_over_rest(runner_id: str) -> None:
         # their leases — with concurrency, reporting only the newest would let
         # the others expire mid-run.
         _, beat = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body(_in_flight_ids()))
+        _LAST_BEAT.clear()
+        _LAST_BEAT.update(beat if isinstance(beat, dict) else {})
         honour_stops(beat)
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
         # Attached viewers are served on this path too — a runner that fell back
@@ -6452,6 +6640,7 @@ def run_over_rest(runner_id: str) -> None:
         # the operator on the runners that fail most.
         _drain_mint(runner_id)
         _maybe_reread_credentials()
+        _credential_tick()
         _drain_inbox(runner_id)
         if (len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS or not _memory_headroom_ok()
                 or _token_refused()):
@@ -6656,6 +6845,8 @@ def run_over_ws(runner_id: str) -> bool:
             # what the REST paths reported, every 20 seconds.
             ack = _ws_request(ws, {"action": "heartbeat", **_heartbeat_body(_in_flight_ids())},
                               "heartbeat.ack", timeout=15)
+            _LAST_BEAT.clear()
+            _LAST_BEAT.update(ack if isinstance(ack, dict) else {})
             honour_stops(ack)
             # This thread is the one that claims, so "idle" holds until the
             # restart; see maybe_self_refresh.
@@ -6719,6 +6910,7 @@ def run_over_ws(runner_id: str) -> bool:
                     _sync_session_views(runner_id)          # incl. backfills
                     _drain_mint(runner_id)
                     _maybe_reread_credentials()
+                    _credential_tick()
                     _drain_inbox(runner_id)
                     last_poll = time.monotonic()
                     last_stream = time.monotonic()
