@@ -211,7 +211,9 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
 - **A dispatched session inherits its parent's people.** A session created with a parent
   (`X-Canopy-Parent-Session`/`-Turn`, or a payload `parent`) that its creator can read gets
   the parent's participants who are members of its workspace — owner becomes editor, a
-  viewer stays a viewer (`services._inherit_participants`). An agent starting work for the
+  viewer stays a viewer (`services._inherit_participants`) — and the parent turn's
+  initiator joins as editor when that turn belongs to the parent, since a session started
+  in emdash has no participant rows to copy. An agent starting work for the
   person it is talking to therefore never hides that work from them.
 - `tests/test_session_acl.py` asserts every door gives the same answer for every (person,
   session shape), and fails on a `SessionParticipant` writer outside its allowlist.

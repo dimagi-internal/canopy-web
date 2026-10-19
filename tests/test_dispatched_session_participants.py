@@ -82,3 +82,52 @@ def test_naming_a_session_you_cannot_read_pulls_no_one_in(world):
     child = _dispatch(world["raw"], HTTP_X_CANOPY_PARENT_SESSION=str(private.pk))
     assert child.parent_session == private  # still recorded: provenance is a record
     assert _roles(child) == {"ace": "owner"}
+
+
+def _emdash_session(world):
+    """A session started in emdash: runner-discovered, no creator, no participant
+    rows — its person reads it through the tenant leg, and typing into it from
+    the web never writes a row (#926)."""
+    import uuid
+
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.models import Runner, Turn
+
+    ws = world["parent"].workspace
+    runner = Runner.objects.create(name="acedimagi-mbp", workspace=ws, kind=Runner.EMDASH,
+                                   location=Runner.LOCAL, status=Runner.ONLINE,
+                                   owner=world["jj"], host="ace@mbp")
+    fi = Session.objects.create(workspace=ws, agent=world["parent"].agent, origin=Session.ORIGIN_RUNNER,
+                                title="fi")
+    RunnerBinding.objects.create(session=fi, runner=runner, session_key="fi-sid",
+                                 emdash_project="ace", host=runner.host, thread_key="emdash:fi")
+    turn = Turn.objects.create(chat_session=fi, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="hand it over",
+                               idempotency_key=uuid.uuid4().hex, initiator_user=world["jj"])
+    return fi, turn
+
+
+def test_the_person_who_asked_in_an_emdash_session_joins_what_it_dispatched(world):
+    fi, turn = _emdash_session(world)
+    assert not fi.participants.exists()
+    child = _dispatch(world["raw"], HTTP_X_CANOPY_PARENT_SESSION=str(fi.pk),
+                      HTTP_X_CANOPY_PARENT_TURN=str(turn.pk))
+    assert child.parent_session == fi and child.parent_turn == turn
+    assert _roles(child) == {"ace": "owner", "jj": "editor"}
+
+    listed = Client()
+    listed.force_login(world["jj"])
+    assert str(child.pk) in [s["id"] for s in listed.get("/api/canopy-sessions/").json()]
+
+
+def test_a_turn_from_another_session_does_not_bring_its_asker(world):
+    fi, _turn = _emdash_session(world)
+    import uuid
+
+    from apps.harness.models import Turn
+
+    elsewhere = Session.objects.create(workspace_id="dimagi", created_by=world["mate"])
+    stray = Turn.objects.create(chat_session=elsewhere, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="x",
+                                idempotency_key=uuid.uuid4().hex, initiator_user=world["mate"])
+    child = _dispatch(world["raw"], HTTP_X_CANOPY_PARENT_SESSION=str(fi.pk),
+                      HTTP_X_CANOPY_PARENT_TURN=str(stray.pk))
+    assert _roles(child) == {"ace": "owner"}
