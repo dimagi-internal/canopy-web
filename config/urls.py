@@ -6,7 +6,7 @@ from django.urls import include, path, re_path
 
 from apps.api.api import api as api_v2
 from apps.api.views import redoc_docs, scalar_docs
-from apps.harness.views import runner_app_home
+from apps.harness.views import download_runner, runner_app_home
 from apps.plugins import views as plugin_views
 from apps.reviews.views import review_page
 from apps.slack import views as slack_views
@@ -28,6 +28,10 @@ urlpatterns = [
     path("api/csrf/", csrf_view, name="csrf"),
     # The Canopy Runner desktop app's window: redirects to the page you chose.
     path("runner-app/", runner_app_home, name="runner-app-home"),
+    # Canopy Runner installers: signed in → 302 to a short-lived presigned URL
+    # for the deployed runner version's installer (apps/harness/runner_releases.py).
+    # Before the SPA catch-all.
+    path("download/runner/<str:platform>", download_runner, name="download-runner"),
     path("api/debug/", include("apps.common.urls_debug")),
     path("auth/cli/authorize/", views_cli_authorize, name="cli_authorize"),
     # The GitHub App connect flow. Bare views (redirects + session), and

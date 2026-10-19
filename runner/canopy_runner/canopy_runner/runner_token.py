@@ -10,8 +10,16 @@ canopy's `canopy vault runner-session`, run here the way `device_key.enroll` run
 Why: a runner on its owner's PAT is stranded the moment that PAT is revoked — on
 2026-10-17 one was, in a token cleanup, and a box silently lost every turn it
 claimed. The PAT (`cfg.token`) remains only as the fallback while no approved key
-can get a token: a key still pending, an older canopy without the command, no
-canopy CLI at all. Opt out entirely with CANOPY_DEVICE_KEY=0.
+can get a token: a key still pending, an older canopy without the command. Opt out
+entirely with CANOPY_DEVICE_KEY=0.
+
+With NO canopy CLI — a box installed from the downloadable installer — the runner
+signs the proof itself (`device_proof`, the same key files canopy would use) and posts
+it to the same route, but only when `status.json` says this machine's key is
+registered for THIS runner with the thumbprint of the key it loads (canopy's own rule
+for attaching a proof). Such a runner was paired from the browser and has no PAT at
+all: `bearer()` is then "" rather than anything else — never a credential that does
+not exist.
 """
 from __future__ import annotations
 
@@ -22,6 +30,8 @@ import os
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from typing import Callable, Optional
 
 from . import device_key
@@ -35,22 +45,43 @@ RENEW_SECONDS = 600
 RETRY_SECONDS = 300
 TIMEOUT = 60
 PREFIX = "crt_"
+SESSIONS_PATH = "/api/runner-sessions/"
+
+Transport = Callable[[str, str, dict, bytes], "tuple[int, str]"]
+
+
+def urllib_transport(method: str, url: str, headers: dict, body: bytes) -> tuple[int, str]:
+    """(status, text) for one request; an HTTP error is an answer, not an exception."""
+    req = urllib.request.Request(url, data=body, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        try:
+            text = exc.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            text = ""
+        return exc.code, text
 
 
 class RunnerCredential:
     """The bearer this runner sends: its own runner token while its device key can
-    buy one, else the owner's PAT. Thread-safe; the poll loop, the chat pump and
-    the wake listener all share one."""
+    buy one, else the owner's PAT (or "" when it has none). Thread-safe; the poll
+    loop, the chat pump and the wake listener all share one."""
 
     def __init__(self, base_url: str, pat: str, runner_id: str, *,
                  runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
-                 cli: Optional[str] = None, clock: Callable[[], float] = time.time):
+                 cli: Optional[str] = None, clock: Callable[[], float] = time.time,
+                 transport: Optional[Transport] = None,
+                 proof: Optional[Callable[..., dict]] = None):
         self._base_url = base_url.rstrip("/")
-        self._pat = pat
+        self._pat = pat or ""
         self._runner_id = runner_id
         self._run = runner
         self._cli = cli
         self._clock = clock
+        self._transport = transport or urllib_transport
+        self._proof = proof
         self._lock = threading.Lock()
         self._raw = ""
         self._exp = 0.0
@@ -79,7 +110,11 @@ class RunnerCredential:
                 self._failed_at = now
             if self._raw and self._exp > now:
                 return self._raw  # still good while the renewal is retried
-            self._note("pat", "device key could not get a runner token — using the owner's PAT")
+            if self._pat:
+                self._note("pat", "device key could not get a runner token — using the owner's PAT")
+            else:
+                self._note("none", "device key could not get a runner token, and this runner "
+                                   "has no PAT — waiting for its key to be approved")
             return self._pat
 
     def drop(self) -> bool:
@@ -96,9 +131,14 @@ class RunnerCredential:
             logger.info("runner credential: %s", msg)
 
     def _exchange(self) -> bool:
+        """canopy's CLI when this box has one (a developer install, unchanged), else —
+        or when it fails — the same exchange signed here (`_exchange_native`)."""
         cli = self._cli or device_key.canopy_cli()
-        if not cli:
-            return False
+        if cli and self._exchange_cli(cli):
+            return True
+        return self._exchange_native()
+
+    def _exchange_cli(self, cli: str) -> bool:
         try:
             p = self._run([cli, "vault", "runner-session", "--runner", self._runner_id,
                            "--base-url", self._base_url],
@@ -115,10 +155,50 @@ class RunnerCredential:
             exp = dt.datetime.fromisoformat(str(body["expires_at"]).replace("Z", "+00:00")).timestamp()
         except (ValueError, KeyError, TypeError):
             return False
+        return self._accept(raw, exp)
+
+    def _accept(self, raw: str, exp: float) -> bool:
         if not raw.startswith(PREFIX):
             return False
         self._raw, self._exp = raw, exp
         return True
+
+    def _exchange_native(self) -> bool:
+        """POST /api/runner-sessions/ {"runner": id} with a DPoP proof of this machine's
+        registered key — what `canopy vault runner-session` sends, without canopy."""
+        url = self._base_url + SESSIONS_PATH
+        try:
+            if self._proof is not None:
+                headers = self._proof("POST", url, runner_id=self._runner_id)
+            else:
+                from . import device_proof
+
+                headers = device_proof.proof_headers("POST", url, runner_id=self._runner_id)
+        except Exception as exc:  # noqa: BLE001 — a proof is an addition, never a crash
+            logger.debug("device proof failed: %s", exc)
+            return False
+        if not headers:
+            return False
+        from .client import user_agent
+
+        try:
+            status, text = self._transport(
+                "POST", url, {**headers, "Content-Type": "application/json",
+                              "User-Agent": user_agent()},
+                json.dumps({"runner": self._runner_id}).encode("utf-8"))
+        except Exception as exc:  # noqa: BLE001 — network: retried after RETRY_SECONDS
+            logger.debug("runner-session exchange failed: %s", exc)
+            return False
+        if status != 201:
+            logger.debug("runner-session refused (%s): %s", status, (text or "")[:300])
+            return False
+        try:
+            body = json.loads(text)
+            raw = str(body["access_token"])
+            exp = dt.datetime.fromisoformat(str(body["expires_at"]).replace("Z", "+00:00")).timestamp()
+        except (ValueError, KeyError, TypeError):
+            return False
+        return self._accept(raw, exp)
 
 
 def bearer_of(token) -> str:

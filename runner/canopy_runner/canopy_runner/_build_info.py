@@ -21,3 +21,8 @@ BUILT_AT = ""
 # Committer epoch of the commit named by SHA. 0 = unstamped/unknown, which orders
 # nothing — consumers fall back to a direction-less "differs" rather than guessing.
 COMMITTED_AT = 0
+# Which release platform this build is ("macos-arm64", "macos-x86_64",
+# "windows-x86_64"). CI stamps it when it builds an installer bundle; empty for a
+# developer install (install-runner.sh does not write it, and every consumer reads it
+# with getattr, so a stamp written without it still imports).
+PLATFORM = ""

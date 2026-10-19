@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthProvider'
 import { CopyCommand } from '@/components/agents/CopyCommand'
+import { RunnerDownloads } from '@/components/runners/RunnerDownloads'
 import { listAgents } from '@/api/agents'
 import { scopedPath } from '@/lib/scopedLinks'
 import { pairingCommand } from '@/pages/topology/topologyMap'
@@ -25,7 +26,9 @@ import { useActiveWorkspace } from '@/workspace/WorkspaceProvider'
  *
  * Below the steps: making an agent of your own (a link to the active workspace's
  * create page, when one is known) and, at #runner, pairing a laptop runner — the
- * runner step of an agent's setup checklist links here.
+ * runner step of an agent's setup checklist links here. A runner is a download
+ * (Canopy Runner for macOS or Windows) approved in the browser; the
+ * install-runner.sh path for a canopy-web checkout is a collapsed note.
  */
 
 /** Where a cloud runner is stood up from: it needs AWS rights canopy-web does not hold. */
@@ -254,17 +257,11 @@ export function GetStartedPage(): JSX.Element {
         <Panel id="runner" title="Pair a runner">
           A runner is the computer that runs an agent&apos;s turns when someone asks it for something through
           canopy (a task, an email, Slack). You need one to run an agent for others, not to use one yourself.
-          To pair your Mac, run this in a terminal on that macOS account:
-          <div className="mt-2">
-            <CopyCommand command={runnerCommand} />
+          <h4 className="mt-3 text-[13px] font-semibold text-foreground">Download Canopy Runner</h4>
+          <div className="mt-1">
+            <RunnerDownloads authed={authed} developerCommand={runnerCommand} />
           </div>
           <Notes>
-            <li>
-              It needs <InlineCode>uv</InlineCode>, a canopy-web checkout at{' '}
-              <InlineCode>~/emdash-projects/canopy-web</InlineCode> and your canopy token at{' '}
-              <InlineCode>~/.claude/canopy/workbench-token</InlineCode> (the{' '}
-              <InlineCode>canopy:canopy-web-pat-mint</InlineCode> skill writes it).
-            </li>
             <li>A runner takes an agent&apos;s turns only if you are one of that agent&apos;s admins.</li>
             <li>
               A cloud box is stood up from the{' '}

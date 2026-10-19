@@ -168,6 +168,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     what: "The accept-invite landing page: previews the inviting workspace and role (masked email), then lets a signed-in matching account accept. Deliberately outside /w/:workspace — there's no tenant to scope into until the invite is accepted.",
     actions: ['Sign in with the invited address', 'Accept the invite'],
   },
+  {
+    path: '/pair/:code',
+    title: 'Pair a computer as your runner',
+    audience: 'Someone who just installed Canopy Runner (it opens this page)',
+    what: "Approve a computer asking to become your runner: check the code matches the one Canopy Runner shows, pick a workspace you can run work in and a name, and approve with your passkey — the browser then hands the computer its one-time pairing secret on its own loopback address. Outside /w/:workspace: the pairing has no workspace until you pick one.",
+    needsFirst: 'Canopy Runner installed and showing a code, and a workspace where you can run work',
+    actions: ['Approve as your runner', 'Decline'],
+  },
 
   // --- Tenant-scoped surfaces under /w/:workspace ---
   {

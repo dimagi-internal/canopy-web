@@ -26,6 +26,7 @@ it in `apps/events/analytics.py`.
 - `setting.changed` — `events.audit.audited`, alongside the `SettingChange` row (`ref` `sc<pk>`).
 - `mcp.call` — `mcp.audit`, alongside `MCPAuditLog` when it has a workspace (`ref` `mcp<pk>`).
 - `runner.invited`, `runner.invitation.approved`, `runner.paired` — a new cloud box's pairing invitation made, approved and used (`apps/harness/api_runner_invitations.py`; `ref` the invitation, or the new runner for `runner.paired`).
+- `runner.pairing.approved` — a person approved a laptop's browser pairing (`apps/harness/api_runner_pairings.py`, `ref` the pairing); its claim emits `runner.paired` with the new runner as `ref`.
 
 Active people = distinct `actor` with `actor_kind=user` that day. An agent acting with
 its own login is `agent`, not a person.

@@ -7248,6 +7248,169 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runner-pairings/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A new laptop box asks to be paired by browser (no token)
+         * @description Carry a DPoP proof (bound to this URL) by the key in `public_jwk`. 201:
+         *     a pairing — show `user_code`, open `verify_url`, and poll the claim every
+         *     `interval` seconds until `expires_at` (15 minutes). A key that is already an
+         *     active runner's: 200 `reattached`, and nothing is made. A proof by another
+         *     key, or a key canopy knows in any other state: one uniform 401.
+         */
+        readonly post: operations["create_runner_pairing"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-pairings/{pairing_id}/claim": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The box claims its approved pairing (no token)
+         * @description Carry a DPoP proof (bound to this URL) by the pairing's key. 202
+         *     `waiting` until a person approves; then, with the `secret` the approval
+         *     handed to this box's loopback, 201 `paired`: a new runner owned by the
+         *     approver, in the workspace they chose, whose device key is already ACTIVE.
+         *     Anything else — declined, expired, used, a wrong secret or key, an approver
+         *     who may no longer run work there — one uniform 401.
+         */
+        readonly post: operations["claim_runner_pairing"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-pairings/{user_code}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A runner pairing, by its code
+         * @description What the box says it is, where the pairing stands, and the workspaces you
+         *     may put it in (those where you may run work). Anyone signed in who has the
+         *     code may look; 404 for a code that does not exist.
+         */
+        readonly get: operations["get_runner_pairing"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-pairings/{user_code}/approve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve a runner pairing (browser session + passkey step-up)
+         * @description Make the box your runner, named `name`, in `workspace` (one where you may
+         *     run work). Only from a browser after a fresh passkey touch; a token is
+         *     refused. The answer's `redirect_url` is the box's own loopback with a
+         *     one-time secret — send this browser there. Approving again before the box
+         *     claims issues a new secret. Used, declined or expired: 409.
+         */
+        readonly post: operations["approve_runner_pairing"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-pairings/{user_code}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline a runner pairing
+         * @description This is not your computer, or not one you meant to pair: the box's claim
+         *     is refused from now on. Used or expired: 409.
+         */
+        readonly post: operations["decline_runner_pairing"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-releases/current": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The deployed runner version's update for a platform
+         * @description The update artifact of the runner version this deployment ships, for
+         *     `platform` (`macos-arm64`, `macos-x86_64`, `windows-x86_64`): its sha, file,
+         *     sha256, size, whether it is signed (and notarized), and a download `url`
+         *     good for 15 minutes. 404 when no release of that version is built for the
+         *     platform — an updater then does nothing. 503 when downloads are off.
+         */
+        readonly get: operations["current_runner_release"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-releases/downloads": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Download links for Canopy Runner
+         * @description The installers of the runner version this deployment ships, one per
+         *     platform built — empty when none is. `href` signs you in if needed and
+         *     redirects to the file. `signed: false` is an unsigned build: the operating
+         *     system will warn before opening it.
+         */
+        readonly get: operations["runner_downloads"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/local-turns/": {
         readonly parameters: {
             readonly query?: never;
@@ -25385,6 +25548,232 @@ export interface components {
              */
             readonly host: string;
         };
+        /**
+         * RunnerPairedOut
+         * @description `reattached` (this key is already an active runner's) or `paired` (a new
+         *     runner was made); `waiting` while the pairing is not yet approved.
+         */
+        readonly RunnerPairedOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "paired" | "reattached" | "waiting";
+            /** Runner Id */
+            readonly runner_id?: string | null;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+            /** Device Key Id */
+            readonly device_key_id?: string | null;
+        };
+        /**
+         * RunnerPairingCreatedOut
+         * @description A new pairing: show `user_code` and open `verify_url`; poll the claim
+         *     every `interval` seconds until `expires_at`.
+         */
+        readonly RunnerPairingCreatedOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** User Code */
+            readonly user_code: string;
+            /** Verify Url */
+            readonly verify_url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Interval */
+            readonly interval: number;
+        };
+        /**
+         * RunnerPairingIn
+         * @description A box asks to be paired. `public_jwk` is the PUBLIC half of the device key
+         *     it holds (and whose DPoP proof is on this request); `redirect_port` is the
+         *     loopback port the approval's secret is handed back through.
+         */
+        readonly RunnerPairingIn: {
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "secure-enclave" | "tpm" | "software";
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Ecdh Store
+             * @default
+             */
+            readonly ecdh_store: string;
+            /**
+             * Hostname
+             * @default
+             */
+            readonly hostname: string;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
+            /**
+             * Platform
+             * @enum {string}
+             */
+            readonly platform: "macos" | "windows" | "linux";
+            /**
+             * Has Emdash
+             * @default false
+             */
+            readonly has_emdash: boolean;
+            /** Redirect Port */
+            readonly redirect_port: number;
+        };
+        /** RunnerPairingClaimIn */
+        readonly RunnerPairingClaimIn: {
+            /**
+             * Secret
+             * @default
+             */
+            readonly secret: string;
+        };
+        /**
+         * RunnerPairingOut
+         * @description A pairing as the person approving it sees it. Everything about the box is
+         *     what the box says about itself.
+         */
+        readonly RunnerPairingOut: {
+            /** User Code */
+            readonly user_code: string;
+            /** Hostname */
+            readonly hostname: string;
+            /** Account */
+            readonly account: string;
+            /** Platform */
+            readonly platform: string;
+            /** Kind */
+            readonly kind: string;
+            /** Has Emdash */
+            readonly has_emdash: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "approved" | "consumed" | "declined" | "expired";
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Suggested Name */
+            readonly suggested_name: string;
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["RunnerPairingWorkspaceOut"][];
+            /** Runner Id */
+            readonly runner_id?: string | null;
+        };
+        /** RunnerPairingWorkspaceOut */
+        readonly RunnerPairingWorkspaceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
+        /**
+         * RunnerPairingApprovedOut
+         * @description Send the browser to `redirect_url`: the box's own loopback, which takes
+         *     the one-time secret and claims the pairing.
+         */
+        readonly RunnerPairingApprovedOut: {
+            /**
+             * Status
+             * @constant
+             */
+            readonly status: "approved";
+            /** Redirect Url */
+            readonly redirect_url: string;
+        };
+        /** RunnerPairingApproveIn */
+        readonly RunnerPairingApproveIn: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Name */
+            readonly name: string;
+        };
+        /** RunnerPairingDeclinedOut */
+        readonly RunnerPairingDeclinedOut: {
+            /**
+             * Status
+             * @constant
+             */
+            readonly status: "declined";
+        };
+        /**
+         * RunnerReleaseOut
+         * @description The update artifact of the deployed runner version for one platform.
+         *     `url` is a presigned download, good for 15 minutes.
+         */
+        readonly RunnerReleaseOut: {
+            /** Sha */
+            readonly sha: string;
+            /** Platform */
+            readonly platform: string;
+            /** File */
+            readonly file: string;
+            /** Url */
+            readonly url: string;
+            /** Sha256 */
+            readonly sha256: string;
+            /** Size */
+            readonly size: number;
+            /** Signed */
+            readonly signed: boolean;
+            /** Notarized */
+            readonly notarized: boolean;
+        };
+        /** RunnerDownloadOut */
+        readonly RunnerDownloadOut: {
+            /** Platform */
+            readonly platform: string;
+            /** Label */
+            readonly label: string;
+            /** File */
+            readonly file: string;
+            /** Size */
+            readonly size: number;
+            /** Signed */
+            readonly signed: boolean;
+            /** Notarized */
+            readonly notarized: boolean;
+            /** Href */
+            readonly href: string;
+        };
+        /**
+         * RunnerDownloadsOut
+         * @description The installers of the deployed runner version; empty when none is built.
+         */
+        readonly RunnerDownloadsOut: {
+            /** Sha */
+            readonly sha: string;
+            /** Downloads */
+            readonly downloads: readonly components["schemas"]["RunnerDownloadOut"][];
+        };
         /** LocalTurnOut */
         readonly LocalTurnOut: {
             /**
@@ -40541,6 +40930,186 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerPairByRoleOut"];
+                };
+            };
+        };
+    };
+    readonly create_runner_pairing: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerPairingIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairedOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairingCreatedOut"];
+                };
+            };
+        };
+    };
+    readonly claim_runner_pairing: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly pairing_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerPairingClaimIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairedOut"];
+                };
+            };
+            /** @description Accepted */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairedOut"];
+                };
+            };
+        };
+    };
+    readonly get_runner_pairing: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_code: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairingOut"];
+                };
+            };
+        };
+    };
+    readonly approve_runner_pairing: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_code: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerPairingApproveIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairingApprovedOut"];
+                };
+            };
+        };
+    };
+    readonly decline_runner_pairing: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly user_code: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairingDeclinedOut"];
+                };
+            };
+        };
+    };
+    readonly current_runner_release: {
+        readonly parameters: {
+            readonly query: {
+                readonly platform: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerReleaseOut"];
+                };
+            };
+        };
+    };
+    readonly runner_downloads: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDownloadsOut"];
                 };
             };
         };

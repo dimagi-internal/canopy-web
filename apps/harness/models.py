@@ -1858,6 +1858,81 @@ class RunnerInvitation(models.Model):
         return self.APPROVED if self.approved_at is not None else self.PENDING
 
 
+#: How long a laptop pairing waits for its approval and claim.
+PAIRING_TTL = dt.timedelta(minutes=15)
+#: Added to `expires_at` on approval, so a slow claim after a late approval works.
+PAIRING_APPROVAL_GRACE = dt.timedelta(minutes=10)
+
+
+class RunnerPairing(models.Model):
+    """A laptop box asks to be paired, and a person approves it in their browser
+    (`apps/harness/api_runner_pairings.py`, spec 2026-10-19-runner-installers).
+
+    The box makes its device key first and opens a pairing with a DPoP proof of
+    it (anonymous: no token exists yet). The person opens `/pair/<user_code>`,
+    picks a workspace and a name, and approves behind a passkey step-up. The
+    approval's one-time secret goes back ONLY through a redirect to the box's
+    loopback (`redirect_port`), so whoever approves must be at that machine. The
+    box then claims with the secret and a proof of the same key, and gets a
+    Runner whose device key is already ACTIVE. Single use; one live pairing per
+    key (`jkt`).
+    """
+
+    PENDING, APPROVED, CONSUMED, DECLINED, EXPIRED = "pending", "approved", "consumed", "declined", "expired"
+    PLATFORMS = ("macos", "windows", "linux")
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #: What the person checks against the box's window: `ABCD-EFGH`.
+    user_code = models.CharField(max_length=9, unique=True)
+    #: The box's signing key (reduced public JWK) and its RFC 7638 thumbprint.
+    public_jwk = models.JSONField(default=dict)
+    jkt = models.CharField(max_length=64, db_index=True)
+    kind = models.CharField(max_length=16)
+    ecdh_public_jwk = models.JSONField(default=dict, blank=True)
+    ecdh_store = models.CharField(max_length=16, blank=True, default="")
+    #: Self-reported by the box: shown to the approver, trusted for nothing.
+    hostname = models.CharField(max_length=100, blank=True, default="")
+    account = models.CharField(max_length=100, blank=True, default="")
+    platform = models.CharField(max_length=10)
+    has_emdash = models.BooleanField(default=False)
+    redirect_port = models.PositiveIntegerField()
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, null=True, blank=True,
+                                  related_name="+")
+    #: The Runner.name the approver chose.
+    name = models.CharField(max_length=63, blank=True, default="")
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="+")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    #: sha256 of the approval's one-time secret; the raw value is only ever in
+    #: the loopback redirect.
+    secret_hash = models.CharField(max_length=64, blank=True, default="")
+    declined_at = models.DateTimeField(null=True, blank=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    runner = models.ForeignKey(Runner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"runner-pairing:{self.user_code}:{self.status}"
+
+    def save(self, *args, **kwargs):
+        if self.expires_at is None:
+            self.expires_at = (self.created_at or timezone.now()) + PAIRING_TTL
+        super().save(*args, **kwargs)
+
+    @property
+    def status(self) -> str:
+        if self.consumed_at is not None:
+            return self.CONSUMED
+        if self.declined_at is not None:
+            return self.DECLINED
+        if timezone.now() >= self.expires_at:
+            return self.EXPIRED
+        return self.APPROVED if self.approved_at is not None else self.PENDING
+
 class PrivateRunner(models.Model):
     """A PERSON's own machine: plain Claude Code with the canopy plugin, no runner app.
 

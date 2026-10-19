@@ -880,6 +880,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--drain-one", action="store_true",
                         help="claim + run exactly ONE queued turn, then exit (no inbox poll, "
                              "no schedules; runs even while paused)")
+    parser.add_argument("--log-file", default="", help=argparse.SUPPRESS)
 
     subparsers = parser.add_subparsers(dest="command")
 
@@ -888,6 +889,10 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--once", action="store_true", help="single iteration (for cron/tests)")
     run_parser.add_argument("--drain-one", action="store_true",
                             help="claim + run exactly ONE queued turn, then exit")
+    run_parser.add_argument("--log-file", default="",
+                            help="write the log (and stdout/stderr) to this file instead of "
+                                 "the console — the Windows task runs pythonw.exe, which has "
+                                 "no console")
 
     update_parser = subparsers.add_parser(
         "update-check",
@@ -973,6 +978,38 @@ def _build_parser() -> argparse.ArgumentParser:
                              help="don't build ~/Applications/Emdash CDP.app")
     pair_parser.add_argument("--dry-run", action="store_true",
                              help="print the plan; pair nothing, write nothing")
+    pair_parser.add_argument("--browser", action="store_true",
+                             help="pair from your browser with this computer's device key — "
+                                  "no PAT (what the downloadable installer uses)")
+    pair_parser.add_argument("--allow-software", action="store_true",
+                             help="--browser: allow a software device key where a hardware one "
+                                  "cannot be made (a Mac without the canopy-device-key helper)")
+
+    setup_parser = subparsers.add_parser(
+        "setup",
+        help="what the Canopy Runner installer runs: pair from the browser if this computer "
+             "is not paired yet, then start the runner, its auto-updater and (macOS) the "
+             "menu-bar app as background jobs pointing at this app. Idempotent",
+    )
+    setup_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
+    setup_parser.add_argument("--no-pair", action="store_true",
+                              help="never pair; only (re)install the background jobs")
+    setup_parser.add_argument("--base-url", default="", help="canopy-web base url")
+    setup_parser.add_argument("--allow-software", action="store_true",
+                              help="allow a software device key (see pair --allow-software)")
+
+    self_update_parser = subparsers.add_parser(
+        "self-update",
+        help="the installed app's updater: print '<current|stale|busy|unknown> <sha>' and, "
+             "with --if-stale, download, verify and install the build canopy-web names",
+    )
+    self_update_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
+    self_update_parser.add_argument("--if-stale", action="store_true",
+                                    help="install when stale (what the updater job runs)")
+    self_update_parser.add_argument("--platform", default="",
+                                    help="release platform (default: this bundle's)")
+    self_update_parser.add_argument("--log-file", default="",
+                                    help="write output to this file (pythonw has no console)")
 
     return parser
 
@@ -1084,6 +1121,16 @@ def close_sessions_cmd(args) -> int:
 def pair_cmd(args) -> int:
     from . import pair
 
+    if getattr(args, "browser", False):
+        from . import browser_pair
+
+        try:
+            return browser_pair.run_browser_pair(
+                Path(args.config), base_url=args.base_url or pair.DEFAULT_BASE_URL,
+                allow_software=True if args.allow_software else None)
+        except pair.PairError as exc:
+            print(f"pair: {exc}", file=sys.stderr)
+            return 1
     try:
         return pair.run_pair(
             Path(args.config), name=args.name, workspace=args.workspace,
@@ -1250,13 +1297,62 @@ def _tolerant_console(streams=None) -> None:
             pass  # not a TextIOWrapper (a test capture, a pipe wrapper) — leave it
 
 
+#: A --log-file larger than this at startup is moved to <file>.1 first: nothing else
+#: rotates it (launchd does not rotate its StandardOutPath either, but a Windows box
+#: keeps one task running for months).
+LOG_ROLL_BYTES = 20 * 1024 * 1024
+
+
+def _log_to_file(path: str) -> None:
+    """Send logging AND stdout/stderr to `path`. pythonw.exe has no console: without
+    this every log line and every traceback goes nowhere."""
+    p = Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if p.stat().st_size > LOG_ROLL_BYTES:
+            import os
+
+            os.replace(p, p.with_name(p.name + ".1"))
+    except OSError:
+        pass
+    stream = open(p, "a", encoding="utf-8", errors="backslashreplace", buffering=1)
+    sys.stdout = sys.stderr = stream
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                        stream=stream, force=True)
+
+
 def main() -> None:
     _tolerant_console()
     parser = _build_parser()
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if getattr(args, "log_file", ""):
+        _log_to_file(args.log_file)
+    else:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    # A runner installed from the downloadable installer carries its own node and ACP
+    # adapter; put them first on PATH for everything below (no-op for a dev install).
+    from . import bundle
+
+    bundle.activate()
 
     command = args.command or "run"
+
+    if command == "setup":
+        from . import setup_cmd
+
+        raise SystemExit(setup_cmd.run_setup(
+            Path(args.config), no_pair=args.no_pair, base_url=args.base_url,
+            allow_software=True if args.allow_software else None))
+
+    if command == "self-update":
+        from . import self_update
+
+        raise SystemExit(self_update.run_self_update(
+            Path(args.config), if_stale=args.if_stale, platform=args.platform))
 
     if command == "update-check":
         raise SystemExit(update_check(Path(args.config)))

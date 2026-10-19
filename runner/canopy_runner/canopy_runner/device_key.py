@@ -87,8 +87,15 @@ def enroll(cfg, *, runner: Runner = subprocess.run, home: Optional[Path] = None,
         return {"skipped": "CANOPY_DEVICE_KEY=0"}
     cli = cli or canopy_cli(home)
     if not cli:
+        # A runner installed from the downloadable installer has no canopy CLI: its key
+        # was made and registered by `canopy-runner pair --browser` (device_proof).
         logger.info("device key: no canopy CLI on this machine — not enrolled")
         return {"error": "no canopy CLI"}
+    if not (bearer or cfg.token):
+        # Never register as anyone: with no runner token yet and no PAT there is no
+        # identity to send, and an empty CANOPY_WEB_PAT would only earn a 401.
+        logger.info("device key: no runner token and no PAT yet — not enrolling now")
+        return {"error": "no credential"}
     try:
         r = runner([cli, "vault", "device", "--enroll", "--runner", cfg.runner_id, "--json"],
                    capture_output=True, text=True, timeout=TIMEOUT, env=_child_env(cfg, bearer),

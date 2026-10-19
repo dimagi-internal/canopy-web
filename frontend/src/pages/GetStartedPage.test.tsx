@@ -7,6 +7,8 @@ const authState = vi.hoisted(() => ({ value: { status: 'anonymous', user: null }
 const listAgents = vi.hoisted(() => vi.fn())
 vi.mock('@/auth/AuthProvider', () => ({ useAuth: () => authState.value }))
 vi.mock('@/api/agents', () => ({ listAgents }))
+const getRunnerDownloads = vi.hoisted(() => vi.fn())
+vi.mock('@/api/runnerPairings', () => ({ getRunnerDownloads, RunnerPairingError: class extends Error {} }))
 const active = vi.hoisted(() => ({ value: null as string | null }))
 vi.mock('@/workspace/WorkspaceProvider', () => ({ useActiveWorkspace: () => active.value }))
 
@@ -35,6 +37,8 @@ beforeEach(() => {
   authState.value = { status: 'anonymous', user: null }
   active.value = null
   listAgents.mockReset()
+  getRunnerDownloads.mockReset()
+  getRunnerDownloads.mockResolvedValue({ sha: '', downloads: [] })
 })
 
 afterEach(() => {
@@ -156,13 +160,16 @@ describe('GetStartedPage', () => {
     expect(screen.getByText(/Sign in and open a workspace to create one/)).toBeTruthy()
   })
 
-  it('has a #runner section with the pairing command for the active workspace', async () => {
+  it('has a #runner section: download Canopy Runner, with the developer command kept aside', async () => {
     authState.value = { status: 'authenticated', user: { email: 'a@dimagi.com' } }
     active.value = 'marshellis'
     listAgents.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 200 })
     const { container } = renderPage()
     const runner = container.querySelector('#runner')
     expect(runner?.textContent).toContain('Pair a runner')
+    expect(runner?.textContent).toContain('Download Canopy Runner')
+    await waitFor(() => expect(getRunnerDownloads).toHaveBeenCalled())
+    expect(runner?.querySelector('details')?.textContent).toContain('Developers')
     expect(within(runner as HTMLElement).getAllByRole('code').map((c) => c.textContent)).toEqual(
       expect.arrayContaining([expect.stringMatching(/install-runner\.sh --workspace marshellis/)]),
     )
@@ -170,6 +177,13 @@ describe('GetStartedPage', () => {
       'runner/ec2/README.md',
     )
     await waitFor(() => expect(listAgents).toHaveBeenCalled())
+  })
+
+  it('signed out, the runner section offers sign-in to download', () => {
+    const { container } = renderPage()
+    const runner = container.querySelector('#runner') as HTMLElement
+    expect(within(runner).getByRole('link', { name: 'Sign in to download' })).toBeTruthy()
+    expect(getRunnerDownloads).not.toHaveBeenCalled()
   })
 
   it('opened at #runner, scrolls to the runner section', () => {

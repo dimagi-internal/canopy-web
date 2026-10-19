@@ -50,15 +50,33 @@ _lock = threading.Lock()
 
 
 def adapter_argv() -> list[str] | None:
-    """The argv that starts the ACP adapter, or None when it is not installed."""
+    """The argv that starts the ACP adapter, or None when it is not installed.
+
+    A runner installed from the downloadable installer carries its own adapter (and
+    node) in its bundle; that copy is tried FIRST, before anything on PATH, so the
+    adapter is the one the bundle was built and tested with."""
     from canopy_acp import find_adapter
 
-    return find_adapter()
+    from . import bundle
+
+    prefixes = bundle.adapter_prefixes()
+    if prefixes is not None:
+        from canopy_acp.client import _entry_points, _node
+
+        node = _node()
+        if node:
+            for option in _entry_points(prefixes[0]):
+                if option.exists():
+                    return [node, str(option)]
+    return find_adapter(prefixes=prefixes)
 
 
 def ensure_adapter() -> bool:
     """Install the adapter under ADAPTER_PREFIX if it is missing. True when present."""
     from canopy_acp import install_adapter
+
+    if adapter_argv() is not None:
+        return True  # e.g. the bundle's own copy: nothing to install
 
     outcome = install_adapter(ADAPTER_PREFIX)
     if outcome not in ("present", "installed"):

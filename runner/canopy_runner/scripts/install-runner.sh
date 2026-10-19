@@ -43,7 +43,7 @@ RUNNER_SRC="runner/canopy_runner/canopy_runner"
 # What counts as the runner's code for staleness: the package, the installer, the
 # menu-bar app and the icons it bundles. Same list as provenance.CODE_PATHS and
 # deploy-labs.yml (tests/test_runner_code_paths.py keeps the three equal).
-RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand packages/canopy_cron packages/canopy_transcript runner/canopy_acp"
+RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand packages/canopy_cron packages/canopy_transcript runner/canopy_acp runner/packaging"
 LABEL="com.canopy.runner"
 UPDATER_LABEL="com.canopy.runner.updater"
 CONFIG="$HOME/.canopy/runner.json"
@@ -86,6 +86,14 @@ git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 \
 # Installing main instead would run code nothing has deployed, and would leave
 # code_sha != expected_code_sha permanently, so the staleness banner would fire
 # forever on exactly the boxes auto-updating correctly.
+# ~/.canopy/hold-updates holds this box on whatever it runs now — a branch you are
+# testing, or a released build you are trying — for this updater and the released
+# app's (`canopy-runner self-update`) alike. Delete the file to resume.
+if [ "$IF_STALE" -eq 1 ] && [ -e "$HOME/.canopy/hold-updates" ]; then
+  echo "$(date -u +%FT%TZ) --if-stale: held (~/.canopy/hold-updates) — nothing to do."
+  exit 0
+fi
+
 if [ "$IF_STALE" -eq 1 ]; then
   CHECK_BIN="$(uv tool dir --bin 2>/dev/null)/canopy-runner"
   [ -x "$CHECK_BIN" ] || CHECK_BIN="$(command -v canopy-runner || true)"
@@ -369,6 +377,13 @@ if [ "$DO_LAUNCHD" -eq 1 ] && [ "$(uname -s)" = "Darwin" ] \
             "$TMP/assets/brand/AppIcon.icns" "$TMP/assets/brand"/menubar-mark*.png 2>/dev/null \
           | shasum | cut -d' ' -f1)"
   have="$(cat "$MENUBAR_STAMP" 2>/dev/null || true)"
+  # A RELEASED app in that place (it carries its runtime) is not this build, whatever
+  # the stamp says: switching an account back from the downloaded app to this install
+  # must replace it, or it re-points the jobs at itself the next time it launches.
+  if [ -f "$MENUBAR_APP/Contents/Resources/runtime/release.json" ]; then
+    echo "==> replacing the released Canopy Runner.app with the developer build"
+    have=""
+  fi
   if [ -d "$MENUBAR_APP" ] && [ "$want" = "$have" ]; then
     echo "==> menu-bar app unchanged"
   elif ! command -v swiftc >/dev/null 2>&1; then
@@ -395,6 +410,12 @@ if [ "$(uname -s)" = "Darwin" ] && [ "${CANOPY_DEVICE_KEY:-1}" = "1" ] \
    && [ -f "$DEVKEY/build.sh" ]; then
   want="$(cat "$DEVKEY/Sources/main.swift" "$DEVKEY/build.sh" | shasum | cut -d' ' -f1)"
   have="$(cat "$DEVKEY_STAMP" 2>/dev/null || true)"
+  # The released app links this path into its own bundle; once that app is replaced
+  # the link dangles and the Secure Enclave key cannot sign. Build a real file again.
+  if [ -L "$DEVKEY_BIN" ]; then
+    rm -f "$DEVKEY_BIN"
+    have=""
+  fi
   if [ -x "$DEVKEY_BIN" ] && [ "$want" = "$have" ]; then
     echo "==> canopy-device-key unchanged"
   elif ! command -v swiftc >/dev/null 2>&1; then

@@ -99,7 +99,9 @@ class Config:
     @classmethod
     def load(cls, path: Path) -> "Config":
         raw = json.loads(Path(path).read_text())
-        token = raw["token"]
+        # Empty (or absent) for a runner paired from the browser: it signs in with its
+        # device key alone (runner_token) and has no PAT at all.
+        token = str(raw.get("token") or "")
         if token.startswith("@"):
             token = Path(token[1:]).expanduser().read_text().strip()
         known = {f for f in cls.__dataclass_fields__}

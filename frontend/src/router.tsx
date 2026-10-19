@@ -19,6 +19,7 @@ import { WalkthroughsPage } from './pages/WalkthroughsPage'
 import { WalkthroughViewerPage } from './pages/WalkthroughViewerPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
+import { PairRunnerPage } from './pages/PairRunnerPage'
 import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
 import { WorkspaceRetentionPage } from './pages/WorkspaceRetentionPage'
@@ -286,6 +287,10 @@ export const routeTable: RouteObject[] = [
       // (AuthProvider + client.v2 both allowlist this prefix so an
       // unauthenticated visitor reaches it instead of bouncing to login).
       { path: '/invite/:token', element: <InviteAcceptPage /> },
+      // /pair/:code — approve a computer asking to become your runner (the page
+      // Canopy Runner opens after install). Root: a pairing has no workspace
+      // until the person picks one here. Signed-in only (the server's default).
+      { path: '/pair/:code', element: <PairRunnerPage /> },
 
       // --- Tenant-scoped surfaces under /w/:workspace ---
       { path: '/w/:workspace', element: <WorkspaceIndex /> },

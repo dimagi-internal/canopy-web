@@ -1,0 +1,399 @@
+name: Runner release
+
+# Builds the downloadable runner installers — a DMG + update zip per Mac arch and an
+# Inno Setup .exe for Windows — smoke-tests each on a fresh runner, and on main
+# uploads them to s3://<attachments bucket>/runner-releases/<runner sha>/ with
+# manifest.json written LAST. canopy-web serves the one whose sha its deployed image
+# names (RUNNER_CODE_SHA), so a release is inert until a deploy points at it.
+# Design: docs/superpowers/specs/2026-10-19-runner-installers-design.md. Local
+# builds and the secrets below: runner/packaging/README.md.
+#
+# The release is keyed by the RUNNER sha — the last commit touching the runner's
+# code paths, computed exactly as deploy-labs.yml computes RUNNER_CODE_SHA (from
+# provenance.CODE_PATHS, which tests/test_runner_code_paths.py keeps equal to
+# deploy-labs.yml's list) — so every commit that moves it builds a release.
+#
+# Optional secrets — each signing step runs only when ALL its secrets are present,
+# and the manifest's signed/notarized flags record what actually happened:
+#   macOS:   MACOS_CERTIFICATE_P12_BASE64, MACOS_CERTIFICATE_PASSWORD, MACOS_SIGNING_IDENTITY
+#            (+ notarization) APPLE_API_KEY_P8_BASE64, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID
+#   Windows: AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET,
+#            TRUSTED_SIGNING_ENDPOINT, TRUSTED_SIGNING_ACCOUNT, TRUSTED_SIGNING_PROFILE
+# Required to publish: AWS_ROLE_ARN (the same deploy role deploy-labs.yml assumes;
+# its s3:PutObject on runner-releases/* is granted in deploy/aws/deploy_roles.py and
+# applied by a human).
+#
+# Pull requests touching the packaging build and smoke-test unsigned artifacts with
+# no secrets and upload nothing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # The runner code paths (provenance.CODE_PATHS) …
+      - 'runner/canopy_runner/canopy_runner/**'
+      - 'runner/canopy_runner/scripts/**'
+      - 'runner/menubar/**'
+      - 'runner/device-key/**'
+      - 'assets/brand/**'
+      - 'packages/canopy_cron/**'
+      - 'packages/canopy_transcript/**'
+      - 'runner/canopy_acp/**'
+      - 'runner/packaging/**'
+      # … and this workflow.
+      - '.github/workflows/runner-release.yml'
+  pull_request:
+    paths:
+      - 'runner/packaging/**'
+      - 'runner/menubar/**'
+      - '.github/workflows/runner-release.yml'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Re-upload (and overwrite) this sha''s release even if it was already published.'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# One run per ref+sha; a newer push to a PR cancels the older build. Publishing has
+# its own per-sha lock below.
+concurrency:
+  group: runner-release-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  AWS_REGION: us-east-1
+  RELEASES_BUCKET: labs-jj-canopy-web-attachments-858923557655
+  RELEASES_PREFIX: runner-releases
+
+jobs:
+  resolve:
+    name: Resolve runner sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.p.outputs.sha }}
+      committed_at: ${{ steps.p.outputs.committed_at }}
+      built_at: ${{ steps.p.outputs.built_at }}
+      publish: ${{ steps.p.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `git log -1 -- <paths>` needs real history (see deploy-labs.yml).
+          fetch-depth: 0
+      - id: p
+        name: Runner sha, and whether this run publishes
+        run: |
+          # The same `git log -1 --format=%H -- <RUNNER_CODE>` deploy-labs.yml runs,
+          # with the list read from provenance.CODE_PATHS.
+          python3 runner/packaging/build_payload.py --provenance >> "$GITHUB_OUTPUT"
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          # main only: the deploy role trusts main only, and a branch's build must
+          # never become the release a deployed image points at.
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+          python3 runner/packaging/build_payload.py --provenance
+
+  build-macos:
+    name: Build macOS ${{ matrix.arch }}
+    needs: resolve
+    # Native on both arches: macos-15 is Apple silicon, macos-15-intel is the
+    # remaining Intel image (macos-13 is retired). A native build runs the target's
+    # own Python and npm, precompiles bytecode, and the smoke job exercises the real
+    # binaries — none of which a cross-install on arm64 could.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    env:
+      # Secrets reach the build only outside pull requests. build_app.sh signs and
+      # notarizes only when every secret of a step is non-empty.
+      MACOS_CERTIFICATE_P12_BASE64: ${{ github.event_name != 'pull_request' && secrets.MACOS_CERTIFICATE_P12_BASE64 || '' }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.MACOS_CERTIFICATE_PASSWORD || '' }}
+      MACOS_SIGNING_IDENTITY: ${{ github.event_name != 'pull_request' && secrets.MACOS_SIGNING_IDENTITY || '' }}
+      APPLE_API_KEY_P8_BASE64: ${{ github.event_name != 'pull_request' && secrets.APPLE_API_KEY_P8_BASE64 || '' }}
+      APPLE_API_KEY_ID: ${{ github.event_name != 'pull_request' && secrets.APPLE_API_KEY_ID || '' }}
+      APPLE_API_ISSUER_ID: ${{ github.event_name != 'pull_request' && secrets.APPLE_API_ISSUER_ID || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Build the runtime payload
+        run: |
+          uv run --no-project --python 3.12 python runner/packaging/build_payload.py \
+            --platform "macos-${{ matrix.arch }}" --out "$RUNNER_TEMP/payload" --cache "$RUNNER_TEMP/cache"
+      - name: The payload carries the resolved sha
+        run: |
+          got="$(plutil -extract sha raw -o - "$RUNNER_TEMP/payload/release.json")"
+          [ "$got" = "${{ needs.resolve.outputs.sha }}" ] \
+            || { echo "::error::payload stamped $got, resolve said ${{ needs.resolve.outputs.sha }}"; exit 1; }
+      - name: Assemble, sign, notarize, package
+        run: bash runner/packaging/macos/build_app.sh "${{ matrix.arch }}" "$RUNNER_TEMP/payload" "$RUNNER_TEMP/dist"
+      - name: Summary
+        run: |
+          {
+            echo "### macOS ${{ matrix.arch }}"
+            echo '```json'
+            cat "$RUNNER_TEMP/dist/macos-${{ matrix.arch }}.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: runner-macos-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/dist/*.dmg
+            ${{ runner.temp }}/dist/*.app.zip
+            ${{ runner.temp }}/dist/macos-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 14
+          # Already compressed (UDZO dmg, zip).
+          compression-level: 0
+
+  build-windows:
+    name: Build Windows x86_64
+    needs: resolve
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      AZURE_TENANT_ID: ${{ github.event_name != 'pull_request' && secrets.AZURE_TENANT_ID || '' }}
+      AZURE_CLIENT_ID: ${{ github.event_name != 'pull_request' && secrets.AZURE_CLIENT_ID || '' }}
+      AZURE_CLIENT_SECRET: ${{ github.event_name != 'pull_request' && secrets.AZURE_CLIENT_SECRET || '' }}
+      TRUSTED_SIGNING_ENDPOINT: ${{ github.event_name != 'pull_request' && secrets.TRUSTED_SIGNING_ENDPOINT || '' }}
+      TRUSTED_SIGNING_ACCOUNT: ${{ github.event_name != 'pull_request' && secrets.TRUSTED_SIGNING_ACCOUNT || '' }}
+      TRUSTED_SIGNING_PROFILE: ${{ github.event_name != 'pull_request' && secrets.TRUSTED_SIGNING_PROFILE || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Build the runtime payload
+        run: |
+          uv run --no-project --python 3.12 python runner/packaging/build_payload.py `
+            --platform windows-x86_64 --out "$env:RUNNER_TEMP\payload" --cache "$env:RUNNER_TEMP\cache"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $got = (Get-Content "$env:RUNNER_TEMP\payload\release.json" -Raw | ConvertFrom-Json).sha
+          if ($got -ne '${{ needs.resolve.outputs.sha }}') {
+            Write-Output "::error::payload stamped $got, resolve said ${{ needs.resolve.outputs.sha }}"; exit 1
+          }
+
+      - name: Decide whether to sign
+        id: signing
+        run: |
+          $all = @($env:AZURE_TENANT_ID, $env:AZURE_CLIENT_ID, $env:AZURE_CLIENT_SECRET,
+                   $env:TRUSTED_SIGNING_ENDPOINT, $env:TRUSTED_SIGNING_ACCOUNT, $env:TRUSTED_SIGNING_PROFILE)
+          $on = -not ($all | Where-Object { [string]::IsNullOrEmpty($_) })
+          "enabled=$($on.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if (-not $on) { Write-Output "::notice::Azure Trusted Signing secrets absent - building an UNSIGNED installer." }
+
+      # The executables inside the payload, before they are packed: SmartScreen and
+      # Defender judge python.exe / node.exe / the native modules when they run, not
+      # just the installer.
+      - name: Sign the payload's executables (Azure Trusted Signing)
+        if: steps.signing.outputs.enabled == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ env.AZURE_TENANT_ID }}
+          azure-client-id: ${{ env.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ env.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ env.TRUSTED_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ runner.temp }}\payload
+          files-folder-filter: exe,dll,pyd,node
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Build the installer (Inno Setup)
+        run: |
+          ./runner/packaging/windows/build_installer.ps1 -Payload "$env:RUNNER_TEMP\payload" -OutDir "$env:RUNNER_TEMP\dist"
+
+      - name: Sign the installer (Azure Trusted Signing)
+        if: steps.signing.outputs.enabled == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ env.AZURE_TENANT_ID }}
+          azure-client-id: ${{ env.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ env.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ env.TRUSTED_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.TRUSTED_SIGNING_PROFILE }}
+          files: ${{ runner.temp }}\dist\Canopy-Runner-Setup-windows-x86_64.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Record what was built
+        run: |
+          $exe = "$env:RUNNER_TEMP\dist\Canopy-Runner-Setup-windows-x86_64.exe"
+          # signed=true only for a signature Windows itself calls Valid.
+          $signed = (Get-AuthenticodeSignature $exe).Status -eq 'Valid'
+          if ('${{ steps.signing.outputs.enabled }}' -eq 'true' -and -not $signed) {
+            Write-Output "::error::signing ran but the installer's signature is not Valid"; exit 1
+          }
+          $flags = @()
+          if ($signed) { $flags += '--signed' }
+          # The installer IS the update artifact on Windows (self-update runs it with /UPDATE).
+          uv run --no-project --python 3.12 python runner/packaging/manifest.py record `
+            --platform windows-x86_64 --sha '${{ needs.resolve.outputs.sha }}' `
+            --installer $exe --update $exe @flags --out "$env:RUNNER_TEMP\dist\windows-x86_64.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "### Windows x86_64`n``````json`n$(Get-Content "$env:RUNNER_TEMP\dist\windows-x86_64.json" -Raw)``````" >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: runner-windows-x86_64
+          path: |
+            ${{ runner.temp }}/dist/Canopy-Runner-Setup-windows-x86_64.exe
+            ${{ runner.temp }}/dist/windows-x86_64.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # Smoke tests run on a FRESH runner from the uploaded artifact — proof that what
+  # ships works on a machine that did not build it.
+  smoke-macos:
+    name: Smoke macOS ${{ matrix.arch }}
+    needs: build-macos
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: runner-macos-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dist
+      - name: Smoke test
+        run: bash runner/packaging/smoke/smoke-macos.sh "$RUNNER_TEMP/dist" "${{ matrix.arch }}"
+
+  smoke-windows:
+    name: Smoke Windows x86_64
+    needs: build-windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: runner-windows-x86_64
+          path: ${{ runner.temp }}/dist
+      - name: Smoke test (install /UPDATE, exercise, uninstall)
+        run: ./runner/packaging/smoke/smoke-windows.ps1 -Dist "$env:RUNNER_TEMP\dist"
+
+  publish:
+    name: Publish to S3
+    needs: [resolve, build-macos, build-windows, smoke-macos, smoke-windows]
+    if: needs.resolve.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    # Two runs for one sha (a re-run, a dispatch racing a push) must not interleave
+    # their uploads.
+    concurrency:
+      group: runner-release-publish-${{ needs.resolve.outputs.sha }}
+      cancel-in-progress: false
+    env:
+      SHA: ${{ needs.resolve.outputs.sha }}
+      FORCE: ${{ inputs.force == true && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: runner-*
+          path: dist
+          merge-multiple: true
+      - name: Assemble manifest.json
+        run: |
+          python3 runner/packaging/manifest.py assemble --sha "$SHA" \
+            --committed-at "${{ needs.resolve.outputs.committed_at }}" \
+            --built-at "${{ needs.resolve.outputs.built_at }}" \
+            --records dist --out manifest.json
+          ls -l dist
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Upload artifacts, then manifest.json
+        run: |
+          set -uo pipefail
+          prefix="$RELEASES_PREFIX/$SHA"
+          # The deploy role may only PutObject under runner-releases/ — no read, no
+          # list (deploy/aws/deploy_roles.py) — so "already published?" is asked with
+          # a conditional write: If-None-Match: * refuses (412) to replace an object
+          # that exists. Builds are not byte-reproducible, so a release is never
+          # half-replaced: the first existing object stops the run (green), and only
+          # `force` overwrites — every artifact AND the manifest, together.
+          put() {  # <file> <key> <content-type>
+            local args=(--bucket "$RELEASES_BUCKET" --key "$2" --body "$1" --content-type "$3")
+            [ "$FORCE" = true ] || args+=(--if-none-match '*')
+            local err
+            if err="$(aws s3api put-object "${args[@]}" 2>&1 >/dev/null)"; then
+              echo "uploaded s3://$RELEASES_BUCKET/$2"; return 0
+            fi
+            case "$err" in
+              *PreconditionFailed*|*"(412)"*) return 3 ;;
+              *AccessDenied*|*Forbidden*|*"(403)"*)
+                echo "::error::S3 refused the upload of $2 (AccessDenied). The deploy role needs s3:PutObject on arn:aws:s3:::$RELEASES_BUCKET/$RELEASES_PREFIX/* — granted by deploy/aws/deploy_roles.py (\"runner_releases\"), which a human applies. Apply it, then re-run this job."
+                echo "$err" >&2; return 1 ;;
+              *) echo "::error::upload of $2 failed: $err"; return 1 ;;
+            esac
+          }
+          for f in dist/*.dmg dist/*.app.zip dist/*.exe; do
+            case "$f" in
+              *.dmg) ct=application/x-apple-diskimage ;;
+              *.zip) ct=application/zip ;;
+              *.exe) ct=application/vnd.microsoft.portable-executable ;;
+            esac
+            put "$f" "$prefix/$(basename "$f")" "$ct"; rc=$?
+            if [ "$rc" -eq 3 ]; then
+              echo "::notice::runner release $SHA is already published (s3://$RELEASES_BUCKET/$prefix/$(basename "$f") exists) — nothing uploaded. Dispatch with force=true to rebuild and overwrite it."
+              echo "### Skipped: \`$SHA\` already published" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            [ "$rc" -eq 0 ] || exit 1
+          done
+          # LAST: until this exists the server treats the sha as unbuilt (404).
+          put manifest.json "$prefix/manifest.json" application/json; rc=$?
+          if [ "$rc" -eq 3 ]; then
+            echo "::error::artifacts were new but manifest.json already existed for $SHA — re-run with force=true so the manifest matches the uploaded bytes."
+            exit 1
+          fi
+          [ "$rc" -eq 0 ] || exit 1
+          {
+            echo "### Published runner release \`$SHA\`"
+            echo "s3://$RELEASES_BUCKET/$prefix/"
+            echo '```json'
+            cat manifest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

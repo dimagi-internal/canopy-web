@@ -225,6 +225,8 @@ from apps.harness.api_local import local_turns_router, private_runners_router  #
 from apps.harness.api_device_key_requests import router as device_key_requests_router  # noqa: E402
 from apps.harness.api_runner_invitations import pair_router as runner_pair_by_role_router  # noqa: E402
 from apps.harness.api_runner_invitations import router as runner_invitations_router  # noqa: E402
+from apps.harness.api_runner_pairings import router as runner_pairings_router  # noqa: E402
+from apps.harness.api_runner_releases import router as runner_releases_router  # noqa: E402
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.agents.engagement_api import router as engagement_router  # noqa: E402
 from apps.agents.proposals_api import router as proposals_router  # noqa: E402
@@ -306,6 +308,11 @@ api.add_router("/share", session_share_router)
 # `/runners/pair-by-role`.
 api.add_router("/harness/runner-invitations", runner_invitations_router)
 api.add_router("/harness/runners/pair-by-role", runner_pair_by_role_router)
+# A laptop box pairs by browser, and its installers and updates (spec
+# 2026-10-19-runner-installers).
+api.add_router("/harness/runner-pairings", runner_pairings_router)
+api.add_router("/harness/runner-releases", runner_releases_router)
+
 # Local use (canopy-web#1704): a person's private runner and the turns its sessions open.
 api.add_router("/harness/local-turns", local_turns_router)
 api.add_router("/private-runners", private_runners_router)

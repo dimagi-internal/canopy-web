@@ -109,7 +109,8 @@ class Client:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
         bearer = self.token
-        req.add_header("Authorization", f"Bearer {bearer}")
+        if bearer:  # "" = a browser-paired runner whose key is not approved yet: no PAT to send
+            req.add_header("Authorization", f"Bearer {bearer}")
         _identify(req)
         if data is not None:
             req.add_header("Content-Type", "application/json")

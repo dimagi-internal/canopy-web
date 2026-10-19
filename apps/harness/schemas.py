@@ -1900,6 +1900,126 @@ class RunnerPairByRoleOut(Schema):
     device_keys: dict[str, uuid.UUID] = {}
 
 
+# ---- laptop pairing by browser (apps/harness/api_runner_pairings.py) ------------------
+
+RunnerPairingStatus = Literal["pending", "approved", "consumed", "declined", "expired"]
+
+
+class RunnerPairingIn(Schema):
+    """A box asks to be paired. `public_jwk` is the PUBLIC half of the device key
+    it holds (and whose DPoP proof is on this request); `redirect_port` is the
+    loopback port the approval's secret is handed back through."""
+
+    public_jwk: dict[str, Any]
+    kind: Literal["secure-enclave", "tpm", "software"]
+    ecdh_public_jwk: dict[str, Any] | None = None
+    ecdh_store: str = Field(default="", max_length=16)
+    hostname: str = Field(default="", max_length=100)
+    account: str = Field(default="", max_length=100)
+    platform: Literal["macos", "windows", "linux"]
+    has_emdash: bool = False
+    redirect_port: int = Field(ge=1024, le=65535)
+
+
+class RunnerPairingCreatedOut(Schema):
+    """A new pairing: show `user_code` and open `verify_url`; poll the claim
+    every `interval` seconds until `expires_at`."""
+
+    id: uuid.UUID
+    user_code: str
+    verify_url: str
+    expires_at: dt.datetime
+    interval: int
+
+
+class RunnerPairedOut(Schema):
+    """`reattached` (this key is already an active runner's) or `paired` (a new
+    runner was made); `waiting` while the pairing is not yet approved."""
+
+    status: Literal["paired", "reattached", "waiting"]
+    runner_id: uuid.UUID | None = None
+    name: str = ""
+    workspace: str = ""
+    device_key_id: uuid.UUID | None = None
+
+
+class RunnerPairingWorkspaceOut(Schema):
+    slug: str
+    name: str
+
+
+class RunnerPairingOut(Schema):
+    """A pairing as the person approving it sees it. Everything about the box is
+    what the box says about itself."""
+
+    user_code: str
+    hostname: str
+    account: str
+    platform: str
+    kind: str
+    has_emdash: bool
+    status: RunnerPairingStatus
+    expires_at: dt.datetime
+    suggested_name: str
+    #: Where the caller may put it: their workspaces where they may run work.
+    workspaces: list[RunnerPairingWorkspaceOut]
+    runner_id: uuid.UUID | None = None
+
+
+class RunnerPairingApproveIn(Schema):
+    workspace: str = Field(min_length=1, max_length=100)
+    name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
+
+
+class RunnerPairingApprovedOut(Schema):
+    """Send the browser to `redirect_url`: the box's own loopback, which takes
+    the one-time secret and claims the pairing."""
+
+    status: Literal["approved"]
+    redirect_url: str
+
+
+class RunnerPairingDeclinedOut(Schema):
+    status: Literal["declined"]
+
+
+class RunnerPairingClaimIn(Schema):
+    secret: str = Field(default="", max_length=200)
+
+
+# ---- runner releases (apps/harness/runner_releases.py) --------------------------------
+
+class RunnerReleaseOut(Schema):
+    """The update artifact of the deployed runner version for one platform.
+    `url` is a presigned download, good for 15 minutes."""
+
+    sha: str
+    platform: str
+    file: str
+    url: str
+    sha256: str
+    size: int
+    signed: bool
+    notarized: bool
+
+
+class RunnerDownloadOut(Schema):
+    platform: str
+    label: str
+    file: str
+    size: int
+    signed: bool
+    notarized: bool
+    #: Same-origin link: signs you in if needed, then redirects to the bytes.
+    href: str
+
+
+class RunnerDownloadsOut(Schema):
+    """The installers of the deployed runner version; empty when none is built."""
+
+    sha: str
+    downloads: list[RunnerDownloadOut]
+
 # --- local use: private runners + local turns (apps/harness/local.py, canopy-web#1704)
 
 

@@ -108,6 +108,13 @@ APPS = {
         # (the 2026-09-13 shape). preflight.py maps both KMS types so the
         # failure is a named refusal, not a rollout 403.
         "vault_kms": True,
+        # Runner installers (.github/workflows build the macOS/Windows bundles on
+        # main and upload them, manifest.json last). The bucket is the
+        # attachments bucket; only this prefix, and only PutObject: the workflow
+        # writes new objects and never reads, lists or deletes. canopy-web's own
+        # task role reads them (the bucket policy's GetObject) to presign
+        # downloads.
+        "runner_releases": "labs-jj-canopy-web-attachments-858923557655/runner-releases/",
     },
     "ace-web": {
         "sub": "repo:dimagi-internal/ace-web:*",
@@ -375,6 +382,14 @@ def policy_for(app: str, cfg: dict) -> dict:
             "Effect": "Allow",
             "Action": ["kms:ListAliases", "kms:ListKeys"],
             "Resource": "*",
+        })
+
+    if cfg.get("runner_releases"):
+        st.append({
+            "Sid": "UploadRunnerReleasesOnly",
+            "Effect": "Allow",
+            "Action": "s3:PutObject",
+            "Resource": f"arn:aws:s3:::{cfg['runner_releases']}*",
         })
 
     if cfg["log_groups"]:

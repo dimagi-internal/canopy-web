@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { clsx } from 'clsx'
-import { Check, ChevronDown, ChevronRight, Copy, Plus } from 'lucide-react'
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react'
 
 import { grantAgentAdmin, revokeAgentAdmin, type TurnMode } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { useAuth } from '@/auth/AuthProvider'
 import { AgentRouting } from '@/components/agents/AgentRouting'
+import { RunnerDownloads } from '@/components/runners/RunnerDownloads'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
 import {
   getAgentTopology,
@@ -1072,13 +1073,6 @@ function AddRunnerPanel({ workspace, owner, map }: { workspace: string; owner: s
   const isMe = me !== null && me === owner
   const base = `${window.location.origin}${import.meta.env.BASE_URL}`
   const command = pairingCommand(workspace, base)
-  const [copied, setCopied] = useState(false)
-  const copy = () => {
-    void navigator.clipboard?.writeText(command).then(() => {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    })
-  }
   const wsName = findWorkspace(map.root, workspace)?.displayName ?? workspace
   return (
     <div className="flex flex-col gap-3" data-testid="map-add-runner-panel">
@@ -1089,43 +1083,12 @@ function AddRunnerPanel({ workspace, owner, map }: { workspace: string; owner: s
         </span>
       </div>
       <p className="m-0 text-[13px] text-foreground-secondary">
-        A runner is paired from the box itself, one per macOS account. Run this in a terminal on that account:
+        A runner is paired from the computer itself, one per account on it.{' '}
+        {isMe
+          ? 'Download Canopy Runner there and approve it as yourself to land it here.'
+          : `It lands in ${owner}'s lane only if ${owner} approves it.`}
       </p>
-      <div className="flex items-start gap-2 rounded-md border border-input bg-input p-2">
-        <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-foreground" data-testid="map-pairing-command">
-          {command}
-        </code>
-        <button
-          type="button"
-          onClick={copy}
-          className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[12px] text-foreground hover:bg-muted"
-          data-testid="map-pairing-copy"
-        >
-          {copied ? <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      <section className="flex flex-col gap-1">
-        <PanelHeading>Before you run it</PanelHeading>
-        <ul className="m-0 flex list-disc flex-col gap-1 pl-4 text-[12px] text-foreground-secondary">
-          <li>
-            canopy-web cloned at <code className="font-mono">~/emdash-projects/canopy-web</code>, and{' '}
-            <code className="font-mono">uv</code> installed. The script fetches and installs from{' '}
-            <code className="font-mono">main</code> itself.
-          </li>
-          <li>
-            A canopy token at <code className="font-mono">~/.claude/canopy/workbench-token</code> (the{' '}
-            <code className="font-mono">canopy:canopy-web-pat-mint</code> skill writes it).{' '}
-            {isMe
-              ? 'The box pairs as whoever that token belongs to, so use yours to land it here.'
-              : `The box pairs as whoever that token belongs to, so it lands in ${owner}'s lane only if it is theirs.`}
-          </li>
-          <li>
-            Afterwards, relaunch emdash with the <span className="text-foreground">Emdash CDP</span> app it builds. That
-            quits emdash first, so every session open in it stops.
-          </li>
-        </ul>
-      </section>
+      <RunnerDownloads authed={auth.status === 'authenticated'} developerCommand={command} />
       <p className="m-0 text-[12px] text-muted-foreground">
         It appears here once it heartbeats. Then select it to set its login and admins, and add it to an agent&rsquo;s
         runners. A cloud runner is stood up with <code className="font-mono">runner/ec2/up.sh</code> and{' '}

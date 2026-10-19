@@ -431,6 +431,15 @@ NARRATIVE_SOURCE_MAX_UPLOAD_BYTES = env.int(
 # we cannot attach to it. See deploy/aws/canopy-web.cfn.yaml.
 CANOPY_ATTACHMENTS_BUCKET = env("CANOPY_ATTACHMENTS_BUCKET", default="")
 
+# Runner installers and updates (apps/harness/runner_releases.py): CI uploads each
+# runner version's bundles and manifest.json (last) under
+# <prefix><RUNNER_CODE_SHA>/ in this bucket; canopy-web answers a signed-in
+# download, or a runner's own update check, with a short-lived presigned URL.
+# The attachments bucket by default: its bucket policy already lets the task
+# role read every object. Empty disables downloads (the routes answer 503).
+CANOPY_RUNNER_RELEASES_BUCKET = env("CANOPY_RUNNER_RELEASES_BUCKET", default=CANOPY_ATTACHMENTS_BUCKET)
+RUNNER_RELEASES_PREFIX = env("RUNNER_RELEASES_PREFIX", default="runner-releases/")
+
 # Max bytes for one attachment. Deliberately far below the walkthrough cap: this
 # is the phone-screenshot path, and the bytes stream through the web dyno.
 ATTACHMENT_MAX_UPLOAD_BYTES = env.int(

@@ -103,10 +103,11 @@ const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
     match: (p) => p === '/people/:personId/page',
   },
   {
-    // The link up.sh prints (and emails) for a new cloud box. In no menu: only
-    // the person who ran up.sh opens it.
-    label: 'Approving a new cloud runner',
-    match: (p) => p === '/w/:workspace/runner-invitations/:invitationId',
+    // The link up.sh prints (and emails) for a new cloud box, and the page
+    // Canopy Runner opens after install. In no menu: only the person pairing
+    // that box opens it.
+    label: 'Approving a new runner',
+    match: (p) => p === '/w/:workspace/runner-invitations/:invitationId' || p === '/pair/:code',
   },
   {
     // The desktop session IDE, opened from your account menu (it spans
