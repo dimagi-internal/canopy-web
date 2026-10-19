@@ -580,6 +580,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "create_my_memory_collection": ("self",),
     "update_my_memory_collection": ("self",),
     "delete_my_memory_collection": ("self",),
+    # Trying a search over your own memory (scores only, records nothing) — only
+    # the person, and only inside the memory rollout.
+    "preview_my_memory_search": ("self",),
     "set_my_grant_collection": ("self",),
     # --- apps/contacts/hcp_api.py  (HCP v1 over the people brain; apps/contacts/hcp.py)
     # `self` = the person's own instance; `hcp-grant` = an agent, for the person
@@ -921,6 +924,7 @@ NOT_SETTINGS: dict[str, str] = {
     "back_project_as_agent": "content",
     "propose_task": "content", "back_task": "content", "unback_task": "content", "back_task_as_agent": "content",
     "check_scaffold_repo": "action",  # POST only to keep a token out of the URL; writes nothing
+    "preview_my_memory_search": "action",  # POST for the question in a body; writes nothing
     "create_channel_ingest": "request",  # asks the channel; the approval click is the grant
     "mark_channel_ingest_read": "action",  # moves the agent's own read position; grants nothing
     "scaffold_agent": "content",  # pushes code into the caller's own repo; registering is upsert_agent (a setting)
