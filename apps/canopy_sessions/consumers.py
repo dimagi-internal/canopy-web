@@ -493,6 +493,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 app = await database_sync_to_async(self._app_for_result)(frame["data"].get("block"))
                 if app:
                     frame["data"]["app"] = app
+                ask = await database_sync_to_async(self._secret_request_for_result)(frame["data"].get("block"))
+                if ask:
+                    frame["data"]["secret_request"] = ask
             await self.send_json(frame)
 
     def _app_for_result(self, block):
@@ -502,6 +505,15 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             return mcp_apps_views.app_for_result_block(self.session, block or {})
         except Exception:  # noqa: BLE001 - a View is an extra; never break the stream
             log.exception("mcp_apps: could not decide a View for a live tool result")
+            return None
+
+    def _secret_request_for_result(self, block):
+        from apps.agents import secret_requests
+
+        try:
+            return secret_requests.for_result_block(self.session, block or {})
+        except Exception:  # noqa: BLE001 - the card is an extra; never break the stream
+            log.exception("secret request: could not decide a card for a live tool result")
             return None
 
     async def chat_user_message(self, message):
@@ -690,9 +702,11 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # falling back to the binding tail for a local session with no Message rows.
         # REST and this snapshot MUST agree — see tests/test_transcript_parity.py.
         messages, _has_more, _oldest = chat_services.visible_transcript(self.session)
+        from apps.agents import secret_requests
         from apps.tokens import mcp_apps_views
 
         mcp_apps_views.annotate(self.session, messages)
+        secret_requests.annotate(self.session, messages)
         return {
             "event": "session.state",
             "data": serializers.session_state_dto(

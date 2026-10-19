@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import uuid
 from typing import Any
 
 import requests
@@ -122,6 +123,12 @@ from .schemas import (
     ZkValuesOut,
     ZkWrapMissingOut,
     ZkWrapsIn,
+    SecretRequestIn,
+    SecretRequestOut,
+    SecretRequestValueIn,
+    ZkEndorsementsIn,
+    ZkEndorsementsOut,
+    ZkRecipientsOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -2794,6 +2801,138 @@ def rotate_agent_zk(request: HttpRequest, slug: str, payload: ZkRotateIn) -> ZkS
         raise _zk_problem(exc) from exc
     agent.refresh_from_db()
     return _zk_state(agent)
+
+
+# ---- give an agent a secret: requests, recipients, endorsements ---------------------
+# Spec: docs/superpowers/specs/2026-10-19-give-an-agent-a-secret-design.md. The
+# agent asks; a person's browser seals the value (zks1) to recipients endorsed by
+# a key it trusts, and sends ciphertext only. No route here returns a value.
+
+def _secret_request_problem(exc) -> ProblemError:
+    return ProblemError(exc.status, "Secret request", type_=(
+        TYPE_CONFLICT if exc.status == 409 else TYPE_VALIDATION), detail=str(exc),
+        members={"error": exc.code})
+
+
+def _secret_request(request: HttpRequest, slug: str, request_id: uuid.UUID):
+    from .models import AgentSecretRequest
+
+    agent = _get_agent_or_404(request, slug)
+    req = (AgentSecretRequest.objects.filter(pk=request_id, agent=agent)
+           .select_related("agent__workspace", "session", "fulfilled_by").first())
+    if req is None:
+        raise HttpError(404, "no such secret request")
+    return req
+
+
+def _secret_request_out(req, message: str = "") -> SecretRequestOut:
+    from . import secret_requests
+
+    data = secret_requests.out(req)
+    return SecretRequestOut(**data, secret_request_id=data["id"], message=message)
+
+
+@router.post("/{slug}/secret-requests", response=SecretRequestOut,
+             summary="Ask a person for one of this agent's declared secrets")
+def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequestIn) -> SecretRequestOut:
+    """For the agent itself (its own login) or an admin. `name` must be declared
+    in the agent's runtime.yaml. The chat this is called from shows the person a
+    card that seals the value in their browser and stores ciphertext only — you
+    never receive the value, and must not ask for it in the chat. Read the
+    request back (`get_agent_secret_request`) for `status: fulfilled`, then
+    resolve the secret the usual way."""
+    from . import secret_requests
+
+    agent = _get_agent_or_404(request, slug)
+    try:
+        req = secret_requests.create(agent, name=payload.name, reason=payload.reason, user=request.user)
+    except secret_requests.RequestError as exc:
+        raise _secret_request_problem(exc) from exc
+    where = ("in this chat" if req.session_id else
+             f"on {agent.slug}'s Credentials page (this call was not made from one of its chats)")
+    return _secret_request_out(req, message=(
+        f"Asked for {req.name}: a card to enter it is shown {where}. Its value is sealed in the "
+        "person's browser and never reaches you or canopy. Do not ask for it in the conversation."))
+
+
+@router.get("/{slug}/secret-requests/{request_id}", response=SecretRequestOut,
+            summary="A secret request's status (never its value)")
+def get_agent_secret_request(request: HttpRequest, slug: str, request_id: uuid.UUID) -> SecretRequestOut:
+    """`status` is open, fulfilled, cancelled or expired; `has_value` says
+    whether the agent now holds a value for the name. For the agent, its admins
+    and whoever can read the chat it was asked from."""
+    from . import secret_requests
+
+    req = _secret_request(request, slug, request_id)
+    if not (secret_requests.may_read(req, request.user) or req.agent.user_id == request.user.pk):
+        raise HttpError(404, "no such secret request")
+    return _secret_request_out(req)
+
+
+@router.put("/{slug}/secret-requests/{request_id}/value", response=SecretRequestOut,
+            summary="Answer a secret request with a value sealed in the browser (zks1)")
+def fulfil_agent_secret_request(request: HttpRequest, slug: str, request_id: uuid.UUID,
+                                payload: SecretRequestValueIn) -> SecretRequestOut:
+    """`value_zk` must be `zks1:` — sealed to the agent's readers before it left
+    the page — at the agent's current `kv`. An admin may fill or replace; a
+    person who can write to the request's chat may fill a MISSING value only
+    (409 `value_exists`). An agent's own login can never answer. A browser
+    needs a passkey step-up."""
+    from . import secret_requests
+
+    req = _secret_request(request, slug, request_id)
+    if not secret_requests.may_answer(req, request.user):
+        raise HttpError(403, "you cannot answer this request")
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    try:
+        secret_requests.fulfil(req, kv=payload.kv, value_zk=payload.value_zk, user=request.user)
+    except secret_requests.RequestError as exc:
+        raise _secret_request_problem(exc) from exc
+    req.refresh_from_db()
+    return _secret_request_out(req, message=f"{req.name} is stored for {req.agent.slug}.")
+
+
+@router.get("/{slug}/vault/zk/recipients", response=ZkRecipientsOut,
+            summary="Who a sealed value is for, and who vouched for each (public keys only)")
+def get_agent_zk_recipients(request: HttpRequest, slug: str,
+                            secret_request: uuid.UUID | None = None) -> ZkRecipientsOut:
+    """For an admin, or for someone who may answer the open request named by
+    `secret_request`. Verify each recipient's endorsement against a key you
+    already trust BEFORE sealing to it (zk-v1 §7): this list is canopy-web's
+    claim, the endorsements are not."""
+    from . import secret_requests, services, zk_endorse
+    from .models import AgentCredential
+
+    agent = _get_agent_or_404(request, slug)
+    if not agent.is_admin(request.user):
+        req = _secret_request(request, slug, secret_request) if secret_request else None
+        if req is None or not secret_requests.live(req) or not secret_requests.may_answer(req, request.user):
+            raise HttpError(403, "only the agent's admins, or someone answering its open request")
+    if not agent.zk_enabled:
+        raise _zk_problem(zk_endorse.ZkError(409, "zk_not_enabled", f"{agent.slug} is not zero-knowledge"))
+    return ZkRecipientsOut(
+        agent=agent.slug, agent_id=str(agent.pk), kv=agent.zk_kv,
+        recipients=zk_endorse.recipients(agent), endorsements=zk_endorse.endorsements(agent),
+        declared=sorted(services.declared_credential_names(agent)),
+        stored=sorted(AgentCredential.objects.filter(agent=agent).values_list("name", flat=True)))
+
+
+@router.post("/{slug}/vault/zk/endorsements", response=ZkEndorsementsOut,
+             summary="Vouch, with your own vault key, that keys may read this agent")
+def add_agent_zk_endorsements(request: HttpRequest, slug: str, payload: ZkEndorsementsIn) -> ZkEndorsementsOut:
+    """`{endorsements: [{kind, target, key_jkt, by_jkt, sig}]}` — each a zk-v1
+    §7 signature by YOUR vault key over a CURRENT recipient's current key. The
+    browser makes them whenever you wrap the vault key to someone (turn on,
+    grant, rotate) or confirm who can read the agent."""
+    from . import zk_endorse
+
+    agent = _zk_admin(request, slug)
+    try:
+        n = zk_endorse.add(agent, user=request.user, items=payload.endorsements)
+    except zk_endorse.ZkError as exc:
+        raise _zk_problem(exc) from exc
+    return ZkEndorsementsOut(stored=n)
 
 
 # ---- sender trust: a temporary exception to email alignment ----------------------

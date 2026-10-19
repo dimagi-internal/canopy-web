@@ -196,8 +196,20 @@ def test_the_reranker_sends_each_passage_and_reads_back_the_order(settings, monk
 
     assert order == [1, 0]
     url, body = session.sent[0]
-    assert url.endswith("/rankingConfigs/default_ranking_config:rank")
+    assert url.startswith("https://us-discoveryengine.googleapis.com/v1/projects/")
+    assert url.endswith("/locations/us/rankingConfigs/default_ranking_config:rank")
     assert body["model"] == "semantic-ranker-default@latest" and body["records"][1]["content"] == "scarce"
+
+
+def test_the_reranker_location_picks_its_host(settings, monkeypatch):
+    settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
+    session = _RankSession([])
+    monkeypatch.setattr("apps.contacts.embeddings._vertex_session", lambda: session)
+    for loc, host in (("global", "discoveryengine"), ("eu", "eu-discoveryengine")):
+        settings.KB_RERANK_LOCATION = loc
+        kb_vectors.reranker()("q", [{"title": "a", "text": "b"}])
+        url = session.sent[-1][0]
+        assert url.startswith(f"https://{host}.googleapis.com/") and f"/locations/{loc}/" in url
 
 
 def test_a_failed_rerank_answers_none(settings, monkeypatch):

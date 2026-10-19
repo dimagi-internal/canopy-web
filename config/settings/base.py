@@ -350,6 +350,9 @@ KB_EMBEDDINGS_MODEL = env("KB_EMBEDDINGS_MODEL", default=HCP_EMBEDDINGS_MODEL)
 # `semantic-ranker-default@latest`), same identity. Empty = off. Needs the Discovery
 # Engine API enabled in HCP_VERTEX_PROJECT and the service account allowed to rank.
 KB_RERANK_MODEL = env("KB_RERANK_MODEL", default="")
+# Where it runs: a multi-region (`us`, `eu`: its own `<loc>-discoveryengine` host,
+# what Google's BAA asks for with PHI) or `global`.
+KB_RERANK_LOCATION = env("KB_RERANK_LOCATION", default="us")
 # A bulk embed (`manage.py kb_embed`, the sync after a publish): parallel calls,
 # and a ceiling on calls a minute across them (gemini-embedding-001 takes one
 # text per call). A 429 backs everyone off; failures are left for the next run.

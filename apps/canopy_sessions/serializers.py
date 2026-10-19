@@ -48,6 +48,8 @@ def message_dto(msg: Message) -> dict:
         "created_at": _iso(msg.created_at),
         # MCP Apps: this tool result has a View (`tokens/mcp_apps_views.annotate`).
         **({"app": msg.app} if getattr(msg, "app", None) else {}),
+        # A request for one of the agent's secrets (`agents.secret_requests.annotate`).
+        **({"secret_request": msg.secret_request} if getattr(msg, "secret_request", None) else {}),
     }
 
 
