@@ -124,7 +124,17 @@ Every browser-facing address canopy-web serves. The SPA route table is
     history, and Zero-knowledge — turn on / grant pending / rotate / recover
     with code / turn off, every encryption in the browser, the one-time
     recovery-code dialog, the stated trust caveat; on a ZK agent Save and
-    Reveal encrypt/decrypt locally).
+    Reveal encrypt/decrypt locally). The Google mint (`Connect the mailbox`)
+    asks for Gmail only when the agent's address is a Google mailbox; for a
+    canopy-hosted address it asks for Drive, Docs, Sheets, Slides, Forms and
+    Calendar. A Google-mailbox agent's consent must come from `agent.email`
+    (else `?google=wrong-account&account=<x>`, nothing stored); a
+    `zk-no-recipients` result links to `/settings#vault-key`.
+  - The setup checklist (`apps/agents/setup.py`, `GET …/setup`) on Settings: a
+    zero-knowledge agent's vault step comes before its mailbox, and is todo
+    while nobody can open the vault. When no runner can take the agent, the
+    runner step also offers its admins "Pair your laptop" (`/get-started#runner`)
+    and "Stand up a cloud box" (`runner/ec2/README.md`).
   - Redirects (query kept): `work`, `items` → `tasks`; `inbox`, `needs-you` →
     `tasks?waiting=me`; `overview`, `work-products` → `projects`; `syncs` →
     `turns#status-reports`; `history` → `skills/history`; `credentials` →
@@ -346,7 +356,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/about`** — the public explainer, chrome-less, live counts.
 - **`/get-started`** — public (no login): the three steps to use a canopy agent
   in your own Claude Code; signed in, it lists your workspaces' agents with
-  their install and setup commands.
+  their install and setup commands, and links to creating an agent in the
+  active workspace (`/w/<ws>/agents/new`). `#runner` has the laptop pairing
+  command (`install-runner.sh --workspace <ws>`) and the cloud runner guide.
 - **`/supervisor`** — cross-fleet screens: Feed (home), **Waiting on you**
   (`GET /api/tasks/?waiting=me`, the same `TaskCard` tagged with its agent,
   actionable in place; `?tab=inbox` lands here), Sessions, Agents, Runners
@@ -410,7 +422,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/hcp-clients`** — the HCP service's client registry (superusers).
 - **`/beta-requests`** (+ `/:requestId`) — requests for access to Canopy from
   the public site; only their reviewer or a superuser sees them.
-- **`/new-workspace`** — the first-run page with the create-workspace form.
+- **`/new-workspace`** — the first-run page with the create-workspace form; a
+  member also gets a link to creating an agent in their active workspace.
 - **`/invite/:token`** — accept an invite. Outside `/w/` because an invitee has
   no membership yet. Previews pre-auth (masked email, workspace, role —
   `GET /api/workspaces/invites/{token}/preview`); accepting needs a login.
