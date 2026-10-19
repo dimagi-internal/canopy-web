@@ -223,6 +223,52 @@ export async function valueDigest(stored: string): Promise<string> {
   return stored ? bytesToHex(await sha256(enc.encode(stored))) : ''
 }
 
+// ---- 7. endorsements --------------------------------------------------------------------
+//
+// A person's signature, by their own vault key, that a recipient's key may read
+// an agent — the publicly checkable twin of a wrap. A writer with no vault key
+// seals a zks1 value only to recipients endorsed by a key it already trusts.
+// The person key is the §4 ECDH scalar, imported as ECDSA for this one use; the
+// fixed prefix keeps every signed message out of any ECDH derivation.
+
+export interface Endorsement { kind: 'device' | 'member'; target: string; key_jkt: string; by_jkt: string; sig: string }
+
+export const endorseMsg = (agentId: string, kind: string, target: string, keyJkt: string) =>
+  `canopy-vault/v1/endorse|${agentId}|${kind}|${target}|${keyJkt}`
+
+const ECDSA = { name: 'ECDSA', namedCurve: 'P-256' } as const
+const ECDSA_SHA256 = { name: 'ECDSA', hash: 'SHA-256' } as const
+
+/** Sign "this key may read this agent" with the person's scalar. */
+export async function endorse(scalar: Uint8Array, signerPub: { x?: string; y?: string }, agentId: string,
+                              kind: 'device' | 'member', target: string,
+                              recipientPub: { x?: string; y?: string }): Promise<Endorsement> {
+  if (scalar.length !== 32) throw new Error('a P-256 scalar is 32 bytes')
+  const key = await subtle().importKey('jwk', { ...publicJwk(signerPub), d: b64u(scalar) }, ECDSA, false, ['sign'])
+  const keyJkt = await jkt(recipientPub)
+  const sig = new Uint8Array(await subtle().sign(ECDSA_SHA256, key, enc.encode(endorseMsg(agentId, kind, target, keyJkt))))
+  return { kind, target, key_jkt: keyJkt, by_jkt: await jkt(signerPub), sig: b64u(sig) }
+}
+
+/** Is `e` the endorser's valid §7 signature for this agent? Never throws. */
+export async function verifyEndorsement(e: { kind: string; target: string; key_jkt: string; by_jkt: string; sig: string },
+                                        agentId: string, endorserPub: { x?: string; y?: string }): Promise<boolean> {
+  try {
+    if (e.by_jkt !== (await jkt(endorserPub))) return false
+    const sig = unb64u(e.sig)
+    if (sig.length !== 64) return false
+    const key = await subtle().importKey('jwk', publicJwk(endorserPub), ECDSA, false, ['verify'])
+    return await subtle().verify(ECDSA_SHA256, key, sig, enc.encode(endorseMsg(agentId, e.kind, e.target, e.key_jkt)))
+  } catch {
+    return false
+  }
+}
+
+/** A thumbprint as a person compares it: groups of four, upper case, 8 groups. */
+export function fingerprint(thumbprint: string): string {
+  return (thumbprint.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 32).match(/.{1,4}/g) ?? []).join(' ')
+}
+
 // ---- 3. ECDH-ES wraps -------------------------------------------------------------------
 
 export const deviceInfo = (agentId: string, kv: number, deviceJkt: string) =>

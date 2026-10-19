@@ -27,7 +27,7 @@
  * standard.
  */
 
-import type { MessageAppRef, MessageAuthor, SessionMenu, WsEvent } from "./protocol";
+import type { MessageAppRef, MessageAuthor, MessageSecretRequestRef, SessionMenu, WsEvent } from "./protocol";
 
 /** Where canopy's own fields ride. Mirrors `agui.METADATA_KEY`. */
 export const METADATA_KEY = "canopy";
@@ -195,6 +195,8 @@ export function fromAgui(frame: AguiFrame): WsEvent[] {
             block: (m.block as Record<string, unknown> | undefined) ?? { content: frame.content },
             // MCP Apps: the server says this result has a View.
             ...(m.app ? { app: m.app as MessageAppRef } : {}),
+            // The agent asked for a secret here: the host's seal card.
+            ...(m.secret_request ? { secret_request: m.secret_request as MessageSecretRequestRef } : {}),
           },
         },
       ];

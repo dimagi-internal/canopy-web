@@ -47,6 +47,7 @@ import { MemoryDots, SessionMemoryPanel, memorySummary, type SessionMemoryContro
  */
 export function ChatSessionMenu({
   sessionId,
+  agentSlug,
   myRole,
   notifyEveryCompletion,
   onToggleNotify,
@@ -73,6 +74,8 @@ export function ChatSessionMenu({
   memory,
 }: {
   sessionId: string;
+  /** The agent this chat is with: Share secret offers its vault for a declared name. */
+  agentSlug?: string | null;
   myRole: string | null;
   /** Undefined until the session has loaded: the toggle is hidden until then. */
   notifyEveryCompletion?: boolean;
@@ -248,7 +251,7 @@ export function ChatSessionMenu({
                   : "Share to Slack"}
           </DialogTitle>
           {panel === "secret" && (
-            <ShareSecretForm sessionId={sessionId} onDone={() => setPanel(null)} />
+            <ShareSecretForm sessionId={sessionId} agentSlug={agentSlug} onDone={() => setPanel(null)} />
           )}
           {panel === "memory" && memory && (
             <div className="text-[12px]">

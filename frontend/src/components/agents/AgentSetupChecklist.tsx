@@ -1,8 +1,10 @@
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useState, type JSX, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, Circle, Clock, MinusCircle, Terminal } from 'lucide-react'
 
 import { getAgentSetup, type AgentSetupStepOut } from '@/api/agentCreation'
+import { getZkRecipients } from '@/api/vault'
+import { SecretSealCard } from '@/components/vault/SecretSealCard'
 import { CopyCommand } from './CopyCommand'
 
 /** The steps left before an agent can do its job, as the server computes them
@@ -48,8 +50,50 @@ export function AgentSetupChecklist({
         <span className="font-semibold text-foreground">Setup</span> —{' '}
         {left === 0 ? 'done.' : `${left} of ${steps.length} steps left.`} Ticks update when you come back to this tab.
       </p>
-      <SetupSteps steps={steps} />
+      <SetupSteps steps={steps} extra={(step) =>
+        step.key === 'vault' && step.status === 'todo' && step.action === 'Add the missing secrets'
+          ? <MissingSecrets slug={slug} onStored={() => void getAgentSetup(slug).then(setSteps, () => undefined)} />
+          : null} />
     </div>
+  )
+}
+
+/** "Add the missing secrets", done right here: each declared secret with no
+ *  value gets the seal card (sealed in this browser, zero-knowledge). Admins
+ *  only — anyone else's recipients read is refused and this renders nothing. */
+function MissingSecrets({ slug, onStored }: { slug: string; onStored: () => void }): JSX.Element | null {
+  const [missing, setMissing] = useState<string[] | null>(null)
+  const [open, setOpen] = useState('')
+  useEffect(() => {
+    let live = true
+    getZkRecipients(slug).then(
+      (r) => live && setMissing(r.declared.filter((n) => !r.stored.includes(n))),
+      () => live && setMissing([]))
+    return () => {
+      live = false
+    }
+  }, [slug])
+  if (!missing?.length) return null
+  return (
+    <ul className="mt-2 space-y-1" data-testid="missing-secrets">
+      {missing.map((n) => (
+        <li key={n}>
+          <div className="flex items-center gap-2 text-[12px]">
+            <span className="font-mono">{n}</span>
+            {open !== n && (
+              <button type="button" className="text-primary hover:underline" onClick={() => setOpen(n)}>Add</button>
+            )}
+          </div>
+          {open === n && (
+            <SecretSealCard slug={slug} name={n} onStored={() => {
+              setMissing((m) => (m ?? []).filter((x) => x !== n))
+              setOpen('')
+              onStored()
+            }} />
+          )}
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -57,7 +101,12 @@ export function AgentSetupChecklist({
  *  health dashboard (`/w/:ws/health`), which gets the same steps from the server
  *  for every agent in a tree. `canFix=false` keeps the detail and command but
  *  drops the links: the viewer could not follow them. */
-export function SetupSteps({ steps, canFix = true }: { steps: readonly SetupStep[]; canFix?: boolean }): JSX.Element {
+export function SetupSteps({ steps, canFix = true, extra }: {
+  steps: readonly SetupStep[]
+  canFix?: boolean
+  /** Inline controls under a step (the agent's own checklist only). */
+  extra?: (step: SetupStep) => ReactNode
+}): JSX.Element {
   return (
     <ol className="divide-y divide-border">
       {steps.map((step, i) => (
@@ -77,6 +126,7 @@ export function SetupSteps({ steps, canFix = true }: { steps: readonly SetupStep
             </div>
             <p className="text-[12px] text-foreground-secondary">{step.detail}</p>
             {step.status !== 'done' && step.command && <CopyCommand command={step.command} />}
+            {canFix && extra?.(step)}
           </div>
           {canFix && step.status !== 'done' && (step.href || (step.links?.length ?? 0) > 0) && (
             <div className="flex shrink-0 flex-col items-end gap-1 self-start">

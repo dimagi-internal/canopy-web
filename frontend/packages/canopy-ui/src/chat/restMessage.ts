@@ -29,6 +29,8 @@ export interface RestMessage {
   created_at: string;
   /** MCP Apps View on a tool result (`MessageOut.app`). */
   app?: Message["app"];
+  /** A request for one of the agent's secrets (`MessageOut.secret_request`). */
+  secret_request?: Message["secret_request"];
 }
 
 /**
@@ -53,5 +55,6 @@ export function restToKitMessage(m: RestMessage): Message {
     completed_at: m.created_at,
     created_at: m.created_at,
     ...(m.app ? { app: m.app } : {}),
+    ...(m.secret_request ? { secret_request: m.secret_request } : {}),
   };
 }

@@ -7,6 +7,7 @@ import type { RenderMarkdown } from "./MessageItem";
 import { MessageItem, ThinkingIndicator } from "./MessageItem";
 import { ToolCallPair } from "./ToolCallPair";
 import { AppView } from "./mcpApps/AppView";
+import { useSecretRequestHost } from "./secretRequest";
 import { pairToolMessages } from "./pairToolMessages";
 import { groupToolRuns, lastTurnIndex, runHasError, runIsActive, summariseRun } from "./groupToolRuns";
 
@@ -57,6 +58,7 @@ export function MessageList({
   cancellable,
   onCancelQueued,
 }: Props) {
+  const secretHost = useSecretRequestHost();
   const paired = useMemo(() => pairToolMessages(messages), [messages]);
   // Collapse back-to-back tool calls into one row. An agent mid-task emits long
   // stretches of them, and one row each pushes the prose you actually read off
@@ -162,14 +164,24 @@ export function MessageList({
               />
             );
             // MCP Apps: the View first, the (collapsed) tool row below it.
-            return row.result?.app ? (
-              <div key={row.key}>
-                <AppView app={row.result.app} />
-                {pair}
-              </div>
-            ) : (
-              pair
-            );
+            if (row.result?.app) {
+              return (
+                <div key={row.key}>
+                  <AppView app={row.result.app} />
+                  {pair}
+                </div>
+              );
+            }
+            // The agent asked for a secret: the host's seal card, then the row.
+            if (row.result?.secret_request && secretHost) {
+              return (
+                <div key={row.key} data-testid="secret-request-row">
+                  {secretHost.render(row.result.secret_request)}
+                  {pair}
+                </div>
+              );
+            }
+            return pair;
           }
           const item = (
             <MessageItem
