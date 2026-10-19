@@ -6486,6 +6486,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/network": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who talks to whom: people, contacts and agents linked by the threads they wrote in
+         * @description People, contacts and agents over the last `days` (1-365) UTC days, each linked
+         *     to the threads they wrote in — a chat (a bound Slack thread is one too) or an
+         *     email thread — and each thread to the agent that answered it, across this
+         *     workspace and, with `tree`, every one below it the caller may read. A thread's
+         *     title is given only when the caller may open that chat. Read from the analytics
+         *     fact log, which retention does not purge. Admin and above.
+         */
+        readonly get: operations["workspace_network"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/runner-order": {
         readonly parameters: {
             readonly query?: never;
@@ -23191,6 +23216,94 @@ export interface components {
             /** Users */
             readonly users: readonly components["schemas"]["AnalyticsUserOut"][];
         };
+        /** NetworkLinkOut */
+        readonly NetworkLinkOut: {
+            /** Source */
+            readonly source: string;
+            /** Target */
+            readonly target: string;
+            /** Turns */
+            readonly turns: number;
+            /** Kind */
+            readonly kind: string;
+        };
+        /**
+         * NetworkNodeOut
+         * @description A person, a contact, an agent, or a thread (a chat — where a bound Slack thread
+         *     lives too — or an email thread).
+         */
+        readonly NetworkNodeOut: {
+            /** Id */
+            readonly id: string;
+            /** Kind */
+            readonly kind: string;
+            /** Label */
+            readonly label: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Workspaces */
+            readonly workspaces: readonly string[];
+            /** Turns */
+            readonly turns: number;
+            /** Threads */
+            readonly threads: number;
+            /**
+             * Channel
+             * @default
+             */
+            readonly channel: string;
+            /**
+             * Ref
+             * @default
+             */
+            readonly ref: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Openable
+             * @default false
+             */
+            readonly openable: boolean;
+        };
+        /** NetworkTotalsOut */
+        readonly NetworkTotalsOut: {
+            /** People */
+            readonly people: number;
+            /** Contacts */
+            readonly contacts: number;
+            /** Agents */
+            readonly agents: number;
+            /** Threads */
+            readonly threads: number;
+            /** Shared Pairs */
+            readonly shared_pairs: number;
+            /** Shared Threads */
+            readonly shared_threads: number;
+            /** Threads Seen */
+            readonly threads_seen: number;
+        };
+        /** WorkspaceNetworkOut */
+        readonly WorkspaceNetworkOut: {
+            /** Days */
+            readonly days: number;
+            /**
+             * Since
+             * Format: date-time
+             */
+            readonly since: string;
+            /** Workspaces */
+            readonly workspaces: readonly string[];
+            /** Nodes */
+            readonly nodes: readonly components["schemas"]["NetworkNodeOut"][];
+            /** Links */
+            readonly links: readonly components["schemas"]["NetworkLinkOut"][];
+            readonly totals: components["schemas"]["NetworkTotalsOut"];
+            /** Truncated */
+            readonly truncated: boolean;
+        };
         /**
          * RunnerOrderRowOut
          * @description One row of a workspace's ordered runner list — the order REPO turns (project
@@ -37992,6 +38105,31 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["WorkspaceAnalyticsOut"];
+                };
+            };
+        };
+    };
+    readonly workspace_network: {
+        readonly parameters: {
+            readonly query?: {
+                readonly days?: number;
+                readonly tree?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceNetworkOut"];
                 };
             };
         };

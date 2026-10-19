@@ -247,6 +247,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Change the range', 'Include or leave out the workspaces below', 'See usage per agent', 'See what each person does'],
   },
   {
+    path: '/w/:workspace/network',
+    title: 'Network',
+    audience: 'Workspace admin or owner',
+    what: "Who works with whom, over 7, 30 or 90 days, across this workspace and the ones below it: every person, contact and agent as a dot, linked to each thread they wrote in — a chat (a Slack thread bound to a chat is one too) or an email thread — and each thread to the agent that answered it. Shows how many threads more than one person wrote in, and how many pairs of people wrote in the same thread: is an agent a room people meet in, or a private line? Colour by who, by channel or by workspace, and pull each workspace into its own cluster. Click a dot to see its threads and who else is in them; a thread opens if you may open that chat, and its title shows only then. Counts come from canopy's analytics log, which content retention never purges.",
+    actions: ['Change the range', 'Include or leave out the workspaces below', 'Colour by who, channel or workspace', 'Group by workspace', "Click a person to see their threads", 'Open a thread'],
+  },
+  {
     path: '/w/:workspace/settings/topology',
     title: 'Fleet map',
     audience: 'Workspace admin or owner',

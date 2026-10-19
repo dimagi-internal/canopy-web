@@ -532,6 +532,23 @@ export async function getWorkspaceHealth(slug: string): Promise<WorkspaceHealthO
   return res.data as unknown as WorkspaceHealthOut
 }
 
+export type WorkspaceNetworkOut = components['schemas']['WorkspaceNetworkOut']
+export type NetworkNodeOut = components['schemas']['NetworkNodeOut']
+export type NetworkLinkOut = components['schemas']['NetworkLinkOut']
+
+export async function getWorkspaceNetwork(
+  slug: string, opts: { days: number; tree: boolean },
+): Promise<WorkspaceNetworkOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/network', {
+    params: { path: { slug }, query: { days: opts.days, tree: opts.tree } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(
+      res.response.status, problemMessage(res.error, 'Failed to load the network'))
+  }
+  return res.data as unknown as WorkspaceNetworkOut
+}
+
 export type WorkspaceAnalyticsOut = components['schemas']['WorkspaceAnalyticsOut']
 export type AnalyticsDayOut = components['schemas']['AnalyticsDayOut']
 

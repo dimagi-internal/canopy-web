@@ -57,6 +57,7 @@ from .schemas import (
     RunnerOrderRowOut,
     RunnerTopologyOut,
     WorkspaceAnalyticsOut,
+    WorkspaceNetworkOut,
     WorkspaceHealthOut,
     SharedVaultIn,
     SharedVaultOut,
@@ -844,6 +845,23 @@ def workspace_analytics(request: HttpRequest, slug: str, days: int = 30,
     root, visible = _tree_reader(request, slug)
     slugs = [ws.slug for ws, _ in services.subtree(root, visible)] if tree else [root.slug]
     return WorkspaceAnalyticsOut(**analytics.build(slugs, days=days))
+
+
+@router.get("/{slug}/network", response=WorkspaceNetworkOut,
+            summary="Who talks to whom: people, contacts and agents linked by the threads they wrote in")
+def workspace_network(request: HttpRequest, slug: str, days: int = 30,
+                      tree: bool = True) -> WorkspaceNetworkOut:
+    """People, contacts and agents over the last `days` (1-365) UTC days, each linked
+    to the threads they wrote in — a chat (a bound Slack thread is one too) or an
+    email thread — and each thread to the agent that answered it, across this
+    workspace and, with `tree`, every one below it the caller may read. A thread's
+    title is given only when the caller may open that chat. Read from the analytics
+    fact log, which retention does not purge. Admin and above."""
+    from apps.events import analytics
+
+    root, visible = _tree_reader(request, slug)
+    slugs = [ws.slug for ws, _ in services.subtree(root, visible)] if tree else [root.slug]
+    return WorkspaceNetworkOut(**analytics.network(slugs, viewer=request.user, days=days))
 
 
 @router.get("/{slug}/runner-order", response=list[RunnerOrderRowOut],

@@ -672,6 +672,59 @@ class AnalyticsUserOut(AnalyticsRowOut):
     top: list[str]
 
 
+class NetworkNodeOut(StrictModel):
+    """A person, a contact, an agent, or a thread (a chat — where a bound Slack thread
+    lives too — or an email thread)."""
+
+    id: str
+    kind: str  # person | contact | agent | thread
+    label: str
+    # Where it lives: a thread's workspace, an agent's home; a person's or contact's
+    # first thread's. `workspaces` is every workspace it appears in.
+    workspace: str
+    workspaces: list[str]
+    turns: int
+    threads: int
+    # A thread's channel: chat, slack, email, api, ace-web, scheduler.
+    channel: str = ""
+    # A thread's session or mail-thread id; an agent's slug. Blank otherwise.
+    ref: str = ""
+    # A thread's answering agent.
+    agent: str = ""
+    # Whether the viewer may open the thread (the session ACL for a chat).
+    openable: bool = False
+
+
+class NetworkLinkOut(StrictModel):
+    source: str
+    target: str
+    turns: int
+    kind: str  # wrote (someone wrote in a thread) | answered (the agent answering it)
+
+
+class NetworkTotalsOut(StrictModel):
+    people: int
+    contacts: int
+    agents: int
+    threads: int
+    # Pairs of people or contacts who wrote in the same thread.
+    shared_pairs: int
+    # Threads more than one person or contact wrote in.
+    shared_threads: int
+    # Every thread in the window, drawn or not (`truncated`).
+    threads_seen: int
+
+
+class WorkspaceNetworkOut(StrictModel):
+    days: int
+    since: dt.datetime
+    workspaces: list[str]
+    nodes: list[NetworkNodeOut]
+    links: list[NetworkLinkOut]
+    totals: NetworkTotalsOut
+    truncated: bool
+
+
 class WorkspaceAnalyticsOut(StrictModel):
     days: int
     since: dt.datetime

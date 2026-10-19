@@ -66,7 +66,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 - `chat`, `chat/:id` — your chat sessions; live multiplayer chat with an agent
 - `huddles` (+ `/:id`), `threads/:id` — agent huddles; a bounded agent-to-agent thread
 - `schedules`, `activity`, `timeline` — schedule calendar, turn log, team activity feed
-- `health`, `analytics` — what is not set up right across the workspace; turns, outcomes and usage (`docs/architecture/analytics.md`)
+- `health`, `analytics`, `network` — what is not set up right across the workspace; turns, outcomes and usage; who works with whom through which threads (`docs/architecture/analytics.md`)
 - `shareouts` (+ `/:period`), `walkthroughs`, `storyboards`, `ddd` (+ `/:narrative/:runId`) — briefings, demos, storyboard index, DDD operator console
 - `marketplace.json`, `plugins/…` — retired (410); the agent catalog is `/plugins/marketplace.json` (root, below)
 - Public with a token (the only `/w/` pages anonymous visitors reach, `apps/common/middleware.py::_SCOPED_VIEWER`): `walkthrough/:id` (+ `/content`), `review/:id`, `share/:token`, `storyboard/:slug`, `narrative/:slug?b=`, `ddd-release/:narrative/:runId`

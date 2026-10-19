@@ -777,6 +777,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
     "workspace_health": ("logs.read",),  # same tree read; can_fix mirrors Agent.is_admin
     "workspace_analytics": ("logs.read",),  # same tree read
+    "workspace_network": ("logs.read",),  # same tree read; thread titles only where the session ACL lets the viewer open them
 }
 
 #: Writes a VIEWER can make, each a decision rather than a default. A write
