@@ -233,12 +233,16 @@ function RouteChips({
               r.runner_id === selected ? 'border-primary bg-primary/10' : 'border-border',
               !r.enabled && 'line-through opacity-60',
             )}
-            title={r.can_claim ? undefined : "This runner's owner is not in the agent's workspace — it cannot claim these turns"}
+            title={runner?.directed
+              ? 'Directed only — this runner takes only work put on it, never these routed turns'
+              : r.can_claim ? undefined : "This runner's owner is not in the agent's workspace — it cannot claim these turns"}
           >
             {ordered && <span className="text-muted-foreground">{i + 1}</span>}
             <span className={statusTone(runner?.status)}>●</span>
             <span className="text-foreground">{runner?.name ?? 'unknown'}</span>
-            {!r.can_claim && <span className="text-destructive">⚠</span>}
+            {runner?.directed
+              ? <span className="text-muted-foreground">directed only</span>
+              : !r.can_claim && <span className="text-destructive">⚠</span>}
           </span>
         )
       })}

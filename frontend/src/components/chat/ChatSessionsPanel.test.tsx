@@ -267,6 +267,10 @@ describe('ChatSessionsPanel — Run on picker', () => {
       fleetRunner('b', { name: 'Beta', status: 'offline', capabilities: { sessions: true, projects: ['acme'] } }),
       fleetRunner('c', { name: 'Gamma', status: 'online', capabilities: { projects: ['acme'] } }),
       fleetRunner('d', { name: 'Delta', status: 'online', capabilities: { sessions: true, projects: ['other'] } }),
+      // Choosing a box for a project chat needs you to administer it (the server
+      // 403s otherwise), and a directed-only box is offered, labelled.
+      fleetRunner('e', { name: 'Epsilon', status: 'online', can_administer: false, capabilities: { sessions: true, projects: ['acme'] } }),
+      fleetRunner('f', { name: 'Test', status: 'online', capabilities: { sessions: true, projects: ['acme'], directed: true } }),
     ])
 
     renderPanel([])
@@ -306,7 +310,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
     const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
     await waitFor(() => expect(listRunners).toHaveBeenCalled())
     await waitFor(() =>
-      expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Alpha']),
+      expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Auto', '● Alpha', '● Test · directed only']),
     )
   })
 })

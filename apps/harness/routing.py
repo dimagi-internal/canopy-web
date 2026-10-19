@@ -15,7 +15,7 @@ re-exports every name here.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from django.db.models import Q
 
@@ -74,6 +74,8 @@ class InheritedOrder:
     runners: list  # usable, in rank order
     missing_repo: list  # laptops in the order that do not have the agent's repo
     cannot_hold: list  # boxes whose owner is not one of the agent's admins
+    # directed-only boxes in the order (`Runner.directed_only`): take no routed work
+    directed: list = field(default_factory=list)
 
 
 #: `Runner.capabilities` key for the agents a box REPORTS it tried to set up and
@@ -120,6 +122,8 @@ def agents_following_runner(runner: Runner, among=None) -> set:
 
     if among is not None and not among:
         return set()
+    if runner.directed_only():
+        return set()  # takes no routed work, an inherited order's included
     listed = set(WorkspaceRunnerOrder.objects.filter(runner=runner, enabled=True)
                  .values_list("workspace_id", flat=True))
     if not listed:
@@ -155,7 +159,7 @@ def runner_routes_agent(runner: Runner, agent) -> bool:
     """Could `runner` ever claim a turn of `agent`? See the block above."""
     from apps.agents.services import runner_may_hold_agent
 
-    if runner.status == Runner.RETIRED or not runner.owner_id:
+    if runner.status == Runner.RETIRED or not runner.owner_id or runner.directed_only():
         return False
     if agent.workspace_id not in runner_tenant_slugs(runner):
         return False
@@ -172,7 +176,7 @@ def agents_routed_to(runner: Runner):
     from apps.agents.models import Agent
     from apps.agents.services import runner_may_hold_agent
 
-    if runner.status == Runner.RETIRED or not runner.owner_id:
+    if runner.status == Runner.RETIRED or not runner.owner_id or runner.directed_only():
         return Agent.objects.none()
     tenant = runner_tenant_slugs(runner)
     if not tenant:
@@ -236,9 +240,10 @@ def inherited_orders(agent_ids) -> dict:
     The order is followed live, never copied: replacing a cloud box means
     editing one workspace's list, not every agent (2026-10-03).
 
-    Two kinds of listed runner are dropped for an agent rather than kept — kept,
+    Three kinds of listed runner are dropped for an agent rather than kept — kept,
     each would read as an available better rank and stall the agent behind a box
     that can never take its work, until the cascade grace:
+      - a directed-only box (`Runner.directed_only`), which takes no routed work.
       - a laptop that does not have the agent's repo (it reports the emdash
         projects it has, and an agent's project is its slug). A cloud runner sets
         agents up itself and is never dropped for this.
@@ -273,7 +278,9 @@ def inherited_orders(agent_ids) -> dict:
             continue
         inh = InheritedOrder(workspace=source, runners=[], missing_repo=[], cannot_hold=[])
         for r in orders[source]:
-            if r.kind == Runner.EMDASH and agent.slug not in r.project_names():
+            if r.directed_only():
+                inh.directed.append(r)
+            elif r.kind == Runner.EMDASH and agent.slug not in r.project_names():
                 inh.missing_repo.append(r)
             elif not may_hold(r, agent):
                 inh.cannot_hold.append(r)
@@ -303,6 +310,10 @@ def assignment_rows_for(
     `serves` is the agent's slug: a runner that reports it cannot run that agent
     (`cannot_serve`) is dropped the same way, so it neither claims a turn only to
     fail it nor counts as a better-ranked blocker. Empty: not asked.
+
+    A directed-only box (`Runner.directed_only`) is always dropped, after the
+    strict truncation: it takes no routed work, so a strict rule naming only it
+    leaves the turn waiting, visibly.
     """
     base = defaults.get(agent_id) or []
     exact = priorities.get((agent_id, origin, actor)) if actor else None
@@ -337,6 +348,7 @@ def assignment_rows_for(
         # AFTER the strict truncation, so a strict rule whose runners all lack the
         # flag leaves an empty list — the turn waits, it does not fall through.
         out = [r for r in out if rr.satisfies(r.flags, requires)]
+    out = [r for r in out if not r.directed_only()]
     if serves:
         # The same FLOOR, after the strict truncation for the same reason: a strict
         # rule whose every box reports it cannot run the agent leaves an empty list,
@@ -423,19 +435,45 @@ def load_workspace_orders(ws_ids) -> dict:
     return out
 
 
-def repo_order_for(turn: Turn, orders: dict, *, requires: frozenset | None = None) -> list | None:
-    """THE ordered runner list for one repo turn, or None when its workspace has
-    no order (route as before). Pure: no queries, no clock.
+def order_for(workspace_id, project: str, orders: dict, *, requires: frozenset,
+              sessions: bool = False) -> list | None:
+    """THE ordered runner list a workspace's runner order gives one piece of
+    repo work — a repo turn or an unbound project chat — or None when that
+    workspace has no order. Pure: no queries, no clock.
 
-    Only runners that DECLARE the turn's repo and meet its requirements are kept,
-    and ranks are renumbered over what is left — a better-ranked runner that could
-    never take this turn must not count as a blocker for one that can."""
-    listed = orders.get(turn.workspace_id)
+    Only runners that DECLARE the repo (when there is one) and meet the work's
+    requirements are kept, and ranks are renumbered over what is left — a
+    better-ranked runner that could never take this work must not count as a
+    blocker for one that can. A directed-only box takes no routed work, so it is
+    never in the list (`Runner.directed_only`). `sessions`: the work is a chat
+    turn, so only a session-capable box can take it — kept, any other would read
+    as an available better rank and hold back the box that can, until the grace."""
+    listed = orders.get(workspace_id)
     if not listed:
         return None
-    reqs = rr.requirements_of(turn) if requires is None else requires
     return [r for r in listed
-            if turn.project in r.project_names() and rr.satisfies(r.flags, reqs)]
+            if not r.directed_only()
+            and (not sessions or r.session_capable())
+            and (not project or project in r.project_names())
+            and rr.satisfies(r.flags, requires)]
+
+
+def repo_order_for(turn: Turn, orders: dict, *, requires: frozenset | None = None) -> list | None:
+    """`order_for` for one repo turn (its own workspace and repo)."""
+    reqs = rr.requirements_of(turn) if requires is None else requires
+    return order_for(turn.workspace_id, turn.project, orders, requires=reqs)
+
+
+def _cascade_allows(runner: Runner, rows: list, turn: Turn, now) -> bool:
+    """The availability cascade over a workspace order: this runner is listed,
+    and either every better rank is unavailable or the turn has aged past the
+    grace — `_assignment_allows_for_agent`'s rule over an order."""
+    mine = next((i for i, r in enumerate(rows) if r.id == runner.id), None)
+    if mine is None:
+        return False
+    if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
+        return True
+    return not any(r.is_available for r in rows[:mine])
 
 
 def _repo_order_allows(runner: Runner, turn: Turn, orders: dict, now) -> bool:
@@ -444,12 +482,92 @@ def _repo_order_allows(runner: Runner, turn: Turn, orders: dict, now) -> bool:
     rows = repo_order_for(turn, orders)
     if rows is None:
         return True
-    mine = next((i for i, r in enumerate(rows) if r.id == runner.id), None)
-    if mine is None:
+    return _cascade_allows(runner, rows, turn, now)
+
+
+# ---- project chats: a chat with no agent, only a repo (spec 2026-10-19 #6) ----
+#
+# Its UNBOUND turns follow the rules a repo turn follows, plus one: with no
+# workspace order, only a box the chatting person administers. Before, any
+# session-capable box in the tenant took them, so a teammate's new project chat
+# landed on someone else's laptop. A bound session still claims only on its
+# holder, and a pin still bypasses all of this. The claim asks
+# `project_session_allows`; every reader that mirrors it (`claim._refined_allows`,
+# so turn_reach, the unclaimable report and the topology) asks
+# `project_session_covers` — the same predicates without the clock.
+
+def is_project_session_turn(turn: Turn) -> bool:
+    """A chat turn with no agent whose session is not bound to a runner — the
+    turns the project-chat rules route. A chat with neither an agent nor a repo
+    counts: it has no repo to match, but it is still somebody's work."""
+    if not turn.chat_session_id or turn.chat_session.agent_id:
         return False
-    if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
-        return True
-    return not any(r.is_available for r in rows[:mine])
+    binding = getattr(turn.chat_session, "runner_binding", None)
+    return binding is None or binding.runner_id is None
+
+
+def project_session_rows(turn: Turn, orders: dict, *, requires: frozenset | None = None) -> list | None:
+    """The workspace order a project chat's turn follows (`order_for` on its
+    session's workspace and repo), or None when the workspace has none."""
+    sess = turn.chat_session
+    reqs = rr.requirements_of(turn) if requires is None else requires
+    return order_for(sess.workspace_id, sess.project, orders, requires=reqs, sessions=True)
+
+
+def _chatter_administers(runner: Runner, turn: Turn, admins: dict | None) -> bool:
+    """Rule 3: the person who sent it (`enqueued_by`) administers this box. A
+    turn with no person behind it gets no box this way. Cached per (box, person)
+    when the caller passes `admins`."""
+    if not turn.enqueued_by_id:
+        return False
+    from .runners import can_administer_runner
+
+    if admins is None:
+        return can_administer_runner(turn.enqueued_by, runner)
+    key = (runner.id, turn.enqueued_by_id)
+    if key not in admins:
+        admins[key] = can_administer_runner(turn.enqueued_by, runner)
+    return admins[key]
+
+
+def project_session_covers(runner: Runner, turn: Turn, orders: dict, *,
+                           requires: frozenset | None = None, admins: dict | None = None) -> bool:
+    """Could this runner EVER take this unbound project-chat turn? Rules 1–3,
+    without the cascade's clock (membership, as for a repo turn's order)."""
+    if runner.directed_only():
+        return False
+    project = turn.chat_session.project
+    if project and project not in runner.project_names():
+        return False  # 1. the box declares the repo
+    rows = project_session_rows(turn, orders, requires=requires)
+    if rows is not None:
+        return any(r.id == runner.id for r in rows)  # 2. the workspace shares it
+    return _chatter_administers(runner, turn, admins)  # 3. or you run it
+
+
+def project_session_allows(runner: Runner, turn: Turn, orders: dict, now, *,
+                           admins: dict | None = None) -> bool:
+    """`project_session_covers`, then the order's availability cascade and grace."""
+    if not project_session_covers(runner, turn, orders, admins=admins):
+        return False
+    rows = project_session_rows(turn, orders)
+    return rows is None or _cascade_allows(runner, rows, turn, now)
+
+
+def project_session_waits_why(turn: Turn, orders: dict) -> str:
+    """Why no box will take this unbound project-chat turn, in the words of the
+    rules above — the reason `unclaimable_queued_turns` and `turn_reach` give."""
+    sess = turn.chat_session
+    ws = sess.workspace_id
+    repo = sess.project
+    with_repo = f"with {repo}" if repo else "that takes chats"
+    if project_session_rows(turn, orders) is not None:
+        return f"the runner order in {ws} lists no session-capable box {with_repo}"
+    if not turn.enqueued_by_id:
+        return (f"no runner order in {ws}, and this project chat has no person behind "
+                "it, so it needs one")
+    who = turn.enqueued_by.email or turn.enqueued_by.get_username()
+    return f"no runner order in {ws}, and {who} administers no box {with_repo}"
 
 
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
@@ -588,7 +706,12 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q
     class of drift that made REST and the WebSocket show different transcripts.
     The claim path layers routing_q, the pin arm, the availability cascade, and
     the per-candidate refinements on top; this is the coarse target match.
+
+    A directed-only box (`Runner.directed_only`) targets only the sessions bound
+    to it; the claim adds the turns pinned to it. Nothing routed reaches it.
     """
+    if runner.directed_only():
+        return Q(chat_session__isnull=False, chat_session__runner_binding__runner=runner)
     # Both conditions on the SAME assignment row (a single Q, not two ANDed Qs)
     # so they share the join — a disabled row for this runner must not match
     # via some OTHER enabled row on the same agent.
@@ -611,7 +734,7 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q
         # bound session whose holder is gone claims NOWHERE until the user places
         # it (chat offers wait/continue). Unbound sessions are open here and
         # refined per-candidate in the claim loop (agent sessions follow the
-        # assignment cascade; project sessions stay any-sessions-capable).
+        # assignment cascade; project sessions `project_session_allows`).
         #
         # Deliberately NOT relaxed to "stale bindings fail over automatically"
         # (spec 2026-07-24): continuing elsewhere means a FRESH emdash session with

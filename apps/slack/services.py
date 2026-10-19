@@ -943,7 +943,7 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
 
     from . import status
 
-    runner = session_services.available_cloud_runner(session)
+    runner = session_services.available_cloud_runner(session, user=user)
     if runner is None:
         return Outcome(NO_CLOUD, "No cloud runner is online to take this right now.", session=session)
     if not harness.can_administer_runner(user, runner):

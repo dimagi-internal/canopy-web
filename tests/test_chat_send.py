@@ -174,7 +174,9 @@ def test_place_repins_queued_turn():
     session = Session.objects.create(workspace=ws, project="canopy-web")
     RunnerBinding.objects.create(session=session, runner=r1, thread_key=str(session.id))
     _msg, turn = chat.send_message(session=session, text="hi", user=user, client_id="c3")
-    chat.place_queued_turn(session=session, placement=str(r2.id))
+    # Placed by r2's owner: choosing a box for a project chat needs you to
+    # administer it (`may_place_project_chat`).
+    chat.place_queued_turn(session=session, placement=str(r2.id), user=user)
     turn.refresh_from_db()
     assert turn.pinned_runner_id == r2.id
 

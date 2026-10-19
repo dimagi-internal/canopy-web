@@ -55,8 +55,10 @@ def _repo_turn(ws, key):
 
 def _chat_turn(ws, user, key):
     session = Session.objects.create(workspace=ws, created_by=user)
+    # Sent by `user`: an unbound chat runs on a box its sender administers
+    # (or one its workspace's runner order shares).
     return Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_API,
-                               idempotency_key=key, prompt="hi")
+                               idempotency_key=key, prompt="hi", enqueued_by=user)
 
 
 def _client(user):

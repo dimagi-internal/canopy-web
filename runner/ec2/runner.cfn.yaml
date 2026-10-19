@@ -50,6 +50,15 @@ Parameters:
       Verified on cloud-ec2-1, 2026-09-09: tool_start/tool_end/assistant events
       arrive in the ledger's existing shapes, `toolCallId` matching the
       transcript's tool_use.id, with rawInput populated.
+  RunnerDirected:
+    Type: String
+    AllowedValues: ['0', '1']
+    Default: '0'
+    Description: >
+      '1' makes this a directed-only box (capabilities.directed): it claims only
+      turns pinned to it and turns of chats bound to it, never routed agent work,
+      repo turns, unbound chats or an inherited workspace order. For a test box
+      (`up.sh --test`); a chat started on it binds to it.
   RunnerSessions:
     Type: String
     AllowedValues: ['0', '1']
@@ -287,6 +296,7 @@ Resources:
                 RUNNER_PROJECTS=${RunnerProjects}
                 RUNNER_AGENTS=${RunnerAgents}
                 RUNNER_SESSIONS=${RunnerSessions}
+                RUNNER_DIRECTED=${RunnerDirected}
                 RUNNER_EXECUTOR=${RunnerExecutor}
                 RUNNER_WORKSPACE=${RunnerWorkspace}
                 RUNNER_NAME=${RunnerName}

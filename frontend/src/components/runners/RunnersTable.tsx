@@ -55,6 +55,12 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
                     {r.name}
                   </button>
                   <span className="ml-1 text-muted-foreground">{r.kind}{!r.in_tree && ' · elsewhere'}</span>
+                  {r.directed && (
+                    <span className="ml-1 text-[10px] text-muted-foreground" data-testid={`runner-directed-${r.name}`}
+                          title="Takes only turns pinned to it and chats started on it — never routed work">
+                      directed only
+                    </span>
+                  )}
                   {r.flags.map((f) => (
                     <span key={f} className="ml-1 rounded border border-border px-1 text-[10px] uppercase text-muted-foreground">{f}</span>
                   ))}

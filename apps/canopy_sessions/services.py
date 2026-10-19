@@ -1684,6 +1684,28 @@ def _eligible_runner(session: Session, runner_id):
     return runner
 
 
+#: Why choosing a box for a project chat was refused (`may_place_project_chat`).
+PROJECT_CHAT_PLACEMENT_REFUSED = (
+    "starting a project chat on {runner} is for someone who administers that runner; "
+    "start it without choosing a runner and the workspace's runner order, or a box "
+    "you run, takes it")
+
+
+def may_place_project_chat(user, session: Session, runner) -> bool:
+    """May `user` choose `runner` for this chat? For a chat with an agent this
+    is `agents.access.may_pin_runner`, asked by the caller; for a PROJECT chat (no
+    agent) it is: they administer the box (`harness.runners.can_administer_runner`)
+    — the box runs their prompt in its owner's repo checkout, so choosing it is the
+    same act as an unpinned project chat landing there, which only the workspace's
+    runner order or the box's own administrators may decide (spec 2026-10-19 #6,
+    rule 4). Nobody (`user` None) administers anything."""
+    if session.agent_id:
+        return True
+    from apps.harness.runners import can_administer_runner
+
+    return user is not None and can_administer_runner(user, runner)
+
+
 def _resolve_placement(session: Session, placement: str | None, user=None):
     """Directed-placement pin for a NEW turn about to be enqueued. `placement`
     wins when given explicitly; otherwise an unbound session's stashed
@@ -1711,6 +1733,8 @@ def _resolve_placement(session: Session, placement: str | None, user=None):
                 raise ValueError(
                     f"running {session.agent.slug} on {pinned.name} is for the agent's owner "
                     "or admins, or for someone who administers that runner")
+        if not may_place_project_chat(user, session, pinned):
+            raise ValueError(PROJECT_CHAT_PLACEMENT_REFUSED.format(runner=pinned.name))
         return pinned
     if not getattr(session, "runner_binding", None):
         rid = (session.metadata or {}).get("requested_runner_id")
@@ -2368,7 +2392,7 @@ def unqueue_send(session: Session, turn_id, user, *, by: str = "") -> bool:
     return True
 
 
-def place_queued_turn(*, session: Session, placement: str) -> Turn:
+def place_queued_turn(*, session: Session, placement: str, user=None) -> Turn:
     """Re-pin a session's oldest QUEUED turn — the chat banner's after-the-fact
     directed-placement decision (vs `_resolve_placement`, which only applies to
     a turn being newly enqueued). `placement` is "wait" (pin to the session's
@@ -2376,7 +2400,8 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
 
     Raises LookupError if there is no queued turn to place (-> 404), or
     ValueError for an unresolvable placement (-> 422): "wait" with no bound
-    runner, or an unknown/retired runner id.
+    runner, an unknown/retired runner id, or — for a project chat — a box `user`
+    does not administer (`may_place_project_chat`).
     """
     turn = (
         Turn.objects.filter(chat_session=session, status=Turn.QUEUED)
@@ -2394,22 +2419,29 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
         runner = _placeable_runner(session, placement)
         if runner is None:
             raise _placement_refused(session, placement, "unknown runner")
+        if not may_place_project_chat(user, session, runner):
+            raise ValueError(PROJECT_CHAT_PLACEMENT_REFUSED.format(runner=runner.name))
         turn.pinned_runner = runner
     turn.save(update_fields=["pinned_runner"])
     return turn
 
 
-def available_cloud_runner(session: Session):
+def available_cloud_runner(session: Session, user=None):
     """An ONLINE, session-capable cloud runner this session could be placed on,
     or None. Same `_placeable_runner` gate as every other placement, so the
-    answer is never a box that would leave the turn pinned and unclaimable."""
+    answer is never a box that would leave the turn pinned and unclaimable — and,
+    for a project chat, one `user` (who sent it) may place it on
+    (`may_place_project_chat`), so the offer is never one the click refuses. A
+    directed-only box (a test box) is never offered unasked: it takes work only
+    when someone chooses it (the pickers still list it)."""
     from apps.harness.models import Runner
 
     for runner in (Runner.objects.filter(kind=Runner.CLOUD, owner__isnull=False)
                    .exclude(status=Runner.RETIRED).order_by("name")):
-        if runner.live_status != Runner.ONLINE:
+        if runner.live_status != Runner.ONLINE or runner.directed_only():
             continue
-        if _placeable_runner(session, str(runner.id)) is not None:
+        if (_placeable_runner(session, str(runner.id)) is not None
+                and may_place_project_chat(user, session, runner)):
             return runner
     return None
 
@@ -2443,6 +2475,8 @@ def move_queued_turns(*, session: Session, placement: str, user=None, initiator=
     target = _placeable_runner(session, placement)
     if target is None:
         raise _placement_refused(session, placement, "unknown runner")
+    if not may_place_project_chat(user, session, target):
+        raise ValueError(PROJECT_CHAT_PLACEMENT_REFUSED.format(runner=target.name))
     queued = list(Turn.objects.filter(chat_session=session, status=Turn.QUEUED).order_by("created_at"))
     if not queued:
         raise LookupError("no queued turn to move")

@@ -50,6 +50,9 @@ def _session(ws, user):
 
 
 def _session_turn(session, key, **kw):
+    # Sent by the session's creator: an unbound chat with no agent runs on a box
+    # its sender administers, or one its workspace's runner order shares.
+    kw.setdefault("enqueued_by", session.created_by)
     return Turn.objects.create(
         chat_session=session, origin=Turn.ORIGIN_API, idempotency_key=key, **kw
     )

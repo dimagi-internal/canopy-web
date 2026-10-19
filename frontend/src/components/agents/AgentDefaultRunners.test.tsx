@@ -37,7 +37,7 @@ describe('AgentDefaultRunners', () => {
   it('shows the order it follows, and the laptop it skips for want of the repo', async () => {
     getAgentDefaultOrder.mockResolvedValue({
       own: false, workspace: 'dimagi', runners: [runner('hal-mbp-cdp', 0), runner('cloud-ec2-1', 1)],
-      missing_repo: ['jj-mbp-cdp'], cannot_hold: [], repo_url: 'https://github.com/dimagi-internal/jarvis',
+      missing_repo: ['jj-mbp-cdp'], cannot_hold: [], directed: [], repo_url: 'https://github.com/dimagi-internal/jarvis',
     })
     renderIt()
     await screen.findByTestId('default-runners-follows')
@@ -49,9 +49,18 @@ describe('AgentDefaultRunners', () => {
     )
   })
 
+  it('names a directed-only box in the order as skipped', async () => {
+    getAgentDefaultOrder.mockResolvedValue({
+      own: false, workspace: 'dimagi', runners: [runner('cloud-ec2-2', 0)],
+      missing_repo: [], cannot_hold: [], directed: ['cloud-ec2-test'], repo_url: '',
+    })
+    renderIt()
+    expect((await screen.findByTestId('default-runners-directed')).textContent).toContain('cloud-ec2-test')
+  })
+
   it('"Give it its own" copies the followed order onto the agent', async () => {
     getAgentDefaultOrder.mockResolvedValue({
-      own: false, workspace: 'dimagi', runners: [runner('hal-mbp-cdp', 0)], missing_repo: [], cannot_hold: [], repo_url: '',
+      own: false, workspace: 'dimagi', runners: [runner('hal-mbp-cdp', 0)], missing_repo: [], cannot_hold: [], directed: [], repo_url: '',
     })
     putAgentRunners.mockResolvedValue([])
     renderIt()
@@ -62,7 +71,7 @@ describe('AgentDefaultRunners', () => {
   })
 
   it('an agent with its own runners can go back to following, after a confirm', async () => {
-    getAgentDefaultOrder.mockResolvedValue({ own: true, workspace: 'dimagi', runners: [], missing_repo: [], cannot_hold: [], repo_url: '' })
+    getAgentDefaultOrder.mockResolvedValue({ own: true, workspace: 'dimagi', runners: [], missing_repo: [], cannot_hold: [], directed: [], repo_url: '' })
     putAgentRunners.mockResolvedValue([])
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderIt()

@@ -170,6 +170,12 @@ Asked in this order; the first row that matches decides.
   one of the agent's admins) — and that holds for a chat WITH the agent as much
   as for its own turns. Pinning is for an **agent admin OR a runner admin**,
   consistent with actor routes, which require the runner admin.
+* A **project chat** (no agent, only a repo) has no agent admins, so choosing its
+  box — `runner_id` at creation, a placement on send, `/place`, a move — is for a
+  **runner admin** of that box only
+  (`canopy_sessions.services.may_place_project_chat`). Unplaced, it runs on a box
+  its workspace's runner order shares or one its sender administers
+  (`runners.md` → "Project chats"), never on a teammate's box by default.
 
 ## System accounts
 

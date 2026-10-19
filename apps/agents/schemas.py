@@ -231,8 +231,9 @@ class AgentDefaultOrderOut(StrictModel):
     own ordered list, the same rows as `GET /runners`. Otherwise it follows `workspace`'s default order —
     `runners` is that order as it applies to this agent, and two kinds of listed
     runner are left out, each named so a screen can say why: laptops without the
-    agent's repo (`missing_repo`) and boxes whose owner cannot hold the agent
-    (`cannot_hold`). With `own` True, `workspace` names the order it WOULD
+    agent's repo (`missing_repo`), boxes whose owner cannot hold the agent
+    (`cannot_hold`) and directed-only boxes, which take no routed work
+    (`directed`). With `own` True, `workspace` names the order it WOULD
     follow if its own list were cleared. `workspace` None: nothing to follow."""
 
     own: bool
@@ -240,6 +241,7 @@ class AgentDefaultOrderOut(StrictModel):
     runners: list[AgentRunnerOut] = []
     missing_repo: list[str] = []
     cannot_hold: list[str] = []
+    directed: list[str] = []
     repo_url: str = ""
 
 class AgentRunnerRowIn(StrictModel):

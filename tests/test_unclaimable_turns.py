@@ -101,7 +101,8 @@ def test_session_turns_need_a_session_capable_runner():
     from apps.canopy_sessions.models import Session
     user, ws = _ctx(agents=["ace"], projects=["canopy-web"], sessions=False)
     s = Session.objects.create(workspace=ws, created_by=user, title="chat")
-    _age(services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="k3", prompt="hi")[0])
+    _age(services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="k3",
+                               prompt="hi", enqueued_by=user)[0])
     assert [r["target"] for r in services.unclaimable_queued_turns(user)] == ["session"]
 
     Runner.objects.update(capabilities={"agents": [], "projects": [], "sessions": True})

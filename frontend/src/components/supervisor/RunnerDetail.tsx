@@ -10,6 +10,7 @@ import { RunnerWorkspaces } from '@/components/supervisor/RunnerWorkspaces'
 import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
+import { isDirectedOnly } from '@/components/chat/runnerEligibility'
 
 // A runner's full state — the click-through from the Runners tab's runner list.
 // Leads with the signals that actually matter: is it AVAILABLE to fire a turn
@@ -344,6 +345,12 @@ export function RunnerDetail({
             ? 'Takes Slack threads and web chat, and appears in "start a session".'
             : 'Off — this box never takes Slack or chat work and is hidden from "start a session".'}
         </p>
+        {isDirectedOnly(runner) && (
+          <p className="text-[12px] text-foreground" data-testid="runner-directed">
+            Directed only: takes turns pinned to it and chats started on it, and nothing routed — no
+            agent, repo or unrouted chat work, even where a runner order or an agent's list names it.
+          </p>
+        )}
         {sessionsErr && <p className="text-[12px] text-destructive" data-testid="runner-sessions-error">{sessionsErr}</p>}
       </div>
 

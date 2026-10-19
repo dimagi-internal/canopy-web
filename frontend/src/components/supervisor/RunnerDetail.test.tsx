@@ -226,6 +226,16 @@ describe('RunnerDetail — pause', () => {
 })
 
 describe('RunnerDetail — Slack & chat sessions', () => {
+  it('says when a box is directed only', () => {
+    render(<RunnerDetail runner={runner({ capabilities: { sessions: true, directed: true } })} agents={agents} onBack={() => {}} />)
+    expect(screen.getByTestId('runner-directed').textContent).toContain('Directed only')
+  })
+
+  it('says nothing about it on an ordinary box', () => {
+    render(<RunnerDetail runner={runner({ capabilities: { sessions: true } })} agents={agents} onBack={() => {}} />)
+    expect(screen.queryByTestId('runner-directed')).toBeNull()
+  })
+
   it('lets the owner turn sessions on and re-renders from the server row', async () => {
     const on = runner({ capabilities: { agents: ['hal'], sessions: true } })
     setRunnerSessions.mockResolvedValue(on)

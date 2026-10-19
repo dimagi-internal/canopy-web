@@ -24,6 +24,11 @@
 # point: prove a second box end to end without moving any traffic onto it.
 # `down.sh --name <same>` retires the runner, which deletes those rows again.
 #
+# --test (for a box `up.sh --test` made: directed-only) stops after step 2: a test
+# box takes only turns pinned to it and chats bound to it, so there is no routing
+# to change — no predecessor retired, no assignment row, rule or workspace order
+# touched, and no --agents. It prints how to point a chat at the box.
+#
 # Pure curl + python3 — no deps, matching up.sh/down.sh/secrets.sh's house style.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -37,6 +42,7 @@ RUNNER_NAME="$DEFAULT_RUNNER_NAME"
 AGENTS=""     # comma-separated slug allowlist; empty = every agent with assignments
 DRILL=0
 STANDBY=0
+TEST=0
 CRED_FROM=""  # runner name|id whose Claude logins to copy (see step 2)
 DISCOVER_MINUTES=15   # cloud-init (node, claude, aws, gh, op) takes 4-6 min before the first pair
 BOOTSTRAP_MINUTES=40  # first bootstrap clones + provisions every registered agent
@@ -56,6 +62,9 @@ usage: ./wire.sh [options]
   --standby              add the runner as a DISABLED row to --agents (required) and touch
                          nothing else: no retire, no swap, no rule/order edit. For a second
                          box you want to prove (with --drill) without routing work to it.
+  --test                 a directed-only test box (up.sh --test): discover it, stage its
+                         credentials and stop — no routing change of any kind, no --agents.
+                         Prints how to point a chat at it.
   --drill                wait for the box's first bootstrap, fire a readiness drill, poll to
                          completion, print the grid; exits non-zero unless every drill passes
   --credential-from <runner>
@@ -73,6 +82,7 @@ while [[ $# -gt 0 ]]; do
     --base-url) BASE_URL="${2%/}"; shift 2 ;;
     --runner-name|--name) RUNNER_NAME="$2"; shift 2 ;;
     --standby) STANDBY=1; shift ;;
+    --test) TEST=1; shift ;;
     --credential-from) CRED_FROM="$2"; shift 2 ;;
     --discover-minutes) DISCOVER_MINUTES="$2"; shift 2 ;;
     --agents) AGENTS="$2"; shift 2 ;;
@@ -84,6 +94,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 runner_name_ok "$RUNNER_NAME" || { echo "!! invalid runner name '$RUNNER_NAME'" >&2; exit 1; }
+if [[ "$TEST" == "1" && ( "$STANDBY" == "1" || -n "$AGENTS" || "$DRILL" == "1" ) ]]; then
+  echo "!! --test changes no routing: it takes no --standby, --agents or --drill" >&2
+  exit 1
+fi
 if [[ "$STANDBY" == "1" && -z "$AGENTS" ]]; then
   echo "!! --standby needs --agents <a,b>: it only ever touches the agents you name" >&2
   exit 1
@@ -316,6 +330,22 @@ echo "   from: $STAGED_FROM"
 api POST "/api/harness/runners/${RUNNER_ID}/credential" "$TMP/cred.json" | python3 -m json.tool
 rm -f "$TMP/cred.json" "$TMP/src-cred.json"
 echo "==> credential staged"
+
+# ── --test: a directed-only box has no routing to change — stop here ───────────
+if [[ "$TEST" == "1" ]]; then
+  api GET /api/harness/runners/ > "$TMP/runners-test.json"
+  TEST_WS=$(python3 -c "
+import json
+rows = json.load(open('$TMP/runners-test.json'))
+r = next((x for x in rows if isinstance(x, dict) and x.get('id') == '$RUNNER_ID'), {})
+print(r.get('workspace') or '')
+")
+  CHAT_URL="${BASE_URL}/w/${TEST_WS:-<workspace>}/chat"
+  echo "==> test box ready: $RUNNER_ID ($RUNNER_NAME) — directed only, nothing routed to it"
+  echo "    point a chat at it: $CHAT_URL → New chat → pick a repo → Run on $RUNNER_NAME"
+  echo "    tear down: ./down.sh --name $RUNNER_NAME"
+  exit 0
+fi
 
 # ── the drill (step 5), defined here so --standby can reach it too ──────────────
 wait_for_bootstrap() {
