@@ -116,6 +116,19 @@ export function grantSubject(detail: string | null): string {
   return name.replace(/\s+(over|on)\s+.*$/, '').trim() || 'An agent'
 }
 
+/** Why a search returned an entry (or that nothing matched), and the question it
+ *  was asked — from a `preference.read` event's detail, which canopy writes as
+ *  "retrievalId=…; returned=N; why=<reason>; query=<question>" (hcp.search). Older
+ *  reads carry neither. */
+export function readWhy(detail: string | null): { why: string; asked: string } | null {
+  if (!detail) return null
+  const q = detail.indexOf('; query=')
+  const head = q < 0 ? detail : detail.slice(0, q)
+  const m = /(?:^|; )why=([^;]*)/.exec(head)
+  if (!m) return null
+  return { why: m[1].trim(), asked: q < 0 ? '' : detail.slice(q + 8).trim() }
+}
+
 /** One audit event as a sentence: `who` + `did`, and an optional `why`. A grant
  *  event is told about the agent it concerns, not whoever performed it. */
 export function eventSentence(e: HcpAuditEvent, names: Map<string, string>): { who: string; did: string; why: string } {

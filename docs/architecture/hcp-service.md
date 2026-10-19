@@ -426,18 +426,18 @@ Outside the rollout:
   no longer fill from the agent's own workspace first.
 - What an agent records during a turn dispatched from a board task is filed
   against that task's project (`hcp.project_of`); a later turn on the same project
-  gives those entries `PROJECT_BOOST` and admits them even with no word in common.
+  gives those entries `HCP_PROJECT_BOOST` and admits them even with no word in common.
 - Unmatched role entries come along as background, at most `ROLE_FLOOR` (every
   agent-written `work_context` entry is filed as a role, so "all of them" meant
   "the newest work_context entries, whatever was asked"). Corrections always lead.
-- **Embeddings, when `HCP_EMBEDDINGS_MODEL` names a Bedrock model** (Cohere Embed
-  v4 / multilingual v3, or Titan v2): each served entry carries a float32 unit
+- **Embeddings, when `HCP_EMBEDDINGS_MODEL` names a model** (`vertex/gemini-embedding-001`
+  today; Bedrock Cohere Embed or Titan v2 also work): each served entry carries a float32 unit
   vector on its own row (`PersonFact.embedding`, with `embedding_model`). Written
   after commit on every write, filled lazily by any search that meets an entry
   without one (`FILL_PER_SEARCH` at a time), all at once by `manage.py hcp_embed`;
   cleared when a version is superseded or deleted. The query is embedded as a
-  query, entries as documents. Score = shared words + `PROJECT_BOOST` +
-  `SEMANTIC_WEIGHT` × similarity (above `SEMANTIC_FLOOR`). Any failure ranks
+  query, entries as documents. Score = shared words + `HCP_PROJECT_BOOST` +
+  `HCP_SEMANTIC_WEIGHT` × similarity (counted at or above `HCP_SEMANTIC_FLOOR`). Any failure ranks
   lexically. Declared method: `hybrid` while on, `lexical` while off.
 - Comparison is done in Python over the filtered candidates rather than pgvector:
   the same exact scan the plan below calls for at this scale, with no database
@@ -450,9 +450,10 @@ what we send; until the answer is yes, nothing leaves canopy and search stays
 lexical. On Vertex that is the project's `cacheConfig` saying `disableCache: true`
 (Gemini models cache inputs up to 24 h by default). On Bedrock it is the account
 having no model-invocation logging (Bedrock itself stores no prompts). Neither
-check covers the contract: both clouds are under Dimagi's BAA, and Vertex's
-abuse-monitoring prompt logging does not apply to an invoiced billing account —
-confirm both once, by hand, for the project used.
+check covers the contract: both clouds are under Dimagi's BAA, and Google's
+abuse-monitoring prompt-logging exception is granted per project — Dimagi's
+covers connect-labs and dimagi-chrome-extension, not canopy-494811 (2026-10-18;
+requested by hand). Turned on anyway with only Jonathan's own memory in it.
 
 **Turning it on — Vertex (the Dimagi-approved route).** No Google key is stored:
 the ECS task's AWS role (`canopy-web-task-role`) is exchanged for a short-lived
@@ -493,6 +494,65 @@ check), enable the model under Bedrock model access, set `HCP_EMBEDDINGS_MODEL` 
 its id, deploy, run `manage.py hcp_embed`.
 
 Turning either off is clearing the variable; vectors stay but are never read.
+
+### Seeing and tuning search
+
+**What it did, per read — /people/me → What happened.** Every search writes one
+`preference.read` per entry it returned (or one saying nothing matched). Each
+shows the question asked, the entry handed over, and why: `meaning 0.71`,
+`words: dashboard`, `this project`, `a correction (always included)`, or
+`background: who they are (role)`; an empty search says `nothing matched
+(closest meaning 0.55, cutoff 0.60)`. Only the person can read their audit — no
+agent can. Stored in the event's `detail` (`…; why=…; query=…`), so the API's
+`/v1/audit` has it too.
+
+**How it is running — the log.** One INFO line per search, in CloudWatch
+`/ecs/labs-jj-canopy-web` (kept 30 days; the audit rows above are kept for
+good), never with what an entry says:
+
+```
+hcp search: person=7 actor=agent:ace method=hybrid candidates=4 compared=4 returned=2 best_meaning=0.71 floor=0.60 embed_ms=180 retrieval=…
+```
+
+`candidates` is what the grant reached and was scored; `embed_ms` is the Vertex
+round trip (plus filling any missing vectors). These two answer "is it time for
+pgvector?" — when `candidates` reaches the thousands, or the scan shows up next to
+`embed_ms`. Find them with CloudWatch Logs Insights:
+`filter @message like "hcp search:" | parse @message "candidates=* " as c | stats max(c), avg(c)`.
+
+**Why an entry did or didn't come back — `hcp_explain`.** Scores every one of a
+person's entries against a question, with each part of the score and the reason;
+pass knobs to try a value before setting it:
+
+```
+aws ecs execute-command --profile labs --region us-east-1 --cluster labs-jj-cluster \
+  --task $(aws ecs list-tasks --profile labs --region us-east-1 --cluster labs-jj-cluster \
+           --service-name labs-jj-canopy-web --query 'taskArns[0]' --output text) \
+  --container canopy-web --interactive \
+  --command "python manage.py hcp_explain --person jjackson@dimagi.com 'who runs the agents?' --floor 0.55"
+```
+
+Its read is audited like any other ("Canopy read your memory — to check how
+search ranks your memory").
+
+**The knobs** — `deploy/aws/canopy-web.cfn.yaml`, then deploy; no code change:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `HCP_SEMANTIC_FLOOR` | 0.60 | Closeness in meaning (0–1) an entry needs before meaning counts at all. Lower finds more paraphrases and lets in more noise. gemini-embedding-001 scores unrelated questions 0.45–0.55 against everything; right answers scored 0.66–0.73. |
+| `HCP_SEMANTIC_WEIGHT` | 4.0 | What a perfect meaning match is worth, in shared words (0.7 × 4 = 2.8 words). |
+| `HCP_PROJECT_BOOST` | 2.0 | What being from the turn's project is worth, in shared words; such entries come back even with nothing else in common. |
+| `HCP_EMBEDDINGS_MODEL` | `vertex/gemini-embedding-001` | Empty turns meaning off (words only). A different model needs the floor re-measured. |
+
+Fixed in code (`hcp.py`), because they are rules rather than dials: corrections
+always come along and come first; at most `ROLE_FLOOR` (2) unmatched role entries
+ride along; at most 20 entries per search.
+
+**Tuning, in order:** find a read that was wrong on /people/me (copy its question);
+run `hcp_explain` with it to see each entry's meaning score; try `--floor` /
+`--weight` until the right entries come back and the wrong ones don't; check two or
+three unrelated questions still return nothing; set the value in the cfn file and
+deploy.
 
 The original plan, kept for the reasoning. Before this, `hcp.search` ranked by
 term overlap (`_score`), declared as `lexical` (spec 4.4.3). That misses

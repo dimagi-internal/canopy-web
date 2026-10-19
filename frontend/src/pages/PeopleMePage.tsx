@@ -30,6 +30,7 @@ import {
   placeOf,
   reads,
   readsByEntry,
+  readWhy,
   relTime,
   type AgentAccess,
   type EntryReads,
@@ -261,6 +262,7 @@ export function PeopleMePage() {
   const shown = settled.filter((f) => source === 'all' || sourceOf(f).mine === (source === 'you'))
   const { orgs, unplaced } = groupByPlace(shown)
   const activity = audit.slice(0, activityShown)
+  const statementOf = new Map(allFacts.filter((f) => f.entry_id).map((f) => [f.entry_id as string, f.statement]))
 
   const factRow = (f: PersonFactDetail) => {
     const src = sourceOf(f)
@@ -553,6 +555,8 @@ export function PeopleMePage() {
             {activity.map((e, i) => {
               const day = dayLabel(e.timestamp)
               const s = eventSentence(e, names)
+              const read = e.eventType === 'preference.read' ? readWhy(e.detail) : null
+              const entry = e.entryId ? statementOf.get(e.entryId) : undefined
               return (
                 <li key={e.eventId}>
                   {(i === 0 || dayLabel(activity[i - 1].timestamp) !== day) && (
@@ -566,6 +570,13 @@ export function PeopleMePage() {
                       <span className="font-medium text-foreground">{s.who}</span>{' '}
                       <span className="text-foreground">{s.did}</span>
                       {s.why ? <span className="block text-xs text-muted-foreground">to {s.why.replace(/^to\s+/i, '')}</span> : null}
+                      {read && (
+                        <span className="mt-1 block rounded-md bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
+                          {read.asked && <span className="block">Asked: “{read.asked}”</span>}
+                          {entry && <span className="block text-foreground">Got: {entry}</span>}
+                          <span className="block">Why: {read.why}</span>
+                        </span>
+                      )}
                     </span>
                   </div>
                 </li>

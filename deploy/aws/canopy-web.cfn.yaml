@@ -523,6 +523,12 @@ Resources:
             # cache setting, and a federation pool only canopy-web-task-role can
             # use. Not secrets. Turned on 2026-10-18 (only Jonathan's memory so far).
             - { Name: HCP_EMBEDDINGS_MODEL, Value: vertex/gemini-embedding-001 }
+            # How search scores an entry. Try a value with `manage.py hcp_explain
+            # --floor/--weight/--boost` first; guide: docs/architecture/
+            # hcp-service.md § Seeing and tuning search.
+            - { Name: HCP_SEMANTIC_FLOOR, Value: "0.60" }
+            - { Name: HCP_SEMANTIC_WEIGHT, Value: "4.0" }
+            - { Name: HCP_PROJECT_BOOST, Value: "2.0" }
             - { Name: HCP_VERTEX_PROJECT, Value: canopy-494811 }
             - { Name: HCP_VERTEX_LOCATION, Value: us-central1 }
             - { Name: HCP_VERTEX_WIF_AUDIENCE, Value: "//iam.googleapis.com/projects/270508200508/locations/global/workloadIdentityPools/canopy-aws/providers/canopy-web" }

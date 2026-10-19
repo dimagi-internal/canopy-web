@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import io
 import json
 
 import pytest
@@ -21,7 +22,7 @@ from django.test import Client
 from apps.agents.models import Agent, AgentProject, AgentTask
 from apps.contacts import embeddings, hcp, people
 from apps.contacts import services as contacts
-from apps.contacts.models import PersonFact
+from apps.contacts.models import PersonAuditEvent, PersonFact
 from apps.harness import initiator as who
 from apps.harness import services
 from apps.harness.models import Turn
@@ -186,6 +187,50 @@ def test_the_similarity_every_entry_gets_does_not_admit_it(w, embeddings_on, mon
     assert _said(_search(w, _turn(w, "g2"), "recipe for banana bread")) == []
     monkeypatch.setattr(embeddings, "similarity", lambda a, b: 0.7)
     assert _said(_search(w, _turn(w, "g3"), "recipe for banana bread")) == ["Owns the quarterly dashboard."]
+
+
+def test_the_cutoff_is_a_setting(w, embeddings_on, monkeypatch, settings):
+    _add(w, "Owns the quarterly dashboard.")
+    monkeypatch.setattr(embeddings, "similarity", lambda a, b: 0.55)
+    settings.HCP_SEMANTIC_FLOOR = 0.5
+    assert _said(_search(w, _turn(w, "g4"), "recipe for banana bread")) == ["Owns the quarterly dashboard."]
+
+
+def test_each_read_records_why_it_matched_and_what_was_asked(w, embeddings_on, monkeypatch, caplog):
+    _add(w, "Owns the budget dashboard.")                           # the toy model: its own vector
+    _add(w, "Likes tables.")
+    sims = {"Owns the budget dashboard.": 0.71, "Likes tables.": 0.5}
+    monkeypatch.setattr(embeddings, "similarity", lambda q, v: max(
+        s for t, s in sims.items() if PersonFact.objects.filter(statement=t, embedding=v).exists()))
+    with caplog.at_level("INFO", logger="apps.contacts.hcp"):
+        _search(w, _turn(w, "x1"), "who looks after the reports; and how?")
+    (row,) = PersonAuditEvent.objects.filter(event_type="preference.read", entry_id__isnull=False,
+                                             detail__contains="query=who looks")
+    assert "; why=meaning 0.71; query=who looks after the reports; and how?" in row.detail
+    _search(w, _turn(w, "x2"), "banana bread")
+    sims["Owns the budget dashboard."] = 0.5
+    _search(w, _turn(w, "x3"), "banana bread")
+    empty = PersonAuditEvent.objects.filter(event_type="preference.read", entry_id__isnull=True).last()
+    assert "why=nothing matched (closest meaning 0.50, cutoff 0.60)" in empty.detail
+    # One line per search (the turn's own context search logs one too).
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("hcp search:")]
+    assert any("candidates=2 compared=2 returned=1 best_meaning=0.71 floor=0.60" in x for x in lines)
+    assert not any("dashboard" in x or "reports" in x for x in lines)  # never what was said
+
+
+def test_hcp_explain_scores_every_entry_and_says_why(w, embeddings_on, monkeypatch):
+    _add(w, "Owns the quarterly dashboard.")
+    _add(w, "Likes tables.")
+    monkeypatch.setattr(embeddings, "similarity", lambda a, b: 0.55)
+    out = io.StringIO()
+    call_command("hcp_explain", "banana bread", person="lili@dimagi.com", floor=0.5, stdout=out)
+    text = out.getvalue()
+    assert "floor 0.50" in text and "2 entries, 2 compared by meaning" in text
+    assert text.count("meaning 0.55") == 2                         # both returned at the tried floor
+    call_command("hcp_explain", "banana bread", person="lili@dimagi.com", stdout=(out := io.StringIO()))
+    assert out.getvalue().count("under the 0.60 cutoff") == 2
+    # The read shows in the person's own history, as Canopy.
+    assert PersonAuditEvent.objects.filter(actor_type="system", purpose__contains="hcp_explain").count() == 2
 
 
 def test_a_vector_is_cleared_when_its_version_stops_being_served(w, embeddings_on,

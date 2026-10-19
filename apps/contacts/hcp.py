@@ -1386,16 +1386,31 @@ ALWAYS_RELEVANT = frozenset({PersonFact.CORRECTION})
 #: unmatched would hand over the newest work_context entries whatever was asked.
 #: At most this many unmatched ones come along, behind every match.
 ROLE_FLOOR = 2
-#: An entry from the project the turn is working in: as relevant as this many shared
-#: words, and admitted even when it shares none.
-PROJECT_BOOST = 2.0
-#: With embeddings on: below this cosine similarity, meaning alone does not admit an
-#: entry (shared words or the project still can). Each word shared adds 1, a
-#: similarity of 1.0 adds SEMANTIC_WEIGHT. Measured on gemini-embedding-001 against
-#: live memory (2026-10-18): unrelated questions score 0.45-0.55 against every entry,
-#: the right entry 0.66-0.73. Re-measure before changing HCP_EMBEDDINGS_MODEL.
-SEMANTIC_FLOOR = 0.60
-SEMANTIC_WEIGHT = 4.0
+# The tunable knobs are settings (HCP_SEMANTIC_FLOOR, HCP_SEMANTIC_WEIGHT,
+# HCP_PROJECT_BOOST in config/settings/base.py), set in canopy-web.cfn.yaml. The
+# floor was measured on gemini-embedding-001 against live memory (2026-10-18):
+# unrelated questions score 0.45-0.55 against every entry, the right entry
+# 0.66-0.73. Re-measure (`manage.py hcp_explain`) before changing the model.
+
+
+@dataclass
+class Score:
+    """How one candidate scored against a question, and what became of it."""
+    fact: PersonFact
+    words: list[str]            # shared with the question
+    meaning: float | None       # cosine similarity; None when not compared
+    project: bool               # from the turn's project
+    total: float
+    returned: bool = False
+    because: str = ""           # why it was returned, or why not (no ';' in it)
+
+
+def _knobs(floor, weight, boost) -> tuple[float, float, float]:
+    from django.conf import settings
+
+    return (settings.HCP_SEMANTIC_FLOOR if floor is None else floor,
+            settings.HCP_SEMANTIC_WEIGHT if weight is None else weight,
+            settings.HCP_PROJECT_BOOST if boost is None else boost)
 
 
 def minimization_method() -> str:
@@ -1408,10 +1423,77 @@ def _terms(text: str) -> set[str]:
     return {w.strip("'-") for w in _WORD.findall((text or "").lower())} - _STOP
 
 
-def _score(fact: PersonFact, query_terms: set[str]) -> int:
+def _shared(fact: PersonFact, query_terms: set[str]) -> list[str]:
     hay = " ".join(filter(None, [fact.statement, fact.instance_ref, fact.dimension.replace("_", " "),
                                  fact.project.name if fact.project_id else ""]))
-    return len(query_terms & _terms(hay))
+    return sorted(query_terms & _terms(hay))
+
+
+def explain(candidates: list[PersonFact], query: str, *, limit: int, project_id: int | None = None,
+            floor: float | None = None, weight: float | None = None,
+            boost: float | None = None) -> tuple[list[Score], list[Score], dict]:
+    """`rank`, showing its work: (the returned Scores in order, every candidate's
+    Score, stats). The knobs default to settings; `hcp_explain` overrides them to
+    try a value before it is set."""
+    import time
+
+    from . import embeddings
+
+    floor, weight, boost = _knobs(floor, weight, boost)
+    terms = _terms(query)
+    sims: dict[int, float] = {}
+    embed_ms = None
+    if embeddings.enabled() and candidates and (query or "").strip():
+        t0 = time.monotonic()
+        embeddings.fill(candidates)
+        q = embeddings.embed([query], purpose="query")
+        embed_ms = round((time.monotonic() - t0) * 1000)
+        if q is not None:
+            sims = {f.pk: embeddings.similarity(q[0], f.embedding)
+                    for f in candidates if embeddings.has_current(f)}
+    scores, matched, roles = [], [], []
+    for f in candidates:
+        words = _shared(f, terms)
+        on_project = project_id is not None and f.project_id == project_id
+        sim = sims.get(f.pk)
+        total = len(words) + (boost if on_project else 0.0)
+        if sim is not None and sim >= floor:
+            total += sim * weight
+        sc = Score(f, words, sim, on_project, total)
+        scores.append(sc)
+        parts = []
+        if sim is not None and sim >= floor:
+            parts.append(f"meaning {sim:.2f}")
+        if words:
+            parts.append("words: " + " ".join(words))
+        if on_project:
+            parts.append("this project")
+        if total > 0 or f.kind in ALWAYS_RELEVANT:
+            if f.kind == PersonFact.CORRECTION:
+                parts.insert(0, "a correction (always included)")
+            sc.because = ", ".join(parts)
+            matched.append((0 if f.kind == PersonFact.CORRECTION else 1, -total, -f.created_at.timestamp(), sc))
+        elif f.kind == PersonFact.ROLE:
+            roles.append((-f.created_at.timestamp(), sc))
+        else:
+            sc.because = (f"meaning {sim:.2f} is under the {floor:.2f} cutoff, no shared words"
+                          if sim is not None else "no shared words")
+    matched.sort(key=lambda t: t[:3])
+    out = [t[3] for t in matched]
+    for i, (_, sc) in enumerate(sorted(roles, key=lambda t: t[0])):
+        if i < ROLE_FLOOR:
+            sc.because = "background: who they are (role)"
+            out.append(sc)
+        else:
+            sc.because = f"a role entry beyond the {ROLE_FLOOR} that come along unmatched"
+    for sc in out[limit:]:
+        sc.because = f"past the {limit}-entry limit ({sc.because})"
+    out = out[:limit]
+    for sc in out:
+        sc.returned = True
+    best = max(sims.values(), default=None)
+    return out, scores, {"candidates": len(candidates), "compared": len(sims), "embed_ms": embed_ms,
+                         "best_meaning": best, "floor": floor}
 
 
 def rank(candidates: list[PersonFact], query: str, *, limit: int,
@@ -1420,33 +1502,7 @@ def rank(candidates: list[PersonFact], query: str, *, limit: int,
     reaches — filter first, then rank). Corrections lead; then by score: shared
     words, the turn's project, and with embeddings on, closeness in meaning. Ties go
     to the newer entry. Nothing unrelated pads the result (4.4.2)."""
-    from . import embeddings
-
-    terms = _terms(query)
-    sims: dict[int, float] = {}
-    if embeddings.enabled() and candidates and (query or "").strip():
-        embeddings.fill(candidates)
-        q = embeddings.embed([query], purpose="query")
-        if q is not None:
-            sims = {f.pk: embeddings.similarity(q[0], f.embedding)
-                    for f in candidates if embeddings.has_current(f)}
-    scored, roles = [], []
-    for f in candidates:
-        s = float(_score(f, terms))
-        same_project = project_id is not None and f.project_id == project_id
-        if same_project:
-            s += PROJECT_BOOST
-        sim = sims.get(f.pk, 0.0)
-        if sim >= SEMANTIC_FLOOR:
-            s += sim * SEMANTIC_WEIGHT
-        if s > 0 or f.kind in ALWAYS_RELEVANT:
-            scored.append((0 if f.kind == PersonFact.CORRECTION else 1, -s, -f.created_at.timestamp(), f))
-        elif f.kind == PersonFact.ROLE:
-            roles.append((-f.created_at.timestamp(), f))
-    scored.sort(key=lambda t: t[:3])
-    hits = [t[3] for t in scored]
-    hits += [f for _, f in sorted(roles, key=lambda t: t[0])[:ROLE_FLOOR]]
-    return hits[:limit]
+    return [sc.fact for sc in explain(candidates, query, limit=limit, project_id=project_id)[0]]
 
 
 def search(person: Person, *, workspace_slugs, query: str, categories: list[str],
@@ -1486,17 +1542,30 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
     qs = servable(PersonFact.objects.filter(where, person=person, category__in=wanted)
                   ).select_related("project", "person", "workspace") if slugs else PersonFact.objects.none()
     candidates = [f for f in qs if actor.is_person or within_grant(f, grant, "read")]
-    hits = rank(candidates, query, limit=limit, project_id=project_id)
+    returned, _, stats = explain(candidates, query, limit=limit, project_id=project_id)
+    hits = [sc.fact for sc in returned]
     workspace_slug = slugs[0] if slugs else None
     retrieval = str(uuid.uuid4())
+    # The person sees each read's `why` and the question on /people/me (words.ts
+    # `readWhy` parses this; `query=` stays last, since a question may hold ';').
+    asked = " ".join((query or "").split())[:200]
     detail = f"retrievalId=urn:uuid:{retrieval}; returned={len(hits)}"
     if hits:
-        for f in hits:
-            audit(person, "preference.read", actor=actor, entry=f, purpose=purpose, grant=grant,
-                  turn=turn, detail=detail)
+        for sc in returned:
+            audit(person, "preference.read", actor=actor, entry=sc.fact, purpose=purpose, grant=grant,
+                  turn=turn, detail=f"{detail}; why={sc.because}; query={asked}")
     else:
+        best = stats["best_meaning"]
+        why = (f"nothing matched (closest meaning {best:.2f}, cutoff {stats['floor']:.2f})"
+               if best is not None else "nothing matched")
         audit(person, "preference.read", actor=actor, category=",".join(wanted)[:80], purpose=purpose,
-              grant=grant, workspace_slug=workspace_slug, turn=turn, detail=detail)
+              grant=grant, workspace_slug=workspace_slug, turn=turn, detail=f"{detail}; why={why}; query={asked}")
+    best = stats["best_meaning"]
+    logger.info("hcp search: person=%s actor=%s method=%s candidates=%d compared=%d returned=%d "
+                "best_meaning=%s floor=%.2f embed_ms=%s retrieval=%s",
+                person.pk, actor.id, minimization_method(), stats["candidates"], stats["compared"],
+                len(hits), f"{best:.2f}" if best is not None else "-", stats["floor"],
+                stats["embed_ms"] if stats["embed_ms"] is not None else "-", retrieval)
     return hits, wanted, retrieval
 
 
