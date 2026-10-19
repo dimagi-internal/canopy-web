@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { HcpAuditEvent, HcpGrant, PersonFactDetail } from '../../api/people'
-import { activeAccess, byProject, durationOf, eventSentence, groupByPlace, placeOf, reads, readsByEntry } from './words'
+import { activeAccess, byProject, durationOf, eventSentence, groupByPlace, placeOf, reads, readsByEntry, readWhy } from './words'
 
 const grant = (over: Partial<HcpGrant> & { channel?: string; agent?: string | null } = {}): HcpGrant => ({
   grantId: over.grantId ?? 'g1',
@@ -98,5 +98,16 @@ describe('memory words', () => {
       names,
     )
     expect(reads.get('urn:uuid:1')).toEqual({ count: 2, last: '2026-10-17T10:00:00Z', by: ['ACE'] })
+  })
+})
+
+describe('readWhy', () => {
+  it('reads the reason and the question a search recorded', () => {
+    expect(readWhy('retrievalId=urn:uuid:9; returned=2; why=meaning 0.71, words: bots; query=who runs the bots; and why?')).toEqual({
+      why: 'meaning 0.71, words: bots',
+      asked: 'who runs the bots; and why?',
+    })
+    expect(readWhy('retrievalId=urn:uuid:9; returned=1')).toBeNull()
+    expect(readWhy(null)).toBeNull()
   })
 })

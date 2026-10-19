@@ -339,6 +339,14 @@ HCP_VERTEX_PROJECT = env("HCP_VERTEX_PROJECT", default="")
 HCP_VERTEX_LOCATION = env("HCP_VERTEX_LOCATION", default="us-central1")
 HCP_VERTEX_WIF_AUDIENCE = env("HCP_VERTEX_WIF_AUDIENCE", default="")
 HCP_VERTEX_SERVICE_ACCOUNT = env("HCP_VERTEX_SERVICE_ACCOUNT", default="")
+# How a search scores an entry (apps/contacts/hcp.py `score`): 1 per word shared
+# with the question, HCP_PROJECT_BOOST when it is from the turn's project, and
+# HCP_SEMANTIC_WEIGHT x its closeness in meaning — counted only at or above
+# HCP_SEMANTIC_FLOOR. Try a value first with `manage.py hcp_explain`; tuning
+# guide in docs/architecture/hcp-service.md § Seeing and tuning search.
+HCP_SEMANTIC_FLOOR = env.float("HCP_SEMANTIC_FLOOR", default=0.60)
+HCP_SEMANTIC_WEIGHT = env.float("HCP_SEMANTIC_WEIGHT", default=4.0)
+HCP_PROJECT_BOOST = env.float("HCP_PROJECT_BOOST", default=2.0)
 
 # Whether LoginRequiredMiddleware enforces auth. Default on; toggle off during rollout.
 REQUIRE_AUTH = env.bool("REQUIRE_AUTH", default=True)
@@ -828,6 +836,14 @@ LOGGING = {
         # subscription pruned). Low volume, and the only way to answer "am I
         # getting notifications?" from the logs rather than from someone's phone.
         "apps.push": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # Memory search at INFO: one "hcp search:" line per search (how many
+        # entries were scored, how many returned, the closest meaning, the
+        # embedding call's time). Says nothing of what the entries say.
+        "apps.contacts.hcp": {
             "handlers": ["console"],
             "level": "INFO",
             "propagate": False,
