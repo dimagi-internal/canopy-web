@@ -7,6 +7,8 @@ because an agent's sync spans both code/skill improvement AND the work it
 delivered, and is richer than a feed card. canopy-web stores the metadata, summary, and
 self-grades for the feed; the body lives in the doc.
 """
+import uuid
+
 from django.conf import settings
 from django.db import models
 from django.db.models.functions import Lower
@@ -619,6 +621,80 @@ class AgentVaultWrap(models.Model):
 
     def __str__(self) -> str:
         return f"{self.agent_id}:kv{self.kv}:{self.kind}"
+
+
+class AgentVaultEndorsement(models.Model):
+    """A person's signature saying "this public key may read this agent" (zk-v1
+    §7; spec 2026-10-19-give-an-agent-a-secret-design.md §4).
+
+    The publicly checkable twin of a wrap: made in the endorser's browser when
+    they wrap the vault key to a recipient (or confirm it), and checked by a
+    WRITER who holds no vault key before sealing a `zks1` value. A writer seals
+    only to recipients endorsed by a key it already trusts, so canopy-web cannot
+    add a recipient of its own by inserting a key row. canopy-web checks the
+    signature on write (so junk is refused) and serves the rows as-is.
+
+    `target` is as in §6: a device's ECDH thumbprint, or a member's user id.
+    One endorsement per (agent, kind, target, endorser); re-endorsing replaces it."""
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="vault_endorsements")
+    kind = models.CharField(max_length=10)  # "device" | "member"
+    target = models.CharField(max_length=64)
+    #: RFC 7638 thumbprint of the recipient's public JWK, as signed.
+    key_jkt = models.CharField(max_length=64)
+    endorser = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    #: Thumbprint of the endorser's vault key when they signed.
+    endorser_jkt = models.CharField(max_length=64)
+    #: b64u IEEE P1363 r||s.
+    sig = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["agent_id", "kind", "target", "created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["agent", "kind", "target", "endorser"],
+                                    name="one_endorsement_per_target_per_endorser"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.agent_id}:{self.kind}:{self.target} by {self.endorser_id}"
+
+
+class AgentSecretRequest(models.Model):
+    """An agent asking for one of its declared secrets (spec
+    2026-10-19-give-an-agent-a-secret-design.md). A request carries NO value,
+    ever: it is what the chat's seal card answers. The answer is a `zks1` value
+    sealed in the answerer's browser, stored through `zk.set_values`.
+
+    Who may answer is `secret_requests.may_answer`: an agent admin (fill or
+    replace), or a person who can write to the session it was asked from (fill
+    a MISSING value only). Never an agent's own login."""
+
+    OPEN, FULFILLED, CANCELLED = "open", "fulfilled", "cancelled"
+    STATUS_CHOICES = [(OPEN, "Open"), (FULFILLED, "Fulfilled"), (CANCELLED, "Cancelled")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="secret_requests")
+    name = models.CharField(max_length=200)
+    reason = models.CharField(max_length=300, blank=True, default="")
+    #: The chat it was asked from (the turn's session), where the card renders.
+    session = models.ForeignKey("canopy_sessions.Session", on_delete=models.CASCADE, null=True, blank=True,
+                                related_name="secret_requests")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+                                     blank=True, related_name="+")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=OPEN)
+    fulfilled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+                                     blank=True, related_name="+")
+    fulfilled_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["agent", "name", "status"])]
+
+    def __str__(self) -> str:
+        return f"{self.agent_id}:{self.name} ({self.status})"
 
 
 class ZkGrantNotice(models.Model):

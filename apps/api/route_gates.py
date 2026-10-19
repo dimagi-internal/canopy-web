@@ -87,6 +87,10 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``page-viewer`` — an agent's OWN login that a person let see their memory page
   (``apps/contacts/viewers.py::page_of``): reads that person's page and nothing
   else; never a caller token or an HCP client. Anyone else is 404.
+* ``secret-request`` — ``apps/agents/secret_requests.may_answer``: someone who may
+  answer an agent's OPEN request for one of its declared secrets — an agent admin,
+  or a person who can write to the chat it was asked from (filling a MISSING value
+  only); never an agent's own login. Seals ciphertext; never reads.
 """
 from __future__ import annotations
 
@@ -99,6 +103,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
     "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "page-viewer",
+    "secret-request",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -142,6 +147,12 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_agent_zk_values": ("agent-admin",),  # browser: + step-up; token allowed
     "add_agent_zk_wraps": ("agent-admin",),  # browser: + step-up; token allowed
     "rotate_agent_zk": ("agent-admin",),  # browser: + step-up; token allowed
+    # give an agent a secret (apps/agents/secret_requests.py): no route returns a value
+    "request_agent_secret": ("agent-login", "agent-admin"),  # declared names only
+    "get_agent_secret_request": ("agent-login", "agent-admin", "session-acl"),  # status, never a value
+    "fulfil_agent_secret_request": ("agent-admin", "secret-request"),  # zks1 only; browser: + step-up
+    "get_agent_zk_recipients": ("agent-admin", "secret-request"),  # public keys + endorsements
+    "add_agent_zk_endorsements": ("agent-admin",),  # own vault key's signatures; browser: + step-up
     "set_slack_enabled": ("agent-admin",),
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
@@ -863,6 +874,7 @@ SETTINGS: frozenset[str] = frozenset({
     "set_device_binding", "approve_runner_device_key", "revoke_runner_device_key",
     "set_pat_rotation", "rotate_pat_now",
     "enable_agent_zk", "set_agent_zk_values", "add_agent_zk_wraps", "rotate_agent_zk",
+    "fulfil_agent_secret_request", "add_agent_zk_endorsements",
     "set_agent_github", "delete_agent_github", "set_agent_salesforce", "delete_agent_salesforce",
     "set_slack_enabled", "set_turn_mode", "set_sender_trust", "delete_sender_trust",
     # agents: routing (handlers report before/after — apps/harness/routing_audit.py)
@@ -945,6 +957,9 @@ NOT_SETTINGS: dict[str, str] = {
     # yes (passkey-gated). Recorded as activity (runner.invited / .approved); the
     # runner it lets pair is a new row, not a changed setting.
     "create_runner_invitation": "request", "approve_runner_invitation": "action",
+    # an agent asking a person for a declared secret: carries no value; the
+    # answer (fulfil_agent_secret_request) is the setting
+    "request_agent_secret": "request",
     # the invited box pairing: only what its creator approved (runner.paired activity)
     "pair_runner_by_role": "runner-protocol",
     "reply_mail_thread": "conversation", "send_mail": "conversation", "set_mail_thread_state": "conversation",

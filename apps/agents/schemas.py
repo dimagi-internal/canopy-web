@@ -1795,6 +1795,98 @@ class ZkValuesOut(StrictModel):
     names: list[str]
 
 
+class ZkRecipientOut(StrictModel):
+    """A principal a `zks1` value may be sealed to (zk-v1 §6). `target` is what
+    the seal binds: a device's ECDH thumbprint, or a member's user id."""
+
+    kind: Literal["device", "member"]
+    target: str
+    label: str = ""
+    public_jwk: dict[str, Any]
+    #: RFC 7638 thumbprint of `public_jwk` — what an endorsement signs.
+    key_jkt: str
+
+
+class ZkEndorsementOut(StrictModel):
+    """A person's §7 signature that `key_jkt` may read this agent."""
+
+    kind: Literal["device", "member"]
+    target: str
+    key_jkt: str
+    by: str
+    by_email: str = ""
+    by_jkt: str
+    by_public_jwk: dict[str, Any] | None = None
+    sig: str
+
+
+class ZkRecipientsOut(StrictModel):
+    """Everything a writer needs to seal a value without the vault key: who may
+    read the agent, and who vouched for each. Public keys and signatures only."""
+
+    agent: str
+    agent_id: str
+    kv: int
+    recipients: list[ZkRecipientOut]
+    endorsements: list[ZkEndorsementOut]
+    #: Declared names (runtime.yaml), and which of them hold a value now.
+    declared: list[str]
+    stored: list[str]
+
+
+class ZkEndorsementIn(StrictModel):
+    kind: Literal["device", "member"]
+    target: str = Field(max_length=64)
+    key_jkt: str = Field(max_length=64)
+    #: Thumbprint of the signer's vault key — must be the caller's own.
+    by_jkt: str = Field(max_length=64)
+    sig: str = Field(max_length=100)
+
+
+class ZkEndorsementsIn(StrictModel):
+    endorsements: list[ZkEndorsementIn]
+
+
+class ZkEndorsementsOut(StrictModel):
+    stored: int
+
+
+class SecretRequestIn(StrictModel):
+    #: A secret name the agent declares in runtime.yaml.
+    name: str = Field(max_length=200)
+    #: One line for the person answering: why the agent needs it.
+    reason: str = Field(default="", max_length=300)
+
+
+class SecretRequestOut(StrictModel):
+    """A request carries NO value — a name, a reason and a status."""
+
+    id: str
+    #: The same id, under the name the chat's seal card is found by.
+    secret_request_id: str
+    agent: str
+    name: str
+    reason: str = ""
+    #: open | fulfilled | cancelled | expired
+    status: str
+    #: Whether the agent holds any value for `name` now.
+    has_value: bool
+    session_id: str | None = None
+    created_at: datetime
+    expires_at: datetime
+    fulfilled_at: datetime | None = None
+    fulfilled_by_email: str = ""
+    #: What to tell the person, for the agent to relay.
+    message: str = ""
+
+
+class SecretRequestValueIn(StrictModel):
+    #: The agent's current vault-key version (409 `zk_kv_mismatch` otherwise).
+    kv: int
+    #: `zks1:` sealed in the answerer's browser (zk-v1 §6). Nothing else.
+    value_zk: str
+
+
 class BootstrapReportIn(StrictModel):
     """Posted BY a box at the end of its bootstrap pass, per agent.
 
