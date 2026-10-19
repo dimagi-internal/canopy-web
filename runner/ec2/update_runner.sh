@@ -47,7 +47,7 @@ set -uo pipefail
 
 RUNNER_HOME="${RUNNER_HOME:-/opt/canopy-runner}"
 ENV_FILE="${ENV_FILE:-$RUNNER_HOME/runner.env}"
-# Where a box that MOVED records its new address (cloud_runner.py maybe_rebase).
+# A box's manually set address (cloud_runner.py BASE_URL_OVERRIDE_FILE).
 # runner.env still names the stack parameter's address, which canopy-fetch-env
 # re-renders on every start, so this timer must prefer the override exactly as
 # the runner does — or it keeps calling the address canopy has left (it did,

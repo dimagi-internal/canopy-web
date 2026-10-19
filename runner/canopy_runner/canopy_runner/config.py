@@ -93,8 +93,7 @@ class Config:
     # emdash's projects, and wins over them on a name both hold; on a box with no
     # emdash it is the whole list. `canopy-runner projects add` writes it.
     project_paths: dict = field(default_factory=dict)
-    # Where this config was read from — not stored in it. The runner rewrites its
-    # own base_url here when canopy has moved (rebase.py).
+    # Where this config was read from — not stored in it.
     config_path: str = ""
 
     @classmethod

@@ -309,15 +309,10 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             # The ack carries the durable refresh request back, the same thing the
             # REST reply's RunnerOut.refresh_pending says — this is the cloud
             # runner's primary beat, so it is the path that has to answer.
-            from django.conf import settings
-
-            # And canopy's canonical address, so a runner on an address canopy
-            # has left can move itself (RunnerOut.canonical_base_url).
             # And the stops this runner owes (services.cancel_requested_turn_ids):
             # the `cancel` frame is a doorbell a reconnecting socket can miss; this
             # re-delivers it every beat until the turn is finished.
             await self.send_json({"type": "heartbeat.ack", "refresh_pending": bool(refresh),
-                                  "canonical_base_url": (settings.CANOPY_PUBLIC_BASE_URL or "").rstrip("/"),
                                   "cancel_turn_ids": cancel_ids})
         elif action == "start":
             ok = await self._start(content.get("turn_id"), content.get("session_id") or "")
