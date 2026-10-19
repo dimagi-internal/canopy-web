@@ -176,4 +176,5 @@ export function switchWorkspacePath(pathname: string, slug: string): string {
 export const LIST_FOR: Record<string, string> = {
   walkthrough: 'walkthroughs', storyboard: 'storyboards', narrative: 'storyboards',
   'ddd-release': 'ddd', threads: 'huddles', review: 'agents', share: 'agents',
+  'runner-invitations': 'agents',
 }
