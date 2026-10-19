@@ -38,6 +38,7 @@ ALLOW_INSTANCE_CHANGE=0
 ALLOW_DIRTY=0
 UNITS=""
 IN_PLACE=0
+REMOVE_UNITS=""
 APPROVE_MINUTES=30
 TOKEN_FILE="$HOME/.claude/canopy/workbench-token"
 
@@ -71,6 +72,9 @@ usage: ./up.sh [options]
                             user, runner and key on the box (RunnerUnits). The unit of the box's own
                             workspace keeps the box's name; the others are <name>-<unit>. ONE
                             invitation lists them all, so one passkey touch pairs every unit.
+  --remove-unit <id>        let this run drop unit <id>'s KMS key slot (repeatable). Without it a
+                            unit that already has a key is never dropped: its key would go, and
+                            every vault wrap to it with it. The key itself is RETAINED in KMS.
   --in-place                with --units on an EXISTING stack: leave the runner stack (and the
                             instance) alone — make the units' KMS keys and the invitation, and print
                             the one command that moves the running box to units (README: "Moving a
@@ -97,6 +101,7 @@ while [[ $# -gt 0 ]]; do
     --allow-dirty) ALLOW_DIRTY=1; shift ;;
     --units) UNITS="$2"; shift 2 ;;
     --in-place) IN_PLACE=1; shift ;;
+    --remove-unit) REMOVE_UNITS="${REMOVE_UNITS:+$REMOVE_UNITS,}$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 1 ;;
   esac
@@ -203,6 +208,14 @@ else
     die "stack $STACK pairs into '$CURRENT_WS', not '$WORKSPACE'. An existing box keeps its workspace (enroll it in another from the runner page). Nothing was changed."
   fi
   WORKSPACE="${CURRENT_WS:-$WORKSPACE}"
+  # Its units too: a parameter not passed falls back to its default (one unit) on
+  # every update, which would shrink a box of units on its next start.
+  if [[ -z "$UNITS" ]]; then
+    UNITS=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
+      --query "Stacks[0].Parameters[?ParameterKey=='RunnerUnits'].ParameterValue" --output text 2>/dev/null || true)
+    [[ "$UNITS" == "None" ]] && UNITS=""
+    [[ -n "$UNITS" ]] && echo ">> units: the stack's own ($UNITS)"
+  fi
 fi
 echo ">> workspace: ${WORKSPACE:-<the stack default>}"
 
@@ -235,9 +248,48 @@ fi
 # The units other than the box's own get KMS keys of their own (ecdh-kms.cfn.yaml
 # has four slots); the box's own unit keeps the key the box always had.
 EXTRA_UNIT_IDS="$(printf '%s' "$UNITS_JSON" | NAME="$NAME" python3 -c 'import json,os,sys; print(" ".join(u["id"] for u in json.load(sys.stdin) if u["name"] != os.environ["NAME"]))')"
-# shellcheck disable=SC2206
-EXTRA_UNITS_ARR=($EXTRA_UNIT_IDS)
-(( ${#EXTRA_UNITS_ARR[@]} <= 4 )) || die "at most four units besides the box's own (ecdh-kms.cfn.yaml has four key slots)"
+# Each unit is PINNED to its key slot: a slot's value names the KMS key a unit's
+# wraps are addressed to, so a re-run must never move a unit to another slot (that
+# swaps aliases) or blank one (that removes the key). Read the -ecdh stack's
+# current slots, keep every unit where it is, put new units in free slots only, and
+# drop a slot only for --remove-unit. Without --units every slot is kept as it is.
+EXISTING_SLOTS="$("${AWS[@]}" cloudformation describe-stacks --stack-name "${STACK}-ecdh" \
+  --query "Stacks[0].Parameters[?starts_with(ParameterKey, 'Unit')].[ParameterKey,ParameterValue]" \
+  --output text 2>/dev/null | tr '\t' '=' || true)"
+UNIT_SLOTS="$(EXISTING="$EXISTING_SLOTS" WANT="$EXTRA_UNIT_IDS" GIVEN="${UNITS:+1}" REMOVE="$REMOVE_UNITS" python3 - <<'PY'
+import os, sys
+existing = {}
+for line in os.environ["EXISTING"].split():
+    key, _, value = line.partition("=")
+    if key in {f"Unit{i}" for i in range(1, 5)} and value not in ("", "None"):
+        existing[key] = value
+slots = {f"Unit{i}": existing.get(f"Unit{i}", "") for i in range(1, 5)}
+remove = {r for r in os.environ["REMOVE"].split(",") if r}
+want = os.environ["WANT"].split()
+if remove & set(want):
+    sys.exit(f"!! --remove-unit {sorted(remove & set(want))} is also in --units")
+unknown = remove - set(slots.values())
+if unknown:
+    sys.exit(f"!! --remove-unit {sorted(unknown)}: no such unit key slot")
+if os.environ.get("GIVEN"):
+    dropped = [v for v in slots.values() if v and v not in want and v not in remove]
+    if dropped:
+        sys.exit(f"!! --units drops {dropped}, whose KMS key slot holds every vault wrap to it. "
+                 f"Name it again, or pass --remove-unit {dropped[0]} to drop it on purpose.")
+for k, v in slots.items():
+    if v in remove:
+        slots[k] = ""
+for unit in want:
+    if unit in slots.values():
+        continue                      # pinned where it already is
+    free = [k for k, v in slots.items() if not v]
+    if not free:
+        sys.exit("!! at most four units besides the box's own (ecdh-kms.cfn.yaml has four key slots)")
+    slots[free[0]] = unit
+print(" ".join(f"{k}={v}" for k, v in slots.items()))
+PY
+)" || exit 1
+echo ">> unit key slots: ${UNIT_SLOTS}"
 
 # Provenance of the bytes about to be published: the SAME quantity
 # deploy-labs.yml computes for the server's `expected_code_sha`, over the same
@@ -372,7 +424,8 @@ ROLE_NAME=$("${AWS[@]}" cloudformation describe-stack-resource --stack-name "$ST
 ROLE_ARN=$("${AWS[@]}" iam get-role --role-name "$ROLE_NAME" --query Role.Arn --output text)
 echo ">> ECDH key stack ${STACK}-ecdh (role $ROLE_NAME)"
 ECDH_PARAMS=("RunnerRoleArn=$ROLE_ARN")
-for i in 1 2 3 4; do ECDH_PARAMS+=("Unit$i=${EXTRA_UNITS_ARR[$((i - 1))]:-}"); done
+# shellcheck disable=SC2206 # UNIT_SLOTS is four Unit<i>=<id> words
+ECDH_PARAMS+=($UNIT_SLOTS)
 "${AWS[@]}" cloudformation deploy \
   --stack-name "${STACK}-ecdh" --template-file ecdh-kms.cfn.yaml \
   --parameter-overrides "${ECDH_PARAMS[@]}" --no-fail-on-empty-changeset
@@ -403,7 +456,11 @@ if [[ "$STACK_STATUS" != "NONE" ]]; then
     --query "Stacks[0].Parameters[?ParameterKey=='CanopyTokenSecret'].ParameterValue" --output text 2>/dev/null || true)
   [[ "$PAT_SECRET" == "None" ]] && PAT_SECRET=""
 fi
-if [[ -n "$UNITS" ]]; then
+if [[ -n "$UNITS" && "$IN_PLACE" == "1" ]]; then
+  # Moving a box to units ADOPTS its runner: its instance-role key becomes a unit
+  # key, which canopy-web does only under an approved invitation listing that unit.
+  echo ">> --in-place: an invitation listing every unit (adopting the box needs your approval)"
+elif [[ -n "$UNITS" ]]; then
   # A box of units: an invitation unless EVERY unit is already a live runner (a
   # replaced instance re-attaches each unit by the box's role and the unit's name).
   canopy GET /api/harness/runners/ > "$TMPC/runners.json"

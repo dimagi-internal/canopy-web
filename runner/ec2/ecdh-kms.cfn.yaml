@@ -51,6 +51,8 @@ Resources:
   # not derive: kms:DeriveSharedSecret is deliberately absent from its grant.
   EcdhKey:
     Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Sub '${AWS::StackName} zero-knowledge vault ECDH key (canopy-web#1550)'
       KeySpec: ECC_NIST_P256
@@ -100,6 +102,10 @@ Resources:
   Unit1Key:
     Type: AWS::KMS::Key
     Condition: HasUnit1
+    # A unit's agents' vault keys are wrapped to this key: removing the unit from the
+    # stack (or a slot change) must never schedule it for deletion.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Sub '${AWS::StackName} unit ${Unit1} zero-knowledge vault ECDH key'
       KeySpec: ECC_NIST_P256
@@ -150,6 +156,10 @@ Resources:
   Unit2Key:
     Type: AWS::KMS::Key
     Condition: HasUnit2
+    # A unit's agents' vault keys are wrapped to this key: removing the unit from the
+    # stack (or a slot change) must never schedule it for deletion.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Sub '${AWS::StackName} unit ${Unit2} zero-knowledge vault ECDH key'
       KeySpec: ECC_NIST_P256
@@ -200,6 +210,10 @@ Resources:
   Unit3Key:
     Type: AWS::KMS::Key
     Condition: HasUnit3
+    # A unit's agents' vault keys are wrapped to this key: removing the unit from the
+    # stack (or a slot change) must never schedule it for deletion.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Sub '${AWS::StackName} unit ${Unit3} zero-knowledge vault ECDH key'
       KeySpec: ECC_NIST_P256
@@ -250,6 +264,10 @@ Resources:
   Unit4Key:
     Type: AWS::KMS::Key
     Condition: HasUnit4
+    # A unit's agents' vault keys are wrapped to this key: removing the unit from the
+    # stack (or a slot change) must never schedule it for deletion.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Sub '${AWS::StackName} unit ${Unit4} zero-knowledge vault ECDH key'
       KeySpec: ECC_NIST_P256
