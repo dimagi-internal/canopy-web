@@ -119,6 +119,22 @@ def test_values_are_resolved_in_memory_and_cached_for_the_ttl(off_disk, monkeypa
     assert mod._turn_values("eva", now=1000.0 + mod._AGENT_ENV_TTL_SECONDS + 1) == {"CANOPY_WEB_PAT": "pat-2"}
 
 
+def test_resolve_extras_from_the_cli_are_used_instead_of_a_proofless_resolve(off_disk, monkeypatch):
+    """When `--print-json` carries the resolve's op key / vault / Salesforce loan (it
+    resolved with the unit's proof), the runner uses them and makes no resolve of
+    its own; without them it keeps its own resolve."""
+    mod, _ = off_disk
+    doc = {"agent": "eva", "source": "canopy-web", "values": {"X": "1"},
+           "op_sa_token": "ops_eva", "op_vault": "Agent-Eva", "salesforce_creds": "{\"u\": 1}"}
+    monkeypatch.setattr(mod.subprocess, "run",
+                        lambda argv, **kw: subprocess.CompletedProcess(argv, 0, json.dumps(doc), ""))
+    monkeypatch.setattr(mod, "_bearer", lambda min_life=0: "crt")
+    monkeypatch.setattr(mod, "_api", lambda *a, **k: pytest.fail("a proofless resolve was made"))
+    mod._turn_values("eva")
+    assert mod._agent_op_token("eva") == "ops_eva"
+    assert mod._AGENT_VAULT["eva"] == "Agent-Eva" and mod._AGENT_SF["eva"] == "{\"u\": 1}"
+
+
 def test_a_failed_refresh_keeps_the_last_good_values(off_disk, monkeypatch):
     mod, _ = off_disk
     mod._TURN_VALUES["eva"] = (0.0, {"CANOPY_WEB_PAT": "good"})
@@ -242,6 +258,64 @@ def test_a_root_that_is_not_ours_is_not_used(off_disk, monkeypatch, tmp_path):
     target.mkdir()
     root.symlink_to(target)
     assert mod._turn_env_root() is None
+
+
+def _finish(timeline):
+    return [b for p, b in timeline if p == f"/turns/{TID}/finish"]
+
+
+def test_a_turn_whose_env_cannot_be_resolved_fails_clearly_and_is_not_run(turn_box, monkeypatch):
+    """Every restart empties the cache; a resolve that fails then must not run the
+    turn with no agent env (its legacy file may be gone). It fails with the reason
+    and no session, which canopy-web re-queues as a non-attempt."""
+    mod, root, timeline = turn_box
+    monkeypatch.setattr(mod, "_turn_values", lambda slug, **k: None)
+    mod._TURN_ENV_ERRORS["eva"] = "op: could not reach 1Password"
+    monkeypatch.setattr(mod, "execute_prompt", lambda *a, **k: pytest.fail("ran without its credentials"))
+    mod._run_turn("rid", _turn())
+    [finish] = _finish(timeline)
+    assert finish == {"status": "failed",
+                      "result_note": "[runner] could not resolve eva's credentials: op: could not reach 1Password"}
+    assert "session_key" not in finish
+    assert list(root.iterdir()) == []
+
+
+def test_the_real_resolve_failure_reaches_the_note(off_disk, monkeypatch, tmp_path):
+    mod, _ = off_disk
+    monkeypatch.setattr(mod.subprocess, "run",
+                        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "op: vault not found"))
+    monkeypatch.setattr(mod, "_bearer", lambda min_life=0: "")
+    assert mod._turn_values("eva", now=1.0) is None
+    assert "op: vault not found" in mod._TURN_ENV_ERRORS["eva"]
+
+
+def test_a_turn_whose_env_file_cannot_be_written_fails_clearly(turn_box, monkeypatch):
+    mod, root, timeline = turn_box
+
+    def no_write(slug, turn_id):
+        mod._TURN_ENV_ERRORS[slug] = "[Errno 28] No space left on device"
+        return None
+
+    monkeypatch.setattr(mod, "write_turn_env", no_write)
+    monkeypatch.setattr(mod, "execute_prompt", lambda *a, **k: pytest.fail("ran without its env file"))
+    mod._run_turn("rid", _turn())
+    [finish] = _finish(timeline)
+    assert finish["status"] == "failed"
+    assert finish["result_note"].startswith("[runner] could not write eva's per-turn credentials file: ")
+    assert "No space left" in finish["result_note"]
+
+
+def test_legacy_files_stay_until_an_off_disk_turn_of_that_agent_succeeds(turn_box, monkeypatch, tmp_path):
+    mod, root, _ = turn_box
+    legacy = tmp_path / "home" / ".eva" / ".env"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("CANOPY_WEB_PAT=eva-pat\n")
+    monkeypatch.setattr(mod, "execute_prompt", lambda *a, **k: (False, "runner error: boom", ""))
+    mod._run_turn("rid", _turn())
+    assert legacy.exists() and not mod.off_disk_proven("eva")   # a failed turn proves nothing
+    monkeypatch.setattr(mod, "execute_prompt", lambda *a, **k: (True, "done", "sid"))
+    mod._run_turn("rid", _turn())
+    assert not legacy.exists() and mod.off_disk_proven("eva")
 
 
 def test_legacy_secret_files_are_removed(off_disk, tmp_path):

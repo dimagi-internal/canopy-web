@@ -2265,6 +2265,38 @@ def secrets_off_disk() -> bool:
 #: 5-minute TTL `cred sync` had, so a claim is not a 1Password read.
 _TURN_VALUES: dict = {}
 _TURN_VALUES_LOCK = threading.Lock()
+#: Fields of /credentials/resolve the runner needs beside the env values, taken
+#: from `canopy cred env --runner --print-json` when it includes them (top-level
+#: keys, same names as the resolve response). canopy 0.2.736 prints only
+#: {agent, source, values}; until it adds these, a unit's own (proofless) resolve
+#: stands, which a device-bound or zero-knowledge agent refuses.
+RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "salesforce_creds")
+#: slug -> why its env could not be had (the turn's failure note says it).
+_TURN_ENV_ERRORS: dict = {}
+
+
+def _off_disk_marker(slug: str) -> pathlib.Path:
+    return pathlib.Path.home() / ".canopy-runner" / "off-disk-ok" / slug
+
+
+def off_disk_proven(slug: str) -> bool:
+    """Has a turn of `slug` run successfully on its tmpfs env? Only then are its
+    legacy env files removed: until then they are the way back."""
+    return bool(slug) and _off_disk_marker(slug).exists()
+
+
+def note_off_disk_success(slug: str) -> None:
+    """The first good off-disk turn of `slug`: record it, then remove its legacy files."""
+    if not slug or off_disk_proven(slug):
+        return
+    try:
+        marker = _off_disk_marker(slug)
+        marker.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        marker.write_text(str(int(time.time())))
+    except OSError as exc:
+        _log(f"warn: {slug}: could not record its first off-disk turn ({exc}); legacy files kept")
+        return
+    remove_legacy_secret_files([slug])
 
 
 def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
@@ -2291,6 +2323,7 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
         if not isinstance(values, dict):
             raise RuntimeError(" ".join((res.stderr or "").split())[-300:] or f"exit {res.returncode}")
     except Exception as exc:  # noqa: BLE001
+        _TURN_ENV_ERRORS[slug] = " ".join(str(exc).split())[:300]
         _set_check(f"env.{slug}", "warn", f"could not resolve {slug}'s env in memory: {exc}")
         _log(f"warn: {slug}: could not resolve its env ({exc}); "
              f"{'using the last good values' if hit else 'the turn runs without it'}")
@@ -2299,6 +2332,17 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
                 _TURN_VALUES[slug] = (now, hit[1])
         return hit[1] if hit else None
     values = {str(k): str(v) for k, v in values.items()}
+    _TURN_ENV_ERRORS.pop(slug, None)
+    # The resolve-time extras, when the CLI hands them over (`RESOLVE_EXTRAS`): it
+    # resolved WITH this runner's device proof (and unwrapped a zero-knowledge
+    # vault), which a unit's own resolve cannot attach.
+    extras = {k: str(doc.get(k) or "") for k in RESOLVE_EXTRAS if k in doc}
+    if extras:
+        _AGENT_OP[slug] = (now, extras.get("op_sa_token", ""))
+        if "op_vault" in extras:
+            _AGENT_VAULT[slug] = extras["op_vault"].strip()
+        if "salesforce_creds" in extras:
+            _AGENT_SF[slug] = extras["salesforce_creds"]
     with _TURN_VALUES_LOCK:
         _TURN_VALUES[slug] = (now, values)
     _set_check(f"env.{slug}", "ok", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
@@ -2335,6 +2379,7 @@ def write_turn_env(slug: str, turn_id: str) -> pathlib.Path | None:
         os.chmod(path, 0o600)
         return path
     except OSError as exc:
+        _TURN_ENV_ERRORS[slug] = str(exc)[:300]
         _log(f"warn: {slug}: could not write this turn's env file ({exc})")
         remove_turn_env(turn_id)
         return None
@@ -4539,7 +4584,7 @@ def bootstrap_agent_fleet() -> None:
         if secrets_off_disk():
             # The bootstrap above wrote no secret files; the ones an older runner
             # wrote are only a liability now (spec §4).
-            remove_legacy_secret_files(_known_agent_slugs())
+            remove_legacy_secret_files([s for s in _known_agent_slugs() if off_disk_proven(s)])
     finally:
         # Stamped however it went: this is "a bootstrap was ATTEMPTED at", which
         # is what discharges a refresh request. The checks say how it went.
@@ -7677,13 +7722,29 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         slug = _turn_agent_slug(turn)
+        off_disk_env = False
         if not confined and slug and secrets_off_disk():
             # This turn's secrets, on tmpfs, for this turn only (spec §4). Removed in
-            # the `finally` below however the turn ends, and swept at start.
+            # the `finally` below however the turn ends, and swept at start. A turn
+            # whose env cannot be had is NOT run without one: it fails with the
+            # reason and no session, which the server re-queues (a sessionless
+            # failure is a non-attempt, bounded by MAX_SESSIONLESS_RETRIES).
+            if _turn_values(slug) is None:
+                note = (f"[runner] could not resolve {slug}'s credentials: "
+                        f"{_TURN_ENV_ERRORS.get(slug) or 'no answer from the canopy CLI'}")
+                _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+                _log(f"turn {turn_id[:8]} NOT run — {note}")
+                return
             env_path = write_turn_env(slug, str(turn_id))
-            if env_path is not None:
-                per_turn["CANOPY_AGENT_ENV_FILE"] = str(env_path)
-                _TURN_ENV.extra["CANOPY_AGENT_ENV_FILE"] = str(env_path)
+            if env_path is None:
+                note = (f"[runner] could not write {slug}'s per-turn credentials file: "
+                        f"{_TURN_ENV_ERRORS.get(slug) or 'no tmpfs root'}")
+                _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+                _log(f"turn {turn_id[:8]} NOT run — {note}")
+                return
+            per_turn["CANOPY_AGENT_ENV_FILE"] = str(env_path)
+            _TURN_ENV.extra["CANOPY_AGENT_ENV_FILE"] = str(env_path)
+            off_disk_env = True
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(slug))
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
@@ -7802,6 +7863,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # never re-run blind as "sessionless" (services.finish_turn).
             finish_body["session_key"] = cli_session_id
         fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", finish_body)
+        if ok and off_disk_env:
+            # Proven: this agent works off disk, so its legacy files can go.
+            note_off_disk_success(slug)
         if fstatus == 200:
             _log(f"finished turn {turn_id[:8]}: {finish}")
         else:
