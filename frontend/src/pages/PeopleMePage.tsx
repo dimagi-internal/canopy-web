@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { AlertTriangle, BookOpen, Check, ChevronDown, Download, Eye, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { AlertTriangle, BookOpen, Check, ChevronDown, Download, Eye, Pencil, Trash2, X } from 'lucide-react'
+
+import { useParams } from 'react-router-dom'
 
 import {
   MY_CATEGORIES,
@@ -7,19 +9,22 @@ import {
   correctMyEntry,
   exportMine,
   getMyPerson,
+  getPersonPage,
   listMyAudit,
   listMyCollections,
   listMyGrants,
+  listPersonPageAudit,
+  listPersonPageSearches,
   retractFact,
   revokeMyGrant,
   setMyAgentMemory,
 } from '../api/people'
-import type { HcpAuditEvent, HcpGrant, MemoryCollections, PersonFactDetail, PersonMe } from '../api/people'
+import type { HcpAuditEvent, HcpGrant, MemoryCollections, MemoryViewers, PersonFactDetail, PersonMe } from '../api/people'
 import { listWorkspaces } from '../api/workspaces'
 import type { WorkspaceOut } from '../api/workspaces'
 import { AgentReadsPicker, CollectionsPanel } from './memory/Collections'
 import { PageViewers } from './memory/PageViewers'
-import { SearchHistory } from './memory/SearchHistory'
+import { SearchHistory, SearchPreview } from './memory/SearchHistory'
 import {
   activeAccess,
   agentName,
@@ -31,11 +36,8 @@ import {
   groupByPlace,
   placeOf,
   reads,
-  readsByEntry,
-  readWhy,
   relTime,
   type AgentAccess,
-  type EntryReads,
   type Place,
 } from './memory/words'
 
@@ -68,13 +70,27 @@ function sourceOf(f: PersonFactDetail): { mine: boolean; text: string } {
   return { mine: false, text: `${f.asserted_by || 'an agent'}${when ? ` · ${when}` : ''}` }
 }
 
-/** "What agents know about me" — three questions, in the order a person asks them:
- *  what is remembered, who can read it, and what happened to it. Every entry can
- *  be corrected or removed in place; every agent's access can be taken back; past
- *  access and settings stay one click away rather than in the way. Fleet brain v1
- *  (canopy#804), on HCP v1 (hcp_api.py). */
-export function PeopleMePage() {
+/** "Someone's page, as they let you see it" — /people/:personId/page, the href
+ *  canopy hands an agent a person let in (apps/contacts/viewers.py). The same page,
+ *  read-only, fed by the viewer routes. */
+export function PersonPageView() {
+  const { personId } = useParams()
+  const id = Number(personId)
+  if (!Number.isInteger(id) || id <= 0) return <div className="p-6 text-muted-foreground">There’s nothing at this address.</div>
+  return <PeopleMePage viewing={id} />
+}
+
+/** "What agents know about me" — in the order a person asks: what is remembered
+ *  and how much it was used, which conversations used it, who can read it, and
+ *  what changed. Every entry can be corrected or removed in place; every agent's
+ *  access can be taken back; settings and the ranking tools stay below, out of the
+ *  way. With `viewing`, the page of that person as they let this agent see it:
+ *  read-only. Fleet brain v1 (canopy#804), on HCP v1 (hcp_api.py). */
+export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
+  const readOnly = viewing !== undefined
   const [me, setMe] = useState<PersonMe | null>(null)
+  const [viewers, setViewers] = useState<MemoryViewers | null>(null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [grants, setGrants] = useState<HcpGrant[]>([])
   const [audit, setAudit] = useState<HcpAuditEvent[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -99,6 +115,22 @@ export function PeopleMePage() {
   const [busyCollections, setBusyCollections] = useState(false)
 
   const load = useCallback(() => {
+    if (viewing !== undefined) {
+      getPersonPage(viewing)
+        .then((page) => {
+          setMe(page.me)
+          setGrants(page.grants as unknown as HcpGrant[])
+          setCollections(page.collections)
+        })
+        .catch((e: Error) => setFatal(e.message))
+      listPersonPageAudit(viewing)
+        .then((page) => {
+          setAudit(page.events)
+          setNextCursor(page.nextCursor)
+        })
+        .catch((e: Error) => setError(`Couldn't load what happened: ${e.message}`))
+      return
+    }
     // Collections and your workspaces only feed controls; if either fails the
     // rest of the page still stands.
     listMyCollections()
@@ -119,7 +151,7 @@ export function PeopleMePage() {
         setNextCursor(page.nextCursor)
       })
       .catch((e: Error) => setError(`Couldn't load what happened: ${e.message}`))
-  }, [])
+  }, [viewing])
 
   useEffect(load, [load])
 
@@ -129,13 +161,10 @@ export function PeopleMePage() {
     for (const g of grants) if (g.canopy.agent) m.set(g.canopy.agent, agentName(g))
     return m
   }, [grants])
-  const used = useMemo(() => readsByEntry(audit, names), [audit, names])
   const access = useMemo(() => activeAccess(grants), [grants])
+  // Reads are shown per conversation above; this log keeps what changed and who looked.
+  const changes = useMemo(() => audit.filter((e) => e.eventType !== 'preference.read'), [audit])
   const past = useMemo(() => grants.filter((g) => g.status !== 'active'), [grants])
-  const lastRead = useMemo(
-    () => audit.find((e) => e.eventType === 'preference.read' && e.actorType !== 'user'),
-    [audit],
-  )
 
   const run = async (key: (v: string | number | null) => void, id: string | number, work: () => Promise<unknown>) => {
     key(id)
@@ -213,13 +242,13 @@ export function PeopleMePage() {
   }
 
   const moreActivity = async () => {
-    if (activityShown < audit.length) {
+    if (activityShown < changes.length) {
       setActivityShown((n) => n + 20)
       return
     }
     if (!nextCursor) return
     try {
-      const page = await listMyAudit(nextCursor)
+      const page = viewing !== undefined ? await listPersonPageAudit(viewing, nextCursor) : await listMyAudit(nextCursor)
       setAudit((prev) => [...prev, ...page.events])
       setNextCursor(page.nextCursor)
       setActivityShown((n) => n + 20)
@@ -248,7 +277,9 @@ export function PeopleMePage() {
   // Memory is on only for the people settings.HCP_PEOPLE names, for now. Outside
   // that: nothing here at all — unless canopy already holds some of yours, which
   // stays yours to see, download and delete ("paused").
+  // Read-only for a viewer: every control that changes something is hidden.
   const enabled = me.memory_enabled !== false
+  const canEdit = enabled && !readOnly
   if (!enabled && !me.memory_paused) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-8">
@@ -263,12 +294,15 @@ export function PeopleMePage() {
   const settled = allFacts.filter((f) => f.status !== 'conflicted')
   const shown = settled.filter((f) => source === 'all' || sourceOf(f).mine === (source === 'you'))
   const { orgs, unplaced } = groupByPlace(shown)
-  const activity = audit.slice(0, activityShown)
-  const statementOf = new Map(allFacts.filter((f) => f.entry_id).map((f) => [f.entry_id as string, f.statement]))
+  const activity = changes.slice(0, activityShown)
+  const usedIn = Math.max(0, ...settled.map((f) => f.used?.conversations ?? 0))
+  const lastUsed = settled.map((f) => f.used?.last_at).filter(Boolean).sort().pop() ?? null
+  const firstName = me.display_name.split(' ')[0] || me.display_name
+  const lookers = viewers?.viewers.map((v) => v.name) ?? []
 
   const factRow = (f: PersonFactDetail) => {
     const src = sourceOf(f)
-    const r: EntryReads | undefined = f.entry_id ? used.get(f.entry_id) : undefined
+    const u = f.used
     const isEditing = editing?.id === f.id
     const hidden = lens !== null && !reads(lens, f.workspace ?? null)
     return (
@@ -307,16 +341,18 @@ export function PeopleMePage() {
         ) : (
           <div className="flex items-start gap-2">
             <p className={`min-w-0 flex-1 text-sm text-foreground ${busy === f.id ? 'opacity-50' : ''}`}>{f.statement}</p>
-            <div className="flex shrink-0 gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
-              {enabled && f.entry_id && (
-                <IconButton label="Correct" onClick={() => setEditing({ id: f.id, text: f.statement })} disabled={busy === f.id}>
-                  <Pencil className="h-3.5 w-3.5" />
+            {!readOnly && (
+              <div className="flex shrink-0 gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
+                {enabled && f.entry_id && (
+                  <IconButton label="Correct" onClick={() => setEditing({ id: f.id, text: f.statement })} disabled={busy === f.id}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </IconButton>
+                )}
+                <IconButton label="Forget" danger onClick={() => onRetract(f)} disabled={busy === f.id}>
+                  <Trash2 className="h-3.5 w-3.5" />
                 </IconButton>
-              )}
-              <IconButton label="Forget" danger onClick={() => onRetract(f)} disabled={busy === f.id}>
-                <Trash2 className="h-3.5 w-3.5" />
-              </IconButton>
-            </div>
+              </div>
+            )}
           </div>
         )}
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -327,12 +363,15 @@ export function PeopleMePage() {
             {src.mine ? '' : 'learned by '}
             {src.text}
           </span>
-          {r ? (
-            <span className="inline-flex items-center gap-1" title={`Read ${r.count}× · last ${new Date(r.last).toLocaleString()}`}>
+          {u && u.conversations > 0 && u.last_at ? (
+            <span className="inline-flex items-center gap-1" title={`Last given to an agent ${new Date(u.last_at).toLocaleString()}`}>
               <Eye className="h-3 w-3" />
-              {r.by.join(', ')} used this {r.count === 1 ? 'once' : `${r.count}×`}
+              Given to {(u.by ?? []).map((s) => names.get(s) ?? s.toUpperCase()).join(', ')} in{' '}
+              {u.conversations === 1 ? '1 conversation' : `${u.conversations} conversations`} · last {relTime(u.last_at)}
             </span>
-          ) : null}
+          ) : (
+            <span>Not used yet</span>
+          )}
         </div>
       </li>
     )
@@ -350,30 +389,30 @@ export function PeopleMePage() {
         </div>
       )}
       {/* --- the answer, before the detail ------------------------------------------ */}
-      <header className="space-y-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">{enabled ? 'Your memory' : 'Your memory (paused)'}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {enabled
-              ? 'What agents remember about you, who can read it, and what they did with it. Only you see this page.'
-              : "Memory isn't on for you yet, so no agent learns from you or uses any of this. You can still download it, remove anything, or take back access."}
-          </p>
-        </div>
-        <div className="grid grid-cols-3 gap-2 sm:gap-3">
-          <Stat href="#remembered" value={String(settled.length)} label={settled.length === 1 ? 'thing remembered' : 'things remembered'} />
-          <Stat
-            href="#who"
-            value={String(access.length)}
-            label={access.length === 1 ? 'agent can read it' : 'agents can read it'}
-            hint={access.map((a) => a.name).join(', ') || 'none right now'}
-          />
-          <Stat
-            href="#activity"
-            value={lastRead ? relTime(lastRead.timestamp) : '—'}
-            label="last read"
-            hint={lastRead ? `by ${eventSentence(lastRead, names).who}` : 'never'}
-          />
-        </div>
+      <header className="space-y-3">
+        <h1 className="text-2xl font-semibold text-foreground">
+          {readOnly ? `What agents know about ${firstName}` : 'What agents know about you'}
+          {!enabled && <span className="ml-2 text-base font-normal text-muted-foreground">(paused)</span>}
+        </h1>
+        {/* The answer in one sentence, before any detail. */}
+        <p className="text-base text-foreground">
+          {!enabled
+            ? "Memory isn't on for you yet, so no agent learns from you or uses any of this."
+            : settled.length === 0
+              ? 'Agents haven’t remembered anything yet.'
+              : `${settled.length === 1 ? 'One thing' : `${settled.length} things`} remembered. ${
+                  access.length === 0
+                    ? 'No agent can read them right now.'
+                    : `${access.map((a) => a.name).join(' and ')} can read ${settled.length === 1 ? 'it' : 'them'}`
+                }${access.length > 0 && usedIn > 0 && lastUsed ? `, and ${usedIn === 1 ? 'was' : 'has been'} given ${settled.length === 1 ? 'it' : 'them'} in ${usedIn === 1 ? '1 conversation' : `${usedIn} conversations`}, most recently ${relTime(lastUsed)}.` : access.length > 0 ? '.' : ''}`}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {readOnly
+            ? `Read-only — ${firstName} lets this agent see this page, and each look is logged where they can see it.`
+            : lookers.length
+              ? `You see this page, and so can ${lookers.join(', ')} (read-only).`
+              : 'Only you see this page.'}
+        </p>
       </header>
 
       {conflicted.length > 0 && (
@@ -393,8 +432,10 @@ export function PeopleMePage() {
       <section id="remembered" aria-label="What agents know" className="scroll-mt-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">What agents know about you</h2>
-            <p className="text-sm text-muted-foreground">Fix anything that's wrong — agents are told the corrected version.</p>
+            <h2 className="text-lg font-semibold text-foreground">What’s remembered</h2>
+            <p className="text-sm text-muted-foreground">
+              {readOnly ? 'Each entry, who wrote it, and how often agents were given it.' : 'Fix anything that’s wrong — agents are told the corrected version.'}
+            </p>
           </div>
           <Segmented
             value={source}
@@ -416,7 +457,6 @@ export function PeopleMePage() {
             )}
           </div>
         )}
-        {enabled && <Composer onAdd={onAdd} workspaces={workspaces} preferred={orgs[0]?.places[0]?.workspace ?? null} />}
         <div className="mt-4 space-y-4">
           {orgs.map((o) => (
             <div key={o.org} className="rounded-xl border border-border bg-card px-4 pt-3 pb-2">
@@ -430,7 +470,6 @@ export function PeopleMePage() {
                 <div key={p.workspace} className="mt-3">
                   <WorkspaceHeading name={p.name} readers={access.filter((a) => reads(a, p.workspace))} />
                   <ProjectGroups facts={p.facts} row={factRow} />
-                  {enabled && <AddLine onAdd={onAdd} workspace={p.workspace} label={`Add to ${p.name}`} />}
                 </div>
               ))}
             </div>
@@ -442,10 +481,17 @@ export function PeopleMePage() {
             <p className="text-sm text-muted-foreground">Nothing is remembered about you.</p>
           )}
         </div>
+        {canEdit && <Composer onAdd={onAdd} workspaces={workspaces} preferred={orgs[0]?.places[0]?.workspace ?? null} />}
       </section>
 
-      {/* --- how agents find it -------------------------------------------------- */}
-      {enabled && allFacts.length > 0 && <SearchHistory />}
+      {/* --- which conversations used it ------------------------------------------ */}
+      {enabled && allFacts.length > 0 && (
+        <SearchHistory
+          names={names}
+          canPreview={!readOnly}
+          fetchPage={viewing !== undefined ? (before) => listPersonPageSearches(viewing, before) : undefined}
+        />
+      )}
 
       {/* --- who can read it ----------------------------------------------------- */}
       <section id="who" aria-label="Who can read it" className="scroll-mt-6">
@@ -480,13 +526,15 @@ export function PeopleMePage() {
                         {a.kept ? 'Until you take it back' : durationOf(a.grants[0])} · in {a.places.join(', ')}
                       </div>
                     </div>
-                    <button
-                      className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
-                      disabled={busyGrant === a.key}
-                      onClick={() => onRevoke(a)}
-                    >
-                      {busyGrant === a.key ? 'Taking back…' : 'Take back'}
-                    </button>
+                    {!readOnly && (
+                      <button
+                        className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                        disabled={busyGrant === a.key}
+                        onClick={() => onRevoke(a)}
+                      >
+                        {busyGrant === a.key ? 'Taking back…' : 'Take back'}
+                      </button>
+                    )}
                   </div>
                   {reach && (
                     <div className="text-xs">
@@ -511,7 +559,7 @@ export function PeopleMePage() {
                     // Only an agent you keep allowing can be pointed at a collection;
                     // a one-conversation grant reads its organisation and ends.
                     const kept = a.grants.find((g) => g.grantType === 'persistent' && g.canopy.agent)
-                    return kept ? (
+                    return kept && !readOnly ? (
                       <AgentReadsPicker grant={kept} data={collections} disabled={busyCollections} act={actOnCollections} />
                     ) : null
                   })()}
@@ -546,16 +594,12 @@ export function PeopleMePage() {
             )}
           </div>
         )}
-        {enabled && <CollectionsPanel data={collections} busy={busyCollections} act={actOnCollections} />}
-        <div className="mt-3">
-          <PageViewers />
-        </div>
       </section>
 
-      {/* --- what happened ------------------------------------------------------- */}
-      <section id="activity" aria-label="What happened" className="scroll-mt-6">
-        <h2 className="text-lg font-semibold text-foreground">What happened</h2>
-        <p className="text-sm text-muted-foreground">Every time your memory was read or changed, newest first.</p>
+      {/* --- what changed -------------------------------------------------------- */}
+      <section id="activity" aria-label="Changes and access" className="scroll-mt-6">
+        <h2 className="text-lg font-semibold text-foreground">Changes and access</h2>
+        <p className="text-sm text-muted-foreground">What was added, corrected or forgotten, and who was let in — newest first.</p>
         {activity.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">Nothing yet.</p>
         ) : (
@@ -563,8 +607,6 @@ export function PeopleMePage() {
             {activity.map((e, i) => {
               const day = dayLabel(e.timestamp)
               const s = eventSentence(e, names)
-              const read = e.eventType === 'preference.read' ? readWhy(e.detail) : null
-              const entry = e.entryId ? statementOf.get(e.entryId) : undefined
               return (
                 <li key={e.eventId}>
                   {(i === 0 || dayLabel(activity[i - 1].timestamp) !== day) && (
@@ -578,13 +620,6 @@ export function PeopleMePage() {
                       <span className="font-medium text-foreground">{s.who}</span>{' '}
                       <span className="text-foreground">{s.did}</span>
                       {s.why ? <span className="block text-xs text-muted-foreground">to {s.why.replace(/^to\s+/i, '')}</span> : null}
-                      {read && (
-                        <span className="mt-1 block rounded-md bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
-                          {read.asked && <span className="block">Asked: “{read.asked}”</span>}
-                          {entry && <span className="block text-foreground">Got: {entry}</span>}
-                          <span className="block">Why: {read.why}</span>
-                        </span>
-                      )}
                     </span>
                   </div>
                 </li>
@@ -592,7 +627,7 @@ export function PeopleMePage() {
             })}
           </ol>
         )}
-        {(activityShown < audit.length || nextCursor) && (
+        {(activityShown < changes.length || nextCursor) && (
           <button className="mt-3 text-sm text-primary hover:underline" onClick={moreActivity}>
             Show more
           </button>
@@ -600,8 +635,18 @@ export function PeopleMePage() {
       </section>
 
       {/* --- the controls you rarely need ---------------------------------------- */}
-      <section aria-label="Settings" className="space-y-3">
-        <h2 className="text-lg font-semibold text-foreground">Settings</h2>
+      {readOnly ? (
+        <section aria-label="Settings" className="space-y-1 text-sm text-muted-foreground">
+          <h2 className="text-lg font-semibold text-foreground">Settings</h2>
+          {MEMORY_SWITCHES.map((sw) => (
+            <p key={sw.key}>
+              <span className="text-foreground">{sw.label}:</span> {me.agent_memory[sw.key].available ? 'on' : 'off'}
+            </p>
+          ))}
+        </section>
+      ) : (
+      <section aria-label="Settings and sharing" className="space-y-3">
+        <h2 className="text-lg font-semibold text-foreground">Settings and sharing</h2>
         {enabled && (
           <div className="divide-y divide-border rounded-xl border border-border">
             {MEMORY_SWITCHES.map((sw) => {
@@ -636,6 +681,7 @@ export function PeopleMePage() {
             })}
           </div>
         )}
+        <PageViewers onChange={setViewers} />
         <button
           className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
           onClick={onExport}
@@ -643,18 +689,27 @@ export function PeopleMePage() {
           <Download className="h-4 w-4" />
           Download everything canopy holds about you
         </button>
+        {enabled && (
+          <div>
+            <button
+              className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+              aria-expanded={showAdvanced}
+              onClick={() => setShowAdvanced((v) => !v)}
+            >
+              <ChevronDown className={`h-4 w-4 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+              Advanced: limit what an agent reads, and test how agents search
+            </button>
+            {showAdvanced && (
+              <div className="mt-2 space-y-4">
+                <CollectionsPanel data={collections} busy={busyCollections} act={actOnCollections} />
+                <SearchPreview />
+              </div>
+            )}
+          </div>
+        )}
       </section>
+      )}
     </div>
-  )
-}
-
-function Stat({ href, value, label, hint }: { href: string; value: string; label: string; hint?: string }) {
-  return (
-    <a href={href} className="block min-w-0 rounded-xl border border-border bg-card px-3 py-2.5 transition-colors hover:border-primary/40 sm:px-4 sm:py-3">
-      <div className="text-lg font-semibold text-foreground sm:text-2xl">{value}</div>
-      <div className="text-xs text-muted-foreground sm:text-sm">{label}</div>
-      {hint ? <div className="mt-0.5 truncate text-xs text-muted-foreground/80">{hint}</div> : null}
-    </a>
   )
 }
 
@@ -895,56 +950,6 @@ function Composer({ onAdd, workspaces, preferred }: { onAdd: OnAdd; workspaces: 
           {saving ? 'Saving…' : 'Remember'}
         </button>
       </div>
-    </form>
-  )
-}
-
-/** "+ Add to <place>" at the foot of a place: opens into one line, saves on Enter. */
-function AddLine({ onAdd, workspace, label }: { onAdd: OnAdd; workspace: string | null; label: string }) {
-  const [open, setOpen] = useState(false)
-  const [text, setText] = useState('')
-  const [category, setCategory] = useState<string>(MY_CATEGORIES[0].value)
-  const [saving, setSaving] = useState(false)
-  if (!open) {
-    return (
-      <button
-        className="mt-auto inline-flex items-center gap-1 self-start rounded py-2 text-xs text-muted-foreground hover:text-primary"
-        onClick={() => setOpen(true)}
-      >
-        <Plus className="h-3.5 w-3.5" /> {label}
-      </button>
-    )
-  }
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!text.trim()) return
-    setSaving(true)
-    if (await onAdd(category, text.trim(), workspace)) {
-      setText('')
-      setOpen(false)
-    }
-    setSaving(false)
-  }
-  return (
-    <form onSubmit={submit} className="mt-auto flex flex-col gap-2 py-2 sm:flex-row sm:items-center">
-      <CategorySelect value={category} onChange={setCategory} />
-      <input
-        autoFocus
-        aria-label={label}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
-        maxLength={500}
-        placeholder="One sentence, e.g. I prefer a short answer with links."
-        className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-      />
-      <button
-        type="submit"
-        disabled={saving || !text.trim()}
-        className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
-      >
-        {saving ? 'Saving…' : 'Save'}
-      </button>
     </form>
   )
 }
