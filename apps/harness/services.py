@@ -1778,8 +1778,24 @@ def _reported_project(s) -> str:
     return getattr(s, "project", "") or ""
 
 
+#: `_agent_for_project` / `session_home`: the project names an agent OUTSIDE the
+#: runner's tenant. Such a session is not filed anywhere (see `session_home`).
+FOREIGN_AGENT = object()
+
+
+def _session_tenant(runner) -> set[str]:
+    """`runner_tenant_slugs(runner)`, read once per runner object: the report
+    sweep and the missing-sessions paths ask `session_home` per session."""
+    cached = getattr(runner, "_session_tenant_cache", None)
+    if cached is None:
+        cached = runner_tenant_slugs(runner)
+        runner._session_tenant_cache = cached
+    return cached
+
+
 def _agent_for_project(project: str, runner):
-    """The agent a reported emdash PROJECT belongs to, or None.
+    """The agent a reported emdash PROJECT belongs to; None when it names no
+    agent; `FOREIGN_AGENT` when it names an agent outside the runner's tenant.
 
     The wholesale sweep (`POST /runners/{id}/sessions`) reports every open task a
     runner can see and carries NO agent, so canopy had nothing to attribute the
@@ -1796,19 +1812,23 @@ def _agent_for_project(project: str, runner):
     project naming an agent is that agent's work, and the tenant follows from the
     agent rather than from whichever machine happened to run it.
 
-    Returns None for a real repo checkout that is nobody's agent (canopy-web,
+    None for a real repo checkout that is nobody's agent (canopy-web,
     connect-labs). Those keep the runner's workspace, which is right for them.
 
-    Only agents inside the RUNNER's tenant (`runner_tenant_slugs`) count: a slug
-    is global, so a box in one tree that happens to have a checkout named after
-    another tree's agent must not file its session into that other tree.
+    An agent outside the RUNNER's tenant (`runner_tenant_slugs`) is neither the
+    owner nor "nobody's": the box has that agent's work and no business filing it
+    in either tree — not in the agent's (the box does not serve it), and not in
+    its own as a plain project, where its members would read another tree's
+    agent's transcript. `Agent.slug` is globally unique, so one row answers.
     """
     from apps.agents.models import Agent
 
     if not project:
         return None
-    return (Agent.objects.select_related("workspace")
-            .filter(slug=project, workspace_id__in=runner_tenant_slugs(runner)).first())
+    agent = Agent.objects.select_related("workspace").filter(slug=project).first()
+    if agent is None:
+        return None
+    return agent if agent.workspace_id in _session_tenant(runner) else FOREIGN_AGENT
 
 
 def session_home(runner, project: str, fallback=None):
@@ -1816,14 +1836,20 @@ def session_home(runner, project: str, fallback=None):
     under: the agent the project names, in its workspace (`_agent_for_project`);
     else the project, in the runner owner's default (`canopy_sessions.filing`),
     else `fallback` (the runner's workspace). The one rule, for the report sweep and
-    a missing session sent up from Health (`events.usage.send_up`)."""
+    a missing session sent up from Health (`events.usage.send_up`).
+
+    None when the project names an agent outside the runner's tenant: such a
+    session is not filed at all (callers skip it)."""
     owner = _agent_for_project(project, runner)
+    if owner is FOREIGN_AGENT:
+        return None
     if owner is not None:
         # A session targets an agent XOR a project (chat_session_not_agent_and_project).
         return owner, "", owner.workspace
     from apps.canopy_sessions.filing import filing_workspace
 
-    return None, project, filing_workspace(runner, fallback if fallback is not None else runner.workspace)
+    return None, project, filing_workspace(runner, fallback if fallback is not None else runner.workspace,
+                                           tenant=_session_tenant(runner))
 
 
 def fire_sessions_closed(session_ids: list) -> None:
@@ -1852,7 +1878,7 @@ def _ask_identity(menu):
 
 def replace_reported_sessions(
     runner: Runner, workspace, sessions: list, archived: list[str] | None = None,
-    complete: bool = False,
+    complete: bool = False, skipped: list | None = None,
 ) -> int:
     """Upsert a durable Session(origin=runner) + RunnerBinding per reported
     session. Sessions that fell off the report keep their Session row but have
@@ -1922,6 +1948,9 @@ def replace_reported_sessions(
     # an unchanged menu would re-render the buttons under a thumb.
     menu_changes: list[tuple] = []
     new_asks: list[tuple] = []
+    # Tasks of another tree's agent (`session_home` → None): never filed. Their
+    # names go to `skipped` when the caller passed a list; each project is logged once.
+    foreign_logged: set = set()
     # Where a NEW session is filed is `session_home` — consulted only when one is
     # created (the steady-state report creates nothing), never for an EXISTING
     # session, which is what keeps a session someone moved where they put it.
@@ -1985,7 +2014,18 @@ def replace_reported_sessions(
                 # not the runner. A runner is a machine serving several agents
                 # across tenants, so "whose work is this" is a question its own
                 # workspace cannot answer.
-                owner, filed_project, home = session_home(runner, project, workspace)
+                filed = session_home(runner, project, workspace)
+                if filed is None:
+                    # Another tree's agent's work: filed nowhere, and said once.
+                    if skipped is not None:
+                        skipped.append(s.emdash_task)
+                    if project not in foreign_logged:
+                        foreign_logged.add(project)
+                        logger.warning(
+                            "runner %s reported a session for agent %r outside its tenant; "
+                            "not filed", runner.name, project)
+                    continue
+                owner, filed_project, home = filed
                 session = Session.objects.create(
                     agent=owner,
                     # A session targets an agent XOR a project

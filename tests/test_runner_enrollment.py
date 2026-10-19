@@ -343,3 +343,14 @@ def test_runner_out_reports_roots(family):
     seen = {r["name"]: r for r in _client(ada).get("/api/harness/runners/").json()}
     assert seen["jj-mbp"]["roots"] == ["dimagi"]
     assert seen["jj-mbp"]["spans_trees"] is True
+
+
+def test_re_enrolling_an_existing_enrollment_of_a_spanning_cloud_box_is_a_no_op(family):
+    """A cloud box enrolled in two trees before the rule may re-send what it has."""
+    from apps.harness.models import RunnerEnrollment
+
+    jj = family["jj"]
+    box = _box(jj, family["dimagi"], kind=Runner.CLOUD)
+    RunnerEnrollment.objects.create(runner=box, workspace=family["marshellis"])
+    assert services.enroll_runner(box, "marshellis").workspace_id == "marshellis"
+    assert services.enroll_runner(box, "dimagi").workspace_id == "dimagi"

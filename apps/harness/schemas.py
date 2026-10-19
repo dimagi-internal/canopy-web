@@ -216,9 +216,11 @@ class RunnerOut(Schema):
     flags: list[str] = []
 
     # The roots of the workspace trees the box is enrolled in, as far as the
-    # caller may know them: the fleet list keeps only the ones the caller is a
-    # member of (`list_runners`); every other route is the owner's. A cloud runner
-    # names one tree (`runners._other_tree`); a laptop may name several.
+    # caller may know them: all of them for the box's owner, else only the trees
+    # the caller is a member somewhere in. Stamped per (caller, runner) by
+    # `api._with_roots`, which every route returning a RunnerOut calls; an
+    # unstamped row serves [] (the heartbeat reply, which only the box reads).
+    # A cloud runner names one tree (`runners._other_tree`); a laptop may name several.
     roots: list[str] = []
     # Enrolled in more than one tree, whether or not the caller sees them all: on
     # that machine nothing separates the trees from each other.
@@ -226,8 +228,7 @@ class RunnerOut(Schema):
 
     @staticmethod
     def resolve_roots(obj) -> list[str]:
-        shown = getattr(obj, "visible_roots", None)
-        return list(shown) if shown is not None else _enrolled_roots(obj)
+        return list(getattr(obj, "visible_roots", None) or [])
 
     @staticmethod
     def resolve_spans_trees(obj) -> bool:
@@ -597,6 +598,9 @@ class SessionReportOut(Schema):
     from the other's advertised schema."""
 
     count: int
+    # Reported tasks that were not filed: their project names an agent outside
+    # this runner's tenant (`services.session_home`).
+    skipped: int = 0
 
 
 class ParentIn(Schema):

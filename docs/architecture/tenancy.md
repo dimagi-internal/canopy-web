@@ -81,8 +81,10 @@ the rule, its claim/schedule parity test and the routing hint:
   → [runners.md § Isolation units](runners.md#isolation-units-one-runner-per-unit-on-a-cloud-box)
 - **Sessions a runner reports are filed inside its tenant.** A new agent-less
   session names its agent only among agents in `runner_tenant_slugs(runner)`
-  (`harness.services._agent_for_project`: `Agent.slug` is global, so a box in one
-  tree must not file into another's agent), and the owner's default session
+  (`harness.services._agent_for_project`: `Agent.slug` is global). A session whose
+  project names an agent OUTSIDE that tenant is filed nowhere — not in the agent's
+  tree, and not in the runner's as a plain project (`session_home` → None; the
+  report's `skipped` counts it, missing-sessions omits it) — and the owner's default session
   workspace applies only when it is in that tenant, else the runner's workspace
   (`canopy_sessions.filing.filing_workspace`). Tests: `tests/test_session_filing.py`.
 

@@ -50,14 +50,18 @@ key is approved and by pairing by role, never from a role the box merely names.
 
 `routing.unit_refusal(runner, slug)` — part of `cannot_serve` — refuses:
 
-- **"<runner> is the agent unit for S"**: an agent unit asked about any agent but S;
+- **"<runner> is the agent unit for S"**: an agent unit asked about any agent but S —
+  and, for a whole turn (`turn_unit_refusal`), any turn that does not act as S: a
+  repo turn, an agentless chat. Its `runner_target_q` targets only S's turns and chats;
 - **"S has its own unit on this machine (<runner>)"**: any other live runner with the
   same `machine_id` as the agent unit for S.
 
 Both are restrictions a box declares on itself. Unlike the rest of `cannot_serve`,
-a pin does not get past it: `claim_next_turn` asks it above the pin (a pinned turn
-would otherwise hand the box the agent's secrets through
-`device_keys.runner_serves_agent`), `runner_routes_agent` and `agents_routed_to`
+neither a pin nor a session binding gets past it: `claim_next_turn` and the
+coverage check (`_refined_allows`, so `turn_reach` agrees) ask it above both (a
+pinned or bound turn would otherwise hand the box the agent's secrets through
+`device_keys.runner_serves_agent`), `unclaimable_queued_turns` reports such a turn
+with the unit's reason, `runner_routes_agent` and `agents_routed_to`
 ask it, `inherited_orders` drops such a runner for that agent, and the routing
 writes (`agents/api.py::_runners_for_routing`) refuse it with 422 and the reason.
 The topology lists a box's units together (`machine`, `unit` on each runner row).

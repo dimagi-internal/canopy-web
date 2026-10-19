@@ -146,8 +146,11 @@ def send_up(runner, claude_sessions: list[str]) -> list[str]:
     out = []
     pending = {r["claude_session"]: r for r in missing(runner) if r["claude_session"] in set(claude_sessions)}
     for cs, row in pending.items():
+        filed = session_home(runner, row["repo"])
+        if filed is None:
+            continue  # another tree's agent's work: never filed (session_home)
         with transaction.atomic():
-            agent, project, workspace = session_home(runner, row["repo"])
+            agent, project, workspace = filed
             session = Session.objects.create(
                 workspace=workspace, agent=agent, project=project, origin=Session.ORIGIN_RUNNER,
                 created_by=getattr(runner, "owner", None), title=row["title"] or cs)

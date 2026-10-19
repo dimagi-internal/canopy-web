@@ -233,3 +233,141 @@ def test_approving_an_aws_iam_key_records_the_machine(box):
     resp = c.post(f"/api/runner-device-keys/{key.pk}/approve")
     assert resp.status_code == 200, resp.content
     assert Runner.objects.get(pk=r.pk).machine_id == ROLE
+
+
+# ---- an agent unit takes nothing that does not act as its agent ------------------------
+def _chat(box, agent=None, bound_to=None, key="c"):
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    sess = Session.objects.create(agent=agent, workspace=box["dimagi"], created_by=box["jj"])
+    if bound_to is not None:
+        RunnerBinding.objects.create(session=sess, runner=bound_to, session_key=f"k-{key}")
+    t = Turn.objects.create(chat_session=sess, origin=Turn.ORIGIN_API, idempotency_key=key,
+                            routing=Turn.ANY, prompt="hi")
+    Turn.objects.filter(pk=t.pk).update(created_at=timezone.now() - dt.timedelta(hours=1))
+    return t
+
+
+def _session_capable(*runners):
+    for r in runners:
+        Runner.objects.filter(pk=r.pk).update(
+            capabilities={**r.capabilities, "sessions": True, "projects": ["canopy-web"]})
+        r.refresh_from_db()
+
+
+def test_an_agent_unit_takes_no_repo_turn_and_no_agentless_chat(box):
+    eva_unit = box["eva_unit"]
+    _session_capable(eva_unit)
+    repo = Turn.objects.create(project="canopy-web", workspace=box["dimagi"], origin=Turn.ORIGIN_API,
+                               idempotency_key="repo", routing=Turn.ANY, prompt="fix it")
+    Turn.objects.filter(pk=repo.pk).update(created_at=timezone.now() - dt.timedelta(hours=1))
+    chat = _chat(box)
+    pinned = Turn.objects.create(project="other-repo", workspace=box["dimagi"],
+                                 origin=Turn.ORIGIN_API, idempotency_key="pinned",
+                                 routing=Turn.ANY, prompt="drill", pinned_runner=eva_unit)
+    Turn.objects.filter(pk=pinned.pk).update(created_at=timezone.now() - dt.timedelta(hours=1))
+    assert services.claim_next_turn(eva_unit) is None
+    rows = {r["turn_id"]: r for r in services.unclaimable_queued_turns(box["jj"])}
+    for t in (repo, chat, pinned):
+        assert "agent unit for eva" in rows[str(t.pk)]["reason"], rows[str(t.pk)]
+    # Its own agent's chat it takes.
+    own = _chat(box, agent=box["eva"], key="eva-chat")
+    RunnerAssignment.objects.create(agent=box["eva"], runner=eva_unit, rank=0)
+    assert services.claim_next_turn(eva_unit).pk == own.pk
+
+
+def test_a_tree_unit_still_takes_agentless_chats(box):
+    tree = box["tree"]
+    _session_capable(tree)
+    chat = _chat(box)
+    assert services.claim_next_turn(tree).pk == chat.pk
+
+
+def test_a_bound_chat_the_unit_refuses_reads_the_same_everywhere(box):
+    """The binding short-circuit must not report a chat as live that the claim
+    refuses: an ace chat bound to the eva unit, an eva chat bound to the tree."""
+    from apps.harness.claim import turn_reach
+
+    tree, eva_unit = box["tree"], box["eva_unit"]
+    _session_capable(tree, eva_unit)
+    ace_chat = _chat(box, agent=box["ace"], bound_to=eva_unit, key="ace")
+    eva_chat = _chat(box, agent=box["eva"], bound_to=tree, key="eva")
+    assert services.claim_next_turn(eva_unit) is None
+    assert services.claim_next_turn(tree) is None
+    assert turn_reach(Turn.objects.get(pk=ace_chat.pk)).kind != "live"
+    assert turn_reach(Turn.objects.get(pk=eva_chat.pk)).kind != "live"
+    rows = {r["turn_id"]: r for r in services.unclaimable_queued_turns(box["jj"])}
+    assert "agent unit for eva" in rows[str(ace_chat.pk)]["reason"]
+    assert "eva has its own unit on this machine" in rows[str(eva_chat.pk)]["reason"]
+
+
+# ---- what a caller learns of a runner's trees -------------------------------------------
+def test_every_runner_route_stamps_roots_for_its_caller(box):
+    """A non-owner runner admin learns only the trees they are a member in —
+    from the fleet list and from every other route that returns the runner."""
+    from apps.harness.models import RunnerAdmin
+
+    jj, dimagi = box["jj"], box["dimagi"]
+    connect = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj,
+                                       parent=dimagi)
+    family = Workspace.objects.create(slug="marshellis", display_name="M", created_by=jj)
+    WorkspaceMembership.objects.create(workspace=family, user=jj, role=WorkspaceMembership.OWNER)
+    laptop = _runner(jj, "jj-mbp", dimagi, kind=Runner.EMDASH)
+    services.enroll_runner(laptop, "marshellis")
+    ada = get_user_model().objects.create_user(username="ada", email="ada@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=connect, user=ada, role=WorkspaceMembership.EDITOR)
+    RunnerAdmin.objects.create(runner=laptop, user=ada, granted_by=jj)
+    c = _client(ada)
+
+    flags = c.put(f"/api/harness/runners/{laptop.pk}/flags", {"flags": []},
+                  content_type="application/json")
+    assert flags.status_code == 200, flags.content
+    # A member of only `connect` sees `dimagi`, the root of its tree — never the family's.
+    assert flags.json()["roots"] == ["dimagi"] and flags.json()["spans_trees"] is True
+    listed = {r["name"]: r for r in c.get("/api/harness/runners/").json()}
+    assert listed["jj-mbp"]["roots"] == ["dimagi"]
+    own = _client(jj).put(f"/api/harness/runners/{laptop.pk}/flags", {"flags": []},
+                          content_type="application/json").json()
+    assert own["roots"] == ["dimagi", "marshellis"]
+
+
+def test_the_fleet_list_reads_roots_in_constant_queries(box, monkeypatch):
+    """Roots for the whole list come from one tree walk: what they cost the list
+    does not grow with the number of runners, or of trees they serve."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from apps.harness import api as harness_api
+
+    jj, dimagi = box["jj"], box["dimagi"]
+    family = Workspace.objects.create(slug="marshellis", display_name="M", created_by=jj)
+    WorkspaceMembership.objects.create(workspace=family, user=jj, role=WorkspaceMembership.OWNER)
+    c = _client(jj)
+    real = harness_api._with_roots
+
+    def no_roots(request, runners):
+        for r in ([runners] if isinstance(runners, Runner) else runners):
+            r._enrolled_roots_cache = []
+        return runners
+
+    def cost():
+        """Queries the list spends on roots: with them, minus without them."""
+        out = []
+        for stamp in (real, no_roots):
+            monkeypatch.setattr(harness_api, "_with_roots", stamp)
+            with CaptureQueriesContext(connection) as ctx:
+                assert c.get("/api/harness/runners/").status_code == 200
+            out.append(len(ctx.captured_queries))
+        monkeypatch.setattr(harness_api, "_with_roots", real)
+        return out[0] - out[1]
+
+    cost()  # warm the session
+    few = cost()
+    for i in range(5):
+        laptop = _runner(jj, f"laptop-{i}", dimagi, kind=Runner.EMDASH)
+        services.enroll_runner(laptop, "marshellis")
+    many = cost()
+    assert many == few, (few, many)
+    rows = {r["name"]: r for r in c.get("/api/harness/runners/").json()}
+    assert rows["laptop-0"]["roots"] == ["dimagi", "marshellis"]
+    assert rows["laptop-0"]["spans_trees"] is True

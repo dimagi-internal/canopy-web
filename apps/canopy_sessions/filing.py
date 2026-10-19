@@ -110,12 +110,12 @@ def set_default(user, slug: str | None) -> Workspace | None:
     return ws
 
 
-def filing_workspace(runner, fallback):
+def filing_workspace(runner, fallback, *, tenant=None):
     """Where a NEW agent-less session reported by `runner` is filed: its owner's
     default while it still applies AND lies inside the runner's tenant
     (`runner_tenant_slugs`), else `fallback` (the runner's workspace). A person's
     default is one workspace for all their boxes; a box in another tree must not
-    file its sessions there."""
+    file its sessions there. `tenant` is that set when the caller already has it."""
     from apps.harness.routing import runner_tenant_slugs
 
     owner = getattr(runner, "owner", None)
@@ -123,7 +123,8 @@ def filing_workspace(runner, fallback):
         return fallback
     try:
         default = effective_default(owner)
-        if default is not None and default.slug in runner_tenant_slugs(runner):
+        if default is not None and default.slug in (
+                tenant if tenant is not None else runner_tenant_slugs(runner)):
             return default
         return fallback
     except Exception:  # noqa: BLE001 — a preference must never cost a liveness report

@@ -602,7 +602,7 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
         owner=request.user,
         workspace_id=ws_slug,
     )
-    return Status(201, runner)
+    return Status(201, _with_roots(request, runner))
 
 
 @router.post("/runners/{runner_id}/credential", response=RunnerCredentialStatusOut,
@@ -1126,7 +1126,7 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
     # controls that then 404.
     out.can_manage = out.owner_id in (request.user.id, None)
     out.can_administer = services.can_administer_runner(request.user, out)
-    return out
+    return _with_roots(request, out)
 
 
 @router.put("/runners/{runner_id}/engine", response=RunnerOut,
@@ -1163,7 +1163,7 @@ def set_runner_engine(request: HttpRequest, runner_id: uuid.UUID, payload: Runne
     out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
     out.can_manage = out.owner_id in (request.user.id, None)
     out.can_administer = services.can_administer_runner(request.user, out)
-    return out
+    return _with_roots(request, out)
 
 
 def _open_sessions_by_runner(runner_ids) -> dict:
@@ -1180,6 +1180,32 @@ def _open_sessions_by_runner(runner_ids) -> dict:
         .annotate(n=models.Count("pk", distinct=True))
     )
     return {row["runner_binding__runner_id"]: row["n"] for row in rows}
+
+
+def _with_roots(request: HttpRequest, runners):
+    """Stamp each RunnerOut row's `roots` for this caller — the ONE helper every
+    route returning a RunnerOut passes its runner(s) through (the schema serves
+    [] for an unstamped row, so a route that forgets reveals nothing).
+
+    The owner sees every tree the box is enrolled in. Anyone else sees a tree's
+    root only when they are a member somewhere in that tree (a member of only
+    `connect` sees `dimagi` for a box serving `connect`). One tree walk for all
+    the rows; it also fills the cache `spans_trees` reads."""
+    from .routing import enrolled_slugs
+
+    rows = [runners] if isinstance(runners, Runner) else list(runners)
+    if not rows:
+        return runners
+    enrolled = {r.pk: enrolled_slugs(r) for r in rows}
+    mine = wsvc.user_workspace_slugs(request.user)
+    roots = wsvc.tree_roots(set().union(*enrolled.values()) | mine)
+    my_roots = {roots[s] for s in mine}
+    for r in rows:
+        all_roots = sorted({roots[s] for s in enrolled[r.pk]})
+        r._enrolled_roots_cache = all_roots
+        r.visible_roots = (all_roots if r.owner_id == request.user.id
+                           else [root for root in all_roots if root in my_roots])
+    return runners
 
 
 @router.get("/runners/", response=list[RunnerOut], summary="List the fleet I can see")
@@ -1217,11 +1243,7 @@ def list_runners(request: HttpRequest):
         # its own flag rather than overloading can_manage — the credentials block
         # and the drill panel are gated by different routes.
         r.can_administer = services.can_administer_runner(request.user, r)
-        # The trees it serves, as far as this caller may know them — the rule
-        # `_sees_enrollment` applies to its enrollment list.
-        r.visible_roots = [root for root in services.enrolled_roots(r)
-                           if _sees_enrollment(request, r, root)]
-    return rows
+    return _with_roots(request, rows)
 
 
 @router.patch("/runners/{runner_id}", response=RunnerOut)
@@ -1265,7 +1287,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             caps[key] = runner.capabilities[key]
     runner.capabilities = caps
     runner.save(update_fields=["capabilities"])
-    return runner
+    return _with_roots(request, runner)
 
 
 @router.post("/runners/{runner_id}/retire", response=RetireOut)
@@ -1350,7 +1372,7 @@ def unretire_runner(request: HttpRequest, runner_id: uuid.UUID):
     if runner.status == Runner.RETIRED:
         runner.status = Runner.DISCONNECTED
         runner.save(update_fields=["status"])
-    return runner
+    return _with_roots(request, runner)
 
 
 @router.post("/runners/{runner_id}/pause", response=RunnerOut)
@@ -1396,7 +1418,7 @@ def pause_runner(request: HttpRequest, runner_id: uuid.UUID, payload: PauseIn):
     """
     runner = _runner_or_404(request, runner_id)
     services.pause(runner, note=payload.note or "", until=payload.until, by=request.user)
-    return runner
+    return _with_roots(request, runner)
 
 
 @router.post("/runners/{runner_id}/unpause", response=RunnerOut)
@@ -1414,7 +1436,7 @@ def unpause_runner(request: HttpRequest, runner_id: uuid.UUID):
     """
     runner = _runner_or_404(request, runner_id)
     services.unpause(runner)
-    return runner
+    return _with_roots(request, runner)
 
 
 def _may_release_fleet_hold(user) -> bool:
@@ -1526,7 +1548,7 @@ def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
     # The administer tier, not the act-as tier: this changes what the box runs
     # on, the same class of operation as setting its credentials.
     runner = _runner_admin_or_404(request, runner_id)
-    return services.request_refresh(runner)
+    return _with_roots(request, services.request_refresh(runner))
 
 
 @router.get("/runners/{runner_id}/usage-scope", response=UsageScopeOut)
@@ -1590,7 +1612,10 @@ def _missing_sessions(runner) -> MissingSessionsOut:
 
     rows = []
     for r in usage.missing(runner):
-        agent, _project, ws = session_home(runner, r["repo"])
+        filed = session_home(runner, r["repo"])
+        if filed is None:
+            continue  # another tree's agent's work: this box never files it
+        agent, _project, ws = filed
         rows.append({**r, "files_in": getattr(ws, "slug", "") or "", "agent": agent.slug if agent else ""})
     return MissingSessionsOut(
         runner=runner.name, usage_reported_at=runner.usage_reported_at,
@@ -1730,10 +1755,12 @@ def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportS
     ws = runner.workspace
     if ws is None:
         raise HttpError(404, "runner has no workspace")
+    skipped: list = []
     count = services.replace_reported_sessions(
-        runner, ws, payload.sessions, payload.archived, complete=payload.complete
+        runner, ws, payload.sessions, payload.archived, complete=payload.complete,
+        skipped=skipped,
     )
-    return SessionReportOut(count=count)
+    return SessionReportOut(count=count, skipped=len(skipped))
 
 
 @router.get("/runners/{runner_id}/streams", response=StreamSyncOut)

@@ -190,6 +190,18 @@ def unit_refusal(runner: Runner, slug: str) -> str:
     return ""
 
 
+def turn_unit_refusal(runner: Runner, turn) -> str:
+    """`unit_refusal` for a whole turn: an agent unit refuses every turn that does
+    not run AS its agent — another agent's, and one with no acting agent at all
+    (a repo turn, an agentless chat) — and any runner refuses a turn whose agent
+    has its own unit elsewhere on its machine. "" when it takes the turn."""
+    agent = turn.acting_agent
+    own = _agent_unit_slug(runner.unit())
+    if own is not None and (agent is None or agent.slug != own):
+        return f"{runner.name} is the agent unit for {own or '(no agent named)'}"
+    return unit_refusal(runner, agent.slug) if agent is not None else ""
+
+
 def agents_following_runner(runner: Runner, among=None) -> set:
     """Agents that reach `runner` through an INHERITED order: no order of their
     own, and the order they follow lists it as usable for them. The claim's
@@ -780,7 +792,8 @@ def blocking_turn(turn: Turn) -> Turn | None:
     return None
 
 
-def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q:
+def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None,
+                    *, ignore_unit: bool = False) -> Q:
     """Which queued turns this runner can TARGET under directed routing (spec
     2026-07-24): agents via RunnerAssignment (the one source of truth —
     capabilities.agents no longer routes agent turns), repos via
@@ -838,6 +851,12 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q
                 | Q(chat_session__runner_binding__runner=runner)
             )
         )
+    own = None if ignore_unit else _agent_unit_slug(runner.unit())
+    if own is not None:
+        # An agent unit targets its one agent's turns and chats, nothing else —
+        # no repo turns, no agentless chats (`turn_unit_refusal`). `ignore_unit`
+        # is the unclaimable report's counterfactual only.
+        q &= Q(agent__slug=own) | Q(chat_session__agent__slug=own)
     return q
 
 

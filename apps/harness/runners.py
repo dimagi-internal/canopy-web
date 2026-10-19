@@ -368,6 +368,11 @@ def enroll_runner(runner, workspace_slug: str, *, by=None):
         raise EnrollmentRefused(
             f"this runner's owner is not an editor (or above) in '{workspace_slug}', "
             "so the runner cannot serve it")
+    existing = RunnerEnrollment.objects.filter(runner=runner, workspace_id=workspace_slug).first()
+    if existing is not None:
+        # Idempotent, before the one-tree rule: a cloud box enrolled across two
+        # trees before the rule may still re-send an enrollment it already has.
+        return existing
     other_tree = _other_tree(runner, workspace_slug)
     if other_tree:
         raise EnrollmentRefused(
