@@ -198,14 +198,41 @@ def decide_for_turn(turn, agent, requested: str | None = None) -> Decision:
 
 def may_pin_runner(user, agent, runner) -> bool:
     """May `user` pin `agent`'s turn to `runner`? An agent admin may pin any box
-    that can hold the agent; anyone else only a box they administer (its owner,
-    or a `RunnerAdmin`). Either way the box must be able to hold the agent
-    (`services.runner_may_hold_agent`) — that is checked separately, and first."""
+    that can hold the agent; the agent's OWN login may pin a box its admins
+    already route it to (`_routed_to`); anyone else only a box they administer
+    (its owner, or a `RunnerAdmin`). Either way the box must be able to hold the
+    agent (`services.runner_may_hold_agent`) — that is checked separately, and
+    first."""
     if agent.is_admin(user):
+        return True
+    if agent.user_id is not None and agent.user_id == getattr(user, "pk", None) \
+            and _routed_to(agent, runner):
         return True
     from apps.harness.services import can_administer_runner
 
     return can_administer_runner(user, runner)
+
+
+def _routed_to(agent, runner) -> bool:
+    """Is `runner` one its admins already route `agent`'s own work to? It must be
+    an enabled box in the agent's default order (its own, or the workspace's it
+    follows), and a STRICT rule for the agent's own address, when there is one,
+    must name it too. Pinning such a box adds no reach the routing did not
+    already give: an agent sending its next chat to a box it is ordered onto
+    (hal handing off acedimagi → haldimagi, 2026-10-19) is a choice among boxes
+    its admins chose, while a box outside the order, or one a strict rule keeps
+    its work off, stays the admins' or the box's administrators' to pick."""
+    from apps.harness import actors, routing
+
+    defaults, rules = routing.load_assignment_rows([agent.pk])
+    if runner.pk not in {r.pk for _rank, r in defaults.get(agent.pk, [])}:
+        return False
+    own = actors.normalize_actor(getattr(agent.user, "email", ""))
+    for (_agent_id, _source, actor), rows in rules.items():
+        if own and actor == own and any(row.strict for row in rows) \
+                and runner.pk not in {row.runner_id for row in rows}:
+            return False
+    return True
 
 
 def roster(agent) -> list[dict]:

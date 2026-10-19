@@ -169,7 +169,12 @@ Asked in this order; the first row that matches decides.
   must also be able to hold the agent at all (`runner_may_hold_agent`: its owner is
   one of the agent's admins) — and that holds for a chat WITH the agent as much
   as for its own turns. Pinning is for an **agent admin OR a runner admin**,
-  consistent with actor routes, which require the runner admin.
+  consistent with actor routes, which require the runner admin — and for the
+  **agent's own login** (`Agent.user`) on a box its admins already route it to:
+  an enabled box in its default order (its own or the workspace's it follows)
+  that no strict rule for the agent's own address keeps its work off
+  (`access._routed_to`). That lets an agent hand its next chat to another box it
+  runs on without adding reach its routing did not already give.
 * A **project chat** (no agent, only a repo) has no agent admins, so choosing its
   box — `runner_id` at creation, a placement on send, `/place`, a move — is for a
   **runner admin** of that box only
