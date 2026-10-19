@@ -29,6 +29,11 @@ pgvector, kept in step with the published KB file.
   audit logs (`RankService.Rank`, DATA_READ) are off unless the project turns
   them on, and land in our own project. Needs `discoveryengine.googleapis.com`
   enabled and `discoveryengine.rankingConfigs.rank` on the service account.
+  Calls go to the US multi-region (`us-discoveryengine.googleapis.com`,
+  `locations/us`; `KB_RERANK_LOCATION`): "Agent Search on Gemini Enterprise Agent
+  Platform" is on Google's HIPAA BAA list with the footnote "Use regional APIs and
+  resource locations for PHI", which `global` is not. Same scores and latency as
+  `global` (checked 2026-10-19, 50 passages: ~0.45 s both).
   Measured on the GiveWell KB's 312 golden questions (hybrid 0.7 top 50):
   `semantic-ranker-default@latest` MRR 0.508 -> 0.588, R@10 237 -> 259/312, the
   hand-written 30 not worse; `semantic-ranker-fast@latest` 0.545, worse on
@@ -157,13 +162,24 @@ def semantic_for(project) -> Callable | None:
 # --- rerank -----------------------------------------------------------------------
 
 
+def _rank_location() -> str:
+    return (getattr(settings, "KB_RERANK_LOCATION", "") or "us").strip()
+
+
+def _rank_host() -> str:
+    """`global` is the plain host; a multi-region (`us`, `eu`) has its own, which is
+    what Google's BAA asks for with PHI ("use regional APIs and resource locations")."""
+    loc = _rank_location()
+    return "discoveryengine.googleapis.com" if loc == "global" else f"{loc}-discoveryengine.googleapis.com"
+
+
 def _rank(query: str, docs: list[dict]) -> list[int] | None:
     """Vertex AI ranking API (Discovery Engine `rank`) over the candidates: a model
     that reads the question and each passage together, which neither the BM25 index
     nor a passage vector computed before the question existed can do. Indices into
     `docs`, best first; None on any failure (the fused order stands)."""
-    url = ("https://discoveryengine.googleapis.com/v1/projects/"
-           f"{settings.HCP_VERTEX_PROJECT}/locations/global/rankingConfigs/default_ranking_config:rank")
+    url = (f"https://{_rank_host()}/v1/projects/"
+           f"{settings.HCP_VERTEX_PROJECT}/locations/{_rank_location()}/rankingConfigs/default_ranking_config:rank")
     records = [{"id": str(i), "title": d["title"][:500], "content": d["text"]} for i, d in enumerate(docs)]
     try:
         resp = embeddings._vertex_session().post(
