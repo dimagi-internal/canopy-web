@@ -177,6 +177,38 @@ class MemoryCollectionIn(StrictModel):
                                            "workspace:<slug>, personal.")
 
 
+class SearchPreviewIn(StrictModel):
+    query: str
+    floor: float | None = Field(default=None, ge=0, le=1,
+                                description="Try this cutoff instead of HCP_SEMANTIC_FLOOR.")
+    limit: int = Field(default=8, ge=1, le=20)
+
+
+class SearchPreviewEntryOut(StrictModel):
+    entry_id: str | None
+    statement: str
+    kind: str
+    project: str | None
+    meaning: float | None = Field(description="Cosine similarity to the question, 0-1; null when not compared.")
+    words: list[str] = Field(description="Words shared with the question.")
+    on_project: bool
+    total: float
+    position: int | None = Field(description="1-based place in what an agent would get; null if left out.")
+    because: str
+
+
+class SearchPreviewOut(StrictModel):
+    method: str = Field(description="hybrid (words and meaning) or lexical (words only).")
+    model: str
+    floor: float = Field(description="The cutoff this preview used.")
+    live_floor: float = Field(description="HCP_SEMANTIC_FLOOR — what agents' searches use.")
+    weight: float
+    project_boost: float
+    limit: int
+    embed_ms: int | None
+    entries: list[SearchPreviewEntryOut]
+
+
 class MemoryCollectionUpdateIn(StrictModel):
     name: str | None = None
     sources: list[str] | None = None

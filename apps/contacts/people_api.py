@@ -48,6 +48,8 @@ from .people_schemas import (
     PersonOut,
     PersonProjectsOut,
     PersonRefOut,
+    SearchPreviewIn,
+    SearchPreviewOut,
 )
 
 router = Router(auth=session_auth, tags=["people"])
@@ -521,6 +523,44 @@ def list_my_memory_collections(request: HttpRequest) -> dict:
     when read — which agents use each, and the contexts you can choose from.
     Only you see these."""
     return _collections(_the_person_themself(request))
+
+
+@router.post("/me/memory-search-preview/", response=SearchPreviewOut,
+             summary="Try a search over your memory, and see why each entry would come back")
+def preview_my_memory_search(request: HttpRequest, payload: SearchPreviewIn) -> dict:
+    """Scores every entry you hold against a question the way an agent's search
+    does (`hcp.explain`): shared words, closeness in meaning, and the reason each
+    would or would not be returned. `floor` previews another cutoff; agents keep
+    using HCP_SEMANTIC_FLOOR until it is changed in the deploy. Covers all your
+    entries — an agent only reaches what you let it. Changes nothing and is not
+    an agent read, so it is not in your audit; the question is embedded like a
+    search's."""
+    from django.conf import settings
+
+    from . import embeddings
+
+    person = _the_person_themself(request)
+    if not hcp.rollout_allows(person):
+        raise ProblemError(403, hcp.NOT_ROLLED_OUT, type_=TYPE_FORBIDDEN)
+    query = " ".join(payload.query.split())[:500]
+    if not query:
+        raise ProblemError(422, "Type a question", type_=TYPE_VALIDATION)
+    facts = list(hcp.servable(PersonFact.objects.filter(person=person))
+                 .select_related("project", "person", "workspace"))
+    returned, scores, stats = hcp.explain(facts, query, limit=payload.limit, floor=payload.floor)
+    place = {id(sc): i + 1 for i, sc in enumerate(returned)}
+    rows = sorted(scores, key=lambda sc: (place.get(id(sc), 99), -(sc.meaning or 0), -sc.total))
+    return {
+        "method": hcp.minimization_method(), "model": embeddings.model(),
+        "floor": stats["floor"], "live_floor": settings.HCP_SEMANTIC_FLOOR,
+        "weight": settings.HCP_SEMANTIC_WEIGHT, "project_boost": settings.HCP_PROJECT_BOOST,
+        "limit": payload.limit, "embed_ms": stats["embed_ms"],
+        "entries": [{"entry_id": str(sc.fact.entry_id) if sc.fact.entry_id else None, "statement": sc.fact.statement, "kind": sc.fact.kind,
+                     "project": sc.fact.project.name if sc.fact.project_id else None,
+                     "meaning": None if sc.meaning is None else round(sc.meaning, 3), "words": sc.words,
+                     "on_project": sc.project, "total": round(sc.total, 2), "position": place.get(id(sc)),
+                     "because": sc.because} for sc in rows],
+    }
 
 
 @router.post("/me/memory-collections/", response=MemoryCollectionOut,

@@ -10501,6 +10501,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/me/memory-search-preview/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Try a search over your memory, and see why each entry would come back
+         * @description Scores every entry you hold against a question the way an agent's search
+         *     does (`hcp.explain`): shared words, closeness in meaning, and the reason each
+         *     would or would not be returned. `floor` previews another cutoff; agents keep
+         *     using HCP_SEMANTIC_FLOOR until it is changed in the deploy. Covers all your
+         *     entries — an agent only reaches what you let it. Changes nothing and is not
+         *     an agent read, so it is not in your audit; the question is embedded like a
+         *     search's.
+         */
+        readonly post: operations["preview_my_memory_search"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/people/me/memory-collections/{collection_id}/": {
         readonly parameters: {
             readonly query?: never;
@@ -28298,6 +28324,83 @@ export interface components {
              */
             readonly sources: readonly string[];
         };
+        /** SearchPreviewEntryOut */
+        readonly SearchPreviewEntryOut: {
+            /** Entry Id */
+            readonly entry_id: string | null;
+            /** Statement */
+            readonly statement: string;
+            /** Kind */
+            readonly kind: string;
+            /** Project */
+            readonly project: string | null;
+            /**
+             * Meaning
+             * @description Cosine similarity to the question, 0-1; null when not compared.
+             */
+            readonly meaning: number | null;
+            /**
+             * Words
+             * @description Words shared with the question.
+             */
+            readonly words: readonly string[];
+            /** On Project */
+            readonly on_project: boolean;
+            /** Total */
+            readonly total: number;
+            /**
+             * Position
+             * @description 1-based place in what an agent would get; null if left out.
+             */
+            readonly position: number | null;
+            /** Because */
+            readonly because: string;
+        };
+        /** SearchPreviewOut */
+        readonly SearchPreviewOut: {
+            /**
+             * Method
+             * @description hybrid (words and meaning) or lexical (words only).
+             */
+            readonly method: string;
+            /** Model */
+            readonly model: string;
+            /**
+             * Floor
+             * @description The cutoff this preview used.
+             */
+            readonly floor: number;
+            /**
+             * Live Floor
+             * @description HCP_SEMANTIC_FLOOR — what agents' searches use.
+             */
+            readonly live_floor: number;
+            /** Weight */
+            readonly weight: number;
+            /** Project Boost */
+            readonly project_boost: number;
+            /** Limit */
+            readonly limit: number;
+            /** Embed Ms */
+            readonly embed_ms: number | null;
+            /** Entries */
+            readonly entries: readonly components["schemas"]["SearchPreviewEntryOut"][];
+        };
+        /** SearchPreviewIn */
+        readonly SearchPreviewIn: {
+            /** Query */
+            readonly query: string;
+            /**
+             * Floor
+             * @description Try this cutoff instead of HCP_SEMANTIC_FLOOR.
+             */
+            readonly floor?: number | null;
+            /**
+             * Limit
+             * @default 8
+             */
+            readonly limit: number;
+        };
         /** MemoryCollectionUpdateIn */
         readonly MemoryCollectionUpdateIn: {
             /** Name */
@@ -42388,6 +42491,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MemoryCollectionOut"];
+                };
+            };
+        };
+    };
+    readonly preview_my_memory_search: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SearchPreviewIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SearchPreviewOut"];
                 };
             };
         };

@@ -350,3 +350,29 @@ def test_with_embeddings_off_nothing_is_sent_anywhere(w, monkeypatch):
     body = _search(w, _turn(w, "j"), "finance")
     assert body["minimization"]["method"] == "lexical"
     assert PersonFact.objects.get().embedding is None
+
+
+def test_the_person_can_preview_a_search_with_another_cutoff(w, embeddings_on, monkeypatch, settings):
+    settings.HCP_PEOPLE = ["*"]
+    _add(w, "Owns the quarterly dashboard.")
+    monkeypatch.setattr(embeddings, "similarity", lambda a, b: 0.55)
+    c = Client()
+    c.force_login(w["lili"])
+    url = "/api/people/me/memory-search-preview/"
+
+    def preview(**body):
+        r = c.post(url, data=json.dumps({"query": "banana bread", **body}), content_type="application/json")
+        assert r.status_code == 200, r.content
+        return r.json()
+
+    live = preview()
+    (e,) = live["entries"]
+    assert (live["method"], live["floor"], live["live_floor"]) == ("hybrid", 0.6, 0.6)
+    assert e["position"] is None and e["meaning"] == 0.55 and "under the 0.60 cutoff" in e["because"]
+    tried = preview(floor=0.5)
+    assert tried["floor"] == 0.5 and tried["live_floor"] == 0.6
+    assert tried["entries"][0]["position"] == 1 and tried["entries"][0]["because"] == "meaning 0.55"
+    # Nothing recorded, and an agent's login can't use it.
+    assert not PersonAuditEvent.objects.filter(detail__contains="banana").exists()
+    c.force_login(w["ace"].user)
+    assert c.post(url, data=json.dumps({"query": "x"}), content_type="application/json").status_code == 403
