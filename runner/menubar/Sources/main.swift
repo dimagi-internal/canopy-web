@@ -251,7 +251,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     }
 
     // A .regular app needs a main menu for a sane focused experience (Cmd-Q, the app menu).
-    // Minimal: an app menu with Show + Quit.
+    // An app menu with Show + Quit, and the standard Edit menu: AppKit routes Cmd-C/V/X/A/Z
+    // only through menu key equivalents, so without it the web view gets no copy or paste.
     func buildMainMenu() {
         let main = NSMenu()
         let appItem = NSMenuItem()
@@ -261,6 +262,19 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Canopy Runner", action: #selector(quit), keyEquivalent: "q")
         appItem.submenu = appMenu
+
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
         NSApp.mainMenu = main
     }
 
