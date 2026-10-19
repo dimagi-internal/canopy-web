@@ -127,7 +127,8 @@ An endorsement is the **publicly verifiable twin of a wrap**. It says exactly wh
 
 - **Setup checklist.** "Add the missing secrets" lists each missing declared name with **Add**, which opens `SecretSealCard` in admin mode (no request; it writes through `PUT /vault/zk/values` with a `zks1` value, which that route already accepts at any kv).
 - **New-agent flow.** It lands on the setup checklist, so it gets the card through the checklist.
-- **Credentials page.** "Save" on a zero-knowledge agent seals through the same verified path at kv 0, where it used to trust `recipientsOf(state)`. Admins keep the VK path for `zk1` writes at kv > 0.
+- **Credentials page.** Unchanged in this release. Admins keep the VK path for `zk1` writes at kv > 0, and "Save" at kv 0 still seals to `recipientsOf(state)`. Moving it onto the verified path waits until existing agents carry endorsements, which their admins' next grant or Confirm adds. Until then the switch would block Save on every older agent. This is a follow-up.
+- **Share secret.** See §6.
 - **CLI.** `canopy vault zk set --sealed --agent X NAME` reads `/vault/zk/recipients`, verifies endorsements against `~/.canopy/vault-pins.json` (same TOFU rule, shown with fingerprints and confirmed at the prompt, like `set` already confirms wrap targets), seals `zks1` and writes it without the vault key. `--request ID` answers a request instead.
 
 ### 6. Share secret, re-pointed

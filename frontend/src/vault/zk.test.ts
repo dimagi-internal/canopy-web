@@ -35,6 +35,10 @@ import {
   openSealedValue,
   sealValue,
   valueDigest,
+  endorse,
+  endorseMsg,
+  verifyEndorsement,
+  fingerprint,
   type Ephemeral,
 } from './zk'
 
@@ -56,6 +60,8 @@ const V = JSON.parse(raw) as {
     user_key_seal_2skd: { alg: '2skd'; kdf: 'pbkdf2-sha256'; i: number; s: string; n: string; ct: string }
     secret_key_code: string
     user_key_seal_recovery: { alg: 'recovery'; s: string; n: string; ct: string }
+    endorse_msg: string
+    endorsement: { kind: 'device'; target: string; key_jkt: string; by: string; by_jkt: string; sig: string }
   }
 }
 const I = V.inputs
@@ -186,6 +192,25 @@ describe('zk v1 vectors', () => {
     const opened = await openUserKeyRecovery(O.user_key_seal_recovery, I.user_id, parseRecoveryCode(O.recovery_code))
     expect(bytesToHex(opened)).toBe(I.user_priv_scalar_hex)
     await expect(openUserKeyRecovery(O.user_key_seal_recovery, '8', r)).rejects.toThrow()
+  })
+
+  it('endorsement (§7): the reference signature verifies, tampering does not, and ours verifies too', async () => {
+    const e = O.endorsement
+    expect(endorseMsg(I.agent_id, 'device', I.device_jkt, I.device_jkt)).toBe(O.endorse_msg)
+    expect(e.key_jkt).toBe(await jkt(I.device_pub_jwk))
+    expect(await verifyEndorsement(e, I.agent_id, I.user_pub_jwk)).toBe(true)
+    expect(await verifyEndorsement({ ...e, target: 'other' }, I.agent_id, I.user_pub_jwk)).toBe(false)
+    expect(await verifyEndorsement({ ...e, key_jkt: await jkt(I.user_pub_jwk) }, I.agent_id, I.user_pub_jwk)).toBe(false)
+    expect(await verifyEndorsement({ ...e, kind: 'member' }, I.agent_id, I.user_pub_jwk)).toBe(false)
+    expect(await verifyEndorsement(e, '43', I.user_pub_jwk)).toBe(false)
+    expect(await verifyEndorsement(e, I.agent_id, I.device_pub_jwk)).toBe(false)
+    expect(await verifyEndorsement({ ...e, sig: 'not-a-sig' }, I.agent_id, I.user_pub_jwk)).toBe(false)
+    // The browser's own signature (randomized ECDSA) over the same statement.
+    const ours = await endorse(hexToBytes(I.user_priv_scalar_hex), I.user_pub_jwk, I.agent_id, 'device',
+      I.device_jkt, I.device_pub_jwk)
+    expect({ ...ours, sig: '' }).toEqual({ ...e, by: undefined, sig: '' })
+    expect(await verifyEndorsement(ours, I.agent_id, I.user_pub_jwk)).toBe(true)
+    expect(fingerprint(e.key_jkt)).toMatch(/^([A-Z0-9_]{4} ){7}[A-Z0-9_]{4}$|^([A-Z0-9]{4} ){7}[A-Z0-9]{4}$/)
   })
 
   it('passphrase strength floor', () => {

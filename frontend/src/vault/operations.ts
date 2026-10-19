@@ -12,8 +12,10 @@ import { approveRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKey
 import { registerThisDevice, type PasskeyOut } from '@/api/passkeys'
 import { defaultLabel } from '@/auth/webauthn'
 import {
+  addZkEndorsements,
   addZkWraps,
   enableZk,
+  fulfilSecretRequest,
   getKeyset,
   getZkState,
   putKeyset,
@@ -26,10 +28,12 @@ import {
   type ZkWrapOut,
 } from '@/api/vault'
 import { assertWithPrf, PrfUnsupportedError } from './prf'
+import type { Assessment } from './trust'
 import {
   decryptValue,
   deviceInfo,
   encryptValue,
+  endorse,
   generateKeyPair,
   isSealed,
   openSealedValue,
@@ -543,14 +547,24 @@ export async function prepareTurnOnZk(slug: string, storedNames: string[], unloc
     const t = targetOf(p)
     if (t && !(t.kind === 'member' && t.target === ks.user_id)) wraps.push(await wrapTo(vk, state.agent_id, kv, t))
   }
+  // What I wrap the vault key to, I vouch for (zk-v1 §7) — with the key this
+  // flow already opened; giveAccess hands its (memoised) unlock in as well.
+  const readers: Endorsable[] = [selfReader(ks.user_id, ks.public_jwk as Jwk),
+    ...state.pending.map(targetOf).filter((t): t is Target => t !== null).map(endorsableOf)]
+  const commit = async () => {
+    const out = await enableZk(slug, { kv, wraps, values })
+    const signer = me ?? (opts.personRecovery && unlock ? await unlock().catch(() => null) : null)
+    if (signer) await endorseQuietly(slug, state.agent_id, signer, readers)
+    return out
+  }
   // The person's one recovery code covers this agent (their member wrap opens
   // with it); only someone without one gets a code for this agent alone.
   if (opts.personRecovery || hasRecoveryCode(ks)) {
-    return { slug, code: '', kv, commit: () => enableZk(slug, { kv, wraps, values }) }
+    return { slug, code: '', kv, commit }
   }
   const recovery = await freshRecovery(vk, state.agent_id, kv)
   wraps.push(recovery.wrap)
-  return { slug, code: recovery.code, kv, commit: () => enableZk(slug, { kv, wraps, values }) }
+  return { slug, code: recovery.code, kv, commit }
 }
 
 /**
@@ -601,6 +615,7 @@ export async function grantPending(slug: string, unlock: Unlock): Promise<ZkStat
   if (targets.length) {
     const wraps = await Promise.all(targets.map((t) => wrapTo(vk, state.agent_id, state.kv, t)))
     out = await addZkWraps(slug, { kv: state.kv, wraps })
+    await endorseQuietly(slug, state.agent_id, me, [selfReader(me.userId, me.publicJwk), ...targets.map(endorsableOf)])
   }
   // The same unlock settles what canopy-web sealed, so the newly granted can read it.
   if (sealed.length && (await settleSealed(slug, vk, me))) out = await getZkState(slug)
@@ -615,7 +630,9 @@ export async function grantPending(slug: string, unlock: Unlock): Promise<ZkStat
  * inside a passkey touch the person is already making (approving a machine),
  * so no agent ever needs setting up by hand.
  */
-export async function giveAccess(slug: string, unlock: Unlock): Promise<ZkStateOut> {
+export async function giveAccess(slug: string, unlockOnce: Unlock): Promise<ZkStateOut> {
+  let opened: Promise<Unlocked> | null = null
+  const unlock: Unlock = () => (opened = opened ?? unlockOnce())
   const state = await getZkState(slug, true)
   if (state.enabled && state.kv === 0) {
     const names = Object.keys(state.values ?? {})
@@ -678,7 +695,60 @@ export async function rotateVaultKey(slug: string, confirm: (code: string) => Pr
     wraps.push(recovery.wrap)
     await confirm(recovery.code)
   }
-  return rotateZk(slug, { new_kv: kv, wraps, values })
+  const out = await rotateZk(slug, { new_kv: kv, wraps, values })
+  const readers = [...state.wraps.filter((w) => w.kv === state.kv && w.current), ...state.pending]
+    .map(targetOf).filter((t): t is Target => t !== null).map(endorsableOf)
+  await endorseQuietly(slug, state.agent_id, me, [selfReader(me.userId, me.publicJwk), ...readers])
+  return out
+}
+
+// ---- endorsements (zk-v1 §7; spec 2026-10-19-give-an-agent-a-secret-design.md §4) ----
+//
+// Whenever a person wraps the vault key to someone, they also sign "this key may
+// read this agent" — so a writer who holds no vault key can check who a sealed
+// value is for instead of trusting canopy-web's list (`./trust`).
+
+export interface Endorsable { kind: 'device' | 'member'; target: string; publicJwk: Jwk }
+
+const selfReader = (userId: string, publicJwk: Jwk): Endorsable => ({ kind: 'member', target: userId, publicJwk })
+
+/** A wrap target as §6/§7 name it: a device by its ECDH thumbprint. */
+const endorsableOf = (t: Target): Endorsable =>
+  ({ kind: t.kind, target: t.kind === 'device' ? t.ecdhJkt : t.target, publicJwk: t.publicJwk })
+
+/** Sign and store; never throws (a grant must not fail on its receipt). */
+async function endorseQuietly(slug: string, agentId: string, me: Unlocked, readers: Endorsable[]): Promise<number> {
+  try {
+    return await endorseReaders(slug, agentId, me, readers)
+  } catch {
+    return 0
+  }
+}
+
+/** Vouch, with my own key, that each of `readers` may read the agent. */
+export async function endorseReaders(slug: string, agentId: string, me: Unlocked, readers: Endorsable[]): Promise<number> {
+  if (!me.scalar) throw new Error('Unlock your vault key again to confirm who can read this agent.')
+  const seen = new Set<string>()
+  const items = []
+  for (const r of readers) {
+    if (!r.target || seen.has(`${r.kind}:${r.target}`)) continue
+    seen.add(`${r.kind}:${r.target}`)
+    items.push(await endorse(me.scalar, me.publicJwk, agentId, r.kind, r.target, r.publicJwk))
+  }
+  return items.length ? (await addZkEndorsements(slug, items)).stored : 0
+}
+
+/**
+ * Seal one value in this browser and store it — the seal card's write. Only
+ * `zks1` leaves the page, sealed to the recipients `assess` verified. With a
+ * request id it answers the agent's request; without, it is an admin's write.
+ */
+export async function sealAndStore(slug: string, name: string, plaintext: string, a: Assessment,
+                                   requestId?: string): Promise<void> {
+  if (!a.sealTo.length) throw new Error('Nobody you trust can read this agent yet — nothing was sent.')
+  const value_zk = await sealValue(plaintext, a.agentId, name, a.kv, a.sealTo)
+  if (requestId) await fulfilSecretRequest(slug, requestId, { kv: a.kv, value_zk })
+  else await putZkValues(slug, { kv: a.kv, values: [{ name, value_zk }] })
 }
 
 /** Recover: open VK with the recovery code, wrap it to my keyset. */

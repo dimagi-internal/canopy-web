@@ -13,6 +13,7 @@ import { type DraftStorage } from "./drafts";
 import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
 import { useStickyBottom } from "./useStickyBottom";
 import { AppHostContext, type AppHost } from "./mcpApps/context";
+import { SecretRequestHostContext, type SecretRequestHost } from "./secretRequest";
 
 export interface ChatPanelProps {
   state: SessionState;
@@ -61,6 +62,9 @@ export interface ChatPanelProps {
   /** MCP Apps: how this page reaches canopy for the session's Views. Omit and
    *  a tool result with a View renders as an ordinary tool row. */
   appHost?: AppHost;
+  /** How this page shows an agent's request for one of its secrets (a seal
+   *  card). Omit and such a row renders as an ordinary tool row. */
+  secretRequestHost?: SecretRequestHost;
 }
 
 /**
@@ -94,6 +98,7 @@ export function ChatPanel({
   typingVisibility,
   onTypingVisibilityChange,
   appHost,
+  secretRequestHost,
 }: ChatPanelProps) {
   // `onDiscard` is part of the public surface (co-edit teardown) even though
   // the default composer doesn't render a discard button. Referenced to keep
@@ -256,6 +261,7 @@ export function ChatPanel({
 
   return (
     <AppHostContext.Provider value={appHost ?? null}>
+    <SecretRequestHostContext.Provider value={secretRequestHost ?? null}>
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-border bg-background px-3 py-1.5 text-xs">
         <ConnectionStatus connected={connected} />
@@ -341,6 +347,7 @@ export function ChatPanel({
         onTypingVisibilityChange={onTypingVisibilityChange}
       />
     </div>
+    </SecretRequestHostContext.Provider>
     </AppHostContext.Provider>
   );
 }

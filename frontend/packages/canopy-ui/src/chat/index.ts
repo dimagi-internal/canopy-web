@@ -9,6 +9,7 @@ export type {
   Message,
   MessageAuthor,
   MessageAppRef,
+  MessageSecretRequestRef,
   MessageRole,
   MessageStatus,
   Draft,
@@ -104,6 +105,9 @@ export {
   type AppReceipt,
   type AppViewResource,
 } from "./mcpApps/context";
+// An agent asking for one of its secrets: the host renders the seal card
+// (spec 2026-10-19-give-an-agent-a-secret-design.md).
+export { SecretRequestHostContext, useSecretRequestHost, type SecretRequestHost } from "./secretRequest";
 export { AppBridge, PROTOCOL_VERSION as MCP_APPS_PROTOCOL_VERSION, type AppBridgeHandlers,
          type AppBridgeOptions, type CallToolResult } from "./mcpApps/bridge";
 // The AG-UI projection's inverse. Exported so a consumer can translate a stream

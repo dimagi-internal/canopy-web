@@ -76,3 +76,35 @@ export async function rotateZk(slug: string, body: { new_kv: number; wraps: ZkWr
   return need<ZkStateOut>(await apiV2.POST('/api/agents/{slug}/vault/zk/rotate', { params: { path: { slug } }, body: body as never }),
     'Could not rotate the vault key')
 }
+
+// ---- give an agent a secret (spec 2026-10-19-give-an-agent-a-secret-design.md) ----
+
+export type ZkRecipientsOut = Schemas['ZkRecipientsOut']
+export type ZkRecipientOut = Schemas['ZkRecipientOut']
+export type ZkEndorsementOut = Schemas['ZkEndorsementOut']
+export type ZkEndorsementIn = Schemas['ZkEndorsementIn']
+export type SecretRequestOut = Schemas['SecretRequestOut']
+
+/** Who a sealed value is for, and who vouched for each — canopy-web's CLAIM;
+ *  verify the endorsements before sealing (`./vault/trust`). */
+export async function getZkRecipients(slug: string, secretRequest?: string): Promise<ZkRecipientsOut> {
+  return need<ZkRecipientsOut>(await apiV2.GET('/api/agents/{slug}/vault/zk/recipients', {
+    params: { path: { slug }, query: secretRequest ? { secret_request: secretRequest } : {} } }),
+  'Could not load who can read this agent')
+}
+
+export async function addZkEndorsements(slug: string, endorsements: ZkEndorsementIn[]): Promise<{ stored: number }> {
+  return need<{ stored: number }>(await apiV2.POST('/api/agents/{slug}/vault/zk/endorsements', {
+    params: { path: { slug } }, body: { endorsements } }), 'Could not confirm who can read this agent')
+}
+
+export async function getSecretRequest(slug: string, id: string): Promise<SecretRequestOut> {
+  return need<SecretRequestOut>(await apiV2.GET('/api/agents/{slug}/secret-requests/{request_id}', {
+    params: { path: { slug, request_id: id } } }), 'Could not load the request')
+}
+
+export async function fulfilSecretRequest(slug: string, id: string, body: { kv: number; value_zk: string }):
+    Promise<SecretRequestOut> {
+  return need<SecretRequestOut>(await apiV2.PUT('/api/agents/{slug}/secret-requests/{request_id}/value', {
+    params: { path: { slug, request_id: id } }, body }), 'Could not store the value')
+}

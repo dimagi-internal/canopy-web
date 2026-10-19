@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { deleteSecret, listSecrets, shareSecret, type SharedSecret } from "@/api/chat";
+import { getZkRecipients } from "@/api/vault";
+import { SecretSealCard } from "@/components/vault/SecretSealCard";
 
 /**
  * "Secrets", opened from the chat's session menu: what this chat holds, and a
@@ -19,19 +21,38 @@ export function expiresIn(expiresAt: string, now: number = Date.now()): string {
   return minutes <= 0 ? "expiring" : `expires in ${minutes} min`;
 }
 
-export function ShareSecretForm({ sessionId, onDone }: { sessionId: string; onDone: () => void }) {
+export function ShareSecretForm({ sessionId, agentSlug, onDone }: {
+  sessionId: string;
+  /** The chat's agent: a name it declares goes to ITS vault, zero-knowledge. */
+  agentSlug?: string | null;
+  onDone: () => void;
+}) {
   const [shared, setShared] = useState<SharedSecret[] | null>(null);
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [justAdded, setJustAdded] = useState("");
+  const [declared, setDeclared] = useState<string[]>([]);
 
   const refresh = useCallback(() => {
     listSecrets(sessionId).then(setShared).catch(() => setShared([]));
   }, [sessionId]);
 
   useEffect(refresh, [refresh]);
+
+  // The agent's declared secrets (its admins can read the list): one of those
+  // belongs in the agent's vault, sealed in this browser — not in this chat,
+  // where canopy can read it.
+  useEffect(() => {
+    if (!agentSlug) return;
+    let live = true;
+    getZkRecipients(agentSlug).then((r) => live && setDeclared([...r.declared]), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [agentSlug]);
+  const toVault = !!agentSlug && declared.includes(name.trim());
 
   const submit = async () => {
     if (!name.trim() || !value.trim()) return;
@@ -96,8 +117,9 @@ export function ShareSecretForm({ sessionId, onDone }: { sessionId: string; onDo
         }}
       >
         <p className="text-[12px] text-muted-foreground">
-          Stored encrypted and never posted in the chat. Only this session can use it, without seeing
-          it, and it is deleted after 30 minutes.
+          Never posted in the chat. Only this session can use it, without seeing it, and it is deleted
+          after 30 minutes. It is stored encrypted by canopy, which can read it — a secret the agent
+          itself needs belongs in its vault instead, sealed in your browser.
         </p>
         <label className="block space-y-1">
           <span className="text-muted-foreground">Name</span>
@@ -110,17 +132,27 @@ export function ShareSecretForm({ sessionId, onDone }: { sessionId: string; onDo
             className="w-full rounded-md border border-input bg-input px-2 py-1.5 font-mono text-foreground"
           />
         </label>
-        <label className="block space-y-1">
-          <span className="text-muted-foreground">Value</span>
-          <input
-            type="password"
-            autoComplete="new-password"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            data-testid="secret-value"
-            className="w-full rounded-md border border-input bg-input px-2 py-1.5 font-mono text-foreground"
-          />
-        </label>
+        {toVault && agentSlug ? (
+          <div data-testid="secret-to-vault">
+            <p className="text-[12px] text-muted-foreground">
+              <span className="font-mono">{name.trim()}</span> is one of {agentSlug}&apos;s declared secrets, so it
+              goes to its vault — zero-knowledge, readable only by its machines and admins.
+            </p>
+            <SecretSealCard slug={agentSlug} name={name.trim()} />
+          </div>
+        ) : (
+          <label className="block space-y-1">
+            <span className="text-muted-foreground">Value</span>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              data-testid="secret-value"
+              className="w-full rounded-md border border-input bg-input px-2 py-1.5 font-mono text-foreground"
+            />
+          </label>
+        )}
         {error && <p className="text-destructive">{error}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onDone} className="rounded-md px-3 py-1.5 text-muted-foreground hover:bg-muted">

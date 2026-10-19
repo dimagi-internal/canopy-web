@@ -52,6 +52,9 @@ export interface Message {
   /** MCP Apps: this tool result has a View (spec 2026-10-08 §3). Set by the
    *  server on REST rows, the snapshot and the live frame — never guessed. */
   app?: MessageAppRef | null;
+  /** The agent asked for one of its declared secrets here: the host renders a
+   *  seal card (`SecretRequestHostContext`). Set by the server, never guessed. */
+  secret_request?: MessageSecretRequestRef | null;
 }
 
 /** `MessageOut.app` — mirrors `AppRef` in `mcpApps/AppView.tsx`. */
@@ -61,6 +64,13 @@ export interface MessageAppRef {
   tool: string;
   resource_uri: string;
   path?: string;
+}
+
+/** `MessageOut.secret_request` — a request carries no value, ever. */
+export interface MessageSecretRequestRef {
+  id: string;
+  agent: string;
+  name: string;
 }
 
 /** How much of an in-progress message its author lets OTHERS see: the words
@@ -370,7 +380,7 @@ export type WsEvent =
   // Message carries, so a live tool row sorts into exactly the position it will
   // occupy after a reload. Optional: an older server omits it.
   | { event: "chat.tool_use"; data: { parent_message_id: string | null; tool_message_id: string; turn_index?: number; block: Record<string, unknown> } }
-  | { event: "chat.tool_result"; data: { parent_message_id: string | null; tool_message_id: string; turn_index?: number; block: Record<string, unknown>; app?: MessageAppRef | null } }
+  | { event: "chat.tool_result"; data: { parent_message_id: string | null; tool_message_id: string; turn_index?: number; block: Record<string, unknown>; app?: MessageAppRef | null; secret_request?: MessageSecretRequestRef | null } }
   | { event: "chat.stream_complete"; data: { message_id: string; plaintext: string } }
   | { event: "chat.stream_error"; data: { message_id: string; detail: string } }
   | { event: "chat.stream_cancelled"; data: { message_id: string | null; partial_len: number } }

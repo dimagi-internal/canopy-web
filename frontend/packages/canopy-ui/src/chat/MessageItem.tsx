@@ -7,6 +7,7 @@ import { authorColor } from "./personColor";
 import { ToolCallPair } from "./ToolCallPair";
 import { AppView } from "./mcpApps/AppView";
 import { useAppHost } from "./mcpApps/context";
+import { useSecretRequestHost } from "./secretRequest";
 
 /** How to render assistant/system markdown. Injected by the app so the kit
  *  stays free of `react-markdown`. Defaults to plain text in a <span>. */
@@ -101,6 +102,7 @@ export function MessageItem({
   currentContactId,
 }: Props) {
   const appHost = useAppHost();
+  const secretHost = useSecretRequestHost();
   const text = message.plaintext;
   const isStreaming = message.status === "streaming";
   const isPending = message.status === "pending";
@@ -118,6 +120,10 @@ export function MessageItem({
     // A View row with no tool_use beside it — the embed widget, which receives
     // the View but never the raw tool rows (`for_widget`).
     return <AppView app={message.app} />;
+  }
+  if (message.role === "tool_result" && message.secret_request && secretHost) {
+    // An agent's request for a secret, with no tool_use beside it.
+    return <>{secretHost.render(message.secret_request)}</>;
   }
   if (message.role === "tool_result") {
     // Synthesize a fake "use" message so the pair component can render

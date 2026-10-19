@@ -8,8 +8,10 @@ import {
   useSessionSocket,
   type PendingAttachment,
   type PlacementRunner,
+  type SecretRequestHost,
 } from 'canopy-ui/chat'
 import { renderChatMarkdown } from '@/components/chat/renderChatMarkdown'
+import { SecretSealCard } from '@/components/vault/SecretSealCard'
 import { wsUrl } from '@/lib/wsUrl'
 import {
   getSession,
@@ -113,6 +115,15 @@ export function ChatPage({
 } = {}) {
   const { id = '' } = useParams()
   const appHost = useMemo(() => appHostFor(id), [id])
+  // The agent asked for one of its secrets: a card that seals it in this
+  // browser. Once stored, a value-free note tells the agent to carry on.
+  const secretRequestHost = useMemo<SecretRequestHost>(() => ({
+    render: (ref) => (
+      <SecretSealCard key={ref.id} slug={ref.agent} name={ref.name} requestId={ref.id}
+        onStored={(n) => void sendMessage(id, `${n} is stored for ${ref.agent} — sealed in my browser; `
+          + 'resolve it the usual way.').catch(() => undefined)} />
+    ),
+  }), [id])
   const navigate = useNavigate()
   const [meta, setMeta] = useState<ChatSessionDetail | null>(null)
   const [renaming, setRenaming] = useState(editTitle)
@@ -957,6 +968,7 @@ export function ChatPage({
           {id && (
             <ChatSessionMenu
               sessionId={id}
+              agentSlug={meta?.agent_slug ?? null}
               myRole={meta?.my_role ?? null}
               notifyEveryCompletion={meta ? meta.notify_every_completion : undefined}
               onToggleNotify={() => void toggleNotify()}
@@ -1039,6 +1051,8 @@ export function ChatPage({
           draftPersistKey={id}
           // MCP Apps: a Connected site's View for a tool result, acting as you.
           appHost={appHost}
+          // The agent asking for a secret: the zero-knowledge seal card.
+          secretRequestHost={secretRequestHost}
           emptyState={emptyState}
           historySlot={historySlot}
           // Refuse the send outright rather than queueing it at a box that

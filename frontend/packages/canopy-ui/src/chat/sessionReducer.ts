@@ -345,6 +345,9 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
                   ...(role === "tool_result" && "app" in frame.data && frame.data.app
                     ? { app: frame.data.app }
                     : {}),
+                  ...(role === "tool_result" && "secret_request" in frame.data && frame.data.secret_request
+                    ? { secret_request: frame.data.secret_request }
+                    : {}),
                 }
               : m,
           ),
@@ -363,6 +366,9 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         plaintext,
         ...(role === "tool_result" && "app" in frame.data && frame.data.app
           ? { app: frame.data.app }
+          : {}),
+        ...(role === "tool_result" && "secret_request" in frame.data && frame.data.secret_request
+          ? { secret_request: frame.data.secret_request }
           : {}),
         status: block.is_error === true ? "error" : "complete",
         error_detail: null,
