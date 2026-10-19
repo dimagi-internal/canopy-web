@@ -21,7 +21,10 @@ self.addEventListener('push', (event) => {
     self.registration.showNotification(title, {
       body: data.body || '',
       icon: 'icons/icon-192.png',
-      badge: 'icons/icon-192.png',
+      // Android draws the status-bar badge from the alpha channel alone, so
+      // the opaque app icon renders as a solid white square. The badge is the
+      // dome glyph in white on transparent.
+      badge: 'icons/badge-96.png',
       // Collapse to one notification per agent: five separate buzzes for the
       // same agent is how you get muted.
       tag: title,

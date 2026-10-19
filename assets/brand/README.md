@@ -40,6 +40,7 @@ regenerate overwrites them.
 | `frontend/public/favicon.svg` | web `<link rel=icon>` |
 | `frontend/public/icons/icon-192.png`, `icon-512.png` | PWA manifest |
 | `frontend/public/icons/icon-maskable-512.png` | PWA maskable (mark kept inside the safe zone) |
+| `frontend/public/icons/badge-96.png` | push-notification badge (`sw-push.js`): white glyph on transparent, since Android shows only its alpha |
 | `frontend/src/brand/CanopyMark.tsx` | the in-app headers, in `currentColor` |
 | `site/public/favicon.svg`, `site/src/assets/mark.svg` | the public site, when `site/` exists |
 
