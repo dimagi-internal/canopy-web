@@ -52,3 +52,11 @@ def _no_aws_device_proof(monkeypatch):
     what the runner fetched. Off by default here; tests/test_aws_device_proof.py turns it
     back on and points IMDS at a closed port."""
     monkeypatch.setenv("CANOPY_DEVICE_KEY", "0")
+
+
+@pytest.fixture(autouse=True)
+def _no_credential_probe(monkeypatch):
+    """Staging a credential probes it with a real `claude -p` (one short turn).
+    Off by default here, so no test spends usage or waits on a CLI;
+    tests/test_credential_probe.py turns it back on with subprocess faked."""
+    monkeypatch.setenv("CLAUDE_PROBE", "0")

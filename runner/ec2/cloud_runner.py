@@ -84,6 +84,7 @@ import socket
 import shutil
 import subprocess
 import sys
+import tempfile
 import termios
 import threading
 import time
@@ -628,6 +629,16 @@ def _package_checks() -> None:
 
 
 def _credential_check() -> None:
+    # A credential that left the cascade takes its probe with it: a dot for a
+    # token nobody holds any more would be a report about nothing.
+    staged = {c[0] for c in _CLAUDE_CREDS}
+    with _PROBES_LOCK:
+        for label in [lb for lb in _PROBES if lb not in staged]:
+            del _PROBES[label]
+    with _HEALTH_LOCK:
+        for name in [k for k in _HEALTH
+                     if k.startswith("claude.probe.") and k[len("claude.probe."):] not in staged]:
+            del _HEALTH[name]
     n = len(_CLAUDE_CREDS)
     if n == 0:
         _set_check("claude.credentials", "fail",
@@ -4030,6 +4041,120 @@ def _apply_claude_credential(index: int) -> None:
     if var and value:
         os.environ[var] = value
     _log(f"claude credential: using {label} ({var or 'the stored login on this box'})")
+
+
+# ── the credential probe ─────────────────────────────────────────────────────
+# "Ready" used to mean "a value is stored". On 2026-10-18 cloud-ec2-fork read
+# ready with one setup-token that was at its weekly cap, and every turn it took
+# failed as "not signed in". So each credential is asked one short question with
+# no tools, and what it answers is what the runner page and readiness report.
+#
+# Probes spend real usage, so they run only when a credential is staged or
+# changes, when a capped one's reset has passed, and when a turn's own failure is
+# ambiguous (a bare ACP refusal). Never on a plain heartbeat.
+
+#: How long one probe may take. A hung CLI gives `unknown`, which counts as
+#: possibly-working: a probe must never be what keeps a box from serving.
+PROBE_TIMEOUT_SECONDS = 90
+PROBE_PROMPT = "Reply with OK"
+#: Off switch for an operator (CLAUDE_PROBE=0): every probe answers `unknown`.
+PROBE_ENABLED = _bool_env("CLAUDE_PROBE", True)
+#: The latest probe per credential label: {label, status, detail, reset, at}.
+_PROBES: dict[str, dict] = {}
+_PROBES_LOCK = threading.Lock()
+
+
+def _env_for_credential(entry: tuple[str, str, str]) -> dict:
+    """The environment `_apply_claude_credential` would give this credential, as
+    a COPY. Turns run concurrently, so a probe must never touch `os.environ`."""
+    _label, var, value = entry
+    env = _child_safe_env()
+    for other in _CLAUDE_AUTH_VARS:
+        env.pop(other, None)
+    if _BASE_CONFIG_DIR:
+        env["CLAUDE_CONFIG_DIR"] = _BASE_CONFIG_DIR
+    else:
+        env.pop("CLAUDE_CONFIG_DIR", None)
+    if var and value:
+        env[var] = value
+    return env
+
+
+def _credential_env(index: int) -> dict:
+    return _env_for_credential(_CLAUDE_CREDS[index])
+
+
+def _probe_entry(entry: tuple[str, str, str]) -> dict:
+    """Ask one credential one question. Never raises."""
+    label = entry[0]
+    out = {"label": label, "status": "unknown", "detail": "", "reset": None, "at": time.time()}
+    if not PROBE_ENABLED:
+        out["detail"] = "probing is off on this box (CLAUDE_PROBE=0)"
+        return out
+    try:
+        with tempfile.TemporaryDirectory(prefix="claude-probe-") as scratch:
+            proc = subprocess.run(
+                [CLAUDE_BIN, "-p", PROBE_PROMPT, "--output-format", "json", "--max-turns", "1"],
+                cwd=scratch, env=_env_for_credential(entry), stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        out["detail"] = f"no answer within {PROBE_TIMEOUT_SECONDS}s"
+        return out
+    except Exception as exc:  # noqa: BLE001 — a probe that cannot run is unknown
+        out["detail"] = f"the probe could not run ({exc})"[:300]
+        return out
+    stdout, stderr = proc.stdout or "", proc.stderr or ""
+    result, is_error = "", True
+    try:
+        doc = json.loads(stdout)
+        if isinstance(doc, dict):
+            result = str(doc.get("result") or "")
+            is_error = bool(doc.get("is_error"))
+    except ValueError:
+        pass
+    text = "\n".join(t for t in (result, stdout, stderr) if t)
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if _is_usage_cap(text):
+        out["status"] = "capped"
+        out["detail"] = next((ln for ln in lines if _is_usage_cap(ln)), "")[:300]
+        out["reset"] = _cap_reset_epoch(text)
+    elif _is_auth_required(text):
+        out["status"] = "dead"
+        out["detail"] = next((ln for ln in lines if _is_auth_required(ln)), "")[:300]
+    elif proc.returncode == 0 and not is_error:
+        out["status"] = "ok"
+        out["detail"] = "answered a prompt"
+    else:
+        out["detail"] = (f"exit {proc.returncode}: " + (lines[-1] if lines else "no output"))[:300]
+    return out
+
+
+def _probe_credential(index: int) -> dict:
+    return _probe_entry(_CLAUDE_CREDS[index])
+
+
+def _iso(epoch: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+def _record_probe(result: dict) -> None:
+    """Keep a probe's answer and publish it as the `claude.probe.<label>` check."""
+    label, status = result["label"], result["status"]
+    with _PROBES_LOCK:
+        _PROBES[label] = dict(result)
+    if status == "ok":
+        _set_check(f"claude.probe.{label}", "ok", "answered a prompt")
+    elif status == "capped":
+        reset = result.get("reset")
+        _set_check(f"claude.probe.{label}", "warn",
+                   f"at its usage cap — resets {_iso(reset)}" if reset
+                   else "at its usage cap (reset unreadable)")
+    elif status == "dead":
+        _set_check(f"claude.probe.{label}", "fail",
+                   "not signed in — someone has to sign it in again")
+    else:
+        _set_check(f"claude.probe.{label}", "warn",
+                   f"could not check: {result.get('detail') or 'no answer'}")
 
 
 def _advance_claude_credential(*, turn_id: str = "") -> bool:
