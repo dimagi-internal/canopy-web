@@ -53,6 +53,7 @@ def canopy():
         states: list = ["pending", "consumed"]
         posted: list = []
         auth: list = []
+        checked: list = []
 
         def _send(self, code, obj):
             self.send_response(code)
@@ -65,7 +66,15 @@ def canopy():
             if self.path.startswith("/api/harness/runners"):
                 return self._send(H.code, H.runners if H.code == 200 else {"detail": "no"})
             if self.path.startswith("/api/workspaces"):
-                return self._send(200, [{"slug": "dimagi"}, {"slug": "connect"}])
+                return self._send(200, [{"slug": "dimagi"}, {"slug": "connect"}, {"slug": "readonly"}])
+            if self.path.startswith("/api/harness/runner-invitations/check"):
+                ws = self.path.split("workspace=", 1)[-1]
+                H.checked.append(ws)
+                if ws == "readonly":
+                    return self._send(403, {"detail": "needs permission to run work there"})
+                if ws in ("dimagi", "connect"):
+                    return self._send(200, {"workspace": ws})
+                return self._send(404, {"detail": "not found"})
             if self.path.startswith(f"/api/harness/runner-invitations/{INV_ID}"):
                 state = H.states.pop(0) if len(H.states) > 1 else H.states[0]
                 return self._send(200, {"id": INV_ID, "name": "cloud-ec2-test", "status": state,
@@ -84,7 +93,7 @@ def canopy():
         def log_message(self, *a):
             pass
 
-    H.runners, H.posted, H.auth, H.states = [], [], [], ["pending", "consumed"]
+    H.runners, H.posted, H.auth, H.checked, H.states = [], [], [], [], ["pending", "consumed"]
     srv = http.server.HTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     srv.handler = H
@@ -93,12 +102,13 @@ def canopy():
 
 
 def _fake(tmp: pathlib.Path, *, stack_status=None, change_set=None, secrets=STAGED,
-          old_parts=0, stack_workspace="dimagi") -> pathlib.Path:
+          old_parts=0, stack_workspace="dimagi", pat_secret="") -> pathlib.Path:
     state = tmp / "state"
     state.mkdir()
     (state / "calls").write_text("")
     cfg = {"stack_status": stack_status, "change_set": change_set, "secrets": list(secrets),
-           "old_parts": old_parts, "stack_workspace": stack_workspace, "role_arn": ROLE_ARN, "spki": SPKI}
+           "old_parts": old_parts, "stack_workspace": stack_workspace, "role_arn": ROLE_ARN, "spki": SPKI,
+           "pat_secret": pat_secret}
     (state / "cfg.json").write_text(json.dumps(cfg))
     bin_ = tmp / "bin"
     bin_.mkdir()
@@ -125,6 +135,8 @@ elif "describe-stacks" in a and "StackStatus" in arg("--query"):
     print(cfg["stack_status"])
 elif "describe-stacks" in a and "RunnerWorkspace" in arg("--query"):
     print(cfg["stack_workspace"])
+elif "describe-stacks" in a and "CanopyTokenSecret" in arg("--query"):
+    print(cfg["pat_secret"])
 elif "describe-stacks" in a and "EcdhKeyArn" in arg("--query"):
     print("arn:aws:kms:us-east-1:123456789012:key/k-1")
 elif "describe-stack-resource" in a:
@@ -245,6 +257,27 @@ def test_a_workspace_you_are_not_in_is_refused(tmp_path, canopy):
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "elsewhere")
     assert res.returncode != 0 and "not a member" in res.stderr
     assert not any("deploy" in c for c in _calls(state))
+
+
+def test_a_workspace_you_cannot_run_work_in_is_refused_before_aws_writes(tmp_path, canopy):
+    """Membership is not enough: the invitation needs agent.work, and its gates
+    are asked (GET …/runner-invitations/check) before the stack is made."""
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "readonly")
+    assert res.returncode != 0 and "may not run work" in res.stderr
+    assert canopy.handler.checked == ["readonly"]
+    assert not any("put-secret" in c or "create-secret" in c or "deploy" in c for c in _calls(state))
+
+
+def test_an_old_stack_with_a_pat_is_not_invited(tmp_path, canopy):
+    """Its box has CANOPY_TOKEN and pairs the old way; waiting for an invitation
+    it will never use would hang up.sh for half an hour."""
+    _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
+          pat_secret="canopy/cloud-runner/canopy-pat")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not canopy.handler.posted
+    assert "still names a PAT secret" in res.stdout
 
 
 def test_creates_invitation_and_prints_approve_url(tmp_path, canopy):

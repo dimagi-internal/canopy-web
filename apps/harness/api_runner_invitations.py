@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpRequest
 from django.utils import timezone
 from ninja import Router, Status
@@ -40,11 +40,15 @@ from apps.workspaces import services as wsvc
 from . import aws_iam_proof, device_key_notify, device_keys
 from .api_device_keys import ECDH_STORES
 from .models import Runner, RunnerDeviceKey, RunnerInvitation
-from .schemas import RunnerInvitationIn, RunnerInvitationOut, RunnerPairByRoleIn, RunnerPairByRoleOut
+from .schemas import (RunnerInvitationCheckOut, RunnerInvitationIn, RunnerInvitationOut, RunnerPairByRoleIn,
+                      RunnerPairByRoleOut)
 
 logger = logging.getLogger(__name__)
 
 router = Router(auth=session_auth, tags=["harness"])
+
+# Says nothing about who holds it.
+_INVITATION_TAKEN = "a live invitation for this instance role and runner name already exists"
 
 
 def approve_path(invitation: RunnerInvitation) -> str:
@@ -75,15 +79,11 @@ def _own_invitation_or_404(request: HttpRequest, invitation_id: uuid.UUID) -> Ru
     return invitation
 
 
-@router.post("/", response={201: RunnerInvitationOut},
-             summary="Invite a new cloud runner to pair by its instance role")
-def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
-    """Invite one box, named, bound to its EC2 instance role, into a workspace
-    where you may run work. It pairs only once you approve it at `approve_url`
-    with a passkey, and only within an hour. Inviting the same role and name
-    again replaces the earlier invitation."""
-    slug = payload.workspace.strip()
-    if not wsvc.is_member(request.user, slug):
+def _may_invite_into(request: HttpRequest, workspace: str) -> str:
+    """The workspace slug, if the caller may invite a runner into it; else the
+    refusal. Shared by the create and its pre-check, so they cannot disagree."""
+    slug = (workspace or "").strip()
+    if not slug or not wsvc.is_member(request.user, slug):
         raise HttpError(404, f"workspace '{slug}' not found")
     if not perms.can(request.user, slug, perms.AGENT_WORK):
         raise HttpError(403, "inviting a runner into a workspace needs permission to run work there")
@@ -91,6 +91,28 @@ def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
     # agent's login inviting a box would make a runner nobody can manage.
     if getattr(request.user, "agent_identity", None) is not None:
         raise HttpError(403, "a runner must be owned by a person; invite it with your own token")
+    return slug
+
+
+# Declared before `/{invitation_id}`, which would match it.
+@router.get("/check", response=RunnerInvitationCheckOut,
+            summary="May you invite a runner into this workspace? (changes nothing)")
+def check_runner_invitation(request: HttpRequest, workspace: str):
+    """The same gates as creating an invitation, without creating one: 404 not a
+    member, 403 no permission to run work there. `up.sh` asks before it writes
+    anything to AWS, since the box's role (which an invitation names) exists
+    only after the stack does."""
+    return RunnerInvitationCheckOut(workspace=_may_invite_into(request, workspace))
+
+
+@router.post("/", response={201: RunnerInvitationOut},
+             summary="Invite a new cloud runner to pair by its instance role")
+def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
+    """Invite one box, named, bound to its EC2 instance role, into a workspace
+    where you may run work. It pairs only once you approve it at `approve_url`
+    with a passkey, and only within an hour. Inviting the same role and name
+    again replaces the earlier invitation."""
+    slug = _may_invite_into(request, payload.workspace)
     try:
         role_arn = aws_iam_proof.canonical_role_arn(payload.role_arn)
     except aws_iam_proof.AwsProofError as exc:
@@ -102,14 +124,24 @@ def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
         except device_keys.KeyError_ as exc:
             raise HttpError(422, f"ecdh_public_jwk: {exc}") from exc
     jkt = aws_iam_proof.role_jkt(role_arn)
-    with transaction.atomic():
-        RunnerInvitation.objects.filter(role_jkt=jkt, name=payload.name, consumed_at__isnull=True).delete()
-        invitation = RunnerInvitation.objects.create(
-            name=payload.name, workspace_id=slug, created_by=request.user,
-            role_arn=role_arn, role_jkt=jkt, ecdh_public_jwk=ecdh,
-        )
+    try:
+        with transaction.atomic():
+            live = (RunnerInvitation.objects.select_for_update()
+                    .filter(role_jkt=jkt, name=payload.name, consumed_at__isnull=True))
+            # Replace only what is yours, or what has run out. Someone else's live
+            # invitation for this role and name is theirs: replacing it would let
+            # you take over the box they invited (and may already have approved).
+            if live.exclude(created_by=request.user).filter(expires_at__gt=timezone.now()).exists():
+                raise HttpError(409, _INVITATION_TAKEN)
+            live.delete()
+            invitation = RunnerInvitation.objects.create(
+                name=payload.name, workspace_id=slug, created_by=request.user,
+                role_arn=role_arn, role_jkt=jkt, ecdh_public_jwk=ecdh,
+            )
+    except IntegrityError:  # a concurrent create for the same role and name won
+        raise HttpError(409, _INVITATION_TAKEN) from None
     activity.emit(activity.RUNNER_INVITED, workspace=slug, actor=request.user, surface="runner",
-                  ref=str(invitation.pk), meta={"name": invitation.name, "role_arn": role_arn})
+                  ref=str(invitation.pk), meta={"name": invitation.name})
     device_key_notify.notify_invitation_on_commit(invitation, approve_url(invitation))
     return Status(201, invitation_out(invitation))
 
@@ -223,47 +255,55 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
     if not owner.is_active or not perms.can(owner, invitation.workspace_id, perms.AGENT_WORK):
         raise _refuse_pairing(f"invitation {invitation.pk}: its creator may no longer run work in "
                               f"{invitation.workspace_id}")
-    if existing is not None and existing.status != RunnerDeviceKey.REVOKED \
-            and existing.runner.status != Runner.RETIRED:
-        # A pending key on a live runner: that box is someone's to approve or
-        # retire, not this invitation's to take over.
-        raise _refuse_pairing(f"{role_arn} has a pending key on live runner {existing.runner.name}")
+    if existing is not None:
+        # The role already has a key. It is replaced only when it is the SAME
+        # person's and its runner was retired. Another owner's key (live,
+        # revoked, or a retired box's — whose vault wraps would cascade away) is
+        # never this invitation's to erase; and a revoked key on a live runner was
+        # a deliberate act its owner undoes, not something re-inviting launders.
+        if existing.runner.owner_id != owner.pk:
+            raise _refuse_pairing(f"{role_arn}'s key belongs to another owner's runner {existing.runner.name}")
+        if existing.runner.status != Runner.RETIRED:
+            raise _refuse_pairing(f"{role_arn} has a {existing.status} key on live runner {existing.runner.name}")
 
-    with transaction.atomic():
-        locked = (RunnerInvitation.objects.select_for_update()
-                  .filter(pk=invitation.pk, consumed_at__isnull=True).first())
-        if locked is None:  # a concurrent pair-by-role consumed it first
-            raise _refuse_pairing(f"invitation {invitation.pk} was consumed concurrently")
-        if existing is not None:
-            # A revoked key, or a retired runner's: the role is re-approved for a
-            # new runner, and one role has one key row (unique jkt).
-            existing.delete()
-        runner = Runner.objects.create(
-            name=payload.name, kind=Runner.CLOUD, host=payload.host,
-            capabilities=declared_capabilities(payload.capabilities),
-            owner=owner, workspace_id=invitation.workspace_id,
-        )
-        # The ECDH key the invitation named (the `<stack>-ecdh` KMS key, which
-        # only this role can use) is approved with it — also when a fresh box
-        # cannot report one yet (its canopy CLI arrives with the bootstrap); a
-        # later report of the same key changes nothing. A key the invitation did
-        # not name waits for a person, as a new ECDH key always does.
-        store = payload.ecdh_store if ecdh_jkt and payload.ecdh_store in ECDH_STORES else ""
-        if not ecdh_jkt and invitation.ecdh_public_jwk:
-            ecdh_jwk, store = invitation.ecdh_public_jwk, "aws-kms"
-            ecdh_jkt = device_keys.thumbprint(ecdh_jwk)
-        ecdh_approved = bool(ecdh_jkt) and bool(invitation.ecdh_public_jwk)
-        RunnerDeviceKey.objects.create(
-            runner=runner, kind=RunnerDeviceKey.AWS_IAM, role_arn=role_arn, jkt=jkt,
-            label=f"{payload.name} (EC2 instance role)", status=RunnerDeviceKey.ACTIVE,
-            created_by=owner, approved_by=invitation.approved_by, approved_at=invitation.approved_at,
-            ecdh_public_jwk=ecdh_jwk, ecdh_jkt=ecdh_jkt, ecdh_store=store,
-            ecdh_approved_at=invitation.approved_at if ecdh_approved else None,
-            ecdh_approved_by=invitation.approved_by if ecdh_approved else None,
-        )
-        locked.consumed_at, locked.runner = timezone.now(), runner
-        locked.save(update_fields=["consumed_at", "runner"])
+    try:
+        with transaction.atomic():
+            locked = (RunnerInvitation.objects.select_for_update()
+                      .filter(pk=invitation.pk, consumed_at__isnull=True).first())
+            if locked is None:  # a concurrent pair-by-role consumed it first
+                raise _refuse_pairing(f"invitation {invitation.pk} was consumed concurrently")
+            if existing is not None:
+                # This owner's retired runner's key: the role is re-approved for
+                # a new runner, and one role has one key row (unique jkt).
+                existing.delete()
+            runner = Runner.objects.create(
+                name=payload.name, kind=Runner.CLOUD, host=payload.host,
+                capabilities=declared_capabilities(payload.capabilities),
+                owner=owner, workspace_id=invitation.workspace_id,
+            )
+            # The ECDH key the invitation named (the `<stack>-ecdh` KMS key, which
+            # only this role can use) is approved with it — also when a fresh box
+            # cannot report one yet (its canopy CLI arrives with the bootstrap); a
+            # later report of the same key changes nothing. A key the invitation did
+            # not name waits for a person, as a new ECDH key always does.
+            store = payload.ecdh_store if ecdh_jkt and payload.ecdh_store in ECDH_STORES else ""
+            if not ecdh_jkt and invitation.ecdh_public_jwk:
+                ecdh_jwk, store = invitation.ecdh_public_jwk, "aws-kms"
+                ecdh_jkt = device_keys.thumbprint(ecdh_jwk)
+            ecdh_approved = bool(ecdh_jkt) and bool(invitation.ecdh_public_jwk)
+            RunnerDeviceKey.objects.create(
+                runner=runner, kind=RunnerDeviceKey.AWS_IAM, role_arn=role_arn, jkt=jkt,
+                label=f"{payload.name} (EC2 instance role)", status=RunnerDeviceKey.ACTIVE,
+                created_by=owner, approved_by=invitation.approved_by, approved_at=invitation.approved_at,
+                ecdh_public_jwk=ecdh_jwk, ecdh_jkt=ecdh_jkt, ecdh_store=store,
+                ecdh_approved_at=invitation.approved_at if ecdh_approved else None,
+                ecdh_approved_by=invitation.approved_by if ecdh_approved else None,
+            )
+            locked.consumed_at, locked.runner = timezone.now(), runner
+            locked.save(update_fields=["consumed_at", "runner"])
+    except IntegrityError:
+        # A concurrent pairing of the same role made its key first (unique jkt).
+        raise _refuse_pairing(f"{role_arn}: a concurrent pairing won") from None
     activity.emit(activity.RUNNER_PAIRED, workspace=invitation.workspace_id, actor=owner, surface="runner",
-                  ref=str(runner.pk), meta={"name": runner.name, "invitation": str(invitation.pk),
-                                            "role_arn": role_arn})
+                  ref=str(runner.pk), meta={"name": runner.name, "invitation": str(invitation.pk)})
     return Status(201, RunnerPairByRoleOut(status="paired", runner_id=runner.pk))

@@ -170,9 +170,15 @@ if [[ "$STACK_STATUS" == "NONE" ]]; then
   if [[ -z "$WORKSPACE" ]]; then
     die "a new box needs --workspace <slug>: the workspace it pairs into. Yours: $(my_workspaces)"
   fi
-  case " $(my_workspaces) " in
-    *" $WORKSPACE "*) ;;
-    *) die "you are not a member of workspace '$WORKSPACE'. Yours: $(my_workspaces)" ;;
+  # The invitation's own gates (member, and may run work there), asked now —
+  # before anything is written to AWS — since the invitation itself can only be
+  # made once the stack's role exists.
+  canopy GET "/api/harness/runner-invitations/check?workspace=${WORKSPACE}" > "$TMPC/check.json"
+  case "$(cat "$TMPC/code")" in
+    200) ;;
+    403) die "you may not run work in workspace '$WORKSPACE' (an invitation needs it): $(cat "$TMPC/check.json")" ;;
+    404) die "you are not a member of workspace '$WORKSPACE'. Yours: $(my_workspaces)" ;;
+    *) die "canopy-web could not check workspace '$WORKSPACE' (HTTP $(cat "$TMPC/code")): $(cat "$TMPC/check.json")" ;;
   esac
 else
   CURRENT_WS=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
@@ -338,6 +344,16 @@ INVITE_FILE="${KEY_DIR:-.}/${STACK}-invitation.json"
 RUNNER_ID=""
 NEED_INVITE=1
 if [[ "$STACK_STATUS" != "NONE" ]]; then
+  PAT_SECRET=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
+    --query "Stacks[0].Parameters[?ParameterKey=='CanopyTokenSecret'].ParameterValue" --output text 2>/dev/null || true)
+  [[ "$PAT_SECRET" == "None" ]] && PAT_SECRET=""
+fi
+if [[ "$STACK_STATUS" != "NONE" && -n "${PAT_SECRET:-}" ]]; then
+  # An older stack hands its box a PAT (CanopyTokenSecret), and a box with a
+  # token pairs the old way: it would never use an invitation.
+  NEED_INVITE=0
+  echo ">> no pairing invitation: stack $STACK still names a PAT secret ($PAT_SECRET), so its box pairs with that"
+elif [[ "$STACK_STATUS" != "NONE" ]]; then
   canopy GET /api/harness/runners/ > "$TMPC/runners.json"
   if NAME="$NAME" python3 - "$TMPC/runners.json" <<'PY'
 import json, os, sys

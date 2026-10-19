@@ -1767,6 +1767,12 @@ class RunnerInvitationIn(Schema):
     ecdh_public_jwk: dict[str, Any] | None = None
 
 
+class RunnerInvitationCheckOut(Schema):
+    """You may invite a runner into `workspace`."""
+
+    workspace: str
+
+
 class RunnerInvitationOut(Schema):
     """A pairing invitation and where it stands. `approve_url` is the page where
     its creator approves it with a passkey; `runner_id` is set once the box has

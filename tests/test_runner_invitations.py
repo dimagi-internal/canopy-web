@@ -140,6 +140,67 @@ def test_recreate_replaces_the_live_one(org):
     assert RunnerInvitation.objects.count() == 2
 
 
+def _teammate(org, username="mallory"):
+    person = _person(username)
+    WorkspaceMembership.objects.create(workspace=org["ws"], user=person, role=WorkspaceMembership.OWNER)
+    raw, _ = PersonalToken.create_for_user(user=person, label=username)
+    return person, raw
+
+
+def test_someone_elses_live_invitation_cannot_be_replaced(org):
+    mine = _create(_pat_client(org["pat"])).json()
+    _, raw = _teammate(org)
+    res = _create(_pat_client(raw))
+    assert res.status_code == 409
+    assert "mallory" not in res.content.decode() and "jj" not in res.content.decode()
+    assert list(RunnerInvitation.objects.values_list("pk", flat=True)) == [
+        RunnerInvitation.objects.get(pk=mine["id"]).pk]
+
+
+def test_someone_elses_expired_invitation_is_replaced(org):
+    mine = _create(_pat_client(org["pat"])).json()
+    RunnerInvitation.objects.filter(pk=mine["id"]).update(expires_at=timezone.now() - timedelta(seconds=1))
+    teammate, raw = _teammate(org)
+    res = _create(_pat_client(raw))
+    assert res.status_code == 201
+    assert RunnerInvitation.objects.get().created_by == teammate
+
+
+def test_a_concurrent_create_is_a_409_not_a_500(org, monkeypatch):
+    from django.db import IntegrityError
+
+    def boom(**kw):
+        raise IntegrityError("one_live_runner_invitation_per_role_and_name")
+
+    monkeypatch.setattr(RunnerInvitation.objects, "create", boom)
+    assert _create(_pat_client(org["pat"])).status_code == 409
+
+
+def test_the_invited_activity_names_no_role(org):
+    from apps.events.models import Activity
+
+    _create(_pat_client(org["pat"]))
+    assert "role_arn" not in Activity.objects.get(kind="runner.invited").meta
+
+
+# ---- the pre-check up.sh makes before touching AWS -------------------------------------
+
+def test_check_says_yes_and_creates_nothing(org):
+    res = _pat_client(org["pat"]).get(f"{INVITES}check?workspace=connect")
+    assert res.status_code == 200 and res.json() == {"workspace": "connect"}
+    assert not RunnerInvitation.objects.exists()
+
+
+def test_check_applies_the_create_gates(org):
+    viewer = _person("vi")
+    WorkspaceMembership.objects.create(workspace=org["ws"], user=viewer, role=WorkspaceMembership.VIEWER)
+    raw, _ = PersonalToken.create_for_user(user=viewer, label="v")
+    assert _pat_client(raw).get(f"{INVITES}check?workspace=connect").status_code == 403
+    stranger = _person("st")
+    raw, _ = PersonalToken.create_for_user(user=stranger, label="s")
+    assert _pat_client(raw).get(f"{INVITES}check?workspace=connect").status_code == 404
+
+
 # ---- reading one ----------------------------------------------------------------------
 
 def test_only_the_creator_reads_it(org):
@@ -204,6 +265,7 @@ def test_creating_and_approving_are_recorded_as_activity(org):
 # ---- the box pairs by its instance role ------------------------------------------------
 
 PAIR = "/api/harness/runners/pair-by-role"
+_REFUSED = "no approved pairing invitation matches this box's instance role and name"
 PAIR_HTU = f"http://testserver{PAIR}"
 SESSIONS = "/api/runner-sessions/"
 
@@ -373,16 +435,12 @@ def test_replaced_instance_reattaches_without_an_invitation(org):
 
 
 @pytest.mark.usefixtures("sts")
-@pytest.mark.parametrize("how", ["retired", "revoked"])
-def test_retired_runner_role_needs_a_new_invitation_and_replaces_the_key_row(org, how):
+def test_retired_runner_role_needs_a_new_invitation_and_replaces_the_key_row(org):
     from apps.harness.models import RunnerDeviceKey
 
     _approved(org)
     old = Runner.objects.get(pk=_pair().json()["runner_id"])
-    if how == "retired":
-        Runner.objects.filter(pk=old.pk).update(status=Runner.RETIRED)
-    else:
-        RunnerDeviceKey.objects.filter(runner=old).update(status=RunnerDeviceKey.REVOKED)
+    Runner.objects.filter(pk=old.pk).update(status=Runner.RETIRED)
     assert _pair().status_code == 401          # no reattach, and no invitation yet
     _approved(org)
     res = _pair()
@@ -391,6 +449,83 @@ def test_retired_runner_role_needs_a_new_invitation_and_replaces_the_key_row(org
     assert new.pk != old.pk
     key = RunnerDeviceKey.objects.get(jkt=aws_iam_proof.role_jkt(ROLE))
     assert key.runner == new and key.status == RunnerDeviceKey.ACTIVE
+
+
+@pytest.mark.usefixtures("sts")
+def test_a_revoked_key_on_a_live_runner_is_not_laundered_by_reinviting(org):
+    """Revoking was a deliberate act; its owner undoes it, not a new invitation."""
+    from apps.harness.models import RunnerDeviceKey
+
+    _approved(org)
+    old = Runner.objects.get(pk=_pair().json()["runner_id"])
+    RunnerDeviceKey.objects.filter(runner=old).update(status=RunnerDeviceKey.REVOKED)
+    _approved(org)
+    res = _pair()
+    assert res.status_code == 401 and res.json()["detail"] == _REFUSED
+    key = RunnerDeviceKey.objects.get(jkt=aws_iam_proof.role_jkt(ROLE))
+    assert key.runner == old and key.status == RunnerDeviceKey.REVOKED
+    assert Runner.objects.count() == 1
+
+
+@pytest.mark.usefixtures("sts")
+@pytest.mark.parametrize("old_status", ["online", "retired"])
+@pytest.mark.parametrize("key_status", ["active", "revoked"])
+def test_another_owners_key_for_the_role_is_never_erased(org, old_status, key_status):
+    from apps.harness.models import RunnerDeviceKey
+
+    # Mallory's runner already holds this role (live or retired, key live or revoked).
+    mallory, _ = _teammate(org)
+    theirs = Runner.objects.create(name="cloud-ec2-fork", kind=Runner.CLOUD, owner=mallory,
+                                   workspace=org["ws"], status=old_status, capabilities={})
+    RunnerDeviceKey.objects.create(runner=theirs, kind=RunnerDeviceKey.AWS_IAM, role_arn=ROLE,
+                                   jkt=aws_iam_proof.role_jkt(ROLE), status=key_status)
+    _approved(org)
+    res = _pair()
+    if old_status == "online" and key_status == "active":
+        # That is Mallory's own box re-attaching to Mallory's runner; nothing of jj's.
+        assert res.json() == {"runner_id": str(theirs.pk), "status": "reattached"}
+        return
+    assert res.status_code == 401 and res.json()["detail"] == _REFUSED
+    key = RunnerDeviceKey.objects.get(jkt=aws_iam_proof.role_jkt(ROLE))
+    assert key.runner == theirs and key.status == key_status
+    assert Runner.objects.count() == 1
+
+
+@pytest.mark.usefixtures("sts")
+def test_a_concurrent_pairing_is_a_uniform_401_not_a_500(org, monkeypatch):
+    from django.db import IntegrityError
+
+    from apps.harness.models import RunnerDeviceKey
+
+    _approved(org)
+
+    def boom(**kw):
+        raise IntegrityError("duplicate key value violates unique constraint (jkt)")
+
+    monkeypatch.setattr(RunnerDeviceKey.objects, "create", boom)
+    res = _pair()
+    assert res.status_code == 401 and res.json()["detail"] == _REFUSED
+    assert not Runner.objects.exists()
+    assert RunnerInvitation.objects.get().consumed_at is None
+
+
+@pytest.mark.usefixtures("sts")
+def test_hijacking_someone_elses_invitation_fails_end_to_end(org):
+    """Alice (jj) invites and approves her box. Mallory, a co-owner of the
+    workspace, tries to replace the invitation with her own for the same role and
+    name. She is refused; Alice's invitation survives and her box pairs to her."""
+    alice_inv = _approved(org)
+    mallory, raw = _teammate(org)
+    assert _create(_pat_client(raw)).status_code == 409
+    browser = Client()
+    browser.force_login(mallory)
+    grant_step_up(browser)
+    assert browser.post(f"{INVITES}{alice_inv['id']}/approve").status_code == 404
+    res = _pair()
+    assert res.status_code == 201, res.content
+    runner = Runner.objects.get(pk=res.json()["runner_id"])
+    assert runner.owner == org["user"] and runner.owner != mallory
+    assert RunnerInvitation.objects.get(pk=alice_inv["id"]).runner_id == runner.pk
 
 
 @pytest.mark.usefixtures("sts")

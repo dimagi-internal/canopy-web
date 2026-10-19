@@ -246,6 +246,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "revoke_runner_device_key": ("runner-admin",),
     # --- apps/harness/api_runner_invitations.py (a new cloud box pairs by invitation)
     "create_runner_invitation": ("agent.work",),  # member (else 404) with agent.work in the named workspace
+    "check_runner_invitation": ("agent.work",),  # the same gates as create, changing nothing (up.sh's pre-check)
     "get_runner_invitation": ("self",),  # the invitation's creator only
     "approve_runner_invitation": ("self",),  # its creator, browser session + passkey step-up; a token is refused
     # anonymous door: the box's instance-role proof, plus an invitation its creator
