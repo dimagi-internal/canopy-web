@@ -141,7 +141,7 @@ export function AgentSettingsSection() {
             title="Local use"
             who={admins}
             canEdit={isAdmin}
-            description={`Who runs ${agent.name} in their own Claude Code, on which workstations, and when they last did.`}
+            description={`Who runs ${agent.name} in their own Claude Code, on which private runners, and when they last did.`}
           >
             <AgentLicenses agentSlug={agent.slug} canEdit={isAdmin} />
           </Setting>
