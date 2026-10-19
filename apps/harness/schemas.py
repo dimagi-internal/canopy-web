@@ -1895,3 +1895,6 @@ class RunnerPairByRoleOut(Schema):
     status: Literal["paired", "reattached", "waiting"]
     runner_id: uuid.UUID | None = None
     units: dict[str, uuid.UUID] = {}
+    #: Each unit's device key id, by unit name — what the box records so its
+    #: proofs are sent (`canopy vault device --registered`).
+    device_keys: dict[str, uuid.UUID] = {}

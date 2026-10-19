@@ -276,7 +276,8 @@ def test_the_live_single_unit_box_is_adopted_keeping_its_id_bindings_and_wraps(l
                       name="cloud-ec2-2")
     assert res.status_code == 200, res.content
     assert res.json() == {"status": "reattached", "runner_id": str(live_box["runner"].pk),
-                          "units": {"cloud-ec2-2": str(live_box["runner"].pk)}}
+                          "units": {"cloud-ec2-2": str(live_box["runner"].pk)},
+                          "device_keys": {"cloud-ec2-2": str(live_box["key"].pk)}}
     key = RunnerDeviceKey.objects.get()
     assert key.pk == live_box["key"].pk and key.runner_id == live_box["runner"].pk
     assert key.kind == RunnerDeviceKey.SOFTWARE and key.role_arn == ""
@@ -342,3 +343,18 @@ def test_pat_is_never_needed(two_trees):
         units=[{"name": BOX, "workspace": "connect", "kind": "tree", "slug": ""}])
     assert _pair_units(_keys([BOX])).status_code == 201
     assert RunnerInvitation.objects.get(pk=inv.pk).status == "consumed"
+
+
+def test_a_capabilities_write_that_omits_the_unit_keeps_it(two_trees):
+    """The box re-declares its capabilities on every start; the unit canopy-web
+    recorded from the invitation is not lost when it omits it."""
+    from apps.harness.models import RunnerAccessToken
+
+    _approve(two_trees, _invite(two_trees).json()["id"])
+    rid = _pair_units(_keys([u["name"] for u in UNITS])).json()["units"][f"{BOX}-agent-eva"]
+    raw, _ = RunnerAccessToken.mint(RunnerDeviceKey.objects.get(runner_id=rid))
+    res = Client(HTTP_AUTHORIZATION=f"Bearer {raw}").patch(
+        f"/api/harness/runners/{rid}", data={"capabilities": {"sessions": True}},
+        content_type="application/json")
+    assert res.status_code == 200, res.content
+    assert Runner.objects.get(pk=rid).unit() == {"kind": "agent", "slug": "eva"}

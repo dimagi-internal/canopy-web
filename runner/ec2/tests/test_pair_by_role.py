@@ -48,7 +48,7 @@ def test_waits_for_approval_then_pairs_and_writes_its_state(box, monkeypatch):
     sent = _answers(box, monkeypatch, (202, {"status": "waiting"}),
                     (201, {"status": "paired", "runner_id": "rid-1"}))
     assert box.pair_by_role() == "rid-1"
-    assert json.loads(box.STATE_FILE.read_text()) == {"runner_id": "rid-1"}
+    assert json.loads(box.STATE_FILE.read_text()) == {"runner_id": "rid-1", "paired_by": "invitation"}
     url, body = sent[0]
     assert url == "https://canopy.example/api/harness/runners/pair-by-role"
     assert body["name"] == "cloud-ec2-fork" and body["kind"] == "cloud"
@@ -69,7 +69,7 @@ def test_the_proof_is_bound_to_the_pair_by_role_url(box, monkeypatch):
 def test_a_replaced_instance_reattaches(box, monkeypatch):
     _answers(box, monkeypatch, (200, {"status": "reattached", "runner_id": "rid-old"}))
     assert box.pair_by_role() == "rid-old"
-    assert json.loads(box.STATE_FILE.read_text()) == {"runner_id": "rid-old"}
+    assert json.loads(box.STATE_FILE.read_text()) == {"runner_id": "rid-old", "paired_by": "invitation"}
 
 
 def test_a_refusal_says_run_up_sh_and_keeps_asking(box, monkeypatch):

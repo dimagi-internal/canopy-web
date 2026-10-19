@@ -24736,6 +24736,13 @@ export interface components {
             readonly units: {
                 readonly [key: string]: string;
             };
+            /**
+             * Device Keys
+             * @default {}
+             */
+            readonly device_keys: {
+                readonly [key: string]: string;
+            };
         };
         /**
          * RunnerPairByRoleIn

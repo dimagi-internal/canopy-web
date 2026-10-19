@@ -55,6 +55,17 @@ def _no_aws_device_proof(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _legacy_secret_files_by_default(monkeypatch):
+    """Off-disk turn envs (spec 2026-10-19-runner-isolation-units §4) turn on when the
+    installed canopy CLI is new enough — which `subprocess.run` fakes in many tests
+    cannot answer honestly. The tests written before it pin the legacy file path, so
+    it stays the default here; tests/test_turn_env_off_disk.py turns it back on."""
+    monkeypatch.setenv("RUNNER_SECRET_FILES", "1")
+    for name in ("CANOPY_UNIT", "CANOPY_GOG_SECRET_FILE", "CANOPY_TURN_ENV_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_credential_probe(monkeypatch):
     """Staging a credential probes it with a real `claude -p` (one short turn).
     Off by default here, so no test spends usage or waits on a CLI;

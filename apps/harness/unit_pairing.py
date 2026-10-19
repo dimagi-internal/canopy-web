@@ -233,6 +233,9 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
                       meta={"name": runner.name, "invitation": str(invitation.pk), "unit": True})
     ids = {name: r.pk for name, r in existing.items()}
     ids.update({r.name: r.pk for r in created})
+    key_ids = {r.name: k for r in [*existing.values(), *created]
+               for k in [getattr(_active_key(r), "pk", None)] if k}
     first = created[0].pk if created else next(iter(ids.values()))
     status = "paired" if created else "reattached"
-    return status_cls(201 if created else 200, out_cls(status=status, runner_id=first, units=ids))
+    return status_cls(201 if created else 200,
+                      out_cls(status=status, runner_id=first, units=ids, device_keys=key_ids))
