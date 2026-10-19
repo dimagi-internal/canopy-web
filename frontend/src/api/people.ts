@@ -351,3 +351,26 @@ export async function listMySearches(before?: string): Promise<SearchHistory> {
   if (error) throw new Error('Failed to load how agents searched your memory')
   return data as SearchHistory
 }
+
+export type MemoryViewers = components['schemas']['MemoryViewersOut']
+
+/** The agents you let see this page, read-only, and the ones you could let in. */
+export async function listMyViewers(): Promise<MemoryViewers> {
+  const { data, error } = await apiV2.GET('/api/people/me/viewers/')
+  if (error) throw new Error('Failed to load which agents can see this page')
+  return data as MemoryViewers
+}
+
+export async function addMyViewer(agent: string): Promise<MemoryViewers> {
+  const { data, error } = await apiV2.POST('/api/people/me/viewers/', { body: { agent } })
+  if (error) throw new Error('Failed to let that agent see this page')
+  return data as MemoryViewers
+}
+
+export async function removeMyViewer(agent: string): Promise<MemoryViewers> {
+  const { data, error } = await apiV2.DELETE('/api/people/me/viewers/{agent_slug}/', {
+    params: { path: { agent_slug: agent } },
+  })
+  if (error) throw new Error('Failed to stop that agent seeing this page')
+  return data as MemoryViewers
+}

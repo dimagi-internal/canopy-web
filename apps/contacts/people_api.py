@@ -36,6 +36,11 @@ from .people_schemas import (
     MemoryCollectionOut,
     MemoryCollectionsOut,
     MemoryCollectionUpdateIn,
+    MemoryPageAuditOut,
+    MemoryPageOut,
+    MemoryViewerIn,
+    MemoryViewersOut,
+    SharedPagesOut,
     AgentMemoryIn,
     AgentMemoryOut,
     SessionMemoryIn,
@@ -106,6 +111,10 @@ def people_me(request: HttpRequest) -> dict:
     person = contact_services.person_for(user=request.user)
     if person is None:
         raise _not_found()
+    return _me_payload(person)
+
+
+def _me_payload(person: Person) -> dict:
     facts = []
     places: dict[str, dict] = {}
     for f in people.live_facts(person).select_related("asserted_by_agent", "asserted_by_user"):
@@ -583,9 +592,12 @@ def list_my_memory_searches(request: HttpRequest, before: str | None = None, lim
     and why; what was left out and why not — with the settings at that moment.
     Searches from before scores were kept (`scored` false) show what came back
     only. Entry text is what the entry says now."""
+    return _searches(_the_person_themself(request), before, limit)
+
+
+def _searches(person: Person, before: str | None, limit: int) -> dict:
     from .models import PersonSearch
 
-    person = _the_person_themself(request)
     qs = PersonSearch.objects.filter(person=person).select_related(
         "turn__chat_session", "turn__agent")
     if before:
@@ -686,3 +698,121 @@ def set_my_grant_collection(request: HttpRequest, grant_id: str, payload: GrantC
     except (hcp.HcpError, hcp_collections.NeedsConfirm) as exc:
         raise _collection_error(exc) from None
     return _collections(person)
+
+
+# --- letting an agent see your memory page (apps/contacts/viewers.py) ---------------
+
+
+def _pickable_agents(user):
+    from apps.agents.models import Agent
+
+    return Agent.objects.filter(workspace_id__in=wsvc.user_workspace_slugs(user)).order_by("name", "slug")
+
+
+def _viewers(person: Person, user) -> dict:
+    from . import viewers
+
+    live = viewers.live(person)
+    taken = {v.agent_id for v in live}
+    return {"viewers": [{"agent": v.agent.slug, "name": v.agent.name or v.agent.slug,
+                         "granted_at": v.granted_at, "last_viewed_at": v.last_viewed_at}
+                        for v in live],
+            "agents": [{"slug": a.slug, "name": a.name or a.slug}
+                       for a in _pickable_agents(user) if a.pk not in taken]}
+
+
+@router.get("/me/viewers/", response=MemoryViewersOut,
+            summary="The agents you let see your memory page")
+def list_my_viewers(request: HttpRequest) -> dict:
+    """Which agents may see this page, read-only, and which you could let in
+    (the agents of workspaces you belong to). Only you see this."""
+    return _viewers(_the_person_themself(request), request.user)
+
+
+@router.post("/me/viewers/", response=MemoryViewersOut,
+             summary="Let an agent see your memory page, read-only")
+def add_my_viewer(request: HttpRequest, payload: MemoryViewerIn) -> dict:
+    """Your act: the agent's own login may then read everything this page shows
+    you — what is held, who may read it, what happened, how agents searched it —
+    and change nothing. Each look goes in your audit. Only you can do this."""
+    from . import viewers
+
+    person = _the_person_themself(request)
+    agent = _pickable_agents(request.user).filter(slug=payload.agent.strip()).first()
+    if agent is None:
+        raise _not_found("Agent not found")
+    viewers.grant(person, agent, user=request.user)
+    return _viewers(person, request.user)
+
+
+@router.delete("/me/viewers/{agent_slug}/", response=MemoryViewersOut,
+               summary="Stop an agent seeing your memory page")
+def remove_my_viewer(request: HttpRequest, agent_slug: str) -> dict:
+    """At once: its next read is "not found". Only you can do this."""
+    from apps.agents.models import Agent
+
+    from . import viewers
+
+    person = _the_person_themself(request)
+    agent = Agent.objects.filter(slug=agent_slug).first()
+    if agent is None or not viewers.revoke(person, agent, user=request.user):
+        raise _not_found("That agent cannot see your page")
+    return _viewers(person, request.user)
+
+
+@router.get("/pages/shared-with-me/", response=SharedPagesOut,
+            summary="The memory pages people let this agent see")
+def list_shared_pages(request: HttpRequest) -> dict:
+    """For an agent's own login: whose memory page it may read, and where.
+    Anyone else gets an empty list."""
+    from . import viewers
+
+    agent = viewers.viewing_agent(request)
+    if agent is None:
+        return {"pages": []}
+    return {"pages": [{"person_id": v.person_id, "display_name": people.display_name(v.person),
+                       "granted_at": v.granted_at, "href": f"/people/{v.person_id}/page"}
+                      for v in viewers.shared_with(agent)]}
+
+
+def _page_of(request: HttpRequest, person_id: int) -> Person:
+    from . import viewers
+
+    person = viewers.page_of(request, person_id)
+    if person is None:
+        raise _not_found()
+    return person
+
+
+@router.get("/{person_id}/page/", response=MemoryPageOut,
+            summary="A person's memory page, as they let this agent see it")
+def get_memory_page(request: HttpRequest, person_id: int) -> dict:
+    """What /people/me shows the person — what is held, who may read it (their
+    grants, their collections) — for an agent whose own login they let see it.
+    Read-only. Anyone else: not found."""
+    from .hcp_api import grants_of
+
+    person = _page_of(request, person_id)
+    return {"me": _me_payload(person), "grants": grants_of(person),
+            "collections": _collections(person)}
+
+
+@router.get("/{person_id}/page/audit/", response=MemoryPageAuditOut,
+            summary="What happened to a person's memory, as they let this agent see it")
+def get_memory_page_audit(request: HttpRequest, person_id: int, cursor: str | None = None) -> dict:
+    """Their audit log, newest first, 50 at a time — the page's "What happened"."""
+    from .hcp_api import audit_page
+
+    person = _page_of(request, person_id)
+    try:
+        return audit_page(person, cursor=cursor)
+    except hcp.HcpError as exc:
+        raise _bad(exc.detail) from None
+
+
+@router.get("/{person_id}/page/searches/", response=SearchHistoryOut,
+            summary="How agents searched a person's memory, as they let this agent see it")
+def get_memory_page_searches(request: HttpRequest, person_id: int, before: str | None = None,
+                             limit: int = 30) -> dict:
+    """The page's "How agents searched it"."""
+    return _searches(_page_of(request, person_id), before, limit)

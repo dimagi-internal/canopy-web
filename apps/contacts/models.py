@@ -801,6 +801,10 @@ class PersonAuditEvent(models.Model):
         # took a source out of the collection it uses (or moved it to a smaller
         # one). A widening is always a `grant.issued`.
         "collection.created", "collection.updated", "collection.deleted", "grant.narrowed",
+        # An agent the person let see their memory page (`MemoryViewer`): let in,
+        # let go, and each time it looked (`page.viewed`, at most one per
+        # `viewers.LOOK_WINDOW`).
+        "viewer.granted", "viewer.revoked", "page.viewed",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 
@@ -872,6 +876,29 @@ class PersonSearch(models.Model):
         db_table = "contact_person_searches"
         ordering = ["-created_at", "-pk"]
         indexes = [models.Index(fields=["person", "created_at"])]
+
+
+class MemoryViewer(models.Model):
+    """An agent the person let see their memory page (/people/me), read-only
+    (`apps/contacts/viewers.py`). Only that agent's own login reads it; it
+    changes nothing. Revoking sets `revoked_at`; a new act grants again."""
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="viewers")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="memory_pages")
+    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    granted_at = models.DateTimeField(default=timezone.now)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    #: The last look written to the person's audit (`page.viewed`), so a page
+    #: load — several reads — is one event, not one per section.
+    last_viewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "contact_memory_viewers"
+        ordering = ["-granted_at", "-pk"]
+        constraints = [models.UniqueConstraint(fields=["person", "agent"],
+                                               condition=models.Q(revoked_at__isnull=True),
+                                               name="memory_viewer_one_live")]
 
 
 class SessionAgentMemory(models.Model):

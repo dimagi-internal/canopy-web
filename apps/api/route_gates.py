@@ -84,6 +84,9 @@ Vocabulary (closed — add to it deliberately, never in passing):
   (``apps/contacts/hcp_oauth.py``) is held the same way: its ``hcpat_`` access
   token reaches ONLY the person whose grant it was issued under, within that
   grant's scopes and sources, and opens ``/api/hcp/v1/`` and nothing else.
+* ``page-viewer`` — an agent's OWN login that a person let see their memory page
+  (``apps/contacts/viewers.py::page_of``): reads that person's page and nothing
+  else; never a caller token or an HCP client. Anyone else is 404.
 """
 from __future__ import annotations
 
@@ -95,7 +98,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
-    "hcp-grant", "device-proof", "owner-token-and-key", "invited-role",
+    "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "page-viewer",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -599,6 +602,15 @@ GATES: dict[str, tuple[str, ...]] = {
     "preview_my_memory_search": ("self",),
     # Every search agents ran over your memory, as it ran — only the person.
     "list_my_memory_searches": ("self",),
+    # Letting an agent see your memory page, read-only (apps/contacts/viewers.py):
+    # choosing who is the person's own act; the agent's own login then reads it.
+    "list_my_viewers": ("self",),
+    "add_my_viewer": ("self",),
+    "remove_my_viewer": ("self",),
+    "list_shared_pages": ("authenticated",),  # empty unless the caller is an agent's own login
+    "get_memory_page": ("page-viewer",),
+    "get_memory_page_audit": ("page-viewer",),
+    "get_memory_page_searches": ("page-viewer",),
     "set_my_grant_collection": ("self",),
     # --- apps/contacts/hcp_api.py  (HCP v1 over the people brain; apps/contacts/hcp.py)
     # `self` = the person's own instance; `hcp-grant` = an agent, for the person
@@ -899,6 +911,7 @@ SETTINGS: frozenset[str] = frozenset({
     "set_presence_preference", "set_session_workspace_preference", "set_preferences",
     "set_runner_app_preference",
     "set_my_agent_memory", "set_my_grant_collection",
+    "add_my_viewer", "remove_my_viewer",  # who may see your memory page
     "finish_passkey_registration", "delete_passkey",  # the second factor a step-up asks for
     "put_vault_keyset",  # the person's zero-knowledge vault key
     "create_my_memory_collection", "update_my_memory_collection", "delete_my_memory_collection",
