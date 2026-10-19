@@ -10605,6 +10605,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/me/memory-searches/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Every search agents ran over your memory, as it ran
+         * @description Newest first: who searched, for which turn (with a link to its session),
+         *     the question, and every entry it scored — what came back, in what place,
+         *     and why; what was left out and why not — with the settings at that moment.
+         *     Searches from before scores were kept (`scored` false) show what came back
+         *     only. Entry text is what the entry says now.
+         */
+        readonly get: operations["list_my_memory_searches"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/people/me/memory-collections/{collection_id}/": {
         readonly parameters: {
             readonly query?: never;
@@ -28480,8 +28504,11 @@ export interface components {
         readonly SearchPreviewEntryOut: {
             /** Entry Id */
             readonly entry_id: string | null;
-            /** Statement */
-            readonly statement: string;
+            /**
+             * Statement
+             * @description What the entry says now; null once it was deleted.
+             */
+            readonly statement: string | null;
             /** Kind */
             readonly kind: string;
             /** Project */
@@ -28552,6 +28579,66 @@ export interface components {
              * @default 8
              */
             readonly limit: number;
+        };
+        /** SearchHistoryOut */
+        readonly SearchHistoryOut: {
+            /** Searches */
+            readonly searches: readonly components["schemas"]["SearchRecordOut"][];
+            /** Total */
+            readonly total: number | null;
+            /** Next Before */
+            readonly next_before: string | null;
+        };
+        /** SearchRecordOut */
+        readonly SearchRecordOut: {
+            /** Retrieval Id */
+            readonly retrieval_id: string;
+            /**
+             * At
+             * Format: date-time
+             */
+            readonly at: string;
+            /** Actor Id */
+            readonly actor_id: string;
+            /** Actor Type */
+            readonly actor_type: string;
+            /**
+             * Agent
+             * @description The agent whose turn searched, by name.
+             */
+            readonly agent: string | null;
+            /** Purpose */
+            readonly purpose: string;
+            /**
+             * Query
+             * @description The question searched with (a turn's own context search: its prompt).
+             */
+            readonly query: string;
+            /** Method */
+            readonly method: string;
+            /** Model */
+            readonly model: string;
+            /** Floor */
+            readonly floor: number | null;
+            /** Weight */
+            readonly weight: number | null;
+            /** Project Boost */
+            readonly project_boost: number | null;
+            /** Embed Ms */
+            readonly embed_ms: number | null;
+            /**
+             * Scored
+             * @description False: from before scores were kept — what came back only.
+             */
+            readonly scored: boolean;
+            /** Turn Id */
+            readonly turn_id: string | null;
+            /** Session Href */
+            readonly session_href: string | null;
+            /** Session Title */
+            readonly session_title: string | null;
+            /** Entries */
+            readonly entries: readonly components["schemas"]["SearchPreviewEntryOut"][];
         };
         /** MemoryCollectionUpdateIn */
         readonly MemoryCollectionUpdateIn: {
@@ -42761,6 +42848,29 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SearchPreviewOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_memory_searches: {
+        readonly parameters: {
+            readonly query?: {
+                readonly before?: string | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SearchHistoryOut"];
                 };
             };
         };

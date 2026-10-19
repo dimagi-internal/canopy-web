@@ -1496,6 +1496,17 @@ def explain(candidates: list[PersonFact], query: str, *, limit: int, project_id:
                          "best_meaning": best, "floor": floor}
 
 
+def score_rows(returned: list[Score], scores: list[Score]) -> list[dict]:
+    """Every candidate as plain data, in the order shown: what came back by its
+    place, then the rest closest in meaning first. Ids, never content."""
+    place = {id(sc): i + 1 for i, sc in enumerate(returned)}
+    rows = sorted(scores, key=lambda sc: (place.get(id(sc), len(place) + 1), -(sc.meaning or 0), -sc.total))
+    return [{"entry_id": str(sc.fact.entry_id) if sc.fact.entry_id else None,
+             "meaning": None if sc.meaning is None else round(sc.meaning, 3), "words": sc.words,
+             "on_project": sc.project, "total": round(sc.total, 2), "position": place.get(id(sc)),
+             "because": sc.because} for sc in rows]
+
+
 def rank(candidates: list[PersonFact], query: str, *, limit: int,
          project_id: int | None = None) -> list[PersonFact]:
     """The `limit` most relevant of `candidates` (already filtered to what the grant
@@ -1542,7 +1553,7 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
     qs = servable(PersonFact.objects.filter(where, person=person, category__in=wanted)
                   ).select_related("project", "person", "workspace") if slugs else PersonFact.objects.none()
     candidates = [f for f in qs if actor.is_person or within_grant(f, grant, "read")]
-    returned, _, stats = explain(candidates, query, limit=limit, project_id=project_id)
+    returned, scores_all, stats = explain(candidates, query, limit=limit, project_id=project_id)
     hits = [sc.fact for sc in returned]
     workspace_slug = slugs[0] if slugs else None
     retrieval = str(uuid.uuid4())
@@ -1560,6 +1571,17 @@ def search(person: Person, *, workspace_slugs, query: str, categories: list[str]
                if best is not None else "nothing matched")
         audit(person, "preference.read", actor=actor, category=",".join(wanted)[:80], purpose=purpose,
               grant=grant, workspace_slug=workspace_slug, turn=turn, detail=f"{detail}; why={why}; query={asked}")
+    from django.conf import settings
+
+    from . import embeddings
+    from .models import PersonSearch
+
+    PersonSearch.objects.create(
+        person=person, retrieval_id=retrieval, actor_id=actor.id[:200], actor_type=actor.type, turn=turn,
+        purpose=(purpose or "")[:500], query=(query or "")[:4000], method=minimization_method(),
+        model=embeddings.model(), floor=stats["floor"], weight=settings.HCP_SEMANTIC_WEIGHT,
+        project_boost=settings.HCP_PROJECT_BOOST, embed_ms=stats["embed_ms"],
+        entries=score_rows(returned, scores_all))
     best = stats["best_meaning"]
     logger.info("hcp search: person=%s actor=%s method=%s candidates=%d compared=%d returned=%d "
                 "best_meaning=%s floor=%.2f embed_ms=%s retrieval=%s",

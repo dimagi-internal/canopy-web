@@ -48,6 +48,7 @@ from .people_schemas import (
     PersonOut,
     PersonProjectsOut,
     PersonRefOut,
+    SearchHistoryOut,
     SearchPreviewIn,
     SearchPreviewOut,
 )
@@ -548,19 +549,67 @@ def preview_my_memory_search(request: HttpRequest, payload: SearchPreviewIn) -> 
     facts = list(hcp.servable(PersonFact.objects.filter(person=person))
                  .select_related("project", "person", "workspace"))
     returned, scores, stats = hcp.explain(facts, query, limit=payload.limit, floor=payload.floor)
-    place = {id(sc): i + 1 for i, sc in enumerate(returned)}
-    rows = sorted(scores, key=lambda sc: (place.get(id(sc), 99), -(sc.meaning or 0), -sc.total))
     return {
         "method": hcp.minimization_method(), "model": embeddings.model(),
         "floor": stats["floor"], "live_floor": settings.HCP_SEMANTIC_FLOOR,
         "weight": settings.HCP_SEMANTIC_WEIGHT, "project_boost": settings.HCP_PROJECT_BOOST,
         "limit": payload.limit, "embed_ms": stats["embed_ms"],
-        "entries": [{"entry_id": str(sc.fact.entry_id) if sc.fact.entry_id else None, "statement": sc.fact.statement, "kind": sc.fact.kind,
-                     "project": sc.fact.project.name if sc.fact.project_id else None,
-                     "meaning": None if sc.meaning is None else round(sc.meaning, 3), "words": sc.words,
-                     "on_project": sc.project, "total": round(sc.total, 2), "position": place.get(id(sc)),
-                     "because": sc.because} for sc in rows],
+        "entries": _with_text(person, hcp.score_rows(returned, scores)),
     }
+
+
+def _with_text(person: Person, rows: list[dict]) -> list[dict]:
+    """Each scored row with what its entry says NOW (a record keeps only ids):
+    the current version's text, kind and project; `statement` None once the
+    entry is deleted."""
+    ids = [r["entry_id"] for r in rows if r.get("entry_id")]
+    now = {str(f.entry_id): f for f in PersonFact.objects.filter(
+        person=person, entry_id__in=ids, superseded_at__isnull=True).select_related("project")}
+    out = []
+    for r in rows:
+        f = now.get(r.get("entry_id") or "")
+        gone = f is None or f.status == PersonFact.DELETED
+        out.append({"meaning": None, "words": [], "on_project": False, "total": 0.0, "because": "", **r,
+                    "statement": None if gone else f.statement, "kind": "" if gone else f.kind,
+                    "project": None if gone or not f.project_id else f.project.name})
+    return out
+
+
+@router.get("/me/memory-searches/", response=SearchHistoryOut,
+            summary="Every search agents ran over your memory, as it ran")
+def list_my_memory_searches(request: HttpRequest, before: str | None = None, limit: int = 30) -> dict:
+    """Newest first: who searched, for which turn (with a link to its session),
+    the question, and every entry it scored — what came back, in what place,
+    and why; what was left out and why not — with the settings at that moment.
+    Searches from before scores were kept (`scored` false) show what came back
+    only. Entry text is what the entry says now."""
+    from .models import PersonSearch
+
+    person = _the_person_themself(request)
+    qs = PersonSearch.objects.filter(person=person).select_related(
+        "turn__chat_session", "turn__agent")
+    if before:
+        at = parse_datetime(before)
+        if at is None:
+            raise _bad(f"before is not a timestamp: {before}")
+        qs = qs.filter(created_at__lt=at)
+    limit = max(1, min(limit, 100))
+    page = list(qs[:limit + 1])
+    rows = []
+    for s in page[:limit]:
+        sess = s.turn.chat_session if s.turn_id and s.turn.chat_session_id else None
+        rows.append({
+            "retrieval_id": str(s.retrieval_id), "at": s.created_at, "actor_id": s.actor_id,
+            "actor_type": s.actor_type, "agent": s.turn.agent.name if s.turn_id and s.turn.agent_id else None,
+            "purpose": s.purpose, "query": s.query, "method": s.method, "model": s.model,
+            "floor": s.floor, "weight": s.weight, "project_boost": s.project_boost, "embed_ms": s.embed_ms,
+            "scored": s.scored, "turn_id": str(s.turn_id) if s.turn_id else None,
+            "session_href": f"/w/{sess.workspace_id}/chat/{sess.pk}" if sess and sess.workspace_id else None,
+            "session_title": (sess.title or None) if sess else None,
+            "entries": _with_text(person, s.entries or []),
+        })
+    return {"searches": rows, "total": qs.count() if not before else None,
+            "next_before": page[limit - 1].created_at.isoformat() if len(page) > limit else None}
 
 
 @router.post("/me/memory-collections/", response=MemoryCollectionOut,

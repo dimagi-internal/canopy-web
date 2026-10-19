@@ -338,3 +338,16 @@ export async function previewMySearch(query: string, floor?: number): Promise<Se
   if (error) throw new Error((error as { detail?: string }).detail || 'Search preview failed')
   return data as SearchPreview
 }
+
+export type SearchRecord = components['schemas']['SearchRecordOut']
+export type SearchHistory = components['schemas']['SearchHistoryOut']
+
+/** Every search agents ran over your memory, newest first, as it ran: the
+ *  question, every entry scored, and the settings then. `before` pages back. */
+export async function listMySearches(before?: string): Promise<SearchHistory> {
+  const { data, error } = await apiV2.GET('/api/people/me/memory-searches/', {
+    params: { query: { before: before ?? null, limit: 30 } },
+  })
+  if (error) throw new Error('Failed to load how agents searched your memory')
+  return data as SearchHistory
+}

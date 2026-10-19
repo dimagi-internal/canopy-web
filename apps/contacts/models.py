@@ -43,6 +43,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class Person(models.Model):
@@ -834,6 +835,43 @@ class PersonAuditEvent(models.Model):
         if self.pk is not None and not kwargs.pop("_allow_update", False):
             raise ValueError("PersonAuditEvent is append-only")
         super().save(*args, **kwargs)
+
+
+class PersonSearch(models.Model):
+    """One search over a person's memory as it ran (hcp.search): the question,
+    EVERY entry it scored — returned or not — with its score and reason, and the
+    settings at that moment. The person's "how did it actually work" record
+    (/people/me → How agents searched it); like the audit, theirs alone. Entries
+    are named by id, never by content, so deleting one leaves nothing of it here.
+
+    `scored` False: rebuilt from the audit for searches before this was kept
+    (`manage.py hcp_backfill_searches`) — what came back and, for a turn's own
+    context search, the turn's prompt, but no scores."""
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="searches")
+    retrieval_id = models.UUIDField(unique=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    actor_id = models.CharField(max_length=200)
+    actor_type = models.CharField(max_length=8)
+    turn = models.ForeignKey("harness.Turn", on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="person_searches")
+    purpose = models.CharField(max_length=500, blank=True, default="")
+    query = models.TextField(blank=True, default="")
+    method = models.CharField(max_length=16, blank=True, default="")
+    model = models.CharField(max_length=120, blank=True, default="")
+    floor = models.FloatField(null=True, blank=True)
+    weight = models.FloatField(null=True, blank=True)
+    project_boost = models.FloatField(null=True, blank=True)
+    embed_ms = models.IntegerField(null=True, blank=True)
+    scored = models.BooleanField(default=True)
+    # [{entry_id, meaning, words, on_project, total, position, because}], in the
+    # order shown: returned first by position, then the rest.
+    entries = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        db_table = "contact_person_searches"
+        ordering = ["-created_at", "-pk"]
+        indexes = [models.Index(fields=["person", "created_at"])]
 
 
 class SessionAgentMemory(models.Model):
