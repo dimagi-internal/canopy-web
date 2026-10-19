@@ -1750,7 +1750,41 @@ RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", "cli").strip().lower()
 ACP_SESSION_START_TIMEOUT_SECONDS = float(
     os.environ.get("ACP_SESSION_START_TIMEOUT_SECONDS", "300"))
 
-_ACP_CORE: object = False  # False = not yet attempted
+#: What each lazily-imported in-repo package loaded as: only a SUCCESS is kept.
+#: A failure used to be cached too, for the life of the process — and a call made
+#: before bootstrap had put the clone's packages on sys.path (the startup
+#: credential probe parsing a cap's reset, cloud-ec2-2) then disabled durable
+#: transcript rows until the next restart. Now a failure is retried on the next
+#: call and logged once per process.
+_LAZY_MODULES: dict = {}
+_LAZY_FAILED_LOGGED: set = set()
+_LAZY_LOCK = threading.Lock()
+
+
+def _lazy_import(name: str, load, why: str):
+    """`load()` once it succeeds, cached; None (retried next call) until then."""
+    with _LAZY_LOCK:
+        if name in _LAZY_MODULES:
+            return _LAZY_MODULES[name]
+    try:
+        mod = load()
+    except Exception as exc:  # noqa: BLE001
+        with _LAZY_LOCK:
+            first = name not in _LAZY_FAILED_LOGGED
+            _LAZY_FAILED_LOGGED.add(name)
+        if first:
+            _log(f"{name} unavailable ({exc}); {why} — will retry")
+        return None
+    with _LAZY_LOCK:
+        _LAZY_MODULES[name] = mod
+        if name in _LAZY_FAILED_LOGGED:
+            _log(f"{name} imported after an earlier failure")
+    return mod
+
+
+def _import_acp():
+    import canopy_acp  # noqa: PLC0415
+    return canopy_acp
 
 
 def _acp_core():
@@ -1758,16 +1792,7 @@ def _acp_core():
     the package lives in the repo this module clones, so it does not exist at
     import time. Returns None when unavailable, and the caller falls back to
     `claude -p` rather than failing the turn."""
-    global _ACP_CORE
-    if _ACP_CORE is not False:
-        return _ACP_CORE
-    try:
-        import canopy_acp  # noqa: PLC0415
-        _ACP_CORE = canopy_acp
-    except Exception as exc:  # noqa: BLE001
-        _log(f"canopy_acp unavailable ({exc}); ACP executor disabled")
-        _ACP_CORE = None
-    return _ACP_CORE
+    return _lazy_import("canopy_acp", _import_acp, "ACP executor disabled")
 
 
 # Turn id -> what to do the moment the executor learns the turn's CLI session id.
@@ -3241,6 +3266,13 @@ def _install_transcript_core(repo_dir: pathlib.Path) -> None:
     RUNNER_EXECUTOR=acp, so flipping the executor is an env change and a restart
     rather than a redeploy — the point of a switch you can actually use.
     """
+    _expose_repo_packages(repo_dir)
+    _install_acp_adapter()
+
+
+def _expose_repo_packages(repo_dir: pathlib.Path) -> None:
+    """Only the sys.path half of `_install_transcript_core` — cheap, no network,
+    no install — so `main()` can run it before the startup credential probes."""
     _expose_repo_package(repo_dir, "canopy_transcript", "transcript rows")
     # canopy_acp lives beside the runner programs (runner/canopy_acp), not in
     # packages/ — looking for it there disabled the ACP executor on every boot.
@@ -3254,7 +3286,6 @@ def _install_transcript_core(repo_dir: pathlib.Path) -> None:
     # `encode_project_dir` already has (three files, "keep the two in step").
     _expose_repo_package(repo_dir, "canopy_runner", "the shared inbox reader",
                          parent="runner")
-    _install_acp_adapter()
 
 
 #: Turn id -> the live AcpAgent driving it, for the WS thread to reach into.
@@ -5344,21 +5375,15 @@ def _drain_mint(runner_id: str) -> None:
 # The box HAS the credentials (`canopy agent prepare` imports each agent's gmail
 # token at bootstrap, and a live `gog gmail search` succeeds here); it
 # only ever lacked the code. So: same modules, same behaviour, same tests.
-_INBOX_CORE: object = False
+def _import_inbox():
+    from canopy_runner import inbox, inbox_due  # noqa: PLC0415
+    return (inbox, inbox_due)
 
 
 def _inbox_core():
     """`canopy_runner.inbox` + `.inbox_due`, imported lazily off the clone."""
-    global _INBOX_CORE
-    if _INBOX_CORE is not False:
-        return _INBOX_CORE
-    try:
-        from canopy_runner import inbox, inbox_due  # noqa: PLC0415
-        _INBOX_CORE = (inbox, inbox_due)
-    except Exception as exc:  # noqa: BLE001
-        _log(f"inbox reader unavailable ({exc}); this box will not read mail")
-        _INBOX_CORE = None
-    return _INBOX_CORE
+    return _lazy_import("canopy_runner.inbox", _import_inbox,
+                        "inbox reader disabled: this box will not read mail")
 
 
 class _InboxClient:
@@ -6014,19 +6039,13 @@ def _transcript_core():
     durable transcript rows are skipped, which the laptop path would backfill
     anyway.
     """
-    global _TRANSCRIPT_CORE
-    if _TRANSCRIPT_CORE is not False:
-        return _TRANSCRIPT_CORE
-    try:
-        import canopy_transcript  # noqa: PLC0415
-        _TRANSCRIPT_CORE = canopy_transcript
-    except Exception as exc:  # noqa: BLE001
-        _log(f"canopy_transcript unavailable ({exc}); durable transcript rows disabled")
-        _TRANSCRIPT_CORE = None
-    return _TRANSCRIPT_CORE
+    return _lazy_import("canopy_transcript", _import_transcript,
+                        "durable transcript rows disabled")
 
 
-_TRANSCRIPT_CORE: object = False  # False = not yet attempted
+def _import_transcript():
+    import canopy_transcript  # noqa: PLC0415
+    return canopy_transcript
 
 
 def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) -> None:
@@ -7133,6 +7152,11 @@ def main() -> None:
     # fail-open; logs the approve URL while pending). canopy-web#1549.
     enrollment = start_aws_device_key_enrollment(runner_id)
     _retire_shared_github_credentials()
+    # The clone's packages on sys.path BEFORE the startup credential probes: a
+    # probe that reads like a cap parses its reset with canopy_transcript. The
+    # clone is synced later, in bootstrap; a stale one is fine for a path.
+    if (pathlib.Path(RUNNER_SRC_DIR) / ".git").is_dir():
+        _expose_repo_packages(pathlib.Path(RUNNER_SRC_DIR))
     if not fetch_and_stage_credential(runner_id):
         return  # stopped before a credential was provisioned
     # Registering the key can change what canopy-web will accept from this box (a
