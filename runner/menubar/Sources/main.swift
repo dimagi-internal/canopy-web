@@ -369,10 +369,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     }
 
     @objc func showWindow() {
-        // ALWAYS open on the home page, never wherever the last session navigated
-        // to. First open mints + injects the session cookie; after that the cookie is set,
-        // so we just reload it (cheap, no re-mint).
-        if authed { loadHome() } else { authenticateThenLoad() }
+        // Bring the window back as it was left: an open IDE session, its scroll and a
+        // half-typed message survive a click. Only the first open loads the home page
+        // (minting + injecting the session cookie); the page keeps itself live, and
+        // "Opens on" and the Reload items load it again when asked.
+        if web.url == nil { if authed { loadHome() } else { authenticateThenLoad() } }
         if window?.isVisible != true { applyFrame() }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
