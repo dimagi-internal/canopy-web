@@ -151,3 +151,41 @@ def grants_on_turn():
 def agents_granted(agent_memory_on, grants_on_turn):
     """Agent memory on for every person, and every agent they talk to granted."""
     yield
+
+
+def _shard_of(files: dict[str, int], shards: int) -> dict[str, int]:
+    """Each test file's shard, balanced by how many tests it holds: largest file
+    first onto the lightest shard. Deterministic from the collection alone, so
+    every shard (and every xdist worker inside one) computes the same split, and
+    their union is the whole suite by construction — no file can fall between
+    shards the way a hand-kept list can."""
+    load = [0] * shards
+    out: dict[str, int] = {}
+    for path, n in sorted(files.items(), key=lambda kv: (-kv[1], kv[0])):
+        i = load.index(min(load))
+        out[path] = i
+        load[i] += n
+    return out
+
+
+def pytest_collection_modifyitems(config, items):
+    """`PYTEST_SHARD=i/N` (CI's `Backend pytest` matrix) keeps only shard i of N.
+
+    The suite is ~5 minutes on one runner even with `-n auto`; split across N
+    runners it is ~5/N, which is most of the merge queue's wait. Unset (local
+    runs), nothing changes."""
+    import os
+
+    spec = os.environ.get("PYTEST_SHARD")
+    if not spec:
+        return
+    index, total = (int(x) for x in spec.split("/"))
+    files: dict[str, int] = {}
+    for item in items:
+        files[item.nodeid.split("::")[0]] = files.get(item.nodeid.split("::")[0], 0) + 1
+    shard = _shard_of(files, total)
+    keep = [it for it in items if shard[it.nodeid.split("::")[0]] == index - 1]
+    drop = [it for it in items if shard[it.nodeid.split("::")[0]] != index - 1]
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+    items[:] = keep
