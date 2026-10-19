@@ -184,6 +184,30 @@ def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
 MAX_THREADS = 3000
 
 
+def _contacts_that_are_agents(contact_ids: set[str]) -> dict[str, str]:
+    """contact id -> agent slug, for contacts whose address is an agent's: its own
+    `email`, its login's, or one of its inbound mailboxes."""
+    from apps.agents.models import Agent
+    from apps.contacts.models import Contact
+    from apps.inbound.models import InboundMailbox
+
+    emails = {str(pk): (email or "").lower() for pk, email in Contact.objects.filter(
+        pk__in=[int(i) for i in contact_ids if i.isdigit()]).exclude(email="").values_list("pk", "email")}
+    if not emails:
+        return {}
+    wanted = set(emails.values())
+    slug_of: dict[str, str] = {}
+    for slug, own, login in Agent.objects.values_list("slug", "email", "user__email"):
+        for address in (own, login):
+            if address and address.lower() in wanted:
+                slug_of.setdefault(address.lower(), slug)
+    for address, slug in (InboundMailbox.objects.filter(agent__isnull=False)
+                          .values_list("address", "agent__slug")):
+        if address and address.lower() in wanted:
+            slug_of.setdefault(address.lower(), slug)
+    return {pk: slug_of[e] for pk, e in emails.items() if e in slug_of}
+
+
 def network(workspace_slugs: list[str], *, viewer, days: int = 30, now=None) -> dict:
     """People, contacts and agents, linked through the threads they wrote in — a chat
     (where a bound Slack thread lives too) or an email thread — over `window(days)`.
@@ -203,13 +227,14 @@ def network(workspace_slugs: list[str], *, viewer, days: int = 30, now=None) -> 
     facts = (Activity.objects.filter(workspace_id__in=workspace_slugs, at__gte=since,
                                      kind=activity.TURN_ENQUEUED, meta__has_key="thread")
              .order_by().values_list("workspace_id", "actor_kind", "actor_id", "agent_slug",
-                                     "surface", "meta"))
+                                     "surface", "meta", "at"))
     threads: dict[str, dict] = {}
-    for ws, actor_kind, actor_id, agent_slug, surface, meta in facts.iterator():
+    for ws, actor_kind, actor_id, agent_slug, surface, meta, at in facts.iterator():
         key = meta["thread"]
         t = threads.setdefault(key, {"workspace": ws, "agent": agent_slug, "turns": 0,
-                                     "surfaces": {}, "writers": {}})
+                                     "surfaces": {}, "writers": {}, "last_at": at})
         t["turns"] += 1
+        t["last_at"] = max(t["last_at"], at)
         t["agent"] = t["agent"] or agent_slug
         t["surfaces"][surface] = t["surfaces"].get(surface, 0) + 1
         # A member who wrote by email is a person (their contact rides along);
@@ -219,6 +244,18 @@ def network(workspace_slugs: list[str], *, viewer, days: int = 30, now=None) -> 
                   else f"agent:{meta['by_agent']}" if meta.get("by_agent") else None)
         if writer:
             t["writers"][writer] = t["writers"].get(writer, 0) + 1
+
+    # An agent mailing another agent outside its workspace is recorded as a contact
+    # (only a member of the receiving workspace is linked as a person), which is right
+    # for access but wrong here: draw that sender as the agent it is.
+    as_agent = _contacts_that_are_agents({w.partition(":")[2] for t in threads.values()
+                                          for w in t["writers"] if w.startswith("contact:")})
+    for t in threads.values():
+        merged: dict[str, int] = {}
+        for w, n in t["writers"].items():
+            w = f"agent:{as_agent[w[8:]]}" if w.startswith("contact:") and w[8:] in as_agent else w
+            merged[w] = merged.get(w, 0) + n
+        t["writers"] = merged
 
     def humans(t):
         return [w for w in t["writers"] if not w.startswith("agent:")]
@@ -276,7 +313,7 @@ def network(workspace_slugs: list[str], *, viewer, days: int = 30, now=None) -> 
             f"{fallback} with {agent_name}" if agent_name else fallback),
             "workspace": t["workspace"], "workspaces": [t["workspace"]], "turns": t["turns"],
             "threads": 1, "channel": "email" if kind == "mail" else channel, "ref": ref,
-            "agent": t["agent"], "openable": kind == "mail" or ref in titles}
+            "agent": t["agent"], "openable": kind == "mail" or ref in titles, "last_at": t["last_at"]}
         for writer, turns in t["writers"].items():
             wkind, _, pk = writer.partition(":")
             label = (users.get(pk) if wkind == "person" else contacts.get(pk) if wkind == "contact"

@@ -5,10 +5,11 @@ import {
 } from 'd3-force'
 
 import { getWorkspaceNetwork, type WorkspaceNetworkOut } from '@/api/workspaces'
+import { relativeAge } from '@/lib/relativeAge'
 import { AdminOnly, HealthViews } from './HealthViews'
 import {
-  buildGraph, categoryTokens, hrefOf, KIND_LABEL, KIND_TOKEN, linkTurns, tokenOf, workspaceAnchors,
-  type ColorBy, type Graph, type GraphLink, type GraphNode,
+  buildGraph, categoryTokens, hrefOf, KIND_LABEL, KIND_TOKEN, profile, tokenOf, workspaceAnchors,
+  type ColorBy, type Graph, type GraphLink, type GraphNode, type ThreadRow,
 } from './networkGraph'
 import { useTreeRead } from './useTreeRead'
 
@@ -101,7 +102,7 @@ function Network({ data }: { data: WorkspaceNetworkOut }): JSX.Element {
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
           <Canvas graph={graph} colorBy={colorBy} cats={cats} group={group}
                   workspaces={data.workspaces} selected={selected} onSelect={setSelected} />
-          <Detail node={selectedNode} graph={graph} onSelect={setSelected} />
+          <Detail key={selectedNode?.id ?? ''} node={selectedNode} graph={graph} onSelect={setSelected} />
         </div>
       )}
     </div>
@@ -357,7 +358,7 @@ function Canvas({ graph, colorBy, cats, group, workspaces, selected, onSelect }:
         </div>
       )}
       <p className="absolute bottom-2 left-3 text-[11px] text-muted-foreground">
-        Scroll to zoom, drag to pan. Click a dot to see its threads; click a selected thread again to open it.
+        Scroll to zoom, drag to pan. Click a dot to see who it works with; click a selected thread again to open it.
       </p>
     </div>
   )
@@ -374,23 +375,20 @@ function describe(n: GraphNode): string {
 function Detail({ node, graph, onSelect }: {
   node: GraphNode | null; graph: Graph; onSelect: (id: string | null) => void
 }): JSX.Element {
-  if (!node) {
+  const p = useMemo(() => (node ? profile(graph, node.id) : null), [graph, node])
+  if (!node || !p) {
     return (
       <aside className="rounded-lg border border-border bg-card p-3 text-[13px] text-muted-foreground">
-        Click a person, contact, agent or thread to see who it is connected to.
+        Click a person, contact, agent or thread to see who it works with, through which agents and channels.
       </aside>
     )
   }
   const href = hrefOf(node)
-  // Each neighbour with the turns on its link to this node: a person's turns in
-  // this thread, or this person's turns in each of their threads.
-  const around = [...(graph.neighbours.get(node.id) ?? [])]
-    .map((id) => ({ n: graph.byId.get(id)!, turns: linkTurns(graph, node.id, id) }))
-    .sort((a, b) => b.turns - a.turns)
+  const agent = node.kind === 'thread' && node.agent ? graph.byId.get(`agent:${node.agent}`) : undefined
   return (
-    <aside className="rounded-lg border border-border bg-card p-3 text-[13px]" aria-label="Selected">
+    <aside className="min-w-0 overflow-y-auto rounded-lg border border-border bg-card p-3 text-[13px]" style={{ maxHeight: HEIGHT }} aria-label="Selected">
       <div className="mb-1 flex items-start justify-between gap-2">
-        <h2 className="font-semibold text-foreground">{node.label}</h2>
+        <h2 className="line-clamp-3 font-semibold text-foreground" title={node.label}>{node.label}</h2>
         <button type="button" onClick={() => onSelect(null)} className="text-[12px] text-muted-foreground hover:text-foreground">Clear</button>
       </div>
       <p className="mb-2 text-[12px] text-muted-foreground">{describe(node)}</p>
@@ -401,34 +399,120 @@ function Detail({ node, graph, onSelect }: {
       ) : node.kind === 'thread' ? (
         <p className="mb-3 text-[12px] text-muted-foreground">You are not in this chat, so it does not open for you.</p>
       ) : null}
-      <table className="w-full text-[12px]">
-        <thead>
-          <tr className="text-left text-muted-foreground">
-            <th className="py-1 font-normal">{node.kind === 'thread' ? 'Who' : 'Threads'}</th>
-            <th className="py-1 text-right font-normal">{node.kind === 'thread' ? 'Turns here' : 'Their turns'}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {around.slice(0, 50).map(({ n, turns }) => {
-            const to = hrefOf(n)
-            return (
-              <tr key={n.id} className="border-t border-border">
-                <td className="py-1">
-                  <button type="button" onClick={() => onSelect(n.id)} className="text-left text-foreground hover:underline">
-                    <span className="mr-1.5 inline-block size-2 rounded-full" style={{ background: `var(${KIND_TOKEN[n.kind]})` }} />
-                    {n.label}
-                  </button>
-                  {to && n.kind === 'thread' && (
-                    <Link to={to} className="ml-1.5 text-muted-foreground hover:text-foreground" aria-label={`Open ${n.label}`}>↗</Link>
-                  )}
-                </td>
-                <td className="py-1 text-right tabular-nums text-foreground-secondary">{turns}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      {around.length > 50 && <p className="mt-1 text-[11px] text-muted-foreground">and {around.length - 50} more</p>}
+
+      {node.kind === 'thread' ? (
+        <>
+          {agent && (
+            <p className="mb-3 text-[12px] text-muted-foreground">
+              Answered by <Name n={agent} onSelect={onSelect} />
+              {node.last_at && <> · last turn {relativeAge(node.last_at)}</>}
+            </p>
+          )}
+          <Section title="Who wrote here" unit="Turns" rows={p.writers.map((t) => ({ n: t.node, right: t.turns }))} onSelect={onSelect} />
+        </>
+      ) : (
+        <>
+          <Section
+            title={node.kind === 'agent' ? 'Used by' : 'Works with'}
+            unit={node.kind === 'agent' ? 'Threads · turns' : 'Shared threads'}
+            empty={node.kind === 'agent' ? 'Nobody in this window.' : 'Nobody else wrote in their threads — every one is a private line.'}
+            rows={p.people.map((t) => ({ n: t.node, right: node.kind === 'agent' ? `${t.threads} · ${t.turns}` : t.threads }))}
+            onSelect={onSelect}
+          />
+          <Section
+            title={node.kind === 'agent' ? 'Agents that wrote in' : 'Agents'}
+            unit="Threads"
+            rows={p.agents.map((t) => ({ n: t.node, right: t.threads }))}
+            onSelect={onSelect}
+            hideEmpty={node.kind === 'agent'}
+          />
+          {p.channels.length > 0 && (
+            <p className="mb-3 text-[12px] text-muted-foreground">
+              <span className="mr-1.5 text-foreground">Channels</span>
+              {p.channels.map((c) => `${c.channel} ${c.threads}`).join(' · ')}
+            </p>
+          )}
+          <Threads rows={p.threads} self={node} onSelect={onSelect} />
+        </>
+      )}
     </aside>
+  )
+}
+
+function Name({ n, onSelect }: { n: GraphNode; onSelect: (id: string) => void }): JSX.Element {
+  return (
+    <button type="button" onClick={() => onSelect(n.id)} className="min-w-0 truncate text-left text-foreground hover:underline" title={n.label}>
+      <span className="mr-1.5 inline-block size-2 rounded-full" style={{ background: `var(${KIND_TOKEN[n.kind]})` }} />
+      {n.label}
+    </button>
+  )
+}
+
+const SHOWN = 8
+
+function Section({ title, unit, rows, onSelect, empty, hideEmpty }: {
+  title: string; unit: string; rows: { n: GraphNode; right: string | number }[]
+  onSelect: (id: string) => void; empty?: string; hideEmpty?: boolean
+}): JSX.Element | null {
+  const [all, setAll] = useState(false)
+  if (!rows.length && hideEmpty) return null
+  return (
+    <section className="mb-3">
+      <div className="flex justify-between border-b border-border pb-1 text-[12px] text-muted-foreground">
+        <span className="text-foreground">{title}</span><span>{rows.length ? unit : ''}</span>
+      </div>
+      {!rows.length && <p className="py-1 text-[12px] text-muted-foreground">{empty ?? 'None.'}</p>}
+      {(all ? rows : rows.slice(0, SHOWN)).map(({ n, right }) => (
+        <div key={n.id} className="flex items-center justify-between gap-2 py-0.5 text-[12px]">
+          <Name n={n} onSelect={onSelect} />
+          <span className="shrink-0 tabular-nums text-foreground-secondary">{right}</span>
+        </div>
+      ))}
+      {rows.length > SHOWN && (
+        <button type="button" onClick={() => setAll(!all)} className="text-[11px] text-muted-foreground hover:text-foreground">
+          {all ? 'Show fewer' : `Show all ${rows.length}`}
+        </button>
+      )}
+    </section>
+  )
+}
+
+function Threads({ rows, self, onSelect }: { rows: ThreadRow[]; self: GraphNode; onSelect: (id: string) => void }): JSX.Element {
+  const [all, setAll] = useState(false)
+  return (
+    <section>
+      <div className="flex justify-between border-b border-border pb-1 text-[12px] text-muted-foreground">
+        <span className="text-foreground">Threads</span>
+        <span>{self.kind === 'agent' ? 'Turns' : 'Their turns'}</span>
+      </div>
+      {(all ? rows : rows.slice(0, SHOWN)).map(({ node: t, turns, agent, others }) => {
+        const to = hrefOf(t)
+        const meta = [
+          self.kind !== 'agent' && agent?.label,
+          t.channel,
+          others > 0 && (self.kind === 'agent' ? `${others} ${others === 1 ? 'person' : 'people'}` : `+${others} ${others === 1 ? 'other' : 'others'}`),
+          t.last_at && relativeAge(t.last_at),
+        ].filter(Boolean).join(' · ')
+        return (
+          <div key={t.id} className="flex items-start justify-between gap-2 border-b border-border py-1 text-[12px] last:border-0">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <button type="button" onClick={() => onSelect(t.id)} className="min-w-0 truncate text-left text-foreground hover:underline" title={t.label}>
+                  {t.label}
+                </button>
+                {to && <Link to={to} className="shrink-0 text-muted-foreground hover:text-foreground" aria-label={`Open ${t.label}`}>↗</Link>}
+              </div>
+              <div className="truncate text-[11px] text-muted-foreground">{meta}</div>
+            </div>
+            <span className="shrink-0 tabular-nums text-foreground-secondary">{turns}</span>
+          </div>
+        )
+      })}
+      {rows.length > SHOWN && (
+        <button type="button" onClick={() => setAll(!all)} className="mt-1 text-[11px] text-muted-foreground hover:text-foreground">
+          {all ? 'Show fewer' : `Show all ${rows.length}`}
+        </button>
+      )}
+    </section>
   )
 }

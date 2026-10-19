@@ -25,6 +25,11 @@ export interface Graph {
   neighbours: Map<string, Set<string>>
   /** Turns on the link between two nodes, either way round (`linkTurns`). */
   weights: Map<string, number>
+  /** thread -> its writers' turns there; writer -> their turns per thread. */
+  writersOf: Map<string, Map<string, number>>
+  threadsOf: Map<string, Map<string, number>>
+  /** thread -> the agent that answered it, when that is not also a writer. */
+  agentOf: Map<string, string>
 }
 
 const pair = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`)
@@ -48,14 +53,106 @@ export function buildGraph(data: WorkspaceNetworkOut): Graph {
   const neighbours = new Map<string, Set<string>>(nodes.map((n) => [n.id, new Set<string>()]))
   const links: GraphLink[] = []
   const weights = new Map<string, number>()
+  const writersOf = new Map<string, Map<string, number>>()
+  const threadsOf = new Map<string, Map<string, number>>()
+  const agentOf = new Map<string, string>()
+  const put = (m: Map<string, Map<string, number>>, a: string, b: string, n: number) => {
+    if (!m.has(a)) m.set(a, new Map())
+    m.get(a)!.set(b, n)
+  }
   for (const l of data.links as NetworkLinkOut[]) {
     if (!byId.has(l.source) || !byId.has(l.target)) continue
     links.push({ source: l.source, target: l.target, kind: l.kind, turns: l.turns })
     neighbours.get(l.source)!.add(l.target)
     neighbours.get(l.target)!.add(l.source)
     weights.set(pair(l.source, l.target), l.turns)
+    if (l.kind === 'answered') agentOf.set(l.source, l.target)
+    else {
+      put(writersOf, l.target, l.source, l.turns)
+      put(threadsOf, l.source, l.target, l.turns)
+    }
   }
-  return { nodes, links, byId, neighbours, weights }
+  return { nodes, links, byId, neighbours, weights, writersOf, threadsOf, agentOf }
+}
+
+export interface Tally { node: GraphNode; turns: number; threads: number }
+
+export interface ThreadRow {
+  node: GraphNode
+  /** The selected node's turns here (a writer's), or the thread's own (an agent's). */
+  turns: number
+  agent: GraphNode | null
+  /** Other people and contacts who wrote here, besides the selected one. */
+  others: number
+}
+
+/** What the side panel says about one node: who it works with, through which agents
+ *  and channels, and its threads — all read off the graph already drawn. */
+export interface Profile {
+  /** People and contacts in the same threads (a writer), or who use it (an agent). */
+  people: Tally[]
+  /** Agents its threads went to (a writer), or that wrote in them (an agent). */
+  agents: Tally[]
+  /** Threads per channel. */
+  channels: { channel: string; threads: number }[]
+  threads: ThreadRow[]
+  /** A thread's writers, with their turns there. */
+  writers: Tally[]
+}
+
+const human = (n: GraphNode | undefined) => n?.kind === 'person' || n?.kind === 'contact'
+
+export function profile(g: Graph, id: string): Profile {
+  const self = g.byId.get(id)
+  const out: Profile = { people: [], agents: [], channels: [], threads: [], writers: [] }
+  if (!self) return out
+  if (self.kind === 'thread') {
+    out.writers = [...(g.writersOf.get(id) ?? [])]
+      .map(([w, turns]) => ({ node: g.byId.get(w)!, turns, threads: 1 }))
+      .sort((a, b) => b.turns - a.turns)
+    return out
+  }
+  // An agent's threads are the ones it answered plus any it wrote in.
+  const mine = new Map(g.threadsOf.get(id) ?? [])
+  if (self.kind === 'agent') {
+    for (const [t, a] of g.agentOf) if (a === id && !mine.has(t)) mine.set(t, g.byId.get(t)!.turns)
+  }
+  const people = new Map<string, Tally>()
+  const agents = new Map<string, Tally>()
+  const channels = new Map<string, number>()
+  const bump = (m: Map<string, Tally>, nid: string, turns: number) => {
+    const n = g.byId.get(nid)
+    if (!n) return
+    const t = m.get(nid) ?? { node: n, turns: 0, threads: 0 }
+    t.turns += turns
+    t.threads += 1
+    m.set(nid, t)
+  }
+  for (const [tid, turns] of mine) {
+    const thread = g.byId.get(tid)
+    if (!thread) continue
+    const writers = g.writersOf.get(tid) ?? new Map<string, number>()
+    const agentId = g.agentOf.get(tid) ?? (self.kind === 'agent' ? id : null)
+    let others = 0
+    for (const [w, wt] of writers) {
+      if (w === id) continue
+      if (human(g.byId.get(w))) {
+        others += 1
+        // Beside a writer, turns are theirs in the shared threads; beside an agent, the
+        // writer's turns to it — so only in threads it answered, not ones it wrote in.
+        if (self.kind !== 'agent' || agentId === id) bump(people, w, wt)
+      } else bump(agents, w, wt)
+    }
+    if (agentId && agentId !== id) bump(agents, agentId, turns)
+    channels.set(thread.channel || 'other', (channels.get(thread.channel || 'other') ?? 0) + 1)
+    out.threads.push({ node: thread, turns, agent: agentId ? g.byId.get(agentId) ?? null : null, others })
+  }
+  const byWeight = (a: Tally, b: Tally) => b.threads - a.threads || b.turns - a.turns
+  out.people = [...people.values()].sort(byWeight)
+  out.agents = [...agents.values()].sort(byWeight)
+  out.channels = [...channels].map(([channel, threads]) => ({ channel, threads })).sort((a, b) => b.threads - a.threads)
+  out.threads.sort((a, b) => b.turns - a.turns || (b.node.last_at ?? '').localeCompare(a.node.last_at ?? ''))
+  return out
 }
 
 /** Where a click on a thread or agent goes; null for people and contacts. */

@@ -710,6 +710,8 @@ class NetworkNodeOut(StrictModel):
     agent: str = ""
     # Whether the viewer may open the thread (the session ACL for a chat).
     openable: bool = False
+    # A thread's latest turn in the window.
+    last_at: dt.datetime | None = None
 
 
 class NetworkLinkOut(StrictModel):

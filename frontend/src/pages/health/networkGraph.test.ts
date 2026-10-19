@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { NetworkNodeOut, WorkspaceNetworkOut } from '@/api/workspaces'
-import { buildGraph, categoryTokens, hrefOf, linkTurns, tokenOf, workspaceAnchors } from './networkGraph'
+import { buildGraph, categoryTokens, hrefOf, linkTurns, profile, tokenOf, workspaceAnchors } from './networkGraph'
 
 const node = (over: Partial<NetworkNodeOut>): NetworkNodeOut => ({
   id: 'x', kind: 'thread', label: 'x', workspace: 'dimagi', workspaces: ['dimagi'], turns: 1, threads: 1,
@@ -51,5 +51,46 @@ describe('networkGraph', () => {
     const two = workspaceAnchors(['a', 'b'], 100)
     expect(two.get('a')!.x).toBeCloseTo(100)
     expect(two.get('b')!.x).toBeCloseTo(-100)
+  })
+  it('profiles who a node works with, through which agents and channels', () => {
+    const data = {
+      days: 7, since: '', workspaces: ['dimagi'], truncated: false,
+      totals: { people: 2, contacts: 1, agents: 2, threads: 3, shared_pairs: 1, shared_threads: 1, threads_seen: 3 },
+      nodes: [
+        node({ id: 'person:1', kind: 'person' }), node({ id: 'person:2', kind: 'person' }),
+        node({ id: 'contact:5', kind: 'contact' }),
+        node({ id: 'agent:hal', kind: 'agent', label: 'Hal' }), node({ id: 'agent:eva', kind: 'agent' }),
+        node({ id: 'session:a', turns: 5 }), node({ id: 'session:b', channel: 'slack', turns: 1 }),
+        node({ id: 'session:c', channel: 'email', turns: 2 }),
+      ],
+      links: [
+        { source: 'person:1', target: 'session:a', turns: 3, kind: 'wrote' },
+        { source: 'person:2', target: 'session:a', turns: 1, kind: 'wrote' },
+        { source: 'agent:eva', target: 'session:a', turns: 1, kind: 'wrote' },
+        { source: 'session:a', target: 'agent:hal', turns: 5, kind: 'answered' },
+        { source: 'person:1', target: 'session:b', turns: 1, kind: 'wrote' },
+        { source: 'session:b', target: 'agent:hal', turns: 1, kind: 'answered' },
+        { source: 'contact:5', target: 'session:c', turns: 2, kind: 'wrote' },
+        { source: 'session:c', target: 'agent:eva', turns: 2, kind: 'answered' },
+      ],
+    } as WorkspaceNetworkOut
+    const g = buildGraph(data)
+
+    const me = profile(g, 'person:1')
+    expect(me.people.map((t) => [t.node.id, t.threads])).toEqual([['person:2', 1]])
+    expect(me.agents.map((t) => [t.node.id, t.threads, t.turns])).toEqual([['agent:hal', 2, 4], ['agent:eva', 1, 1]])
+    expect(me.channels).toEqual([{ channel: 'chat', threads: 1 }, { channel: 'slack', threads: 1 }])
+    expect(me.threads.map((r) => [r.node.id, r.turns, r.agent?.id, r.others])).toEqual([
+      ['session:a', 3, 'agent:hal', 1], ['session:b', 1, 'agent:hal', 0],
+    ])
+
+    // An agent is used by the people in the threads it answered, and wrote in Hal's.
+    const eva = profile(g, 'agent:eva')
+    expect(eva.people.map((t) => t.node.id)).toEqual(['contact:5'])
+    expect(eva.agents.map((t) => t.node.id)).toEqual(['agent:hal'])
+    expect(eva.threads.map((r) => r.node.id).sort()).toEqual(['session:a', 'session:c'])
+
+    expect(profile(g, 'session:a').writers.map((t) => [t.node.id, t.turns]))
+      .toEqual([['person:1', 3], ['person:2', 1], ['agent:eva', 1]])
   })
 })

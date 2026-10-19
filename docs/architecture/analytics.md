@@ -50,6 +50,14 @@ or contacts who wrote in the same thread. At most `MAX_THREADS` threads, busiest
 opens, only where `canopy_sessions.access.visible_session_q` lets the viewer read it. Each
 node carries its workspace, so the page can colour or cluster by workspace.
 
+A contact whose address is an agent's (its `email`, its login's, or an inbound mailbox) is
+drawn as that agent: an agent mailing one outside its workspace is recorded as a contact,
+which is right for access (it is linked as a person only as a member of the receiving
+workspace), but it is still an agent talking to an agent. The side panel is computed from
+the graph the page holds (`networkGraph.profile`): for a person or contact, who wrote in
+the same threads, which agents and channels, and their threads; for an agent, who uses it;
+for a thread, its writers. Each thread carries `last_at`, its latest turn in the window.
+
 ## Missing sessions
 
 A reported session that matches nothing has no workspace: it counts nowhere, and
