@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 
+import { CopyCommand } from '@/components/agents/CopyCommand'
 import { AgentApiError, getWorkspaceProject, listWorkspaceProjects, type ProjectDetailOut, type ProjectOut } from '@/api/agents'
 
 // WORKSPACE PROJECTS — owned by the workspace rather than one agent (a funder
@@ -54,6 +55,7 @@ function WorkspaceProjectReadOnly({ project }: { project: ProjectDetailOut }): J
     <div className="p-6 max-w-3xl">
       <h1 className="text-lg font-semibold text-foreground">{project.name}</h1>
       <WorkspaceProjectLine project={project} />
+      <ProjectMcpInstall project={project} />
       {project.outcome && <p className="text-[13px] text-foreground-secondary mt-3">{project.outcome}</p>}
       {project.drive_folder_url && (
         <p className="text-[12px] mt-2">
@@ -119,6 +121,7 @@ export function WorkspaceProjectsSection({ workspace }: { workspace: string }): 
               {p.outcome && <p className="text-[12px] text-foreground-secondary mt-2 line-clamp-2">{p.outcome}</p>}
               <p className="text-[11px] text-muted-foreground mt-2">
                 Steward {p.steward_slug} · {p.open_task_count} open of {p.task_count} tasks
+                {p.mcp_path && ' · MCP tools'}
               </p>
             </Link>
           </li>
@@ -136,5 +139,26 @@ export function WorkspaceProjectLine({ project }: { project: ProjectOut }): JSX.
       Workspace project <span className="font-mono">{project.address}</span> · kept current by{' '}
       {project.steward_slug} · any agent in the workspace can file tasks into it
     </p>
+  )
+}
+
+/** How to add a project's own MCP server: one URL, nothing to download. Only for a
+ *  project that serves something (`mcp_path`). The name is the handle, so two
+ *  projects added side by side never collide. */
+export function ProjectMcpInstall({ project }: { project: ProjectOut }): JSX.Element | null {
+  if (!project.mcp_path) return null
+  const url = `${window.location.origin}${project.mcp_path}`.replace(/\/$/, '')
+  return (
+    <section className="mt-4 rounded-lg border border-border bg-card p-4 max-w-3xl" data-testid="project-mcp-install">
+      <h2 className="text-sm font-semibold text-foreground">Use its tools</h2>
+      <p className="text-[12px] text-muted-foreground mt-0.5">
+        Its own MCP server: only this project&apos;s tools, answered by canopy, with nothing to download. You sign in
+        with your canopy account the first time.
+      </p>
+      <p className="text-[12px] text-foreground mt-3">Claude Code</p>
+      <CopyCommand command={`claude mcp add --transport http ${project.handle} ${url}`} testId="project-mcp-claude-code" />
+      <p className="text-[12px] text-foreground mt-3">Claude (web or desktop): Settings → Connectors → Add custom connector</p>
+      <CopyCommand command={url} testId="project-mcp-url" />
+    </section>
   )
 }

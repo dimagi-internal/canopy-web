@@ -194,6 +194,12 @@ jobs:
         working-directory: packages/canopy_cron
         run: uv run --with pytest pytest -q
 
+      # canopy_kb is the knowledge-base engine canopy-web serves per workspace
+      # project; its own tests run Django-free, as the package is.
+      - name: Run canopy_kb tests
+        working-directory: packages/canopy_kb
+        run: uv run --with pytest pytest -q
+
       # The runner decides WHICH slot is due and fires it, so its suite is the only
       # thing standing between a scheduling bug and a fleet that silently never
       # fires (or fires a slot predating its schedule). Also covers the

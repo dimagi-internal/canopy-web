@@ -11,7 +11,7 @@ vi.mock('@/api/agents', async (orig) => ({
   getWorkspaceProject: (...a: unknown[]) => getWorkspaceProject(...a),
 }))
 
-const { WorkspaceProjectLine, WorkspaceProjectRedirect, WorkspaceProjectsSection } = await import('./WorkspaceProjects')
+const { ProjectMcpInstall, WorkspaceProjectLine, WorkspaceProjectRedirect, WorkspaceProjectsSection } = await import('./WorkspaceProjects')
 const { AgentApiError } = await import('@/api/agents')
 
 afterEach(() => {
@@ -103,5 +103,19 @@ describe('WorkspaceProjectLine', () => {
     expect(screen.getByTestId('workspace-project-line').textContent).toContain('dimagi/givewell-kb')
     rerender(<WorkspaceProjectLine project={{ ...(kb as object), scope: 'agent' } as never} />)
     expect(screen.queryByTestId('workspace-project-line')).toBeNull()
+  })
+})
+
+describe('ProjectMcpInstall', () => {
+  it('gives the one line to add its server, named by its handle', () => {
+    render(<ProjectMcpInstall project={{ ...(kb as object), mcp_path: '/api/mcp/projects/connect/givewell-kb/' } as never} />)
+    expect(screen.getByTestId('project-mcp-claude-code').textContent).toBe(
+      `claude mcp add --transport http givewell-kb ${window.location.origin}/api/mcp/projects/connect/givewell-kb`,
+    )
+  })
+
+  it('shows nothing for a project that serves nothing', () => {
+    const { container } = render(<ProjectMcpInstall project={kb} />)
+    expect(container.textContent).toBe('')
   })
 })

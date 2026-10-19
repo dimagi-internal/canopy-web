@@ -889,6 +889,18 @@ class AgentProject(models.Model):
     #: A workspace project's address, unique in its workspace ("givewell-kb").
     #: Blank for agent projects, which are addressed `<agent>/<ext_id>`.
     handle = models.CharField(max_length=60, blank=True, default="")
+    #: What a workspace project SERVES as its own MCP server at `mcp_path`
+    #: (`apps/mcp/projects.py`): "" nothing, "kb" a knowledge base its steward
+    #: publishes (`kb_*` below; tools from the KB's own manifest, `canopy_kb.tools`).
+    MCP_NONE, MCP_KB = "", "kb"
+    MCP_KIND_CHOICES = [(MCP_NONE, "None"), (MCP_KB, "Knowledge base")]
+    mcp_kind = models.CharField(max_length=16, choices=MCP_KIND_CHOICES, blank=True, default="")
+    #: The published kb.sqlite.gz: its object key in the KB bucket, content hash
+    #: (what a serving instance caches by) and size. Set by `kb_store.publish`.
+    kb_key = models.CharField(max_length=300, blank=True, default="")
+    kb_sha256 = models.CharField(max_length=64, blank=True, default="")
+    kb_bytes = models.BigIntegerField(null=True, blank=True)
+    kb_published_at = models.DateTimeField(null=True, blank=True)
     #: Stable id the agent addresses it by, unique per agent — the same shape as
     #: `AgentTask.ext_id` ("P1", "P2"), so the CLI can name a project without
     #: guessing at database ids.
@@ -1002,6 +1014,16 @@ class AgentProject(models.Model):
         which for a division's project stewarded from the parent is not the
         project's (`connect/givewell-kb` → `/w/dimagi/agents/eva/projects/P12`)."""
         return f"/w/{self.agent.workspace_id}/agents/{self.agent.slug}/projects/{self.ext_id}"
+
+    @property
+    def mcp_path(self) -> str:
+        """Where its own MCP server answers — a workspace project serving
+        something, else "". Under `/api/mcp/` so the same sign-in (a personal
+        token, or OAuth) reaches it: one server per project, so a reader adds just
+        this one and not the whole canopy surface."""
+        if self.is_workspace_project and self.mcp_kind and self.kb_key:
+            return f"/api/mcp/projects/{self.owner_workspace_id}/{self.handle}/"
+        return ""
 
     @property
     def owner_email(self) -> str | None:
