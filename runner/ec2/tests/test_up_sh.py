@@ -103,13 +103,14 @@ def canopy():
 
 def _fake(tmp: pathlib.Path, *, stack_status=None, change_set=None, secrets=STAGED,
           old_parts=0, stack_workspace="dimagi", pat_secret="", ecdh_slots="",
-          stack_units="") -> pathlib.Path:
+          stack_units="", ecdh_read="", units_read="") -> pathlib.Path:
     state = tmp / "state"
     state.mkdir()
     (state / "calls").write_text("")
     cfg = {"stack_status": stack_status, "change_set": change_set, "secrets": list(secrets),
            "old_parts": old_parts, "stack_workspace": stack_workspace, "role_arn": ROLE_ARN, "spki": SPKI,
-           "pat_secret": pat_secret, "ecdh_slots": ecdh_slots, "stack_units": stack_units}
+           "pat_secret": pat_secret, "ecdh_slots": ecdh_slots, "stack_units": stack_units,
+           "ecdh_read": ecdh_read, "units_read": units_read}
     (state / "cfg.json").write_text(json.dumps(cfg))
     bin_ = tmp / "bin"
     bin_.mkdir()
@@ -137,8 +138,17 @@ elif "describe-stacks" in a and "StackStatus" in arg("--query"):
 elif "describe-stacks" in a and "RunnerWorkspace" in arg("--query"):
     print(cfg["stack_workspace"])
 elif "describe-stacks" in a and "starts_with(ParameterKey" in arg("--query"):
+    if cfg.get("ecdh_read") == "missing":
+        print("An error occurred (ValidationError): Stack with id x-ecdh does not exist", file=sys.stderr)
+        sys.exit(254)
+    if cfg.get("ecdh_read") == "throttled":
+        print("An error occurred (Throttling): Rate exceeded", file=sys.stderr)
+        sys.exit(254)
     print(cfg["ecdh_slots"].replace(" ", chr(10)).replace("=", chr(9)))
 elif "describe-stacks" in a and "RunnerUnits" in arg("--query"):
+    if cfg.get("units_read") == "throttled":
+        print("An error occurred (Throttling): Rate exceeded", file=sys.stderr)
+        sys.exit(254)
     print(cfg["stack_units"] or "None")
 elif "describe-stacks" in a and "CanopyTokenSecret" in arg("--query"):
     print(cfg["pat_secret"])
@@ -540,3 +550,30 @@ def test_in_place_always_invites_because_adopting_needs_approval(tmp_path, canop
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--units", "tree:connect", "--in-place")
     assert res.returncode == 0, res.stdout + res.stderr
     assert any(p == "/api/harness/runner-invitations/" for p, _ in canopy.handler.posted)
+
+
+
+def test_a_failed_slot_read_aborts_before_anything_is_deployed(tmp_path, canopy):
+    """A transient AWS error must never read as "no slots" — that would blank
+    Unit1..4 and remove the units' key aliases on the next -ecdh deploy."""
+    state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
+                  ecdh_slots="Unit1=marsh", ecdh_read="throttled")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
+    assert res.returncode != 0 and "unit key slots" in res.stderr and "Throttling" in res.stderr
+    assert not any("cloudformation deploy" in c for c in _calls(state))
+
+
+def test_a_failed_units_read_aborts(tmp_path, canopy):
+    state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
+                  units_read="throttled")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
+    assert res.returncode != 0 and "RunnerUnits" in res.stderr
+    assert not any("cloudformation deploy" in c for c in _calls(state))
+
+
+def test_a_missing_ecdh_stack_means_no_slots_yet(tmp_path, canopy):
+    state = _fake(tmp_path, ecdh_read="missing")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi",
+              "--units", "tree:dimagi,tree:connect")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert " Unit1=connect " in _ecdh_deploy(state)

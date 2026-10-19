@@ -91,6 +91,8 @@ Resources:
 
   EcdhKeyAlias:
     Type: AWS::KMS::Alias
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       # The box finds its key by its instance role's NAME (from IMDS), so the alias
       # is that name: the last path segment of the role ARN.
@@ -146,6 +148,8 @@ Resources:
   Unit1KeyAlias:
     Type: AWS::KMS::Alias
     Condition: HasUnit1
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<unit id>.
       AliasName: !Sub
@@ -200,6 +204,8 @@ Resources:
   Unit2KeyAlias:
     Type: AWS::KMS::Alias
     Condition: HasUnit2
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<unit id>.
       AliasName: !Sub
@@ -254,6 +260,8 @@ Resources:
   Unit3KeyAlias:
     Type: AWS::KMS::Alias
     Condition: HasUnit3
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<unit id>.
       AliasName: !Sub
@@ -308,6 +316,8 @@ Resources:
   Unit4KeyAlias:
     Type: AWS::KMS::Alias
     Condition: HasUnit4
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<unit id>.
       AliasName: !Sub

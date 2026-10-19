@@ -407,8 +407,11 @@ def test_the_ecdh_stack_gives_each_extra_unit_its_own_key():
     for i in range(1, 5):
         assert f"Unit{i}Key:\n    Type: AWS::KMS::Key\n    Condition: HasUnit{i}" in text
         block = text[text.index(f"  Unit{i}Key:"):text.index(f"  Unit{i}KeyAlias:")]
-        # A removed unit (or a replaced key) is never scheduled for deletion.
+        # A removed unit (or a replaced key) is never scheduled for deletion…
         assert "DeletionPolicy: Retain" in block and "UpdateReplacePolicy: Retain" in block
+        # …and its alias (what the broker finds it by) is never removed by the stack.
+        alias = text[text.index(f"  Unit{i}KeyAlias:"):][:200]
+        assert "DeletionPolicy: Retain" in alias and "UpdateReplacePolicy: Retain" in alias
         assert f"'alias/canopy-runner-ecdh/${{RoleName}}/${{Unit{i}}}'" in text
 
 

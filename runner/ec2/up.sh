@@ -114,6 +114,25 @@ echo ">> runner '$NAME' -> stack '$STACK'"
 
 die() { echo "!! $*" >&2; exit 1; }
 
+# stack_read <stack> <query> [missing-ok] — one describe-stacks value, text. Fails on
+# ANY error, except — with missing-ok — that the stack does not exist (then: empty).
+# A read that silently came back empty is how a transient AWS error would blank a
+# parameter on the next deploy.
+stack_read() {
+  local out err rc
+  err="$(mktemp)"
+  out="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$1" --query "$2" --output text 2>"$err")"
+  rc=$?
+  if (( rc != 0 )); then
+    if [[ "${3:-}" == "missing-ok" ]] && grep -q "does not exist" "$err"; then
+      rm -f "$err"; return 0
+    fi
+    sed 's/^/   aws: /' "$err" >&2; rm -f "$err"; return 1
+  fi
+  rm -f "$err"
+  printf '%s' "$out"
+}
+
 # A --test box takes nothing it is not given, so it must never be the live box,
 # and it must say where it pairs (the template default is not a decision).
 if [[ "$TEST" == "1" ]]; then
@@ -211,8 +230,9 @@ else
   # Its units too: a parameter not passed falls back to its default (one unit) on
   # every update, which would shrink a box of units on its next start.
   if [[ -z "$UNITS" ]]; then
-    UNITS=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
-      --query "Stacks[0].Parameters[?ParameterKey=='RunnerUnits'].ParameterValue" --output text 2>/dev/null || true)
+    # A failed read must stop the run: an empty answer here would shrink the box.
+    UNITS=$(stack_read "$STACK" "Stacks[0].Parameters[?ParameterKey=='RunnerUnits'].ParameterValue") \
+      || die "could not read stack $STACK's RunnerUnits — nothing was changed"
     [[ "$UNITS" == "None" ]] && UNITS=""
     [[ -n "$UNITS" ]] && echo ">> units: the stack's own ($UNITS)"
   fi
@@ -253,9 +273,12 @@ EXTRA_UNIT_IDS="$(printf '%s' "$UNITS_JSON" | NAME="$NAME" python3 -c 'import js
 # swaps aliases) or blank one (that removes the key). Read the -ecdh stack's
 # current slots, keep every unit where it is, put new units in free slots only, and
 # drop a slot only for --remove-unit. Without --units every slot is kept as it is.
-EXISTING_SLOTS="$("${AWS[@]}" cloudformation describe-stacks --stack-name "${STACK}-ecdh" \
-  --query "Stacks[0].Parameters[?starts_with(ParameterKey, 'Unit')].[ParameterKey,ParameterValue]" \
-  --output text 2>/dev/null | tr '\t' '=' || true)"
+# A failed read must stop the run: an empty answer would blank every slot and remove
+# the units' keys' aliases. Only "the -ecdh stack does not exist yet" means "no slots".
+EXISTING_SLOTS="$(stack_read "${STACK}-ecdh" \
+  "Stacks[0].Parameters[?starts_with(ParameterKey, 'Unit')].[ParameterKey,ParameterValue]" missing-ok)" \
+  || die "could not read ${STACK}-ecdh's unit key slots — nothing was changed (a transient AWS error? re-run)"
+EXISTING_SLOTS="$(printf '%s' "$EXISTING_SLOTS" | tr '\t' '=')"
 UNIT_SLOTS="$(EXISTING="$EXISTING_SLOTS" WANT="$EXTRA_UNIT_IDS" GIVEN="${UNITS:+1}" REMOVE="$REMOVE_UNITS" python3 - <<'PY'
 import os, sys
 existing = {}
