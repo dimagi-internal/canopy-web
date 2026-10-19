@@ -14,6 +14,7 @@ import { deleteConsequence } from './ideTree'
 export type IdeAction =
   | { kind: 'open-tab' }
   | { kind: 'copy-link' }
+  | { kind: 'rename' }
   | { kind: 'open-desktop'; href: string }
   | { kind: 'stop' }
   | { kind: 'transfer'; runner: RunnerOut }
@@ -169,6 +170,13 @@ export function SessionContextMenu({
       </div>
       <Item onClick={() => onAction({ kind: 'open-tab' })}>Open in new tab</Item>
       <Item onClick={() => onAction({ kind: 'copy-link' })}>Copy link</Item>
+      <Item
+        onClick={() => onAction({ kind: 'rename' })}
+        title="Give this session a name of your own (or double-click its row)"
+        testId="ide-menu-rename"
+      >
+        Rename…
+      </Item>
       {desktop && (
         <Item
           onClick={'href' in desktop ? () => onAction({ kind: 'open-desktop', href: desktop.href }) : undefined}
