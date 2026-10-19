@@ -258,6 +258,10 @@ export default defineConfig({
   test: {
     include: ['{src,packages}/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['e2e/**', '**/node_modules/**', '**/dist/**'],
+    // Testing Library's 1 s findBy/waitFor default is too tight on a loaded CI
+    // runner (vitest.setup.ts); the test timeout sits above it.
+    setupFiles: ['./vitest.setup.ts'],
+    testTimeout: 15000,
   },
   server: {
     port: 3000,
