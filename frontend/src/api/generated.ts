@@ -8209,7 +8209,13 @@ export interface paths {
         /** List Turns */
         readonly get: operations["harness_list_turns"];
         readonly put?: never;
-        /** Enqueue Turn */
+        /**
+         * Enqueue Turn
+         * @description Queue a turn for a runner. Started from inside a canopy session? Pass
+         *     `parent={turn, session}` (the caller-context hook prints both ids) so the
+         *     session the runner makes for it records where it came from and includes that
+         *     conversation's people.
+         */
         readonly post: operations["enqueue_turn"];
         readonly delete?: never;
         readonly options?: never;
@@ -9109,7 +9115,12 @@ export interface paths {
          */
         readonly get: operations["canopy_sessions_list_sessions"];
         readonly put?: never;
-        /** Create a chat session */
+        /**
+         * Create a chat session
+         * @description Create a chat session. Started from inside a canopy session? Pass
+         *     `parent={turn, session}` (the caller-context hook prints both ids) so the new
+         *     session records where it came from and includes that conversation's people.
+         */
         readonly post: operations["create_session"];
         readonly delete?: never;
         readonly options?: never;

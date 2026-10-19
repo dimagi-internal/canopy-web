@@ -285,6 +285,9 @@ def _set_status(request: HttpRequest, session_id: uuid.UUID, status: str) -> dic
 
 @router.post("/", response=SessionOut, summary="Create a chat session")
 def create_session(request: HttpRequest, payload: SessionCreateIn):
+    """Create a chat session. Started from inside a canopy session? Pass
+    `parent={turn, session}` (the caller-context hook prints both ids) so the new
+    session records where it came from and includes that conversation's people."""
     if payload.agent_slug and payload.project:
         raise HttpError(422, "a session targets an agent or a project, not both")
     try:

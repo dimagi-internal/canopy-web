@@ -1665,6 +1665,12 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
 
 
 def _record_session(request: HttpRequest, runner: Runner, payload: RecordSessionIn):
+    # The turn this session is being made for, when the runner names one it holds:
+    # a new session takes its title and its parent from it.
+    turn = None
+    if payload.turn_id:
+        turn = (Turn.objects.select_related("agent", "chat_session__agent")
+                .filter(pk=payload.turn_id, claimed_by=runner).first())
     if payload.project:
         ws = _project_workspace_or_404(request, payload.workspace)
         try:
@@ -1672,7 +1678,7 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
                 None, payload.thread_key, runner=runner, project=payload.project, workspace=ws,
                 session_key=payload.session_key, session_id=payload.session_id,
                 agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
-                title=payload.title,
+                title=payload.title, turn=turn,
             )
         except services.ThreadSessionNotFound:
             raise HttpError(404, "session not found")
@@ -1681,20 +1687,17 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
         )
     agent = _agent_or_404(request, payload.agent_slug)
     title = payload.title
-    if payload.turn_id:
+    if turn is not None:
         # The server names the session from the turn when it knows it: the email's
         # subject, the schedule's name — never the raw command a cloud turn's
         # prompt often is ("/ace:turn --thread …", 2026-10-03).
-        turn = (Turn.objects.select_related("agent", "chat_session__agent")
-                .filter(pk=payload.turn_id, claimed_by=runner).first())
-        if turn is not None:
-            title = services.turn_session_title(turn, payload.title)
+        title = services.turn_session_title(turn, payload.title)
     try:
         services.record_session(
             agent, payload.thread_key, runner=runner,
             session_key=payload.session_key, session_id=payload.session_id,
             agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
-            title=title,
+            title=title, turn=turn,
         )
     except services.ThreadSessionNotFound:
         # A session id that is not this agent's, or sits in a tenant the runner's
@@ -2151,6 +2154,10 @@ def list_unclaimable_turns(request: HttpRequest):
 
 @router.post("/turns/", response={200: TurnOut, 201: TurnOut})
 def enqueue_turn(request: HttpRequest, payload: TurnIn):
+    """Queue a turn for a runner. Started from inside a canopy session? Pass
+    `parent={turn, session}` (the caller-context hook prints both ids) so the
+    session the runner makes for it records where it came from and includes that
+    conversation's people."""
     if bool(payload.agent_slug) == bool(payload.project):
         raise HttpError(422, "a turn targets an agent_slug XOR a project")
     if payload.origin not in dict(Turn.ORIGIN_CHOICES):

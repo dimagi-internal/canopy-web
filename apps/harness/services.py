@@ -1368,11 +1368,14 @@ def _session_is_this_threads(session, agent, project, workspace, runner) -> bool
     return owner is not None and wsvc.member_role(owner, session.workspace_id) is not None
 
 
-def _thread_session(agent, project, workspace, thread_key, *, runner):
+def _thread_session(agent, project, workspace, thread_key, *, runner, turn=None):
     """Find-or-create the durable Session a thread maps to. A chat thread_key is
     str(session.id) — bind that exact existing Session, when it is this thread's
     (`_session_is_this_threads`; else ThreadSessionNotFound). Otherwise create a
     durable origin=runner Session for the phone/agent/project thread.
+
+    A new session made for a dispatched turn is that turn's work, so it takes the
+    turn's parent and the parent conversation's people (`_adopt_turn_parent`).
 
     The Session's workspace is the one the caller pinned, else the agent's own
     home (Agent.workspace is NOT NULL). A thread with neither has no tenant, and
@@ -1390,13 +1393,37 @@ def _thread_session(agent, project, workspace, thread_key, *, runner):
     home = workspace or (agent.workspace if agent else None)
     if home is None:
         raise ValueError("a new thread session needs an agent or a workspace")
-    return Session.objects.create(
+    if turn is None:
+        turn = (Turn.objects.filter(claimed_by=runner, origin_ref__thread_key=thread_key)
+                .order_by("-created_at").first())
+    parent = {}
+    if turn is not None and (turn.parent_session_id or turn.parent_turn_id):
+        parent = {"parent_session_id": turn.parent_session_id, "parent_turn_id": turn.parent_turn_id,
+                  "parent_claude_session": turn.parent_claude_session}
+    session = Session.objects.create(
         agent=agent,
         project=project or "",
         workspace=home,
         origin=Session.ORIGIN_RUNNER,
         title=thread_key[:200],
+        **parent,
     )
+    if parent:
+        _adopt_turn_parent(session, turn)
+    return session
+
+
+def _adopt_turn_parent(session, turn) -> None:
+    """The people of the conversation a turn was dispatched from join the session
+    the runner made for it — the same rule as a session created in-app with a
+    parent (`canopy_sessions.services._inherit_participants`): only from a parent
+    the dispatcher can read, only workspace members, never as owner. Without it
+    the work someone asked for in a chat never shows in their /ide."""
+    from apps.canopy_sessions.services import _inherit_participants
+
+    dispatcher = turn.enqueued_by or turn.initiator_user
+    if dispatcher is not None and session.parent_session_id:
+        _inherit_participants(session, dispatcher)
 
 
 #: How an email thread names its Session. Namespaced like `emdash:<task>` so the
@@ -1616,6 +1643,7 @@ def record_session(
     agent_task_ext_id: str | None = None,
     summary: str | None = None,
     title: str = "",
+    turn=None,
 ):
     """Upsert the thread's durable Session + RunnerBinding and re-point the live-session
     hint at THIS runner/host. Only overwrites agent_task_ext_id/summary when passed,
@@ -1626,7 +1654,8 @@ def record_session(
     with transaction.atomic():
         binding = _binding_for_thread(agent, project, workspace, thread_key)
         if binding is None:
-            session = _thread_session(agent, project, workspace, thread_key, runner=runner)
+            session = _thread_session(agent, project, workspace, thread_key, runner=runner,
+                                      turn=turn)
             binding = (
                 RunnerBinding.objects.select_for_update()
                 .filter(session=session)
