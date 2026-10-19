@@ -1391,8 +1391,10 @@ ROLE_FLOOR = 2
 PROJECT_BOOST = 2.0
 #: With embeddings on: below this cosine similarity, meaning alone does not admit an
 #: entry (shared words or the project still can). Each word shared adds 1, a
-#: similarity of 1.0 adds SEMANTIC_WEIGHT.
-SEMANTIC_FLOOR = 0.35
+#: similarity of 1.0 adds SEMANTIC_WEIGHT. Measured on gemini-embedding-001 against
+#: live memory (2026-10-18): unrelated questions score 0.45-0.55 against every entry,
+#: the right entry 0.66-0.73. Re-measure before changing HCP_EMBEDDINGS_MODEL.
+SEMANTIC_FLOOR = 0.60
 SEMANTIC_WEIGHT = 4.0
 
 
