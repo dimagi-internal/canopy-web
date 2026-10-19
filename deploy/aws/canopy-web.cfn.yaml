@@ -533,6 +533,12 @@ Resources:
             - { Name: HCP_VERTEX_LOCATION, Value: us-central1 }
             - { Name: HCP_VERTEX_WIF_AUDIENCE, Value: "//iam.googleapis.com/projects/270508200508/locations/global/workloadIdentityPools/canopy-aws/providers/canopy-web" }
             - { Name: HCP_VERTEX_SERVICE_ACCOUNT, Value: canopy-memory-embeddings@canopy-494811.iam.gserviceaccount.com }
+            # KB search reranker: the Vertex AI ranking API rescores hybrid's top
+            # 50 (apps/agents/kb_vectors.py), same service account, US multi-region
+            # endpoint (KB_RERANK_LOCATION default `us`, per the BAA's "regional
+            # APIs for PHI"). GiveWell KB, 312 questions: top-10 235 -> 259, MRR
+            # 0.502 -> 0.588, ~0.5 s, $0.001/search. Turned on 2026-10-19 (Jonathan).
+            - { Name: KB_RERANK_MODEL, Value: semantic-ranker-default@latest }
             - { Name: AWS_REGION, Value: !Ref "AWS::Region" }
             - { Name: PORT, Value: !Ref ContainerPort }
             # Google Drive root folder for walkthrough storage. Not a secret
