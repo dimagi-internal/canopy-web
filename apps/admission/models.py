@@ -38,6 +38,7 @@ class AdmissionRule(models.Model):
     ORIGIN_CHOICES = [
         ("api", "API"), ("ace_web", "ace-web"), ("canopy_web_chat", "canopy-web chat"),
         ("canopy_scheduler", "canopy scheduler"), ("email", "Email"), ("slack", "Slack"),
+        ("local", "Local"),
     ]
 
     MEMBER, CONTACT, AGENT, SYSTEM = "member", "contact", "agent", "system"

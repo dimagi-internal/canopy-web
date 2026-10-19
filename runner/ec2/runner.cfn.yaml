@@ -320,6 +320,11 @@ Resources:
                 AccuracySec=1min
                 [Install]
                 WantedBy=timers.target
+            # needrestart must never restart a canopy unit mid-turn (update_runner.sh
+            # also lays this down on boxes already up).
+            - path: /etc/needrestart/conf.d/50-canopy-runner.conf
+              content: |
+                $nrconf{override_rc}->{qr(^canopy-)} = 0;
           runcmd:
             # Swap, so a memory spike slows a turn down instead of the kernel
             # killing one. A t3.medium has 3.8 GB and ships with none; 4 GB here

@@ -272,6 +272,18 @@ The runner evaluates crons with the Django-free `canopy_cron` library (`packages
 
 How the runner software is installed, updated and versioned (`expected_code_sha`), and what the cloud runner does each tick: [`runners.md`](runners.md) → "The runner software".
 
+### Local use (`apps/harness/api_local.py`) — a person's private runner and its local turns
+
+What and why: [`access.md`](access.md) → "Local use of an agent".
+
+- `POST /api/private-runners/` (`{name, host}`) — Register one of YOUR machines (201; 200 when that name exists — idempotent, and it revives a retired one). `GET /api/private-runners/` — yours. `POST /api/private-runners/{id}/retire`. Only ever the caller's own rows.
+- `POST /api/harness/local-turns/` (`{agent, private_runner, claude_session_id, cwd, turn_mode}`) — Open the local turn for a Claude Code session on your private runner: a RUNNING `origin=local` turn, never claimed or routed, with you as its initiator. 404 for a non-member or someone else's private runner; 403 when `access.decide` does not give you the whole agent. `turn_mode: auto` is honoured only for an agent admin. Idempotent per Claude session while the turn is live (200); a session whose turn ended gets a new one (201). Returns `{turn_id, turn_mode, turn_mode_basis, url, envelope}` — the envelope a runner would have received at claim.
+- `POST /api/harness/local-turns/{id}/renew` — Push its 8-hour lease out (the prompt hook calls it, throttled). Its initiator only.
+- A local turn is finished and its transcript appended through the ordinary `POST /api/harness/turns/{id}/finish` and `/transcript`, which accept a local turn's initiator — and nobody else, not even an editor.
+- `GET /api/private-runners/used?workspace=<slug>` — The private runners local turns on that workspace's agents ran on (whose, which agents, how many turns, last seen), for the runners page. Members only.
+- `GET /api/agents/{slug}/licenses` — Who uses the agent locally: every license (`active`, `requested`, `revoked`) with its basis, private runners, local turns, credential reads and last use. Any member. `POST /api/agents/{slug}/licenses/{user_id}/revoke` (`{note}`) and `…/approve` — agent admins; approve answers 409 unless the caller list gives the person the whole agent. Both are settings changes (audited).
+- `/credentials/resolve` and `/credentials/access` take a third principal, `via: "license"`: an active license plus the caller's own running local turn named in `X-Canopy-Turn-Id` (see the resolve route's own description).
+
 ### The HCP service (`apps/contacts/hcp_oauth_views.py`, `hcp_api.py`, `hcp_clients_api.py`) — OAuth for apps canopy does not operate
 
 Issuer `<origin>/api/hcp`; design, flow and judgment calls in [`hcp-service.md`](hcp-service.md). Internal only (`HCP_SERVICE_AUDIENCE`). Errors on `/v1/` are `application/problem+json` with an HCP problem type; a mismatched `HCP-Version` header is refused.

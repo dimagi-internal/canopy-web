@@ -4,12 +4,15 @@ import { clsx } from 'clsx'
 
 import {
   getRunnerTopology,
+  listWorkspacePrivateRunners,
   WorkspaceApiError,
+  type PrivateRunnerUseOut,
   type RunnerTopologyOut,
   type TopologyRouteOut,
   type TopologyRunnerOut,
 } from '@/api/workspaces'
 import { RunnersTable } from '@/components/runners/RunnersTable'
+import { relativeAge } from '@/lib/relativeAge'
 import { TopologyViews } from './topology/TopologyViews'
 import { agentHealth, defaultRoutes, dependsSolelyOn, ruleRoutes, statusTone } from './runnerTopology'
 
@@ -99,6 +102,8 @@ function Topology({ slug }: { slug: string }): JSX.Element {
         <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Runners</h3>
         <RunnersTable runners={topo.runners} workspace={slug} open={selected} onOpen={setSelected} />
       </section>
+
+      <PrivateRunners slug={slug} />
 
       <section>
         <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -247,5 +252,49 @@ function RouteChips({
         )
       })}
     </span>
+  )
+}
+
+// People's OWN machines (canopy-web#1704): a session there runs an agent in that
+// person's Claude Code and is recorded as a local turn. Listed beside the runners
+// because "where does this agent's work happen" now has a second answer, but they
+// are not runners — they claim nothing and nothing routes to them, so there is no
+// status and no route chip. Hidden until someone has used one.
+function PrivateRunners({ slug }: { slug: string }): JSX.Element | null {
+  const [rows, setRows] = useState<PrivateRunnerUseOut[] | null>(null)
+
+  useEffect(() => {
+    let off = false
+    listWorkspacePrivateRunners(slug)
+      .then((r) => { if (!off) setRows(r) })
+      .catch(() => { if (!off) setRows([]) })
+    return () => { off = true }
+  }, [slug])
+
+  if (!rows || rows.length === 0) return null
+  return (
+    <section data-testid="private-runners">
+      <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Private runners · people running agents in their own Claude Code
+      </h3>
+      <table className="w-full text-[12px]">
+        <tbody className="divide-y divide-border">
+          {rows.map((w) => (
+            <tr key={w.id} className={clsx(w.retired && 'opacity-60')}>
+              <td className="py-1.5 pr-3 text-foreground">
+                {w.name} <span className="text-muted-foreground">— private runner, {w.owner_name}</span>
+              </td>
+              <td className="py-1.5 pr-3">{w.agents.join(', ')}</td>
+              <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">
+                {w.local_turns} local turn{w.local_turns === 1 ? '' : 's'}
+              </td>
+              <td className="py-1.5 text-right text-muted-foreground">
+                {w.last_seen_at ? relativeAge(w.last_seen_at) : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   )
 }

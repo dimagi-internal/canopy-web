@@ -236,7 +236,8 @@ report of which features work, sent on every heartbeat; the list shows a red/amb
 | `claude.credentials` | 0 credentials (fail) or 1 (warn: a usage cap stops every agent here) |
 | `claude.version` | `claude --version` does not run |
 | `canopy.cli` | the canopy CLI did not run (fail) or is behind the marketplace plugin (warn) — Refresh |
-| `disk` | root volume ≥ 80% (warn) / ≥ 90% (fail) — Refresh (bootstrap prunes caches) or grow `VolumeSize` (see "Disk") |
+| `disk` | root volume ≥ 80% (warn) / ≥ 90% (fail) — the runner sweeps scratch and prunes caches on its own at its next idle moment; a fail that stays is not scratch: grow `VolumeSize` (see "Disk") |
+| `scratch` | the disk sweep kept an old dir in `/tmp` or `WORK_DIR/sessions` because it holds work that exists nowhere else (uncommitted, or commits on no remote) — push or discard it; nothing else needs doing (see "Disk") |
 | `github.<slug>` | the agent's owner has lent no GitHub token, or it is expired / cannot open a PR on the agent's repo — the OWNER sets it at the agent's Settings → Credentials → GitHub; checked at boot, so Refresh (or wait for the next bootstrap) to re-check |
 | `env.<slug>` | the agent's `~/.<slug>/.env` could not be re-read from its vault when a turn was claimed (op's reason in the detail) — turns run on the last good file, which may be stale. Fix the vault/key; the next claim after `AGENT_ENV_TTL_SECONDS` (300) retries |
 
@@ -630,6 +631,18 @@ installed — 33 canopy, 24 ace, ~9 GB — plus npm/uv caches). Now:
   cache past 500 MB, and runs `uv cache prune`;
 - the heartbeat health carries a **`disk`** check — warn ≥ 80%, fail ≥ 90% — so the
   runner page says so before turns start failing on writes.
+- the runner **sweeps its own scratch** (`cloud_runner.maybe_sweep_disk`, after a
+  heartbeat, only while no turn runs, on its own thread): every 6 h, and 30 min after
+  the last sweep while the disk is at warn — when it then also runs `prune_caches.py`.
+  It removes entries in `/tmp` (`SCRATCH_ROOT`) owned by the runner's user and untouched
+  for 72 h (newest mtime anywhere inside), and chat-session worktrees under
+  `WORK_DIR/sessions` idle for 7 days (worktree and transcript both; the next turn
+  re-makes the worktree at the same path, so `--resume` still finds the conversation).
+  It never removes hidden/system entries, the runner's own dirs, or anything holding
+  work that exists nowhere else — uncommitted changes, or commits on no remote (a
+  worktree judged by its HEAD) — which it keeps and names in the **`scratch`** check.
+  cloud-ec2-2 reached 100% on 2026-10-19 on exactly this scratch (~3.4 GB of week-old
+  agent clones in `/tmp`, 2.1 GB of session worktrees). `DISK_SWEEP=0` turns it off.
 
 ## Migrating the live stack (`canopy-cloud-runner`, created 2026-09-05)
 The live box keeps working untouched: its baked-in `canopy-fetch-env` reads the

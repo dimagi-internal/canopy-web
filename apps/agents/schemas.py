@@ -557,6 +557,32 @@ class AgentAdminOut(StrictModel):
     granted_at: dt.datetime | None = None
 
 
+class AgentLicenseOut(StrictModel):
+    """One person's license to use the agent locally (`apps/agents/licenses.py`)."""
+
+    user_id: int
+    email: str
+    name: str
+    status: Literal["requested", "active", "revoked"]
+    #: Why it was issued (`admin`, `full:<rule>`, `editor`, `approved by …`).
+    basis: str = ""
+    note: str = ""
+    requested_at: dt.datetime
+    issued_at: dt.datetime | None = None
+    issued_by_email: str | None = None
+    revoked_at: dt.datetime | None = None
+    revoked_by_email: str | None = None
+    last_used_at: dt.datetime | None = None
+    #: The private runners their local turns on this agent ran on, most recent first.
+    private_runners: list[str] = []
+    local_turns: int = 0
+    credential_reads: int = 0
+
+
+class AgentLicenseRevokeIn(StrictModel):
+    note: str = Field(default="", max_length=300)
+
+
 class AgentAccessRowOut(StrictModel):
     user_id: int
     email: str
@@ -1599,13 +1625,15 @@ class AgentCredentialAccessOut(StrictModel):
     (canopy#850). `may_resolve` mirrors GET /credentials/resolve exactly, minus
     its bearer requirement (that is a property of the request, not of the
     caller): `via` is `runner` when the caller pairs a live runner this agent
-    routes to, `admin` when they are the agent's owner or an admin, and null
-    when neither holds — then `reason` names the access to ask for."""
+    routes to, `admin` when they are the agent's owner or an admin, `license`
+    when they hold an active license to use it locally and name their own open
+    local turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
+    names the access to ask for."""
 
     agent: str
     credential_source: Literal["1password", "canopy-web"]
     may_resolve: bool
-    via: Literal["runner", "admin"] | None = None
+    via: Literal["runner", "admin", "license"] | None = None
     reason: str = ""
 
 

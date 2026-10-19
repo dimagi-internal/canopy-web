@@ -254,3 +254,11 @@ def test_a_send_does_not_follow_a_redirect(monkeypatch, user, settings):
     services._send_one(sub, {"title": "t"})
     assert sent["url"] == sub.endpoint
     assert sent["allow_redirects"] is False
+    # pywebpush defaults TTL to 0 (deliver now or drop), which FCM applies to a
+    # dozing phone by discarding the push. A default TTL keeps it queued.
+    assert sent["headers"]["TTL"] == str(services.DEFAULT_TTL)
+    assert sent["headers"]["Urgency"] == "normal"
+
+    services._send_one(sub, {"title": "t"}, ttl=600, urgency="high")
+    assert sent["headers"]["TTL"] == "600"
+    assert sent["headers"]["Urgency"] == "high"

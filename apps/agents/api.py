@@ -33,6 +33,8 @@ from apps.workspaces import services as wsvc
 from . import delegations, services
 from . import skill_history as history
 from .schemas import (
+    AgentLicenseOut,
+    AgentLicenseRevokeIn,
     ProposedTaskOut,
     AgentMoveIn,
     AgentMoveOut,
@@ -889,6 +891,100 @@ def agent_access(request: HttpRequest, slug: str):
         "interface_published": bool(iface.get("capabilities") or iface.get("full")),
         "slack_enabled": agent.slack_enabled,
     }
+
+
+def _license_rows(agent) -> list[dict]:
+    from django.db.models import Count
+
+    from apps.harness.models import Turn
+
+    from .models import AgentCredentialRead, AgentLicense
+
+    lics = list(AgentLicense.objects.filter(agent=agent)
+                .select_related("user", "issued_by", "revoked_by"))
+    users = [lic.user_id for lic in lics]
+    turns = Turn.objects.filter(agent=agent, origin=Turn.ORIGIN_LOCAL, initiator_user_id__in=users)
+    counts = dict(turns.values_list("initiator_user_id").annotate(n=Count("id")))
+    machines: dict[int, list[str]] = {}
+    for uid, name in (turns.exclude(private_runner=None).order_by("-created_at")
+                      .values_list("initiator_user_id", "private_runner__name")):
+        if name not in machines.setdefault(uid, []):
+            machines[uid].append(name)
+    reads = dict(AgentCredentialRead.objects.filter(license__in=lics)
+                 .values_list("license_id").annotate(n=Count("id")))
+    return [{
+        "user_id": lic.user_id, "email": lic.user.email,
+        "name": lic.user.get_full_name() or lic.user.email,
+        "status": lic.status, "basis": lic.basis, "note": lic.note,
+        "requested_at": lic.requested_at, "issued_at": lic.issued_at,
+        "issued_by_email": getattr(lic.issued_by, "email", None),
+        "revoked_at": lic.revoked_at, "revoked_by_email": getattr(lic.revoked_by, "email", None),
+        "last_used_at": lic.last_used_at, "private_runners": machines.get(lic.user_id, []),
+        "local_turns": counts.get(lic.user_id, 0), "credential_reads": reads.get(lic.pk, 0),
+    } for lic in lics]
+
+
+@router.get("/{slug}/licenses", response=list[AgentLicenseOut],
+            summary="Who uses this agent locally: its license holders")
+def list_agent_licenses(request: HttpRequest, slug: str):
+    """Every license to use the agent in someone's own Claude Code — active,
+    requested (the caller list did not allow it yet) or revoked — with the
+    private_runners it ran on, its local turns and credential reads, and when it was
+    last used. Readable by any member, like the admin list."""
+    return _license_rows(_get_agent_or_404(request, slug))
+
+
+def _license_target(request: HttpRequest, slug: str, user_id: int):
+    from django.contrib.auth import get_user_model
+
+    agent = _get_agent_or_404(request, slug)
+    if not agent.is_admin(request.user):
+        raise HttpError(403, f"only an admin of {agent.slug} may change who uses it locally")
+    target = get_user_model().objects.filter(pk=user_id).first()
+    if target is None:
+        raise HttpError(404, "user not found")
+    return agent, target
+
+
+@router.post("/{slug}/licenses/{user_id}/revoke", response=AgentLicenseOut,
+             summary="Revoke a person's license to use this agent locally")
+def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
+                         payload: AgentLicenseRevokeIn | None = None):
+    """Per person, without editing the caller list: they may not open a local turn
+    or read the agent's credentials again until an admin approves them. A revoked
+    license is never re-issued automatically."""
+    from apps.events import audit
+
+    from . import licenses
+    from .models import AgentLicense
+
+    agent, target = _license_target(request, slug, user_id)
+    before = AgentLicense.objects.filter(agent=agent, user=target).values_list("status", flat=True).first()
+    licenses.revoke(agent, target, by=request.user, note=(payload.note if payload else ""))
+    audit.note_change(scope=f"agent.license:{target.email}", before=before,
+                      after=AgentLicense.REVOKED, workspace=agent.workspace)
+    return next(r for r in _license_rows(agent) if r["user_id"] == target.pk)
+
+
+@router.post("/{slug}/licenses/{user_id}/approve", response=AgentLicenseOut,
+             summary="Issue or reinstate a person's license to use this agent locally")
+def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
+    """Re-asks the caller list: refused (409) unless it gives them the whole agent —
+    make them an editor or add a `full:` rule first."""
+    from apps.events import audit
+
+    from . import licenses
+    from .models import AgentLicense
+
+    agent, target = _license_target(request, slug, user_id)
+    before = AgentLicense.objects.filter(agent=agent, user=target).values_list("status", flat=True).first()
+    try:
+        licenses.approve(agent, target, by=request.user)
+    except licenses.LicenseRefusedError as exc:
+        raise HttpError(409, str(exc)) from exc
+    audit.note_change(scope=f"agent.license:{target.email}", before=before,
+                      after=AgentLicense.ACTIVE, workspace=agent.workspace)
+    return next(r for r in _license_rows(agent) if r["user_id"] == target.pk)
 
 
 # Granting admin hands over the agent's credentials, so it is held to the same
@@ -2243,13 +2339,29 @@ def _credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
         return "runner", ""
     if agent.is_admin(request.user):
         return "admin", ""
+    # A license holder, during their OWN open local turn on this agent (named in
+    # X-Canopy-Turn-Id) — apps/agents/licenses.py, canopy-web#1704. No turn, no secrets.
+    if _license_for_read(request, agent) is not None:
+        return "license", ""
     owner = getattr(agent.owner, "email", "") if agent.owner_id else ""
     ask = f"ask its owner ({owner})" if owner else "ask its owner or a workspace owner"
     return None, (
-        f"resolving {agent.slug}'s secrets needs either a live runner you pair that "
-        f"{agent.slug} routes to, or being {agent.slug}'s owner or an agent admin; "
+        f"resolving {agent.slug}'s secrets needs a live runner you pair that "
+        f"{agent.slug} routes to, being {agent.slug}'s owner or an agent admin, or an active "
+        f"license to use it locally, during your own local turn (canopy private-runner register, "
+        f"then open a session with CANOPY_AGENT={agent.slug}); "
         f"{ask} to make you an admin (PUT /api/agents/{agent.slug}/admins/<your user id>)"
     )
+
+
+def _license_for_read(request: HttpRequest, agent):
+    """The AgentLicense a credential read may go out under (`licenses.credential_principal`)."""
+    if getattr(request, "runner_token", None) is not None:
+        return None  # a box speaks for itself, never for a person's license
+    from . import licenses
+
+    return licenses.credential_principal(
+        agent, request.user, request.META.get("HTTP_X_CANOPY_TURN_ID", ""))
 
 
 @router.get("/{slug}/credentials/access", response=AgentCredentialAccessOut,
@@ -2318,7 +2430,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
        what makes "the browser never sees plaintext" a property of the system
        rather than a habit of the UI — a future page cannot accidentally acquire
        the ability to render a secret.
-    2. **The caller must be one of two principals** (`_credential_access`):
+    2. **The caller must be one of three principals** (`_credential_access`):
        - `runner`: pairs a live runner this agent routes to. Mirrors the runner
          credential fetch, whose boundary is "the caller who can claim turns as
          this runner".
@@ -2326,8 +2438,11 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
          resolving for a local Claude Code session (canopy#850). Not a widening
          in substance: an admin can already write every value, swap the vault
          key, and put their own box on the agent to read them back.
-       Anyone else — a member, an editor — is refused, and told which access to
-       ask for. Tighter than workspace membership on purpose.
+       - `license`: holds an ACTIVE license to use the agent locally and names
+         their OWN open local turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
+         The read is logged against that turn and license.
+       Anyone else — a member, an editor with no local turn — is refused, and
+       told which access to ask for. Tighter than workspace membership on purpose.
 
     Every read is recorded, so a credential fetch is visible in the fleet log
     rather than silent.
@@ -2389,8 +2504,14 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     shared_vault, shared_token = services.resolve_shared_vault(agent)
 
     def extra(name: str) -> bool:
+        if via == "license" and name in LICENSE_WITHHELD_EXTRAS:
+            return False
         return wanted is None or name in wanted
 
+    if via == "license":
+        # A license holder runs the agent's TOOLS, not the agent: never its own canopy
+        # login (which grades as `system` — past the editor's manual cap) — canopy-web#1704.
+        values = {k: v for k, v in values.items() if k not in LICENSE_WITHHELD_REFS}
     delegation = delegations.delegation_for(agent) if extra("github_token") else None
     out = AgentCredentialsResolveOut(
         values=values, op_vault=vault,
@@ -2424,9 +2545,17 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
             and runner.kind == runner.EMDASH and runner.owner_id == request.user.pk):
         via = "admin"
     turn_id = request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120]
+    lic = None
+    if via == "license":
+        from . import licenses
+
+        lic = _license_for_read(request, agent)
+        if lic is not None:
+            licenses.touch(lic)
     try:
         services.record_credential_reads(
-            agent, read, user=request.user, runner=runner, via=via, turn_id=turn_id)
+            agent, read, user=request.user, runner=runner, via=via, turn_id=turn_id,
+            license=lic)
     except Exception:  # noqa: BLE001 - a log hiccup must not deny a runner its secrets
         logger.exception("credential read log failed for %s", agent.slug)
     from . import vault_alerts
@@ -2460,6 +2589,15 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
 #: resolve (`?refs=`) returns each only when it is named; the read log names
 #: each one handed out, like a ref.
 RESOLVE_SECRET_EXTRAS = ("op_sa_token", "shared_op_sa_token", "github_token", "salesforce_creds")
+
+#: What a `license` read (a person's local turn, canopy-web#1704) never gets: the
+#: agent OWNER's GitHub delegation, a credential LENT to the agent, the shared vault's
+#: key — none of them is the agent's own — and the agent's own canopy login, which would
+#: let the holder act AS the agent (graded `system`, past the editor tier's manual cap).
+#: The agent's 1Password key (`op_sa_token`) is handed out: that is the decision on
+#: #1704, and an agent that keeps its canopy PAT in that vault exposes it through the key.
+LICENSE_WITHHELD_EXTRAS = ("shared_op_sa_token", "github_token", "salesforce_creds")
+LICENSE_WITHHELD_REFS = frozenset({"canopy-pat", "canopy-web-pat"})
 
 
 def _parse_refs(refs: str | None) -> set[str] | None:

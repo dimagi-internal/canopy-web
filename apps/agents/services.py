@@ -1582,7 +1582,8 @@ def resolve_agent_credentials(agent, refs: set[str] | None = None) -> dict[str, 
     return {c.name: c.plaintext() for c in qs}
 
 
-def record_credential_reads(agent, names, *, user=None, runner=None, via="", turn_id="") -> None:
+def record_credential_reads(agent, names, *, user=None, runner=None, via="", turn_id="",
+                            license=None) -> None:
     """One `AgentCredentialRead` row per ref handed out (canopy-web#1538)."""
     from apps.agents.models import AgentCredentialRead
 
@@ -1590,7 +1591,7 @@ def record_credential_reads(agent, names, *, user=None, runner=None, via="", tur
         AgentCredentialRead(
             agent=agent, name=str(n)[:120],
             user=user if getattr(user, "is_authenticated", False) else None,
-            runner=runner, via=via[:16], turn_id=(turn_id or "")[:120],
+            runner=runner, via=via[:16], turn_id=(turn_id or "")[:120], license=license,
         )
         for n in sorted(set(names))
     ])
