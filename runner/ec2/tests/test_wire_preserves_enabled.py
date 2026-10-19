@@ -112,7 +112,7 @@ def _run_wire(tmp: pathlib.Path, state_dir: pathlib.Path) -> subprocess.Complete
     op.write_text("#!/bin/sh\nexit 1\n")
     op.chmod(0o755)
     return subprocess.run(
-        ["bash", str(SCRIPT), "--runner-id", NEW],
+        ["bash", str(SCRIPT), "--probe-minutes", "0", "--runner-id", NEW],
         capture_output=True, text=True, timeout=120,
         env={"PATH": f"{tmp / 'bin'}:/usr/bin:/bin", "HOME": str(home),
              "CLAUDE_TOKEN": "x"},

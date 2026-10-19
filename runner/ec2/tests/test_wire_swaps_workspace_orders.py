@@ -85,7 +85,7 @@ def _run(tmp: pathlib.Path) -> subprocess.CompletedProcess:
         p.write_text(body)
         p.chmod(0o755)
     return subprocess.run(
-        ["bash", str(SCRIPT), "--runner-id", NEW], capture_output=True, text=True, timeout=120,
+        ["bash", str(SCRIPT), "--probe-minutes", "0", "--runner-id", NEW], capture_output=True, text=True, timeout=120,
         env={"PATH": f"{tmp / 'bin'}:/usr/bin:/bin", "HOME": str(home), "CLAUDE_TOKEN": "x"},
         cwd=str(SCRIPT.parent),
     )
