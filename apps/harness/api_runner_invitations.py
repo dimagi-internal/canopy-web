@@ -40,6 +40,7 @@ from apps.workspaces import services as wsvc
 from . import aws_iam_proof, device_key_notify, device_keys
 from .api_device_keys import ECDH_STORES
 from .models import Runner, RunnerDeviceKey, RunnerInvitation
+from .runners import set_runner_machine
 from .schemas import (RunnerInvitationCheckOut, RunnerInvitationIn, RunnerInvitationOut, RunnerPairByRoleIn,
                       RunnerPairByRoleOut)
 
@@ -235,6 +236,9 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
         # it was approved for — a role cannot pair as a second runner.
         if existing.runner.name != payload.name:
             raise _refuse_pairing(f"{role_arn} is already {existing.runner.name}, not {payload.name}")
+        # The verified role IS the machine (`Runner.machine_id`): a runner paired
+        # before the field existed learns it here.
+        set_runner_machine(existing.runner, role_arn)
         return Status(200, RunnerPairByRoleOut(status="reattached", runner_id=existing.runner_id))
 
     invitation = (RunnerInvitation.objects.select_related("created_by")
@@ -280,6 +284,7 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
                 name=payload.name, kind=Runner.CLOUD, host=payload.host,
                 capabilities=declared_capabilities(payload.capabilities),
                 owner=owner, workspace_id=invitation.workspace_id,
+                machine_id=aws_iam_proof.canonical_role_arn(role_arn),
             )
             # The ECDH key the invitation named (the `<stack>-ecdh` KMS key, which
             # only this role can use) is approved with it — also when a fresh box

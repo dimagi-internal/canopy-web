@@ -1126,7 +1126,7 @@ def test_a_new_agent_in_another_enrolled_workspace_seals_to_the_box(fleet):
     must seal to the approved machines that order names — and to nobody else."""
     from apps.harness import device_keys
     from apps.harness.models import WorkspaceRunnerOrder
-    from apps.harness.runners import enroll_runner
+    from apps.harness.runners import enroll_runner, unenroll_runner
 
     f = fleet
     family = Workspace.objects.create(slug="family", display_name="Family", created_by=f.user)
@@ -1136,6 +1136,9 @@ def test_a_new_agent_in_another_enrolled_workspace_seals_to_the_box(fleet):
     # Not enrolled there yet: the box is no recipient, whatever the order says.
     assert zk.eligible_device_keys(helper) == []
 
+    # A cloud runner serves one tree (`runners._other_tree`): the family tree is
+    # this box's unit only once it leaves its first one.
+    unenroll_runner(f.runner, f.ws.slug)
     enroll_runner(f.runner, "family", by=f.user)
     WorkspaceRunnerOrder.objects.create(workspace=family, runner=f.runner, rank=0)
 

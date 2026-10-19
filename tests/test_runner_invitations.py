@@ -435,6 +435,20 @@ def test_replaced_instance_reattaches_without_an_invitation(org):
 
 
 @pytest.mark.usefixtures("sts")
+def test_pairing_and_reattaching_record_the_machine(org):
+    """The verified role is the runner's machine (`Runner.machine_id`), the key
+    the isolation-unit rules group a box's runners by."""
+    canonical = aws_iam_proof.canonical_role_arn(ROLE)
+    _approved(org)
+    rid = _pair().json()["runner_id"]
+    assert Runner.objects.get(pk=rid).machine_id == canonical
+    # A runner paired before the field existed learns it when it reattaches.
+    Runner.objects.filter(pk=rid).update(machine_id="")
+    assert _pair().status_code == 200
+    assert Runner.objects.get(pk=rid).machine_id == canonical
+
+
+@pytest.mark.usefixtures("sts")
 def test_retired_runner_role_needs_a_new_invitation_and_replaces_the_key_row(org):
     from apps.harness.models import RunnerDeviceKey
 

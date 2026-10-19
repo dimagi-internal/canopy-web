@@ -25,6 +25,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     owner_email: 'jj@dimagi.com', can_manage: true, can_administer: true, open_sessions: 0,
     flags: [],
     known_flags: ['zdr'],
+    roots: ['dimagi'], spans_trees: false,
     ...overrides,
   }
 }

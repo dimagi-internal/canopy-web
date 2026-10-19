@@ -47,6 +47,7 @@ from .routing import (
     is_project_session_turn,
     load_assignment_rows,
     load_workspace_orders,
+    prime_machine_units,
     profile_q,
     project_session_allows,
     project_session_covers,
@@ -56,6 +57,7 @@ from .routing import (
     routed_slug,
     runner_target_q,
     runner_tenant_slugs,
+    turn_unit_refusal,
 )
 from .schedule_turns import release_stale_occurrence_turns_all, skip_late_scheduled_turns
 
@@ -172,6 +174,8 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
         return False  # above the pin and the binding, as in claim_next_turn
     if not ignore_hold and not _may_hold(r, t, holds):
         return False  # likewise above the pin and the binding
+    if not ignore_serve and turn_unit_refusal(r, t):
+        return False  # the box's isolation unit: above the pin and the binding too
     # A pin trumps everything below it (claim_next_turn's `pinned_here`).
     if t.pinned_runner_id == r.id:
         return True
@@ -242,7 +246,7 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
         # Same coarse target predicate the claim path uses (assignments +
         # projects + binding-sticky sessions), plus the pin arm — a turn
         # pinned to an offline standby must read "offline", not "config".
-        q = runner_target_q(r) | Q(pinned_runner=r)
+        q = runner_target_q(r, ignore_unit=ignore_serve) | Q(pinned_runner=r)
         covered = set()
         for t in (
             Turn.objects.filter(pk__in=ids).filter(q)
@@ -349,6 +353,7 @@ def turn_reach(turn: Turn) -> Reach:
         .prefetch_related("declared_flags").order_by("name")
         if ws in runner_tenant_slugs(r)
     ]
+    prime_machine_units(runners)
     defaults, priorities = _assignment_rows_for_turns([turn])
     covering = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities).items() if pks]
     live = [r for r in covering if r.live_status == Runner.ONLINE]
@@ -492,6 +497,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         .prefetch_related("declared_flags")
         if runner_tenant_slugs(r) & ws_slugs
     ]
+    prime_machine_units(runners)
     ids = {t.id for t in queued}
     defaults, priorities = _assignment_rows_for_turns(queued)
 
@@ -515,7 +521,9 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
                                              ignore_hold=True).values()) if unheld else set()
     # And for a box's own report that it cannot run the agent: a turn only such
     # boxes would take is a setup gap on those boxes, named with what each said.
-    unserved = {t.pk for t in queued if t.pk not in claimable_ever and t.acting_agent is not None}
+    # Its isolation unit counts here too, for every turn (an agent unit refuses
+    # the agentless ones as well).
+    unserved = {t.pk for t in queued if t.pk not in claimable_ever}
     by_unserving = _coverage(unserved, runners, defaults, priorities,
                              ignore_serve=True) if unserved else {}
     orders = _orders_for(queued)
@@ -535,14 +543,15 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
             kind = "config"
             reason = (f"this conversation's site requires a {rr.describe(reqs)} runner, and "
                       f"no runner that serves it is declared {rr.describe(reqs)}")
-        elif any(t.pk in pks for pks in by_unserving.values()):
+        elif said := _unserving_said(t, by_unserving):
             kind = "config"
-            slug = t.acting_agent.slug
-            said = "; ".join(cannot_serve(r, slug) for r, pks in by_unserving.items()
-                             if t.pk in pks and cannot_serve(r, slug))
-            reason = (f"the runners that {what} report they cannot run '{slug}': {said} — "
-                      "set it up on that box and refresh the runner, or route the agent "
-                      "to a box that has it")
+            if t.acting_agent is not None:
+                reason = (f"the runners that {what} report they cannot run "
+                          f"'{t.acting_agent.slug}': {said} — set it up on that box and "
+                          "refresh the runner, or route the agent to a box that has it")
+            else:
+                reason = (f"the runners that {what} cannot take it: {said} — an agent "
+                          "unit runs only its own agent's work")
         elif t.pk in blocked_by_hold:
             kind = "config"
             reason = (f"the runners {what} are owned by people who are not admins of "
@@ -578,6 +587,21 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
             "created_at": t.created_at, "reason": reason, "kind": kind,
         })
     return out
+
+
+def _unserving_said(t: Turn, by_unserving: dict) -> str:
+    """What each runner that would take `t` but for its own report says about it:
+    its isolation unit (`turn_unit_refusal`), else `cannot_serve` for the turn's
+    agent. "" when none would."""
+    agent = t.acting_agent
+    said = []
+    for r, pks in by_unserving.items():
+        if t.pk not in pks:
+            continue
+        why = turn_unit_refusal(r, t) or (cannot_serve(r, agent.slug) if agent is not None else "")
+        if why:
+            said.append(why)
+    return "; ".join(said)
 
 
 def _capability_sweep() -> None:
@@ -764,6 +788,13 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                 trusted[held.id] = runner_may_hold_agent(runner, held)
             if not trusted[held.id]:
                 continue
+        # Its isolation unit, above the pin and the binding like the hold: an agent
+        # unit runs only turns that act as its agent (none of a repo's or an
+        # agentless chat's), and an agent with a unit of its own runs on no other
+        # unit of the machine — a pinned or bound turn would otherwise hand it the
+        # agent's secrets (`device_keys.runner_serves_agent`).
+        if turn_unit_refusal(runner, turn):
+            continue
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:
             if not _kind_allows(runner, turn.routing):

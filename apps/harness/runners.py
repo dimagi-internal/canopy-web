@@ -311,6 +311,40 @@ def list_runner_admins(runner):
     )
 
 
+# ---- The machine a runner is on --------------------------------------------
+def set_runner_machine(runner, role_arn: str) -> bool:
+    """Record that `runner` is on the machine whose instance role is `role_arn`
+    (`Runner.machine_id`). Call it only with a role the box PROVED — an approved
+    aws-iam device key, or pairing by role — never with one it merely named.
+    Idempotent; True when the stored value changed. A role that is not one
+    raises `aws_iam_proof.AwsProofError`."""
+    from .aws_iam_proof import canonical_role_arn
+
+    machine = canonical_role_arn(role_arn)
+    if runner.machine_id == machine:
+        return False
+    type(runner).objects.filter(pk=runner.pk).update(machine_id=machine)
+    runner.machine_id = machine
+    return True
+
+
+def backfill_machine_ids(runner_model, device_key_model) -> int:
+    """Set `machine_id` on every runner with an ACTIVE aws-iam device key that
+    has none yet, from that key's (already canonical) role ARN — the newest key
+    when a runner has several. Takes the model classes so the migration passes its
+    historical ones. Returns how many runners it set."""
+    keys = (device_key_model.objects.filter(kind="aws-iam", status="active")
+            .exclude(role_arn="").filter(runner__machine_id="")
+            .order_by("runner_id", "-approved_at", "-created_at")
+            .values_list("runner_id", "role_arn"))
+    first: dict = {}
+    for runner_id, role_arn in keys:
+        first.setdefault(runner_id, role_arn)
+    for runner_id, role_arn in first.items():
+        runner_model.objects.filter(pk=runner_id).update(machine_id=role_arn)
+    return len(first)
+
+
 # ---- Workspace enrollment (which tenants a box serves) ---------------------
 class EnrollmentRefused(ValueError):
     """The owner may not run work in that workspace, so the box may not serve it."""
@@ -334,9 +368,55 @@ def enroll_runner(runner, workspace_slug: str, *, by=None):
         raise EnrollmentRefused(
             f"this runner's owner is not an editor (or above) in '{workspace_slug}', "
             "so the runner cannot serve it")
+    existing = RunnerEnrollment.objects.filter(runner=runner, workspace_id=workspace_slug).first()
+    if existing is not None:
+        # Idempotent, before the one-tree rule: a cloud box enrolled across two
+        # trees before the rule may still re-send an enrollment it already has.
+        return existing
+    other_tree = _other_tree(runner, workspace_slug)
+    if other_tree:
+        raise EnrollmentRefused(
+            f"a cloud runner serves one workspace tree: {runner.name} serves the "
+            f"'{other_tree}' tree, and '{workspace_slug}' is not in it — pair another "
+            "runner unit on the box for that tree")
     row, _ = RunnerEnrollment.objects.get_or_create(
         runner=runner, workspace_id=workspace_slug, defaults={"enrolled_by": by})
     return row
+
+
+def _other_tree(runner, workspace_slug: str) -> str:
+    """The root of a tree OTHER than `workspace_slug`'s that a CLOUD runner is
+    already enrolled in — "" when there is none, or the runner is not a cloud box.
+
+    A cloud runner is one isolation unit on its box: its own Unix user, keys and
+    logins. Two trees on one unit would share all of that, so a cloud runner names
+    one tree, and a box that serves two runs two units. A laptop has one desktop
+    user however many runners it pairs, so it may span trees; its runner page says
+    so (`RunnerOut.roots`)."""
+    from apps.workspaces import services as wsvc
+
+    from .models import Runner, RunnerEnrollment
+
+    if runner.kind != Runner.CLOUD:
+        return ""
+    existing = set(RunnerEnrollment.objects.filter(runner=runner)
+                   .values_list("workspace_id", flat=True)) - {workspace_slug}
+    if not existing:
+        return ""
+    roots = wsvc.tree_roots(existing | {workspace_slug})
+    others = sorted({roots[s] for s in existing} - {roots[workspace_slug]})
+    return others[0] if others else ""
+
+
+def enrolled_roots(runner) -> list[str]:
+    """The roots of the trees `runner` is enrolled in, sorted. More than one only
+    for a laptop (`_other_tree`), or a cloud box enrolled before the rule."""
+    from apps.workspaces import services as wsvc
+
+    from .routing import enrolled_slugs
+
+    slugs = enrolled_slugs(runner)
+    return sorted(set(wsvc.tree_roots(slugs).values())) if slugs else []
 
 
 def unenroll_runner(runner, workspace_slug: str) -> bool:

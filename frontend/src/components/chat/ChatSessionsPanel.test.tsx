@@ -76,6 +76,7 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     open_sessions: 0,
     flags: [],
     known_flags: ['zdr'],
+    roots: ['dimagi'], spans_trees: false,
     ...overrides,
   }
 }

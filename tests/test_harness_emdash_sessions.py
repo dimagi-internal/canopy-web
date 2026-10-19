@@ -16,8 +16,9 @@ def _user(name):
     return User.objects.create_user(name, f"{name}@dimagi.com", "pw")
 
 
-def _ws(slug, owner):
-    ws = Workspace.objects.create(slug=slug, display_name=slug.title(), created_by=owner)
+def _ws(slug, owner, parent=None):
+    ws = Workspace.objects.create(slug=slug, display_name=slug.title(), created_by=owner,
+                                  parent=parent)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     return ws
 
@@ -565,7 +566,9 @@ def test_a_reported_session_belongs_to_the_agent_its_project_names():
 
     jj = _user("jj")
     runner_ws = _ws("dimagi", jj)          # where every runner is registered
-    agent_ws = _ws("connect", jj)          # where the agents actually live
+    # Where the agents actually live: a division of the runner's tree, which is
+    # what puts them in the runner's tenant (a slug in ANOTHER tree is not theirs).
+    agent_ws = _ws("connect", jj, parent=runner_ws)
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=agent_ws)
     runner = _runner(jj, runner_ws)
     c = Client()

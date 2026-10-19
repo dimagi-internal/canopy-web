@@ -75,6 +75,19 @@ A runner's tenant is its pairing owner's workspaces it is enrolled in, never
 the rule, its claim/schedule parity test and the routing hint:
 [runners.md § Which workspaces a runner serves](runners.md#which-workspaces-a-runner-serves-the-tenant-gate).
 
+- **One cloud runner, one tree.** A `kind=cloud` runner enrolls in one root's
+  tree only (422 otherwise); a box serving two trees runs a runner (an isolation
+  unit) per tree. A laptop may span trees and says so on its runner row.
+  → [runners.md § Isolation units](runners.md#isolation-units-one-runner-per-unit-on-a-cloud-box)
+- **Sessions a runner reports are filed inside its tenant.** A new agent-less
+  session names its agent only among agents in `runner_tenant_slugs(runner)`
+  (`harness.services._agent_for_project`: `Agent.slug` is global). A session whose
+  project names an agent OUTSIDE that tenant is filed nowhere — not in the agent's
+  tree, and not in the runner's as a plain project (`session_home` → None; the
+  report's `skipped` counts it, missing-sessions omits it) — and the owner's default session
+  workspace applies only when it is in that tenant, else the runner's workspace
+  (`canopy_sessions.filing.filing_workspace`). Tests: `tests/test_session_filing.py`.
+
 ## An agent row is an instance; its definition is the repo
 
 - An `Agent` row is an INSTANCE in one workspace: board, credentials, turns, runner

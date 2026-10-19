@@ -22953,6 +22953,16 @@ export interface components {
              * @default false
              */
             readonly can_administer: boolean;
+            /**
+             * Machine
+             * @default
+             */
+            readonly machine: string;
+            /**
+             * Unit
+             * @default
+             */
+            readonly unit: string;
         };
         /** TopologyWorkspaceOut */
         readonly TopologyWorkspaceOut: {
@@ -24583,6 +24593,16 @@ export interface components {
              */
             readonly flags: readonly string[];
             /**
+             * Roots
+             * @default []
+             */
+            readonly roots: readonly string[];
+            /**
+             * Spans Trees
+             * @default false
+             */
+            readonly spans_trees: boolean;
+            /**
              * Known Flags
              * @default []
              */
@@ -25590,6 +25610,11 @@ export interface components {
         readonly SessionReportOut: {
             /** Count */
             readonly count: number;
+            /**
+             * Skipped
+             * @default 0
+             */
+            readonly skipped: number;
         };
         /** ReportSessionsIn */
         readonly ReportSessionsIn: {

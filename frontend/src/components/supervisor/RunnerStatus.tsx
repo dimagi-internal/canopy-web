@@ -42,6 +42,15 @@ function HealthBadge({ runner }: { runner: RunnerOut }): JSX.Element | null {
   )
 }
 
+// A laptop may serve more than one workspace tree (a cloud runner serves one).
+// Said plainly, because nothing on that machine keeps the trees apart. `roots`
+// holds only the trees the viewer is a member of, so a hidden one is counted,
+// not named.
+function treesLine(roots: readonly string[]): string {
+  const named = roots.length > 1 ? roots.join(', ') : roots.length === 1 ? `${roots[0]} and another tree` : 'more than one tree'
+  return `serves ${named} — no separation between them on this machine`
+}
+
 export function RunnerStatus({
   runners,
   onSelect,
@@ -126,6 +135,11 @@ export function RunnerStatus({
           {r.host && (
             <span className="flex items-baseline gap-2 pl-[18px] text-xs sm:hidden">
               <span className="min-w-0 truncate text-muted-foreground">{r.host}</span>
+            </span>
+          )}
+          {r.spans_trees && (
+            <span data-testid={`runner-spans-trees-${r.name}`} className="pl-[18px] text-xs text-foreground-secondary">
+              {treesLine(r.roots ?? [])}
             </span>
           )}
         </button>

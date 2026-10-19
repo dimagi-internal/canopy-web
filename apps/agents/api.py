@@ -278,7 +278,20 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
             "grant you admin (POST /api/harness/runners/{id}/admins)",
         )
     _refuse_runners_that_cannot_hold(agent, [by_id[rid] for rid in added])
+    _refuse_other_units(agent, [by_id[rid] for rid in added])
     return by_id
+
+
+def _refuse_other_units(agent, runners) -> None:
+    """422 naming every runner whose isolation unit keeps it from this agent
+    (`routing.unit_refusal`): an agent unit runs only its own agent, and an agent
+    with a unit of its own runs on no other runner of that machine. The claim
+    refuses them anyway; refusing the write says so while someone is looking."""
+    from apps.harness.routing import unit_refusal
+
+    said = sorted({why for why in (unit_refusal(r, agent.slug) for r in runners) if why})
+    if said:
+        raise HttpError(422, f"cannot route {agent.slug} there: {'; '.join(said)}")
 
 
 def _refuse_auto_unless_admin(request: HttpRequest, agent, what: str) -> None:

@@ -275,6 +275,13 @@ class Runner(models.Model):
     )
     paired_at = models.DateTimeField(auto_now_add=True)
     meta = models.JSONField(default=dict, blank=True)
+    # The MACHINE this runner is on: the canonical IAM role ARN its box proved
+    # (`services.set_runner_machine`, from an approved aws-iam device key and from
+    # pairing by role). Several runners — one per isolation unit — share a box,
+    # and so share this. "" = not known (a laptop, or a box that never proved a
+    # role). Read by `routing.unit_refusal` and the topology's grouping; never a
+    # grant on its own.
+    machine_id = models.CharField(max_length=300, blank=True, default="", db_index=True)
 
     class Meta:
         indexes = [models.Index(fields=["kind", "status"])]
@@ -295,6 +302,14 @@ class Runner(models.Model):
 
     def agent_slugs(self) -> list[str]:
         return list(self.capabilities.get("agents", []))
+
+    def unit(self) -> dict:
+        """The isolation unit this runner says it is (`capabilities.unit`):
+        `{"kind": "tree", "root": <slug>}` or `{"kind": "agent", "slug": <slug>}`;
+        {} for a runner that declares none. Box-declared, and only ever a
+        restriction on what the box takes (`routing.unit_refusal`)."""
+        unit = (self.capabilities or {}).get("unit")
+        return unit if isinstance(unit, dict) else {}
 
     def project_names(self) -> list[str]:
         """The repos this runner declares it can drive. Like `agents`, this is a

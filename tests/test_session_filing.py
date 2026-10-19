@@ -92,15 +92,75 @@ def test_unset_default_keeps_todays_behaviour(runner):
 
 
 def test_a_new_session_is_filed_in_the_runner_owners_default(runner, jj, family):
+    services.enroll_runner(runner, "marshellis")  # a laptop serving both trees
     filing.set_default(jj, "marshellis")
     _report(runner, "t1")
     assert _session("t1").workspace_id == "marshellis"
 
 
+def test_owner_default_outside_runner_tenant_is_not_used(jj, dimagi, family):
+    """The default is one workspace for all of a person's boxes; a cloud box in
+    the family tree must not file its sessions into dimagi, nor the reverse."""
+    box = Runner.objects.create(name="cloud-ec2-2-marshellis", kind=Runner.CLOUD, host="ec2",
+                                owner=jj, workspace=family)
+    filing.set_default(jj, "dimagi")
+    _report(box, "t1")
+    assert _session("t1").workspace_id == "marshellis"
+
+
+def test_session_named_after_another_trees_agent_is_not_filed_there(jj, dimagi, family):
+    """`Agent.slug` is global: a family box with a checkout named `hal` is not
+    reporting Dimagi's Hal, and must not file into Dimagi's tree."""
+    connect = _ws("connect", jj, parent=dimagi)
+    Agent.objects.create(slug="hal", name="Hal", workspace=connect)
+    box = Runner.objects.create(name="cloud-ec2-2-marshellis", kind=Runner.CLOUD, host="ec2",
+                                owner=jj, workspace=family)
+    resp = _client(jj).post(
+        f"/api/harness/runners/{box.pk}/sessions",
+        {"sessions": [{"emdash_task": "t1", "project": "hal"},
+                      {"emdash_task": "t2", "project": "canopy-web"}], "complete": True},
+        content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    # Filed NOWHERE — not in Dimagi's tree (the box does not serve it), and not in
+    # the family's as a plain project, where its members would read Hal's work.
+    assert resp.json()["skipped"] == 1
+    assert not Session.objects.filter(runner_binding__session_key="t1").exists()
+    assert _session("t2").workspace_id == "marshellis"
+
+
+def test_session_home_reads_the_tenant_once_per_runner(jj, dimagi, family, django_assert_num_queries):
+    from apps.harness import services as hs
+
+    box = Runner.objects.create(name="cloud-ec2-2-marshellis", kind=Runner.CLOUD, host="ec2",
+                                owner=jj, workspace=family)
+    hs.session_home(box, "canopy-web")
+    # Warm: the tenant is cached on the runner, so a second session costs only
+    # its agent lookup and the owner's default.
+    with django_assert_num_queries(2):
+        hs.session_home(box, "other-repo")
+
+
+def test_missing_sessions_skip_another_trees_agent(jj, dimagi, family):
+    from apps.events import usage
+    from apps.events.models import SessionUsage
+
+    connect = _ws("connect", jj, parent=dimagi)
+    Agent.objects.create(slug="hal", name="Hal", workspace=connect)
+    box = Runner.objects.create(name="cloud-ec2-2-marshellis", kind=Runner.CLOUD, host="ec2",
+                                owner=jj, workspace=family)
+    for cs, repo in (("cs-hal", "hal"), ("cs-mine", "canopy-web")):
+        SessionUsage.objects.create(runner=box, claude_session=cs, repo=repo, day="2026-10-18")
+    rows = _client(jj).get(f"/api/harness/runners/{box.pk}/missing-sessions").json()["sessions"]
+    assert [r["claude_session"] for r in rows] == ["cs-mine"]
+    assert usage.send_up(box, ["cs-hal"]) == []
+    assert not Session.objects.filter(runner_binding__session_key="claude:cs-hal").exists()
+
+
 def test_an_agent_project_still_follows_the_agent(runner, jj, family):
     """The default is the PERSON's; an agent's project is the agent's tenant."""
-    connect = _ws("connect", jj)
+    connect = _ws("connect", jj, parent=runner.workspace)
     Agent.objects.create(slug="hal", name="Hal", workspace=connect)
+    services.enroll_runner(runner, "marshellis")
     filing.set_default(jj, "marshellis")
     _report(runner, "t1", project="hal")
     s = _session("t1")
@@ -124,6 +184,7 @@ def test_a_default_where_the_owner_was_demoted_to_viewer_is_ignored(runner, jj, 
 
 
 def test_existing_sessions_are_not_refiled_when_the_default_changes(runner, jj, family):
+    services.enroll_runner(runner, "marshellis")
     _report(runner, "t1")
     filing.set_default(jj, "marshellis")
     _report(runner, "t1", "t2")

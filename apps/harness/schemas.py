@@ -110,6 +110,17 @@ class RunnerEngineIn(Schema):
     engine: str
 
 
+def _enrolled_roots(obj) -> list[str]:
+    """`runners.enrolled_roots`, read once per row."""
+    cached = getattr(obj, "_enrolled_roots_cache", None)
+    if cached is None:
+        from .runners import enrolled_roots
+
+        cached = enrolled_roots(obj)
+        obj._enrolled_roots_cache = cached
+    return cached
+
+
 class RunnerOut(Schema):
     id: uuid.UUID
     name: str
@@ -203,6 +214,25 @@ class RunnerOut(Schema):
 
     # What this box's owner has declared about it (RunnerFlag) — e.g. `zdr`.
     flags: list[str] = []
+
+    # The roots of the workspace trees the box is enrolled in, as far as the
+    # caller may know them: all of them for the box's owner, else only the trees
+    # the caller is a member somewhere in. Stamped per (caller, runner) by
+    # `api._with_roots`, which every route returning a RunnerOut calls; an
+    # unstamped row serves [] (the heartbeat reply, which only the box reads).
+    # A cloud runner names one tree (`runners._other_tree`); a laptop may name several.
+    roots: list[str] = []
+    # Enrolled in more than one tree, whether or not the caller sees them all: on
+    # that machine nothing separates the trees from each other.
+    spans_trees: bool = False
+
+    @staticmethod
+    def resolve_roots(obj) -> list[str]:
+        return list(getattr(obj, "visible_roots", None) or [])
+
+    @staticmethod
+    def resolve_spans_trees(obj) -> bool:
+        return len(_enrolled_roots(obj)) > 1
 
     @staticmethod
     def resolve_flags(obj) -> list[str]:
@@ -568,6 +598,9 @@ class SessionReportOut(Schema):
     from the other's advertised schema."""
 
     count: int
+    # Reported tasks that were not filed: their project names an agent outside
+    # this runner's tenant (`services.session_home`).
+    skipped: int = 0
 
 
 class ParentIn(Schema):
