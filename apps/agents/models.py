@@ -255,6 +255,21 @@ class Agent(models.Model):
             return True
         return self.admin_grants.filter(user=user).exists()
 
+    def admin_user_ids(self) -> set[int]:
+        """Every user `is_admin` answers yes for, in a fixed number of queries: the
+        workspace's effective members (inherited owners included) who are its owner, a
+        workspace owner, or hold an explicit grant. For listing — asking `is_admin` of
+        each candidate costs queries per person."""
+        if not self.workspace_id:
+            return set()
+        from apps.workspaces import permissions as perms
+        from apps.workspaces import services as wsvc
+
+        granted = set(self.admin_grants.values_list("user_id", flat=True))
+        return {m.user_id for m in wsvc.effective_memberships(self.workspace)
+                if m.user_id == self.owner_id or m.user_id in granted
+                or perms.role_allows(m.role, perms.OWN)}
+
     class Meta:
         ordering = ["name"]
 

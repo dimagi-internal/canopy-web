@@ -344,3 +344,157 @@ def test_a_failed_mint_returns_to_the_same_prefixed_page(fleet, monkeypatch, set
     res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
     assert res["Location"].startswith("https://labs.connect.dimagi.com/canopy/w/connect/")
     assert res["Location"].endswith("?google=no-refresh-token#credentials")
+
+
+# --- only what the agent needs, and from the right account ------------------------
+
+GMAIL = "https://www.googleapis.com/auth/gmail"
+
+
+def _id_token_for(email: str) -> str:
+    import base64
+    import json
+
+    payload = base64.urlsafe_b64encode(json.dumps({"email": email}).encode())
+    return "h." + payload.rstrip(b"=").decode() + ".sig"
+
+
+def _hosted(agent, address="family@marshellis.com", status="verified"):
+    """Give `agent` an address on a canopy-hosted domain of its own workspace (apps/mail),
+    routed to it."""
+    from apps.mail.models import MailDomain, MailRoute
+
+    local, _, host = address.partition("@")
+    d = MailDomain.objects.create(workspace=agent.workspace, name=host, status=status)
+    MailRoute.objects.create(domain=d, local_part=local, kind=MailRoute.AGENT, agent=agent)
+    agent.email = address
+    agent.save(update_fields=["email"])
+    return agent
+
+
+@pytest.mark.django_db
+def test_a_domain_registered_but_not_yet_verified_is_still_gmail(fleet, monkeypatch):
+    """A workspace can register its domain before the MX cut-over; until the domain verifies,
+    the address is still a Google mailbox — it keeps its Gmail scopes, its
+    hint, and the account check."""
+    agent = _hosted(fleet["agent"], "ace@dimagi-ai.com", status="pending")
+    assert g.scopes_for(agent) == g.FLEET_SCOPES
+    assert g.expected_account(agent) == "ace@dimagi-ai.com"
+    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
+    assert "gmail.modify" in url and "login_hint=ace%40dimagi-ai.com" in url
+    res = _mint(fleet, monkeypatch, {**_google_response(), "id_token": _id_token_for("jj@gmail.com")})
+    assert "google=wrong-account" in res["Location"]
+
+
+def _gmail(agent, address="ace@dimagi-ai.com"):
+    agent.email = address
+    agent.save(update_fields=["email"])
+    return agent
+
+
+def _mint(fleet, monkeypatch, resp):
+    monkeypatch.setattr(g, "exchange_code", lambda **kw: resp)
+    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
+    return fleet["client"].get(CALLBACK, {"code": "c", "state": state})
+
+
+@pytest.mark.django_db
+def test_a_gmail_agent_is_asked_for_everything(fleet):
+    assert g.scopes_for(_gmail(fleet["agent"])) == g.FLEET_SCOPES
+
+
+@pytest.mark.django_db
+def test_a_canopy_hosted_agent_is_never_asked_for_gmail(fleet):
+    """Its mail runs through canopy (SES), so a Gmail grant would be a line on the
+    consent screen for nothing — and access to whatever inbox the account has."""
+    agent = _hosted(fleet["agent"])
+    scopes = g.scopes_for(agent)
+    assert not [s for s in scopes if s.startswith(GMAIL)]
+    assert set(g.services_for(scopes)) == {"calendar", "docs", "drive", "forms", "sheets", "slides"}
+    assert {"openid", "email"} <= set(scopes)
+
+    from urllib.parse import parse_qs, urlparse
+
+    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
+    q = parse_qs(urlparse(url).query)
+    assert GMAIL not in q["scope"][0]
+    # The hosted address is not a Google account, so it is never the hint.
+    assert q["login_hint"] == ["ace@dimagi-ai.com"]
+
+
+@pytest.mark.django_db
+def test_a_gmail_agent_is_hinted_at_its_own_address(fleet):
+    _gmail(fleet["agent"], "Scout@Example.org")
+    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
+    assert "login_hint=scout%40example.org" in url
+    assert "gmail.modify" in url
+
+
+@pytest.mark.django_db
+def test_a_consent_from_another_google_account_is_refused_and_nothing_stored(fleet, monkeypatch):
+    """The runner reads a Gmail agent's mailbox by its address (`gog --account
+    <agent.email>`), so a token for any other account can never serve it — storing one
+    would read as "connected" while every mail turn fails."""
+    agent = _gmail(fleet["agent"])
+    res = _mint(fleet, monkeypatch, {**_google_response(), "id_token": _id_token_for("jj@gmail.com")})
+    assert res.status_code == 302
+    assert res["Location"].endswith(
+        "?google=wrong-account&account=jj%40gmail.com&expected=ace%40dimagi-ai.com#credentials")
+    assert not AgentCredential.objects.filter(agent=agent, name="gog-token").exists()
+
+
+@pytest.mark.django_db
+def test_the_account_check_ignores_case(fleet, monkeypatch):
+    _gmail(fleet["agent"], "ACE@dimagi-ai.com")
+    assert _mint(fleet, monkeypatch, _google_response())["Location"].endswith("?google=ok#credentials")
+
+
+@pytest.mark.django_db
+def test_a_hosted_agent_with_no_google_account_may_use_any(fleet, monkeypatch):
+    """A canopy-hosted address is not a Google account; with no `google_account` set,
+    nothing names the account its Drive/Docs login must be, so any will do."""
+    agent = _hosted(fleet["agent"])
+    resp = {**_google_response(scope=["openid", "email", "https://www.googleapis.com/auth/drive"]),
+            "id_token": _id_token_for("marshellis.agent@gmail.com")}
+    assert _mint(fleet, monkeypatch, resp)["Location"].endswith("?google=ok#credentials")
+    assert AgentCredential.objects.filter(agent=agent, name="gog-token").exists()
+
+
+@pytest.mark.django_db
+def test_a_hosted_agent_with_a_google_account_must_sign_in_as_it(fleet, monkeypatch):
+    """`Agent.google_account` names the agent's Google login apart from its mailbox
+    (family@marshellis.com on SES, signing in to Drive as a Gmail account): the mint is
+    hinted at it and refuses any other account."""
+    agent = _hosted(fleet["agent"])
+    agent.google_account = "Marshellis.Agent@gmail.com"
+    agent.save(update_fields=["google_account"])
+    assert g.expected_account(agent) == "marshellis.agent@gmail.com"
+    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
+    assert "login_hint=marshellis.agent%40gmail.com" in url and "gmail.modify" not in url
+
+    res = _mint(fleet, monkeypatch, {**_google_response(), "id_token": _id_token_for("jj@gmail.com")})
+    assert "google=wrong-account" in res["Location"] and "expected=marshellis.agent%40gmail.com" in res["Location"]
+    assert not AgentCredential.objects.filter(agent=agent, name="gog-token").exists()
+    resp = {**_google_response(), "id_token": _id_token_for("marshellis.agent@gmail.com")}
+    assert _mint(fleet, monkeypatch, resp)["Location"].endswith("?google=ok#credentials")
+
+
+@pytest.mark.django_db
+def test_a_gmail_agent_with_a_separate_google_account_checks_that_account(fleet, monkeypatch):
+    agent = _gmail(fleet["agent"])
+    agent.google_account = "login@dimagi-ai.com"
+    agent.save(update_fields=["google_account"])
+    assert g.expected_account(agent) == "login@dimagi-ai.com"
+    res = _mint(fleet, monkeypatch, _google_response())  # consents as ace@dimagi-ai.com
+    assert "google=wrong-account" in res["Location"]
+
+
+@pytest.mark.django_db
+def test_a_hosted_agent_that_also_reads_a_gmail_address_keeps_gmail(fleet):
+    """Ada's shape: a hosted primary address and a Gmail mailbox the runner still reads
+    (an InboundMailbox) — the token must still carry Gmail."""
+    from apps.inbound.models import InboundMailbox
+
+    agent = _hosted(fleet["agent"])
+    InboundMailbox.objects.create(address="ace@dimagi-ai.com", agent=agent)
+    assert g.scopes_for(agent) == g.FLEET_SCOPES

@@ -37,7 +37,8 @@ def _shared_vault(ws: Workspace) -> dict:
 
 
 def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: dict) -> dict:
-    steps = setup_steps(agent)
+    can_fix = agent.is_admin(viewer)
+    steps = setup_steps(agent, viewer_is_admin=can_fix)
     left = [s for s in steps if s["status"] not in (DONE, OPTIONAL)]
     last = last_turns.get(agent.slug) or {}
     c = counts.get(agent.pk) or {}
@@ -46,7 +47,7 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
         "name": agent.name,
         "workspace": agent.workspace_id,
         "owner_email": agent.owner.email if agent.owner_id else "",
-        "can_fix": agent.is_admin(viewer),
+        "can_fix": can_fix,
         "email": agent.email,
         "repo_url": agent.repo_url,
         "turn_mode": agent.turn_mode,

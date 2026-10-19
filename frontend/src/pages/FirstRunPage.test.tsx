@@ -9,8 +9,11 @@ const createWorkspace = vi.fn()
 vi.mock('@/api/workspaces', () => ({ listRequestableWorkspaces, requestWorkspaceAccess, createWorkspace }))
 
 const refresh = vi.fn().mockResolvedValue(undefined)
+const wsState = vi.hoisted(() => ({
+  value: { workspaces: [] as { slug: string; display_name: string }[], active: null as string | null },
+}))
 vi.mock('@/workspace/WorkspaceProvider', () => ({
-  useWorkspace: () => ({ workspaces: [], loading: false, refresh }),
+  useWorkspace: () => ({ ...wsState.value, loading: false, refresh }),
 }))
 vi.mock('@/auth/AuthProvider', () => ({
   useAuth: () => ({ status: 'authenticated', user: { email: 'ada@dimagi.com', can_create_workspace: true } }),
@@ -32,6 +35,35 @@ function renderPage() {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  wsState.value = { workspaces: [], active: null }
+})
+
+describe('FirstRunPage — create an agent', () => {
+  function renderNewWorkspace() {
+    return render(
+      <MemoryRouter initialEntries={['/new-workspace']}>
+        <Routes>
+          <Route path="/new-workspace" element={<FirstRunPage alwaysOfferForm />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('a member links to creating an agent in the workspace they are in', async () => {
+    listRequestableWorkspaces.mockResolvedValue([])
+    wsState.value = { workspaces: [{ slug: 'marshellis', display_name: 'Marshellis' }], active: 'marshellis' }
+    renderNewWorkspace()
+    const link = await screen.findByRole('link', { name: 'Create an agent' })
+    expect(link.getAttribute('href')).toBe('/w/marshellis/agents/new')
+    expect(screen.getByText(/in Marshellis\./)).toBeTruthy()
+  })
+
+  it('someone in no workspace yet has nowhere to create one, so no link', async () => {
+    listRequestableWorkspaces.mockResolvedValue([])
+    renderPage()
+    await screen.findByRole('button', { name: 'Create workspace' })
+    expect(screen.queryByRole('link', { name: 'Create an agent' })).toBeNull()
+  })
 })
 
 const dimagi = { slug: 'dimagi', display_name: 'Dimagi', domain: 'dimagi.com', pending_request_id: null }

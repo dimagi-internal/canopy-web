@@ -482,3 +482,56 @@ def test_health_shows_how_an_agent_is_used_and_where_it_ran(tree):
     assert (hal["turns_30d"], hal["done_30d"], hal["failed_30d"], hal["people_30d"]) == (2, 1, 1, 2)
     assert hal["ran_on"] == [{"name": "cloud-1", "kind": "cloud", "turns": 2}]
     assert hal["left"] > 0 and body["totals"]["used_30d"] == 1
+
+
+# ---- zero-knowledge agents' vault step, at the cost of a tree -----------------
+
+
+def _keyset(user):
+    from apps.passkeys.models import UserVaultKeyset
+
+    return UserVaultKeyset.objects.create(user=user, public_jwk={"kty": "EC", "crv": "P-256", "x": "x", "y": "y"})
+
+
+def _health_queries(user) -> int:
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as ctx:
+        assert _get(user, "/api/workspaces/dimagi/health").status_code == 200
+    return len(ctx.captured_queries)
+
+
+def test_health_does_not_ask_about_every_vault_key_in_the_system(tree):
+    """The vault step asks, per ZK agent, whether anyone can open its vault. Asking
+    `is_admin` of every keyset holder in the system made the health page's queries grow
+    with keysets × agents; the cheap check is two queries per agent whatever the count."""
+    for slug in ("zk1", "zk2", "zk3"):
+        Agent.objects.create(slug=slug, name=slug, workspace_id="connect", owner=tree["builder"],
+                             credential_source=Agent.CANOPY_WEB, zk_enabled=True, zk_kv=0)
+    before = _health_queries(tree["ceo"])
+    for i in range(8):  # vault keys held by people who administer none of these agents
+        _keyset(_user(f"stranger{i}@dimagi.com"))
+    assert _health_queries(tree["ceo"]) == before
+
+
+def test_has_recipients_matches_recipients_for(tree):
+    from apps.agents import zk_seal
+
+    agent = Agent.objects.create(slug="zk", name="zk", workspace_id="connect", owner=tree["builder"],
+                                 credential_source=Agent.CANOPY_WEB, zk_enabled=True, zk_kv=0)
+    _keyset(tree["staff"])  # an editor of the parent: not an admin of the agent
+    assert zk_seal.has_recipients(agent) is False and zk_seal.recipients_for(agent) == []
+    _keyset(tree["ceo"])  # owner of the parent workspace: an admin by inheritance
+    assert zk_seal.has_recipients(agent) is True and len(zk_seal.recipients_for(agent)) == 1
+
+
+def test_admin_user_ids_agrees_with_is_admin(tree):
+    from apps.agents.models import AgentAdmin
+
+    agent = tree["hal"]
+    AgentAdmin.objects.create(agent=agent, user=tree["staff"])
+    outsider = _user("out@elsewhere.org")
+    ids = agent.admin_user_ids()
+    for u in (tree["ceo"], tree["staff"], tree["builder"], outsider):
+        assert (u.pk in ids) == agent.is_admin(u), u.email

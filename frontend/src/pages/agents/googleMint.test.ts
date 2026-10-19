@@ -38,4 +38,19 @@ describe('mintOutcome', () => {
     expect(mintOutcome('denied')?.text).toMatch(/cancelled/i)
     expect(mintOutcome('exchange-failed')?.text).toMatch(/failed/i)
   })
+
+  it('names both accounts when Google signed in as the wrong one', () => {
+    const m = mintOutcome('wrong-account', { account: 'jj@gmail.com', agentEmail: 'ace@dimagi-ai.com' })
+    expect(m?.tone).toBe('error')
+    expect(m?.text).toBe(
+      'Google signed in as jj@gmail.com, but this agent is ace@dimagi-ai.com. Sign in to Google as the agent and try again.',
+    )
+  })
+
+  it('sends a vault with no keys to setting up the vault first, with a link there', () => {
+    const m = mintOutcome('zk-no-recipients')
+    expect(m?.tone).toBe('error')
+    expect(m?.text).toMatch(/vault has no keys yet.* set up its vault \(passkey\) first, then connect Google/)
+    expect(m?.link).toEqual({ href: '/settings#vault-key', label: 'Set up your vault key' })
+  })
 })

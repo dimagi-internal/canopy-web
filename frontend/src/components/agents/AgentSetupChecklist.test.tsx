@@ -59,6 +59,25 @@ describe('AgentSetupChecklist', () => {
     expect(screen.queryByText('in Claude Code')).toBeNull()
   })
 
+  it('offers a step’s further links beside its main one', async () => {
+    setupMock.mockResolvedValue([
+      step('runner', 'todo', {
+        href: '/w/scouts/agents/scout/settings#running',
+        action: 'Pick a runner',
+        links: [
+          { href: '/get-started#runner', action: 'Pair your laptop' },
+          { href: 'https://github.com/dimagi-internal/canopy-web/blob/main/runner/ec2/README.md', action: 'Stand up a cloud box' },
+        ],
+      }),
+    ])
+    mount()
+    expect((await screen.findByRole('link', { name: 'Pick a runner' })).getAttribute('href')).toBe(
+      '/w/scouts/agents/scout/settings#running',
+    )
+    expect(screen.getByRole('link', { name: 'Pair your laptop' }).getAttribute('href')).toBe('/get-started#runner')
+    expect(screen.getByRole('link', { name: 'Stand up a cloud box ↗' }).getAttribute('href')).toContain('runner/ec2/README.md')
+  })
+
   it('disappears from Settings once nothing required is left', async () => {
     setupMock.mockResolvedValue([step('repo', 'done'), step('mailbox', 'optional')])
     const { container } = mount(true)

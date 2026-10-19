@@ -54,13 +54,15 @@ def start_google_mint(request: HttpRequest, slug: str, login_hint: str = "") -> 
     if not client_id:
         raise HttpError(503, "this deployment has no Google OAuth client configured")
     state = google_oauth.sign_state(agent_slug=agent.slug, user_pk=request.user.pk)
-    # Default the account picker to the agent's Google account (`google_identity`: its
-    # own `google_account`, else its mailbox when that is Google). It is a HINT, not a
-    # constraint — whoever is signing in can still choose another account, and the
-    # token records whichever mailbox actually consented.
-    hint = login_hint or agent.google_identity() or f"{agent.slug}@dimagi-ai.com"
+    # Default the account picker to the account the callback will insist on
+    # (`expected_account`: its `google_account`, else its mailbox when that is Google),
+    # else the fleet's convention as a guess — a hosted-mail agent commonly signs in to
+    # Google as <slug>@dimagi-ai.com. A hint, not the check: the account can still be
+    # changed on Google's side.
+    hint = login_hint or google_oauth.expected_account(agent) or f"{agent.slug}@dimagi-ai.com"
     return GoogleMintStartOut(
-        url=google_oauth.authorize_url(client_id=client_id, state=state, login_hint=hint)
+        url=google_oauth.authorize_url(client_id=client_id, state=state, login_hint=hint,
+                                       scopes=google_oauth.scopes_for(agent))
     )
 
 
@@ -71,7 +73,7 @@ oauth_router = Router(auth=session_auth, tags=["agents"])
 def google_callback(request: HttpRequest, code: str = "", state: str = "", error: str = ""):
     from django.core import signing
 
-    def done(agent, status: str):
+    def done(agent, status: str, **extra: str):
         # ROOT-RELATIVE IS WRONG HERE. This deployment is served under a path
         # prefix (/canopy), so "/w/…" lands outside the app entirely — the mint
         # succeeded, the token was stored, and the operator got a Resolver404
@@ -86,10 +88,13 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
         # Overview with the rest of the agent's configuration, 2026-09-23); the
         # fragment lands the person on it rather than at the top of the page.
         # `/credentials` still redirects here too, so an older link survives.
+        from urllib.parse import urlencode
+
+        query = urlencode({"google": status, **extra})
         if agent is None:
-            return HttpResponseRedirect(f"{root}/?google={status}")
+            return HttpResponseRedirect(f"{root}/?{query}")
         path = f"/w/{agent.workspace.slug}/agents/{agent.slug}/settings"
-        return HttpResponseRedirect(f"{root}{path}?google={status}#credentials")
+        return HttpResponseRedirect(f"{root}{path}?{query}#credentials")
 
     if not state:
         raise HttpError(400, "missing state")
@@ -124,6 +129,12 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
     email = google_oauth.email_from_id_token(tokens["id_token"]) if tokens.get("id_token") else ""
     if not email:
         return done(agent, "no-email")
+    expected = google_oauth.expected_account(agent)
+    if expected and email.strip().lower() != expected:
+        # Refused before anything is stored: a token for another account can never read
+        # this agent's mailbox, and stored it would read as "connected". The page names
+        # the account Google signed in as, so the person can tell which one they used.
+        return done(agent, "wrong-account", account=email, expected=expected)
 
     token = google_oauth.build_gog_token(
         email=email,

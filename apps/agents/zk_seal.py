@@ -92,6 +92,20 @@ def recipients_for(agent) -> list[tuple[str, str, dict]]:
     return out
 
 
+def has_recipients(agent) -> bool:
+    """Would `recipients_for(agent)` name anyone? Asked per agent by the setup checklist
+    (and so by the workspace health page, for every agent in a tree), so it never loads
+    every vault keyset in the system: one exists() for the devices, then one for the
+    keysets of the agent's admins (`Agent.admin_user_ids`)."""
+    from apps.passkeys.models import UserVaultKeyset
+
+    from . import zk
+
+    if zk.eligible_device_keys_qs(agent).exists():
+        return True
+    return UserVaultKeyset.objects.filter(user_id__in=agent.admin_user_ids()).exists()
+
+
 def sealed_targets(value: str) -> set[tuple[str, str]]:
     """The `(kind, target)` pairs a `zks1:` value was sealed to; empty for
     anything else (or a value too malformed to read — it was checked on write)."""

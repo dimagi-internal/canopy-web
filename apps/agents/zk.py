@@ -147,12 +147,17 @@ def eligible_device_keys(agent) -> list:
     agent's resolve accepts — the devices that can be (and, at the current kv,
     should be) wrapped to. A new ECDH key a person has not approved yet gets
     nothing, though its signing key stays active."""
+    return list(eligible_device_keys_qs(agent))
+
+
+def eligible_device_keys_qs(agent):
+    """`eligible_device_keys` as a queryset, for a caller that only asks whether any exist."""
     from apps.harness import device_keys
     from apps.harness.models import RunnerDeviceKey
 
-    return list(device_keys.keys_for_agent(agent)
-                .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
-                .exclude(ecdh_jkt=""))
+    return (device_keys.keys_for_agent(agent)
+            .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
+            .exclude(ecdh_jkt=""))
 
 
 def device_waits(agent, key) -> bool:

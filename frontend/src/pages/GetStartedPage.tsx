@@ -1,7 +1,11 @@
 import { useEffect, useState, type JSX, type ReactNode } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthProvider'
 import { CopyCommand } from '@/components/agents/CopyCommand'
 import { listAgents } from '@/api/agents'
+import { scopedPath } from '@/lib/scopedLinks'
+import { pairingCommand } from '@/pages/topology/topologyMap'
+import { useActiveWorkspace } from '@/workspace/WorkspaceProvider'
 
 /**
  * /get-started — how a person starts using canopy agents: install canopy,
@@ -18,7 +22,15 @@ import { listAgents } from '@/api/agents'
  * Signed in, steps 2 and 3 list the agents in all of the reader's workspaces
  * that have a plugin, one line per plugin (two instances of one plugin install
  * once). Signed out, or when nothing loads, the page shows the ACE example.
+ *
+ * Below the steps: making an agent of your own (a link to the active workspace's
+ * create page, when one is known) and, at #runner, pairing a laptop runner — the
+ * runner step of an agent's setup checklist links here.
  */
+
+/** Where a cloud runner is stood up from: it needs AWS rights canopy-web does not hold. */
+const CLOUD_RUNNER_README =
+  'https://github.com/dimagi-internal/canopy-web/blob/main/runner/ec2/README.md#lifecycle--commands-only'
 
 const CATALOG = 'canopy-agents'
 const EXAMPLE_AGENT = 'ace'
@@ -60,9 +72,9 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
   )
 }
 
-function Panel({ title, children }: { title: string; children: ReactNode }) {
+function Panel({ title, id, children }: { title: string; id?: string; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <div id={id} className="scroll-mt-4 rounded-lg border border-border bg-card p-4">
       <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       <div className="mt-1.5 text-[13px] leading-relaxed text-foreground-secondary">{children}</div>
     </div>
@@ -72,6 +84,11 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
 export function GetStartedPage(): JSX.Element {
   const auth = useAuth()
   const authed = auth.status === 'authenticated'
+  const workspace = useActiveWorkspace()
+  // React Router does not scroll to a fragment, so `/get-started#runner` (linked from an
+  // agent's setup checklist) would open at the top. The agent list loading below can
+  // shift the section, so it scrolls again once that settles.
+  const { hash } = useLocation()
   const [agents, setAgents] = useState<ListedPlugin[] | null>(null)
 
   useEffect(() => {
@@ -99,8 +116,14 @@ export function GetStartedPage(): JSX.Element {
     }
   }, [authed])
 
+  useEffect(() => {
+    if (!hash) return
+    document.getElementById(decodeURIComponent(hash.slice(1)))?.scrollIntoView?.({ block: 'start' })
+  }, [hash, agents])
+
   const listed = authed && agents && agents.length > 0 ? agents : null
   const setupPlugins = listed ? listed.map((a) => a.plugin) : [EXAMPLE_AGENT]
+  const runnerCommand = pairingCommand(workspace ?? '<workspace>', `${window.location.origin}${import.meta.env.BASE_URL}`)
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
@@ -217,6 +240,41 @@ export function GetStartedPage(): JSX.Element {
       </ol>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2">
+        <Panel title="Make an agent of your own">
+          A new agent starts from an empty GitHub repo you make; canopy fills it with the agent scaffold and
+          then walks you through the rest of its setup.{' '}
+          {authed && workspace ? (
+            <Link to={scopedPath(workspace, '/agents/new')} className="font-medium text-primary hover:underline">
+              Create an agent
+            </Link>
+          ) : (
+            'Sign in and open a workspace to create one.'
+          )}
+        </Panel>
+        <Panel id="runner" title="Pair a runner">
+          A runner is the computer that runs an agent&apos;s turns when someone asks it for something through
+          canopy (a task, an email, Slack). You need one to run an agent for others, not to use one yourself.
+          To pair your Mac, run this in a terminal on that macOS account:
+          <div className="mt-2">
+            <CopyCommand command={runnerCommand} />
+          </div>
+          <Notes>
+            <li>
+              It needs <InlineCode>uv</InlineCode>, a canopy-web checkout at{' '}
+              <InlineCode>~/emdash-projects/canopy-web</InlineCode> and your canopy token at{' '}
+              <InlineCode>~/.claude/canopy/workbench-token</InlineCode> (the{' '}
+              <InlineCode>canopy:canopy-web-pat-mint</InlineCode> skill writes it).
+            </li>
+            <li>A runner takes an agent&apos;s turns only if you are one of that agent&apos;s admins.</li>
+            <li>
+              A cloud box is stood up from the{' '}
+              <a href={CLOUD_RUNNER_README} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                cloud runner guide
+              </a>{' '}
+              and needs AWS access.
+            </li>
+          </Notes>
+        </Panel>
         <Panel title="Then just ask">
           Talk to Claude as usual and name the agent: &ldquo;Use ACE to explain how a Connect opportunity is
           set up.&rdquo; The agent&apos;s skills also appear as slash commands, such as{' '}

@@ -4753,8 +4753,8 @@ export interface paths {
         };
         /**
          * What is left before this agent can do its job
-         * @description The setup checklist, in order: repository, GitHub identity, mailbox, vault, runner,
-         *     its first real skill (done in Claude Code — `command` starts that session), first
+         * @description The setup checklist, in order: repository, GitHub identity, mailbox, vault (the
+         *     vault before the mailbox for a zero-knowledge agent), runner, its first real skill (done in Claude Code — `command` starts that session), first
          *     turn. Each step reads the same check the system runs for that thing.
          */
         readonly get: operations["agent_setup"];
@@ -20388,6 +20388,18 @@ export interface components {
              * @default
              */
             readonly command: string;
+            /**
+             * Links
+             * @default []
+             */
+            readonly links: readonly components["schemas"]["SetupLinkOut"][];
+        };
+        /** SetupLinkOut */
+        readonly SetupLinkOut: {
+            /** Href */
+            readonly href: string;
+            /** Action */
+            readonly action: string;
         };
         /**
          * BootstrapReportIn
@@ -23185,6 +23197,13 @@ export interface components {
             /** Active */
             readonly active: boolean;
         };
+        /** HealthStepLinkOut */
+        readonly HealthStepLinkOut: {
+            /** Href */
+            readonly href: string;
+            /** Action */
+            readonly action: string;
+        };
         /** HealthStepOut */
         readonly HealthStepOut: {
             /** Key */
@@ -23218,6 +23237,11 @@ export interface components {
              * @default
              */
             readonly command: string;
+            /**
+             * Links
+             * @default []
+             */
+            readonly links: readonly components["schemas"]["HealthStepLinkOut"][];
         };
         /** HealthTotalsOut */
         readonly HealthTotalsOut: {

@@ -78,7 +78,15 @@ export function SetupSteps({ steps, canFix = true }: { steps: readonly SetupStep
             <p className="text-[12px] text-foreground-secondary">{step.detail}</p>
             {step.status !== 'done' && step.command && <CopyCommand command={step.command} />}
           </div>
-          {canFix && step.status !== 'done' && step.href && <StepLink href={step.href} label={step.action || 'Open'} />}
+          {canFix && step.status !== 'done' && (step.href || (step.links?.length ?? 0) > 0) && (
+            <div className="flex shrink-0 flex-col items-end gap-1 self-start">
+              {step.href && <StepLink href={step.href} label={step.action || 'Open'} />}
+              {/* Further choices beside the main one, e.g. the runner step's "Pair your laptop". */}
+              {(step.links ?? []).map((l) => (
+                <StepLink key={l.href} href={l.href} label={l.action} />
+              ))}
+            </div>
+          )}
         </li>
       ))}
     </ol>
@@ -99,7 +107,8 @@ function StepLink({ href, label }: { href: string; label: string }): JSX.Element
 }
 
 /** A step as both the agent's `/setup` and the workspace `/health` serve it. */
-export type SetupStep = Pick<AgentSetupStepOut, 'key' | 'title' | 'status' | 'detail' | 'where' | 'href' | 'action' | 'command'>
+export type SetupStep = Pick<AgentSetupStepOut, 'key' | 'title' | 'status' | 'detail' | 'where' | 'href' | 'action' | 'command'> &
+  Partial<Pick<AgentSetupStepOut, 'links'>>
 
 export function StatusIcon({ status }: { status: AgentSetupStepOut['status'] }): JSX.Element {
   const cls = 'mt-0.5 h-4 w-4 shrink-0'

@@ -477,6 +477,11 @@ class SystemAccountOut(StrictModel):
 # ---- workspace health (apps/agents/health.py) --------------------------------
 
 
+class HealthStepLinkOut(StrictModel):
+    href: str
+    action: str
+
+
 class HealthStepOut(StrictModel):
     key: str
     title: str
@@ -486,6 +491,7 @@ class HealthStepOut(StrictModel):
     href: str = ""
     action: str = ""
     command: str = ""
+    links: list[HealthStepLinkOut] = []
 
 
 class VaultRefOut(StrictModel):

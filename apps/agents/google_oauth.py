@@ -88,6 +88,54 @@ _DECLARED_BEYOND_THE_FLEET: tuple[str, ...] = (
 
 FLEET_SCOPES: tuple[str, ...] = _BASE_SCOPES + _DECLARED_BEYOND_THE_FLEET
 
+_GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail"
+
+
+def mailbox_kind(agent) -> str:
+    """"google" when `agent.email` is a Google mailbox the runner reads with gog,
+    "hosted" when canopy runs its mail (apps/mail, SES), "none" without one.
+
+    Hosted means on a VERIFIED canopy domain (DKIM proves canopy holds its DNS), not
+    merely a registered one: a workspace can add its domain before the MX cut-over, and
+    until it verifies the address is still a Google mailbox that needs its Gmail scopes
+    and the account check."""
+    from . import mailbox
+
+    box = mailbox.describe(agent)
+    if box["kind"] == "hosted":
+        return "hosted" if box.get("verified") else "google"
+    return box["kind"]
+
+
+def scopes_for(agent) -> tuple[str, ...]:
+    """What to ask Google for on THIS agent's behalf. An agent whose mail is
+    canopy-hosted reads and sends it through canopy, so its Google login is for Drive,
+    Docs, Sheets, Slides, Forms and Calendar only — asking it for Gmail too would grant
+    access to an inbox nothing reads. Gmail stays when any of its addresses is still a
+    Gmail mailbox the runner reads (ada@dimagi-ai.com beside ada@dimagi.ai)."""
+    from . import mailbox
+
+    if mailbox_kind(agent) == "hosted" and not any(
+            a["backend"] == "gmail" for a in mailbox.addresses(agent)):
+        return tuple(s for s in FLEET_SCOPES if not s.startswith(_GMAIL_SCOPE))
+    return FLEET_SCOPES
+
+
+def expected_account(agent) -> str:
+    """The Google account a consent must come from, or "" when any will do.
+
+    `Agent.google_account` when set — the agent's Google login, named apart from its
+    mailbox. Else `agent.email` when that is a Google mailbox: the token is only any use
+    for that address, because the runner finds it by the address (`gog auth tokens
+    list` keys are `<client>:<mailbox>`, mailbox_probe.py) and reads mail with
+    `--account <agent.email>`. Else nothing names the account (a canopy-hosted address
+    is not a Google account; an agent may have no address), so any will do. Mirrors
+    `Agent.google_identity`, with hosted meaning live (`mailbox_kind`)."""
+    if agent.google_account:
+        return agent.google_account.strip().lower()
+    return agent.email.strip().lower() if mailbox_kind(agent) == "google" else ""
+
+
 # gog's short service names, keyed by the scope-path prefix that implies them.
 # Ordered longest-prefix-first is unnecessary here because no key is a prefix of
 # another, but the map is checked by test rather than trusted.
@@ -165,12 +213,13 @@ def unsign_state(state: str) -> dict:
     return signing.loads(state, salt=STATE_SALT, max_age=STATE_MAX_AGE)
 
 
-def authorize_url(*, client_id: str, state: str, login_hint: str = "") -> str:
+def authorize_url(*, client_id: str, state: str, login_hint: str = "",
+                  scopes: tuple[str, ...] = FLEET_SCOPES) -> str:
     params = {
         "client_id": client_id,
         "redirect_uri": callback_url(),
         "response_type": "code",
-        "scope": " ".join(FLEET_SCOPES),
+        "scope": " ".join(scopes),
         # Both are required to get a refresh_token back. `access_type=offline`
         # asks for one; `prompt=consent` forces one to be RE-ISSUED even when the
         # account has approved this client before — without it a re-mint returns

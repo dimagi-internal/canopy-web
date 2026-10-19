@@ -433,3 +433,75 @@ def test_registering_a_new_agent_asks_its_cloud_box_to_set_it_up(editor, ws):
     assert resp.status_code == 201, resp.content
     box.refresh_from_db()
     assert box.refresh_requested_at is not None
+
+
+def test_the_runner_step_offers_pairing_to_whoever_could_hold_the_agent(editor, ws):
+    """No runner can take it: an admin of the agent (whose own box could hold it) gets
+    links to pair a laptop or stand up a cloud box, beside "Pick a runner". A viewer's
+    box could never hold the agent (`runner_may_hold_agent`), so it gets none."""
+    agent = _agent(ws, editor)
+    runner = next(s for s in setup_steps(agent, viewer_is_admin=True) if s["key"] == "runner")
+    assert runner["status"] == "todo" and runner["action"] == "Pick a runner"
+    assert runner["links"] == [
+        {"href": "/get-started#runner", "action": "Pair your laptop"},
+        {"href": "https://github.com/dimagi-internal/canopy-web/blob/main/runner/ec2/README.md"
+                 "#lifecycle--commands-only", "action": "Stand up a cloud box"},
+    ]
+    assert next(s for s in setup_steps(agent) if s["key"] == "runner")["links"] == []
+
+    # Through the route, as the caller.
+    steps = _client(editor).get("/api/agents/scout/setup").json()
+    assert [link["action"] for link in next(s for s in steps if s["key"] == "runner")["links"]] == [
+        "Pair your laptop", "Stand up a cloud box"]
+    viewer = a_member(ws, email="v@dimagi.com", role=WorkspaceMembership.VIEWER)
+    steps = _client(viewer).get("/api/agents/scout/setup").json()
+    assert next(s for s in steps if s["key"] == "runner")["links"] == []
+
+    # Once a runner takes it, there is nothing to pair.
+    box = enrolled(Runner.objects.create(name="olive-cloud", kind=Runner.CLOUD, owner=editor,
+                                         status=Runner.ONLINE, last_heartbeat_at=timezone.now()), ws)
+    RunnerAssignment.objects.create(agent=agent, runner=box, rank=0)
+    AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud")
+    assert next(s for s in setup_steps(agent, viewer_is_admin=True) if s["key"] == "runner")["links"] == []
+
+
+def _zk_agent(ws, owner):
+    """A new agent as creation makes it: zero-knowledge, on the canopy-web vault, at kv 0."""
+    return _agent(ws, owner, zk_enabled=True, zk_kv=0, credential_source=Agent.CANOPY_WEB)
+
+
+def test_a_zero_knowledge_agent_sets_up_its_vault_before_google(editor, ws):
+    """Connecting Google seals the token to whoever can open the vault; with nobody yet
+    the mint ends in `zk-no-recipients`. So the vault comes first."""
+    steps = setup_steps(_zk_agent(ws, editor))
+    assert [s["key"] for s in steps] == ["repo", "github", "vault", "canopy_login", "mailbox", "runner",
+                                         "job", "first_turn"]
+
+
+def test_a_vault_nobody_can_open_is_not_done(editor, ws):
+    from apps.passkeys.models import UserVaultKeyset
+
+    agent = _zk_agent(ws, editor)
+    vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
+    assert vault["status"] == "todo"
+    assert vault["href"] == "/settings#vault-key" and vault["action"] == "Set up your vault key"
+    assert "passkey" in vault["detail"] and "Google" in vault["detail"]
+
+    # An admin of the agent with a vault key can open it.
+    UserVaultKeyset.objects.create(user=editor, public_jwk={"kty": "EC", "crv": "P-256", "x": "x", "y": "y"})
+    assert _status(agent)["vault"] == "done"
+
+
+def test_a_vault_open_only_to_a_non_admin_still_has_nobody(editor, ws):
+    from apps.passkeys.models import UserVaultKeyset
+
+    agent = _zk_agent(ws, editor)
+    viewer = a_member(ws, email="v@dimagi.com", role=WorkspaceMembership.VIEWER)
+    UserVaultKeyset.objects.create(user=viewer, public_jwk={"kty": "EC", "crv": "P-256", "x": "x", "y": "y"})
+    assert _status(agent)["vault"] == "todo"
+
+
+def test_an_agent_that_is_not_zero_knowledge_keeps_google_before_its_vault(editor, ws):
+    agent = _agent(ws, editor, credential_source=Agent.CANOPY_WEB)
+    keys = [s["key"] for s in setup_steps(agent)]
+    assert keys.index("mailbox") < keys.index("vault")

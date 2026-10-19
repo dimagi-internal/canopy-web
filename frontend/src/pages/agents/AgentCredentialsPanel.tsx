@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   AgentApiError,
   deleteAgentCredential,
@@ -94,7 +94,7 @@ export function AgentCredentialsPanel({
   // a secret in every screenshot and screen-share until it is gone.
   const [revealed, setRevealed] = useState<{ name: string; value: string } | null>(null)
   const [params] = useSearchParams()
-  const outcome = mintOutcome(params.get('google'))
+  const outcome = mintOutcome(params.get('google'), { account: params.get('account'), agentEmail: params.get('expected') || agent.email })
   // Collapsed by DEFAULT. These rows are correct and need nothing; shown as a
   // list of empty inputs they read as forty-five things to type.
   const [showVault, setShowVault] = useState(false)
@@ -362,6 +362,14 @@ export function AgentCredentialsPanel({
           data-testid="google-mint-outcome"
         >
           {outcome.text}
+          {outcome.link && (
+            <>
+              {' '}
+              <Link to={outcome.link.href} className="font-medium text-primary hover:underline">
+                {outcome.link.label}
+              </Link>
+            </>
+          )}
         </p>
       )}
 
