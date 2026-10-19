@@ -155,6 +155,12 @@ export function eventSentence(e: HcpAuditEvent, names: Map<string, string>): { w
         return [grantSubject(e.detail), 'lost access — its conversation ended']
       case 'grant.narrowed':
         return [grantSubject(e.detail), 'now reaches less of your memory']
+      case 'viewer.granted':
+        return [actor, 'let an agent see this page']
+      case 'viewer.revoked':
+        return [actor, 'stopped an agent seeing this page']
+      case 'page.viewed':
+        return [actor, 'looked at this page']
       default:
         return [actor, e.eventType.replace(/[._]/g, ' ')]
     }

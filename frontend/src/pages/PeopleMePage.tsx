@@ -18,6 +18,7 @@ import type { HcpAuditEvent, HcpGrant, MemoryCollections, PersonFactDetail, Pers
 import { listWorkspaces } from '../api/workspaces'
 import type { WorkspaceOut } from '../api/workspaces'
 import { AgentReadsPicker, CollectionsPanel } from './memory/Collections'
+import { PageViewers } from './memory/PageViewers'
 import { SearchHistory } from './memory/SearchHistory'
 import {
   activeAccess,
@@ -546,6 +547,9 @@ export function PeopleMePage() {
           </div>
         )}
         {enabled && <CollectionsPanel data={collections} busy={busyCollections} act={actOnCollections} />}
+        <div className="mt-3">
+          <PageViewers />
+        </div>
       </section>
 
       {/* --- what happened ------------------------------------------------------- */}

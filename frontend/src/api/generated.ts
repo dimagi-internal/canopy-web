@@ -10829,6 +10829,136 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/me/viewers/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The agents you let see your memory page
+         * @description Which agents may see this page, read-only, and which you could let in
+         *     (the agents of workspaces you belong to). Only you see this.
+         */
+        readonly get: operations["list_my_viewers"];
+        readonly put?: never;
+        /**
+         * Let an agent see your memory page, read-only
+         * @description Your act: the agent's own login may then read everything this page shows
+         *     you — what is held, who may read it, what happened, how agents searched it —
+         *     and change nothing. Each look goes in your audit. Only you can do this.
+         */
+        readonly post: operations["add_my_viewer"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/me/viewers/{agent_slug}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop an agent seeing your memory page
+         * @description At once: its next read is "not found". Only you can do this.
+         */
+        readonly delete: operations["remove_my_viewer"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/pages/shared-with-me/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The memory pages people let this agent see
+         * @description For an agent's own login: whose memory page it may read, and where.
+         *     Anyone else gets an empty list.
+         */
+        readonly get: operations["list_shared_pages"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/{person_id}/page/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A person's memory page, as they let this agent see it
+         * @description What /people/me shows the person — what is held, who may read it (their
+         *     grants, their collections) — for an agent whose own login they let see it.
+         *     Read-only. Anyone else: not found.
+         */
+        readonly get: operations["get_memory_page"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/{person_id}/page/audit/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What happened to a person's memory, as they let this agent see it
+         * @description Their audit log, newest first, 50 at a time — the page's "What happened".
+         */
+        readonly get: operations["get_memory_page_audit"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/{person_id}/page/searches/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How agents searched a person's memory, as they let this agent see it
+         * @description The page's "How agents searched it".
+         */
+        readonly get: operations["get_memory_page_searches"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/hcp/.well-known/hcp-configuration": {
         readonly parameters: {
             readonly query?: never;
@@ -29172,6 +29302,94 @@ export interface components {
             /** Confirm Widening */
             readonly confirm_widening?: readonly string[] | null;
         };
+        /** MemoryViewerOut */
+        readonly MemoryViewerOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Granted At
+             * Format: date-time
+             */
+            readonly granted_at: string;
+            /**
+             * Last Viewed At
+             * @description When it last looked (one look per 10 minutes is recorded).
+             */
+            readonly last_viewed_at?: string | null;
+        };
+        /** MemoryViewersOut */
+        readonly MemoryViewersOut: {
+            /** Viewers */
+            readonly viewers: readonly components["schemas"]["MemoryViewerOut"][];
+            /**
+             * Agents
+             * @description Agents you could let in.
+             */
+            readonly agents: readonly components["schemas"]["ViewerChoiceOut"][];
+        };
+        /** ViewerChoiceOut */
+        readonly ViewerChoiceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
+        /** MemoryViewerIn */
+        readonly MemoryViewerIn: {
+            /**
+             * Agent
+             * @description The slug of an agent in a workspace you belong to.
+             */
+            readonly agent: string;
+        };
+        /** SharedPageOut */
+        readonly SharedPageOut: {
+            /** Person Id */
+            readonly person_id: number;
+            /** Display Name */
+            readonly display_name: string;
+            /**
+             * Granted At
+             * Format: date-time
+             */
+            readonly granted_at: string;
+            /**
+             * Href
+             * @description The page, in canopy's web app.
+             */
+            readonly href: string;
+        };
+        /** SharedPagesOut */
+        readonly SharedPagesOut: {
+            /** Pages */
+            readonly pages: readonly components["schemas"]["SharedPageOut"][];
+        };
+        /** MemoryPageOut */
+        readonly MemoryPageOut: {
+            readonly me: components["schemas"]["PersonMeOut"];
+            /**
+             * Grants
+             * @description The person's HCP grants, as /api/hcp/v1/grants shows them.
+             */
+            readonly grants: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            readonly collections: components["schemas"]["MemoryCollectionsOut"];
+        };
+        /** MemoryPageAuditOut */
+        readonly MemoryPageAuditOut: {
+            /**
+             * Events
+             * @description Audit events, as /api/hcp/v1/audit shows them.
+             */
+            readonly events: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Nextcursor */
+            readonly nextCursor?: string | null;
+        };
         /** HcpSearchIn */
         readonly HcpSearchIn: {
             /**
@@ -43611,6 +43829,163 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MemoryCollectionsOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_viewers: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemoryViewersOut"];
+                };
+            };
+        };
+    };
+    readonly add_my_viewer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MemoryViewerIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemoryViewersOut"];
+                };
+            };
+        };
+    };
+    readonly remove_my_viewer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly agent_slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemoryViewersOut"];
+                };
+            };
+        };
+    };
+    readonly list_shared_pages: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SharedPagesOut"];
+                };
+            };
+        };
+    };
+    readonly get_memory_page: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemoryPageOut"];
+                };
+            };
+        };
+    };
+    readonly get_memory_page_audit: {
+        readonly parameters: {
+            readonly query?: {
+                readonly cursor?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemoryPageAuditOut"];
+                };
+            };
+        };
+    };
+    readonly get_memory_page_searches: {
+        readonly parameters: {
+            readonly query?: {
+                readonly before?: string | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SearchHistoryOut"];
                 };
             };
         };

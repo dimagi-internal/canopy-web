@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
 from pydantic import Field
 
@@ -368,3 +369,50 @@ class PeopleCoverageOut(StrictModel):
     rule: str = Field(description="The rule `healthy` applies, in words.")
     healthy: bool
     agents: list[AgentCoverageOut]
+
+
+# --- letting an agent see your memory page (apps/contacts/viewers.py) ---------------
+
+
+class MemoryViewerIn(StrictModel):
+    agent: str = Field(description="The slug of an agent in a workspace you belong to.")
+
+
+class MemoryViewerOut(StrictModel):
+    agent: str
+    name: str
+    granted_at: dt.datetime
+    last_viewed_at: dt.datetime | None = Field(
+        None, description="When it last looked (one look per 10 minutes is recorded).")
+
+
+class ViewerChoiceOut(StrictModel):
+    slug: str
+    name: str
+
+
+class MemoryViewersOut(StrictModel):
+    viewers: list[MemoryViewerOut]
+    agents: list[ViewerChoiceOut] = Field(description="Agents you could let in.")
+
+
+class SharedPageOut(StrictModel):
+    person_id: int
+    display_name: str
+    granted_at: dt.datetime
+    href: str = Field(description="The page, in canopy's web app.")
+
+
+class SharedPagesOut(StrictModel):
+    pages: list[SharedPageOut]
+
+
+class MemoryPageOut(StrictModel):
+    me: PersonMeOut
+    grants: list[dict[str, Any]] = Field(description="The person's HCP grants, as /api/hcp/v1/grants shows them.")
+    collections: MemoryCollectionsOut
+
+
+class MemoryPageAuditOut(StrictModel):
+    events: list[dict[str, Any]] = Field(description="Audit events, as /api/hcp/v1/audit shows them.")
+    nextCursor: str | None = None

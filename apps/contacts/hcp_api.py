@@ -582,14 +582,23 @@ def hcp_list_audit(request: HttpRequest, cursor: str | None = None, limit: int =
             if when is None:
                 raise hcp.malformed(f"{bound!r} is not ISO-8601")
             qs = qs.filter(**{op: when})
+    return _ok(audit_page(p.person, cursor=cursor, limit=limit, qs=qs))
+
+
+def audit_page(person: Person, *, cursor: str | None = None, limit: int = AUDIT_PAGE_DEFAULT,
+               qs=None) -> dict:
+    """One page of `person`'s audit log, newest first (also the memory page an
+    agent was let see: `people_api.get_memory_page_audit`)."""
+    if qs is None:
+        qs = PersonAuditEvent.objects.filter(person=person).order_by("-pk")
     if cursor:
         qs = qs.filter(pk__lt=_decode_cursor(cursor))
     limit = max(1, min(int(limit or AUDIT_PAGE_DEFAULT), AUDIT_PAGE_MAX))
     rows = list(qs[:limit + 1])
     more = len(rows) > limit
     rows = rows[:limit]
-    return _ok({"events": [_event_dict(e) for e in rows],
-                "nextCursor": _encode_cursor(rows[-1].pk) if more and rows else None})
+    return {"events": [_event_dict(e) for e in rows],
+            "nextCursor": _encode_cursor(rows[-1].pk) if more and rows else None}
 
 
 @router.get("/v1/grants", operation_id="hcp_listGrants", summary="HCP: who may read what about me")
@@ -600,12 +609,17 @@ def hcp_list_grants(request: HttpRequest, status: str = "active", turn: str | No
     p = _principal(request, turn, hcp.ANY)
     if not p.actor.is_person:
         return _ok({"grants": [hcp.grant_dict(p.grant)]})
-    qs = PersonGrant.objects.filter(person=p.person).select_related("agent").order_by("-issued_at")
+    return _ok({"grants": grants_of(p.person, status)})
+
+
+def grants_of(person: Person, status: str = "all") -> list[dict]:
+    """Every grant `person` issued, newest first (lapsing any now due)."""
+    qs = PersonGrant.objects.filter(person=person).select_related("agent").order_by("-issued_at")
     for g in qs.filter(status=PersonGrant.ACTIVE, expires_at__isnull=False):
         hcp._expire_if_due(g)
     if status != "all":
         qs = qs.filter(status=status)
-    return _ok({"grants": [hcp.grant_dict(g) for g in qs]})
+    return [hcp.grant_dict(g) for g in qs]
 
 
 @router.delete("/v1/grants/{grant_id}", operation_id="hcp_revokeGrant", summary="HCP: revoke a grant")
