@@ -187,5 +187,5 @@ def test_the_ws_heartbeat_ack_carries_the_stop(cloud, published):
     chat.stop_session(session)
     consumer = RunnerConsumer()
     consumer._runner_pk = runner.pk
-    refresh, cancel_ids = consumer._heartbeat.__wrapped__(consumer, [str(turn.id)], {})
+    refresh, cancel_ids, _pause = consumer._heartbeat.__wrapped__(consumer, [str(turn.id)], {})
     assert cancel_ids == [str(turn.id)]
