@@ -31,6 +31,39 @@ construction (`tests/test_claim_schedule_parity.py`). It is the INTERSECTION of:
   person owns both. Managed by the owner or a runner admin at
   `/api/harness/runners/{id}/workspaces` (`tests/test_runner_enrollment.py`).
 
+**A cloud runner serves one tree.** `enroll_runner` refuses (422) a `kind=cloud`
+runner's enrollment whose root differs from its existing enrollments' root
+(`runners._other_tree`; divisions of its root are fine). A cloud runner is one
+isolation unit (below), so a box that serves two trees runs two runners. A laptop
+(`emdash`, `remote`) may span trees: it has one desktop user, so nothing on it
+separates them, and `RunnerOut.roots` / `spans_trees` let `/supervisor` say so on
+its row. `roots` lists only the trees the caller is a member of.
+
+## Isolation units: one runner per unit on a cloud box
+
+A cloud box runs one runner per **isolation unit**: a workspace tree, or a single
+agent given a unit of its own. The box declares it in `capabilities.unit` —
+`{"kind": "tree", "root": "dimagi"}` or `{"kind": "agent", "slug": "eva"}`
+(`Runner.unit()`). Runners on one box share `Runner.machine_id`, the canonical IAM
+role ARN the box proved: set by `runners.set_runner_machine` when an aws-iam device
+key is approved and by pairing by role, never from a role the box merely names.
+
+`routing.unit_refusal(runner, slug)` — part of `cannot_serve` — refuses:
+
+- **"<runner> is the agent unit for S"**: an agent unit asked about any agent but S;
+- **"S has its own unit on this machine (<runner>)"**: any other live runner with the
+  same `machine_id` as the agent unit for S.
+
+Both are restrictions a box declares on itself. Unlike the rest of `cannot_serve`,
+a pin does not get past it: `claim_next_turn` asks it above the pin (a pinned turn
+would otherwise hand the box the agent's secrets through
+`device_keys.runner_serves_agent`), `runner_routes_agent` and `agents_routed_to`
+ask it, `inherited_orders` drops such a runner for that agent, and the routing
+writes (`agents/api.py::_runners_for_routing`) refuse it with 422 and the reason.
+The topology lists a box's units together (`machine`, `unit` on each runner row).
+`prime_machine_units` loads the machine siblings once per claim and per report.
+Tests: `tests/test_runner_units.py`.
+
 `capabilities` (agents, projects) is a caller-supplied routing HINT declared by
 the box; it is intersected with the tenant gate for **project and session** turns,
 never a substitute for it — agent turns route by `RunnerAssignment` (and
@@ -71,7 +104,7 @@ a box runs the agent at all — so a box that failed to set an agent up keeps it
 its roster and retries at its next bootstrap.
 
 **A box never claims a turn of an agent it reports it cannot run**
-(`routing.cannot_serve`). Two self-reports: a laptop driving emdash whose reported
+(`routing.cannot_serve`). Its isolation unit (above), and two self-reports: a laptop driving emdash whose reported
 `projects` lacks the agent's slug (never-reported = unknown, not empty), and any
 box naming the agent in `capabilities["unprepared"]` — the cloud runner's
 heartbeat `agents_unprepared`, the agents its bootstrap or lazy prepare tried and
@@ -79,8 +112,9 @@ has no clone of. It is a FLOOR on the composed list in
 `routing.assignment_rows_for` (`serves=`), applied after strict truncation like
 `requires`: the box neither claims nor blocks a lower rank, a strict rule whose
 every box cannot run it waits, and `unclaimable_queued_turns` reports such a turn
-as `config`, quoting what each box said. A pin still lands (a drill exists to find
-this out).
+as `config`, quoting what each box said. A pin still lands on a box that reports
+it cannot run the agent (a drill exists to find this out), but never on one whose
+unit refuses it.
 `agents_routed_to(runner)` is the same rule as a list. Three readers share it,
 and `tests/test_runner_serves_agents.py` holds it to `claim_next_turn` over every
 box and agent pair:
