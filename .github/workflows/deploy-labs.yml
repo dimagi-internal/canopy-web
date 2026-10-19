@@ -258,8 +258,12 @@ jobs:
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:latest
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:buildcache
-          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:buildcache,mode=max
+          # Build cache lives in GitHub's cache, not ECR: a registry cache on a
+          # GitHub-hosted runner is pulled OUT of AWS on every build, billed as
+          # ECR internet egress (~8 GB/day, Oct 2026), and every cache push
+          # orphaned the previous one as an untagged image in the repo.
+          cache-from: type=gha,scope=canopy-web
+          cache-to: type=gha,scope=canopy-web,mode=max
 
   deploy:
     name: Deploy to Fargate
