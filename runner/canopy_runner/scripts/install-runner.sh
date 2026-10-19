@@ -43,7 +43,7 @@ RUNNER_SRC="runner/canopy_runner/canopy_runner"
 # What counts as the runner's code for staleness: the package, the installer, the
 # menu-bar app and the icons it bundles. Same list as provenance.CODE_PATHS and
 # deploy-labs.yml (tests/test_runner_code_paths.py keeps the three equal).
-RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand packages/canopy_cron packages/canopy_transcript runner/canopy_acp"
+RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand packages/canopy_cron packages/canopy_transcript runner/canopy_acp runner/packaging"
 LABEL="com.canopy.runner"
 UPDATER_LABEL="com.canopy.runner.updater"
 CONFIG="$HOME/.canopy/runner.json"

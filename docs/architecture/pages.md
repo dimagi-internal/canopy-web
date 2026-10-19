@@ -178,8 +178,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
     order and arrows to every agent it can send work to; select a runner for
     who stops if it goes dark. The side panel mounts the supervisor's
     `RunnerDetail` and the agent's `AgentRouting` — this is where runners are
-    configured on the web; each lane's "Add a runner" gives the pairing command
-    (`install-runner.sh --workspace <ws>`). Drawn from the same two endpoints as
+    configured on the web; each lane's "Add a runner" offers the Canopy Runner
+    downloads (as on `/get-started#runner`), with the developer command
+    (`install-runner.sh --workspace <ws>`) folded under "Developers". Drawn from the same two endpoints as
     its table views, so the picture cannot disagree with them; an arrow to an
     agent in a collapsed box lands on the box. Routing semantics (cascade,
     workspace default order): [`runners.md`](runners.md).
@@ -358,8 +359,30 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/get-started`** — public (no login): the three steps to use a canopy agent
   in your own Claude Code; signed in, it lists your workspaces' agents with
   their install and setup commands, and links to creating an agent in the
-  active workspace (`/w/<ws>/agents/new`). `#runner` has the laptop pairing
-  command (`install-runner.sh --workspace <ws>`) and the cloud runner guide.
+  active workspace (`/w/<ws>/agents/new`). `#runner` is **Download Canopy
+  Runner**: a table of the deployed runner version's installers (macOS Apple
+  silicon, macOS Intel, Windows; `GET /api/harness/runner-releases/downloads`),
+  each saying whether it is signed — an unsigned build says the OS will warn
+  (Windows SmartScreen: More info → Run anyway). Download → open → approve in
+  the browser (`/pair/:code`). Signed out it says "Sign in to download"; with
+  none built it says so. The developer path (`install-runner.sh --workspace
+  <ws>` from a checkout) is a collapsed "Developers" note; the cloud runner
+  guide is linked below.
+- **`/download/runner/<platform>`** — server view (`apps/harness/views.py`), not
+  the SPA: signed in → 302 to a 15-minute presigned S3 URL for the deployed
+  runner version's installer (`macos-arm64`, `macos-x86_64`,
+  `windows-x86_64`); signed out → sign in and back; an unknown platform → 404;
+  nothing built (or downloads off) → a small 404 page saying no download exists
+  yet, linking back to `/get-started`.
+- **`/pair/:code`** — approve a computer asking to become your runner: the page
+  Canopy Runner opens after install. Shows the code ("check it matches the code
+  Canopy Runner shows on your computer"), the hostname, account, system and
+  key kind the box reports, a workspace picker (your workspaces where you may
+  run work) and an editable runner name (suggested `<account>-<hostname>`).
+  Approve needs a passkey step-up, then sends the browser to the box's own
+  `http://127.0.0.1:<port>/paired?…` with the one-time secret; Decline refuses
+  it. Signed-in only; root because a pairing has no workspace until you pick
+  one (`apps/harness/api_runner_pairings.py`).
 - **`/supervisor`** — cross-fleet screens: Feed (home), **Waiting on you**
   (`GET /api/tasks/?waiting=me`, the same `TaskCard` tagged with its agent,
   actionable in place; `?tab=inbox` lands here), Sessions, Agents, Runners

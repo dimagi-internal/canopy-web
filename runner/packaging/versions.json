@@ -1,0 +1,44 @@
+{
+  "_comment": "Pinned third-party runtimes bundled into the runner installers. build_payload.py refuses any download whose sha256 differs. To bump: change the version/tag, then copy each sha256 from the upstream checksum file (python-build-standalone: the release's SHA256SUMS; Node: https://nodejs.org/dist/<version>/SHASUMS256.txt).",
+  "python": {
+    "version": "3.12.15",
+    "release": "20261003",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/{release}/{file}",
+    "files": {
+      "macos-arm64": {
+        "file": "cpython-3.12.15+20261003-aarch64-apple-darwin-install_only_stripped.tar.gz",
+        "sha256": "ad8d0c637c0a36b967b310e2c07254f4d2ca8cabaa7699e55ed6290aceb481a2"
+      },
+      "macos-x86_64": {
+        "file": "cpython-3.12.15+20261003-x86_64-apple-darwin-install_only_stripped.tar.gz",
+        "sha256": "562c30864ece2cb1d3e0ad66a1acd498611a47e5a10ce81b99158bef1ccbd355"
+      },
+      "windows-x86_64": {
+        "file": "cpython-3.12.15+20261003-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+        "sha256": "6fba7f2ae506facf41d457ea8293c7497910a675c69a4e954875169410a50402"
+      }
+    }
+  },
+  "node": {
+    "version": "v24.22.0",
+    "url": "https://nodejs.org/dist/{version}/{file}",
+    "files": {
+      "macos-arm64": {
+        "file": "node-v24.22.0-darwin-arm64.tar.gz",
+        "sha256": "6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5"
+      },
+      "macos-x86_64": {
+        "file": "node-v24.22.0-darwin-x64.tar.gz",
+        "sha256": "495e3f273c645f3c4677d438304cdfc701729ea5dec5728f5c8e76a2dece4b91"
+      },
+      "windows-x86_64": {
+        "file": "node-v24.22.0-win-x64.zip",
+        "sha256": "f9683a19877e12a9b167305c8db71040d812876359de21f0d2e97c3f321f80c3"
+      }
+    }
+  },
+  "acp_adapter": {
+    "package": "@agentclientprotocol/claude-agent-acp",
+    "version": "0.93.0"
+  }
+}

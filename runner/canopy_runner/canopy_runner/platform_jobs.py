@@ -37,6 +37,9 @@ from pathlib import Path
 #: launchd labels (macOS). Also the filenames of the two plist templates.
 UPDATER_LABEL = "com.canopy.runner.updater"
 RUNNER_LABEL = "com.canopy.runner"
+#: The menu-bar app's LaunchAgent — and its bundle identifier, which the runner and
+#: updater jobs name as AssociatedBundleIdentifiers (setup_cmd).
+MENUBAR_LABEL = "com.canopy.runner.menubar"
 
 #: Task Scheduler paths (Windows). Backslash-prefixed = the task folder, so both
 #: jobs group under a "Canopy" folder in taskschd.msc rather than littering root.
@@ -102,3 +105,12 @@ def kickstart_updater(*, runner=subprocess.run) -> None:
     else:
         cmd = ["launchctl", "kickstart", f"gui/{os.getuid()}/{UPDATER_LABEL}"]
     runner(cmd, capture_output=True, timeout=15, check=True)
+
+
+def no_window() -> dict:
+    """subprocess kwargs that keep a child from opening a console window on Windows.
+
+    The bundled runner and updater run under pythonw.exe, which has no console, so every
+    console program they start (powershell, schtasks, python.exe) would otherwise flash
+    a window of its own in front of whoever is using the computer. Empty elsewhere."""
+    return {"creationflags": 0x08000000} if is_windows() else {}  # CREATE_NO_WINDOW

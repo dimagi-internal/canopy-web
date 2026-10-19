@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime exceptions for the bundled RUNTIME (Contents/Resources/runtime:
+  python, node, the native binaries the ACP adapter ships, every .so/.dylib/.node).
+  build_app.sh applies this file to those Mach-O files only; the menu-bar app
+  (Contents/MacOS/CanopyRunner) and canopy-device-key are signed with no exceptions.
+
+  Each key is a widening of the hardened runtime, so each is here for a named reason:
+
+  allow-jit
+    Node.js (the CDP sidecar, the ACP adapter) is V8, which JIT-compiles JavaScript
+    into MAP_JIT memory. Without it node aborts at startup under the hardened runtime.
+    The Claude Code binary the agent SDK ships is a JS runtime with the same need.
+
+  allow-unsigned-executable-memory
+    Python's ctypes/cffi (cryptography's bindings go through cffi) build libffi
+    closures in writable-then-executable pages, and V8's WebAssembly tiers on older
+    macOS do the same outside MAP_JIT. Refused, they crash on first use rather than
+    at startup — the worst kind of failure for an unattended runner.
+
+  disable-library-validation
+    Library validation lets a process load only libraries signed by Apple or by its
+    own Team ID. Everything shipped in the bundle is re-signed with ours, but the
+    runner also loads native code it did not ship: an npm install the sidecar or
+    adapter performs at run time on a box (cdp_control.ensure_sidecar_deps,
+    canopy_acp.install_adapter), and a Python extension a later self-repair installs.
+    Those are unsigned or signed by their authors, and would fail dlopen.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>

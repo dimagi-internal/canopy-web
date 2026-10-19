@@ -34,6 +34,16 @@ dependencies = [
 # so a normally-provisioned runner gets instant wakes rather than silently
 # regressing to polling because nothing ever declared the dep.
 realtime = ["websocket-client>=1.8,<2"]
+# Software device keys (device_proof.py) — the key a runner with no Secure Enclave
+# helper and no TPM signs in with, made by the runner itself when this box has no
+# canopy CLI. Imported lazily, only when a software key is made or used; the
+# downloadable installer's bundle installs `canopy-runner[realtime,keys]`.
+keys = ["cryptography>=42"]
+
+[dependency-groups]
+# Installed by `uv run` here (uv syncs the dev group by default), so the suite can
+# check a software key's DPoP proof with the same library the bundle ships.
+dev = ["cryptography>=42"]
 
 [tool.uv.sources]
 # In-repo, standalone, installable — same editable path-dep wiring the root

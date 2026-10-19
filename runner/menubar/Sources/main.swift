@@ -31,6 +31,99 @@ let launchLabel = "com.canopy.runner"
 // packages, so every invocation died on ModuleNotFoundError, unreported, because
 // the launch is fire-and-forget. install-runner.sh generates this file.
 let plistPath = home.appendingPathComponent("Library/LaunchAgents/com.canopy.runner.plist")
+let updaterPlistPath = home.appendingPathComponent("Library/LaunchAgents/com.canopy.runner.updater.plist")
+
+// ── bundled mode (the downloadable installer) ────────────────────────────────────
+// A release build carries its whole runtime in Contents/Resources/runtime
+// (runner/packaging/build_payload.py): Python + the runner, Node, the ACP adapter,
+// canopy-device-key and the `bin/canopy-runner` shim. Its release.json is the marker.
+// A developer build (runner/menubar/build.sh) has no runtime and behaves exactly as
+// before: the runner is installed and paired by install-runner.sh, not by this app.
+let runtimeDir = Bundle.main.resourceURL?.appendingPathComponent("runtime")
+let isBundled = runtimeDir.map {
+    FileManager.default.fileExists(atPath: $0.appendingPathComponent("release.json").path)
+} ?? false
+// Where a bundled app lives: per-user, so installing and self-updating never need admin.
+let installedAppURL = home.appendingPathComponent("Applications/Canopy Runner.app")
+// Written by `canopy-runner pair --browser` while a pairing waits for the person's
+// approval ({user_code, verify_url, …}) and removed once it is claimed or abandoned.
+let pairingFile = canopyDir.appendingPathComponent("pairing.json")
+
+struct Pairing {
+    let code: String
+    let verifyURL: URL
+
+    static func load() -> Pairing? {
+        guard let data = try? Data(contentsOf: pairingFile),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let code = obj["user_code"] as? String,
+              let raw = obj["verify_url"] as? String, let url = URL(string: raw) else { return nil }
+        // A pairing that failed (declined, expired) is left behind with its status for
+        // the record; only one still waiting for the person is worth showing.
+        if let status = obj["status"] as? String, status != "pending" { return nil }
+        if let exp = obj["expires_at"] as? Double, Date(timeIntervalSince1970: exp) < Date() { return nil }
+        if let raw = obj["expires_at"] as? String, !raw.isEmpty {
+            let iso = ISO8601DateFormatter()
+            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let exp = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+            if let exp, exp < Date() { return nil }
+        }
+        return Pairing(code: code, verifyURL: url)
+    }
+}
+
+// A bundled app run from anywhere but ~/Applications (the DMG, Downloads, an App
+// Translocation path) copies itself there, starts that copy, and exits — so the
+// launchd jobs `setup` writes point at a path that survives the DMG being ejected,
+// and self-update replaces one known copy. Returns true when this process should exit.
+func relocateIfNeeded() -> Bool {
+    guard isBundled else { return false }
+    let here = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
+    let target = installedAppURL.resolvingSymlinksInPath().standardizedFileURL
+    if here.path == target.path { return false }
+    let fm = FileManager.default
+    let myVersion = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+    let theirs = NSDictionary(contentsOf: target.appendingPathComponent("Contents/Info.plist"))
+    let sameBuild = theirs?["CFBundleVersion"] as? String == myVersion
+        && fm.fileExists(atPath: target.appendingPathComponent("Contents/Resources/runtime/release.json").path)
+    if !sameBuild {
+        // An older copy that is RUNNING is this same app: ask it to quit (as Cmd-Q
+        // would) so the relaunch below starts the new build rather than activating it.
+        // Nothing else is touched — the runner daemon keeps running until `setup`.
+        for other in NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+        where other.processIdentifier != getpid()
+            && other.bundleURL?.resolvingSymlinksInPath().standardizedFileURL.path == target.path {
+            other.terminate()
+        }
+        // Copy beside the target, then swap: a half-finished copy is never the app.
+        let staging = target.deletingLastPathComponent()
+            .appendingPathComponent(".Canopy Runner.app.installing-\(getpid())")
+        try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.removeItem(at: staging)
+        guard spawn("/usr/bin/ditto", [here.path, staging.path]) == 0 else {
+            NSLog("Canopy Runner: could not copy to \(target.path)")
+            return false  // run from where we are rather than not at all
+        }
+        try? fm.removeItem(at: target)
+        do { try fm.moveItem(at: staging, to: target) } catch {
+            NSLog("Canopy Runner: could not install to \(target.path): \(error)")
+            return false
+        }
+    }
+    // -n: a new instance even though this one (same bundle id) is still running.
+    return spawn("/usr/bin/open", ["-n", target.path]) == 0
+}
+
+// Run a program with an argv (no shell, so no quoting of paths), wait, return its status.
+@discardableResult
+func spawn(_ path: String, _ args: [String]) -> Int32 {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: path)
+    p.arguments = args
+    do { try p.run() } catch { return -1 }
+    p.waitUntilExit()
+    return p.terminationStatus
+}
 
 func baseURL() -> String {
     guard let data = try? Data(contentsOf: configFile),
@@ -218,11 +311,22 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     var window: NSWindow?
     var web: WKWebView!
     var authed = false  // have we minted + injected the session cookie this launch?
+    // Bundled mode only (see FirstRun below): the `canopy-runner setup` this launch ran.
+    var setupProc: Process?
+    var setupStarted = false
+    var setupExit: Int32?
+    var setupLastLine = ""
+    var firstRunWindow: NSWindow?
+    var firstRunText: NSTextField?
+    var firstRunCode: NSTextField?
+    var firstRunButton: NSButton?
+    var firstRunLog: NSTextView?
 
     func applicationDidFinishLaunching(_ n: Notification) {
         baseTree = loadTree()
         buildWindow()
         buildMainMenu()
+        if isBundled { startSetupIfNeeded() }
         // Left-click opens the shared web fleet UI; right-click shows local controls.
         if let btn = statusItem.button {
             btn.target = self
@@ -472,14 +576,38 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
                 if !server.note.isEmpty { tip += "\n\(server.note)" }
                 if !server.remedy.isEmpty { tip += "\nTo fix: \(server.remedy)" }
             }
+            if let pairing = Pairing.load() {
+                tip = "Canopy Runner — approve this Mac in your browser (code \(pairing.code))"
+            }
             btn.toolTip = tip
         }
+        if isBundled { refreshFirstRun() }
         // Note: we do NOT assign statusItem.menu here — a permanent menu would swallow the
         // left-click we use to open the web panel. The menu is shown on demand (right-click).
     }
 
     func buildMenu(_ state: RunnerState) -> NSMenu {
         let menu = NSMenu()
+
+        // First run (bundled): the one thing the person has to do, above everything else.
+        if let pairing = Pairing.load() {
+            let item = NSMenuItem(title: "Approve this Mac in your browser — code \(pairing.code)",
+                                  action: #selector(openPairing), keyEquivalent: "")
+            item.target = self
+            item.attributedTitle = NSAttributedString(
+                string: item.title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
+            menu.addItem(item)
+            menu.addItem(.separator())
+        } else if isBundled, setupProc != nil {
+            let item = NSMenuItem(title: "Setting up… \(setupLastLine)", action: #selector(showFirstRun),
+                                  keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            menu.addItem(.separator())
+        } else if isBundled, let code = setupExit, code != 0 {
+            add(menu, "Setup did not finish — Retry setup", #selector(retrySetup))
+            menu.addItem(.separator())
+        }
 
         let header = NSMenuItem(title: "Runner: \(state.label)", action: nil, keyEquivalent: "")
         header.isEnabled = false
@@ -811,6 +939,180 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
     }
     @objc func quit() { NSApplication.shared.terminate(nil) }
 }
+
+if relocateIfNeeded() { exit(0) }
+
+// ── first run (bundled mode) ─────────────────────────────────────────────────────
+// A person who just opened the downloaded app must not be left with only a menu-bar
+// icon: setup runs by itself and a window says what is happening and the one thing
+// they have to do (approve this Mac in the browser, matching the code).
+extension Controller {
+    var runnerShim: URL? { runtimeDir?.appendingPathComponent("bin/canopy-runner") }
+
+    // Cheap: setup is needed when there is no runner config, or when the installed
+    // launchd jobs do not run THIS bundle's runtime (a first install, or a copy that
+    // moved). `setup` itself is idempotent; this only avoids running it every launch.
+    func needsSetup() -> Bool {
+        guard let runtime = runtimeDir?.resolvingSymlinksInPath().path else { return false }
+        if !FileManager.default.fileExists(atPath: configFile.path) { return true }
+        for plist in [plistPath, updaterPlistPath] {
+            guard let data = try? Data(contentsOf: plist),
+                  let obj = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                  let argv = obj["ProgramArguments"] as? [String],
+                  argv.contains(where: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path.hasPrefix(runtime) })
+            else { return true }
+        }
+        return false
+    }
+
+    func startSetupIfNeeded() {
+        guard !setupStarted, needsSetup() else { return }
+        startSetup()
+    }
+
+    func startSetup() {
+        guard let shim = runnerShim, setupProc == nil else { return }
+        setupStarted = true
+        setupExit = nil
+        setupLastLine = ""
+        let proc = Process()
+        proc.executableURL = shim
+        proc.arguments = ["setup"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] fh in
+            let data = fh.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            DispatchQueue.main.async { self?.appendSetupOutput(text) }
+        }
+        proc.terminationHandler = { [weak self] p in
+            DispatchQueue.main.async {
+                pipe.fileHandleForReading.readabilityHandler = nil
+                guard let self else { return }
+                self.setupExit = p.terminationStatus
+                self.setupProc = nil
+                self.appendSetupOutput(p.terminationStatus == 0
+                    ? "\nSetup finished.\n" : "\nSetup stopped (exit \(p.terminationStatus)).\n")
+                self.rebuild()
+            }
+        }
+        do {
+            try proc.run()
+            setupProc = proc
+        } catch {
+            setupExit = -1
+            appendSetupOutput("Could not start \(shim.path): \(error)\n")
+        }
+        showFirstRun()
+    }
+
+    func appendSetupOutput(_ text: String) {
+        if let last = text.split(whereSeparator: \.isNewline).last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+            setupLastLine = String(last.prefix(80))
+        }
+        if let log = firstRunLog {
+            log.textStorage?.append(NSAttributedString(string: text, attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                .foregroundColor: NSColor.secondaryLabelColor]))
+            log.scrollToEndOfDocument(nil)
+        }
+        refreshFirstRun()
+    }
+
+    @objc func retrySetup() { startSetup() }
+
+    @objc func openPairing() {
+        if let pairing = Pairing.load() { NSWorkspace.shared.open(pairing.verifyURL) }
+    }
+
+    @objc func showFirstRun() {
+        if firstRunWindow == nil { buildFirstRun() }
+        refreshFirstRun()
+        NSApp.activate(ignoringOtherApps: true)
+        firstRunWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func buildFirstRun() {
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
+                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                           backing: .buffered, defer: false)
+        win.title = "Set up Canopy Runner"
+        win.isReleasedWhenClosed = false
+
+        let heading = NSTextField(labelWithString: "Canopy Runner")
+        heading.font = NSFont.boldSystemFont(ofSize: 18)
+        let text = NSTextField(wrappingLabelWithString: "")
+        text.preferredMaxLayoutWidth = 480
+        let code = NSTextField(labelWithString: "")
+        code.font = NSFont.monospacedSystemFont(ofSize: 28, weight: .semibold)
+        code.isSelectable = true
+        let button = NSButton(title: "Open the approval page", target: self, action: #selector(openPairing))
+        button.bezelStyle = .rounded
+        button.keyEquivalent = "\r"
+
+        let log = NSTextView(frame: NSRect(x: 0, y: 0, width: 480, height: 160))
+        log.isEditable = false
+        log.isVerticallyResizable = true
+        log.autoresizingMask = [.width]
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 160))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        scroll.documentView = log
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
+        scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 480).isActive = true
+
+        let stack = NSStackView(views: [heading, text, code, button, scroll])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        win.contentView = stack
+        win.center()
+        firstRunWindow = win
+        firstRunText = text
+        firstRunCode = code
+        firstRunButton = button
+        firstRunLog = log
+    }
+
+    // Called on every status tick (rebuild) and on setup output: the window follows
+    // the files the runner writes (pairing.json, runner.json), not its own guesses.
+    func refreshFirstRun() {
+        let pairing = Pairing.load()
+        // A pairing appearing is the moment the person is needed — bring the window up
+        // even if they closed it, once per code.
+        if let pairing, pairing.code != shownPairingCode {
+            shownPairingCode = pairing.code
+            if firstRunWindow?.isVisible != true { showFirstRun(); return }
+        }
+        guard let text = firstRunText else { return }
+        firstRunCode?.stringValue = pairing?.code ?? ""
+        firstRunCode?.isHidden = pairing == nil
+        firstRunButton?.isHidden = pairing == nil
+        if pairing != nil {
+            text.stringValue = "Approve this Mac in your browser. A page has opened for you — "
+                + "sign in to Canopy, check that the code it shows matches the one below, and approve. "
+                + "If no page opened, use the button."
+        } else if setupProc != nil {
+            text.stringValue = "Setting up Canopy Runner on this Mac… This takes a minute. \(setupLastLine)"
+        } else if let code = setupExit, code != 0 {
+            text.stringValue = "Setup did not finish. The details are below. You can retry from the "
+                + "Canopy Runner icon in the menu bar (right-click → Retry setup)."
+        } else if FileManager.default.fileExists(atPath: configFile.path) {
+            text.stringValue = "This Mac is set up and Canopy Runner is running. You can close this "
+                + "window — the runner keeps working in the background, and the tree icon in the "
+                + "menu bar shows its state."
+        } else {
+            text.stringValue = "Canopy Runner is not set up on this Mac yet."
+        }
+    }
+}
+
+// The last pairing code the first-run window was raised for (so a person who closes
+// it is not interrupted again for the same code).
+var shownPairingCode: String?
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)  // Dock icon = always-visible "it's running" signal;

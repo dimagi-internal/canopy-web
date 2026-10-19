@@ -111,3 +111,12 @@ def _fresh_startup_watch():
     startup_watch._reset_for_tests()
     yield
     startup_watch._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_device_proof(monkeypatch, tmp_path):
+    """With no canopy CLI the runner signs its own device proof (device_proof), reading
+    ~/.canopy/device-key — and on a Mac running the Secure Enclave helper. No test may
+    touch the developer's real key: point the key dir at tmp and the helper at nothing."""
+    monkeypatch.setenv("CANOPY_DEVICE_KEY_DIR", str(tmp_path / "device-key"))
+    monkeypatch.setenv("CANOPY_DEVICE_KEY_BIN", str(tmp_path / "no-helper"))

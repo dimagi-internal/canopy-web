@@ -67,6 +67,10 @@ Vocabulary (closed — add to it deliberately, never in passing):
   bound to this request, matched to a pairing invitation its creator APPROVED
   behind a passkey (or to that role's existing, approved runner of the same name)
   (``apps/harness/api_runner_invitations.py``).
+* ``paired-key`` — no session or token: a DPoP proof by the box's own device key,
+  bound to this request; opening a pairing makes nothing but the pairing, and
+  claiming one also needs the one-time secret a person's passkey-gated approval
+  handed to that box's loopback (``apps/harness/api_runner_pairings.py``).
 * ``signed-link`` — a signed token in the URL is the authority (drill report,
   invite token, OAuth state).
 * ``beta-reviewer`` — ``apps/beta_requests/services.may_review``: a superuser or
@@ -98,7 +102,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
-    "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "page-viewer",
+    "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "paired-key", "page-viewer",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -255,6 +259,23 @@ GATES: dict[str, tuple[str, ...]] = {
     # anonymous door: the box's instance-role proof, plus an invitation its creator
     # approved (or that role's existing, approved runner); one uniform 401 otherwise
     "pair_runner_by_role": ("invited-role",),
+    # --- apps/harness/api_runner_pairings.py (a laptop box pairs by browser)
+    # anonymous door: a proof of the box's key; makes only the pairing (or answers
+    # `reattached` for a key that is already an ACTIVE runner's). Uniform 401.
+    "create_runner_pairing": ("paired-key",),
+    # anonymous door: the pairing's key + the approval's one-time secret; the
+    # runner is the approver's, and only while they still hold agent.work there
+    "claim_runner_pairing": ("paired-key",),
+    # the code is the capability; workspaces listed are the caller's with agent.work
+    "get_runner_pairing": ("authenticated",),
+    # browser session + passkey step-up (a token is refused); member (else 404)
+    # with agent.work in the chosen workspace; the runner will be the caller's
+    "approve_runner_pairing": ("agent.work",),
+    # anyone holding the code may refuse it; it grants nothing
+    "decline_runner_pairing": ("authenticated",),
+    # --- apps/harness/api_runner_releases.py (the deployed version's installers)
+    "current_runner_release": ("authenticated",),  # a person, or a runner's own token (runner_auth)
+    "runner_downloads": ("authenticated",),
     "turn_github_token": ("runner", "runner-holds-agent"),  # turn must be claimed by this box
     "turn_attachment_content": ("runner", "runner-holds-agent"),  # an attachment of the chat a turn this box holds belongs to
     "runner_github_readiness": ("runner",),
@@ -947,6 +968,11 @@ NOT_SETTINGS: dict[str, str] = {
     "create_runner_invitation": "request", "approve_runner_invitation": "action",
     # the invited box pairing: only what its creator approved (runner.paired activity)
     "pair_runner_by_role": "runner-protocol",
+    # a laptop box asking to be paired, a person saying yes or no (passkey-gated;
+    # recorded as runner.pairing.approved), and the box claiming what was approved
+    # (runner.paired) — a new runner row, like pair_runner_by_role, not a changed setting
+    "create_runner_pairing": "request", "approve_runner_pairing": "action",
+    "decline_runner_pairing": "action", "claim_runner_pairing": "runner-protocol",
     "reply_mail_thread": "conversation", "send_mail": "conversation", "set_mail_thread_state": "conversation",
     # content
     "create_run_doc": "content", "put_run_doc_state": "content", "mark_task_action_applied": "content",

@@ -225,6 +225,18 @@ def _is_public_page(path: str) -> bool:
     return path in _PUBLIC_PAGES
 
 
+# A laptop box pairing by browser (apps/harness/api_runner_pairings.py) holds no
+# token yet: opening a pairing and claiming it are anonymous, and self-enforce —
+# a DPoP proof of the box's own key, and for the claim the one-time secret a
+# person's passkey-gated approval handed back to that box's loopback. POST only,
+# and only these two paths: reading or approving a pairing needs a session.
+_RUNNER_PAIRING_BOX = re.compile(r"^/api/harness/runner-pairings(/|/[^/]+/claim)?$")
+
+
+def _is_runner_pairing_box_call(request) -> bool:
+    return request.method == "POST" and bool(_RUNNER_PAIRING_BOX.match(request.path))
+
+
 def _is_ddd_release_link(request) -> bool:
     # The release read API (/api/ddd/release/<run_id>/) self-enforces the
     # ?t=<share_token> gate (or a workspace-member session) inside
@@ -268,6 +280,7 @@ class LoginRequiredMiddleware:
             or _is_plugin_marketplace(request.path)
             or _is_flat_artifact(request.path)
             or _is_ddd_release_link(request)
+            or _is_runner_pairing_box_call(request)
             or _is_storyboard_link(request)
             or _is_invite_link(request)
         ):

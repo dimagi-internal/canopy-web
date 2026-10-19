@@ -51,6 +51,9 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"GET"}), r"/api/workspaces"),
     # Its device key: re-registering after an ECDH key change.
     (frozenset({"GET", "POST"}), r"/api/runner-device-keys"),
+    # The bundled updater: the deployed version's update for its platform
+    # (apps/harness/api_runner_releases.py). Not `downloads`: that is for people.
+    (frozenset({"GET"}), r"/api/harness/runner-releases/current"),
     # Telemetry it reports (inbox and drill events).
     (frozenset({"POST"}), r"/api/events"),
 )

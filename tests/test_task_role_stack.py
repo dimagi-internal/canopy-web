@@ -115,3 +115,22 @@ def test_the_canopy_web_deploy_role_may_log_in_to_public_ecr():
                    for s in pol["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"]))
     workflow = (AWS.parent.parent / ".github/workflows/deploy-labs.yml").read_text()
     assert "registry-type: public" in workflow
+
+
+def test_the_canopy_web_deploy_role_may_upload_runner_releases_and_nothing_more():
+    # The runner-installer workflow (main only, this same OIDC role) uploads the
+    # built bundles under runner-releases/ in the attachments bucket. Write-only,
+    # that prefix only: it cannot read or delete chat attachments.
+    spec = importlib.util.spec_from_file_location("deploy_roles", AWS / "deploy_roles.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    pol = mod.policy_for("canopy-web", mod.APPS["canopy-web"])
+    stmt = {s["Sid"]: s for s in pol["Statement"]}["UploadRunnerReleasesOnly"]
+    assert stmt["Action"] == "s3:PutObject"
+    assert stmt["Resource"] == (
+        "arn:aws:s3:::labs-jj-canopy-web-attachments-858923557655/runner-releases/*")
+    s3 = [s for s in pol["Statement"]
+          if any(a.startswith("s3:") for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"]))]
+    assert s3 == [stmt]
+    for app in ("ace-web", "connect-labs"):
+        assert "runner-releases" not in str(mod.policy_for(app, mod.APPS[app])), app

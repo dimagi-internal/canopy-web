@@ -43,6 +43,7 @@ const FLAT_ALLOWED: Record<string, string> = {
   // --- pre-tenant ---
   '/invite/:token': 'pre-tenant: an invitee has no membership yet, so there is no tenant to scope it under',
   '/new-workspace': 'pre-tenant: the create-a-workspace form',
+  '/pair/:code': 'pre-tenant: a runner pairing has no workspace until the person approving it picks one',
 
   // --- redirects into a scoped page ---
   '/': 'redirect: to the active workspace',
