@@ -38,6 +38,24 @@ def code_current(runner) -> bool | None:
     return (runner.code_sha == expected) if (runner.code_sha and expected) else None
 
 
+def machine_label(runner) -> str:
+    """The machine a runner is on, as the topology groups it: the instance role's
+    NAME (`Runner.machine_id` without its account), "" when not known. Every unit
+    on one box shares it."""
+    return runner.machine_id.rsplit("/", 1)[-1] if runner.machine_id else ""
+
+
+def unit_label(runner) -> str:
+    """`tree:<root>` / `agent:<slug>` for a runner that declares its isolation
+    unit (`Runner.unit`), "" otherwise."""
+    unit = runner.unit()
+    if unit.get("kind") == "agent":
+        return f"agent:{unit.get('slug') or ''}"
+    if unit.get("kind") == "tree":
+        return f"tree:{unit.get('root') or ''}"
+    return ""
+
+
 def problems(runner) -> list[dict]:
     """Its self-reported health checks that are not ok, failures first."""
     checks = [c for c in ((runner.health or {}).get("checks") or [])
@@ -200,7 +218,12 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
             "expected_code_sha": r.expected_code_sha(),
             "agents": sorted((by_pk[a] for a in serves.get(r.pk, ()) if a in by_pk), key=lambda a: a["slug"]),
             "problems": problems(r),
+            "machine": machine_label(r),
+            "unit": unit_label(r),
         })
-    runner_rows.sort(key=lambda row: (not row["in_tree"], row["name"].lower()))
+    # A box's units sit together, as one group: rows on one machine share a sort
+    # key (the machine), and a runner on no known machine is a group of its own.
+    runner_rows.sort(key=lambda row: (not row["in_tree"], (row["machine"] or row["name"]).lower(),
+                                      row["name"].lower()))
     _usage(runner_rows, viewer)
     return {"root": root.slug, "workspaces": ordered, "runners": runner_rows}

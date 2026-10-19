@@ -30,6 +30,10 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
   const open = openProp === undefined ? own : openProp
   const toggle = (id: string) => (onOpen ?? setOwn)(open === id ? null : id)
   if (runners.length === 0) return <p className="py-3 text-[12px] text-muted-foreground">No runner lives in or serves this tree.</p>
+  // A box running several isolation units lists them together (the server
+  // orders them so); each row says which machine and which unit it is.
+  const perMachine = new Map<string, number>()
+  for (const r of runners) if (r.machine) perMachine.set(r.machine, (perMachine.get(r.machine) ?? 0) + 1)
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[960px] text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="runners-table">
@@ -60,6 +64,10 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
                           title="Takes only turns pinned to it and chats started on it — never routed work">
                       directed only
                     </span>
+                  )}
+                  {r.unit && <span className="ml-1 text-muted-foreground" data-testid="runner-unit">· unit {r.unit}</span>}
+                  {r.machine && (perMachine.get(r.machine) ?? 0) > 1 && (
+                    <span className="ml-1 text-muted-foreground" data-testid="runner-machine">· on {r.machine}</span>
                   )}
                   {r.flags.map((f) => (
                     <span key={f} className="ml-1 rounded border border-border px-1 text-[10px] uppercase text-muted-foreground">{f}</span>

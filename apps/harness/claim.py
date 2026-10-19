@@ -47,6 +47,7 @@ from .routing import (
     is_project_session_turn,
     load_assignment_rows,
     load_workspace_orders,
+    prime_machine_units,
     profile_q,
     project_session_allows,
     project_session_covers,
@@ -56,6 +57,7 @@ from .routing import (
     routed_slug,
     runner_target_q,
     runner_tenant_slugs,
+    unit_refusal,
 )
 from .schedule_turns import release_stale_occurrence_turns_all, skip_late_scheduled_turns
 
@@ -172,9 +174,10 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
         return False  # above the pin and the binding, as in claim_next_turn
     if not ignore_hold and not _may_hold(r, t, holds):
         return False  # likewise above the pin and the binding
-    # A pin trumps everything below it (claim_next_turn's `pinned_here`).
+    # A pin trumps everything below it (claim_next_turn's `pinned_here`) — but not
+    # the box's isolation unit, which the claim asks above the pin too.
     if t.pinned_runner_id == r.id:
-        return True
+        return ignore_serve or t.acting_agent is None or not unit_refusal(r, t.acting_agent.slug)
     directed = r.directed_only()
     if t.chat_session_id:
         # STICKINESS, mirroring the claim loop's bound_to_me short-circuit: a
@@ -349,6 +352,7 @@ def turn_reach(turn: Turn) -> Reach:
         .prefetch_related("declared_flags").order_by("name")
         if ws in runner_tenant_slugs(r)
     ]
+    prime_machine_units(runners)
     defaults, priorities = _assignment_rows_for_turns([turn])
     covering = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities).items() if pks]
     live = [r for r in covering if r.live_status == Runner.ONLINE]
@@ -492,6 +496,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         .prefetch_related("declared_flags")
         if runner_tenant_slugs(r) & ws_slugs
     ]
+    prime_machine_units(runners)
     ids = {t.id for t in queued}
     defaults, priorities = _assignment_rows_for_turns(queued)
 
@@ -763,6 +768,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             if held.id not in trusted:
                 trusted[held.id] = runner_may_hold_agent(runner, held)
             if not trusted[held.id]:
+                continue
+            # Its isolation unit, above the pin like the hold: an agent unit runs
+            # its one agent, and an agent with a unit of its own runs on no other
+            # unit of the machine — a pinned turn would otherwise hand it the
+            # agent's secrets (`device_keys.runner_serves_agent`).
+            if unit_refusal(runner, held.slug):
                 continue
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:

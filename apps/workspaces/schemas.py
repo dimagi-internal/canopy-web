@@ -331,6 +331,11 @@ class TopologyRunnerOut(StrictModel):
     missing_sessions: int = 0
     # The viewer may check for and send up its missing sessions.
     can_administer: bool = False
+    # The machine it is on (its instance role's name; "" = not known). Runners on
+    # one machine are that box's isolation units, listed together.
+    machine: str = ""
+    # The unit it declares: `tree:<root>`, `agent:<slug>`, or "" for none.
+    unit: str = ""
 
 
 class RunnerTopologyOut(StrictModel):

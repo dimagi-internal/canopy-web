@@ -22953,6 +22953,16 @@ export interface components {
              * @default false
              */
             readonly can_administer: boolean;
+            /**
+             * Machine
+             * @default
+             */
+            readonly machine: string;
+            /**
+             * Unit
+             * @default
+             */
+            readonly unit: string;
         };
         /** TopologyWorkspaceOut */
         readonly TopologyWorkspaceOut: {

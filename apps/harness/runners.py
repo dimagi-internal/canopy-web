@@ -311,6 +311,40 @@ def list_runner_admins(runner):
     )
 
 
+# ---- The machine a runner is on --------------------------------------------
+def set_runner_machine(runner, role_arn: str) -> bool:
+    """Record that `runner` is on the machine whose instance role is `role_arn`
+    (`Runner.machine_id`). Call it only with a role the box PROVED — an approved
+    aws-iam device key, or pairing by role — never with one it merely named.
+    Idempotent; True when the stored value changed. A role that is not one
+    raises `aws_iam_proof.AwsProofError`."""
+    from .aws_iam_proof import canonical_role_arn
+
+    machine = canonical_role_arn(role_arn)
+    if runner.machine_id == machine:
+        return False
+    type(runner).objects.filter(pk=runner.pk).update(machine_id=machine)
+    runner.machine_id = machine
+    return True
+
+
+def backfill_machine_ids(runner_model, device_key_model) -> int:
+    """Set `machine_id` on every runner with an ACTIVE aws-iam device key that
+    has none yet, from that key's (already canonical) role ARN — the newest key
+    when a runner has several. Takes the model classes so the migration passes its
+    historical ones. Returns how many runners it set."""
+    keys = (device_key_model.objects.filter(kind="aws-iam", status="active")
+            .exclude(role_arn="").filter(runner__machine_id="")
+            .order_by("runner_id", "-approved_at", "-created_at")
+            .values_list("runner_id", "role_arn"))
+    first: dict = {}
+    for runner_id, role_arn in keys:
+        first.setdefault(runner_id, role_arn)
+    for runner_id, role_arn in first.items():
+        runner_model.objects.filter(pk=runner_id).update(machine_id=role_arn)
+    return len(first)
+
+
 # ---- Workspace enrollment (which tenants a box serves) ---------------------
 class EnrollmentRefused(ValueError):
     """The owner may not run work in that workspace, so the box may not serve it."""

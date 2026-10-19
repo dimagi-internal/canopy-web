@@ -33,7 +33,7 @@ from apps.passkeys import stepup
 
 from . import device_key_notify, device_keys
 from .models import Runner, RunnerAdmin, RunnerDeviceKey
-from .runners import can_administer_runner
+from .runners import can_administer_runner, set_runner_machine
 from .schemas import DeviceKeyAgentOut, RunnerDeviceKeyCreatedOut, RunnerDeviceKeyIn, RunnerDeviceKeyOut
 
 router = Router(auth=session_auth, tags=["harness"])
@@ -262,6 +262,9 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
         fields += ["ecdh_approved_by", "ecdh_approved_at"]
     if fields:
         key.save(update_fields=fields)
+    if key.kind == RunnerDeviceKey.AWS_IAM and key.role_arn:
+        # A person just trusted this role as the box: it is the runner's machine.
+        set_runner_machine(key.runner, key.role_arn)
     audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
                       before=before, after=key.status)
     out = key_out(key, can_manage=True)

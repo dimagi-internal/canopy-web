@@ -53,6 +53,8 @@ def load_assignment_rows(agent_ids) -> tuple[dict, dict]:
         # turn carries requirements, and must not query per runner.
         .select_related("runner").prefetch_related("runner__declared_flags").order_by("rank")
     )
+    rows = list(rows)
+    prime_machine_units([row.runner for row in rows])
     for row in rows:
         if row.source:
             priorities.setdefault((row.agent_id, row.source, row.actor), []).append(row)
@@ -98,15 +100,93 @@ def cannot_serve(runner: Runner, slug: str) -> str:
         and the turn ended without doing anything (cloud-ec2-2, fizzy, 2026-10-15).
 
     A box can only refuse work for itself here, so a self-report is safe to trust
-    in this direction. Pure: reads the runner row, no queries."""
+    in this direction. And its isolation unit (`unit_refusal`), which is the same
+    kind of self-restriction. Reads the runner row; the unit's machine siblings
+    come from `prime_machine_units` when the caller loaded them (one query per
+    call otherwise, and none for a box with no machine)."""
     if not slug:
         return ""
+    said = unit_refusal(runner, slug)
+    if said:
+        return said
     caps = runner.capabilities or {}
     if (runner.kind == Runner.EMDASH and runner.engine == Runner.ENGINE_EMDASH
             and "projects" in caps and slug not in runner.project_names()):
         return f"{runner.name} has no emdash project '{slug}'"
     if slug in (caps.get(UNPREPARED) or []):
         return f"{runner.name} could not set '{slug}' up (no clone of it on the box)"
+    return ""
+
+
+# ---- isolation units (spec 2026-10-19 §3) -------------------------------------
+#
+# A cloud box runs one runner per isolation unit: a workspace tree, or a single
+# agent that has a unit of its own. Each unit is its own Unix user with its own
+# keys, so an agent's secrets reach only the unit that runs it. Two refusals keep
+# routing inside that: an agent unit runs its one agent, and no OTHER runner on
+# the same machine (`Runner.machine_id`) runs that agent. Both are restrictions
+# a box declares on itself, so trusting its declaration is safe.
+
+#: The attribute `prime_machine_units` caches a runner's machine siblings' agent
+#: units on: {agent slug: sibling runner name}.
+_MACHINE_UNITS = "_machine_agent_units"
+
+
+def _agent_unit_slug(unit: dict) -> str | None:
+    """The agent an agent unit runs ("" when it names none); None: not an agent unit."""
+    if unit.get("kind") != "agent":
+        return None
+    return str(unit.get("slug") or "")
+
+
+def prime_machine_units(runners) -> None:
+    """Cache, on each of `runners`, the agent units of the OTHER live runners on
+    its machine — one query for them all, so the claim and the coverage report
+    ask `unit_refusal` of every candidate without a query each."""
+    runners = [r for r in runners if r is not None]
+    machines = {r.machine_id for r in runners if r.machine_id}
+    rows = list(Runner.objects.filter(machine_id__in=machines).exclude(status=Runner.RETIRED)
+                .values_list("pk", "name", "machine_id", "capabilities")) if machines else []
+    for r in runners:
+        units: dict = {}
+        for pk, name, machine, caps in rows:
+            if machine != r.machine_id or pk == r.pk:
+                continue
+            unit = (caps or {}).get("unit")
+            slug = _agent_unit_slug(unit) if isinstance(unit, dict) else None
+            if slug:
+                units.setdefault(slug, name)
+        setattr(r, _MACHINE_UNITS, units)
+
+
+def machine_agent_units(runner: Runner) -> dict:
+    """{agent slug: runner name} for the agent units on `runner`'s machine other
+    than itself — {} for a runner on no known machine."""
+    if not runner.machine_id:
+        return {}
+    if not hasattr(runner, _MACHINE_UNITS):
+        prime_machine_units([runner])
+    return getattr(runner, _MACHINE_UNITS)
+
+
+def unit_refusal(runner: Runner, slug: str) -> str:
+    """Why `runner`'s isolation unit keeps it from running agent `slug` — "" when
+    it does not:
+
+      - it is an AGENT unit, and `slug` is not its agent;
+      - another live runner on its machine is the agent unit for `slug`, so the
+        agent's secrets stay in that unit.
+
+    Unlike the rest of `cannot_serve`, a pin does not get past this: the claim
+    asks it above the pin, and the vault through `runner_routes_agent`."""
+    if not slug:
+        return ""
+    own = _agent_unit_slug(runner.unit())
+    if own is not None and slug != own:
+        return f"{runner.name} is the agent unit for {own or '(no agent named)'}"
+    sibling = machine_agent_units(runner).get(slug)
+    if sibling and own != slug:
+        return f"{slug} has its own unit on this machine ({sibling})"
     return ""
 
 
@@ -161,6 +241,8 @@ def runner_routes_agent(runner: Runner, agent) -> bool:
 
     if runner.status == Runner.RETIRED or not runner.owner_id or runner.directed_only():
         return False
+    if unit_refusal(runner, agent.slug):
+        return False
     if agent.workspace_id not in runner_tenant_slugs(runner):
         return False
     if not runner_may_hold_agent(runner, agent):
@@ -185,7 +267,8 @@ def agents_routed_to(runner: Runner):
                  .values_list("agent_id", flat=True))
     candidates = Agent.objects.filter(id__in=listed | agents_following_runner(runner),
                                       workspace_id__in=tenant)
-    held = [a.id for a in candidates if runner_may_hold_agent(runner, a)]
+    held = [a.id for a in candidates
+            if runner_may_hold_agent(runner, a) and not unit_refusal(runner, a.slug)]
     return Agent.objects.filter(id__in=held).select_related("owner").order_by("slug")
 
 
@@ -284,6 +367,8 @@ def inherited_orders(agent_ids) -> dict:
                 inh.missing_repo.append(r)
             elif not may_hold(r, agent):
                 inh.cannot_hold.append(r)
+            elif unit_refusal(r, agent.slug):
+                continue  # another agent's unit, or the agent has its own: not for it
             else:
                 inh.runners.append(r)
         out[agent.id] = inh
@@ -430,6 +515,8 @@ def load_workspace_orders(ws_ids) -> dict:
         .select_related("runner").prefetch_related("runner__declared_flags")
         .exclude(runner__status=Runner.RETIRED).order_by("rank")
     )
+    rows = list(rows)
+    prime_machine_units([row.runner for row in rows])
     for row in rows:
         out.setdefault(row.workspace_id, []).append(row.runner)
     return out
