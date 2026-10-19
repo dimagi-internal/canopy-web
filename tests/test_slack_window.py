@@ -38,6 +38,15 @@ pytestmark = pytest.mark.django_db
 NOW = time.time()
 
 
+@pytest.fixture(autouse=True)
+def _now():
+    # The messages sit minutes before NOW and the window is read against the real
+    # clock, so NOW must be when the test runs — not when xdist imported the module,
+    # which on a busy CI box can be minutes earlier.
+    global NOW
+    NOW = time.time()
+
+
 def _ts(ago_min: float) -> str:
     return f"{NOW - ago_min * 60:.6f}"
 

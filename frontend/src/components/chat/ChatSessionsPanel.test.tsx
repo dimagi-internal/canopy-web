@@ -447,8 +447,10 @@ describe('ChatSessionsPanel — close a session', () => {
 })
 
 describe('ChatSessionsPanel — transfer a session', () => {
+  // A once-value a failed test never consumed would leak into the next test.
+  afterEach(() => listSessions.mockReset())
+
   it('transfers to the picked runner and reports a move', async () => {
-    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValueOnce([chatSession('s1', { runner_name: 'Laptop' })])
     listRunners.mockResolvedValue([fleetRunner('b', { name: 'Cloud' })])
     transferSession.mockResolvedValue({
@@ -461,6 +463,7 @@ describe('ChatSessionsPanel — transfer a session', () => {
 
     fireEvent.click(await screen.findByTestId('transfer-session-s1'))
     const select = (await screen.findByTestId('transfer-runner-select')) as HTMLSelectElement
+    await screen.findByRole('option', { name: 'Cloud' })  // runners load on open
     fireEvent.change(select, { target: { value: 'b' } })
     await act(async () => {
       fireEvent.click(screen.getByText('Transfer'))
