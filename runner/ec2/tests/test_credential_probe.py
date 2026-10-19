@@ -174,7 +174,18 @@ def test_staging_probes_before_the_first_ready_beat(cr, monkeypatch):
     monkeypatch.setattr(cr, "_probe_entry", lambda entry: _probe(entry[0], "capped"))
     assert cr.fetch_and_stage_credential("rid") is True
     assert cr._PROBES["subscription-1"]["status"] == "capped"
-    assert not [c for c in calls if c[1].endswith("/heartbeat")]
+    # …and reported at once: the next beat is otherwise after the bootstrap (up
+    # to 40 min), and wire.sh is waiting on exactly these checks.
+    beats = [c for c in calls if c[1] == "/runners/rid/heartbeat"]
+    assert len(beats) == 1
+    names = [ch["name"] for ch in beats[0][2]["health"]["checks"]]
+    assert "claude.probe.subscription-1" in names
+
+
+def test_every_probe_check_says_when_it_was_taken(cr):
+    cr._record_probe(_probe("api-key", "ok", at=1792000000.0))
+    assert cr._HEALTH["claude.probe.api-key"]["detail"].endswith(
+        "probed " + cr._iso(1792000000.0))
 
 
 def test_readiness_false_when_every_probe_fails(cr):
@@ -296,16 +307,114 @@ def test_reread_probes_only_changed_entries(cr, monkeypatch):
 
     class FakeThread:
         def __init__(self, target=None, args=(), kwargs=None, **kw):
-            self.target, self.args = target, args
+            self.target = target
 
         def start(self):
-            started.append(self.args)
+            started.append(self.target)
 
     monkeypatch.setattr(cr.threading, "Thread", FakeThread)
     assert cr._reload_claude_credentials() is True
-    assert started == [(["subscription-2"],)]
+    assert len(started) == 1
+    assert cr._PROBE_PENDING == {"subscription-2"}
     # An unchanged entry keeps what it last proved.
     assert cr._PROBES["subscription-1"]["status"] == "ok"
+
+
+def test_a_request_made_while_probing_is_queued_not_dropped(cr, monkeypatch):
+    probed = []
+    monkeypatch.setattr(cr, "_probe_all", lambda labels: probed.append(list(labels)))
+    assert cr._PROBE_RUNNING.acquire(blocking=False)     # a prober is running
+    cr._probe_in_background(["box-login"])
+    assert cr._PROBE_PENDING == {"box-login"}
+    cr._probe_job()                                      # …and it drains the queue
+    assert probed == [["box-login"]]
+    assert cr._PROBE_RUNNING.acquire(blocking=False)
+
+
+def test_a_bundle_restaged_unchanged_is_proved_again(cr, monkeypatch):
+    """wire.sh on a running box writes the same values: it is waiting to hear
+    whether they work, so an old result must not stand in."""
+    monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "rid")
+    cr._CLAUDE_CREDS[:] = [("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
+    cr._BUNDLE_STAMP["updated_at"] = "2026-10-18T10:00:00Z"
+    cr._record_probe(_probe("subscription-1", "ok"))
+    _api_log(cr, monkeypatch, {("GET", "/runners/rid/credential"): (
+        200, {"claude_token": "tok-1", "logins": [], "updated_at": "2026-10-19T10:00:00Z"})})
+    monkeypatch.setattr(cr, "_reconcile_logins", lambda *a: None)
+    monkeypatch.setattr(cr, "box_login_ready", lambda **kw: False)
+    asked = []
+    monkeypatch.setattr(cr, "_probe_in_background", lambda labels: asked.append(list(labels)))
+    assert cr._reload_claude_credentials() is False
+    assert asked == [["subscription-1"]]
+    assert "subscription-1" not in cr._PROBES
+    # A re-read that finds the same stamp asks nothing.
+    assert cr._reload_claude_credentials() is False
+    assert asked == [["subscription-1"]]
+
+
+def test_adopting_the_box_login_probes_it(cr, monkeypatch):
+    asked = []
+    monkeypatch.setattr(cr, "_reprobe", lambda labels: asked.append(list(labels)))
+    monkeypatch.setattr(cr, "box_login_ready", lambda *a, **kw: True)
+    assert cr._adopt_box_login() is True
+    assert asked == [["box-login"]]
+
+
+def test_the_tick_reprobes_a_dead_credential_on_a_slow_timer(cr, monkeypatch):
+    import time as _time
+    monkeypatch.setattr(cr, "_RUNNER_ID", "rid")
+    _api_log(cr, monkeypatch)
+    cr._record_probe(_probe("subscription-1", "dead", at=_time.time() - cr.DEAD_REPROBE_SECONDS - 1))
+    cr._record_probe(_probe("api-key", "dead"))
+    started = []
+    monkeypatch.setattr(cr, "_probe_in_background", lambda labels: started.append(labels))
+    cr._credential_tick({"paused": True, "paused_note": cr.SELF_PAUSE_PREFIX + "x"})
+    assert started == [["subscription-1"]]
+
+
+def test_never_repauses_after_a_persons_unpause(cr, monkeypatch):
+    """A person unpaused a box the box had paused: that decision stands until a
+    probe taken after it says the credentials are still dead."""
+    import time as _time
+    monkeypatch.setattr(cr, "_RUNNER_ID", "rid")
+    calls = _api_log(cr, monkeypatch)
+    old = _time.time() - 60
+    cr._record_probe(_probe("subscription-1", "dead", at=old))
+    cr._record_probe(_probe("api-key", "dead", at=old))
+    cr._observe_beat({"paused": True, "paused_note": cr.SELF_PAUSE_PREFIX + "no working"})
+    cr._observe_beat({"paused": False, "paused_note": ""})      # a person unpaused it
+    cr._sync_self_pause()
+    assert not [c for c in calls if c[1].endswith("/pause")]
+    # Fresh evidence, taken after the unpause, may pause again.
+    cr._record_probe(_probe("subscription-1", "dead", at=_time.time() + 1))
+    cr._record_probe(_probe("api-key", "dead", at=_time.time() + 1))
+    cr._sync_self_pause()
+    assert [c for c in calls if c[1] == "/runners/rid/pause"]
+
+
+def test_a_missed_reply_never_touches_the_pause(cr, monkeypatch):
+    """Review: with no reply the box used to fall back to its own memory, and so
+    could lift a pause a person had put on after it."""
+    monkeypatch.setattr(cr, "_RUNNER_ID", "rid")
+    calls = _api_log(cr, monkeypatch)
+    cr._observe_beat({"paused": True, "paused_note": cr.SELF_PAUSE_PREFIX + "x"})
+    cr._record_probe(_probe("subscription-1", "ok"))
+    cr._record_probe(_probe("api-key", "ok"))
+    cr._observe_beat(None)
+    cr._sync_self_pause()
+    cr._observe_beat({"detail": "bad gateway"})
+    cr._sync_self_pause()
+    assert not calls
+
+
+def test_every_reply_says_whose_pause_it_is(cr):
+    cr._observe_beat({"paused": True, "paused_note": cr.SELF_PAUSE_PREFIX + "x"})
+    assert cr._SELF_PAUSED["set"] is True
+    # The server's scheduled wake lifted it: the box's memory follows.
+    cr._observe_beat({"paused": False, "paused_note": ""})
+    assert cr._SELF_PAUSED["set"] is False
+    cr._observe_beat({"paused": True, "paused_note": "maintenance"})
+    assert cr._SELF_PAUSED["set"] is False
 
 
 def test_a_successful_turn_marks_its_credential_ok(cr, monkeypatch):

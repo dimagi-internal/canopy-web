@@ -52,8 +52,15 @@ def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
     # A box posting with its own runner token records in the runner's workspace
     # when nothing is pinned: its owner may belong to several, and a credential
     # alert that 422'd for want of a default was an alert nobody got.
+    # Only a workspace the owner may record in: `Runner.workspace` is where the
+    # box was paired, which the owner may since have lost write in — then the
+    # owner's default, as for any caller.
     rtok = getattr(request, "runner_token", None)
-    runner_home = rtok.runner.workspace if (rtok is not None and rtok.runner.workspace_id) else None
+    runner_home = None
+    if rtok is not None and rtok.runner.workspace_id:
+        ws = rtok.runner.workspace
+        if perms.can(request.user, ws, perms.EVENTS_WRITE):
+            runner_home = ws
     home = (
         wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
     ) or runner_home or wsvc.user_default_workspace(request.user)

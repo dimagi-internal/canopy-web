@@ -53,7 +53,10 @@ def record(items: list[dict], *, workspace, first_today: list[int] | None = None
 
             if key:
                 if first_today is not None:
-                    last = (Event.objects.filter(workspace=workspace, source=source, key=key)
+                    # Locked, so two boxes posting the same alert at once cannot
+                    # both read yesterday's last_seen_at and both notify.
+                    last = (Event.objects.select_for_update()
+                            .filter(workspace=workspace, source=source, key=key)
                             .values_list("last_seen_at", flat=True).first())
                     if last is not None and last.astimezone(dt.UTC).date() < today:
                         first_today.append(index)

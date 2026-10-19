@@ -15,6 +15,8 @@ import subprocess
 
 SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "wire.sh"
 NEW = "11111111-1111-1111-1111-111111111111"
+#: When the fake canopy-web says the bundle was written (the POST's updated_at).
+STAGED_AT = "2026-10-19T12:00:00+00:00"
 LIVE = "22222222-2222-2222-2222-222222222222"
 OTHER = "33333333-3333-3333-3333-333333333333"
 
@@ -31,6 +33,7 @@ def _setup(tmp: pathlib.Path, runners: list[dict], statuses: dict | None = None)
     (bin_ / "curl").write_text(f'''#!/usr/bin/env python3
 import json, sys, pathlib
 S = pathlib.Path({str(state)!r})
+STAGED_AT = {STAGED_AT!r}
 a = sys.argv[1:]
 method = a[a.index("-X") + 1] if "-X" in a else "GET"
 url = next(x for x in a if x.startswith("http"))
@@ -50,7 +53,7 @@ elif method == "GET" and path.endswith("/credential/status"):
                                              "claude_token_secondary_label": "JJ"}}))
 elif method == "POST" and path.endswith("/credential"):
     (S / "posted.json").write_text(pathlib.Path(a[a.index("--data") + 1][1:]).read_text())
-    print("{{}}")
+    print(json.dumps({{"has_claude_token": True, "updated_at": STAGED_AT}}))
 elif path.startswith("/api/agents/?"):
     print(json.dumps({{"items": []}}))
 elif path == "/api/workspaces/" or path.endswith("/runners"):

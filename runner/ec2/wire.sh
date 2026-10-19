@@ -245,11 +245,22 @@ if [[ -z "$RUNNER_ID" ]]; then
     # and a paired-but-unstaged cloud-ec2-fork was never discovered (2026-10-18).
     # A dead predecessor left by down.sh --keep-runner has its bundle staged, so
     # it is never mistaken for the new box. Most recent heartbeat first.
+    # Live only: online, and heartbeating within the last 2 minutes (the wait
+    # beats every 15 s). A dead unstaged row — a box that paired and died — must
+    # not be taken for the one that is waiting now.
     CANDIDATES=$(python3 -c "
-import json
+import datetime as dt, json
 rows = json.load(open('$TMP/runners.json'))
+now = dt.datetime.now(dt.timezone.utc)
+def fresh(r):
+    raw = r.get('last_heartbeat_at') or ''
+    try:
+        at = dt.datetime.fromisoformat(raw.replace('Z', '+00:00'))
+    except ValueError:
+        return False
+    return (now - at).total_seconds() <= 120
 hits = [r for r in rows if r.get('kind') == 'cloud' and r.get('name') == '$RUNNER_NAME'
-        and r.get('status') != 'retired']
+        and r.get('status') == 'online' and fresh(r)]
 hits.sort(key=lambda r: r.get('last_heartbeat_at') or '', reverse=True)
 print(' '.join(r['id'] for r in hits))
 " 2>/dev/null || true)
@@ -380,7 +391,21 @@ for key, label, name in (("claude_token", "Token 1", "claude_token_label"),
         got.append(label + (f" ({c[name]})" if name and c.get(name) else ""))
 print("   copied: " + (", ".join(got) if got else "nothing"))
 PY
-api POST "/api/harness/runners/${RUNNER_ID}/credential" "$TMP/cred.json" | python3 -m json.tool
+api POST "/api/harness/runners/${RUNNER_ID}/credential" "$TMP/cred.json" > "$TMP/staged.json"
+python3 -m json.tool < "$TMP/staged.json" || cat "$TMP/staged.json"
+# The staging moment, on the SERVER's clock (the bundle's updated_at): the probe
+# wait below counts only probes taken after it, so a result left from an earlier
+# staging (--runner-id on a running box) cannot pass.
+STAGED_AT=$(python3 - "$TMP/staged.json" <<'PY'
+import datetime as dt, json, sys
+try:
+    raw = (json.load(open(sys.argv[1])) or {}).get("updated_at") or ""
+    at = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+except Exception:
+    at = dt.datetime.now(dt.timezone.utc)
+print(at.astimezone(dt.timezone.utc).isoformat())
+PY
+)
 rm -f "$TMP/cred.json" "$TMP/src-cred.json"
 CREDENTIALS_URL="${BASE_URL}/supervisor?tab=runners&runner=${RUNNER_ID}"
 # …and what could not be: the source's full logins stay where they were made.
@@ -405,42 +430,53 @@ echo "==> credential staged — to use claude.ai connectors, + Add a login on it
 # health checks); nothing below runs until one has answered.
 if [[ "$PROBE_MINUTES" != "0" ]]; then
   echo ">> waiting up to ${PROBE_MINUTES} min for the box to prove a Claude credential works…"
+  # Reads the runner row: `state` prints none|ok|bad over the probes taken AFTER
+  # the staging moment (each check's detail ends "· probed <ISO>", on the box's
+  # clock; the row's health_received_at is the server's), `show` prints them.
+  cat > "$TMP/probes.py" <<'PY'
+import datetime as dt, json, re, sys
+mode, path, rid, staged = sys.argv[1:5]
+SLACK = dt.timedelta(seconds=5)
+def when(raw):
+    try:
+        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+staged_at = when(staged)
+try:
+    rows = json.load(open(path))
+    r = next((x for x in rows if x.get("id") == rid), {})
+except Exception:
+    r = {}
+received = when(r.get("health_received_at") or "")
+fresh = {}
+if not (received and staged_at and received < staged_at - SLACK):
+    for name, v in sorted((r.get("health_checks") or {}).items()):
+        if not name.startswith("claude.probe."):
+            continue
+        m = re.search(r"probed (\S+)\s*$", v.get("detail") or "")
+        taken = when(m.group(1)) if m else None
+        if taken and staged_at and taken >= staged_at - SLACK:
+            fresh[name[len("claude.probe."):]] = v
+if mode == "show":
+    for label, v in fresh.items():
+        print(f"   {label:22s} {v.get('status', '?'):5s} {v.get('detail', '')}")
+elif not fresh:
+    print("none")
+else:
+    print("ok" if any(v.get("status") == "ok" for v in fresh.values()) else "bad")
+PY
   PROBE_STATE="none"
   for _ in $(seq 1 $(( PROBE_MINUTES * 6 ))); do
     api GET /api/harness/runners/ > "$TMP/runner-probe.json" 2>/dev/null || true
-    PROBE_STATE=$(python3 - "$TMP/runner-probe.json" "$RUNNER_ID" <<'PY'
-import json, sys
-try:
-    rows = json.load(open(sys.argv[1]))
-    r = next((x for x in rows if x.get("id") == sys.argv[2]), {})
-except Exception:
-    r = {}
-checks = {k: v for k, v in (r.get("health_checks") or {}).items() if k.startswith("claude.probe.")}
-if not checks:
-    print("none")
-elif any(v.get("status") == "ok" for v in checks.values()):
-    print("ok")
-else:
-    print("bad")
-PY
-)
+    PROBE_STATE=$(python3 "$TMP/probes.py" state "$TMP/runner-probe.json" "$RUNNER_ID" "$STAGED_AT")
     [[ "$PROBE_STATE" == "ok" ]] && break
     sleep "$POLL_SECONDS"
   done
-  python3 - "$TMP/runner-probe.json" "$RUNNER_ID" <<'PY'
-import json, sys
-try:
-    rows = json.load(open(sys.argv[1]))
-    r = next((x for x in rows if x.get("id") == sys.argv[2]), {})
-except Exception:
-    r = {}
-for name, v in sorted((r.get("health_checks") or {}).items()):
-    if name.startswith("claude.probe."):
-        print(f"   {name[len('claude.probe.'):]:22s} {v.get('status', '?'):5s} {v.get('detail', '')}")
-PY
+  python3 "$TMP/probes.py" show "$TMP/runner-probe.json" "$RUNNER_ID" "$STAGED_AT"
   if [[ "$PROBE_STATE" != "ok" ]]; then
     if [[ "$PROBE_STATE" == "none" ]]; then
-      echo "!! the box reported no credential probe within ${PROBE_MINUTES} min." >&2
+      echo "!! the box reported no credential probe taken since staging (${STAGED_AT}) within ${PROBE_MINUTES} min." >&2
     else
       echo "!! no staged Claude credential answered a prompt." >&2
     fi

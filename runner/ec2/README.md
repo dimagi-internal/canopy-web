@@ -109,10 +109,15 @@ link (`/supervisor?tab=runners&runner=<id>`), where "+ Add a login" signs one in
 probes each credential with one short prompt (`claude.probe.<label>` health checks,
 see `docs/architecture/runners.md`). `wire.sh` waits up to `--probe-minutes` (default
 5; `0` skips) for one to be `ok`, prints every probe, and when none is, exits
-non-zero with the "+ Add a login" link before it retires, swaps or adds anything.
+3 with the "+ Add a login" link before it retires, swaps or adds anything. Only
+probes taken after the staging moment count (the bundle's `updated_at`; each
+check's detail ends `· probed <ISO>`), so a result left from an earlier staging
+cannot pass. A running box (`--runner-id`) notices a re-staged bundle on its next
+re-read (≤5 min) before it probes, so give it `--probe-minutes 10`.
 
 **Finding the new box.** `wire.sh --runner-id <uuid>` skips discovery. Otherwise it
-takes the non-retired cloud runner with that name that has **no credential staged**
+takes the cloud runner with that name that is online, heartbeated within the last 2
+minutes, and has **no credential staged**
 (`GET …/credential/status`: no token, no API key, no signed-in login), most recent
 heartbeat first — a box waiting for its bundle already heartbeats (online, not ready),
 so it is found by what it lacks. `wire.sh --agents ace,echo` narrows which

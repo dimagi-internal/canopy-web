@@ -69,6 +69,18 @@ def test_runner_token_records_in_the_runners_workspace(box):
     assert Event.objects.get().workspace_id == box["ws_b"].pk
 
 
+def test_the_runners_workspace_is_used_only_where_the_owner_may_record(box):
+    """The box was paired in `connect`; its owner is a viewer there now. The
+    runner's workspace is then no answer, and the owner's default (none: two
+    memberships) applies, exactly as for any caller."""
+    WorkspaceMembership.objects.filter(workspace=box["ws_b"], user=box["user"]).update(
+        role=WorkspaceMembership.VIEWER)
+    res = _post(box, _alert())
+    assert res.status_code == 422
+    assert Event.objects.count() == 0
+    assert mail.outbox == []
+
+
 def test_the_owners_pat_still_needs_a_workspace(box):
     from apps.tokens.models import PersonalToken
 

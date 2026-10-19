@@ -203,12 +203,17 @@ def test_the_relay_reports_a_box_login_without_a_token(cr, tmp_path, monkeypatch
 
     monkeypatch.setattr(cr, "_api", fake_api)
     monkeypatch.setattr(cr, "LoginSession", FakeLogin)
+    reprobed = []
+    monkeypatch.setattr(cr, "_reprobe", lambda labels: reprobed.append(list(labels)))
     cr._drain_mint("rid")
     cr._drain_mint("rid")
     result = [b for p, b in posts if p.endswith("/mint/result")]
     assert result == [result[0]] and result[0]["logged_in"] is True
     assert "token" not in result[0], "a box login is never sent off the box"
     assert cr._claude_cred_label() == "box-login"
+    # A login signed in anew is asked again: its value (a config dir) is unchanged,
+    # so nothing else would clear what it proved before (a "dead").
+    assert ["box-login"] in reprobed
 
 
 # ── what the credentials page reads ───────────────────────────────────────
@@ -408,7 +413,8 @@ def test_a_box_waiting_for_a_credential_heartbeats_as_not_ready(cr, tmp_path, mo
     monkeypatch.setattr(cr, "_drain_mint", lambda rid: _store_login(tmp_path))
     monkeypatch.setattr(cr, "POLL_SECONDS", 0)
     assert cr.fetch_and_stage_credential("rid") is True
-    assert len(beats) == 1
+    # The wait's beat, then the one that reports the staged credentials' probes.
+    assert len(beats) == 2
     assert beats[0]["ready"] is False
     assert "Sign in with Claude" in beats[0]["ready_note"]
     assert len(beats[0]["ready_note"]) <= 200

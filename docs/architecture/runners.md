@@ -449,10 +449,15 @@ or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
 (every probe answers `unknown`).
 
 - **When:** after `fetch_and_stage_credential` stages a bundle, synchronously,
-  before the first ready heartbeat; after a re-read changes the bundle, only the
-  new or changed entries, in the background; for a capped entry once its reset has
-  passed (the main loop's poll tick); and when a turn's own failure is ambiguous
-  (below). Never on a plain heartbeat — probes spend usage. A turn's own outcome
+  then reported at once in a heartbeat (the next one is otherwise after the
+  bootstrap); after a re-read changes the bundle, only the new or changed entries,
+  in the background — and every entry when the bundle was re-written unchanged
+  (its `updated_at` moved); after a login is signed in again or the default login
+  is adopted (its value, a config dir, does not change); for a capped entry once
+  its reset has passed and a dead one every `DEAD_REPROBE_SECONDS` (10 min) — the
+  main loop's poll tick; and when a turn's own failure is ambiguous (below).
+  Background requests queue on one prober thread. Each check's detail ends
+  `· probed <ISO>`. Never on a plain heartbeat — probes spend usage. A turn's own outcome
   updates the same state for free (a turn that ran marks its credential `ok`; a
   classified cap or dead marks it so). A promoted subscription carries its probe.
 - **Health:** one check per credential, `claude.probe.<label>` (`subscription-1`,
@@ -474,7 +479,9 @@ or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
   prefix. It lifts its own pause (`POST …/unpause`) once a probe answers `ok` —
   only a pause whose note carries the prefix, read off the heartbeat reply
   (`paused`/`paused_note`, on both the REST reply and the WS ack). It never
-  pauses over, or lifts, a person's pause.
+  pauses over, or lifts, a person's pause. A beat with no usable reply leaves
+  the pause alone. After anyone changes the pause (a person's unpause, the
+  scheduled wake) the box pauses again only on probes taken after that change.
 - **A bare ACP refusal is probed.** Over ACP a capped token and a signed-out one
   both fail with `runner error (acp): authentication required`. When nothing
   earlier in the turn capped, the box probes that credential: capped → it is a cap
