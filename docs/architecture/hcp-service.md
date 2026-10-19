@@ -488,6 +488,17 @@ Then in `deploy/aws/canopy-web.cfn.yaml` set `HCP_EMBEDDINGS_MODEL=vertex/gemini
 and `HCP_VERTEX_SERVICE_ACCOUNT=$SA`, deploy, and run `manage.py hcp_embed` (it
 prints the retention check first and refuses on a no).
 
+The KB reranker (`KB_RERANK_MODEL`, `apps/agents/kb_vectors.py`) calls the Vertex AI
+ranking API with the same service account. It needs the API and one more permission
+on the same custom role (custom-role support: SUPPORTED); `roles/discoveryengine.viewer`
+also carries it but reads every Discovery Engine resource:
+
+```bash
+gcloud services enable discoveryengine.googleapis.com --project $P
+gcloud iam roles update canopyMemoryEmbeddings --project $P \
+  --add-permissions=discoveryengine.rankingConfigs.rank
+```
+
 **Turning it on — Bedrock.** Deploy the task role (its `memory-embeddings` policy
 grants `bedrock:InvokeModel` on embedding models only, and the read-only logging
 check), enable the model under Bedrock model access, set `HCP_EMBEDDINGS_MODEL` to

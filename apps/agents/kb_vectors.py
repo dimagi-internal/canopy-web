@@ -19,9 +19,20 @@ pgvector, kept in step with the published KB file.
   BM25 by weighted reciprocal rank.
 * **Rerank** (`reranker`, off unless `KB_RERANK_MODEL` is set): the Vertex AI
   ranking API rescores the fused top 50, reading question and passage together.
-  Before turning it on, confirm what the ranking API retains — Google's ranking
-  page says nothing about it, and nothing here checks it the way `retention_ok`
-  checks the embedding model.
+  There is no retention setting to check the way `retention_ok` checks the
+  embedding model: Google publishes no zero-retention statement for ranking and
+  no cacheConfig-like switch. What it does say: the API is "stateless" (ranking
+  page); Agent Search, which it belongs to, is an AI/ML Service, not a Generative
+  AI Service, so the abuse-monitoring prompt logging does not cover it (Service
+  Specific Terms, services summary); "Google will not use Customer Data to train
+  or fine-tune any AI/ML models" (Service Specific Terms §18). Its Data Access
+  audit logs (`RankService.Rank`, DATA_READ) are off unless the project turns
+  them on, and land in our own project. Needs `discoveryengine.googleapis.com`
+  enabled and `discoveryengine.rankingConfigs.rank` on the service account.
+  Measured on the GiveWell KB's 312 golden questions (hybrid 0.7 top 50):
+  `semantic-ranker-default@latest` MRR 0.508 -> 0.588, R@10 237 -> 259/312, the
+  hand-written 30 not worse; `semantic-ranker-fast@latest` 0.545, worse on
+  paraphrases. About 0.5 s a call (p95 0.6-0.7 s).
 
 Every way this can be missing — SQLite, no `vector` extension, a non-Vertex model,
 no rows yet, the embedding call failing — answers None, and the search is lexical.
