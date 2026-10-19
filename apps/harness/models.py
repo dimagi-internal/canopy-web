@@ -332,6 +332,16 @@ class Runner(models.Model):
         other capabilities, a hint gated by tenant."""
         return bool(self.capabilities.get("sessions", False))
 
+    def directed_only(self) -> bool:
+        """Whether this box takes only what is PUT on it: turns pinned to it and
+        turns of sessions bound to it — no routed agent turn (even with an
+        enabled assignment row), no repo turn, no unbound chat, no inherited
+        workspace order. Box-declared (`capabilities.directed`, a cloud box's
+        `RUNNER_DIRECTED=1`) and safe to trust for the same reason `cannot_serve`
+        is: it can only make a box take less. It stays session-capable, so a chat
+        can still be started on it, and that chat binds to it."""
+        return bool((self.capabilities or {}).get("directed", False))
+
     @property
     def live_status(self) -> str:
         """What we can OBSERVE, not what the runner last claimed.

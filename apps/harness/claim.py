@@ -44,9 +44,13 @@ from .routing import (
     busy_agent_ids,
     busy_session_ids,
     cannot_serve,
+    is_project_session_turn,
     load_assignment_rows,
     load_workspace_orders,
     profile_q,
+    project_session_allows,
+    project_session_covers,
+    project_session_waits_why,
     repo_order_for,
     ridable_sessions,
     routed_slug,
@@ -153,7 +157,7 @@ def _may_hold(r: Runner, t: Turn, holds: dict | None) -> bool:
 def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
                     *, ignore_requirements: bool = False, orders: dict | None = None,
                     ignore_hold: bool = False, holds: dict | None = None,
-                    ignore_serve: bool = False) -> bool:
+                    ignore_serve: bool = False, admins: dict | None = None) -> bool:
     """The per-candidate refinements claim_next_turn applies after the coarse
     target match — same checks, same ORDER, so coverage can't overstate what
     claiming will do.
@@ -180,6 +184,8 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
         binding = getattr(t.chat_session, "runner_binding", None)
         if binding is not None and binding.runner_id == r.id:
             return True
+        if binding is not None and binding.runner_id is not None:
+            return False  # bound to another box: only its holder claims it
         routed_agent = t.chat_session.agent_id
     else:
         routed_agent = t.agent_id
@@ -191,7 +197,12 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
             rows = repo_order_for(t, orders if orders is not None
                                   else load_workspace_orders({t.workspace_id}), requires=reqs)
             return rows is None or any(row.id == r.id for row in rows)
-        return True  # agentless session: runner_target_q had the last word
+        # An unbound project chat: the box has its repo, and the workspace's
+        # order shares the box or the chatting person administers it — the
+        # predicate the claim asks, without the cascade's clock.
+        return project_session_covers(
+            r, t, orders if orders is not None else _orders_for([t]), requires=reqs,
+            admins=admins)
     # The SAME actor resolution the claim path uses. These two disagreeing is
     # the drift class tests/test_claim_schedule_parity.py exists for: a strict
     # actor rule pointing at an offline box must report `offline`
@@ -216,9 +227,13 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
     `ignore_serve=True`, if no box had reported it cannot run the agent."""
     out: dict = {}
     holds: dict = {}
+    admins: dict = {}
     orders = load_workspace_orders(
-        Turn.objects.filter(pk__in=ids, agent__isnull=True, chat_session__isnull=True)
-        .values_list("workspace_id", flat=True)
+        set(Turn.objects.filter(pk__in=ids, agent__isnull=True, chat_session__isnull=True)
+            .values_list("workspace_id", flat=True))
+        | set(Turn.objects.filter(pk__in=ids, chat_session__isnull=False,
+                                  chat_session__agent__isnull=True)
+              .values_list("chat_session__workspace_id", flat=True))
     )
     for r in runners:
         # Same coarse target predicate the claim path uses (assignments +
@@ -233,7 +248,7 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
             .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=r))
             .filter(profile_q(r))
             .select_related("agent", "chat_session", "chat_session__runner_binding",
-                            "chat_session__agent")
+                            "chat_session__agent", "enqueued_by")
         ):
             # Then the per-source refinement. A runner assigned the agent but
             # excluded by a strict rule for THIS turn's source does not cover
@@ -241,7 +256,7 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
             if _refined_allows(r, t, defaults, priorities,
                                ignore_requirements=ignore_requirements, orders=orders,
                                ignore_hold=ignore_hold, holds=holds,
-                               ignore_serve=ignore_serve):
+                               ignore_serve=ignore_serve, admins=admins):
                 covered.add(t.pk)
         out[r] = covered
     return out
@@ -278,6 +293,19 @@ class Reach:
     #: For PARKED: when the first of its runners resumes on its own (a scheduled
     #: unpause), or None when only a person resuming one will run it.
     held_until: dt.datetime | None = None
+    #: For UNROUTED: why nothing will take it, when the rules can say more than
+    #: "no runner" — an unbound project chat names its workspace's order and the
+    #: person (`routing.project_session_waits_why`).
+    reason: str = ""
+
+
+def _orders_for(turns) -> dict:
+    """The workspace runner orders these turns can follow: a repo turn's own
+    workspace, an unbound project chat's session workspace. One query."""
+    return load_workspace_orders(
+        {t.workspace_id for t in turns if _is_repo_turn(t)}
+        | {t.chat_session.workspace_id for t in turns if is_project_session_turn(t)}
+    )
 
 
 def _parked(takers) -> tuple[bool, dt.datetime | None]:
@@ -305,7 +333,7 @@ def turn_reach(turn: Turn) -> Reach:
     ONLINE, so a degraded box is not "picking it up".
     """
     turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__runner_binding",
-                                        "chat_session__agent")
+                                        "chat_session__agent", "enqueued_by")
             .get(pk=turn.pk))
     if turn.chat_session_id:
         ws = turn.chat_session.workspace_id
@@ -343,7 +371,9 @@ def turn_reach(turn: Turn) -> Reach:
         # Its own runners are merely offline; the requirement is the blocker
         # only if a runner that IS live would otherwise have taken it.
         return Reach(OFFLINE, covering, blocked_by_requirements(live_only=True))
-    return Reach(UNROUTED, [], blocked_by_requirements(live_only=False))
+    return Reach(UNROUTED, [], blocked_by_requirements(live_only=False),
+                 reason=(project_session_waits_why(turn, _orders_for([turn]))
+                         if is_project_session_turn(turn) else ""))
 
 
 def _when(at: dt.datetime | None) -> str:
@@ -420,7 +450,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         # chat_session + its binding are read per turn by the per-source
         # refinement below (once per turn PER RUNNER), so preload them.
         .select_related("agent", "chat_session", "chat_session__runner_binding",
-                        "chat_session__agent")
+                        "chat_session__agent", "enqueued_by")
         .filter(turn_q if turn_q is not None else Q())
         # A user sees a session turn (and its prompt) only in a chat they may
         # read — the chat ACL, not the tenant. A contact is already narrowed to
@@ -485,6 +515,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     unserved = {t.pk for t in queued if t.pk not in claimable_ever and t.acting_agent is not None}
     by_unserving = _coverage(unserved, runners, defaults, priorities,
                              ignore_serve=True) if unserved else {}
+    orders = _orders_for(queued)
 
     out = []
     for t in queued:
@@ -527,6 +558,9 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         elif t.pk in claimable_ever:
             kind = "offline"
             reason = f"a runner {what}, but none are reachable right now (offline or heartbeat lapsed)"
+        elif is_project_session_turn(t):
+            kind = "config"
+            reason = project_session_waits_why(t, orders)
         else:
             kind = "config"
             reason = f"no runner {what}"
@@ -679,7 +713,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # _assignment_allows reads turn.agent_id; the session leg's stickiness
         # check reads chat_session.agent_id + chat_session.runner_binding.
         .select_related("agent", "chat_session", "chat_session__runner_binding",
-                        "chat_session__agent")
+                        "chat_session__agent", "enqueued_by")
         .order_by("created_at")
     )
     # Two-pass: materialize candidates above, then batch-load every candidate
@@ -694,9 +728,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # claim (it is absent from the composed list, so `mine` comes back None) nor
     # count as a better-ranked availability blocker for a lower enabled rank.
     defaults, priorities = load_assignment_rows(agent_ids)
-    # The workspace runner order, for the repo turns among the candidates — the
-    # ranking a project dispatch never had (WorkspaceRunnerOrder).
-    orders = load_workspace_orders({t.workspace_id for t in candidates if _is_repo_turn(t)})
+    # The workspace runner order, for the repo turns and unbound project chats
+    # among the candidates — the ranking a project dispatch never had
+    # (WorkspaceRunnerOrder).
+    orders = _orders_for(candidates)
+    admins: dict = {}
     now = timezone.now()
     my_flags = runner.flags
     from apps.agents.services import runner_may_hold_agent
@@ -727,6 +763,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                 if not _assignment_allows(runner, turn, defaults, priorities, now):
                     continue
             if _is_repo_turn(turn) and not _repo_order_allows(runner, turn, orders, now):
+                continue
+            # An unbound project chat: a box with its repo, that the workspace's
+            # order shares or the chatting person administers (spec 2026-10-19).
+            if is_project_session_turn(turn) and not project_session_allows(
+                    runner, turn, orders, now, admins=admins):
                 continue
             if turn.chat_session_id:
                 sess = turn.chat_session

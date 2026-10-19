@@ -423,19 +423,41 @@ def load_workspace_orders(ws_ids) -> dict:
     return out
 
 
-def repo_order_for(turn: Turn, orders: dict, *, requires: frozenset | None = None) -> list | None:
-    """THE ordered runner list for one repo turn, or None when its workspace has
-    no order (route as before). Pure: no queries, no clock.
+def order_for(workspace_id, project: str, orders: dict, *, requires: frozenset) -> list | None:
+    """THE ordered runner list a workspace's runner order gives one piece of
+    repo work — a repo turn or an unbound project chat — or None when that
+    workspace has no order. Pure: no queries, no clock.
 
-    Only runners that DECLARE the turn's repo and meet its requirements are kept,
-    and ranks are renumbered over what is left — a better-ranked runner that could
-    never take this turn must not count as a blocker for one that can."""
-    listed = orders.get(turn.workspace_id)
+    Only runners that DECLARE the repo (when there is one) and meet the work's
+    requirements are kept, and ranks are renumbered over what is left — a
+    better-ranked runner that could never take this work must not count as a
+    blocker for one that can. A directed-only box takes no routed work, so it is
+    never in the list (`Runner.directed_only`)."""
+    listed = orders.get(workspace_id)
     if not listed:
         return None
-    reqs = rr.requirements_of(turn) if requires is None else requires
     return [r for r in listed
-            if turn.project in r.project_names() and rr.satisfies(r.flags, reqs)]
+            if not r.directed_only()
+            and (not project or project in r.project_names())
+            and rr.satisfies(r.flags, requires)]
+
+
+def repo_order_for(turn: Turn, orders: dict, *, requires: frozenset | None = None) -> list | None:
+    """`order_for` for one repo turn (its own workspace and repo)."""
+    reqs = rr.requirements_of(turn) if requires is None else requires
+    return order_for(turn.workspace_id, turn.project, orders, requires=reqs)
+
+
+def _cascade_allows(runner: Runner, rows: list, turn: Turn, now) -> bool:
+    """The availability cascade over a workspace order: this runner is listed,
+    and either every better rank is unavailable or the turn has aged past the
+    grace — `_assignment_allows_for_agent`'s rule over an order."""
+    mine = next((i for i, r in enumerate(rows) if r.id == runner.id), None)
+    if mine is None:
+        return False
+    if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
+        return True
+    return not any(r.is_available for r in rows[:mine])
 
 
 def _repo_order_allows(runner: Runner, turn: Turn, orders: dict, now) -> bool:
@@ -444,12 +466,92 @@ def _repo_order_allows(runner: Runner, turn: Turn, orders: dict, now) -> bool:
     rows = repo_order_for(turn, orders)
     if rows is None:
         return True
-    mine = next((i for i, r in enumerate(rows) if r.id == runner.id), None)
-    if mine is None:
+    return _cascade_allows(runner, rows, turn, now)
+
+
+# ---- project chats: a chat with no agent, only a repo (spec 2026-10-19 #6) ----
+#
+# Its UNBOUND turns follow the rules a repo turn follows, plus one: with no
+# workspace order, only a box the chatting person administers. Before, any
+# session-capable box in the tenant took them, so a teammate's new project chat
+# landed on someone else's laptop. A bound session still claims only on its
+# holder, and a pin still bypasses all of this. The claim asks
+# `project_session_allows`; every reader that mirrors it (`claim._refined_allows`,
+# so turn_reach, the unclaimable report and the topology) asks
+# `project_session_covers` — the same predicates without the clock.
+
+def is_project_session_turn(turn: Turn) -> bool:
+    """A chat turn with no agent whose session is not bound to a runner — the
+    turns the project-chat rules route. A chat with neither an agent nor a repo
+    counts: it has no repo to match, but it is still somebody's work."""
+    if not turn.chat_session_id or turn.chat_session.agent_id:
         return False
-    if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
-        return True
-    return not any(r.is_available for r in rows[:mine])
+    binding = getattr(turn.chat_session, "runner_binding", None)
+    return binding is None or binding.runner_id is None
+
+
+def project_session_rows(turn: Turn, orders: dict, *, requires: frozenset | None = None) -> list | None:
+    """The workspace order a project chat's turn follows (`order_for` on its
+    session's workspace and repo), or None when the workspace has none."""
+    sess = turn.chat_session
+    reqs = rr.requirements_of(turn) if requires is None else requires
+    return order_for(sess.workspace_id, sess.project, orders, requires=reqs)
+
+
+def _chatter_administers(runner: Runner, turn: Turn, admins: dict | None) -> bool:
+    """Rule 3: the person who sent it (`enqueued_by`) administers this box. A
+    turn with no person behind it gets no box this way. Cached per (box, person)
+    when the caller passes `admins`."""
+    if not turn.enqueued_by_id:
+        return False
+    from .runners import can_administer_runner
+
+    if admins is None:
+        return can_administer_runner(turn.enqueued_by, runner)
+    key = (runner.id, turn.enqueued_by_id)
+    if key not in admins:
+        admins[key] = can_administer_runner(turn.enqueued_by, runner)
+    return admins[key]
+
+
+def project_session_covers(runner: Runner, turn: Turn, orders: dict, *,
+                           requires: frozenset | None = None, admins: dict | None = None) -> bool:
+    """Could this runner EVER take this unbound project-chat turn? Rules 1–3,
+    without the cascade's clock (membership, as for a repo turn's order)."""
+    if runner.directed_only():
+        return False
+    project = turn.chat_session.project
+    if project and project not in runner.project_names():
+        return False  # 1. the box declares the repo
+    rows = project_session_rows(turn, orders, requires=requires)
+    if rows is not None:
+        return any(r.id == runner.id for r in rows)  # 2. the workspace shares it
+    return _chatter_administers(runner, turn, admins)  # 3. or you run it
+
+
+def project_session_allows(runner: Runner, turn: Turn, orders: dict, now, *,
+                           admins: dict | None = None) -> bool:
+    """`project_session_covers`, then the order's availability cascade and grace."""
+    if not project_session_covers(runner, turn, orders, admins=admins):
+        return False
+    rows = project_session_rows(turn, orders)
+    return rows is None or _cascade_allows(runner, rows, turn, now)
+
+
+def project_session_waits_why(turn: Turn, orders: dict) -> str:
+    """Why no box will take this unbound project-chat turn, in the words of the
+    rules above — the reason `unclaimable_queued_turns` and `turn_reach` give."""
+    sess = turn.chat_session
+    ws = sess.workspace_id
+    repo = sess.project
+    with_repo = f"with {repo}" if repo else "that takes chats"
+    if project_session_rows(turn, orders) is not None:
+        return f"the runner order in {ws} lists no session-capable box {with_repo}"
+    if not turn.enqueued_by_id:
+        return (f"no runner order in {ws}, and this project chat has no person behind "
+                "it, so it needs one")
+    who = turn.enqueued_by.email or turn.enqueued_by.get_username()
+    return f"no runner order in {ws}, and {who} administers no box {with_repo}"
 
 
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
