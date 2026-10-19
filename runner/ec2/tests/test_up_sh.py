@@ -27,7 +27,7 @@ import pytest
 
 EC2 = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = EC2 / "up.sh"
-STAGED = ["canopy/cloud-runner/claude-oauth-token", "canopy/cloud-runner/gog-keyring-password"]
+STAGED = ["canopy/cloud-runner/claude-oauth-token"]
 ROLE_ARN = "arn:aws:iam::123456789012:role/canopy-cloud-runner-test-RunnerRole-X"
 INV_ID = "0b4f7f8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
 RID = "6f1c0d3e-0000-4000-8000-000000000001"
@@ -420,3 +420,51 @@ def test_up_workspace_names_where_the_box_pairs(tmp_path, canopy):
     assert res.returncode == 0, res.stdout + res.stderr
     assert " RunnerWorkspace=canopy " in _deploy(state)
     assert "RunnerDirected" not in _deploy(state)
+
+
+# ---- isolation units (spec 2026-10-19-runner-isolation-units, plan Task 6.6) -----
+
+def test_up_units_invites_every_unit_in_one_invitation(tmp_path, canopy):
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi",
+              "--units", "tree:dimagi,tree:connect,agent:eva")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert " RunnerUnits=tree:dimagi,tree:connect,agent:eva " in _deploy(state)
+    ecdh = next(c for c in _calls(state) if "cloudformation deploy" in c and "-ecdh" in c)
+    for p in ("Unit1=connect", "Unit2=agent-eva", "Unit3=", "Unit4="):
+        assert f" {p}" in ecdh + " ", (p, ecdh)
+    # Each extra unit's key is read by the alias the -ecdh stack gives it.
+    assert any("get-public-key --key-id alias/canopy-runner-ecdh/canopy-cloud-runner-test-RunnerRole-X/agent-eva"
+               in c for c in _calls(state))
+    [(_, body)] = [(p, b) for p, b in canopy.handler.posted if p == "/api/harness/runner-invitations/"]
+    assert body["name"] == "cloud-ec2-test"
+    assert [(u["name"], u["workspace"], u["kind"], u["slug"]) for u in body["units"]] == [
+        ("cloud-ec2-test", "dimagi", "tree", ""), ("cloud-ec2-test-connect", "connect", "tree", ""),
+        ("cloud-ec2-test-agent-eva", "dimagi", "agent", "eva")]
+    assert all("ecdh_public_jwk" in u for u in body["units"])
+    # Every unit workspace passed the invitation's gates before AWS was touched.
+    assert {"dimagi", "connect"} <= set(canopy.handler.checked)
+
+
+def test_up_units_refuses_a_workspace_you_cannot_run_work_in(tmp_path, canopy):
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi",
+              "--units", "tree:dimagi,tree:readonly")
+    assert res.returncode != 0 and "readonly" in res.stderr
+    assert not any("deploy" in c for c in _calls(state))
+
+
+def test_up_units_in_place_leaves_the_runner_stack_alone(tmp_path, canopy):
+    """Moving a live box to units: the KMS keys and the invitation, never an
+    instance stop/start or replacement — the box moves itself (--install-units)."""
+    state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=INSTANCE_CHANGE, stack_workspace="connect")
+    canopy.handler.runners = [{"kind": "cloud", "name": "cloud-ec2-test", "status": "online"}]
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--units", "tree:connect,agent:eva@connect",
+              "--in-place")
+    assert res.returncode == 0, res.stdout + res.stderr
+    deploys = [c for c in _calls(state) if "cloudformation deploy" in c]
+    assert deploys and all("-ecdh" in c for c in deploys), deploys
+    assert not any("execute-change-set" in c for c in _calls(state))
+    assert "--install-units" in res.stdout and "RUNNER_UNITS=tree:connect,agent:eva@connect" in res.stdout
+    [(_, body)] = [(p, b) for p, b in canopy.handler.posted if p == "/api/harness/runner-invitations/"]
+    assert [u["name"] for u in body["units"]] == ["cloud-ec2-test", "cloud-ec2-test-agent-eva"]
