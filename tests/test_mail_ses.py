@@ -53,13 +53,17 @@ def s3_signing(monkeypatch):
 @pytest.mark.parametrize("call", [
     lambda: ses.create_identity("d.example", mail_from="bounce.d.example"),
     lambda: ses.identity_verified("d.example"),
+    lambda: ses.identity_status("d.example"),
+    lambda: ses.restart_dkim("d.example"),
+    lambda: ses.restart_mail_from("d.example", mail_from="bounce.d.example"),
     lambda: ses.delete_identity("d.example"),
     lambda: ses.send_raw(from_addr="a@b.c", to=["d@e.f"], raw=b"x"),
     lambda: ses.get_object("incoming/abc"),
     lambda: ses.keep("incoming/abc"),
     lambda: ses.put_object("kept/abc", b"x", "text/plain"),
     lambda: ses.presign("incoming/abc", "f.pdf"),
-], ids=["create_identity", "identity_verified", "delete_identity", "send_raw",
+], ids=["create_identity", "identity_verified", "identity_status", "restart_dkim",
+        "restart_mail_from", "delete_identity", "send_raw",
         "get_object", "keep", "put_object", "presign"])
 def test_everything_refuses_when_mail_is_off(settings, call):
     settings.MAIL_ENABLED = False
@@ -121,6 +125,44 @@ def test_identity_verified_reads_dkim_status(on, sesv2):
                        {"DkimAttributes": {"Status": "SUCCESS"}, "VerifiedForSendingStatus": True},
                        {"EmailIdentity": "marshellis.com"})
     assert ses.identity_verified("marshellis.com") is True
+
+
+def test_identity_status_reads_dkim_and_mail_from(on, sesv2):
+    sesv2.add_response("get_email_identity",
+                       {"DkimAttributes": {"Status": "FAILED", "Tokens": ["t1", "t2", "t3"]},
+                        "MailFromAttributes": {"MailFromDomain": "bounce.marshellis.com",
+                                               "MailFromDomainStatus": "FAILED",
+                                               "BehaviorOnMxFailure": "USE_DEFAULT_VALUE"}},
+                       {"EmailIdentity": "marshellis.com"})
+    assert ses.identity_status("marshellis.com") == ses.IdentityStatus("FAILED", "FAILED", ["t1", "t2", "t3"])
+
+
+def test_restart_dkim_reputs_easy_dkim_with_no_new_key(on, sesv2):
+    # Stubber checks the call against botocore's own SESv2 model: the operation and its
+    # params exist, and only the origin is sent (no SigningAttributes, so no key change).
+    sesv2.add_response("put_email_identity_dkim_signing_attributes",
+                       {"DkimStatus": "PENDING", "DkimTokens": ["t1", "t2", "t3"]},
+                       {"EmailIdentity": "marshellis.com", "SigningAttributesOrigin": "AWS_SES"})
+    assert ses.restart_dkim("marshellis.com") == ["t1", "t2", "t3"]
+    sesv2.assert_no_pending_responses()
+
+
+def test_restart_mail_from_reputs_the_same_attributes(on, sesv2):
+    sesv2.add_response("put_email_identity_mail_from_attributes", {},
+                       {"EmailIdentity": "marshellis.com", "MailFromDomain": "bounce.marshellis.com",
+                        "BehaviorOnMxFailure": "USE_DEFAULT_VALUE"})
+    ses.restart_mail_from("marshellis.com", mail_from="bounce.marshellis.com")
+    sesv2.assert_no_pending_responses()
+
+
+def test_restart_calls_are_ones_the_task_role_may_make():
+    """The mail stack's task-role policy must allow every SES write the restart makes."""
+    from pathlib import Path
+
+    tpl = (Path(__file__).resolve().parents[1] / "deploy/aws/canopy-mail.cfn.yaml").read_text()
+    for action in ("ses:GetEmailIdentity", "ses:PutEmailIdentityDkimSigningAttributes",
+                   "ses:PutEmailIdentityMailFromAttributes"):
+        assert action in tpl
 
 
 def test_delete_identity_deletes_the_sesv2_identity(on, sesv2):

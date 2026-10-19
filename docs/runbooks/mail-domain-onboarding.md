@@ -57,7 +57,9 @@ The mail stack's HTTPS subscriptions send a `SubscriptionConfirmation` the momen
 
 ## Watching and recovering
 
-A suspended domain (bounce/complaint rate) shows its reason on the settings page; fix the cause, then re-enable it there. Raw inbound mail in `incoming/` is deleted after 7 days.
+A suspended domain (bounce/complaint rate) shows its reason on the settings page; fix the cause, then re-enable it there.
+
+**A domain stuck on `pending` with "SES gave up verifying"** means the records were not published (or not visible) within SES's 72-hour window: SES's DKIM or MAIL FROM status is `FAILED` and it never re-checks by itself, even once every row is green. Recovery: publish the records until the rows are green, then press **Re-check and restart verification** on the Email page (or `POST /api/mail/domains/<workspace>/<id>/refresh`, the `refresh_mail_domain` MCP tool). canopy restarts SES verification in place — same identity, same DKIM tokens unless SES issues new ones, in which case the page lists the new CNAMEs to publish and says so. It restarts at most every 10 minutes per domain. SES then re-checks within minutes to hours; the domain turns `verified` on a later read. Never restart it by hand in the SES console or CLI: the row's tokens and the identity must stay in step. To confirm, read (only) `aws sesv2 get-email-identity --profile labs --region us-east-1 --email-identity <domain>`: `DkimAttributes.Status` and `MailFromAttributes.MailFromDomainStatus` go `PENDING` → `SUCCESS`. Raw inbound mail in `incoming/` is deleted after 7 days.
 
 **Replaying a message**, within those 7 days. Its key is `incoming/<SES message id>` (list them with `aws s3 ls --profile labs s3://canopy-inbound-mail-858923557655/incoming/`); run it as a one-off task on the canopy-web task definition (`aws ecs run-task` with a `containerOverrides` command, output in the `/ecs/labs-jj-canopy-web` log group — the pattern in `docs/runbooks/connecting-a-system.md`). **Always `--dry-run` first**:
 ```bash

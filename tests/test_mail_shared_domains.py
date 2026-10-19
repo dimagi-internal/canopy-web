@@ -25,6 +25,7 @@ def _aws(settings, monkeypatch):
     from apps.mail import dns
     monkeypatch.setattr(dns, "_resolve", lambda n, t: [])
     monkeypatch.setattr(ses, "identity_verified", lambda d: True)
+    monkeypatch.setattr(ses, "identity_status", lambda d: ses.IdentityStatus("SUCCESS", "SUCCESS", []))
 
 
 @pytest.fixture()

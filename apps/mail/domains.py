@@ -176,8 +176,15 @@ def records(domain: MailDomain) -> list:
     return got
 
 
-def refresh(domain: MailDomain, *, force: bool = False) -> MailDomain:
+_RESTART_COOLDOWN = dt.timedelta(minutes=10)  # between verification restarts of one domain
+
+
+def refresh(domain: MailDomain, *, force: bool = False, restart: bool = False) -> MailDomain:
+    """Re-read SES verification and the MX. `restart` (the explicit Re-check only — never
+    the lazy per-read refresh) also starts verification over when SES gave up on it and the
+    records it looks for are published now; what it did is left on `domain.restart_note`."""
     now = timezone.now()
+    domain.restart_note = ""  # not a field: the Re-check's answer
     if domain.checked_at:
         age = now - domain.checked_at
         if age < dt.timedelta(seconds=_FORCE_COOLDOWN) or (
@@ -185,21 +192,103 @@ def refresh(domain: MailDomain, *, force: bool = False) -> MailDomain:
             return domain
     if force:
         cache.delete(_cache_key(domain))
-    if domain.status == MailDomain.PENDING:
+    fields = ["mx_provider", "receiving", "checked_at"]
+    if domain.status == MailDomain.PENDING or domain.verification_error or restart:
         try:
-            if ses.identity_verified(domain.name):
+            status = ses.identity_status(domain.name)
+        except ses.MailOff:
+            status = None
+        if status is not None:
+            if status.dkim == "SUCCESS" and domain.status == MailDomain.PENDING:
                 # only flip a row that is still pending: a concurrent suspension wins
                 if MailDomain.objects.filter(pk=domain.pk, status=MailDomain.PENDING).update(
                         status=MailDomain.VERIFIED):
                     domain.status = MailDomain.VERIFIED
-        except ses.MailOff:
-            pass
+            if restart:
+                status = _restart_failed(domain, status, now)
+                fields += ["dkim_tokens", "verification_restarted_at"]
+            domain.verification_error = verification_error(domain, status)
+            fields.append("verification_error")
     mx = dns._resolve(domain.name, "MX")
     domain.mx_provider = dns.mx_provider(mx)
     domain.receiving = any(settings.MAIL_INBOUND_MX in h.lower() for h in mx)
     domain.checked_at = now
-    domain.save(update_fields=["mx_provider", "receiving", "checked_at"])
+    domain.save(update_fields=fields)
     return domain
+
+
+def verification_error(domain: MailDomain, status: ses.IdentityStatus) -> str:
+    """Why SES is no longer verifying, in words for the settings page; "" when it is."""
+    failed = []
+    if status.dkim == "FAILED" and domain.status == MailDomain.PENDING:
+        failed.append("the DKIM records")
+    if status.mail_from == "FAILED":
+        failed.append(f"the MAIL FROM records on {domain.mail_from_subdomain}.{domain.name}")
+    if not failed:
+        return ""
+    return ("SES gave up verifying — " + " and ".join(failed) + " weren't found within 72 hours, "
+            "and it does not look again by itself. Once the records below are published, "
+            "Re-check starts verification again.")
+
+
+def _restart_failed(domain: MailDomain, status: ses.IdentityStatus, now) -> ses.IdentityStatus:
+    """Start over whatever SES gave up on, when its records now check out in live DNS.
+
+    At most once per `_RESTART_COOLDOWN` per domain. Restarting changes no configuration:
+    DKIM re-puts Easy DKIM with no new key and MAIL FROM re-puts the same attributes. If SES
+    nevertheless answers with different DKIM tokens, the row takes them (the page then lists
+    the new records) and the note says so. Returns the status as it stands afterwards."""
+    dkim_failed = status.dkim == "FAILED" and domain.status == MailDomain.PENDING
+    mail_from_failed = status.mail_from == "FAILED"
+    if not (dkim_failed or mail_from_failed):
+        return status
+    last = domain.verification_restarted_at
+    if last and now - last < _RESTART_COOLDOWN:
+        mins = max(1, int((_RESTART_COOLDOWN - (now - last)).total_seconds() // 60))
+        domain.restart_note = (f"Verification was restarted {_ago(now - last)}; "
+                               f"Re-check can restart it again in {mins} min.")
+        return status
+    by_purpose = {r.purpose: r for r in records(domain)}
+    dkim_rows = [r for p, r in by_purpose.items() if p.startswith("dkim-")]
+    dkim_ready = bool(dkim_rows) and all(r.ok for r in dkim_rows)
+    mail_from_ready = all(by_purpose.get(p) is not None and by_purpose[p].ok
+                          for p in ("mail-from-mx", "mail-from-spf"))
+    did, waiting, notes = [], [], []
+    dkim, mail_from, tokens = status.dkim, status.mail_from, status.tokens
+    try:
+        if dkim_failed and dkim_ready:
+            new = ses.restart_dkim(domain.name)
+            did.append("DKIM")
+            dkim = "PENDING"
+            if new and sorted(new) != sorted(domain.dkim_tokens or []):
+                notes.append("SES issued new DKIM records: publish the DKIM rows below in place "
+                             "of the old ones.")
+                domain.dkim_tokens = tokens = new
+                cache.delete(_cache_key(domain))
+        elif dkim_failed:
+            waiting.append("DKIM")
+        if mail_from_failed and mail_from_ready:
+            ses.restart_mail_from(domain.name, mail_from=f"{domain.mail_from_subdomain}.{domain.name}")
+            did.append("MAIL FROM")
+            mail_from = "PENDING"
+        elif mail_from_failed:
+            waiting.append("MAIL FROM")
+    except (ClientError, BotoCoreError) as exc:
+        log.warning("mail: restarting verification of %s failed", domain.name, exc_info=True)
+        notes.append(f"SES refused to restart verification: {_reason(exc)}.")
+    if did:
+        domain.verification_restarted_at = now
+        notes.insert(0, f"Restarted SES verification of {' and '.join(did)}; "
+                        "SES re-checks the records over the next minutes to hours.")
+    if waiting:
+        notes.append(f"{' and '.join(waiting)} not restarted: its records are not all green yet.")
+    domain.restart_note = " ".join(notes)
+    return ses.IdentityStatus(dkim=dkim, mail_from=mail_from, tokens=tokens)
+
+
+def _ago(delta: dt.timedelta) -> str:
+    mins = int(delta.total_seconds() // 60)
+    return "just now" if mins < 1 else f"{mins} min ago"
 
 
 def remove_domain(domain: MailDomain) -> None:

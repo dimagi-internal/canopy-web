@@ -37,6 +37,12 @@ class MailDomainOut(Schema):
     receiving: bool
     mx_provider: str
     suspended_reason: str
+    verification_error: str = ""
+    """Why SES stopped verifying the domain (its DKIM or MAIL FROM check FAILED after 72 h);
+    "" while verifying or verified. The status stays `pending` meanwhile."""
+    verification_restarted_at: str | None = None
+    restart_note: str = ""
+    """On a Re-check's answer only: whether it restarted SES verification, and why not."""
     daily_send_cap: int
     records: list[DnsRecordOut]
     routes: list[MailRouteOut]

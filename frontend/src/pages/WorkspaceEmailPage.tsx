@@ -149,8 +149,9 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         )}
         {owned && (
           <button type="button" className={secondary} disabled={busy}
+            title={domain.verification_error ? 'Re-check DNS and restart SES verification' : undefined}
             onClick={() => void run(async () => onChange(await refreshMailDomain(workspace, domain.id)), 'Could not re-check')}>
-            Re-check
+            {domain.verification_error ? 'Re-check and restart verification' : 'Re-check'}
           </button>
         )}
         {manage && owned && (
@@ -164,6 +165,17 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         )}
       </div>
 
+      {owned && domain.verification_error && (
+        <p className="text-[12px] text-destructive" data-testid="mail-verification-error">
+          {domain.verification_error}
+          <span className="block text-muted-foreground">
+            Re-check restarts SES verification when the records below are green (at most every 10 minutes).
+          </span>
+        </p>
+      )}
+      {owned && domain.restart_note && (
+        <p className="text-[12px] text-muted-foreground" data-testid="mail-restart-note">{domain.restart_note}</p>
+      )}
       {owned && !domain.receiving && domain.mx_provider && (
         <p className="text-[12px] text-warning" data-testid="mail-mx-elsewhere">
           {domain.mx_points_at_google

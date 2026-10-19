@@ -22,6 +22,7 @@ def stub_aws(monkeypatch, settings):
     monkeypatch.setattr(ses, "create_identity", lambda d, mail_from: ["t1", "t2", "t3"])
     monkeypatch.setattr(ses, "identity_verified", lambda d: True)
     monkeypatch.setattr(ses, "delete_identity", lambda d: None)
+    monkeypatch.setattr(ses, "identity_status", lambda d: ses.IdentityStatus("SUCCESS", "SUCCESS", []))
     from apps.mail import dns
     monkeypatch.setattr(dns, "_resolve", lambda n, t: ["10 mx.zoho.com."] if t == "MX" else [])
 
@@ -530,3 +531,126 @@ def test_a_plain_add_keeps_the_default_audit_summary(owner, ws):
     assert row.changes == [{"scope": "mail.domain:marshellis.com", "before": None,
                             "after": {"name": "marshellis.com"}}]
     assert "released" not in row.summary
+
+
+# ---- SES gave up verifying (DKIM / MAIL FROM FAILED after 72 h) ----------------
+
+def _published(n, t):
+    """Live DNS for marshellis.com with every DKIM and bounce record published."""
+    if t == "CNAME" and n.endswith("._domainkey.marshellis.com"):
+        return [n.split(".", 1)[0] + ".dkim.amazonses.com."]
+    if n == "bounce.marshellis.com":
+        return ["10 feedback-smtp.us-east-1.amazonses.com."] if t == "MX" else ["v=spf1 include:amazonses.com -all"]
+    return ["10 mx.zoho.com."] if t == "MX" else []
+
+
+@pytest.fixture()
+def failed(ws, monkeypatch):
+    from apps.mail import dns
+    monkeypatch.setattr(dns, "_resolve", _published)
+    state = {"dkim": "FAILED", "mail_from": "FAILED", "tokens": ["t1", "t2", "t3"]}
+    calls = []
+    monkeypatch.setattr(ses, "identity_status",
+                        lambda d: ses.IdentityStatus(state["dkim"], state["mail_from"], list(state["tokens"])))
+
+    def restart_dkim(d):
+        calls.append(("dkim", d))
+        state["dkim"] = "PENDING"
+        return list(state["tokens"])
+
+    def restart_mail_from(d, mail_from):
+        calls.append(("mail_from", d, mail_from))
+        state["mail_from"] = "PENDING"
+    monkeypatch.setattr(ses, "restart_dkim", restart_dkim)
+    monkeypatch.setattr(ses, "restart_mail_from", restart_mail_from)
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", dkim_tokens=["t1", "t2", "t3"])
+    return d, state, calls
+
+
+def _recheck(owner, d):
+    MailDomain.objects.filter(pk=d.pk).update(checked_at=None)  # past the 10 s cooldown
+    r = _c(owner).post(f"/api/mail/domains/marshellis/{d.pk}/refresh")
+    assert r.status_code == 200, r.content
+    return r.json()
+
+
+def test_a_failed_verification_is_surfaced_and_the_lazy_refresh_never_restarts_it(owner, failed):
+    d, _, calls = failed
+    body = _c(owner).get("/api/mail/domains/marshellis").json()["items"][0]
+    assert body["status"] == "pending"  # status values unchanged
+    assert "SES gave up verifying" in body["verification_error"]
+    assert "72 hours" in body["verification_error"] and "bounce.marshellis.com" in body["verification_error"]
+    assert calls == []
+
+
+def test_recheck_restarts_failed_verification_keeping_the_tokens(owner, failed):
+    from apps.events.models import SettingChange
+    d, _, calls = failed
+    body = _recheck(owner, d)
+    assert calls == [("dkim", "marshellis.com"), ("mail_from", "marshellis.com", "bounce.marshellis.com")]
+    assert body["status"] == "pending" and body["verification_error"] == ""
+    assert "Restarted SES verification of DKIM and MAIL FROM" in body["restart_note"]
+    assert "new DKIM records" not in body["restart_note"]
+    d.refresh_from_db()
+    assert d.dkim_tokens == ["t1", "t2", "t3"] and d.verification_restarted_at is not None
+    row = SettingChange.objects.get(operation="refresh_mail_domain")
+    assert "restarted SES verification of marshellis.com" in row.summary
+
+
+def test_recheck_restarts_at_most_once_per_ten_minutes(owner, failed):
+    d, state, calls = failed
+    _recheck(owner, d)
+    state["dkim"] = state["mail_from"] = "FAILED"  # SES gave up again at once
+    body = _recheck(owner, d)
+    assert len(calls) == 2  # the first restart's two calls only
+    assert "can restart it again in" in body["restart_note"]
+    MailDomain.objects.filter(pk=d.pk).update(
+        verification_restarted_at=timezone.now() - dt.timedelta(minutes=11))
+    _recheck(owner, d)
+    assert len(calls) == 4
+
+
+def test_recheck_does_not_restart_while_records_are_missing(owner, failed, monkeypatch):
+    from apps.mail import dns
+    d, _, calls = failed
+    monkeypatch.setattr(dns, "_resolve", lambda n, t: [])
+    body = _recheck(owner, d)
+    assert calls == []
+    assert "not restarted" in body["restart_note"]
+    assert "SES gave up verifying" in body["verification_error"]
+    assert MailDomain.objects.get(pk=d.pk).verification_restarted_at is None
+
+
+def test_recheck_takes_new_tokens_when_ses_issues_them(owner, failed, monkeypatch):
+    d, state, calls = failed
+    monkeypatch.setattr(ses, "restart_dkim", lambda name: ["n1", "n2", "n3"])
+    body = _recheck(owner, d)
+    assert "new DKIM records" in body["restart_note"]
+    assert {r["name"] for r in body["records"] if r["purpose"].startswith("dkim-")} == {
+        f"{t}._domainkey.marshellis.com" for t in ("n1", "n2", "n3")}
+    assert MailDomain.objects.get(pk=d.pk).dkim_tokens == ["n1", "n2", "n3"]
+
+
+def test_recheck_restarts_only_mail_from_on_a_verified_domain(owner, failed):
+    d, state, calls = failed
+    state["dkim"] = "SUCCESS"
+    MailDomain.objects.filter(pk=d.pk).update(status="verified")
+    body = _recheck(owner, MailDomain.objects.get(pk=d.pk))
+    assert calls == [("mail_from", "marshellis.com", "bounce.marshellis.com")]
+    assert body["status"] == "verified" and body["verification_error"] == ""
+
+
+def test_recheck_reports_an_ses_refusal_without_failing(owner, failed, monkeypatch):
+    d, _, _ = failed
+    monkeypatch.setattr(ses, "restart_dkim",
+                        lambda name: (_ for _ in ()).throw(_client_error("TooManyRequestsException")))
+    body = _recheck(owner, d)
+    assert "SES refused to restart verification: TooManyRequestsException" in body["restart_note"]
+    assert "SES gave up verifying" in body["verification_error"]
+
+
+def test_a_plain_recheck_writes_no_audit_row(owner, ws):
+    from apps.events.models import SettingChange
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", dkim_tokens=["t1"])
+    _recheck(owner, d)
+    assert not SettingChange.objects.filter(operation="refresh_mail_domain").exists()
