@@ -52,9 +52,10 @@ BATCH = 256
 #: Passages fetched per semantic search: one item can own several of the nearest,
 #: and canopy_kb keeps one per item, so ask for more than the items wanted.
 PASSAGES_PER_ITEM = 3
-#: HNSW candidate list per search. Measured on the GiveWell KB (140k passages,
-#: golden set, kb_eval): 150 and 400 lost neighbours an exact scan finds (hybrid
-#: MRR 0.496 / 0.524); 1000 matches the exact scan (0.554) at tens of ms.
+#: HNSW candidate list per search: pgvector's maximum. Measured on the GiveWell KB
+#: (140k passages, kb_eval): lower values lost neighbours an exact scan finds; with
+#: the index built m=32, ef_construction=200 (migration 0065) 1000 comes within
+#: 2/312 of the exact scan at ~60 ms a search.
 EF_SEARCH = 1000
 #: How hard a bulk embed tries one passage before leaving it for the next run.
 ATTEMPTS = 6
