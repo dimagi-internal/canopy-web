@@ -148,26 +148,35 @@ for a in (items or []):
 # each one's vault every 30 minutes; a zero-knowledge agent refuses a box it does
 # not route to, and each refusal emailed that agent's owner a device-proof alert
 # (fizzy, 2026-10-17, canopy-web#1563). canopy-web answers which agents this box
-# serves by the same rule it checks the proof against. Nothing (no runner id yet,
-# an older canopy-web, an error, an empty answer) means "unknown": the roster
-# stays the registry, as before.
-served_agents() {  # -> one slug per line, or nothing
+# serves by the same rule it checks the proof against.
+#
+# ANSWERED (HTTP 200 with a JSON list) is final, an empty list included: a new box
+# serves nothing, and reading [] as "unknown" sent cloud-ec2-fork down the whole
+# registry, each resolve refused "does not run echo" (2026-10-18). Only UNKNOWN (no
+# runner id yet, an older canopy-web, an error, a body that is not a list) falls
+# back to the registry. A box that later gains an agent prepares it then
+# (request_setup, or the runner's lazy clone on its first turn).
+served_agents() {  # -> one slug per line; exit 0 = answered (even empty), 3 = unknown
   local base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
-  local state="${STATE_FILE:-${HOME:-}/.canopy-cloud-runner.json}" rid
-  [[ -n "$base" && -n "$tok" && -r "$state" ]] || return 0
+  local state="${STATE_FILE:-${HOME:-}/.canopy-cloud-runner.json}" rid body
+  [[ -n "$base" && -n "$tok" && -r "$state" ]] || return 3
   rid="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("runner_id") or "")' \
          "$state" 2>/dev/null)" || rid=""
-  [[ -n "$rid" ]] || return 0
-  curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
-       "${base%/}/api/harness/runners/${rid}/agents" 2>/dev/null | python3 -c '
+  [[ -n "$rid" ]] || return 3
+  body="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+       "${base%/}/api/harness/runners/${rid}/agents" 2>/dev/null)" || return 3
+  printf '%s' "$body" | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
 except Exception:
-    raise SystemExit(0)
-if isinstance(d, list):
-    print("\n".join(s for s in d if isinstance(s, str) and s))
-' 2>/dev/null || true
+    raise SystemExit(3)
+if not isinstance(d, list):
+    raise SystemExit(3)
+for s in d:
+    if isinstance(s, str) and s:
+        print(s)
+' 2>/dev/null || return 3
 }
 
 resolve_roster() {  # -> comma-joined slugs; served first, registry, AGENT_SLUGS offline
@@ -176,14 +185,14 @@ resolve_roster() {  # -> comma-joined slugs; served first, registry, AGENT_SLUGS
   # and it does not depend on the token being able to list the whole fleet. It
   # used to be only a filter over the registry, so an empty registry (a revoked
   # PAT, 2026-10-17) threw it away and fell back to AGENT_SLUGS.
-  local reg served
-  served="$(served_agents)"
-  if [[ -n "$served" ]]; then
-    reg="$served"
-  else
-    reg="$(agent_registry)"
+  local reg served slugs
+  if served="$(served_agents)"; then
+    slugs="$(printf '%s' "$served" | grep -v '^$' | paste -sd, - 2>/dev/null || true)"
+    [[ -n "$slugs" ]] || printf '[bootstrap-agents] this box serves no agents yet\n' >&2
+    printf '%s\n' "$slugs"
+    return 0
   fi
-  local slugs
+  reg="$(agent_registry)"
   slugs="$(printf '%s' "$reg" | cut -f1 | grep -v '^$' | paste -sd, - 2>/dev/null || true)"
   # An EMPTY registry is treated as "could not read", not as "provision nothing":
   # a canopy-web with zero agents is indistinguishable from an outage, and the
@@ -498,6 +507,11 @@ step4b_prune_caches() {
 # ── Step 5: readiness summary ────────────────────────────────────────────────────
 step5_summary() {
   log "step 5: readiness summary"
+  if [[ -z "$AGENT_SLUGS" ]]; then
+    # An answered, empty roster (served_agents): success, not "nothing came up".
+    ok "this box serves no agents yet — nothing to prepare"
+    return 0
+  fi
   log "agents attempted: ${AGENT_SLUGS}"
   log "agents with a clone + provision pass: ${READY_AGENTS[*]:-(none)}"
   if [[ ${#FAILED_AGENTS[@]} -gt 0 ]]; then
