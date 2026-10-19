@@ -22,11 +22,34 @@ from apps.harness.models import Runner, RunnerInvitation
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.test_canopy_vault_phase1b import ROLE, sts  # noqa: F401 — sts is a fixture
+
+
+def _proof(htu: str) -> str:
+    """A botocore-signed, unsent sts:GetCallerIdentity, as the box builds it —
+    with a signed random jti, so two proofs in one second are not a replay."""
+    import base64
+    import json
+    import secrets
+    import time
+
+    from botocore.auth import SigV4Auth
+    from botocore.awsrequest import AWSRequest
+    from botocore.credentials import Credentials
+
+    body = "Action=GetCallerIdentity&Version=2011-06-15"
+    headers = {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+               "X-Canopy-Proof-Htu": htu, "X-Canopy-Proof-Iat": str(int(time.time())),
+               "X-Canopy-Proof-Jti": secrets.token_hex(16)}
+    req = AWSRequest(method="POST", url="https://sts.amazonaws.com/", data=body, headers=headers)
+    SigV4Auth(Credentials("AKIAFAKE", "fake-secret", "fake-session-token"), "sts", "us-east-1").add_auth(req)
+    obj = {"method": "POST", "url": "https://sts.amazonaws.com/", "headers": dict(req.headers.items()),
+           "body": body}
+    return base64.b64encode(json.dumps(obj).encode()).decode()
 
 pytestmark = pytest.mark.django_db
 
 INVITES = "/api/harness/runner-invitations/"
-ROLE = "arn:aws:iam::123456789012:role/canopy-runner-fork-RunnerRole-ABC"
 
 
 @pytest.fixture(autouse=True)
@@ -72,7 +95,7 @@ def test_creating_an_invitation_returns_its_approve_link_and_tells_the_creator(
     inv = RunnerInvitation.objects.get(pk=body["id"])
     assert body["status"] == "pending" and body["runner_id"] is None
     assert body["name"] == "cloud-ec2-fork" and body["workspace"] == "connect"
-    assert body["role_arn"] == "arn:aws:iam::123456789012:role/canopy-runner-fork-RunnerRole-ABC"
+    assert body["role_arn"] == ROLE
     assert body["approve_url"].endswith(f"/w/connect/runner-invitations/{inv.pk}")
     assert inv.created_by == org["user"] and inv.role_jkt == aws_iam_proof.role_jkt(ROLE)
     assert (inv.expires_at - inv.created_at) == timedelta(hours=1)
@@ -176,3 +199,231 @@ def test_creating_and_approving_are_recorded_as_activity(org):
     org["browser"].post(f"{INVITES}{inv['id']}/approve")
     kinds = list(Activity.objects.filter(workspace_id="connect").order_by("at").values_list("kind", flat=True))
     assert kinds == ["runner.invited", "runner.invitation.approved"]
+
+
+# ---- the box pairs by its instance role ------------------------------------------------
+
+PAIR = "/api/harness/runners/pair-by-role"
+PAIR_HTU = f"http://testserver{PAIR}"
+SESSIONS = "/api/runner-sessions/"
+
+
+def _ecdh_jwk() -> dict:
+    from canopy_sdk.keys import header_jwk
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from apps.harness import device_keys
+
+    return device_keys.normalize_public_jwk(header_jwk(ec.generate_private_key(ec.SECP256R1())))
+
+
+ECDH = _ecdh_jwk()
+OTHER_ECDH = _ecdh_jwk()
+
+
+def _approved(org, **extra) -> dict:
+    inv = _create(_pat_client(org["pat"]), **extra).json()
+    assert org["browser"].post(f"{INVITES}{inv['id']}/approve").status_code == 200
+    return inv
+
+
+def _pair(*, name="cloud-ec2-fork", proof=None, **extra):
+    """What the box sends: no Authorization at all, only its role's proof."""
+    body = {"name": name, "kind": "cloud", "host": "ubuntu@ip-10-0-0-1",
+            "capabilities": {"projects": ["canopy-web"], "sessions": True, "profiles": ["x"]},
+            "proof": proof if proof is not None else _proof(PAIR_HTU), **extra}
+    return Client().post(PAIR, data=body, content_type="application/json")
+
+
+@pytest.mark.usefixtures("sts")
+def test_approved_invitation_pairs_once(org):
+    from apps.harness.models import RunnerDeviceKey, RunnerEnrollment
+
+    inv = _approved(org)
+    res = _pair()
+    assert res.status_code == 201, res.content
+    body = res.json()
+    assert body["status"] == "paired"
+    runner = Runner.objects.get(pk=body["runner_id"])
+    assert runner.owner == org["user"] and runner.workspace_id == "connect"
+    assert runner.kind == Runner.CLOUD and runner.name == "cloud-ec2-fork"
+    # The server decides what a box reports; pairing drops the reported keys.
+    assert runner.capabilities == {"projects": ["canopy-web"], "sessions": True}
+    assert list(RunnerEnrollment.objects.filter(runner=runner).values_list("workspace_id", flat=True)) == [
+        "connect"]
+    key = RunnerDeviceKey.objects.get(runner=runner)
+    assert key.kind == RunnerDeviceKey.AWS_IAM and key.status == RunnerDeviceKey.ACTIVE
+    assert key.jkt == aws_iam_proof.role_jkt(ROLE) and key.approved_by == org["user"]
+    row = RunnerInvitation.objects.get(pk=inv["id"])
+    assert row.status == "consumed" and row.runner_id == runner.pk
+    got = _pat_client(org["pat"]).get(f"{INVITES}{inv['id']}").json()
+    assert got["status"] == "consumed" and got["runner_id"] == str(runner.pk)
+    # The same box asking again (a restart before its state file landed) gets
+    # the same runner back; nothing new is made.
+    again = _pair()
+    assert again.status_code == 200 and again.json() == {"runner_id": str(runner.pk), "status": "reattached"}
+    assert Runner.objects.count() == 1 and RunnerDeviceKey.objects.count() == 1
+
+
+@pytest.mark.usefixtures("sts")
+def test_pending_invitation_waits(org):
+    _create(_pat_client(org["pat"]))
+    res = _pair()
+    assert res.status_code == 202 and res.json() == {"runner_id": None, "status": "waiting"}
+    assert not Runner.objects.exists()
+
+
+def _no_invitation(org):
+    return None
+
+
+def _expired(org):
+    inv = _approved(org)
+    RunnerInvitation.objects.filter(pk=inv["id"]).update(expires_at=timezone.now() - timedelta(seconds=1))
+
+
+def _consumed_by_other_name(org):
+    _approved(org, name="cloud-ec2-other")
+    assert _pair(name="cloud-ec2-other").status_code == 201
+
+
+def _for_another_name(org):
+    _approved(org, name="cloud-ec2-other")
+
+
+def _ecdh_mismatch(org):
+    _approved(org, ecdh_public_jwk=ECDH)
+    return {"ecdh_public_jwk": OTHER_ECDH}
+
+
+def _bad_proof(org):
+    _approved(org)
+    return {"proof": "bm90LWEtcHJvb2Y="}
+
+
+def _proof_for_another_url(org):
+    _approved(org)
+    return {"proof": _proof(f"http://testserver{SESSIONS}")}
+
+
+def _creator_lost_agent_work(org):
+    _approved(org)
+    WorkspaceMembership.objects.filter(user=org["user"]).update(role=WorkspaceMembership.VIEWER)
+
+
+@pytest.mark.usefixtures("sts")
+@pytest.mark.parametrize("setup", [_no_invitation, _expired, _consumed_by_other_name, _for_another_name,
+                                   _ecdh_mismatch, _bad_proof, _proof_for_another_url,
+                                   _creator_lost_agent_work])
+def test_refusals_are_uniform_and_create_nothing(org, setup):
+    from apps.harness.models import RunnerDeviceKey
+
+    extra = setup(org) or {}
+    runners, keys = Runner.objects.count(), RunnerDeviceKey.objects.count()
+    res = _pair(**extra)
+    assert res.status_code == 401
+    assert res.json()["title"] == "Pairing refused"
+    assert res.json()["detail"] == "no approved pairing invitation matches this box's instance role and name"
+    assert Runner.objects.count() == runners and RunnerDeviceKey.objects.count() == keys
+
+
+@pytest.mark.usefixtures("sts")
+def test_a_matching_ecdh_key_is_approved_with_the_invitation(org):
+    from apps.harness.models import RunnerDeviceKey
+
+    _approved(org, ecdh_public_jwk=ECDH)
+    res = _pair(ecdh_public_jwk=ECDH, ecdh_store="aws-kms")
+    assert res.status_code == 201, res.content
+    key = RunnerDeviceKey.objects.get()
+    assert key.ecdh_ready and key.ecdh_store == "aws-kms" and key.ecdh_approved_by == org["user"]
+
+
+@pytest.mark.usefixtures("sts")
+def test_the_invitations_ecdh_key_is_kept_when_a_fresh_box_reports_none(org):
+    from apps.harness import device_keys
+    from apps.harness.models import RunnerDeviceKey
+
+    _approved(org, ecdh_public_jwk=ECDH)
+    assert _pair().status_code == 201
+    key = RunnerDeviceKey.objects.get()
+    assert key.ecdh_ready and key.ecdh_jkt == device_keys.thumbprint(ECDH) and key.ecdh_store == "aws-kms"
+
+
+@pytest.mark.usefixtures("sts")
+def test_an_ecdh_key_the_invitation_did_not_name_waits_for_a_person(org):
+    from apps.harness.models import RunnerDeviceKey
+
+    _approved(org)
+    assert _pair(ecdh_public_jwk=ECDH).status_code == 201
+    key = RunnerDeviceKey.objects.get()
+    assert key.status == RunnerDeviceKey.ACTIVE and key.ecdh_waiting
+
+
+@pytest.mark.usefixtures("sts")
+def test_replaced_instance_reattaches_without_an_invitation(org):
+    _approved(org)
+    rid = _pair().json()["runner_id"]
+    # up.sh --allow-instance-change: a new instance, the same role, no state file.
+    assert not RunnerInvitation.objects.filter(consumed_at__isnull=True).exists()
+    res = _pair()
+    assert res.status_code == 200 and res.json()["runner_id"] == rid
+    # …but the role's runner has that name; the role cannot pair as another.
+    assert _pair(name="cloud-ec2-impostor").status_code == 401
+    assert Runner.objects.count() == 1
+
+
+@pytest.mark.usefixtures("sts")
+@pytest.mark.parametrize("how", ["retired", "revoked"])
+def test_retired_runner_role_needs_a_new_invitation_and_replaces_the_key_row(org, how):
+    from apps.harness.models import RunnerDeviceKey
+
+    _approved(org)
+    old = Runner.objects.get(pk=_pair().json()["runner_id"])
+    if how == "retired":
+        Runner.objects.filter(pk=old.pk).update(status=Runner.RETIRED)
+    else:
+        RunnerDeviceKey.objects.filter(runner=old).update(status=RunnerDeviceKey.REVOKED)
+    assert _pair().status_code == 401          # no reattach, and no invitation yet
+    _approved(org)
+    res = _pair()
+    assert res.status_code == 201, res.content
+    new = Runner.objects.get(pk=res.json()["runner_id"])
+    assert new.pk != old.pk
+    key = RunnerDeviceKey.objects.get(jkt=aws_iam_proof.role_jkt(ROLE))
+    assert key.runner == new and key.status == RunnerDeviceKey.ACTIVE
+
+
+@pytest.mark.usefixtures("sts")
+def test_the_new_runner_can_get_a_runner_session(org):
+    _approved(org)
+    rid = _pair().json()["runner_id"]
+    res = Client().post(SESSIONS, data={"runner": rid}, content_type="application/json",
+                        HTTP_X_CANOPY_AWS_PROOF=_proof(f"http://testserver{SESSIONS}"))
+    assert res.status_code == 201, res.content
+    assert res.json()["runner"] == rid
+
+
+@pytest.mark.usefixtures("sts")
+def test_no_token_can_approve_its_own_pairing_end_to_end(org):
+    """All a box (or up.sh) holds — a token and its role — gets it no further
+    than `waiting`."""
+    inv = _create(_pat_client(org["pat"])).json()
+    assert _pat_client(org["pat"]).post(f"{INVITES}{inv['id']}/approve").status_code == 403
+    assert _pair().status_code == 202
+    assert not Runner.objects.exists()
+
+
+@pytest.mark.usefixtures("sts")
+def test_a_replayed_proof_is_refused(org):
+    _create(_pat_client(org["pat"]))
+    proof = _proof(PAIR_HTU)
+    assert _pair(proof=proof).status_code == 202
+    assert _pair(proof=proof).status_code == 401
+
+
+def test_a_runner_token_cannot_reach_the_invitation_routes():
+    from apps.harness import runner_auth
+
+    rid = "6f1c0d3e-0000-4000-8000-000000000000"
+    for method, path in (("POST", INVITES), ("GET", f"{INVITES}x"), ("POST", f"{INVITES}x/approve")):
+        assert not runner_auth.reaches(method, path, rid)

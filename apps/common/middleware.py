@@ -48,6 +48,7 @@ PUBLIC_PATH_PREFIXES = (
     "/embed/",
     "/api/auth/contact-token",   # auth=None — self-enforces by verifying a signed assertion
     "/api/runner-sessions/",     # auth=None — self-enforces: an approved device key's proof (apps/harness/api_runner_sessions.py)
+    "/api/harness/runners/pair-by-role",  # auth=None — self-enforces: the box's instance-role proof + an invitation its creator approved behind a passkey (apps/harness/api_runner_invitations.py)
     "/api/runner-device-key-requests/",  # auth=None — self-enforces: the owner's (recently revoked) token + the key's own proof; makes a PENDING key only (apps/harness/api_device_key_requests.py)
     # canopy's OAuth CLIENT identity — the metadata document whose URL is its
     # client_id, and the public client key it names. A host reads both before

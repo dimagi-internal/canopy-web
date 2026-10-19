@@ -1785,3 +1785,27 @@ class RunnerInvitationOut(Schema):
     #: Whether the box's ECDH key is part of what approving covers.
     has_ecdh_key: bool = False
     runner_id: uuid.UUID | None = None
+
+
+class RunnerPairByRoleIn(Schema):
+    """A new cloud box pairs by proving its EC2 instance role: `proof` is an
+    `X-Canopy-Aws-Proof` value (a signed, unsent `sts:GetCallerIdentity`) whose
+    htu is this URL. It needs no token. `ecdh_public_jwk`/`ecdh_store` are its
+    zero-knowledge ECDH key, as `POST /api/runner-device-keys/` takes them."""
+
+    name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
+    kind: Literal["cloud"] = "cloud"
+    capabilities: dict = {}
+    host: str = Field(default="", max_length=200)
+    proof: str = Field(min_length=1, max_length=20000)
+    ecdh_public_jwk: dict[str, Any] | None = None
+    ecdh_store: str = Field(default="", max_length=16)
+
+
+class RunnerPairByRoleOut(Schema):
+    """`paired` (a new runner), `reattached` (this role's existing runner — a
+    replaced instance), or `waiting` (the invitation is not approved yet; ask
+    again on the next poll)."""
+
+    status: Literal["paired", "reattached", "waiting"]
+    runner_id: uuid.UUID | None = None

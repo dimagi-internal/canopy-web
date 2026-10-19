@@ -536,6 +536,18 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     return turn
 
 
+#: Capabilities a box REPORTS on heartbeat and never declares at pairing.
+REPORTED_CAPABILITIES = ("profiles", "envelope", "midturn")
+
+
+def declared_capabilities(caps: dict) -> dict:
+    """What a pairing box may declare. `profiles` is REPORTED on heartbeat, never
+    declared: a box that says at pairing it can confine a caller's session would
+    be believed until its first beat. Dropped rather than refused, so an old
+    pairing script that copies a whole capabilities dict still pairs."""
+    return {k: v for k, v in (caps or {}).items() if k not in REPORTED_CAPABILITIES}
+
+
 @router.post("/runners/", response={201: RunnerOut})
 def pair_runner(request: HttpRequest, payload: RunnerIn):
     if payload.kind not in dict(Runner.KIND_CHOICES):
@@ -585,12 +597,7 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
     runner = Runner.objects.create(
         name=payload.name,
         kind=payload.kind,
-        # `profiles` is REPORTED on heartbeat, never declared: a box that says at
-        # pairing it can confine a caller's session would be believed until its
-        # first beat. Dropped here rather than refused, so an old pairing script
-        # that copies a whole capabilities dict still pairs.
-        capabilities={k: v for k, v in payload.capabilities.items()
-                      if k not in ("profiles", "envelope", "midturn")},
+        capabilities=declared_capabilities(payload.capabilities),
         host=payload.host,
         owner=request.user,
         workspace_id=ws_slug,

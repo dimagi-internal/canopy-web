@@ -6997,6 +6997,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/pair-by-role": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A new cloud box pairs by its instance role (no token)
+         * @description Prove this box's EC2 instance role (`proof`, bound to this URL). With an
+         *     APPROVED, unexpired, unused invitation for that role and `name`: 201
+         *     `paired` — a new runner owned by the invitation's creator, in its
+         *     workspace, whose instance role is already its approved device key. A role
+         *     whose runner already exists under that name: 200 `reattached` (a replaced
+         *     instance; nothing is made). An invitation not yet approved: 202 `waiting`.
+         *     Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`.
+         */
+        readonly post: operations["pair_runner_by_role"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/": {
         readonly parameters: {
             readonly query?: never;
@@ -24356,6 +24382,61 @@ export interface components {
             } | null;
         };
         /**
+         * RunnerPairByRoleOut
+         * @description `paired` (a new runner), `reattached` (this role's existing runner — a
+         *     replaced instance), or `waiting` (the invitation is not approved yet; ask
+         *     again on the next poll).
+         */
+        readonly RunnerPairByRoleOut: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "paired" | "reattached" | "waiting";
+            /** Runner Id */
+            readonly runner_id?: string | null;
+        };
+        /**
+         * RunnerPairByRoleIn
+         * @description A new cloud box pairs by proving its EC2 instance role: `proof` is an
+         *     `X-Canopy-Aws-Proof` value (a signed, unsent `sts:GetCallerIdentity`) whose
+         *     htu is this URL. It needs no token. `ecdh_public_jwk`/`ecdh_store` are its
+         *     zero-knowledge ECDH key, as `POST /api/runner-device-keys/` takes them.
+         */
+        readonly RunnerPairByRoleIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Kind
+             * @default cloud
+             * @constant
+             */
+            readonly kind: "cloud";
+            /**
+             * Capabilities
+             * @default {}
+             */
+            readonly capabilities: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Host
+             * @default
+             */
+            readonly host: string;
+            /** Proof */
+            readonly proof: string;
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Ecdh Store
+             * @default
+             */
+            readonly ecdh_store: string;
+        };
+        /**
          * HealthCheck
          * @description One feature a runner checked on itself. `warn` is "works, but a person
          *     should know" (one Claude credential, no fallback); `fail` is "this feature
@@ -38994,6 +39075,48 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerInvitationOut"];
+                };
+            };
+        };
+    };
+    readonly pair_runner_by_role: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerPairByRoleIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairByRoleOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairByRoleOut"];
+                };
+            };
+            /** @description Accepted */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerPairByRoleOut"];
                 };
             };
         };
