@@ -104,6 +104,22 @@ export function SendBox({
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // A stop you asked for shows AT ONCE, before the server says anything. Esc
+  // had no visible effect of its own, and the host clears `awaitingReply` on
+  // stop — which could take the Stop button (the only thing that relabels to
+  // "stopping…") away in the same render. Held until the server's verdict
+  // arrives or the turn ends.
+  const [stopAsked, setStopAsked] = useState(false);
+  useEffect(() => {
+    if (stopState !== undefined && stopState !== "requested") setStopAsked(false);
+  }, [stopState]);
+  const [wasStreaming, setWasStreaming] = useState(isStreaming);
+  if (wasStreaming !== isStreaming) {
+    setWasStreaming(isStreaming);
+    if (!isStreaming && stopAsked) setStopAsked(false);
+  }
+  const stopping = stopState === "requested" || (stopAsked && stopState === undefined);
+
   // LOCAL-FIRST: the textarea's value is local state, never server state.
   // Rendering `draft.body` directly made every inbound frame a chance to
   // overwrite the user mid-keystroke — a stale echo of your own debounced
@@ -268,6 +284,7 @@ export function SendBox({
   const handleStopClick = () => {
     // Fires even with no streamingMessageId: while a turn sits QUEUED there is
     // no assistant message to name, and that is exactly when you want out.
+    setStopAsked(true);
     onStop(streamingMessageId);
   };
 
@@ -392,6 +409,14 @@ export function SendBox({
             >
               stop didn&rsquo;t take — still running
             </span>
+          ) : stopping ? (
+            <span role="status" className="mr-auto text-xs text-muted-foreground">
+              stopping the agent…
+            </span>
+          ) : stopState === "stopped" && !isStreaming ? (
+            <span role="status" className="mr-auto text-xs text-muted-foreground">
+              stopped
+            </span>
           ) : null}
           {/* Never DISABLED while a stop is in flight, only relabelled. If the
               runner dies between the request and the verdict, `stopState` never
@@ -399,7 +424,7 @@ export function SendBox({
               no way to ask again, the exact trap #519 documents for the composer
               lock. Pressing again is harmless: the runner dedupes by session_key,
               so three impatient presses are still one Escape. */}
-          {isStreaming ? (
+          {isStreaming || stopping ? (
             <Button
               type="button"
               variant="destructive"
@@ -407,7 +432,7 @@ export function SendBox({
               title="Stop the agent (Esc)"
               onClick={handleStopClick}
             >
-              {stopState === "requested" ? "stopping…" : "stop"}
+              {stopping ? "stopping…" : "stop"}
             </Button>
           ) : null}
           {typingVisibility != null && onTypingVisibilityChange != null && (

@@ -174,3 +174,37 @@ describe('ChatSessionMenu — Move to workspace', () => {
     await waitFor(() => expect(onMove).toHaveBeenCalledWith('marshellis'))
   })
 })
+
+describe('ChatSessionMenu — Memory', () => {
+  const memory = {
+    state: {
+      session_id: 's1',
+      agent: { slug: 'ada', name: 'Ada' },
+      record: { available: true, default: true, override: null, effective: true, granted: false, grant: null },
+      use: { available: true, default: true, override: null, effective: true, granted: true, grant: null },
+    },
+    editable: true,
+    features: ['record', 'use'],
+    busy: null,
+    failed: false,
+    toggle: vi.fn(async () => {}),
+    keep: vi.fn(async () => {}),
+  } as unknown as NonNullable<ComponentProps<typeof ChatSessionMenu>['memory']>
+
+  it('is an item with its state as dots, opening the switches in a dialog', async () => {
+    render(<ChatSessionMenu {...baseProps({ memory })} />)
+    await openMenu()
+    // Ungranted reads as off (red); granted and on as on (green). No "?".
+    const item = screen.getByRole('menuitem', { name: 'Memory… Learn off, Use on' })
+    fireEvent.click(item)
+    await waitFor(() => expect(screen.getByText('Your memory in this conversation')).toBeTruthy())
+    fireEvent.click(screen.getByRole('switch', { name: 'Learn from me in this conversation' }))
+    expect(memory.toggle).toHaveBeenCalledWith('record')
+  })
+
+  it('is absent when there is no memory to show', async () => {
+    render(<ChatSessionMenu {...baseProps({ memory: null })} />)
+    await openMenu()
+    expect(screen.queryByTestId('session-memory')).toBeNull()
+  })
+})

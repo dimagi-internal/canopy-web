@@ -23,6 +23,7 @@ from ninja.files import UploadedFile
 from apps.harness import initiator as who
 from apps.harness import provenance
 from apps.harness import runner_requirements as rr
+from apps.realtime import groups
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
@@ -73,6 +74,7 @@ from .schemas import (
     ParticipantAddIn,
     ParticipantOut,
     SessionNotifyIn,
+    SessionTitleIn,
     SessionOut,
     SessionSearchPageOut,
     SessionSecretIn,
@@ -1049,6 +1051,24 @@ def set_session_notify(request: HttpRequest, session_id: uuid.UUID, payload: Ses
     if session.notify_every_completion != payload.every_completion:
         session.notify_every_completion = payload.every_completion
         session.save(update_fields=["notify_every_completion", "updated_at"])
+    return _out(session)
+
+
+@router.put("/{session_id}/title", response=SessionOut, summary="Rename a session")
+def set_session_title(request: HttpRequest, session_id: uuid.UUID, payload: SessionTitleIn):
+    """Give this session a title of your own. A title somebody typed is never
+    replaced by the emdash task name or the first message; a blank one clears
+    it, and the session is named again the way an untitled one is. Renames the
+    session in canopy only — the emdash task keeps its name."""
+    session = _session_or_404(request, session_id, write=True)
+    title = " ".join(payload.title.split())[:200]
+    if session.title != title:
+        session.title = title
+        session.save(update_fields=["title", "updated_at"])
+        groups.publish(
+            groups.session_group(session.pk),
+            {"type": "session.title_updated", "title": title},
+        )
     return _out(session)
 
 

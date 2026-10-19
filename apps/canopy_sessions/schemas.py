@@ -410,6 +410,12 @@ class SessionNotifyIn(Schema):
     every_completion: bool
 
 
+class SessionTitleIn(Schema):
+    #: The new title. Blank clears it, so the session is named again the way an
+    #: untitled one is (its emdash task, or its first message).
+    title: str = Field(max_length=200)
+
+
 class SessionMoveIn(Schema):
     #: The workspace slug to file this session in. You must be an editor there.
     workspace: str

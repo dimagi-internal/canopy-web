@@ -376,7 +376,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   mode, archived), kept in `localStorage`, and nothing is ranked or labelled
   "stuck"; the foot of the list says how many sessions the filters hide, with
   **Show all**. **New session** (the shared `NewChatMenu`: an agent, or a repo a
-  runner reports) opens the new chat in place; each project row's **+** is the
+  runner reports) opens the new chat in place, its header title already being
+  named; each project row's **+** is the
   same menu opened straight on "Run on" for that agent or repo (shown only when
   the name is an agent you can see or a repo an online runner holds). A delete
   the list called unconfirmed that then lands takes its error back. The rail header is two lines: the state totals (which are the
@@ -386,7 +387,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   (`components/AppLayout/appBarStore.ts`, `/ide` only); `⌘B` hides the list
   and `/` focuses search. The chat runs `compact` (one-line header) inside
   `.ide-dense`, which sets its text to 13px (`index.css`). Right-clicking a row offers the existing session routes (open in a
-  new tab, copy link, stop, transfer to another runner, archive/unarchive,
+  new tab, copy link, rename — also a double-click on the row, or a click on the
+  chat header's title — stop, transfer to another runner, archive/unarchive,
   delete = close — its confirm names an emdash task only when a runner reports
   one, `SessionOut.runner_reported`; a cloud session's turns are cancelled and it is archived); the rail's right edge drags to resize (double-click
   resets). In the agent panel, "close the ones that are done" runs the close
