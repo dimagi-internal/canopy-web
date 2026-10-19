@@ -79,4 +79,20 @@ describe('RunnerStatus', () => {
     render(<RunnerStatus runners={[runner()]} />)
     expect(screen.queryByTestId('runner-directed-jj-mbp')).toBeNull()
   })
+
+  it('says plainly when a laptop serves more than one tree', () => {
+    render(<RunnerStatus runners={[runner({ roots: ['dimagi', 'marshellis'], spans_trees: true })]} />)
+    expect(screen.getByTestId('runner-spans-trees-jj-mbp').textContent).toBe(
+      'serves dimagi, marshellis — no separation between them on this machine')
+  })
+
+  it('counts a tree the viewer cannot see without naming it', () => {
+    render(<RunnerStatus runners={[runner({ roots: ['dimagi'], spans_trees: true })]} />)
+    expect(screen.getByTestId('runner-spans-trees-jj-mbp').textContent).toContain('dimagi and another tree')
+  })
+
+  it('says nothing for a runner in one tree', () => {
+    render(<RunnerStatus runners={[runner({ roots: ['dimagi'], spans_trees: false })]} />)
+    expect(screen.queryByTestId('runner-spans-trees-jj-mbp')).toBeNull()
+  })
 })

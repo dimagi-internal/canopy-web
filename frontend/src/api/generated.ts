@@ -24583,6 +24583,16 @@ export interface components {
              */
             readonly flags: readonly string[];
             /**
+             * Roots
+             * @default []
+             */
+            readonly roots: readonly string[];
+            /**
+             * Spans Trees
+             * @default false
+             */
+            readonly spans_trees: boolean;
+            /**
              * Known Flags
              * @default []
              */

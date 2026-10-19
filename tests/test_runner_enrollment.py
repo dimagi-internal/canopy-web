@@ -41,7 +41,9 @@ def _member(ws, user, role):
 
 
 def _box(owner, ws, **kw):
-    defaults = dict(name="jj-mbp", kind=Runner.CLOUD, host="jj-mac", owner=owner, workspace=ws,
+    # A laptop by default: only a laptop may span workspace trees, and several
+    # tests below enroll one box in two of them.
+    defaults = dict(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=owner, workspace=ws,
                     status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                     capabilities={"projects": ["canopy-web"], "sessions": True})
     defaults.update(kw)
@@ -284,3 +286,60 @@ def test_the_listing_says_what_each_enrollment_covers(family):
     _ws("dimagi-b", jj, parent=dimagi)
     rows = _client(jj).get(f"/api/harness/runners/{box.pk}/workspaces").json()
     assert [(r["workspace"], r["covers"]) for r in rows] == [("dimagi", ["dimagi-a", "dimagi-b"])]
+
+
+# --- a cloud runner serves one tree; a laptop may span them ------------------------
+def test_cloud_runner_cannot_span_roots(family):
+    jj = family["jj"]
+    box = _box(jj, family["dimagi"], kind=Runner.CLOUD)
+    with pytest.raises(services.EnrollmentRefused, match="one workspace tree"):
+        services.enroll_runner(box, "marshellis")
+    resp = _client(jj).post(f"/api/harness/runners/{box.pk}/workspaces",
+                            {"workspace": "marshellis"}, content_type="application/json")
+    assert resp.status_code == 422 and "one workspace tree" in resp.json()["detail"]
+    assert services.enrolled_slugs(box) == {"dimagi"}
+
+
+def test_cloud_runner_may_enroll_a_division_of_its_root(family):
+    jj, dimagi = family["jj"], family["dimagi"]
+    box = _box(jj, dimagi, kind=Runner.CLOUD)
+    connect = _ws("connect", jj, parent=dimagi)
+    deep = _ws("connect-labs", jj, parent=connect)
+    services.enroll_runner(box, connect.slug)
+    services.enroll_runner(box, deep.slug)
+    assert services.enrolled_slugs(box) == {"dimagi", "connect", "connect-labs"}
+    # Enrolled in a division only, the box's tree is that division's root.
+    other = _box(jj, connect, name="cloud-connect", kind=Runner.CLOUD)
+    with pytest.raises(services.EnrollmentRefused):
+        services.enroll_runner(other, "marshellis")
+    services.enroll_runner(other, "dimagi")
+
+
+def test_laptop_may_span_roots(family):
+    jj = family["jj"]
+    laptop = _box(jj, family["dimagi"], kind=Runner.EMDASH)
+    services.enroll_runner(laptop, "marshellis")
+    assert services.enrolled_slugs(laptop) == {"dimagi", "marshellis"}
+    assert services.runner_tenant_slugs(laptop) == {"dimagi", "marshellis"}
+
+
+def test_runner_out_reports_roots(family):
+    jj, dimagi = family["jj"], family["dimagi"]
+    laptop = _box(jj, dimagi, kind=Runner.EMDASH)
+    services.enroll_runner(laptop, "marshellis")
+    cloud = _box(jj, dimagi, name="cloud-ec2-2", kind=Runner.CLOUD)
+    _ws("connect", jj, parent=dimagi)
+    services.enroll_runner(cloud, "connect")
+
+    rows = {r["name"]: r for r in _client(jj).get("/api/harness/runners/").json()}
+    assert rows["jj-mbp"]["roots"] == ["dimagi", "marshellis"]
+    assert rows["jj-mbp"]["spans_trees"] is True
+    assert rows["cloud-ec2-2"]["roots"] == ["dimagi"]
+    assert rows["cloud-ec2-2"]["spans_trees"] is False
+
+    # A teammate in dimagi learns the laptop spans trees, but not which other one.
+    ada = _user("ada")
+    _member(dimagi, ada, EDITOR)
+    seen = {r["name"]: r for r in _client(ada).get("/api/harness/runners/").json()}
+    assert seen["jj-mbp"]["roots"] == ["dimagi"]
+    assert seen["jj-mbp"]["spans_trees"] is True

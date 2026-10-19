@@ -110,6 +110,17 @@ class RunnerEngineIn(Schema):
     engine: str
 
 
+def _enrolled_roots(obj) -> list[str]:
+    """`runners.enrolled_roots`, read once per row."""
+    cached = getattr(obj, "_enrolled_roots_cache", None)
+    if cached is None:
+        from .runners import enrolled_roots
+
+        cached = enrolled_roots(obj)
+        obj._enrolled_roots_cache = cached
+    return cached
+
+
 class RunnerOut(Schema):
     id: uuid.UUID
     name: str
@@ -203,6 +214,24 @@ class RunnerOut(Schema):
 
     # What this box's owner has declared about it (RunnerFlag) — e.g. `zdr`.
     flags: list[str] = []
+
+    # The roots of the workspace trees the box is enrolled in, as far as the
+    # caller may know them: the fleet list keeps only the ones the caller is a
+    # member of (`list_runners`); every other route is the owner's. A cloud runner
+    # names one tree (`runners._other_tree`); a laptop may name several.
+    roots: list[str] = []
+    # Enrolled in more than one tree, whether or not the caller sees them all: on
+    # that machine nothing separates the trees from each other.
+    spans_trees: bool = False
+
+    @staticmethod
+    def resolve_roots(obj) -> list[str]:
+        shown = getattr(obj, "visible_roots", None)
+        return list(shown) if shown is not None else _enrolled_roots(obj)
+
+    @staticmethod
+    def resolve_spans_trees(obj) -> bool:
+        return len(_enrolled_roots(obj)) > 1
 
     @staticmethod
     def resolve_flags(obj) -> list[str]:

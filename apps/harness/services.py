@@ -130,6 +130,7 @@ from .runners import (
     backfill_runner_enrollments,  # noqa: F401
     can_administer_runner,  # noqa: F401
     enroll_runner,  # noqa: F401
+    enrolled_roots,  # noqa: F401
     EnrollmentRefused,  # noqa: F401
     list_runner_enrollments,  # noqa: F401
     unenroll_runner,  # noqa: F401

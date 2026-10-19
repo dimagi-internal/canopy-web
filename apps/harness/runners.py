@@ -334,9 +334,50 @@ def enroll_runner(runner, workspace_slug: str, *, by=None):
         raise EnrollmentRefused(
             f"this runner's owner is not an editor (or above) in '{workspace_slug}', "
             "so the runner cannot serve it")
+    other_tree = _other_tree(runner, workspace_slug)
+    if other_tree:
+        raise EnrollmentRefused(
+            f"a cloud runner serves one workspace tree: {runner.name} serves the "
+            f"'{other_tree}' tree, and '{workspace_slug}' is not in it — pair another "
+            "runner unit on the box for that tree")
     row, _ = RunnerEnrollment.objects.get_or_create(
         runner=runner, workspace_id=workspace_slug, defaults={"enrolled_by": by})
     return row
+
+
+def _other_tree(runner, workspace_slug: str) -> str:
+    """The root of a tree OTHER than `workspace_slug`'s that a CLOUD runner is
+    already enrolled in — "" when there is none, or the runner is not a cloud box.
+
+    A cloud runner is one isolation unit on its box: its own Unix user, keys and
+    logins. Two trees on one unit would share all of that, so a cloud runner names
+    one tree, and a box that serves two runs two units. A laptop has one desktop
+    user however many runners it pairs, so it may span trees; its runner page says
+    so (`RunnerOut.roots`)."""
+    from apps.workspaces import services as wsvc
+
+    from .models import Runner, RunnerEnrollment
+
+    if runner.kind != Runner.CLOUD:
+        return ""
+    existing = set(RunnerEnrollment.objects.filter(runner=runner)
+                   .values_list("workspace_id", flat=True)) - {workspace_slug}
+    if not existing:
+        return ""
+    roots = wsvc.tree_roots(existing | {workspace_slug})
+    others = sorted({roots[s] for s in existing} - {roots[workspace_slug]})
+    return others[0] if others else ""
+
+
+def enrolled_roots(runner) -> list[str]:
+    """The roots of the trees `runner` is enrolled in, sorted. More than one only
+    for a laptop (`_other_tree`), or a cloud box enrolled before the rule."""
+    from apps.workspaces import services as wsvc
+
+    from .routing import enrolled_slugs
+
+    slugs = enrolled_slugs(runner)
+    return sorted(set(wsvc.tree_roots(slugs).values())) if slugs else []
 
 
 def unenroll_runner(runner, workspace_slug: str) -> bool:

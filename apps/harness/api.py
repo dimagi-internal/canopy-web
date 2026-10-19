@@ -1195,7 +1195,7 @@ def list_runners(request: HttpRequest):
     qs = (
         Runner.objects.exclude(status=Runner.RETIRED)
         .filter(_runner_read_q(request))
-        .prefetch_related("declared_flags")
+        .prefetch_related("declared_flags", "enrollments")
         .order_by(models.F("last_heartbeat_at").desc(nulls_last=True))
     )
     from apps.tokens import delegation
@@ -1217,6 +1217,10 @@ def list_runners(request: HttpRequest):
         # its own flag rather than overloading can_manage — the credentials block
         # and the drill panel are gated by different routes.
         r.can_administer = services.can_administer_runner(request.user, r)
+        # The trees it serves, as far as this caller may know them — the rule
+        # `_sees_enrollment` applies to its enrollment list.
+        r.visible_roots = [root for root in services.enrolled_roots(r)
+                           if _sees_enrollment(request, r, root)]
     return rows
 
 
