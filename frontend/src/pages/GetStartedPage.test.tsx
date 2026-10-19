@@ -12,9 +12,9 @@ vi.mock('@/workspace/WorkspaceProvider', () => ({ useActiveWorkspace: () => acti
 
 const { GetStartedPage } = await import('./GetStartedPage')
 
-function renderPage() {
+function renderPage(entry = '/get-started') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[entry]}>
       <GetStartedPage />
     </MemoryRouter>,
   )
@@ -170,5 +170,19 @@ describe('GetStartedPage', () => {
       'runner/ec2/README.md',
     )
     await waitFor(() => expect(listAgents).toHaveBeenCalled())
+  })
+
+  it('opened at #runner, scrolls to the runner section', () => {
+    const scrolled: string[] = []
+    const spy = vi.fn(function (this: HTMLElement) {
+      scrolled.push(this.id)
+    })
+    Element.prototype.scrollIntoView = spy as unknown as Element['scrollIntoView']
+    try {
+      renderPage('/get-started#runner')
+      expect(scrolled).toContain('runner')
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+    }
   })
 })

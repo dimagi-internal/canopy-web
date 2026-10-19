@@ -1,5 +1,5 @@
 import { useEffect, useState, type JSX, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthProvider'
 import { CopyCommand } from '@/components/agents/CopyCommand'
 import { listAgents } from '@/api/agents'
@@ -85,6 +85,10 @@ export function GetStartedPage(): JSX.Element {
   const auth = useAuth()
   const authed = auth.status === 'authenticated'
   const workspace = useActiveWorkspace()
+  // React Router does not scroll to a fragment, so `/get-started#runner` (linked from an
+  // agent's setup checklist) would open at the top. The agent list loading below can
+  // shift the section, so it scrolls again once that settles.
+  const { hash } = useLocation()
   const [agents, setAgents] = useState<ListedPlugin[] | null>(null)
 
   useEffect(() => {
@@ -111,6 +115,11 @@ export function GetStartedPage(): JSX.Element {
       cancelled = true
     }
   }, [authed])
+
+  useEffect(() => {
+    if (!hash) return
+    document.getElementById(decodeURIComponent(hash.slice(1)))?.scrollIntoView?.({ block: 'start' })
+  }, [hash, agents])
 
   const listed = authed && agents && agents.length > 0 ? agents : null
   const setupPlugins = listed ? listed.map((a) => a.plugin) : [EXAMPLE_AGENT]
