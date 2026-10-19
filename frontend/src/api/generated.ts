@@ -5868,6 +5868,48 @@ export interface paths {
         readonly patch: operations["patch_workspace_project"];
         readonly trace?: never;
     };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/upload": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Get a presigned upload for a new knowledge base (the steward's curator)
+         * @description Step one of publishing: PUT the gzipped kb.sqlite to `url` with `headers`,
+         *     then `POST …/kb/publish`. The bytes never pass through canopy.
+         */
+        readonly post: operations["kb_upload_target"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/publish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Publish an uploaded knowledge base: the project then serves it as its MCP server
+         * @description The project answers its tools at `mcp_path` from this upload from now on
+         *     (every serving instance re-fetches it by its sha256); the previous one is deleted.
+         */
+        readonly post: operations["publish_kb"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/": {
         readonly parameters: {
             readonly query?: never;
@@ -18133,6 +18175,18 @@ export interface components {
              * @default
              */
             readonly board_url: string;
+            /**
+             * Mcp Kind
+             * @default
+             */
+            readonly mcp_kind: string;
+            /**
+             * Mcp Path
+             * @default
+             */
+            readonly mcp_path: string;
+            /** Kb Published At */
+            readonly kb_published_at?: string | null;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -18294,6 +18348,18 @@ export interface components {
              * @default
              */
             readonly board_url: string;
+            /**
+             * Mcp Kind
+             * @default
+             */
+            readonly mcp_kind: string;
+            /**
+             * Mcp Path
+             * @default
+             */
+            readonly mcp_path: string;
+            /** Kb Published At */
+            readonly kb_published_at?: string | null;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -22012,6 +22078,33 @@ export interface components {
              * @default
              */
             readonly workspace: string;
+        };
+        /**
+         * KbUploadOut
+         * @description Where to PUT a kb.sqlite.gz (straight to storage, never through canopy),
+         *     then name `key` to `POST …/kb/publish`.
+         */
+        readonly KbUploadOut: {
+            /** Key */
+            readonly key: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Headers
+             * @default {}
+             */
+            readonly headers: {
+                readonly [key: string]: string;
+            };
+            /** Expires In */
+            readonly expires_in: number;
+        };
+        /** KbPublishIn */
+        readonly KbPublishIn: {
+            /** Key */
+            readonly key: string;
+            /** Sha256 */
+            readonly sha256: string;
         };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
@@ -36848,6 +36941,56 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["AgentProjectPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly kb_upload_target: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbUploadOut"];
+                };
+            };
+        };
+    };
+    readonly publish_kb: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbPublishIn"];
             };
         };
         readonly responses: {

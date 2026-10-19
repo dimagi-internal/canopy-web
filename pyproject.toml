@@ -72,6 +72,10 @@ dependencies = [
     # runner and was restated in a server comment, which is exactly how the two
     # runners' copies drifted apart in the first place.
     "canopy-transcript",
+    # Knowledge bases (packages/canopy_kb): the engine and MCP tool layer canopy-web
+    # serves per workspace project at /api/mcp/projects/<ws>/<handle>/ (apps/mcp/projects.py).
+    # Stdlib only. Editable path dep via [tool.uv.sources] below.
+    "canopy-kb",
     # The Python half of the canopy SDK (sdk/python, import name `canopy_sdk`):
     # the host grant contract defined ONCE, and canopy's consumer half of it.
     # apps/tokens/{assertions,host_grants,host_gateway,client_identity}.py import
@@ -137,6 +141,7 @@ canopy-agent-runs = { path = "packages/canopy_agent_runs", editable = true }
 # Same deal for the cron slot math: in-repo, standalone, installable. The runner
 # (runner/canopy_runner) depends on it directly rather than via canopy-web.
 canopy-cron = { path = "packages/canopy_cron", editable = true }
+canopy-kb = { path = "packages/canopy_kb", editable = true }
 # The transcript core: in-repo, standalone, installable. Both runners depend on it
 # directly; the server uses it for the ordinal scheme.
 canopy-transcript = { path = "packages/canopy_transcript", editable = true }

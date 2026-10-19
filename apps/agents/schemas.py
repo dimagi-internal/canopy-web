@@ -877,6 +877,22 @@ class WorkspaceProjectIn(AgentProjectIn):
     workspace: str = Field(default="", max_length=100)
 
 
+class KbUploadOut(StrictModel):
+    """Where to PUT a kb.sqlite.gz (straight to storage, never through canopy),
+    then name `key` to `POST …/kb/publish`."""
+
+    key: str
+    url: str
+    headers: dict[str, str] = {}
+    expires_in: int
+
+
+class KbPublishIn(StrictModel):
+    key: str = Field(min_length=1, max_length=300)
+    #: sha256 of the uploaded file — what serving instances cache by and verify.
+    sha256: str = Field(min_length=64, max_length=64)
+
+
 class SpawnedFromOut(StrictModel):
     """The task a project grew out of: "from <task> in <project>"."""
 
@@ -911,6 +927,11 @@ class AgentProjectOut(StrictModel):
     #: Its page on its agent's board, in the agent's workspace (`url` for an
     #: agent project; where a workspace project's address redirects to).
     board_url: str = ""
+    #: What it serves as its own MCP server ("" nothing, "kb" a knowledge base),
+    #: and where (relative to canopy's origin; empty until something is published).
+    mcp_kind: str = ""
+    mcp_path: str = ""
+    kb_published_at: datetime | None = None
     ext_id: str
     name: str
     outcome: str

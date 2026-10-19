@@ -20,7 +20,7 @@ from .api import (_agent_for_write, _listed_agent_workspace_ids, _require_worksp
                   _visible_agent_workspace_ids, apply_project_patch, project_detail)
 from .models import AgentProject, AgentTask
 from .schemas import (AgentProjectDetailOut, AgentProjectOut, AgentProjectPatch, AgentTaskOut,
-                      WorkspaceProjectIn)
+                      KbPublishIn, KbUploadOut, WorkspaceProjectIn)
 
 router = Router(auth=session_auth, tags=["tasks"])
 
@@ -141,3 +141,42 @@ def patch_workspace_project(request: HttpRequest, workspace: str, handle: str,
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump() for link in data["links"]]
     return AgentProjectOut.model_validate(apply_project_patch(request, project, data))
+
+
+# ---- its own MCP server: the steward publishes a knowledge base it serves ----
+
+
+def _kb_call(fn):
+    from . import kb_store
+
+    try:
+        return fn()
+    except kb_store.KbNotConfigured as exc:
+        raise HttpError(503, str(exc)) from exc
+    except kb_store.KbPublishError as exc:
+        raise HttpError(422, str(exc)) from exc
+
+
+@router.post("/workspace-projects/{workspace}/{handle}/kb/upload", response=KbUploadOut,
+             summary="Get a presigned upload for a new knowledge base (the steward's curator)")
+def kb_upload_target(request: HttpRequest, workspace: str, handle: str) -> KbUploadOut:
+    """Step one of publishing: PUT the gzipped kb.sqlite to `url` with `headers`,
+    then `POST …/kb/publish`. The bytes never pass through canopy."""
+    from . import kb_store
+
+    project = _workspace_project_or_404(request, workspace, handle)
+    _agent_for_write(request, project.agent.slug)
+    return KbUploadOut(**_kb_call(lambda: kb_store.upload_target(project)))
+
+
+@router.post("/workspace-projects/{workspace}/{handle}/kb/publish", response=AgentProjectOut,
+             summary="Publish an uploaded knowledge base: the project then serves it as its MCP server")
+def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPublishIn) -> AgentProjectOut:
+    """The project answers its tools at `mcp_path` from this upload from now on
+    (every serving instance re-fetches it by its sha256); the previous one is deleted."""
+    from . import kb_store
+
+    project = _workspace_project_or_404(request, workspace, handle)
+    _agent_for_write(request, project.agent.slug)
+    project = _kb_call(lambda: kb_store.publish(project, payload.key, payload.sha256))
+    return AgentProjectOut.model_validate(project)

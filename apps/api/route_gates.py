@@ -186,6 +186,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_workspace_project": ("member",),
     "create_workspace_project": ("agent.work",),  # the steward's write gate
     "patch_workspace_project": ("agent.work",),  # the steward's (and a new steward's) write gate
+    "kb_upload_target": ("agent.work",),  # the steward's write gate: its curator publishes
+    "publish_kb": ("agent.work",),
     "set_agent_credentials": ("agent-admin",),
     "agent_credential_status": ("member",),
     "agent_credential_access": ("member",),  # no values; reports the resolve gate for the caller
@@ -911,6 +913,7 @@ NOT_SETTINGS: dict[str, str] = {
     "create_run_doc": "content", "put_run_doc_state": "content", "mark_task_action_applied": "content",
     "create_project": "content", "patch_project": "content",
     "create_workspace_project": "content", "patch_workspace_project": "content",
+    "kb_upload_target": "content", "publish_kb": "content",
     "put_contributor_summary": "content", "delete_contributor_summary": "content",
     "create_run": "content", "fork_run": "content", "record_gate": "content", "record_verdict": "content",
     "create_sync": "content", "delete_sync": "content", "replace_skills": "content",

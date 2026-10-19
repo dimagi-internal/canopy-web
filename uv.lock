@@ -407,6 +407,11 @@ dependencies = [
 requires-dist = [{ name = "croniter", specifier = ">=6.0,<7.0" }]
 
 [[package]]
+name = "canopy-kb"
+version = "0.1.0"
+source = { editable = "packages/canopy_kb" }
+
+[[package]]
 name = "canopy-runner"
 source = { editable = "runner/canopy_runner" }
 dependencies = [
@@ -454,6 +459,7 @@ dependencies = [
     { name = "canopy-agent-factory" },
     { name = "canopy-agent-runs" },
     { name = "canopy-cron" },
+    { name = "canopy-kb" },
     { name = "canopy-runtime" },
     { name = "canopy-transcript" },
     { name = "channels" },
@@ -500,6 +506,7 @@ requires-dist = [
     { name = "canopy-agent-factory", specifier = ">=1,<2" },
     { name = "canopy-agent-runs", editable = "packages/canopy_agent_runs" },
     { name = "canopy-cron", editable = "packages/canopy_cron" },
+    { name = "canopy-kb", editable = "packages/canopy_kb" },
     { name = "canopy-runner", marker = "extra == 'dev'", editable = "runner/canopy_runner" },
     { name = "canopy-runtime", editable = "packages/canopy_runtime" },
     { name = "canopy-transcript", editable = "packages/canopy_transcript" },

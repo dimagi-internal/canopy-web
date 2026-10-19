@@ -3,7 +3,8 @@ ASGI config for canopy-web project.
 
 It exposes the ASGI callable as a module-level variable named ``application``.
 
-The FastMCP Streamable-HTTP server (apps/mcp) is mounted at /api/mcp/.
+The FastMCP Streamable-HTTP server (apps/mcp) is mounted at /api/mcp/, and each
+workspace project's own server at /api/mcp/projects/<workspace>/<handle>/.
 Auth is enforced INSIDE the MCP app via FastMCP MultiAuth (per-user PAT +
 optional OAuth) — there is no hand-rolled gate here anymore.
 
@@ -44,6 +45,14 @@ _MCP_PREFIX = "/api/mcp"
 # Streamable-HTTP ASGI app. path="/" -> the MCP endpoint is the mount
 # root, i.e. /api/mcp/.
 _mcp_app = build_http_app()
+
+# Each workspace project that serves something gets its OWN MCP server at
+# /api/mcp/projects/<workspace>/<handle>/ — only its tools, the same sign-in
+# (apps/mcp/projects.py). One app serves every project; the dispatcher names it.
+from apps.mcp.projects import ProjectMcpDispatch  # noqa: E402
+from apps.mcp.projects import build_http_app as build_project_http_app  # noqa: E402
+
+_project_mcp_app = build_project_http_app()
 
 # The catch-all: HTTP goes to Django as before; WebSocket goes through the
 # realtime handshake auth + URL router (apps/realtime). Same shape ace-web uses.
@@ -91,7 +100,7 @@ async def _lifespan(app):
     (apps/capabilities/scheduler.py), the Slack channel-ingest reader's
     (apps/slack/ingest_scheduler.py) and the canopy-pat rotation's
     (apps/agents/pat_rotation_scheduler.py), for the life of the process."""
-    async with _mcp_app.lifespan(app):
+    async with _mcp_app.lifespan(app), _project_mcp_app.lifespan(app):
         async with _capability_scheduler.running():
             async with _slack_ingest_scheduler.running():
                 async with _pat_rotation_scheduler.running():
@@ -105,6 +114,8 @@ application = Starlette(
         # MCP, apps/tokens/self_host.py) arrives as `Authorization: DPoP`; the
         # gate verifies the proof and hands FastMCP a plain bearer. Every other
         # request passes through untouched.
+        # A project's own server, ahead of the main one so its prefix wins.
+        Mount(_MCP_PREFIX + "/projects", app=_dpop_gate(ProjectMcpDispatch(_project_mcp_app))),
         Mount(_MCP_PREFIX, app=_dpop_gate(_mcp_app)),
         # Django + realtime WS handle everything else (mounted last as catch-all).
         Mount("/", app=_django_with_ws),
