@@ -1,6 +1,8 @@
 """Pydantic schemas for /api/people — what agents know about a person (canopy#804)."""
 from __future__ import annotations
 
+import datetime as dt
+
 from pydantic import Field
 
 from apps.common.schemas import StrictModel
@@ -186,7 +188,7 @@ class SearchPreviewIn(StrictModel):
 
 class SearchPreviewEntryOut(StrictModel):
     entry_id: str | None
-    statement: str
+    statement: str | None = Field(description="What the entry says now; null once it was deleted.")
     kind: str
     project: str | None
     meaning: float | None = Field(description="Cosine similarity to the question, 0-1; null when not compared.")
@@ -207,6 +209,33 @@ class SearchPreviewOut(StrictModel):
     limit: int
     embed_ms: int | None
     entries: list[SearchPreviewEntryOut]
+
+
+class SearchRecordOut(StrictModel):
+    retrieval_id: str
+    at: dt.datetime
+    actor_id: str
+    actor_type: str
+    agent: str | None = Field(description="The agent whose turn searched, by name.")
+    purpose: str
+    query: str = Field(description="The question searched with (a turn's own context search: its prompt).")
+    method: str
+    model: str
+    floor: float | None
+    weight: float | None
+    project_boost: float | None
+    embed_ms: int | None
+    scored: bool = Field(description="False: from before scores were kept — what came back only.")
+    turn_id: str | None
+    session_href: str | None
+    session_title: str | None
+    entries: list[SearchPreviewEntryOut]
+
+
+class SearchHistoryOut(StrictModel):
+    searches: list[SearchRecordOut]
+    total: int | None
+    next_before: str | None
 
 
 class MemoryCollectionUpdateIn(StrictModel):

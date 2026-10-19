@@ -585,6 +585,8 @@ GATES: dict[str, tuple[str, ...]] = {
     # Trying a search over your own memory (scores only, records nothing) — only
     # the person, and only inside the memory rollout.
     "preview_my_memory_search": ("self",),
+    # Every search agents ran over your memory, as it ran — only the person.
+    "list_my_memory_searches": ("self",),
     "set_my_grant_collection": ("self",),
     # --- apps/contacts/hcp_api.py  (HCP v1 over the people brain; apps/contacts/hcp.py)
     # `self` = the person's own instance; `hcp-grant` = an agent, for the person

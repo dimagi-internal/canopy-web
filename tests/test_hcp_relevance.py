@@ -376,3 +376,53 @@ def test_the_person_can_preview_a_search_with_another_cutoff(w, embeddings_on, m
     assert not PersonAuditEvent.objects.filter(detail__contains="banana").exists()
     c.force_login(w["ace"].user)
     assert c.post(url, data=json.dumps({"query": "x"}), content_type="application/json").status_code == 403
+
+
+def test_every_search_is_kept_as_it_ran_and_the_person_can_read_it_back(w, embeddings_on, monkeypatch, settings):
+    from apps.contacts.models import PersonSearch
+
+    settings.HCP_PEOPLE = ["*"]
+    _add(w, "Owns the budget dashboard.")
+    gone = _add(w, "Likes tables.")
+    sims = {"Owns the budget dashboard.": 0.71, "Likes tables.": 0.5}
+    monkeypatch.setattr(embeddings, "similarity", lambda q, v: max(
+        s for t, s in sims.items() if PersonFact.objects.filter(statement=t, embedding=v).exists()))
+    turn = _turn(w, "h1")
+    body = _search(w, turn, "who looks after the reports?")
+    rec = PersonSearch.objects.get(retrieval_id=body["retrievalId"].removeprefix("urn:uuid:"))
+    assert (rec.query, rec.method, rec.floor, rec.scored, rec.turn) == (
+        "who looks after the reports?", "hybrid", 0.6, True, turn)
+    assert [(e["position"], e["meaning"]) for e in rec.entries] == [(1, 0.71), (None, 0.5)]   # left out, kept too
+    assert "under the 0.60 cutoff" in rec.entries[1]["because"]
+    people.retract(gone, by=w["lili"])
+
+    c = Client()
+    c.force_login(w["lili"])
+    r = c.get("/api/people/me/memory-searches/")
+    assert r.status_code == 200, r.content
+    s = next(x for x in r.json()["searches"] if x["retrieval_id"] == str(rec.retrieval_id))
+    assert s["agent"] == "ACE" and s["scored"] is True
+    assert [e["statement"] for e in s["entries"]] == ["Owns the budget dashboard.", None]   # deleted since
+    c.force_login(w["ace"].user)
+    assert c.get("/api/people/me/memory-searches/").status_code == 403
+
+
+def test_searches_before_records_were_kept_are_rebuilt_from_the_audit(w):
+    from apps.contacts.models import PersonSearch
+
+    a = _add(w, "Owns the budget dashboard.")
+    b = _add(w, "Likes tables.")
+    turn = _turn(w, "h2", prompt="what does lili own?")
+    rid = "00000000-0000-4000-8000-000000000001"
+    for f in (b, a):
+        hcp.audit(w["person"], "preference.read", actor=hcp.agent_actor(w["ace"]), entry=f,
+                  purpose=people.ENVELOPE_PURPOSE, turn=turn, detail=f"retrievalId=urn:uuid:{rid}; returned=2")
+    PersonSearch.objects.all().delete()
+    call_command("hcp_backfill_searches", stdout=io.StringIO())
+    rec = PersonSearch.objects.get(retrieval_id=rid)
+    assert (rec.query, rec.scored, rec.actor_id) == ("what does lili own?", False, "agent:ace")
+    assert [e["entry_id"] for e in rec.entries] == [str(b.entry_id), str(a.entry_id)]
+    assert [e["position"] for e in rec.entries] == [1, 2]
+    out = io.StringIO()
+    call_command("hcp_backfill_searches", stdout=out)                # idempotent
+    assert "rebuilt 0 searches" in out.getvalue()

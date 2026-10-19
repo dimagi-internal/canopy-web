@@ -45,11 +45,11 @@ export function SearchPreview() {
   const back = result?.entries.filter((e) => e.position !== null).length ?? 0
 
   return (
-    <section id="search" aria-label="How agents find it" className="scroll-mt-6">
-      <h2 className="text-lg font-semibold text-foreground">How agents find it</h2>
+    <div aria-label="Try a question" className="mt-6">
+      <h3 className="text-sm font-semibold text-foreground">Try a question</h3>
       <p className="text-sm text-muted-foreground">
-        Type a question the way an agent would. Every entry you hold is scored against it; an agent gets the ones marked with a
-        number. This changes nothing and isn’t shown to anyone.
+        Type a question the way an agent would to see how it would score today. This changes nothing and isn’t shown to
+        anyone.
       </p>
       <form
         className="mt-3 flex gap-2"
@@ -145,11 +145,13 @@ export function SearchPreview() {
           )}
         </div>
       )}
-    </section>
+    </div>
   )
 }
 
-function EntryScore({ e, cutoff }: { e: SearchPreviewEntry; cutoff: number | null }) {
+/** One scored entry. `scored` false: a search from before scores were kept —
+ *  its place and recorded reason only. */
+export function EntryScore({ e, cutoff, scored = true }: { e: SearchPreviewEntry; cutoff: number | null; scored?: boolean }) {
   const counts = e.meaning !== null && cutoff !== null && e.meaning >= cutoff
   const tags = [
     e.kind === 'correction' ? 'correction' : null,
@@ -168,7 +170,7 @@ function EntryScore({ e, cutoff }: { e: SearchPreviewEntry; cutoff: number | nul
       </span>
       <div className="min-w-0 flex-1">
         <p className="text-sm text-foreground">
-          {e.statement}
+          {e.statement ?? <span className="italic text-muted-foreground">(an entry since deleted)</span>}
           {tags.map((t) => (
             <span key={t} className="ml-1.5 rounded bg-muted px-1.5 py-0.5 align-middle text-[10px] text-muted-foreground">
               {t}
@@ -189,8 +191,8 @@ function EntryScore({ e, cutoff }: { e: SearchPreviewEntry; cutoff: number | nul
         )}
         <p className="mt-1 text-xs text-muted-foreground">
           {e.position !== null ? 'Why: ' : 'Left out: '}
-          {e.because || '—'}
-          {e.position !== null && <span className="tabular-nums"> · score {e.total.toFixed(2)}</span>}
+          {e.because || (scored ? '—' : 'not recorded then')}
+          {scored && e.position !== null && <span className="tabular-nums"> · score {e.total.toFixed(2)}</span>}
         </p>
       </div>
     </li>
