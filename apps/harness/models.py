@@ -1797,6 +1797,13 @@ class RunnerInvitation(models.Model):
     #: The box's zero-knowledge ECDH public key (the `<stack>-ecdh` KMS key), when
     #: `up.sh` could read it: one approval covers both. {} when none.
     ecdh_public_jwk = models.JSONField(default=dict, blank=True)
+    #: The isolation units the box will pair as, one runner each (spec
+    #: 2026-10-19-runner-isolation-units §2): `[{name, workspace, kind, slug,
+    #: ecdh_public_jwk, runner_id}]`. `kind` is "tree" or "agent" (`slug` names the
+    #: agent). Empty for a single-runner invitation, which pairs as `name` in
+    #: `workspace` by its instance role (`units_of`). `runner_id` is filled in when
+    #: the box pairs.
+    units = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     expires_at = models.DateTimeField()
     approved_at = models.DateTimeField(null=True, blank=True)

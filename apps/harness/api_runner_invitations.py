@@ -15,6 +15,10 @@ through pairing; when it expired, nothing said so. Now (spec
   BROWSER, behind a fresh passkey step-up. A token cannot (403), so neither
   `up.sh` nor the box can approve its own invitation.
 
+A box of isolation units (spec 2026-10-19-runner-isolation-units §2) is invited
+with `units`, and its one approval pairs every unit: `pair-by-role` with `units`
+is `unit_pairing.pair_units`.
+
 Who approves: only the creator, who becomes the runner's owner — as only a box's
 owner or its runner admins approve a device key, and no runner admin can exist
 before the runner does.
@@ -37,12 +41,12 @@ from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import aws_iam_proof, device_key_notify, device_keys
+from . import aws_iam_proof, device_key_notify, device_keys, unit_pairing
 from .api_device_keys import ECDH_STORES
 from .models import Runner, RunnerDeviceKey, RunnerInvitation
 from .runners import set_runner_machine
-from .schemas import (RunnerInvitationCheckOut, RunnerInvitationIn, RunnerInvitationOut, RunnerPairByRoleIn,
-                      RunnerPairByRoleOut)
+from .schemas import (RunnerInvitationCheckOut, RunnerInvitationIn, RunnerInvitationOut,
+                      RunnerInvitationUnitOut, RunnerPairByRoleIn, RunnerPairByRoleOut)
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +66,52 @@ def approve_url(invitation: RunnerInvitation) -> str:
 
 
 def invitation_out(invitation: RunnerInvitation) -> RunnerInvitationOut:
+    units = unit_pairing.units_of(invitation)
     return RunnerInvitationOut(
         id=invitation.pk, name=invitation.name, workspace=invitation.workspace_id,
         role_arn=invitation.role_arn, status=invitation.status, approve_url=approve_url(invitation),
         created_at=invitation.created_at, expires_at=invitation.expires_at,
         created_by_email=invitation.created_by.email or "", approved_at=invitation.approved_at,
-        has_ecdh_key=bool(invitation.ecdh_public_jwk), runner_id=invitation.runner_id,
+        has_ecdh_key=bool(invitation.ecdh_public_jwk) or any(u.get("ecdh_public_jwk") for u in units),
+        runner_id=invitation.runner_id,
+        units=[RunnerInvitationUnitOut(
+            name=u["name"], workspace=u["workspace"], kind=u.get("kind") or "tree",
+            slug=u.get("slug") or "", has_ecdh_key=bool(u.get("ecdh_public_jwk")),
+            runner_id=u.get("runner_id") or None) for u in units],
     )
+
+
+def _invited_units(request: HttpRequest, payload: RunnerInvitationIn) -> list[dict]:
+    """The units a box of isolation units will pair as, each checked as the box's
+    own workspace is: the inviter may run work in its workspace, an agent unit
+    names an agent of that workspace, and no name is used twice. [] for a box that
+    pairs as one runner."""
+    if not payload.units:
+        return []
+    from apps.agents.models import Agent
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for unit in payload.units:
+        if unit.name in seen:
+            raise HttpError(422, f"units: '{unit.name}' is named twice")
+        seen.add(unit.name)
+        slug = _may_invite_into(request, unit.workspace)
+        agent = ""
+        if unit.kind == "agent":
+            agent = (unit.slug or "").strip()
+            if not agent or not Agent.objects.filter(slug=agent, workspace_id=slug).exists():
+                raise HttpError(422, f"units: '{unit.name}' is an agent unit, and '{agent}' is not an "
+                                     f"agent of {slug}")
+        ecdh: dict = {}
+        if unit.ecdh_public_jwk:
+            try:
+                ecdh = device_keys.normalize_public_jwk(unit.ecdh_public_jwk)
+            except device_keys.KeyError_ as exc:
+                raise HttpError(422, f"units: '{unit.name}' ecdh_public_jwk: {exc}") from exc
+        out.append({"name": unit.name, "workspace": slug, "kind": unit.kind, "slug": agent,
+                    "ecdh_public_jwk": ecdh, "runner_id": None})
+    return out
 
 
 def _own_invitation_or_404(request: HttpRequest, invitation_id: uuid.UUID) -> RunnerInvitation:
@@ -125,6 +168,7 @@ def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
         except device_keys.KeyError_ as exc:
             raise HttpError(422, f"ecdh_public_jwk: {exc}") from exc
     jkt = aws_iam_proof.role_jkt(role_arn)
+    units = _invited_units(request, payload)
     try:
         with transaction.atomic():
             live = (RunnerInvitation.objects.select_for_update()
@@ -137,7 +181,7 @@ def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
             live.delete()
             invitation = RunnerInvitation.objects.create(
                 name=payload.name, workspace_id=slug, created_by=request.user,
-                role_arn=role_arn, role_jkt=jkt, ecdh_public_jwk=ecdh,
+                role_arn=role_arn, role_jkt=jkt, ecdh_public_jwk=ecdh, units=units,
             )
     except IntegrityError:  # a concurrent create for the same role and name won
         raise HttpError(409, _INVITATION_TAKEN) from None
@@ -219,13 +263,24 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
     workspace, whose instance role is already its approved device key. A role
     whose runner already exists under that name: 200 `reattached` (a replaced
     instance; nothing is made). An invitation not yet approved: 202 `waiting`.
-    Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`."""
+    Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`.
+
+    A box of isolation units sends `units` (each unit's name, the public half of
+    its own signing key and its ECDH key) with ONE proof: one runner per unit with
+    an active software device key, `units` mapping each name to its runner id. A
+    replaced instance (the same role and unit names) re-attaches every unit, its
+    new key replacing the old in place, keeping each runner id; that needs no
+    invitation. A unit not yet paired needs the approved invitation that lists it."""
     from .api import declared_capabilities
 
     try:
         role_arn = aws_iam_proof.verify(payload.proof, request)
     except aws_iam_proof.AwsProofError as exc:
         raise _refuse_pairing(f"proof: {exc}") from exc
+    if payload.units:
+        # A box of isolation units: every unit, one runner each, in one call.
+        return unit_pairing.pair_units(request, payload, role_arn, refuse=_refuse_pairing,
+                                       out_cls=RunnerPairByRoleOut, status_cls=Status)
     jkt = aws_iam_proof.role_jkt(role_arn)
 
     existing = RunnerDeviceKey.objects.select_related("runner").filter(jkt=jkt).first()
