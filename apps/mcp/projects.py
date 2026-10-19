@@ -105,7 +105,8 @@ def _call(workspace: str, handle: str, name: str, arguments: dict):
         # `search` fuses BM25 with the project's vectors (pgvector) when it has
         # them; with none yet, or no vector search here, it is lexical.
         semantic = kb_vectors.semantic_for(project) if name == "search" else None
-        return run(kb, name, arguments, semantic)
+        rerank = kb_vectors.reranker() if name == "search" else None
+        return run(kb, name, arguments, semantic, rerank)
     except (KBError, KeyError, ValueError, TypeError) as exc:
         raise ToolError(f"{name}: {exc}") from exc
     finally:

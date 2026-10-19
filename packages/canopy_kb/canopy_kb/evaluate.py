@@ -54,10 +54,10 @@ def score(golden: list[dict], ranked_ids: Callable[[str], Sequence[str]], ks: Se
 
 def table(results: dict[str, dict], ks: Sequence[int] = KS) -> str:
     """A plain-text table of `{mode: score(...)}`, one block per kind then overall."""
-    head = f"{'mode':<10} {'slice':<12} " + " ".join(f"{'R@' + str(k):>7}" for k in ks) + f" {'MRR':>6}"
+    head = f"{'mode':<16} {'slice':<20} " + " ".join(f"{'R@' + str(k):>7}" for k in ks) + f" {'MRR':>6}"
     lines = [head, "-" * len(head)]
     for mode, res in results.items():
         for label, s in [*res["by_kind"].items(), ("overall", res["overall"])]:
             cells = " ".join(f"{s[f'hits@{k}']:>3}/{s['n']:<3}" for k in ks)
-            lines.append(f"{mode:<10} {label:<12} {cells} {s['mrr']:>6.3f}")
+            lines.append(f"{mode:<16} {label:<20} {cells} {s['mrr']:>6.3f}")
     return "\n".join(lines)

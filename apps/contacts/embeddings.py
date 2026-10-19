@@ -165,7 +165,8 @@ def _vertex_base() -> str:
     return f"https://{loc}-aiplatform.googleapis.com/v1/projects/{settings.HCP_VERTEX_PROJECT}"
 
 
-def _invoke_vertex(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
+def _invoke_vertex(model_id: str, texts: list[str], purpose: str,
+                   dimensions: int = VERTEX_DIMENSIONS) -> list[list[float]]:
     name = model_id.removeprefix(VERTEX_PREFIX)
     url = f"{_vertex_base()}/locations/{settings.HCP_VERTEX_LOCATION}/publishers/google/models/{name}:predict"
     task = "RETRIEVAL_QUERY" if purpose == "query" else "RETRIEVAL_DOCUMENT"
@@ -174,23 +175,24 @@ def _invoke_vertex(model_id: str, texts: list[str], purpose: str) -> list[list[f
     out: list[list[float]] = []
     for i in range(0, len(texts), batch):
         body = {"instances": [{"content": t, "task_type": task} for t in texts[i:i + batch]],
-                "parameters": {"autoTruncate": True, "outputDimensionality": VERTEX_DIMENSIONS}}
+                "parameters": {"autoTruncate": True, "outputDimensionality": dimensions}}
         resp = _vertex_session().post(url, json=body, timeout=(2, 5))
         resp.raise_for_status()
         out.extend(p["embeddings"]["values"] for p in resp.json()["predictions"])
     return out
 
 
-def _invoke(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
+def _invoke(model_id: str, texts: list[str], purpose: str, **kw) -> list[list[float]]:
     if provider(model_id) == "vertex":
-        return _invoke_vertex(model_id, texts, purpose)
+        return _invoke_vertex(model_id, texts, purpose, **kw)
     return _invoke_bedrock(model_id, texts, purpose)
 
 
-def invoke(model_id: str, texts: list[str], purpose: str) -> list[list[float]]:
+def invoke(model_id: str, texts: list[str], purpose: str, *, dimensions: int | None = None) -> list[list[float]]:
     """Raw vectors, raising on any failure — for a bulk caller that retries and
-    counts its own failures. Check `retention_ok(model_id=)` before the first call."""
-    return _invoke(model_id, texts, purpose)
+    counts its own failures. Check `retention_ok(model_id=)` before the first call.
+    `dimensions` asks a Vertex model for that many (gemini-embedding: 768–3072)."""
+    return _invoke(model_id, texts, purpose, **({"dimensions": dimensions} if dimensions else {}))
 
 
 # --- zero retention ---------------------------------------------------------------
@@ -231,16 +233,18 @@ def retention_ok(*, force: bool = False, model_id: str | None = None) -> tuple[b
         return ok, why
 
 
-def embed(texts: list[str], *, purpose: str = "document", model_id: str | None = None) -> list[bytes] | None:
+def embed(texts: list[str], *, purpose: str = "document", model_id: str | None = None,
+          dimensions: int | None = None) -> list[bytes] | None:
     """Packed, unit-length vectors for `texts` from `model_id` (default: memory's
-    model), or None when off, unverified, or on any failure."""
+    model, 768-d), or None when off, unverified, or on any failure."""
     model_id = model() if model_id is None else model_id
     if not model_id or not texts:
         return None
     if not retention_ok(model_id=model_id)[0]:
         return None
     try:
-        vectors = _invoke(model_id, [t[:TEXT_MAX] for t in texts], purpose)
+        vectors = _invoke(model_id, [t[:TEXT_MAX] for t in texts], purpose,
+                          **({"dimensions": dimensions} if dimensions else {}))
     except Exception:  # noqa: BLE001 — any failure means "rank lexically this time"
         logger.warning("hcp embeddings: %s failed; falling back to lexical", model_id, exc_info=True)
         return None

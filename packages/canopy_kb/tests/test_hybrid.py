@@ -115,3 +115,32 @@ def test_score_reports_recall_at_k_and_mrr_by_kind():
     assert res["by_kind"]["keyword"]["recall@5"] == 1.0
     assert res["by_kind"]["paraphrase"]["hits@5"] == 0 and res["by_kind"]["paraphrase"]["hits@10"] == 1
     assert res["overall"]["mrr"] == round((1 + 1 / 7) / 3, 3)
+
+
+def test_weights_tilt_the_fusion_toward_one_list():
+    assert rrf([["a", "b"], ["b", "a"]], weights=[0.7, 0.3])[0] == "a"
+    assert rrf([["a", "b"], ["b", "a"]], weights=[0.3, 0.7])[0] == "b"
+
+
+def test_a_reranker_reorders_the_fused_candidates_seeing_each_passage(kb):
+    seen = []
+
+    def rerank(query, docs):
+        seen.extend(docs)
+        return sorted(range(len(docs)), key=lambda i: "Lead" not in docs[i]["title"])
+
+    hits = kb.search("cholera lead", semantic=_semantic([("doc:ocv", 0), ("page:lead", 0)]), rerank=rerank)
+    assert hits[0]["id"] == "page:lead"
+    assert {"title": "Lead exposure", "text": "Lead paint and spices."} in seen
+
+
+@pytest.mark.parametrize("answer", [None, [], [0, 0], [7]])
+def test_a_reranker_that_cannot_answer_leaves_the_order(kb, answer):
+    plain = kb.search("cholera", semantic=_semantic([("page:lead", 0)]))
+    assert kb.search("cholera", semantic=_semantic([("page:lead", 0)]), rerank=lambda q, d: answer) == plain
+
+
+def test_a_partial_rerank_keeps_the_rest_in_order(kb):
+    hits = kb.search("cholera", semantic=_semantic([("page:lead", 0), ("blog:wash", 0)]), rerank=lambda q, d: [2])
+    assert len(hits) == 3 and hits[0]["id"] == kb.search("cholera", semantic=_semantic(
+        [("page:lead", 0), ("blog:wash", 0)]))[2]["id"]

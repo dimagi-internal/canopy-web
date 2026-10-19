@@ -10,6 +10,7 @@ import json
 import math
 import re
 
+from apps.agents.kb_vectors import DIMENSIONS
 from apps.contacts import embeddings
 from canopy_kb import build
 
@@ -20,7 +21,7 @@ CONCEPTS = {"cholera": 0, "vaccine": 1, "vaccines": 1, "inoculation": 1, "ocv": 
 
 
 def vector(text: str) -> list[float]:
-    v = [0.0] * 768
+    v = [0.0] * DIMENSIONS
     for word in re.findall(r"[a-z]+", text.lower()):
         dim = CONCEPTS.get(word)
         if dim is None:
@@ -38,8 +39,8 @@ def install(monkeypatch, settings, calls: list | None = None, fail=lambda text: 
     monkeypatch.setitem(embeddings._retention, "model", None)
     monkeypatch.setattr(embeddings, "_check_retention", lambda m: (True, "keeps nothing"))
 
-    def invoke(model_id, texts, purpose):
-        assert model_id == MODEL
+    def invoke(model_id, texts, purpose, dimensions=768):
+        assert model_id == MODEL and dimensions == DIMENSIONS
         out = []
         for t in texts:
             if fail(t):
