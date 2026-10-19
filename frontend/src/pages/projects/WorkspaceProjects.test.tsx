@@ -79,6 +79,17 @@ describe('WorkspaceProjectRedirect', () => {
     expect(await screen.findByText('dimagi board')).toBeTruthy()
   })
 
+  it("renders the project in place for a reader who cannot open the steward's board", async () => {
+    getWorkspaceProject.mockResolvedValue({
+      ...(kb as object), workspace: 'connect', address: 'connect/givewell-kb', board_readable: false,
+      tasks: [{ ext_id: 'T1', title: 'Pull the SMC parameters', agent_slug: 'ace', status: 'todo' }],
+    } as never)
+    at('/w/connect/projects/givewell-kb')
+    expect(await screen.findByText('GiveWell Knowledge Base')).toBeTruthy()
+    expect(screen.getByText('Pull the SMC parameters')).toBeTruthy()
+    expect(screen.queryByText('steward page')).toBeNull()
+  })
+
   it('says so when there is no such project', async () => {
     getWorkspaceProject.mockRejectedValue(new AgentApiError('not found', 404, 'not found'))
     at('/w/dimagi/projects/nope')

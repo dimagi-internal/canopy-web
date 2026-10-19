@@ -1378,6 +1378,9 @@ class AgentProjectDetailOut(AgentProjectOut):
     #: The tasks its check-ins proposed that wait for Start or Decline, each as
     #: the huddle page shows it.
     proposed_tasks: list[ProposedTaskOut] = Field(default_factory=list)
+    #: Can the caller open `board_url`? False for a member of a division reading
+    #: a project its parent's agent stewards: the page then renders at its address.
+    board_readable: bool = True
 
 
 # ---- shared ----

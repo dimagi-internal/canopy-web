@@ -265,7 +265,7 @@ def test_a_parent_workspaces_agent_stewards_a_project_of_the_division(client, ev
     assert (body["address"], body["steward_slug"], body["url"]) == (
         "connect/givewell-kb", "eva", "/w/connect/projects/givewell-kb")
     assert body["board_url"] == "/w/dimagi/agents/eva/projects/P1"  # the steward's workspace, not connect
-    assert client.get("/api/workspace-projects/connect/givewell-kb/").status_code == 200
+    assert client.get("/api/workspace-projects/connect/givewell-kb/").json()["board_readable"] is True
 
 
 def test_it_can_be_created_directly_in_the_division(client, eva, connect):
@@ -357,5 +357,7 @@ def test_a_division_member_reads_it_without_seeing_the_parent(eva, connect):
     AgentProject.objects.create(agent=eva, ext_id="P1", name="KB", scope="workspace",
                                 owner_workspace=connect, handle="givewell-kb")
 
-    assert mc.get("/api/workspace-projects/connect/givewell-kb/").status_code == 200
+    detail = mc.get("/api/workspace-projects/connect/givewell-kb/")
+    assert detail.status_code == 200
+    assert detail.json()["board_readable"] is False  # the page renders at its address
     assert mc.get("/api/agents/eva/").status_code == 404

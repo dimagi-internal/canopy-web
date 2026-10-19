@@ -18354,6 +18354,11 @@ export interface components {
             readonly proposal?: components["schemas"]["ProposedProjectOut"] | null;
             /** Proposed Tasks */
             readonly proposed_tasks?: readonly components["schemas"]["ProposedTaskOut"][];
+            /**
+             * Board Readable
+             * @default true
+             */
+            readonly board_readable: boolean;
         };
         /**
          * AgentTaskOut
