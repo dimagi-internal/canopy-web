@@ -4,6 +4,7 @@
 #   aws sso login --profile labs
 #   ./up.sh                                  # the live box: stack canopy-cloud-runner, runner cloud-ec2-1
 #   ./up.sh --name cloud-ec2-test --standby  # a second box: stack canopy-cloud-runner-test
+#   ./up.sh --name cloud-ec2-fork --test --workspace canopy   # a test box: takes only what is put on it
 #   ./wire.sh --name <same> [--standby --agents a,b] --drill   # then wire it
 #   ./down.sh --name <same>                  # tear it down (stack + canopy-web runner row)
 #
@@ -21,6 +22,9 @@ BASE_URL="https://canopy.dimagi.com"
 NAME="$DEFAULT_RUNNER_NAME"
 STACK_ARG=""
 STANDBY=0
+TEST=0
+PROJECTS=""
+WORKSPACE=""
 VOLUME_SIZE=""
 INSTANCE_TYPE=""
 ALLOW_INSTANCE_CHANGE=0
@@ -36,6 +40,12 @@ usage: ./up.sh [options]
   --standby                 a box that claims NOTHING it is not explicitly given: no repo
                             (RunnerProjects='') and no chat-session turns (RunnerSessions=0).
                             Agent work reaches it only through assignment rows / drills.
+  --test                    a directed-only TEST box: it claims only turns pinned to it and
+                            chats bound to it (RunnerDirected=1), serves no agent
+                            (RunnerAgents=''), takes chats (RunnerSessions=1) for --projects.
+                            Not for the live name; needs --workspace. Then: ./wire.sh --test
+  --projects <a,b>          the repos a --test box holds (default canopy-web)
+  --workspace <slug>        the workspace the box pairs into (RunnerWorkspace)
   --volume-size <GiB>       root volume (template default 40)
   --instance-type <type>    EC2 type (template default t3.medium)
   --base-url <url>          canopy-web (default https://canopy.dimagi.com)
@@ -54,6 +64,9 @@ while [[ $# -gt 0 ]]; do
     --name) NAME="$2"; shift 2 ;;
     --stack) STACK_ARG="$2"; shift 2 ;;
     --standby) STANDBY=1; shift ;;
+    --test) TEST=1; shift ;;
+    --projects) PROJECTS="$2"; shift 2 ;;
+    --workspace) WORKSPACE="$2"; shift 2 ;;
     --volume-size) VOLUME_SIZE="$2"; shift 2 ;;
     --instance-type) INSTANCE_TYPE="$2"; shift 2 ;;
     --base-url) BASE_URL="${2%/}"; shift 2 ;;
@@ -70,6 +83,16 @@ STACK="${STACK_ARG:-${STACK:-$(stack_for_name "$NAME")}}"
 echo ">> runner '$NAME' -> stack '$STACK'"
 
 die() { echo "!! $*" >&2; exit 1; }
+
+# A --test box takes nothing it is not given, so it must never be the live box,
+# and it must say where it pairs (the template default is not a decision).
+if [[ "$TEST" == "1" ]]; then
+  [[ "$STANDBY" == "1" ]] && die "--test and --standby are different boxes: pick one"
+  [[ "$NAME" == "$DEFAULT_RUNNER_NAME" ]] \
+    && die "--test is never the live box ($DEFAULT_RUNNER_NAME): pass --name <test-name>"
+  [[ -n "$WORKSPACE" ]] || die "--test needs --workspace <slug>: the workspace the test box pairs into"
+fi
+[[ -z "$PROJECTS" || "$TEST" == "1" ]] || die "--projects is for a --test box"
 
 # ── preflight: every one-time human step, checked before anything is written ────
 for tool in aws python3 git curl; do
@@ -188,6 +211,10 @@ PARAMS=("SshCidr=${MYIP}/32" "RunnerName=${NAME}")
 if [[ "$STANDBY" == "1" ]]; then
   PARAMS+=("RunnerProjects=" "RunnerSessions=0")
 fi
+if [[ "$TEST" == "1" ]]; then
+  PARAMS+=("RunnerAgents=" "RunnerProjects=${PROJECTS:-canopy-web}" "RunnerSessions=1" "RunnerDirected=1")
+fi
+[[ -n "$WORKSPACE" ]] && PARAMS+=("RunnerWorkspace=${WORKSPACE}")
 # shellcheck disable=SC2206 # EXTRA_PARAMS is documented as space-separated Key=Val
 [[ -n "${EXTRA_PARAMS:-}" ]] && PARAMS+=(${EXTRA_PARAMS})
 echo ">> parameters: ${PARAMS[*]}"
@@ -269,6 +296,7 @@ chmod 600 "$KEYFILE"
 
 WIRE="./wire.sh --name $NAME --drill"
 [[ "$STANDBY" == "1" ]] && WIRE="./wire.sh --name $NAME --standby --agents <a,b> --drill"
+[[ "$TEST" == "1" ]] && WIRE="./wire.sh --name $NAME --test"
 echo ""
 echo "==> UP. stack=$STACK runner=$NAME ip=$IP"
 echo "    next: $WIRE"

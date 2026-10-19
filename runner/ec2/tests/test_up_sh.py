@@ -210,3 +210,58 @@ def test_a_failed_create_must_be_torn_down_first(tmp_path, canopy):
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
     assert res.returncode != 0 and "down.sh" in res.stderr
     assert not any("deploy" in c for c in _calls(state))
+
+
+# ── --test: a directed-only box that serves nothing until a chat is put on it ──
+
+def _deploy(state):
+    return next(c for c in _calls(state) if "cloudformation deploy" in c) + " "
+
+
+def test_up_test_mode_params(tmp_path, canopy):
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-fork", "--test", "--workspace", "canopy")
+    assert res.returncode == 0, res.stdout + res.stderr
+    deploy = _deploy(state)
+    for p in ("RunnerName=cloud-ec2-fork", "RunnerDirected=1", "RunnerSessions=1", "RunnerAgents=",
+              "RunnerProjects=canopy-web", "RunnerWorkspace=canopy"):
+        assert f" {p} " in deploy, (p, deploy)
+    assert "./wire.sh --name cloud-ec2-fork --test" in res.stdout
+
+
+def test_up_test_mode_takes_projects(tmp_path, canopy):
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-fork", "--test", "--workspace", "canopy",
+              "--projects", "canopy-web,connect-labs")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert " RunnerProjects=canopy-web,connect-labs " in _deploy(state)
+
+
+def test_up_test_refuses_live_name(tmp_path, canopy):
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--test", "--workspace", "canopy")
+    assert res.returncode != 0 and "cloud-ec2-1" in res.stderr
+    assert not any("deploy" in c or "put-secret" in c or "create-secret" in c for c in _calls(state))
+
+
+def test_up_test_needs_a_workspace(tmp_path, canopy):
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-fork", "--test")
+    assert res.returncode != 0 and "--workspace" in res.stderr
+    assert not any("deploy" in c for c in _calls(state))
+
+
+def test_up_test_and_standby_do_not_mix(tmp_path, canopy):
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-fork", "--test", "--standby",
+              "--workspace", "canopy")
+    assert res.returncode != 0
+    assert not any("deploy" in c for c in _calls(state))
+
+
+def test_up_workspace_names_where_the_box_pairs(tmp_path, canopy):
+    state = _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "canopy")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert " RunnerWorkspace=canopy " in _deploy(state)
+    assert "RunnerDirected" not in _deploy(state)
