@@ -132,3 +132,32 @@ def notify_pending_on_commit(key, *, reapproval: bool = False) -> None:
         transaction.on_commit(lambda: notify_pending(key, reapproval=reapproval))
     except Exception:  # noqa: BLE001
         logger.exception("device key notice could not be scheduled")
+
+
+def notify_rekeyed(key, *, adopted: bool = False) -> dict:
+    """Tell the runner's approvers its key was just replaced by its box re-pairing.
+    Approval-free for a unit re-attaching on its own machine, so it must never be
+    silent: if nobody expected it, revoking the key is one click. Never raises."""
+    from .api_device_keys import approve_url
+
+    result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
+    try:
+        runner = key.runner
+        subject = f"Canopy · {runner.name} has a new key"
+        how = ("moved into an isolation unit" if adopted
+               else "re-paired its isolation unit (a replaced or rebuilt instance)")
+        detail = (f"{runner.name} {how}: its sign-in key was replaced. It keeps its runner, its routing "
+                  f"and its access. If you did not replace or rebuild this box, revoke the key now.")
+        foot = "You are getting this because you administer this runner."
+        _send(approvers(runner), subject=subject, detail=detail, link=approve_url(key), foot=foot,
+              link_text="Review it under Your machines", result=result)
+    except Exception:  # noqa: BLE001
+        logger.exception("re-key notice failed for %s", getattr(key, "pk", "?"))
+        result["error"] = True
+    return result
+
+
+def notify_rekeyed_on_commit(key, *, adopted: bool = False) -> None:
+    from django.db import transaction
+
+    transaction.on_commit(lambda: notify_rekeyed(key, adopted=adopted))

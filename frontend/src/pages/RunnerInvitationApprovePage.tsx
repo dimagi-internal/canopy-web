@@ -20,7 +20,8 @@ const STATUS_TEXT: Record<RunnerInvitationOut['status'], string> = {
  * carries (`/w/:workspace/runner-invitations/:invitationId`).
  *
  * Shows what is being let in (name, workspace, instance role, who asked, when it
- * runs out) and one Approve button. The passkey step-up is the API client's: a
+ * runs out — and, for a box of isolation units, every unit it pairs) and one
+ * Approve button: one approval pairs every unit. The passkey step-up is the API client's: a
  * 403 `step_up_required` prompts for the passkey and retries, so this page has
  * no passkey code of its own. Only the invitation's creator can open it.
  */
@@ -60,6 +61,7 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
     )
   }
   if (!inv) return <div className="h-32 max-w-2xl animate-pulse rounded-lg bg-muted" />
+  const units = inv.units ?? []
 
   async function approve() {
     if (!inv) return
@@ -96,11 +98,41 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
             {inv.status}: {STATUS_TEXT[inv.status]}
           </dd>
         </dl>
-        <p className="mt-3 text-[12px] text-muted-foreground">
-          Approving makes this box your runner in {inv.workspace}. It signs in with its instance role, holds no
-          token, and serves nothing until you route work to it
-          {inv.has_ecdh_key ? '. Its key for reading zero-knowledge secrets is approved with it' : ''}.
-        </p>
+        {units.length > 0 ? (
+          <>
+            <table className="mt-4 w-full text-left text-[13px]" aria-label="Units">
+              <thead className="text-[12px] text-muted-foreground">
+                <tr>
+                  <th className="py-1 pr-3 font-medium">Unit runner</th>
+                  <th className="py-1 pr-3 font-medium">Serves</th>
+                  <th className="py-1 pr-3 font-medium">Workspace</th>
+                  <th className="py-1 font-medium">Paired</th>
+                </tr>
+              </thead>
+              <tbody>
+                {units.map((u) => (
+                  <tr key={u.name} className="border-t border-border" data-testid="invitation-unit">
+                    <td className="py-1 pr-3 font-mono">{u.name}</td>
+                    <td className="py-1 pr-3">{u.kind === 'agent' ? `only agent ${u.slug}` : 'its workspace tree'}</td>
+                    <td className="py-1 pr-3">{u.workspace}</td>
+                    <td className="py-1 font-mono text-[12px]">{u.runner_id ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-3 text-[12px] text-muted-foreground">
+              Approving makes each of these {units.length} units your runner in its workspace: each is its own user on
+              the box with its own key, holds no token, and serves nothing until you route work to it
+              {inv.has_ecdh_key ? '. Their keys for reading zero-knowledge secrets are approved with them' : ''}.
+            </p>
+          </>
+        ) : (
+          <p className="mt-3 text-[12px] text-muted-foreground">
+            Approving makes this box your runner in {inv.workspace}. It signs in with its instance role, holds no
+            token, and serves nothing until you route work to it
+            {inv.has_ecdh_key ? '. Its key for reading zero-knowledge secrets is approved with it' : ''}.
+          </p>
+        )}
       </section>
 
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}

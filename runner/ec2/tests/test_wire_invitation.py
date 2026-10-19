@@ -79,3 +79,22 @@ def test_an_invitation_for_another_name_is_not_used(tmp_path):
     _with_invitation(tmp_path, status="consumed", name="cloud-ec2-other")
     res = _wire(tmp_path, "--standby", "--agents", "ada")
     assert f"==> runner: {INVITED}" not in res.stdout
+
+
+UNIT_RID = "55555555-5555-5555-5555-555555555555"
+
+
+def test_unit_wires_that_units_runner_from_the_boxs_one_invitation(tmp_path):
+    """up.sh --units makes ONE invitation for the box; each unit's runner id is in
+    its `units`. `--unit agent-eva` wires `cloud-ec2-test-agent-eva`."""
+    state = _with_invitation(tmp_path, status="consumed")
+    curl = (tmp_path / "bin" / "curl").read_text()
+    units = [{"name": "cloud-ec2-test", "runner_id": INVITED},
+             {"name": "cloud-ec2-test-agent-eva", "runner_id": UNIT_RID}]
+    curl = curl.replace("'runner_id': '44444444-4444-4444-4444-444444444444'}",
+                        f"'runner_id': '44444444-4444-4444-4444-444444444444', 'units': {units!r}}}")
+    (tmp_path / "bin" / "curl").write_text(curl)
+    res = _wire(tmp_path, "--unit", "agent-eva", "--standby", "--agents", "ada")
+    assert f"==> runner: {UNIT_RID}" in res.stdout, res.stdout + res.stderr
+    rows = json.loads((state / "put-ada.json").read_text())["runners"]
+    assert rows[-1] == {"runner_id": UNIT_RID, "enabled": False}

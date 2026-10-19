@@ -33,8 +33,11 @@ MCP_CALL = "mcp.call"
 RUNNER_INVITED = "runner.invited"
 RUNNER_INVITATION_APPROVED = "runner.invitation.approved"
 RUNNER_PAIRED = "runner.paired"
+#: A cloud runner's device key was replaced by its box re-pairing (a replaced
+#: instance, or a box adopted into isolation units).
+RUNNER_REKEYED = "runner.rekeyed"
 KINDS = (TURN_ENQUEUED, TURN_FINISHED, CHAT_SESSION_CREATED, CHAT_MESSAGE, SETTING_CHANGED, MCP_CALL,
-         RUNNER_INVITED, RUNNER_INVITATION_APPROVED, RUNNER_PAIRED)
+         RUNNER_INVITED, RUNNER_INVITATION_APPROVED, RUNNER_PAIRED, RUNNER_REKEYED)
 
 
 def _actor_kind(actor, agent=None) -> str:

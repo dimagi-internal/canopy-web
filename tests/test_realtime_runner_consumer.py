@@ -108,6 +108,26 @@ async def test_claim_over_ws_returns_a_turn():
     await comm.disconnect()
 
 
+async def test_claim_over_ws_skips_the_agents_the_box_paused():
+    """A box backing off an agent whose credentials it cannot resolve says so on the
+    claim frame, as the REST claim's `?paused=` does: that agent's turn stays queued."""
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+
+    @database_sync_to_async
+    def _enqueue():
+        services.enqueue_turn(initiator=_BY_CANOPY, agent=agent, origin=Turn.ORIGIN_API,
+                              idempotency_key="p1", prompt="later")
+
+    await _enqueue()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "claim", "paused": ["echo"]})
+    assert (await comm.receive_json_from(timeout=2)) == {"type": "claim.result", "turn": None}
+    await comm.send_json_to({"action": "claim"})
+    assert (await comm.receive_json_from(timeout=2))["turn"]["target"] == "echo"
+    await comm.disconnect()
+
+
 async def test_claim_over_ws_empty_when_nothing_queued():
     user, _ws, _a, runner = await database_sync_to_async(_setup)()
     comm = await _connect(runner.id, user)

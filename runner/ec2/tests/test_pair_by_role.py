@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import pathlib
-import re
 
 import pytest
 
@@ -48,7 +47,7 @@ def test_waits_for_approval_then_pairs_and_writes_its_state(box, monkeypatch):
     sent = _answers(box, monkeypatch, (202, {"status": "waiting"}),
                     (201, {"status": "paired", "runner_id": "rid-1"}))
     assert box.pair_by_role() == "rid-1"
-    assert json.loads(box.STATE_FILE.read_text()) == {"runner_id": "rid-1"}
+    assert json.loads(box.STATE_FILE.read_text()) == {"runner_id": "rid-1", "paired_by": "invitation"}
     url, body = sent[0]
     assert url == "https://canopy.example/api/harness/runners/pair-by-role"
     assert body["name"] == "cloud-ec2-fork" and body["kind"] == "cloud"
@@ -69,7 +68,7 @@ def test_the_proof_is_bound_to_the_pair_by_role_url(box, monkeypatch):
 def test_a_replaced_instance_reattaches(box, monkeypatch):
     _answers(box, monkeypatch, (200, {"status": "reattached", "runner_id": "rid-old"}))
     assert box.pair_by_role() == "rid-old"
-    assert json.loads(box.STATE_FILE.read_text()) == {"runner_id": "rid-old"}
+    assert json.loads(box.STATE_FILE.read_text()) == {"runner_id": "rid-old", "paired_by": "invitation"}
 
 
 def test_a_refusal_says_run_up_sh_and_keeps_asking(box, monkeypatch):
@@ -128,11 +127,12 @@ def test_main_starts_without_a_token(box, monkeypatch):
         box.main()
 
 
-def test_the_stack_writes_canopy_token_only_when_it_names_a_secret():
+def test_the_stack_writes_no_pat_no_claude_token_and_no_keyring_password():
+    """A box of isolation units holds no PAT (it pairs by invitation, each unit signs in
+    with its own key), no Claude token (each unit's logins come from canopy-web) and no
+    box-wide gog password (each agent's is derived from its unit's secret) — spec
+    2026-10-19-runner-isolation-units §5."""
     cfn = (EC2 / "runner.cfn.yaml").read_text()
-    line = next(ln for ln in cfn.splitlines() if ln.strip().startswith("CANOPY_TOKEN="))
-    # Guarded by a non-empty check, and tolerant of a deleted secret.
-    assert re.search(r'if \[ -n "\$\{CanopyTokenSecret\}" \]', line), line
-    assert "|| true" in line, line
-    # A new stack names no PAT secret; an existing one keeps its value on update.
-    assert re.search(r"\n  CanopyTokenSecret:\n    Type: String\n    Default: ''\n", cfn)
+    for banned in ("CANOPY_TOKEN=", "CLAUDE_CODE_OAUTH_TOKEN=", "GOG_KEYRING_PASSWORD=",
+                   "CanopyTokenSecret", "ClaudeTokenSecret", "GogKeyringSecret", "runner.env"):
+        assert banned not in cfn, banned

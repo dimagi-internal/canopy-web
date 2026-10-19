@@ -125,7 +125,8 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
 
 
 #: Where a box may say its ECDH private key lives (`RunnerDeviceKey.ecdh_store`).
-ECDH_STORES = frozenset({"secure-enclave", "tpm", "aws-kms", "software"})
+#: `kms-broker`: an isolation unit's KMS key, used through its box's root-only broker.
+ECDH_STORES = frozenset({"secure-enclave", "tpm", "aws-kms", "software", "kms-broker"})
 
 
 def _set_ecdh_and_store(key: RunnerDeviceKey, jwk: dict | None, jkt: str, store: str) -> None:

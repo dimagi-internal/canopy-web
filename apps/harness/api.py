@@ -1285,6 +1285,12 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     for key in ("projects", "profiles", "envelope", "midturn", "unprepared"):
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
+    # The isolation unit is SERVER-OWNED once it is set (`unit_pairing` records it
+    # from the invitation a person approved): a write can neither replace nor clear
+    # it, or an agent unit could lift its own restriction. A box-sent value is
+    # ignored; a runner with none may still declare one (a self-restriction).
+    if runner.capabilities.get("unit"):
+        caps["unit"] = runner.capabilities["unit"]
     runner.capabilities = caps
     runner.save(update_fields=["capabilities"])
     return _with_roots(request, runner)

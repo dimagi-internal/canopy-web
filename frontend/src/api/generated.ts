@@ -7047,6 +7047,13 @@ export interface paths {
          *     whose runner already exists under that name: 200 `reattached` (a replaced
          *     instance; nothing is made). An invitation not yet approved: 202 `waiting`.
          *     Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`.
+         *
+         *     A box of isolation units sends `units` (each unit's name, the public half of
+         *     its own signing key and its ECDH key) with ONE proof: one runner per unit with
+         *     an active software device key, `units` mapping each name to its runner id. A
+         *     replaced instance (the same role and unit names) re-attaches every unit, its
+         *     new key replacing the old in place, keeping each runner id; that needs no
+         *     invitation. A unit not yet paired needs the approved invitation that lists it.
          */
         readonly post: operations["pair_runner_by_role"];
         readonly delete?: never;
@@ -24626,12 +24633,46 @@ export interface components {
             readonly has_ecdh_key: boolean;
             /** Runner Id */
             readonly runner_id?: string | null;
+            /**
+             * Units
+             * @default []
+             */
+            readonly units: readonly components["schemas"]["RunnerInvitationUnitOut"][];
+        };
+        /**
+         * RunnerInvitationUnitOut
+         * @description One unit an invitation pairs, and its runner once the box has paired.
+         */
+        readonly RunnerInvitationUnitOut: {
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "tree" | "agent";
+            /**
+             * Slug
+             * @default
+             */
+            readonly slug: string;
+            /**
+             * Has Ecdh Key
+             * @default false
+             */
+            readonly has_ecdh_key: boolean;
+            /** Runner Id */
+            readonly runner_id?: string | null;
         };
         /**
          * RunnerInvitationIn
          * @description Invite one new cloud box, by the name it will pair as and its EC2 instance
          *     role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
          *     public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it.
+         *     `units`: a box that runs several isolation units lists them, and the one
+         *     approval pairs every one.
          */
         readonly RunnerInvitationIn: {
             /** Name */
@@ -24644,12 +24685,43 @@ export interface components {
             readonly ecdh_public_jwk?: {
                 readonly [key: string]: unknown;
             } | null;
+            /** Units */
+            readonly units?: readonly components["schemas"]["RunnerUnitIn"][] | null;
+        };
+        /**
+         * RunnerUnitIn
+         * @description One isolation unit on the invited box: a runner of its own, named `name`,
+         *     serving `workspace`'s tree (`kind` tree) or only agent `slug` (`kind` agent,
+         *     an agent of `workspace`). `ecdh_public_jwk` is that unit's zero-knowledge ECDH
+         *     key (its KMS key in the `<stack>-ecdh` stack) when known.
+         */
+        readonly RunnerUnitIn: {
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Kind
+             * @default tree
+             * @enum {string}
+             */
+            readonly kind: "tree" | "agent";
+            /**
+             * Slug
+             * @default
+             */
+            readonly slug: string;
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /**
          * RunnerPairByRoleOut
          * @description `paired` (a new runner), `reattached` (this role's existing runner — a
          *     replaced instance), or `waiting` (the invitation is not approved yet; ask
-         *     again on the next poll).
+         *     again on the next poll). A box of units gets `units`, each unit's runner id by
+         *     its name (`paired` when any was made).
          */
         readonly RunnerPairByRoleOut: {
             /**
@@ -24659,6 +24731,20 @@ export interface components {
             readonly status: "paired" | "reattached" | "waiting";
             /** Runner Id */
             readonly runner_id?: string | null;
+            /**
+             * Units
+             * @default {}
+             */
+            readonly units: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Device Keys
+             * @default {}
+             */
+            readonly device_keys: {
+                readonly [key: string]: string;
+            };
         };
         /**
          * RunnerPairByRoleIn
@@ -24699,6 +24785,43 @@ export interface components {
              * @default
              */
             readonly ecdh_store: string;
+            /** Units */
+            readonly units?: readonly components["schemas"]["RunnerPairUnitIn"][] | null;
+        };
+        /**
+         * RunnerPairUnitIn
+         * @description One unit of a box pairing all its units at once: its runner `name`, the
+         *     PUBLIC half of the unit's own signing key (`public_jwk`, a software P-256 key
+         *     in the unit's home), its zero-knowledge ECDH key, and what it declares.
+         */
+        readonly RunnerPairUnitIn: {
+            /** Name */
+            readonly name: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Ecdh Store
+             * @default
+             */
+            readonly ecdh_store: string;
+            /**
+             * Capabilities
+             * @default {}
+             */
+            readonly capabilities: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Host
+             * @default
+             */
+            readonly host: string;
         };
         /**
          * HealthCheck

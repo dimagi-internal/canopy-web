@@ -290,7 +290,18 @@ RUNNER_TOKEN_RETRY_SECONDS = 60
 
 
 def _exchange_device_proof(runner_id: str) -> bool:
-    """Trade a fresh instance-role proof for a runner token. Never raises."""
+    """Trade a fresh device proof for a runner token — the instance role's, or for an
+    isolation unit its own software key's (`_exchange_unit_proof`). Never raises."""
+    if UNIT:
+        raw, exp = _exchange_unit_proof(runner_id)
+        if not raw:
+            return False
+        _RUNNER_TOKEN.update(raw=raw, exp=exp)
+        _share_runner_token(raw, exp)
+        if not _RUNNER_TOKEN["announced"]:
+            _RUNNER_TOKEN["announced"] = True
+            _log(f"keyless: unit {UNIT} signed in with its own device key (no PAT, no instance role)")
+        return True
     url = f"{BASE_URL}/api/runner-sessions/"
     headers = _aws_proof_headers(url)
     if not headers:
@@ -364,7 +375,27 @@ def _bearer(min_life: float = RUNNER_TOKEN_RENEW_SECONDS) -> str:
             # An unexpired token is still good while the renewal is retried.
             if _RUNNER_TOKEN["raw"] and _RUNNER_TOKEN["exp"] > now:
                 return _RUNNER_TOKEN["raw"]
+    # No PAT fallback for a box that holds none by design (spec §5): a unit, or a box
+    # paired by invitation. Without a token it reports itself unauthenticated and its
+    # device-key path asks the owner — it never borrows a person's credential.
+    if _no_pat_fallback():
+        return ""
     return TOKEN
+
+
+#: The state file's `paired_by`, read once (`_no_pat_fallback`); pairing sets it.
+_PAIRED_BY: dict = {"v": None}
+
+
+def _no_pat_fallback() -> bool:
+    if UNIT:
+        return True
+    if _PAIRED_BY["v"] is None:
+        try:
+            _PAIRED_BY["v"] = str(json.loads(STATE_FILE.read_text()).get("paired_by") or "")
+        except (OSError, ValueError, AttributeError):
+            return False
+    return _PAIRED_BY["v"] == "invitation"
 
 
 def _drop_runner_token() -> bool:
@@ -388,7 +419,8 @@ def _api(method: str, path: str, body: dict | None = None, *,
         if value:
             req.add_header(name, value)
     bearer = _bearer()
-    req.add_header("Authorization", f"Bearer {bearer}")
+    if bearer:
+        req.add_header("Authorization", f"Bearer {bearer}")
     req.add_header("Content-Type", "application/json")
     # Provenance (canopy-web apps/common/request_context.py): what canopy records
     # as the program behind anything this request creates.
@@ -536,6 +568,9 @@ def _nudge_updater(expected_sha: str, *, now: float | None = None) -> bool:
     if not expected or not installed or expected == installed:
         return False
     if now - _last_update_nudge < UPDATE_NUDGE_MIN_SECONDS:
+        return False
+    if os.environ.get("CANOPY_UNIT", "").strip():
+        # A unit has no sudo: root's updater timer (30 min) installs for every unit.
         return False
     # Advance the throttle on the ATTEMPT, not the success: a broken systemctl
     # would otherwise warn on every ~20s beat, and the timer rescues that case.
@@ -943,6 +978,10 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
 
 
 def pair_or_load() -> str:
+    if UNIT and not STATE_FILE.exists():
+        # A unit never pairs itself: root's canopy-pair pairs every unit at once.
+        if not _wait_for_unit_state():
+            sys.exit(0)
     if STATE_FILE.exists():
         rid = json.loads(STATE_FILE.read_text()).get("runner_id")
         if rid:
@@ -975,6 +1014,10 @@ def pair_or_load() -> str:
                 _api("PATCH", f"/runners/{rid}",
                      {"capabilities": {k: v for k, v in RUNNER_CAPS.items() if k != "projects"}})
                 return rid
+    if UNIT:
+        _log(f"FATAL: unit {UNIT}'s runner is gone from canopy-web (retired?) — re-run "
+             "canopy-pair (`sudo systemctl restart canopy-pair`) after a new invitation")
+        sys.exit(1)
     if not TOKEN:
         # A new box holds no PAT: it pairs by the invitation up.sh made for its
         # instance role, once the operator approves it with a passkey.
@@ -1047,7 +1090,10 @@ def pair_by_role() -> str | None:
         status, reply = _post_unauthenticated(url, body)
         rid = (reply or {}).get("runner_id") if isinstance(reply, dict) else None
         if status in (200, 201) and rid:
-            STATE_FILE.write_text(json.dumps({"runner_id": rid}))
+            # `paired_by`: this box holds no PAT by design, so `_bearer` never falls
+            # back to one (spec 2026-10-19-runner-isolation-units §5).
+            STATE_FILE.write_text(json.dumps({"runner_id": rid, "paired_by": "invitation"}))
+            _PAIRED_BY["v"] = "invitation"
             how = "re-attached to" if status == 200 else "paired as new"
             _log(f"pair-by-role: {how} runner {rid} ({RUNNER_NAME}, caps={RUNNER_CAPS})")
             return rid
@@ -1301,8 +1347,9 @@ def aws_proof(url: str, *, creds: dict | None = None, now: float | None = None) 
 
 
 def _aws_proof_headers(url: str) -> dict:
-    """{X-Canopy-Aws-Proof: …} for every resolve this box makes, or {} — never raises."""
-    if os.environ.get("CANOPY_DEVICE_KEY", "1") == "0":
+    """{X-Canopy-Aws-Proof: …} for every resolve this box makes, or {} — never raises.
+    A unit has no instance role to prove (IMDS is root's): {}."""
+    if os.environ.get("CANOPY_DEVICE_KEY", "1") == "0" or UNIT:
         return {}
     try:
         proof = aws_proof(url)
@@ -1433,6 +1480,1027 @@ def start_aws_device_key_enrollment(runner_id: str) -> threading.Thread:
                          name="aws-device-key-enroll")
     t.start()
     return t
+
+
+# ── Isolation units: one box, many tenants (spec 2026-10-19-runner-isolation-units) ──
+#
+# A box may run several isolation units — a workspace TREE, or a single AGENT —
+# each its own Unix user (`cu-<unit>`), home, runner process
+# (`canopy-runner@<unit>.service`), `Runner` row and device identity. The instance
+# role is root's: an iptables rule rejects IMDS for every other uid, so a unit can
+# neither sign as the box nor call KMS. A unit therefore holds:
+#
+# * a SOFTWARE signing key in its home (`~/.canopy/device-key/sw.pem`), made by the
+#   canopy CLI (`canopy vault device --public-jwk --kind software`) — this file has
+#   no EC crypto (stdlib-only), so the CLI also signs its DPoP proofs
+#   (`canopy vault runner-session`);
+# * an ECDH key in KMS, one per unit, which only the root-owned broker
+#   (`kms_broker.py`, a Unix socket checked by SO_PEERCRED) derives with on its
+#   behalf (`CANOPY_ECDH_BROKER`);
+# * its own gog secret (`/etc/canopy-runner/<unit>.gog-secret`), from which each
+#   agent's keyring password is derived (`gog_env`).
+#
+# Root does the box-wide parts from this same file: `--setup-units` (users, files,
+# the IMDS rule; every start) and `--pair-units` (one `pair-by-role` call for every
+# unit, under ONE approval). A box with no `CANOPY_UNIT` in its environment — a
+# laptop-shaped single box, or a box built before units — behaves exactly as before.
+
+UNIT = os.environ.get("CANOPY_UNIT", "").strip()
+UNIT_KIND = os.environ.get("CANOPY_UNIT_KIND", "").strip()
+UNIT_AGENT = os.environ.get("CANOPY_UNIT_AGENT", "").strip()
+if UNIT and UNIT_KIND == "agent" and UNIT_AGENT:
+    # A self-restriction canopy-web also records from the approved invitation:
+    # this runner runs only its agent (`routing.unit_refusal`).
+    RUNNER_CAPS["unit"] = {"kind": "agent", "slug": UNIT_AGENT}
+UNIT_ETC = pathlib.Path(os.environ.get("CANOPY_UNIT_ETC", "/etc/canopy-runner"))
+UNITS_FILE = UNIT_ETC / "units.json"
+BOX_ENV_FILE = UNIT_ETC / "box.env"
+KMS_BROKER_SOCKET = os.environ.get("CANOPY_KMS_BROKER_SOCKET", "/run/canopy-kms/sock")
+TURN_ENV_BASE = pathlib.Path(os.environ.get("CANOPY_TURN_ENV_BASE", "/run/canopy"))
+UNIT_HOME_ROOT = os.environ.get("CANOPY_UNIT_HOME_ROOT", "/home")
+IMDS_V4, IMDS_V6 = "169.254.169.254", "fd00:ec2::254"
+#: `cu-<id>` must fit Linux's 32-character user names.
+_UNIT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,27}$")
+_RUNNER_NAME = re.compile(r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")
+#: The KMS alias the `<stack>-ecdh` stack gives a unit's key. The unit that keeps
+#: the box's name keeps the box's ORIGINAL key (`alias/canopy-runner-ecdh/<role>`),
+#: so a box moved to units loses no wrap; every other unit's has its id appended.
+KMS_ALIAS_PREFIX = "alias/canopy-runner-ecdh/"
+
+
+def parse_units(spec: str, *, workspace: str, box: str) -> list[dict]:
+    """`RunnerUnits` (`tree:dimagi,tree:marshellis,agent:eva`) as unit records.
+
+    Empty means ONE unit, `tree:<workspace>`, so a single-tree box keeps its shape.
+    `agent:<slug>[@<workspace>]` is an agent unit (its workspace defaults to the
+    box's). The tree unit of the box's own workspace keeps the BOX's name — the
+    live box keeps its runner (and its id) when it moves to units; every other unit
+    is `<box>-<id>`. Raises ValueError on anything it cannot make a unit of."""
+    items = [x.strip() for x in (spec or "").split(",") if x.strip()]
+    if not items:
+        if not workspace:
+            raise ValueError("no RunnerUnits and no RunnerWorkspace: nothing to make a unit of")
+        items = [f"tree:{workspace}"]
+    out: list[dict] = []
+    for item in items:
+        kind, sep, rest = item.partition(":")
+        if not sep or kind not in ("tree", "agent") or not rest:
+            raise ValueError(f"unit '{item}': expected tree:<workspace> or agent:<slug>[@<workspace>]")
+        if kind == "tree":
+            ws, slug, uid = rest, "", rest
+        else:
+            slug, _, ws = rest.partition("@")
+            ws = ws or workspace
+            uid = f"agent-{slug}"
+        if not _UNIT_ID.match(uid) or not ws:
+            raise ValueError(f"unit '{item}': '{uid}' is not a usable unit id (lowercase, digits, '-')")
+        name = box if kind == "tree" and ws == workspace else f"{box}-{uid}"
+        if not _RUNNER_NAME.match(name):
+            raise ValueError(f"unit '{item}': runner name '{name}' is not a valid runner name")
+        out.append({"id": uid, "kind": kind, "workspace": ws, "slug": slug, "name": name,
+                    "user": f"cu-{uid}", "home": f"{UNIT_HOME_ROOT}/cu-{uid}"})
+    for field in ("id", "name"):
+        seen = [u[field] for u in out]
+        if len(set(seen)) != len(seen):
+            raise ValueError(f"RunnerUnits names a unit twice ({field})")
+    trees = [u["workspace"] for u in out if u["kind"] == "tree"]
+    if len(set(trees)) != len(trees):
+        raise ValueError("RunnerUnits names one workspace tree twice")
+    return out
+
+
+def unit_kms_key(unit: dict, box: str, role_name: str) -> str:
+    """The KMS key id (an alias) of `unit`'s ECDH key."""
+    suffix = "" if unit["name"] == box else f"/{unit['id']}"
+    return f"{KMS_ALIAS_PREFIX}{role_name}{suffix}"
+
+
+def _csv_minus(value: str, drop: set) -> str:
+    return ",".join(x for x in (x.strip() for x in (value or "").split(",")) if x and x not in drop)
+
+
+def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int) -> dict:
+    """The environment `canopy-runner@<unit>` runs with (`/etc/canopy-runner/<id>.env`).
+
+    Deliberately WITHOUT `CANOPY_TOKEN` (no PAT on a runner), `CLAUDE_CODE_OAUTH_TOKEN`
+    (the Claude bundle comes from canopy-web per unit) and `GOG_KEYRING_PASSWORD`
+    (each agent's is derived from the unit's own secret). An agent unit runs only its
+    agent; the box's own tree unit runs the box's agents and repos minus every agent
+    that has a unit of its own; another tree unit starts with neither and takes what
+    canopy-web routes to it."""
+    agent_units = {u["slug"] for u in units if u["kind"] == "agent"}
+    home = unit["home"]
+    if unit["kind"] == "agent":
+        agents = slugs = unit["slug"]
+        projects = ""
+    elif unit["name"] == box.get("RUNNER_NAME"):
+        agents = _csv_minus(box.get("RUNNER_AGENTS", ""), agent_units)
+        slugs = _csv_minus(box.get("AGENT_SLUGS", ""), agent_units)
+        projects = box.get("RUNNER_PROJECTS", "")
+    else:
+        agents = slugs = projects = ""
+    env = {
+        "CANOPY_BASE_URL": box.get("CANOPY_BASE_URL", ""),
+        "CANOPY_UNIT": unit["id"], "CANOPY_UNIT_KIND": unit["kind"],
+        "CANOPY_UNIT_AGENT": unit["slug"],
+        "RUNNER_NAME": unit["name"], "RUNNER_HOST": unit["name"],
+        "RUNNER_WORKSPACE": unit["workspace"],
+        "RUNNER_AGENTS": agents, "AGENT_SLUGS": slugs, "RUNNER_PROJECTS": projects,
+        "RUNNER_SESSIONS": box.get("RUNNER_SESSIONS", "1"),
+        "RUNNER_DIRECTED": box.get("RUNNER_DIRECTED", "0"),
+        "RUNNER_EXECUTOR": box.get("RUNNER_EXECUTOR", "acp"),
+        "HOME": home, "USER": unit["user"], "LOGNAME": unit["user"],
+        "PATH": f"{home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "WORK_DIR": f"{home}/work", "AGENT_ROOT": f"{home}/agents",
+        "STATE_FILE": f"{home}/.canopy-cloud-runner.json",
+        "RUNNER_TOKEN_FILE": f"{home}/.canopy-runner/runner-token.json",
+        "IN_FLIGHT_FILE": f"{home}/.canopy-runner/in-flight",
+        "RUNNER_SRC_DIR": f"{home}/.canopy-runner/src",
+        "CANOPY_WEB_REPO_DIR": f"{home}/canopy-web",
+        "CANOPY_BASE_URL_OVERRIDE_FILE": f"{home}/.canopy-runner/base_url.override",
+        "CANOPY_DEVICE_KEY_KIND": "software",
+        "CANOPY_ECDH_BROKER": KMS_BROKER_SOCKET,
+        "CANOPY_GOG_SECRET_FILE": str(UNIT_ETC / f"{unit['id']}.gog-secret"),
+        "CANOPY_TURN_ENV_ROOT": str(TURN_ENV_BASE / str(uid)),
+    }
+    return env
+
+
+def _env_text(env: dict) -> str:
+    return "".join(f"{k}={v}\n" for k, v in env.items())
+
+
+def read_env_file(path: pathlib.Path) -> dict:
+    """KEY=value lines (systemd EnvironmentFile shape); {} when unreadable."""
+    out: dict = {}
+    try:
+        text = path.read_text()
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _write_owned(path: pathlib.Path, data: bytes, *, uid: int, gid: int, mode: int, chown) -> None:
+    """Write `data` atomically at `mode`, owned by uid:gid (root writes for a unit)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    os.chmod(tmp, mode)
+    chown(str(tmp), uid, gid)
+    os.replace(tmp, path)
+
+
+def _mkdir_owned(path: pathlib.Path, *, uid: int, gid: int, mode: int, chown) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    os.chmod(path, mode)
+    chown(str(path), uid, gid)
+
+
+def imds_rules(run=subprocess.run) -> list[str]:
+    """Reject IMDS for every uid but root's (spec §2): no unit process can fetch the
+    instance role's credentials. Idempotent (`-C` before `-I`). IPv6 only where the
+    tool exists. Returns what it changed."""
+    changed = []
+    for tool, dest in (("iptables", IMDS_V4), ("ip6tables", IMDS_V6)):
+        rule = ["OUTPUT", "-d", dest, "-m", "owner", "!", "--uid-owner", "0", "-j", "REJECT"]
+        if tool == "ip6tables" and not shutil.which(tool):
+            continue
+        try:
+            if run([tool, "-C", *rule], capture_output=True).returncode == 0:
+                continue
+            res = run([tool, "-I", *rule[:1], "1", *rule[1:]], capture_output=True)
+        except OSError as exc:
+            if tool == "iptables":
+                raise RuntimeError(f"cannot install the IMDS rule: {exc}") from exc
+            continue
+        if res.returncode != 0 and tool == "iptables":
+            raise RuntimeError(f"iptables refused the IMDS rule: {res.stderr!r}")
+        changed.append(tool)
+    return changed
+
+
+def setup_units(box: dict, *, run=subprocess.run, chown=os.chown, uid_of=None,
+                etc: pathlib.Path | None = None, role_name: str = "") -> list[dict]:
+    """ROOT, on every start (`cloud_runner.py --setup-units`): make each unit's user,
+    home, env file, gog secret and tmpfs root; write `units.json` for the broker and
+    `canopy-pair`; install the IMDS rule. Idempotent. Returns the units, with uids."""
+    import pwd
+
+    etc = etc or UNIT_ETC
+    uid_of = uid_of or (lambda user: pwd.getpwnam(user))
+    units = parse_units(box.get("RUNNER_UNITS", ""), workspace=box.get("RUNNER_WORKSPACE", ""),
+                        box=box.get("RUNNER_NAME", ""))
+    _mkdir_owned(etc, uid=0, gid=0, mode=0o755, chown=chown)
+    for unit in units:
+        if run(["id", "-u", unit["user"]], capture_output=True).returncode != 0:
+            res = run(["useradd", "--create-home", "--home-dir", unit["home"], "--shell", "/bin/bash",
+                       "--comment", f"canopy isolation unit {unit['id']}", unit["user"]],
+                      capture_output=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"useradd {unit['user']} failed: {res.stderr!r}")
+        pw = uid_of(unit["user"])
+        uid, gid = pw.pw_uid, pw.pw_gid
+        unit["uid"], unit["gid"] = uid, gid
+        home = pathlib.Path(unit["home"])
+        _mkdir_owned(home, uid=uid, gid=gid, mode=0o700, chown=chown)
+        for sub in ("work", "agents", ".canopy-runner"):
+            _mkdir_owned(home / sub, uid=uid, gid=gid, mode=0o700, chown=chown)
+        env = unit_env(unit, units, box, uid=uid)
+        _write_owned(etc / f"{unit['id']}.env", _env_text(env).encode(), uid=uid, gid=gid, mode=0o600,
+                     chown=chown)
+        secret = etc / f"{unit['id']}.gog-secret"
+        if not secret.exists():
+            # 32 random bytes, never rotated by a restart: every agent's gog keyring
+            # password in this unit is derived from it (`gog_env`).
+            _write_owned(secret, secrets.token_bytes(32), uid=uid, gid=gid, mode=0o400, chown=chown)
+        else:
+            os.chmod(secret, 0o400)
+            chown(str(secret), uid, gid)
+        root = pathlib.Path(env["CANOPY_TURN_ENV_ROOT"])
+        _mkdir_owned(root.parent, uid=0, gid=0, mode=0o755, chown=chown)
+        _mkdir_owned(root, uid=uid, gid=gid, mode=0o700, chown=chown)
+        unit["kms_key"] = unit_kms_key(unit, box.get("RUNNER_NAME", ""), role_name) if role_name else ""
+    doc = {"box": box.get("RUNNER_NAME", ""), "role_name": role_name, "units": units}
+    _write_owned(etc / "units.json", json.dumps(doc, indent=1).encode(), uid=0, gid=0, mode=0o644,
+                 chown=chown)
+    return units
+
+
+def load_units(path: pathlib.Path | None = None) -> dict:
+    try:
+        return json.loads((path or UNITS_FILE).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _role_name() -> str:
+    """The instance role's NAME (root only: IMDS is closed to units)."""
+    try:
+        token = _imds("/latest/api/token", put=True, headers={"X-aws-ec2-metadata-token-ttl-seconds": "300"})
+        names = _imds("/latest/meta-data/iam/security-credentials/", token=token).split()
+        return names[0] if names else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _as_unit(unit: dict, argv: list[str], *, run=subprocess.run, env: dict | None = None,
+             timeout: float = 300) -> subprocess.CompletedProcess:
+    """Run `argv` AS the unit's user, in its environment (`runuser`, root only)."""
+    base = read_env_file(UNIT_ETC / f"{unit['id']}.env")
+    pairs = [f"{k}={v}" for k, v in {**base, **(env or {})}.items()]
+    return run(["runuser", "-u", unit["user"], "--", "env", "-i", *pairs, *argv],
+               capture_output=True, text=True, timeout=timeout)
+
+
+#: How a unit gets the canopy CLI before it is paired. canopy is a public repo, so
+#: this needs no token — which is what lets a fresh box make its keys at all.
+CANOPY_CLI_URL = os.environ.get("CANOPY_PLUGIN_URL", "https://github.com/dimagi-internal/canopy.git")
+_ENSURE_CLI = (
+    'command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1; '
+    'command -v canopy >/dev/null 2>&1 || "$HOME/.local/bin/uv" tool install --force "git+$CANOPY_CLI_URL" '
+    '>/dev/null 2>&1; command -v canopy')
+
+
+def _unit_keys(unit: dict, *, run=subprocess.run) -> dict:
+    """The unit's PUBLIC keys, made by the canopy CLI as the unit: its software signing
+    key (`--public-jwk --kind software`) and its broker-held ECDH key (`--ecdh-jwk`).
+    `{public_jwk, jkt, ecdh_public_jwk?}`; raises RuntimeError without a signing key."""
+    res = _as_unit(unit, ["bash", "-c", _ENSURE_CLI], run=run, env={"CANOPY_CLI_URL": CANOPY_CLI_URL},
+                   timeout=900)
+    if res.returncode != 0:
+        raise RuntimeError(f"{unit['id']}: no canopy CLI ({(res.stderr or '').strip()[-200:]})")
+    out: dict = {}
+    res = _as_unit(unit, ["canopy", "vault", "device", "--public-jwk", "--kind", "software"], run=run)
+    try:
+        doc = json.loads((res.stdout or "").strip().splitlines()[-1])
+        out["public_jwk"], out["jkt"] = doc["jwk"], str(doc.get("jkt") or "")
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"{unit['id']}: canopy made no signing key "
+                           f"({(res.stderr or res.stdout or '').strip()[-200:]})") from exc
+    res = _as_unit(unit, ["canopy", "vault", "device", "--ecdh-jwk", "--kind", "software"], run=run)
+    try:
+        doc = json.loads((res.stdout or "").strip().splitlines()[-1])
+        if set(doc["jwk"]) == {"kty", "crv", "x", "y"}:
+            out["ecdh_public_jwk"] = doc["jwk"]
+    except Exception:  # noqa: BLE001 — no ECDH key yet (no KMS key for this unit): it waits
+        _log(f"pair-units: {unit['id']} has no ECDH key from the broker yet — its zero-knowledge "
+             "agents wait until its <stack>-ecdh key exists")
+    return out
+
+
+def _unit_state(unit: dict) -> dict:
+    try:
+        return json.loads((pathlib.Path(unit["home"]) / ".canopy-cloud-runner.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def pair_units_payload(box: str, units: list[dict], keys: dict, proof: str,
+                       unit_envs: dict | None = None) -> dict:
+    """The ONE pair-by-role body for every unit (spec §2): the box's name, one role
+    proof, and each unit's name, public keys and declared capabilities."""
+    out = []
+    for unit in units:
+        k = keys[unit["id"]]
+        uenv = (unit_envs or {}).get(unit["id"]) or read_env_file(UNIT_ETC / f"{unit['id']}.env")
+        caps: dict = {}
+        if uenv.get("RUNNER_SESSIONS", "1").strip().lower() not in ("0", "false", "no", ""):
+            caps["sessions"] = True
+        if uenv.get("RUNNER_DIRECTED", "0").strip().lower() not in ("0", "false", "no", ""):
+            caps["directed"] = True
+        if unit["kind"] == "agent":
+            caps["unit"] = {"kind": "agent", "slug": unit["slug"]}
+        entry = {"name": unit["name"], "public_jwk": k["public_jwk"], "host": unit["name"],
+                 "capabilities": caps}
+        if k.get("ecdh_public_jwk"):
+            entry["ecdh_public_jwk"], entry["ecdh_store"] = k["ecdh_public_jwk"], "kms-broker"
+        out.append(entry)
+    return {"name": box, "kind": "cloud", "proof": proof, "units": out}
+
+
+def write_unit_states(units: list[dict], reply: dict, keys: dict, *, run=subprocess.run,
+                      chown=os.chown) -> None:
+    """Each unit's state file (owned by the unit), and canopy's record that its key is
+    registered (`canopy vault device --registered`), so its DPoP proofs are sent."""
+    ids, key_ids = reply.get("units") or {}, reply.get("device_keys") or {}
+    for unit in units:
+        rid = ids.get(unit["name"])
+        if not rid:
+            continue
+        state = {"runner_id": rid, "paired_by": "invitation", "unit": unit["id"],
+                 "jkt": keys[unit["id"]].get("jkt", "")}
+        _write_owned(pathlib.Path(unit["home"]) / ".canopy-cloud-runner.json",
+                     json.dumps(state).encode(), uid=unit.get("uid", 0), gid=unit.get("gid", 0),
+                     mode=0o600, chown=chown)
+        if key_ids.get(unit["name"]):
+            _as_unit(unit, ["canopy", "vault", "device", "--registered", str(key_ids[unit["name"]]),
+                            "--runner", str(rid), "--status", "active"], run=run)
+
+
+def pair_units_main(*, run=subprocess.run, post=None, sleep=time.sleep, chown=os.chown) -> int:
+    """ROOT (`canopy-pair.service`, `cloud_runner.py --pair-units`): one `pair-by-role`
+    call for every unit on the box, under the box's ONE approved invitation. Units
+    already paired with the keys they hold are left alone; a replaced instance (new
+    keys, same role and names) re-attaches and keeps its runner ids."""
+    doc = load_units()
+    units = doc.get("units") or []
+    box = doc.get("box") or RUNNER_NAME
+    if not units:
+        _log("pair-units: no units.json — run --setup-units first")
+        return 1
+    keys = {u["id"]: _unit_keys(u, run=run) for u in units}
+    if all(_unit_state(u).get("runner_id") and _unit_state(u).get("jkt") == keys[u["id"]]["jkt"]
+           for u in units):
+        _log("pair-units: every unit is paired with the key it holds — nothing to do")
+        return 0
+    url = BASE_URL + PAIR_BY_ROLE_PATH
+    post = post or _post_unauthenticated
+    while not _stop:
+        creds = _aws_instance_credentials()
+        if not creds:
+            _log("pair-units: no instance role (this must run as root on the EC2 box)")
+            return 1
+        status, reply = post(url, pair_units_payload(box, units, keys, aws_proof(url, creds=creds)))
+        if status in (200, 201) and isinstance(reply, dict) and reply.get("units"):
+            write_unit_states(units, reply, keys, run=run, chown=chown)
+            _log(f"pair-units: {'paired' if status == 201 else 're-attached'} "
+                 + ", ".join(f"{n}={r}" for n, r in reply["units"].items()))
+            return 0
+        if status == 202:
+            _log(f"pair-units: waiting for the invitation for {box} to be approved")
+        else:
+            _log(f"pair-units: HTTP {status} — no approved invitation lists these units yet "
+                 f"(./up.sh --units …); asking again in {POLL_SECONDS}s")
+        sleep(POLL_SECONDS)
+    return 1
+
+
+# ── systemd for a box of units (`cloud_runner.py --install-units`, root) ─────
+#
+# The unit files live HERE, not in runner.cfn.yaml's UserData: UserData is capped at
+# 16 KB, and cloud-init writes it only on an instance's first boot — so a box built
+# before units could never be moved in place. `--install-units` is the one path for
+# both: cloud-init runs it on a new box, and an operator runs it (with Jonathan's
+# approval) to move a live box to units (runner/ec2/README.md "Moving a box to units").
+SYSTEMD_DIR = pathlib.Path(os.environ.get("CANOPY_SYSTEMD_DIR", "/etc/systemd/system"))
+RUNNER_PY = "/opt/canopy-runner/cloud_runner.py"
+
+SYSTEMD_UNITS = {
+    # Every start: re-read the stack's parameters, then (re)make every unit's user,
+    # files and secrets and the IMDS rule — iptables does not survive a reboot.
+    "canopy-units.service": f"""[Unit]
+Description=Canopy isolation units: users, env files, secrets, the IMDS rule
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/canopy-fetch-env
+ExecStart=/usr/bin/python3 {RUNNER_PY} --setup-units
+[Install]
+WantedBy=multi-user.target
+""",
+    "canopy-kms-broker.service": """[Unit]
+Description=Canopy KMS broker: each unit's zero-knowledge ECDH key, for that unit only
+After=canopy-units.service
+Requires=canopy-units.service
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/canopy-runner/kms_broker.py
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+""",
+    # Pairs every unit in ONE pair-by-role call; waits for the invitation's approval.
+    "canopy-pair.service": f"""[Unit]
+Description=Canopy pairing: every isolation unit on this box, one approval
+After=canopy-kms-broker.service network-online.target
+Requires=canopy-units.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=infinity
+EnvironmentFile=-/etc/canopy-runner/box.env
+ExecStart=/usr/bin/python3 {RUNNER_PY} --pair-units
+Restart=on-failure
+RestartSec=30
+[Install]
+WantedBy=multi-user.target
+""",
+    # One runner per unit, as that unit's user. No sudo, no instance role (IMDS is
+    # root's), its own /tmp.
+    "canopy-runner@.service": f"""[Unit]
+Description=Canopy runner, isolation unit %i
+After=network-online.target canopy-units.service canopy-kms-broker.service
+Wants=network-online.target
+Requires=canopy-units.service
+[Service]
+Type=simple
+User=cu-%i
+EnvironmentFile=/etc/canopy-runner/%i.env
+WorkingDirectory=/home/cu-%i
+ExecStart=/usr/bin/python3 {RUNNER_PY}
+Restart=on-failure
+RestartSec=10
+OOMPolicy=continue
+NoNewPrivileges=yes
+PrivateTmp=yes
+[Install]
+WantedBy=multi-user.target
+""",
+    # The auto-updater, as ROOT on a box of units: one install, every unit restarted.
+    "canopy-runner-update.service": """[Unit]
+Description=Canopy cloud runner auto-update (every isolation unit)
+[Service]
+Type=oneshot
+User=root
+Environment=HOME=/root
+Environment=UNITS_FILE=/etc/canopy-runner/units.json
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/bin/canopy-runner-update
+""",
+}
+
+
+def _git_root(*args: str, run=subprocess.run) -> subprocess.CompletedProcess:
+    return run(["git", "-c", "safe.directory=*", "-C", CANOPY_WEB_REPO_DIR, *args],
+               capture_output=True, text=True, timeout=300)
+
+
+def install_broker(*, run=subprocess.run) -> bool:
+    """`/opt/canopy-runner/kms_broker.py` at the sha this runner was installed from
+    (build-info), from the root-owned canopy-web clone (a public repo: no token)."""
+    target = RUNNER_HOME / "kms_broker.py"
+    repo = pathlib.Path(CANOPY_WEB_REPO_DIR)
+    if not (repo / ".git").is_dir():
+        run(["git", "clone", "--quiet", CANOPY_WEB_REPO_URL, str(repo)], capture_output=True, timeout=600)
+    sha = build_info().get("sha") or ""
+    if sha:
+        _git_root("fetch", "--quiet", "origin", sha, run=run)
+    _git_root("fetch", "--quiet", "origin", "main", run=run)
+    for ref in ([sha] if sha else []) + ["origin/main"]:
+        res = _git_root("show", f"{ref}:runner/ec2/kms_broker.py", run=run)
+        if res.returncode == 0 and res.stdout.strip():
+            target.write_text(res.stdout)
+            os.chmod(target, 0o755)
+            return True
+    return False
+
+
+#: The stack parameters a box of units needs (never a secret), as the legacy
+#: runner.env names them — what an in-place move carries over into box.env.
+BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS", "RUNNER_DIRECTED",
+                "RUNNER_EXECUTOR", "RUNNER_WORKSPACE", "RUNNER_NAME", "AGENT_SLUGS", "RUNNER_UNITS")
+_IN_PLACE_FETCH_ENV = """#!/bin/sh
+# Replaced by `cloud_runner.py --install-units` when this box moved to isolation
+# units in place: the old script re-wrote /opt/canopy-runner/runner.env (a PAT, the
+# Claude token, the box-wide gog password) on every start. A box of units reads its
+# parameters from /etc/canopy-runner/box.env, which holds no secret.
+exit 0
+"""
+
+
+def write_box_env_from_legacy(*, units_spec: str, legacy: pathlib.Path | None = None,
+                              out: pathlib.Path | None = None) -> dict:
+    """An in-place move: box.env from the legacy runner.env's NON-secret keys, plus
+    the units the operator asked for. Leaves an existing box.env alone."""
+    out = out or BOX_ENV_FILE
+    if out.exists():
+        return read_env_file(out)
+    old = read_env_file(legacy or RUNNER_HOME / "runner.env")
+    box = {k: old[k] for k in BOX_ENV_KEYS if k in old}
+    box["RUNNER_UNITS"] = units_spec or box.get("RUNNER_UNITS", "")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(_env_text(box))
+    return box
+
+
+def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None,
+                  fetch_env: pathlib.Path = pathlib.Path("/usr/local/bin/canopy-fetch-env"),
+                  sudoers: pathlib.Path = pathlib.Path("/etc/sudoers.d/canopy-runner-update")) -> list[str]:
+    """ROOT: the systemd units for a box of isolation units, the legacy single runner
+    retired, root ownership of the shared code, and everything enabled and started.
+    Idempotent. Returns the runner services it enabled.
+
+    On a box built before units (an in-place move), box.env is made from the legacy
+    runner.env's non-secret keys and `$RUNNER_UNITS`, and the legacy fetch-env that
+    re-wrote runner.env's secrets on every start is replaced."""
+    systemd = systemd or SYSTEMD_DIR
+    write_box_env_from_legacy(units_spec=os.environ.get("RUNNER_UNITS", ""))
+    try:
+        if "runner.env" in fetch_env.read_text() and "box.env" not in fetch_env.read_text():
+            fetch_env.write_text(_IN_PLACE_FETCH_ENV)
+    except OSError:
+        pass
+    for name, text in SYSTEMD_UNITS.items():
+        (systemd / name).write_text(text)
+    # The shared, read-only parts: root's, so no unit can rewrite what the others run.
+    home = RUNNER_HOME
+    # The legacy single runner's credentials go first: they must never become
+    # readable by a unit (its runner.env held a PAT, the Claude token and the
+    # box-wide gog password; runner-token.json its runner token).
+    for stale in ("runner.env", "runner-token.json", "runner-token.json.tmp", "in-flight", "turn-env-root"):
+        try:
+            (home / stale).unlink()
+        except OSError:
+            pass
+    for path in (home, pathlib.Path(CANOPY_WEB_REPO_DIR)):
+        if path.exists():
+            run(["chown", "-R", "root:root", str(path)], capture_output=True)
+    run(["chmod", "-R", "go+rX,go-w", CANOPY_WEB_REPO_DIR], capture_output=True)   # a public repo
+    for name, mode in (("cloud_runner.py", 0o755), ("kms_broker.py", 0o755), ("build-info.json", 0o644)):
+        try:
+            os.chmod(home / name, mode)
+        except OSError:
+            pass
+    try:
+        os.chmod(home, 0o755)
+    except OSError:
+        pass
+    # The legacy single runner (User=ubuntu, the box-wide runner.env) stops here;
+    # its runner row is adopted by the unit that keeps the box's name.
+    run(["systemctl", "disable", "--now", "canopy-runner.service"], capture_output=True)
+    for stale in (sudoers,):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+    install_broker(run=run)
+    run(["systemctl", "daemon-reload"], capture_output=True)
+    run(["systemctl", "enable", "--now", "canopy-units.service"], capture_output=True)
+    units = load_units().get("units") or []
+    services = [f"canopy-runner@{u['id']}.service" for u in units]
+    run(["systemctl", "enable", "--now", "canopy-kms-broker.service", "canopy-pair.service",
+         "canopy-runner-update.timer", *services], capture_output=True)
+    return services
+
+
+def _wait_for_unit_state() -> str:
+    """A unit never pairs itself (it has no role to prove): it waits for root's
+    `canopy-pair` to write its state file."""
+    said = False
+    while not _stop:
+        try:
+            rid = json.loads(STATE_FILE.read_text()).get("runner_id")
+        except (OSError, ValueError):
+            rid = ""
+        if rid:
+            return str(rid)
+        if not said:
+            _log(f"unit {UNIT}: not paired yet — waiting for canopy-pair to write {STATE_FILE}")
+            said = True
+        time.sleep(POLL_SECONDS)
+    return ""
+
+
+def _exchange_unit_proof(runner_id: str) -> tuple[str, float]:
+    """A unit's runner token, bought with ITS software key: `canopy vault runner-session`
+    signs the DPoP proof (this file has no EC crypto). ("", 0) on any failure."""
+    try:
+        res = subprocess.run([_canopy_cli(), "vault", "runner-session", "--runner", runner_id,
+                              "--base-url", BASE_URL], capture_output=True, text=True, timeout=60,
+                             env=_child_safe_env())
+    except Exception as exc:  # noqa: BLE001
+        _log(f"unit {UNIT}: could not run canopy vault runner-session ({exc})")
+        return "", 0.0
+    if res.returncode != 0:
+        _log(f"unit {UNIT}: canopy-web refused this unit's device proof — "
+             f"{' '.join((res.stderr or res.stdout or '').split())[-200:]}")
+        return "", 0.0
+    try:
+        body = json.loads((res.stdout or "").strip().splitlines()[-1])
+        exp = datetime.datetime.fromisoformat(
+            str(body.get("expires_at", "")).replace("Z", "+00:00")).timestamp()
+    except (ValueError, IndexError, AttributeError):
+        return "", 0.0
+    return str(body.get("access_token") or ""), exp
+
+
+# ── gog: one home and one keyring password per agent (spec §6) ──────────────
+GOG_SECRET_ENV = "CANOPY_GOG_SECRET_FILE"
+
+
+def hkdf_sha256(ikm: bytes, info: bytes, length: int = 32, salt: bytes = b"") -> bytes:
+    """RFC 5869 HKDF-SHA256 (empty salt = HashLen zero bytes), stdlib only."""
+    prk = hmac.new(salt or b"\x00" * 32, ikm, hashlib.sha256).digest()
+    out, block, i = b"", b"", 1
+    while len(out) < length:
+        block = hmac.new(prk, block + info + bytes([i]), hashlib.sha256).digest()
+        out += block
+        i += 1
+    return out[:length]
+
+
+def gog_password(secret: bytes, slug: str) -> str:
+    """An agent's gog keyring password: HKDF-SHA256(unit secret, info=b"gog:"+slug), hex
+    — canopy's `gog_home` derives the same, so either side can open the keyring."""
+    return hkdf_sha256(secret, b"gog:" + slug.encode()).hex()
+
+
+def _gog_secret() -> bytes | None:
+    """The unit secret's bytes; None when no secret is configured (a box before units:
+    today's box-wide GOG_* in this process's env stand) — and b"" when one IS
+    configured but cannot be read, which must give nobody a password."""
+    path = os.environ.get(GOG_SECRET_ENV, "").strip()
+    if not path:
+        return None
+    try:
+        return pathlib.Path(path).read_bytes()
+    except OSError:
+        return b""
+
+
+def gog_env(slug: str) -> dict:
+    """`slug`'s own gog home and keyring password, and nothing of any other agent's.
+    {} when there is no unit secret (legacy: the process env's GOG_* apply) or it is
+    unreadable."""
+    secret = _gog_secret()
+    if not secret or not slug:
+        return {}
+    return {"GOG_HOME": str(pathlib.Path.home() / ".gog" / slug), "GOG_KEYRING_BACKEND": "file",
+            "GOG_KEYRING_PASSWORD": gog_password(secret, slug)}
+
+
+def _gog_runner(slug: str):
+    """`subprocess.run` with `slug`'s gog env, for the inbox poller's gog calls."""
+    extra = gog_env(slug)
+    if not extra:
+        return subprocess.run
+
+    def run(argv, **kw):
+        env = {k: v for k, v in (kw.pop("env", None) or os.environ).items()
+               if k not in ("GOG_HOME", "GOG_KEYRING_PASSWORD", "GOG_KEYRING_BACKEND")}
+        return subprocess.run(argv, env={**env, **extra}, **kw)
+
+    return run
+
+
+# ── secrets off disk: each turn's env on tmpfs, gone when it ends (spec §4) ──
+#: The canopy CLI that reads `CANOPY_AGENT_ENV_FILE` first and can resolve in memory
+#: (`cred env --print-json/--out`, prepare's off-disk mode): canopy PR #999.
+OFF_DISK_MIN_CLI = (0, 2, 736)
+_CLI_VERSION: dict = {"at": 0.0, "v": None}
+CLI_VERSION_TTL_SECONDS = 600.0
+
+
+def _canopy_cli_version(*, now: float | None = None) -> tuple | None:
+    """The installed canopy CLI's version as a tuple, cached; None when it cannot say."""
+    now = time.time() if now is None else now
+    if _CLI_VERSION["v"] is not None and now - _CLI_VERSION["at"] < CLI_VERSION_TTL_SECONDS:
+        return _CLI_VERSION["v"] or None
+    v = _version_of([_canopy_cli(), "--version"])
+    parsed = tuple(int(x) for x in v.split(".")) if v else ()
+    _CLI_VERSION.update(at=now, v=parsed)
+    return parsed or None
+
+
+def _forget_cli_version() -> None:
+    _CLI_VERSION.update(at=0.0, v=None)
+
+
+def _turn_env_root(*, create: bool = True) -> pathlib.Path | None:
+    """Where this runner writes per-turn env files: `$CANOPY_TURN_ENV_ROOT` (a unit's
+    `/run/canopy/<uid>`), else `/run/canopy/<uid>` when it exists and is ours, else a
+    0700 `/dev/shm/canopy-<uid>` (tmpfs, which a box built before units can still
+    make). None when none is usable: the turn then runs the legacy way."""
+    uid = os.getuid()
+    env = os.environ.get("CANOPY_TURN_ENV_ROOT", "").strip()
+    candidates = [pathlib.Path(env)] if env else [TURN_ENV_BASE / str(uid),
+                                                  pathlib.Path("/dev/shm") / f"canopy-{uid}"]
+    for root in candidates:
+        try:
+            if not root.exists():
+                if not create or not root.parent.is_dir():
+                    continue
+                root.mkdir(mode=0o700)
+            st = os.lstat(root)
+            if not os.path.isdir(root) or os.path.islink(root) or st.st_uid != uid:
+                continue
+            os.chmod(root, 0o700)
+            return root
+        except OSError:
+            continue
+    return None
+
+
+def secrets_off_disk() -> bool:
+    """Do this runner's turns get their env on tmpfs (and no `~/.<slug>/.env`)?
+
+    By default only on an isolation unit (`CANOPY_UNIT`, or a box with units.json): a
+    box built before units keeps its files until an operator opts it in with
+    `RUNNER_SECRET_FILES=0` — a new runner deploying must never change how a live box
+    hands its agents their secrets. `RUNNER_SECRET_FILES=1` keeps the files anywhere.
+    And only when the installed canopy CLI can read `CANOPY_AGENT_ENV_FILE` — on an
+    older CLI a turn's PAT reads would find nothing, so the legacy files stay and
+    health says why (Review Focus 5)."""
+    choice = os.environ.get("RUNNER_SECRET_FILES", "").strip().lower()
+    if choice in ("1", "true", "yes"):
+        _set_check("secrets", "warn", "RUNNER_SECRET_FILES=1: agent secrets are kept in "
+                   "~/.<agent>/.env files on purpose")
+        return False
+    if choice not in ("0", "false", "no") and not (UNIT or UNITS_FILE.exists()):
+        _set_check("secrets", "ok", "agent secrets are in ~/.<agent>/.env files (a box without "
+                   "isolation units; RUNNER_SECRET_FILES=0 moves them off disk)")
+        return False
+    v = _canopy_cli_version()
+    want = ".".join(map(str, OFF_DISK_MIN_CLI))
+    if not v or v < OFF_DISK_MIN_CLI:
+        _set_check("secrets", "warn", f"canopy CLI {'.'.join(map(str, v)) if v else '(unknown)'} is "
+                   f"older than {want}: agent secrets are still written to ~/.<agent>/.env — "
+                   "update the CLI (a bootstrap does)")
+        return False
+    root = _turn_env_root()
+    if root is None:
+        _set_check("secrets", "warn", "no tmpfs directory for per-turn env files: agent secrets "
+                   "are still written to ~/.<agent>/.env")
+        return False
+    _set_check("secrets", "ok", f"agent secrets stay off disk: each turn's env is under {root} "
+               "and removed when it ends")
+    return True
+
+
+#: slug -> (fetched_at, {NAME: value}) from `canopy cred env --print-json`. The same
+#: 5-minute TTL `cred sync` had, so a claim is not a 1Password read.
+_TURN_VALUES: dict = {}
+_TURN_VALUES_LOCK = threading.Lock()
+#: Fields of /credentials/resolve the runner needs beside the env values, taken
+#: from `canopy cred env --runner --print-json` when it includes them (top-level
+#: keys, same names as the resolve response). canopy 0.2.736 prints only
+#: {agent, source, values}; until it adds these, a unit's own (proofless) resolve
+#: stands, which a device-bound or zero-knowledge agent refuses.
+RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "salesforce_creds")
+#: slug -> why its env could not be had (the turn's failure note says it).
+_TURN_ENV_ERRORS: dict = {}
+
+
+def _off_disk_marker(slug: str) -> pathlib.Path:
+    return pathlib.Path.home() / ".canopy-runner" / "off-disk-ok" / slug
+
+
+def off_disk_proven(slug: str) -> bool:
+    """Has a turn of `slug` run successfully on its tmpfs env? Only then are its
+    legacy env files removed: until then they are the way back."""
+    return bool(slug) and _off_disk_marker(slug).exists()
+
+
+def note_off_disk_success(slug: str) -> None:
+    """The first good off-disk turn of `slug`: record it, then remove its legacy files."""
+    if not slug or off_disk_proven(slug):
+        return
+    try:
+        marker = _off_disk_marker(slug)
+        marker.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        marker.write_text(str(int(time.time())))
+    except OSError as exc:
+        _log(f"warn: {slug}: could not record its first off-disk turn ({exc}); legacy files kept")
+        return
+    remove_legacy_secret_files([slug])
+
+
+def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
+    """`slug`'s env values, resolved in memory by the canopy CLI as this runner, cached
+    for `_AGENT_ENV_TTL_SECONDS`. On a failed refresh the last good values are kept
+    (the vault, not this box, is the source; a blip must not cost the turn)."""
+    now = time.time() if now is None else now
+    with _TURN_VALUES_LOCK:
+        hit = _TURN_VALUES.get(slug)
+        if hit and now - hit[0] < _AGENT_ENV_TTL_SECONDS:
+            return hit[1]
+    if not _has_env_source(slug):
+        # canopy's `_env_in_memory` "n/a": no template and no canopy-web values. An
+        # agent with nothing to resolve has an EMPTY env, not a failed one.
+        with _TURN_VALUES_LOCK:
+            _TURN_VALUES[slug] = (now, {})
+        _set_check(f"env.{slug}", "ok", "no env to resolve (no .env.tpl, not canopy-web-sourced)")
+        return {}
+    env = {k: v for k, v in _child_safe_env().items()
+           if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
+    turn_id = str((getattr(_TURN_ENV, "extra", None) or {}).get("CANOPY_TURN_ID") or "")
+    if turn_id:
+        env["CANOPY_TURN_ID"] = turn_id
+    try:
+        res = subprocess.run([_canopy_cli(), "cred", "env", "--slug", slug, "--runner",
+                              "--agent-root", AGENT_ROOT, "--print-json"], env=env,
+                             capture_output=True, text=True, timeout=_AGENT_ENV_TIMEOUT_SECONDS + 200)
+        doc = json.loads((res.stdout or "").strip().splitlines()[-1]) if res.returncode == 0 else None
+        values = doc.get("values") if isinstance(doc, dict) else None
+        if not isinstance(values, dict):
+            raise RuntimeError(" ".join((res.stderr or "").split())[-300:] or f"exit {res.returncode}")
+    except Exception as exc:  # noqa: BLE001
+        _TURN_ENV_ERRORS[slug] = " ".join(str(exc).split())[:300]
+        _set_check(f"env.{slug}", "warn", f"could not resolve {slug}'s env in memory: {exc}")
+        _log(f"warn: {slug}: could not resolve its env ({exc}); "
+             f"{'using the last good values' if hit else 'the turn runs without it'}")
+        with _TURN_VALUES_LOCK:
+            if hit:
+                _TURN_VALUES[slug] = (now, hit[1])
+        return hit[1] if hit else None
+    values = {str(k): str(v) for k, v in values.items()}
+    _TURN_ENV_ERRORS.pop(slug, None)
+    note_cred_success(slug)
+    # The resolve-time extras, when the CLI hands them over (`RESOLVE_EXTRAS`): it
+    # resolved WITH this runner's device proof (and unwrapped a zero-knowledge
+    # vault), which a unit's own resolve cannot attach.
+    extras = {k: str(doc.get(k) or "") for k in RESOLVE_EXTRAS if k in doc}
+    if extras:
+        _AGENT_OP[slug] = (now, extras.get("op_sa_token", ""))
+        if "op_vault" in extras:
+            _AGENT_VAULT[slug] = extras["op_vault"].strip()
+        if "salesforce_creds" in extras:
+            _AGENT_SF[slug] = extras["salesforce_creds"]
+    with _TURN_VALUES_LOCK:
+        _TURN_VALUES[slug] = (now, values)
+    _set_check(f"env.{slug}", "ok", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
+               "held in memory")
+    return values
+
+
+def _has_env_source(slug: str) -> bool:
+    """Does `slug` have an env to resolve: a `.env.tpl` in its clone, or canopy-web as
+    its credential source? Unknown (no clone yet, canopy-web unreachable) counts as
+    YES — a resolve that then fails fails the turn, rather than running it bare."""
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if (clone / ".env.tpl").is_file() or not (clone / ".git").is_dir():
+        return True
+    status, body = _api("GET", f"/{slug}/credentials/access", prefix="/api/agents")
+    if status != 200 or not isinstance(body, dict):
+        return True
+    return str(body.get("credential_source") or "") == "canopy-web"
+
+
+# ── backing off an agent whose credentials this box cannot resolve ──────────
+#: A turn that fails "could not resolve <slug>'s credentials" goes back to the queue
+#: (a sessionless failure is a non-attempt). Claimed straight back by this box it
+#: would spend the server's MAX_SESSIONLESS_RETRIES in a minute; so the box stops
+#: claiming that agent for a growing interval, reset by the next good resolve. It is
+#: the claim's `paused` list (the per-agent local pause), so the turn simply waits.
+CRED_BACKOFF_STEPS = (60, 120, 300, 600)
+_CRED_BACKOFF: dict = {}   # slug -> (consecutive failures, not before epoch)
+
+
+def note_cred_failure(slug: str, *, now: float | None = None) -> float:
+    """Back `slug` off; returns until when."""
+    now = time.time() if now is None else now
+    n = _CRED_BACKOFF.get(slug, (0, 0.0))[0] + 1
+    until = now + CRED_BACKOFF_STEPS[min(n, len(CRED_BACKOFF_STEPS)) - 1]
+    _CRED_BACKOFF[slug] = (n, until)
+    return until
+
+
+def note_cred_success(slug: str) -> None:
+    _CRED_BACKOFF.pop(slug, None)
+
+
+def backed_off_slugs(*, now: float | None = None) -> list[str]:
+    """The agents this box will not claim right now (credential-resolve backoff)."""
+    now = time.time() if now is None else now
+    return sorted(s for s, (_n, until) in _CRED_BACKOFF.items() if until > now)
+
+
+def _turn_env_dir(turn_id: str, *, create: bool = True) -> pathlib.Path | None:
+    root = _turn_env_root(create=create)
+    if root is None or not re.fullmatch(r"[0-9a-zA-Z-]{8,64}", str(turn_id)):
+        return None
+    return root / str(turn_id)
+
+
+def write_turn_env(slug: str, turn_id: str) -> pathlib.Path | None:
+    """`<root>/<turn>/env` (dir 0700, file 0600) holding `slug`'s env for ONE turn.
+    The turn gets its path as `CANOPY_AGENT_ENV_FILE`; `remove_turn_env` deletes it in
+    the turn's `finally`. None when it cannot be written (the turn still has the
+    values in its environment)."""
+    d = _turn_env_dir(turn_id)
+    values = _turn_values(slug)
+    if d is None or values is None:
+        return None
+    try:
+        d.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(d, 0o700)
+        path = d / "env"
+        body = f"# {slug} credentials for one turn ({turn_id[:8]}), removed when it ends.\n" + \
+            "".join(f"{k}={v}\n" for k, v in values.items()
+                    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and "\n" not in v)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(body)
+        os.chmod(path, 0o600)
+        return path
+    except OSError as exc:
+        _TURN_ENV_ERRORS[slug] = str(exc)[:300]
+        _log(f"warn: {slug}: could not write this turn's env file ({exc})")
+        remove_turn_env(turn_id)
+        return None
+
+
+def remove_turn_env(turn_id: str) -> None:
+    """Delete a turn's env dir — however the turn ended. Never raises."""
+    try:
+        d = _turn_env_dir(turn_id, create=False)
+    except Exception:  # noqa: BLE001
+        return
+    if d is not None:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def sweep_turn_envs() -> int:
+    """At start: remove every per-turn env a previous process left (a crash, a
+    kill -9). No turn is running yet, so nothing here is anyone's."""
+    root = _turn_env_root(create=False)
+    if root is None:
+        return 0
+    n = 0
+    for child in list(root.iterdir()) if root.is_dir() else []:
+        try:
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink()
+            n += 1
+        except OSError:
+            continue
+    if n:
+        _log(f"secrets: swept {n} leftover per-turn env(s) from {root}")
+    return n
+
+
+def remove_legacy_secret_files(slugs) -> list[str]:
+    """Once turns get their env off disk, the copies the old path wrote are only a
+    liability: `~/.<slug>/.env`, `<AGENT_ROOT>/<slug>/.env`, `.gws-sa-key.json`."""
+    removed = []
+    for slug in sorted({s for s in slugs if s and re.fullmatch(r"[a-z0-9][a-z0-9_-]*", s)}):
+        for path in (pathlib.Path.home() / f".{slug}" / ".env",
+                     pathlib.Path.home() / f".{slug}" / ".gws-sa-key.json",
+                     pathlib.Path(AGENT_ROOT) / slug / ".env",
+                     pathlib.Path(AGENT_ROOT) / slug / ".gws-sa-key.json"):
+            try:
+                if path.is_file() and not path.is_symlink():
+                    path.unlink()
+                    removed.append(str(path))
+            except OSError:
+                continue
+    if removed:
+        _log(f"secrets: removed {len(removed)} legacy secret file(s): {', '.join(removed)}")
+    return removed
+
+
+def _known_agent_slugs() -> list[str]:
+    slugs = {s.strip() for s in AGENT_SLUGS.split(",") if s.strip()}
+    try:
+        slugs |= {p.name for p in pathlib.Path(AGENT_ROOT).iterdir() if p.is_dir()}
+    except OSError:
+        pass
+    return sorted(slugs)
 
 
 def _agent_op_token(slug: str) -> str:
@@ -1630,15 +2698,26 @@ def _agent_env(slug: str | None) -> dict:
     sf_home = _stage_salesforce(slug)
     if sf_home is not None:
         env["CHROME_SALES_HOME"] = str(sf_home)
-    # The vault, not this box's last bootstrap, decides what the turn reads.
-    _refresh_agent_env(slug, op_token, vault)
-    env_file = pathlib.Path.home() / f".{slug}" / ".env"
-    try:
-        raw = env_file.read_text()
-    except OSError:
-        return {**env, **extra}  # not provisioned (yet) — the turn still runs
+    # The agent's OWN gog home and keyring password (spec §6) — never another
+    # agent's, never a box-wide one. {} on a box without a unit secret.
+    env.update(gog_env(slug))
+    if secrets_off_disk():
+        # Off disk (spec §4): the values the canopy CLI resolved in memory, and the
+        # turn's own tmpfs file (`CANOPY_AGENT_ENV_FILE`, in `extra`) for the readers
+        # that cannot see this environment (the MCP headersHelper). No
+        # `~/.<slug>/.env` is read or written — `cred sync` would write one.
+        lines = [f"{k}={v}" for k, v in (_turn_values(slug) or {}).items()]
+        env_file = pathlib.Path(str(extra.get("CANOPY_AGENT_ENV_FILE") or "(memory)"))
+    else:
+        # The vault, not this box's last bootstrap, decides what the turn reads.
+        _refresh_agent_env(slug, op_token, vault)
+        env_file = pathlib.Path.home() / f".{slug}" / ".env"
+        try:
+            lines = env_file.read_text().splitlines()
+        except OSError:
+            return {**env, **extra}  # not provisioned (yet) — the turn still runs
     loaded = 0
-    for line in raw.splitlines():
+    for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -1658,6 +2737,9 @@ def _agent_env(slug: str | None) -> dict:
         loaded += 1
     if loaded:
         _log(f"loaded {loaded} vars from {env_file}")
+    # Over the agent's values too: a stale box-wide GOG_* in an old .env must not
+    # replace the agent's own pair.
+    env.update(gog_env(slug))
     # LAST, over the agent's own .env: a confined turn's profile is the runner's
     # decision, and nothing an agent provisions may switch it off.
     return {**env, **extra}
@@ -3557,13 +4639,47 @@ def bootstrap_agent_fleet() -> None:
         _github_readiness()
         _install_repo_worktree_shim()
         _guard_shared_clone(pathlib.Path(CANOPY_WEB_REPO_DIR))
+        if secrets_off_disk():
+            # The bootstrap above wrote no secret files; the ones an older runner
+            # wrote are only a liability now (spec §4).
+            remove_legacy_secret_files([s for s in _known_agent_slugs() if off_disk_proven(s)])
     finally:
         # Stamped however it went: this is "a bootstrap was ATTEMPTED at", which
         # is what discharges a refresh request. The checks say how it went.
         _BOOTSTRAPPED_AT = time.time()
+        # The bootstrap may have installed a newer canopy CLI (the off-disk gate).
+        _forget_cli_version()
         # Versions may have just moved (bootstrap updates Claude Code and the
         # canopy CLI): re-read them on the next beat rather than in 10 minutes.
         _HEALTH_SLOW_AT = 0.0
+
+
+#: Where the auto-updater learns this runner keeps secrets off disk, so its
+#: credentials pass runs `canopy agent prepare` the same way (no env files).
+TURN_ENV_ROOT_MARKER = pathlib.Path(os.environ.get(
+    "TURN_ENV_ROOT_MARKER", str(IN_FLIGHT_FILE.with_name("turn-env-root"))))
+
+
+def _off_disk_env(env: dict) -> dict:
+    """`env` for a child that prepares agents: with secrets off disk, the tmpfs root
+    (`CANOPY_TURN_ENV_ROOT`) that makes `canopy agent prepare --runner` write no
+    `~/.<slug>/.env`, `<clone>/.env` or `.gws-sa-key.json`. Records the root for the
+    updater. Unchanged on the legacy path."""
+    if not secrets_off_disk():
+        try:
+            TURN_ENV_ROOT_MARKER.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return env
+    root = _turn_env_root()
+    if root is None:
+        return env
+    try:
+        TURN_ENV_ROOT_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        TURN_ENV_ROOT_MARKER.write_text(str(root) + "\n")
+    except OSError:
+        pass
+    return {**env, "CANOPY_TURN_ENV_ROOT": str(root)}
 
 
 def _canopy_cli() -> str:
@@ -3579,7 +4695,7 @@ def prepare_agent(slug: str) -> None:
     this box has never seen. Only that agent, not the fleet: a new agent's first turn waits
     for itself, not for every other agent's clone, plugins and Gmail check. Best-effort,
     like the fleet bootstrap; the agent's readiness report says what it could do."""
-    env = dict(os.environ)
+    env = _off_disk_env(dict(os.environ))
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
     # bootstrap_agents.sh and `canopy agent prepare --runner` read the agent
     # roster and credentials AS THIS BOX: hand them its own token, not a PAT.
@@ -3708,7 +4824,7 @@ def _run_bootstrap() -> None:
         _log(f"warn: {script} not found — skipping agent bootstrap")
         _set_check("bootstrap", "fail", f"{script} not found")
         return
-    env = dict(os.environ)
+    env = _off_disk_env(dict(os.environ))
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
     # The roster read and every `canopy agent prepare` it runs act AS THIS BOX, as
     # prepare_agent's do — including each agent's readiness report, a WRITE that
@@ -5479,9 +6595,13 @@ def mailboxes_readable() -> list | None:
     return sorted(a.lower() for a, ok in _MAILBOX_READABLE.items() if ok)
 
 
-def _gog_config_dir() -> pathlib.Path:
-    """gog's own config dir on Linux — $GOG_HOME, else $XDG_CONFIG_HOME/gogcli,
-    else ~/.config/gogcli. Mirrors bootstrap_agents.sh `gog_config_dir`."""
+def _gog_config_dir(slug: str = "") -> pathlib.Path:
+    """gog's own config dir on Linux — `slug`'s own home on a box with a unit secret
+    (`gog_env`), else $GOG_HOME, else $XDG_CONFIG_HOME/gogcli, else ~/.config/gogcli.
+    Mirrors bootstrap_agents.sh `gog_config_dir`."""
+    own = gog_env(slug).get("GOG_HOME") if slug else ""
+    if own:
+        return pathlib.Path(own)
     home = os.environ.get("GOG_HOME", "").strip()
     if home:
         return pathlib.Path(os.path.expanduser(home))
@@ -5495,7 +6615,7 @@ def _gog_config_dir() -> pathlib.Path:
 FLEET_GOG_CLIENTS = ("canopy", "canopy-web")
 
 
-def _candidate_gog_clients(account: str, declared: str) -> list:
+def _candidate_gog_clients(account: str, declared: str, slug: str = "") -> list:
     """Every client this box could present for `account`, most likely first.
 
     Order: what the agent's config declares; what gog's own `account_clients`
@@ -5504,7 +6624,7 @@ def _candidate_gog_clients(account: str, declared: str) -> list:
     a client and only that client can use it — so the list is a search order,
     not an answer. `_resolve_mailbox_clients` asks the token.
     """
-    cfg_dir = _gog_config_dir()
+    cfg_dir = _gog_config_dir(slug)
     # The fleet clients right behind the declaration — those this box holds the
     # credentials for: `canopy` (a laptop's gog login) and `canopy-web` (canopy-web's
     # "Connect Google mailbox" button) are one app, and either serves the agent.
@@ -5550,7 +6670,7 @@ def _resolve_mailbox_clients(boxes: dict, probe) -> dict:
         declared = (box.get("client") or "").strip()
         live = _GOG_CLIENT_LIVE.get(account)
         if not live:
-            tried = _candidate_gog_clients(account, declared)
+            tried = _candidate_gog_clients(account, declared, slug)
             for client in tried:
                 try:
                     probe(account, client)
@@ -5595,11 +6715,14 @@ def _drain_inbox(runner_id: str) -> None:
                                      interval=INBOX_POLL_SECONDS, rung=rung)
         boxes = {
             **{s: b for s, b in boxes.items() if s not in due_declared},
-            **_resolve_mailbox_clients(
-                {s: boxes[s] for s in due_declared},
-                lambda account, client: inbox_mod.search_threads(
-                    account, client, max_threads=1),
-            ),
+            # One agent at a time: each probe runs gog in THAT agent's own home with
+            # its own keyring password (`_gog_runner`), never a box-wide one.
+            **{k: v for s in due_declared for k, v in _resolve_mailbox_clients(
+                {s: boxes[s]},
+                lambda account, client, _s=s: inbox_mod.search_threads(
+                    account, client, max_threads=1,
+                    **({"runner": _gog_runner(_s)} if gog_env(_s) else {})),
+            ).items()},
         }
         # A mailbox no client could open is stamped like any other failure, or
         # it is re-probed every tick.
@@ -5619,6 +6742,7 @@ def _drain_inbox(runner_id: str) -> None:
                 res = inbox_mod.check_inbox(
                     client, slug, mailbox=box["account"], gog_client=box["client"],
                     discovered_by=inbox_due.discovered_by(slug, rung_slugs),
+                    **({"runner": _gog_runner(slug)} if gog_env(slug) else {}),
                 )
                 if res.get("new"):
                     _log(f"inbox {slug}: {len(res['new'])} new turn(s) "
@@ -5645,7 +6769,12 @@ def _drain_inbox(runner_id: str) -> None:
             try:
                 from canopy_runner import admission_notices  # noqa: PLC0415
 
-                admission_notices.deliver(client, runner_id, {s: boxes[s] for s in due}, log=_log)
+                if any(gog_env(s) for s in due):
+                    for s in due:  # each agent's mail with its own gog home and password
+                        admission_notices.deliver(client, runner_id, {s: boxes[s]}, log=_log,
+                                                  runner=_gog_runner(s))
+                else:
+                    admission_notices.deliver(client, runner_id, {s: boxes[s] for s in due}, log=_log)
             except Exception as exc:  # noqa: BLE001
                 _log(f"admission notices: {exc}")
     except Exception as exc:  # noqa: BLE001
@@ -6413,7 +7542,13 @@ def _confined_env(slug: str | None, cap: dict, extra: dict) -> dict:
     env = {k: v for k, v in src.items()
            if k in _CONFINED_ENV_KEEP or k.startswith(_CONFINED_ENV_KEEP_PREFIXES)}
     if _capability_uses_mail(cap):
-        env.update({k: src[k] for k in _CONFINED_MAIL_ENV if k in src})
+        if _gog_secret() is not None:
+            # A unit (spec §6): ONLY this agent's gog home and password, derived from
+            # the unit secret — never the secret's path, never another agent's pair.
+            # A secret that cannot be read gives nothing.
+            env.update(gog_env(slug or ""))
+        else:
+            env.update({k: src[k] for k in _CONFINED_MAIL_ENV if k in src})
     if slug:
         env["CANOPY_AGENT"] = slug  # a name, not a secret — see `_agent_env`
     env.update({k: v for k, v in extra.items() if k not in _CONFINED_EXTRA_DENY})
@@ -6644,7 +7779,37 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                         **ONE_SHOT_TURN_ENV}
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
-        cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))
+        slug = _turn_agent_slug(turn)
+        off_disk_env = False
+        if not confined and slug and secrets_off_disk():
+            # This turn's secrets, on tmpfs, for this turn only (spec §4). Removed in
+            # the `finally` below however the turn ends, and swept at start. A turn
+            # whose env cannot be had is NOT run without one: it fails with the
+            # reason and no session, which the server re-queues (a sessionless
+            # failure is a non-attempt, bounded by MAX_SESSIONLESS_RETRIES).
+            # The clone first: whether the agent has an env to resolve at all is read
+            # from its template (an agent this box has never seen is bootstrapped now).
+            _ensure_agent_clone(slug)
+            if _turn_values(slug) is None:
+                note = (f"[runner] could not resolve {slug}'s credentials: "
+                        f"{_TURN_ENV_ERRORS.get(slug) or 'no answer from the canopy CLI'}")
+                until = note_cred_failure(slug)
+                _log(f"{slug}: not claiming its turns until "
+                     f"{time.strftime('%H:%M:%S', time.gmtime(until))}Z (credentials)")
+                _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+                _log(f"turn {turn_id[:8]} NOT run — {note}")
+                return
+            env_path = write_turn_env(slug, str(turn_id))
+            if env_path is None:
+                note = (f"[runner] could not write {slug}'s per-turn credentials file: "
+                        f"{_TURN_ENV_ERRORS.get(slug) or 'no tmpfs root'}")
+                _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+                _log(f"turn {turn_id[:8]} NOT run — {note}")
+                return
+            per_turn["CANOPY_AGENT_ENV_FILE"] = str(env_path)
+            _TURN_ENV.extra["CANOPY_AGENT_ENV_FILE"] = str(env_path)
+            off_disk_env = True
+        cwd = _turn_cwd(turn, turn_id, env=_agent_env(slug))
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
         if not confined:
@@ -6762,6 +7927,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # never re-run blind as "sessionless" (services.finish_turn).
             finish_body["session_key"] = cli_session_id
         fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", finish_body)
+        if ok and off_disk_env:
+            # Proven: this agent works off disk, so its legacy files can go.
+            note_off_disk_success(slug)
         if fstatus == 200:
             _log(f"finished turn {turn_id[:8]}: {finish}")
         else:
@@ -6791,6 +7959,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     except Exception as exc:  # noqa: BLE001 — a worker must never take the loop down
         _log(f"turn {turn_id[:8]} worker crashed: {exc}")
     finally:
+        # The turn's secrets end with it — done, failed, raised, stopped or timed out.
+        remove_turn_env(str(turn_id))
         with _TURNS_LOCK:
             _IN_FLIGHT.pop(turn_id, None)
         _clear_stop(turn_id)
@@ -6838,7 +8008,9 @@ def run_over_rest(runner_id: str) -> None:
                 or _token_refused()):
             time.sleep(POLL_SECONDS)
             continue
-        status, turn = _api("POST", f"/runners/{runner_id}/claim")
+        paused = backed_off_slugs()
+        status, turn = _api("POST", f"/runners/{runner_id}/claim"
+                            + (f"?paused={','.join(paused)}" if paused else ""))
         if status != 200 or not turn:
             time.sleep(POLL_SECONDS)
             continue
@@ -6953,7 +8125,8 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
         return False  # the poll tick retries; the queued turn waits, nothing is lost
     if _token_refused():
         return False  # it could never report back; leave it for a box that can
-    res = _ws_request(ws, {"action": "claim"}, "claim.result")
+    paused = backed_off_slugs()
+    res = _ws_request(ws, {"action": "claim", **({"paused": paused} if paused else {})}, "claim.result")
     turn = res.get("turn") if res else None
     if not turn:
         return False
@@ -7129,9 +8302,16 @@ def main() -> None:
     runner_id = pair_or_load()
     global _RUNNER_ID
     _RUNNER_ID = runner_id
-    # Canopy Vault: register this box's instance role as its device key (background,
-    # fail-open; logs the approve URL while pending). canopy-web#1549.
-    enrollment = start_aws_device_key_enrollment(runner_id)
+    # No turn runs yet: any per-turn env a previous process left is nobody's.
+    sweep_turn_envs()
+    if UNIT:
+        # A unit's key was registered by canopy-pair; it has no instance role to enroll.
+        enrollment = threading.Thread(target=lambda: None, daemon=True)
+        enrollment.start()
+    else:
+        # Canopy Vault: register this box's instance role as its device key
+        # (background, fail-open; logs the approve URL while pending). canopy-web#1549.
+        enrollment = start_aws_device_key_enrollment(runner_id)
     _retire_shared_github_credentials()
     if not fetch_and_stage_credential(runner_id):
         return  # stopped before a credential was provisioned
@@ -7151,9 +8331,38 @@ def _handle_stop(*_a):
     _log("stopping after current turn")
 
 
+def _units_cli(argv: list[str]) -> int:
+    """Root's box-wide steps for isolation units (systemd runs them; see runner.cfn.yaml):
+    `--install-units` (the systemd units, once — cloud-init, or an operator moving a
+    live box), `--setup-units` (users, env files, secrets, the IMDS rule; every
+    start) and `--pair-units` (canopy-pair: every unit in one pair-by-role call)."""
+    if os.geteuid() != 0:
+        print("--install-units / --setup-units / --pair-units run as root", file=sys.stderr)
+        return 2
+    if argv[0] == "--install-units":
+        services = install_units()
+        _log(f"install-units: {', '.join(services) or 'no units'} enabled")
+        return 0
+    if argv[0] == "--setup-units":
+        box = read_env_file(BOX_ENV_FILE)
+        units = setup_units(box, role_name=_role_name())
+        imds_rules()
+        _log("setup-units: " + ", ".join(f"{u['id']} ({u['user']}, {u['name']})" for u in units))
+        # A unit added to RunnerUnits later: start its runner, and pair it.
+        for u in units:
+            subprocess.run(["systemctl", "enable", "--now", "--no-block",
+                            f"canopy-runner@{u['id']}.service"], capture_output=True)
+        if any(not _unit_state(u).get("runner_id") for u in units):
+            subprocess.run(["systemctl", "restart", "--no-block", "canopy-pair.service"], capture_output=True)
+        return 0
+    return pair_units_main()
+
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["repo-worktree"]:
         sys.exit(_repo_worktree_cli(sys.argv[2:]))
+    if sys.argv[1:2] in (["--install-units"], ["--setup-units"], ["--pair-units"]):
+        sys.exit(_units_cli(sys.argv[1:]))
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
     main()

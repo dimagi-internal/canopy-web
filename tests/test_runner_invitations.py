@@ -65,6 +65,12 @@ def _person(username: str):
 
 @pytest.fixture
 def org():
+    return make_org()
+
+
+def make_org() -> dict:
+    """jj, owner of `connect`, signed in with a fresh passkey step-up, and a PAT.
+    A plain function so other modules can build the same fixture under their own."""
     jj = _person("jj")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
@@ -323,7 +329,7 @@ def test_approved_invitation_pairs_once(org):
     # The same box asking again (a restart before its state file landed) gets
     # the same runner back; nothing new is made.
     again = _pair()
-    assert again.status_code == 200 and again.json() == {"runner_id": str(runner.pk), "status": "reattached"}
+    assert again.status_code == 200 and again.json() == {"runner_id": str(runner.pk), "status": "reattached", "units": {}, "device_keys": {}}
     assert Runner.objects.count() == 1 and RunnerDeviceKey.objects.count() == 1
 
 
@@ -331,7 +337,7 @@ def test_approved_invitation_pairs_once(org):
 def test_pending_invitation_waits(org):
     _create(_pat_client(org["pat"]))
     res = _pair()
-    assert res.status_code == 202 and res.json() == {"runner_id": None, "status": "waiting"}
+    assert res.status_code == 202 and res.json() == {"runner_id": None, "status": "waiting", "units": {}, "device_keys": {}}
     assert not Runner.objects.exists()
 
 
@@ -497,7 +503,7 @@ def test_another_owners_key_for_the_role_is_never_erased(org, old_status, key_st
     res = _pair()
     if old_status == "online" and key_status == "active":
         # That is Mallory's own box re-attaching to Mallory's runner; nothing of jj's.
-        assert res.json() == {"runner_id": str(theirs.pk), "status": "reattached"}
+        assert res.json() == {"runner_id": str(theirs.pk), "status": "reattached", "units": {}, "device_keys": {}}
         return
     assert res.status_code == 401 and res.json()["detail"] == _REFUSED
     key = RunnerDeviceKey.objects.get(jkt=aws_iam_proof.role_jkt(ROLE))

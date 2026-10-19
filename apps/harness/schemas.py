@@ -1789,15 +1789,42 @@ RUNNER_NAME_PATTERN = r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"
 RunnerInvitationStatus = Literal["pending", "approved", "consumed", "expired"]
 
 
+class RunnerUnitIn(Schema):
+    """One isolation unit on the invited box: a runner of its own, named `name`,
+    serving `workspace`'s tree (`kind` tree) or only agent `slug` (`kind` agent,
+    an agent of `workspace`). `ecdh_public_jwk` is that unit's zero-knowledge ECDH
+    key (its KMS key in the `<stack>-ecdh` stack) when known."""
+
+    name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
+    workspace: str = Field(min_length=1, max_length=100)
+    kind: Literal["tree", "agent"] = "tree"
+    slug: str = Field(default="", max_length=100)
+    ecdh_public_jwk: dict[str, Any] | None = None
+
+
 class RunnerInvitationIn(Schema):
     """Invite one new cloud box, by the name it will pair as and its EC2 instance
     role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
-    public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it."""
+    public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it.
+    `units`: a box that runs several isolation units lists them, and the one
+    approval pairs every one."""
 
     name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
     workspace: str = Field(min_length=1, max_length=100)
     role_arn: str = Field(min_length=1, max_length=300)
     ecdh_public_jwk: dict[str, Any] | None = None
+    units: list[RunnerUnitIn] | None = Field(default=None, max_length=8)
+
+
+class RunnerInvitationUnitOut(Schema):
+    """One unit an invitation pairs, and its runner once the box has paired."""
+
+    name: str
+    workspace: str
+    kind: Literal["tree", "agent"]
+    slug: str = ""
+    has_ecdh_key: bool = False
+    runner_id: uuid.UUID | None = None
 
 
 class RunnerInvitationCheckOut(Schema):
@@ -1824,6 +1851,21 @@ class RunnerInvitationOut(Schema):
     #: Whether the box's ECDH key is part of what approving covers.
     has_ecdh_key: bool = False
     runner_id: uuid.UUID | None = None
+    #: The units the box pairs as, one runner each; empty for a one-runner box.
+    units: list[RunnerInvitationUnitOut] = []
+
+
+class RunnerPairUnitIn(Schema):
+    """One unit of a box pairing all its units at once: its runner `name`, the
+    PUBLIC half of the unit's own signing key (`public_jwk`, a software P-256 key
+    in the unit's home), its zero-knowledge ECDH key, and what it declares."""
+
+    name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
+    public_jwk: dict[str, Any]
+    ecdh_public_jwk: dict[str, Any] | None = None
+    ecdh_store: str = Field(default="", max_length=16)
+    capabilities: dict = {}
+    host: str = Field(default="", max_length=200)
 
 
 class RunnerPairByRoleIn(Schema):
@@ -1839,12 +1881,20 @@ class RunnerPairByRoleIn(Schema):
     proof: str = Field(min_length=1, max_length=20000)
     ecdh_public_jwk: dict[str, Any] | None = None
     ecdh_store: str = Field(default="", max_length=16)
+    #: A box of isolation units pairs them all in this one call (`name` is then
+    #: the BOX's name, the one its invitation was made for).
+    units: list[RunnerPairUnitIn] | None = Field(default=None, max_length=8)
 
 
 class RunnerPairByRoleOut(Schema):
     """`paired` (a new runner), `reattached` (this role's existing runner — a
     replaced instance), or `waiting` (the invitation is not approved yet; ask
-    again on the next poll)."""
+    again on the next poll). A box of units gets `units`, each unit's runner id by
+    its name (`paired` when any was made)."""
 
     status: Literal["paired", "reattached", "waiting"]
     runner_id: uuid.UUID | None = None
+    units: dict[str, uuid.UUID] = {}
+    #: Each unit's device key id, by unit name — what the box records so its
+    #: proofs are sent (`canopy vault device --registered`).
+    device_keys: dict[str, uuid.UUID] = {}

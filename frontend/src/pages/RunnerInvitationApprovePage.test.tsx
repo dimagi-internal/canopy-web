@@ -40,6 +40,7 @@ function invitation(over: Partial<RunnerInvitationOut> = {}): RunnerInvitationOu
     approved_at: null,
     has_ecdh_key: true,
     runner_id: null,
+    units: [],
     ...over,
   }
 }
@@ -69,6 +70,26 @@ describe('RunnerInvitationApprovePage', () => {
     expect(screen.getByText('jj@dimagi.com')).toBeTruthy()
     expect(screen.getByText(new Date('2026-10-19T11:00:00Z').toLocaleString())).toBeTruthy()
     expect(getRunnerInvitation).toHaveBeenCalledWith(ID)
+  })
+
+  it('lists every unit one approval pairs', async () => {
+    getRunnerInvitation.mockResolvedValue(
+      invitation({
+        units: [
+          { name: 'cloud-ec2-9', workspace: 'connect', kind: 'tree', slug: '', has_ecdh_key: false, runner_id: null },
+          { name: 'cloud-ec2-9-marsh', workspace: 'marsh', kind: 'tree', slug: '', has_ecdh_key: false, runner_id: null },
+          { name: 'cloud-ec2-9-agent-eva', workspace: 'connect', kind: 'agent', slug: 'eva', has_ecdh_key: false, runner_id: null },
+        ],
+      }),
+    )
+    renderPage()
+    const rows = await screen.findAllByTestId('invitation-unit')
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining('cloud-ec2-9its workspace tree'),
+      expect.stringContaining('cloud-ec2-9-marsh'),
+      expect.stringContaining('only agent eva'),
+    ])
+    expect(screen.getByText(/each of these 3 units your runner/)).toBeTruthy()
   })
 
   it('approve calls the approve endpoint and shows the new state', async () => {

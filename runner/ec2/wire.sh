@@ -31,6 +31,12 @@
 # credential to answer (a test box with a dead token tests nothing), then prints
 # how to point a chat at the box.
 #
+# --unit <id> wires ONE isolation unit of a box of units (up.sh --units): its runner
+# is `<name>-<id>` (the box's own tree unit is just `--name <box>`), found through the
+# box's one invitation. Its Claude credentials default to a copy of the box's own
+# unit's logins — long-lived tokens copy across units; a full login does not (its
+# refresh token rotates), so a unit that wants one signs in on its own runner page.
+#
 # Pure curl + python3 — no deps, matching up.sh/down.sh/secrets.sh's house style.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -46,6 +52,7 @@ DRILL=0
 STANDBY=0
 TEST=0
 CRED_FROM=""  # runner name|id whose Claude logins to copy (see step 2)
+UNIT=""       # an isolation unit of the box --name names (up.sh --units)
 DISCOVER_MINUTES=15   # cloud-init (node, claude, aws, gh, op) takes 4-6 min before the first pair
 BOOTSTRAP_MINUTES=40  # first bootstrap clones + provisions every registered agent
 PROBE_MINUTES=5       # how long to wait for the box to prove one staged credential answers
@@ -72,6 +79,9 @@ usage: ./wire.sh [options]
                          at it.
   --drill                wait for the box's first bootstrap, fire a readiness drill, poll to
                          completion, print the grid; exits non-zero unless every drill passes
+  --unit <id>            one isolation unit of the box --name names (up.sh --units): wires the
+                         runner <name>-<id>, found through the box's invitation, and copies the
+                         box's own unit's Claude logins to it unless --credential-from says else
   --credential-from <runner>
                          copy the Claude logins (primary, fallback, API key) from this
                          runner (name or id). Default: the same-name predecessor, else the
@@ -93,6 +103,7 @@ while [[ $# -gt 0 ]]; do
     --standby) STANDBY=1; shift ;;
     --test) TEST=1; shift ;;
     --credential-from) CRED_FROM="$2"; shift 2 ;;
+    --unit) UNIT="$2"; shift 2 ;;
     --discover-minutes) DISCOVER_MINUTES="$2"; shift 2 ;;
     --probe-minutes) PROBE_MINUTES="$2"; shift 2 ;;
     --agents) AGENTS="$2"; shift 2 ;;
@@ -104,6 +115,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 runner_name_ok "$RUNNER_NAME" || { echo "!! invalid runner name '$RUNNER_NAME'" >&2; exit 1; }
+# The box (its stack and its one invitation) and, with --unit, the unit's own runner.
+BOX_NAME="$RUNNER_NAME"
+if [[ -n "$UNIT" ]]; then
+  [[ "$UNIT" =~ ^[a-z0-9][a-z0-9-]{0,27}$ ]] || { echo "!! invalid unit id '$UNIT'" >&2; exit 1; }
+  RUNNER_NAME="${BOX_NAME}-${UNIT}"
+  runner_name_ok "$RUNNER_NAME" || { echo "!! '$RUNNER_NAME' is not a valid runner name" >&2; exit 1; }
+  # Tokens copy across units: the box's own unit is the natural source.
+  [[ -n "$CRED_FROM" ]] || CRED_FROM="$BOX_NAME"
+fi
 if [[ "$TEST" == "1" && ( "$STANDBY" == "1" || -n "$AGENTS" || "$DRILL" == "1" ) ]]; then
   echo "!! --test changes no routing: it takes no --standby, --agents or --drill" >&2
   exit 1
@@ -239,7 +259,7 @@ fi
 # ── Step 1: discover (or accept) the fresh runner ───────────────────────────────
 # A box paired by invitation names itself: up.sh records the invitation in
 # <stack>-invitation.json, and canopy-web says which runner consumed it.
-INVITE_FILE="${KEY_DIR:-.}/$(stack_for_name "$RUNNER_NAME")-invitation.json"
+INVITE_FILE="${KEY_DIR:-.}/$(stack_for_name "$BOX_NAME")-invitation.json"
 if [[ -z "$RUNNER_ID" && -f "$INVITE_FILE" ]]; then
   INV_ID=$(python3 -c 'import json,sys
 try:
@@ -248,16 +268,19 @@ except Exception:
     print("")' "$INVITE_FILE")
   if [[ -n "$INV_ID" ]]; then
     api GET "/api/harness/runner-invitations/${INV_ID}" > "$TMP/invitation.json" || true
-    INV=$(NAME="$RUNNER_NAME" python3 - "$TMP/invitation.json" <<'PY'
+    INV=$(BOX="$BOX_NAME" NAME="$RUNNER_NAME" python3 - "$TMP/invitation.json" <<'PY'
 import json, os, sys
 try:
     d = json.load(open(sys.argv[1]))
 except Exception:
     d = {}
-if not isinstance(d, dict) or d.get("name") != os.environ["NAME"]:
+if not isinstance(d, dict) or d.get("name") != os.environ["BOX"]:
     print("unknown -")
 else:
-    print(d.get("status") or "unknown", d.get("runner_id") or "-")
+    # A box of units: this unit's runner, by its name, from the one invitation.
+    units = {u.get("name"): u.get("runner_id") for u in d.get("units") or []}
+    rid = units.get(os.environ["NAME"]) if units else d.get("runner_id")
+    print(d.get("status") or "unknown", rid or "-")
 PY
 )
     if [[ "${INV%% *}" == "consumed" && "${INV#* }" != "-" ]]; then
