@@ -29,11 +29,7 @@ wire.
 - `bootstrap_agents.sh` — idempotent bootstrap of the BOX (tooling, gog's keyring, the canopy plugin + CLI, Claude Code itself, caches); each agent is prepared by canopy's `canopy agent prepare --runner`. Runs ON the box, from the runner's own `canopy-web` clone (`RUNNER_SRC_DIR`) — not baked into the template. See "Bootstrap" below.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
 - `up.sh` — preflight every one-time prerequisite, publish the seed, `cloudformation deploy` (updates via a reviewed change set); pulls the private key from SSM for SSH.
-<<<<<<< HEAD
-- `wire.sh` — operator-side: stage the fresh runner's credential bundle, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else; `--test` stages credentials and stops. Run this after `up.sh`.
-=======
-- `wire.sh` — operator-side: stage the fresh runner's credential bundle, wait for the box to prove one credential works, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else. Run this after `up.sh`.
->>>>>>> 8d7971f8 (docs: the credential probe, self-pause, alerts that reach a person, wire.sh's source order and probe wait)
+- `wire.sh` — operator-side: stage the fresh runner's credential bundle, wait for the box to prove one credential works, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else; `--test` stages credentials, waits for the proof and stops. Run this after `up.sh`.
 - `down.sh` — delete the stack, remove the SSH key, retire the runner row (dropping every route to it); `--keep-runner` for a recycle, `--purge-secrets` to also remove the shared secrets.
 
 `*.pem` and the rendered template are gitignored.
@@ -75,8 +71,9 @@ Promote a proven standby by enabling its row on the agent's Settings → Runners
                                   # directed-only: RunnerDirected=1, RunnerSessions=1, RunnerAgents='',
                                   # RunnerProjects=--projects (default canopy-web), RunnerWorkspace=canopy
 ./wire.sh --name cloud-ec2-fork --test
-                                  # discover it, stage its credentials, stop: no retire, no assignment,
-                                  # rule or workspace-order change, no --agents. Prints the chat URL.
+                                  # discover it, stage its credentials, wait for one to answer
+                                  # (--probe-minutes), stop: no retire, no assignment, rule or
+                                  # workspace-order change, no --agents. Prints the chat URL.
 ./down.sh --name cloud-ec2-fork
 ```
 A directed-only box (`capabilities.directed`) claims only turns pinned to it and

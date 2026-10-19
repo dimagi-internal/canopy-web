@@ -24,10 +24,12 @@
 # point: prove a second box end to end without moving any traffic onto it.
 # `down.sh --name <same>` retires the runner, which deletes those rows again.
 #
-# --test (for a box `up.sh --test` made: directed-only) stops after step 2: a test
-# box takes only turns pinned to it and chats bound to it, so there is no routing
-# to change — no predecessor retired, no assignment row, rule or workspace order
-# touched, and no --agents. It prints how to point a chat at the box.
+# --test (for a box `up.sh --test` made: directed-only) stops after step 2 and the
+# probe wait: a test box takes only turns pinned to it and chats bound to it, so
+# there is no routing to change — no predecessor retired, no assignment row, rule
+# or workspace order touched, and no --agents. It still waits for a staged
+# credential to answer (a test box with a dead token tests nothing), then prints
+# how to point a chat at the box.
 #
 # Pure curl + python3 — no deps, matching up.sh/down.sh/secrets.sh's house style.
 set -euo pipefail
@@ -65,8 +67,9 @@ usage: ./wire.sh [options]
                          nothing else: no retire, no swap, no rule/order edit. For a second
                          box you want to prove (with --drill) without routing work to it.
   --test                 a directed-only test box (up.sh --test): discover it, stage its
-                         credentials and stop — no routing change of any kind, no --agents.
-                         Prints how to point a chat at it.
+                         credentials, wait for one to answer (--probe-minutes) and stop — no
+                         routing change of any kind, no --agents. Prints how to point a chat
+                         at it.
   --drill                wait for the box's first bootstrap, fire a readiness drill, poll to
                          completion, print the grid; exits non-zero unless every drill passes
   --credential-from <runner>
