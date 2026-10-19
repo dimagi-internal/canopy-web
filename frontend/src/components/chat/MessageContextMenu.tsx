@@ -7,20 +7,13 @@ import type { RunnerOut } from '@/api/harness'
  * turn (`POST /canopy-sessions/{id}/fork`); the page runs it and opens the fork.
  */
 
-/** Why this session cannot be forked, or null when it can. Mirrors the server's
- *  own refusal (`services.fork_runner_supported`), which stays the authority:
- *  a cloud runner, or a laptop on the Claude CLI runtime, can cut a fork. */
-export function forkBlockedReason(
-  runnerName: string | null | undefined,
-  runners: readonly RunnerOut[],
-): string | null {
-  if (!runnerName) return 'This session has not run on a runner yet'
-  const runner = runners.find((r) => r.name === runnerName)
-  if (!runner) return `${runnerName} is not one of your runners`
-  if (runner.kind !== 'cloud' && runner.engine !== 'claude-cli') {
-    return `Forking needs a cloud runner or the Claude CLI runtime; ${runner.name} runs ${runner.engine}`
-  }
-  return null
+/** Whether this session's runner can cut a fork. Mirrors the server's own
+ *  refusal (`services.fork_runner_supported`), which stays the authority: a
+ *  cloud runner, or a laptop on the Claude CLI runtime. Anywhere else the menu
+ *  is not offered at all. */
+export function canFork(runnerName: string | null | undefined, runners: readonly RunnerOut[]): boolean {
+  const runner = runnerName ? runners.find((r) => r.name === runnerName) : undefined
+  return Boolean(runner && (runner.kind === 'cloud' || runner.engine === 'claude-cli'))
 }
 
 /** The message a right-click landed on: every chat row carries its `turn_index`
@@ -35,7 +28,6 @@ export function turnIndexAt(target: EventTarget | null): number | null {
 export function MessageContextMenu({
   x,
   y,
-  blocked,
   busy,
   error,
   onFork,
@@ -43,7 +35,6 @@ export function MessageContextMenu({
 }: {
   x: number
   y: number
-  blocked: string | null
   busy: boolean
   error: string | null
   onFork: () => void
@@ -102,17 +93,13 @@ export function MessageContextMenu({
         type="button"
         role="menuitem"
         data-testid="message-menu-fork"
-        disabled={Boolean(blocked) || busy}
-        title={
-          blocked ??
-          'A new session with the conversation up to the end of this turn. It runs in the same worktree, so both sessions see and edit the same files.'
-        }
+        disabled={busy}
+        title="A new session with the conversation up to the end of this turn, listed under this one. It runs in the same worktree, so both sessions see and edit the same files."
         onClick={onFork}
         className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px] text-foreground enabled:hover:bg-muted disabled:cursor-default disabled:opacity-40"
       >
         {busy ? 'Forking…' : 'Fork from here'}
       </button>
-      {blocked && <div className="px-2 pb-1 text-[11px] text-muted-foreground">{blocked}</div>}
       {error && (
         <div role="alert" className="px-2 pb-1 text-[11px] text-destructive">
           {error}

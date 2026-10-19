@@ -41,7 +41,7 @@ import {
   closeResultMessage,
 } from '@/components/chat/closeAction'
 import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
-import { MessageContextMenu, forkBlockedReason, turnIndexAt } from '@/components/chat/MessageContextMenu'
+import { MessageContextMenu, canFork, turnIndexAt } from '@/components/chat/MessageContextMenu'
 import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
@@ -276,6 +276,8 @@ export function ChatPage({
     setForkError(null)
   }, [])
   const onMessageContextMenu = (e: ReactMouseEvent) => {
+    // Only where a fork can be cut; elsewhere the browser's own menu stays.
+    if (!canFork(meta?.runner_name, fleetRunners)) return
     const turnIndex = turnIndexAt(e.target)
     // A row not yet in the transcript (your own line, still sending) has a
     // placeholder index; leave the browser's own menu there.
@@ -954,7 +956,6 @@ export function ChatPage({
           <MessageContextMenu
             x={messageMenu.x}
             y={messageMenu.y}
-            blocked={forkBlockedReason(meta?.runner_name, fleetRunners)}
             busy={forking}
             error={forkError}
             onFork={forkHere}
