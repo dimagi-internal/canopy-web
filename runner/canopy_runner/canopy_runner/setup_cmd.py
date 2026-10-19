@@ -198,9 +198,31 @@ class Launchd:
                          f"Retry with: launchctl bootstrap gui/{uid} {dest}")
 
 
+def previous_install(agents: Path, root: Path) -> str:
+    """The runner job's program when it runs something OTHER than this bundle — a
+    developer install (`install-runner.sh`) or another copy of the app — else ""."""
+    try:
+        with (agents / f"{platform_jobs.RUNNER_LABEL}.plist").open("rb") as fh:
+            argv = plistlib.load(fh).get("ProgramArguments") or []
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return ""
+    prog = str(argv[0]) if argv else ""
+    try:
+        inside = Path(prog).resolve().is_relative_to(root.resolve())
+    except (OSError, ValueError):
+        inside = False
+    return "" if not prog or inside else prog
+
+
 def setup_macos(root: Path, home: Path, config: Path, *, launchd: Launchd, out=print) -> int:
     agents = home / "Library" / "LaunchAgents"
     jobs = mac_plists(root, home, config)
+    prev = previous_install(agents, root)
+    if prev:
+        # Same runner, same runner.json, same device key: only what runs it changes.
+        out(f"==> this account ran the runner from {prev}; it now runs this app instead "
+            "(same runner and pairing). To go back to a developer install, run "
+            "runner/canopy_runner/scripts/install-runner.sh from a canopy-web checkout.")
     (home / ".canopy").mkdir(parents=True, exist_ok=True)
     out("==> starting the runner in the background")
     launchd.install(platform_jobs.RUNNER_LABEL, jobs[platform_jobs.RUNNER_LABEL], agents,

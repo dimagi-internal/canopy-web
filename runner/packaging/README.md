@@ -59,6 +59,34 @@ paths (`provenance.CODE_PATHS`, which includes this directory). Uncommitted
 changes under those paths are built in, with a warning, but the sha still names
 the commit, so release only from CI.
 
+## Developers and testers
+
+The downloaded app and `install-runner.sh` drive the same runner: the same
+`~/.canopy/runner.json`, device key and launchd labels (Windows: task names). Whichever
+installed last runs it, and switching never re-pairs.
+
+- **Try the released app on your own account.** Download it from `/get-started` (or the
+  topology page) and open it. It takes over the jobs from your developer install, keeps
+  your runner and pairing, and says so. Back to the developer install: run
+  `runner/canopy_runner/scripts/install-runner.sh` from your checkout; it replaces the
+  released app in `~/Applications` and rebuilds `~/.canopy/bin/canopy-device-key`, which
+  the app had linked into itself. Windows: run the installer, and `install-runner.ps1` to
+  go back (uninstall the app from Settings → Apps when you are done with it).
+- **Try it without touching your developer runner.** Use a second macOS account (the
+  fleet already runs one runner per account): open the app there and approve the pairing
+  in that account's browser. It gets its own runner, ports and key.
+- **Try an unreleased build.** Every run of this workflow (a PR touching
+  `runner/packaging/**`, or `gh workflow run runner-release.yml --ref <branch>`) uploads
+  the installers as run artifacts for 14 days:
+  `gh run download <run-id> -n runner-macos-arm64` (or `runner-macos-x86_64`,
+  `runner-windows-x86_64`). These are not on canopy-web, and are unsigned unless the run
+  had the signing secrets.
+- **Keep a box on what you installed.** The updater installs the deployed sha within 30
+  minutes. `touch ~/.canopy/hold-updates` holds it (both updaters honour the file, and
+  `canopy-runner self-update` then answers `held`); delete the file to resume.
+- **Check without installing.** `"$HOME/Applications/Canopy Runner.app/Contents/Resources/runtime/bin/canopy-runner" self-update`
+  prints `current|stale|busy|unknown|held <sha>` and changes nothing.
+
 ## What CI does (`.github/workflows/runner-release.yml`)
 
 - **Triggers:**

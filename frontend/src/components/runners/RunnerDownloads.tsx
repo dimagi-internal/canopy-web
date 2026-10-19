@@ -117,6 +117,12 @@ export function RunnerDownloads({ authed, developerCommand }: { authed: boolean;
         <code className="mt-1 block break-all rounded-md border border-input bg-input p-2 font-mono text-foreground">
           {developerCommand}
         </code>
+        <p className="mt-1">
+          Both installs run the same runner and pairing: opening the app on a developer account takes it over, and
+          re-running <code className="font-mono">install-runner.sh</code> switches back.{' '}
+          <code className="font-mono">touch ~/.canopy/hold-updates</code> keeps a box on the build you installed.
+          To try the app without touching your runner, use a second macOS account.
+        </p>
       </details>
     </div>
   )

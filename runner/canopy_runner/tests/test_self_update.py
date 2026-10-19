@@ -314,3 +314,18 @@ def test_windows_refuses_when_current_names_another_build(tmp_path):
     with pytest.raises(self_update.UpdateError, match="does not name the expected"):
         self_update.install_windows(tmp_path / "Setup.exe", NEW, app, tmp_path / "r.json",
                                     run=run, out=lambda *a: None)
+
+
+def test_hold_updates_keeps_a_stale_box_where_it_is(tmp_path):
+    app = mac_app(tmp_path / "home")
+    hold = tmp_path / "home" / ".canopy" / "hold-updates"
+    hold.parent.mkdir(parents=True, exist_ok=True)
+    hold.touch()
+    out = []
+    rc = self_update.run_self_update(
+        _config(tmp_path), if_stale=True, executable=mac_python(app), home=tmp_path / "home",
+        client_factory=lambda cfg: FakeClient(_rel()), installed=OLD,
+        downloader=lambda *a: pytest.fail("no download while held"), system="Darwin",
+        out=out.append)
+    assert rc == 0 and out[-1] == f"held {NEW}"
+    assert _sha_of(app) == OLD

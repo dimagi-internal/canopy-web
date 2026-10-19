@@ -263,3 +263,20 @@ def test_kickstart_updater_names_the_bundled_jobs(monkeypatch):
     monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
     platform_jobs.kickstart_updater(runner=lambda argv, **kw: calls.append(argv))
     assert calls == [["schtasks", "/Run", "/TN", r"\Canopy\canopy-runner-updater"]]
+
+
+def test_taking_over_a_developer_install_keeps_the_pairing_and_says_how_back(mac):
+    home, app, cfg = mac
+    agents = home / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True)
+    dev_bin = str(home / ".local" / "bin" / "canopy-runner")
+    (agents / "com.canopy.runner.plist").write_bytes(plistlib.dumps(
+        {"Label": "com.canopy.runner", "ProgramArguments": [dev_bin, "run"]}))
+    before = cfg.read_text()
+    rc, out = _setup(home, app, cfg, Cmds())
+    assert rc == 0
+    assert any(dev_bin in line and "install-runner.sh" in line for line in out), out
+    assert cfg.read_text() == before, "the same runner and pairing"
+    # Once the jobs point into the app, a second setup has nothing to announce.
+    rc, out = _setup(home, app, cfg, Cmds())
+    assert not any("install-runner.sh" in line for line in out)

@@ -125,6 +125,11 @@ New-Item -ItemType Directory -Force -Path $CanopyDir | Out-Null
 # runner source in the DEPLOYED image, already through CI and a deploy. Installing
 # main would run undeployed code AND leave code_sha != expected_code_sha forever,
 # so the staleness banner would fire permanently on correctly-updating boxes.
+# ~/.canopy/hold-updates holds this box on what it runs now (a branch under test, or a
+# released build being tried) for this updater and the released app's alike.
+if ($IfStale -and (Test-Path (Join-Path $CanopyDir "hold-updates"))) {
+    Write-Host "$(Stamp) -IfStale: held (~/.canopy/hold-updates) -- nothing to do."; exit 0
+}
 if ($IfStale) {
     $binDir   = (& uv tool dir --bin 2>$null)
     $checkBin = if ($binDir) { Join-Path $binDir "canopy-runner.exe" } else { $null }

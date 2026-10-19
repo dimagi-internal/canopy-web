@@ -29,6 +29,10 @@ Windows runs the downloaded Setup with `/VERYSILENT … /UPDATE`, which writes
 --no-pair`, a restart of the runner task, and a prune of all but the current and the
 previous version.
 
+`~/.canopy/hold-updates` holds the box on what it runs (a build being tested): a stale
+answer is then `held` and nothing is installed — the same file `install-runner.sh
+--if-stale` honours, so it means one thing whichever way the box was installed.
+
 The last line printed is always `<status> <sha>`, like `update-check`.
 """
 from __future__ import annotations
@@ -56,6 +60,11 @@ CHUNK = 1 << 20
 DOWNLOAD_TIMEOUT = 60
 WINDOWS_INSTALL_TIMEOUT = 15 * 60
 NOT_BUNDLED = ("not a bundled install; developer installs update via install-runner.sh")
+HELD = "held"
+
+
+def hold_path(home: Path) -> Path:
+    return home / ".canopy" / "hold-updates"
 
 
 class UpdateError(Exception):
@@ -323,6 +332,9 @@ def run_self_update(config_path: Path, *, if_stale: bool = False, platform: str 
     inst = provenance.code_sha() if installed is None else installed
     status, rel = decide(cfg, client, installed=inst, platform=plat, now=now)
     sha = str((rel or {}).get("sha") or "-")
+    if status == update.STALE and hold_path(home).exists():
+        out(f"updates are held ({hold_path(home)}) — delete it to resume")
+        status = HELD
     if status != update.STALE or not if_stale:
         out(f"{status} {sha}")
         return 0
