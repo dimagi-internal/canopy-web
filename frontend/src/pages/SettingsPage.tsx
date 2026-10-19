@@ -11,6 +11,7 @@ import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 import { useMemoryVisible } from '@/auth/memoryRollout'
 import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePanel'
+import { RunnerAppPanel } from '@/components/settings/RunnerAppPanel'
 
 export function SettingsPage() {
   const memoryVisible = useMemoryVisible()
@@ -74,6 +75,8 @@ export function SettingsPage() {
       <RunnersPanel />
 
       <SessionWorkspacePanel />
+
+      <RunnerAppPanel />
 
       {/* Presence */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-3">

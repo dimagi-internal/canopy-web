@@ -12,6 +12,8 @@ from .schemas import (
     MeOut,
     PresencePreferenceIn,
     PresencePreferenceOut,
+    RunnerAppPreferenceIn,
+    RunnerAppPreferenceOut,
     SessionWorkspaceChoice,
     SessionWorkspacePreferenceIn,
     SessionWorkspacePreferenceOut,
@@ -85,6 +87,39 @@ def set_presence_preference(
         user=request.user, defaults={"show_presence": payload.show_presence}
     )
     return PresencePreferenceOut(show_presence=payload.show_presence)
+
+
+# --- /me/runner-app/ (auth) ------------------------------------
+
+
+@common_router.get(
+    "/me/runner-app/",
+    response=RunnerAppPreferenceOut,
+    summary="Get the page your Canopy Runner app opens on",
+)
+def get_runner_app_preference(request: HttpRequest) -> RunnerAppPreferenceOut:
+    """The page the Canopy Runner desktop app's window opens on (it loads
+    `/runner-app/`, which redirects there). Unset: the supervisor."""
+    from apps.harness.models import RunnerAppPreference
+
+    return RunnerAppPreferenceOut(opens_on=RunnerAppPreference.opens_on_for(request.user))
+
+
+@common_router.patch(
+    "/me/runner-app/",
+    response=RunnerAppPreferenceOut,
+    summary="Set the page your Canopy Runner app opens on",
+)
+def set_runner_app_preference(
+    request: HttpRequest, payload: RunnerAppPreferenceIn
+) -> RunnerAppPreferenceOut:
+    """Takes effect the next time the app's window opens, on every box you use."""
+    from apps.harness.models import RunnerAppPreference
+
+    RunnerAppPreference.objects.update_or_create(
+        user=request.user, defaults={"opens_on": payload.opens_on}
+    )
+    return RunnerAppPreferenceOut(opens_on=payload.opens_on)
 
 
 # --- /me/session-workspace/ (auth) ------------------------------

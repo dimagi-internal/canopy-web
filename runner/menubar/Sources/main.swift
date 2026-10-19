@@ -263,7 +263,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.mainMenu = main
     }
 
-    // The fleet UI is the DEPLOYED /supervisor React surface — the SAME app the phone PWA
+    // The fleet UI is the DEPLOYED React app — the SAME one the phone PWA
     // and desktop browser load (CLAUDE.md: "loaded by three consumers"). Hosting it in a
     // WKWebView keeps the menu bar DRY with web + mobile: zero duplicated components, and
     // a persistent data store so the Google login persists across opens.
@@ -297,23 +297,23 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func showWindow() {
-        // ALWAYS open on the supervisor home, never wherever the last session navigated
+        // ALWAYS open on the home page, never wherever the last session navigated
         // to. First open mints + injects the session cookie; after that the cookie is set,
-        // so we just reload /supervisor (cheap, no re-mint).
-        if authed { loadSupervisor() } else { authenticateThenLoad() }
+        // so we just reload it (cheap, no re-mint).
+        if authed { loadHome() } else { authenticateThenLoad() }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
 
     // SHARED AUTH: the panel is authenticated with the SAME PAT the daemon uses (both read
     // ~/.canopy/runner.json → the workbench token). We POST it to /api/debug/mint-session/,
-    // inject the returned session cookie into the WebView, then load /supervisor already
+    // inject the returned session cookie into the WebView, then load the home page already
     // signed in — no separate Google login. Falls back to interactive login if minting fails.
     func authenticateThenLoad() {
         guard let token = readToken(),
               let mintURL = URL(string: baseURL() + "/api/debug/mint-session/"),
               let host = URL(string: baseURL())?.host else {
-            loadSupervisor(); return
+            loadHome(); return
         }
         var req = URLRequest(url: mintURL)
         req.httpMethod = "POST"
@@ -329,20 +329,23 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
                   let cookie = HTTPCookie(properties: [
                       .domain: host, .path: "/", .name: name, .value: value, .secure: "TRUE",
                   ]) else {
-                DispatchQueue.main.async { self.loadSupervisor() }  // fall back to login
+                DispatchQueue.main.async { self.loadHome() }  // fall back to login
                 return
             }
             DispatchQueue.main.async {
                 self.web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
                     self.authed = true
-                    self.loadSupervisor()
+                    self.loadHome()
                 }
             }
         }.resume()
     }
 
-    func loadSupervisor() {
-        if let url = URL(string: baseURL() + "/supervisor") { web.load(URLRequest(url: url)) }
+    // The home page is the one the person chose in canopy's Settings ("Canopy Runner app
+    // opens on": supervisor, IDE, …). /runner-app/ redirects there, so a new choice needs
+    // no change here.
+    func loadHome() {
+        if let url = URL(string: baseURL() + "/runner-app/") { web.load(URLRequest(url: url)) }
     }
 
     // The workbench PAT, shared with the daemon (runner.json "token", possibly an @file ref).
@@ -581,12 +584,12 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let url = URL(string: baseURL() + "/supervisor") { NSWorkspace.shared.open(url) }
     }
     @objc func reloadPanel() {
-        authenticateThenLoad()  // re-mint the session cookie, then reload /supervisor
+        authenticateThenLoad()  // re-mint the session cookie, then reload the home page
     }
     // The bulletproof hard-refresh, WITHOUT logging you out. "Reload panel" is a
     // normal navigation, so a stale service worker keeps serving the cached bundle.
     // This purges the service-worker registration + every CACHE so the next load must
-    // fetch the current /supervisor and register the fresh (auto-updating) SW — but it
+    // fetch the current page and register the fresh (auto-updating) SW — but it
     // KEEPS cookies (the session) and localStorage (theme/prefs), so the reload comes
     // straight back signed in. No re-mint, no Google login. ("Reload panel" remains the
     // re-auth path for when the session itself needs refreshing.)
@@ -596,7 +599,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         types.remove(WKWebsiteDataTypeCookies)
         types.remove(WKWebsiteDataTypeLocalStorage)
         store.removeData(ofTypes: types, modifiedSince: Date(timeIntervalSince1970: 0)) { [weak self] in
-            self?.loadSupervisor()  // cookie preserved -> already authed -> fresh bundle
+            self?.loadHome()  // cookie preserved -> already authed -> fresh bundle
         }
     }
     @objc func openLog() {

@@ -337,8 +337,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   (`GET /api/tasks/?waiting=me`, the same `TaskCard` tagged with its agent,
   actionable in place; `?tab=inbox` lands here), Sessions, Agents, Runners
   (live status; links each runner to the topology map). Root because the fleet
-  spans workspaces. Loaded by the phone PWA, the menubar's WKWebView and
-  desktop browsers; installable as a PWA; pushes only about the Feed
+  spans workspaces. Loaded by the phone PWA, desktop browsers and the menubar's
+  WKWebView (unless you chose another page for it in `/settings` → Runner app); installable as a PWA; pushes only about the Feed
   (`apps/canopy_sessions/feed.py`).
 - **`/ide`** (+ `/:id`) — the desktop session IDE: one `WorkbenchRail` tree of
   emdash projects (repos and agents, by the row's `emdash_project`) with every
@@ -375,7 +375,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   edits reuse the agent rail's `ScheduleEditor`.
 - **`/settings`** — your account: runners you administer (each linking to
   `/supervisor?tab=runners&runner=<id>`, where a box's Claude login and admins
-  live), presence, GitHub, connected apps (OAuth MCP clients, disconnectable,
+  live), Runner app (the page the Canopy Runner desktop window opens on —
+  Supervisor or IDE; it loads `/runner-app/`, a bare view that redirects to the
+  choice, `RunnerAppPreference`), presence, GitHub, connected apps (OAuth MCP clients, disconnectable,
   plus the MCP address and `claude mcp add` line), personal access tokens, and
   runner device keys (`#device-keys`, shown when you have any or arrive by a
   box's `approve_url` with `?device_key=<id>`, which marks that row; approve /

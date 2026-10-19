@@ -9,6 +9,7 @@ The canonical tenant URL is `/api/w/{ws}/…`: `apps/api/tenancy.py::WorkspaceRe
 - `GET /api/me/` — current user. `GET /api/health/` — health check (`auth=None`).
 - `GET /api/csrf/` — CSRF token bootstrap (bare view). `GET /api/_auth_smoke/` — internal smoke check of session auth (returns the caller's email).
 - `GET|PATCH /api/me/presence-preference/` — the user's presence-visibility opt-out (`docs/architecture/chat-sessions.md` § Viewer presence).
+- `GET|PATCH /api/me/runner-app/` — `{opens_on: "supervisor"|"ide"}`, the page the Canopy Runner desktop app opens on (`RunnerAppPreference`; default supervisor). The app loads the bare view `/runner-app/`, which 302s there — a new page is a new choice here, with no change on the box.
 - `GET|PATCH /api/me/session-workspace/` — the workspace NEW emdash sessions your runners discover are filed in when the emdash project is not an agent's (an agent's follows the agent). Must be a workspace you are editor+ in; blank clears (falls back to the runner's workspace); existing sessions stay put (move one with `POST /api/canopy-sessions/{id}/move`).
 - `GET|POST /auth/cli/authorize/` — bare view (`apps/tokens/cli_authorize_views.py`). gh-style loopback: a signed-in browser mints a `PersonalToken` and 302s it to a local CLI callback (callback must be a safe loopback target). Pairs with `/canopy:canopy-web-pat-mint`.
 - `GET /auth/github/start/` · `GET /auth/github/callback/` — bare views, signed-in only: the per-user GitHub App connect flow (`apps/tokens/github_app.py`). The callback path is registered on the GitHub App.

@@ -95,6 +95,31 @@ export interface paths {
         readonly patch: operations["set_presence_preference"];
         readonly trace?: never;
     };
+    readonly "/api/me/runner-app/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get the page your Canopy Runner app opens on
+         * @description The page the Canopy Runner desktop app's window opens on (it loads
+         *     `/runner-app/`, which redirects there). Unset: the supervisor.
+         */
+        readonly get: operations["get_runner_app_preference"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Set the page your Canopy Runner app opens on
+         * @description Takes effect the next time the app's window opens, on every box you use.
+         */
+        readonly patch: operations["set_runner_app_preference"];
+        readonly trace?: never;
+    };
     readonly "/api/me/session-workspace/": {
         readonly parameters: {
             readonly query?: never;
@@ -10991,6 +11016,29 @@ export interface components {
         readonly PresencePreferenceIn: {
             /** Show Presence */
             readonly show_presence: boolean;
+        };
+        /**
+         * RunnerAppPreferenceOut
+         * @description Response for GET/PATCH /api/me/runner-app/.
+         */
+        readonly RunnerAppPreferenceOut: {
+            /**
+             * Opens On
+             * @description The page the Canopy Runner desktop app opens on.
+             * @enum {string}
+             */
+            readonly opens_on: "supervisor" | "ide";
+        };
+        /**
+         * RunnerAppPreferenceIn
+         * @description Request body for PATCH /api/me/runner-app/.
+         */
+        readonly RunnerAppPreferenceIn: {
+            /**
+             * Opens On
+             * @enum {string}
+             */
+            readonly opens_on: "supervisor" | "ide";
         };
         /** SessionWorkspaceChoice */
         readonly SessionWorkspaceChoice: {
@@ -28765,6 +28813,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PresencePreferenceOut"];
+                };
+            };
+        };
+    };
+    readonly get_runner_app_preference: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerAppPreferenceOut"];
+                };
+            };
+        };
+    };
+    readonly set_runner_app_preference: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerAppPreferenceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerAppPreferenceOut"];
                 };
             };
         };
