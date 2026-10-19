@@ -58,7 +58,7 @@ grant on that agent. An agent's own canopy login is not a holder.
 `routing.runner_routes_agent(runner, agent)` answers "could this box ever claim
 a turn of this agent?" with the claim's own static gates and nothing else:
 
-1. the box is not retired;
+1. the box is not retired, and not directed-only (below);
 2. the agent's workspace is in the box's tenant (`runner_tenant_slugs`: enrolled
    there AND its owner may run work there);
 3. its owner may hold the agent (`runner_may_hold_agent`, above);
@@ -119,7 +119,14 @@ In order, each a hard stop:
 2. Lazy sweeps: expired leases, `schedule_turns.release_stale_occurrence_turns_all`,
    `skip_late_scheduled_turns` (see Scheduled turns).
 3. Candidate filter: pinned here, or (`runner_target_q` ∧ routing kind); a cloud
-   runner never takes `local_only`. `profile_q`: a confined (caller) turn only to a
+   runner never takes `local_only`. A **directed-only** box
+   (`capabilities.directed`, `Runner.directed_only`) targets only the sessions
+   bound to it, so it claims just its pins and its bound chats — no routed agent
+   turn (even with an enabled assignment row), no repo turn, no unbound chat, no
+   inherited order. Every routed list drops it (`assignment_rows_for`, the
+   workspace order, `inherited_orders` → `InheritedOrder.directed`), so it neither
+   claims nor counts as a better rank; it routes and prepares no agent. Box-declared
+   (`RUNNER_DIRECTED=1`) and trusted as such: it can only make a box take less. `profile_q`: a confined (caller) turn only to a
    runner reporting `profiles >= PROFILES_VERSION` and `envelope >= ENVELOPE_VERSION`
    — not bypassable by a pin. Agents/sessions with an executing turn are excluded
    (`busy_agent_ids` / `busy_session_ids`; the `isnull=False` filters in them are
@@ -128,7 +135,8 @@ In order, each a hard stop:
 4. Per candidate: runner flags satisfy the turn's requirements (above the pin);
    `runner_may_hold_agent` (above the pin); then, unless pinned here, the
    availability cascade for the agent / repo order / session agent — over a list
-   with every box that reports it cannot run the agent removed (`cannot_serve`).
+   with every box that reports it cannot run the agent removed (`cannot_serve`) —
+   and, for an unbound project chat, `routing.project_session_allows` (below).
 5. Turn mode decided and stamped (`turn_mode.for_turn`), an admission `auto` rule
    may raise a standing manual to auto, then admission rejects
    (`apps/admission`, see `access.md` → "Admission rules"), then the conditional
@@ -205,8 +213,32 @@ per `runner_tenant_slugs` or it is a 422). It does two things:
   requirements. A workspace with no enabled rows: any serving runner that declares
   the repo (`tests/test_workspace_runner_order.py`).
 
+### Project chats
+
+A project chat is a chat session with no agent, only a repo (`Session.project`).
+Its turns, while the session is **unbound**, follow the rules a repo turn
+follows (`routing.project_session_allows`, `tests/test_project_chat_routing.py`):
+
+1. the box declares the repo (`Runner.project_names()`; a chat with no repo has
+   nothing to match here);
+2. if the session's workspace has an enabled order, the order decides — the same
+   cascade and grace, among listed boxes that pass rule 1 (`order_for`);
+3. with no order, only a box the turn's sender (`enqueued_by`) administers
+   (`harness.runners.can_administer_runner`). A turn with no person behind it gets
+   no box this way, so it needs an order.
+
+A bound session still claims only on its holder, and a pin still bypasses 1–3.
+The claim asks `project_session_allows`; `_refined_allows` (so `turn_reach`, the
+unclaimable report and the topology) asks `project_session_covers`, the same
+predicates without the clock. A turn no box will take reads
+`project_session_waits_why`: "no runner order in <ws>, and <person> administers no
+box with <repo>". Choosing a box for a project chat — `runner_id` at creation, a
+placement on send, `/place`, a move — needs you to administer it
+(`canopy_sessions.services.may_place_project_chat`).
+
 The topology screens and `GET /api/workspaces/{slug}/runner-topology`
-(`apps/harness/topology.py`) are computed from these same predicates.
+(`apps/harness/topology.py`) are computed from these same predicates. A
+directed-only box is drawn as `directed` (never serving), not as a route.
 
 ## Turn mode per rule
 

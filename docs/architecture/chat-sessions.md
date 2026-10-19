@@ -148,6 +148,26 @@ an emdash task name alone is not an identity.
   no-ops — ace-web still passes them.
 - Spec: `docs/superpowers/specs/2026-09-26-per-person-drafts-and-authored-messages-design.md`.
 
+## Which box takes a chat's first turn
+
+- **A bound chat** claims only on its binding's runner (stickiness, below).
+- **An unbound chat with an agent** follows the agent's runner list and rules
+  (`runners.md` → "An agent's runner list").
+- **An unbound project chat** (no agent, only `Session.project`) runs on a box that
+  declares the repo and that the workspace's runner order shares — or, with no
+  order, one the person who sent it administers. A teammate's project chat in a
+  workspace with no order does not land on your box; it waits, and `/supervisor`'s
+  unclaimable report says "no runner order in <ws>, and <person> administers no box
+  with <repo>" (`runners.md` → "Project chats"). A chat with neither an agent nor a
+  repo follows the same order-or-your-box rule.
+- **Picking a box** for a project chat (the "Run on" picker's `runner_id`, a send's
+  `placement`, the banner's `/place`, a move to a cloud box) needs you to administer
+  it (`canopy_sessions.services.may_place_project_chat`); the picker offers only
+  those. For a chat with an agent it is `agents.access.may_pin_runner`.
+- **A directed-only box** (`capabilities.directed`, a test box from `up.sh --test`)
+  is still offered, labelled "directed only": a chat started on it binds to it, and
+  it takes nothing else.
+
 ## Session liveness is polled
 
 - `RunnerBinding.runner` is **identity** — which box the session lives on; a report

@@ -29,7 +29,7 @@ wire.
 - `bootstrap_agents.sh` — idempotent bootstrap of the BOX (tooling, gog's keyring, the canopy plugin + CLI, Claude Code itself, caches); each agent is prepared by canopy's `canopy agent prepare --runner`. Runs ON the box, from the runner's own `canopy-web` clone (`RUNNER_SRC_DIR`) — not baked into the template. See "Bootstrap" below.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
 - `up.sh` — preflight every one-time prerequisite, publish the seed, `cloudformation deploy` (updates via a reviewed change set); pulls the private key from SSM for SSH.
-- `wire.sh` — operator-side: stage the fresh runner's credential bundle, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else. Run this after `up.sh`.
+- `wire.sh` — operator-side: stage the fresh runner's credential bundle, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else; `--test` stages credentials and stops. Run this after `up.sh`.
 - `down.sh` — delete the stack, remove the SSH key, retire the runner row (dropping every route to it); `--keep-runner` for a recycle, `--purge-secrets` to also remove the shared secrets.
 
 `*.pem` and the rendered template are gitignored.
@@ -64,6 +64,23 @@ aws sso login --profile labs      # you, once per session
 row of its own — even a disabled one — would replace that order with a list holding
 no enabled runner. Drill such an agent by adding the box to the workspace order.
 Promote a proven standby by enabling its row on the agent's Settings → Runners.
+
+**A test box that serves nothing until a chat is put on it** (`--test`):
+```bash
+./up.sh   --name cloud-ec2-fork --test --workspace canopy [--projects canopy-web,connect-labs]
+                                  # directed-only: RunnerDirected=1, RunnerSessions=1, RunnerAgents='',
+                                  # RunnerProjects=--projects (default canopy-web), RunnerWorkspace=canopy
+./wire.sh --name cloud-ec2-fork --test
+                                  # discover it, stage its credentials, stop: no retire, no assignment,
+                                  # rule or workspace-order change, no --agents. Prints the chat URL.
+./down.sh --name cloud-ec2-fork
+```
+A directed-only box (`capabilities.directed`) claims only turns pinned to it and
+chats bound to it — never routed agent work, a repo turn, an unbound chat or an
+inherited workspace order, even where a list names it. It stays session-capable,
+so the chat "Run on" picker offers it ("directed only"): start a chat on it and the
+chat binds to it. `--test` refuses the live name and needs `--workspace`;
+`--workspace <slug>` (→ `RunnerWorkspace`) also works on any other `up.sh` run.
 
 **Tear down** (it bills hourly): `./down.sh [--name X]`. It deletes the stack, then
 retires the runner row — only a row that has STOPPED heartbeating, so a same-name
@@ -533,6 +550,8 @@ every agent's list and rules back to confirm none still name it.
 
 ## Config (CloudFormation parameters)
 Flags: `--name` (→ `RunnerName`), `--standby` (→ `RunnerProjects=''`, `RunnerSessions=0`),
+`--test` (→ `RunnerDirected=1`, `RunnerSessions=1`, `RunnerAgents=''`, `RunnerProjects` from
+`--projects`), `--workspace` (→ `RunnerWorkspace`),
 `--volume-size` (→ `VolumeSize`, default **40** GiB — 20 filled up), `--instance-type`.
 Anything else: `EXTRA_PARAMS='Key=Val Key=Val' ./up.sh`:
 `InstanceType` (t3.medium), `CanopyBaseUrl`, `RunnerProjects`, `RunnerAgents`,
