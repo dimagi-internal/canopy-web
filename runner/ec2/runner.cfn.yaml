@@ -111,8 +111,14 @@ Parameters:
       not a defect.
   CanopyTokenSecret:
     Type: String
-    Default: canopy/cloud-runner/canopy-pat
-    Description: Secrets Manager id holding the canopy-web PAT.
+    Default: ''
+    Description: >
+      Secrets Manager id of a canopy-web PAT for the box to pair with — only for a
+      stack made before pairing by invitation (it keeps its value on update). A new
+      stack leaves it empty: the box holds no PAT and pairs by its instance role
+      once the operator approves up.sh's invitation (runner/ec2/README.md). A named
+      secret that no longer exists is tolerated: a paired box signs in with its
+      device key.
   GogKeyringSecret:
     Type: String
     Default: canopy/cloud-runner/gog-keyring-password
@@ -291,7 +297,7 @@ Resources:
                 cat > /opt/canopy-runner/runner.env <<ENV
                 GOG_KEYRING_PASSWORD=$GOG_PW
                 CANOPY_BASE_URL=${CanopyBaseUrl}
-                CANOPY_TOKEN=$(secret ${CanopyTokenSecret})
+                CANOPY_TOKEN=$(if [ -n "${CanopyTokenSecret}" ]; then secret "${CanopyTokenSecret}" 2>/dev/null || true; fi)
                 CLAUDE_CODE_OAUTH_TOKEN=$(secret ${ClaudeTokenSecret})
                 RUNNER_PROJECTS=${RunnerProjects}
                 RUNNER_AGENTS=${RunnerAgents}
