@@ -93,10 +93,18 @@ _GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail"
 
 def mailbox_kind(agent) -> str:
     """"google" when `agent.email` is a Google mailbox the runner reads with gog,
-    "hosted" when it is on a canopy-hosted domain (apps/mail, SES), "none" without one."""
+    "hosted" when canopy runs its mail (apps/mail, SES), "none" without one.
+
+    Hosted means LIVE (route to this agent, enabled, domain verified), not merely a
+    registered domain: a workspace can add its domain before the MX cut-over, and until
+    then the address is still a Google mailbox that needs its Gmail scopes and the
+    account check."""
     from . import mailbox
 
-    return mailbox.describe(agent)["kind"]
+    box = mailbox.describe(agent)
+    if box["kind"] == "hosted":
+        return "hosted" if box.get("live") else "google"
+    return box["kind"]
 
 
 def scopes_for(agent) -> tuple[str, ...]:

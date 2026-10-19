@@ -359,14 +359,31 @@ def _id_token_for(email: str) -> str:
     return "h." + payload.rstrip(b"=").decode() + ".sig"
 
 
-def _hosted(agent, address="family@marshellis.com"):
-    """Give `agent` an address on a canopy-hosted domain of its own workspace (apps/mail)."""
-    from apps.mail.models import MailDomain
+def _hosted(agent, address="family@marshellis.com", status="verified"):
+    """Give `agent` an address on a canopy-hosted domain of its own workspace (apps/mail),
+    routed to it — live once the domain is verified."""
+    from apps.mail.models import MailDomain, MailRoute
 
-    MailDomain.objects.create(workspace=agent.workspace, name=address.split("@")[1], status="verified")
+    local, _, host = address.partition("@")
+    d = MailDomain.objects.create(workspace=agent.workspace, name=host, status=status)
+    MailRoute.objects.create(domain=d, local_part=local, kind=MailRoute.AGENT, agent=agent)
     agent.email = address
     agent.save(update_fields=["email"])
     return agent
+
+
+@pytest.mark.django_db
+def test_a_domain_registered_but_not_yet_live_is_still_gmail(fleet, monkeypatch):
+    """A workspace can register its domain before the MX cut-over; until canopy actually
+    runs the mail, the address is still a Google mailbox — it keeps its Gmail scopes, its
+    hint, and the account check."""
+    agent = _hosted(fleet["agent"], "ace@dimagi-ai.com", status="pending")
+    assert g.scopes_for(agent) == g.FLEET_SCOPES
+    assert g.expected_account(agent) == "ace@dimagi-ai.com"
+    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
+    assert "gmail.modify" in url and "login_hint=ace%40dimagi-ai.com" in url
+    res = _mint(fleet, monkeypatch, {**_google_response(), "id_token": _id_token_for("jj@gmail.com")})
+    assert "google=wrong-account" in res["Location"]
 
 
 def _gmail(agent, address="ace@dimagi-ai.com"):
