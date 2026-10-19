@@ -121,3 +121,45 @@ def test_a_new_ecdh_key_sending_the_key_back_to_pending_notifies_again(tmp_path,
     quiet = pending("ECDH-1")
     _enroll(tmp_path, quiet, monkeypatch)
     assert notes(quiet) == 0
+
+
+def test_a_helper_rebuilt_after_start_brings_the_ecdh_key_without_a_restart(tmp_path, monkeypatch):
+    # The runner enrolled seconds before the installer rebuilt canopy-device-key
+    # (haldimagi, 2026-10-19): it must notice the rebuild and enroll again.
+    helper = dk.helper_path(tmp_path)
+    helper.parent.mkdir(parents=True)
+    helper.write_text("old")
+    no_ecdh = {"status": "active", "jkt": "JKT-1", "kind": "secure-enclave",
+               "ecdh_note": "canopy-device-key predates ECDH"}
+    with_ecdh = {"status": "active", "jkt": "JKT-1", "kind": "secure-enclave",
+                 "ecdh_jkt": "ECDH-1", "ecdh_kind": "secure-enclave"}
+    results = [no_ecdh, with_ecdh]
+    calls = []
+
+    def fake_enroll(cfg, **kw):
+        calls.append(kw)
+        return results[len(calls) - 1]
+
+    ticks = []
+
+    def sleep(_s):
+        ticks.append(_s)
+        if len(ticks) == 2:  # rebuilt between the first and second check
+            import os
+            helper.write_text("new")
+            os.utime(helper, (1, 1))
+
+    monkeypatch.setattr(dk, "enroll", fake_enroll)
+    t = dk.start(CFG, home=tmp_path, sleep=sleep, max_watches=5)
+    t.join(5)
+    assert not t.is_alive()
+    assert len(calls) == 2  # once at start, once after the rebuild — then it stops
+    assert len(ticks) == 2
+
+
+def test_an_ecdh_key_at_start_means_no_watching(tmp_path, monkeypatch):
+    monkeypatch.setattr(dk, "enroll", lambda cfg, **kw: {"status": "active", "ecdh_jkt": "E"})
+    ticks = []
+    t = dk.start(CFG, home=tmp_path, sleep=ticks.append, max_watches=5)
+    t.join(5)
+    assert ticks == []

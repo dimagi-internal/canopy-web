@@ -147,11 +147,46 @@ def enroll(cfg, *, runner: Runner = subprocess.run, home: Optional[Path] = None,
     return st
 
 
-def start(cfg, **kw) -> threading.Thread:
-    """Enroll in the background so a slow canopy-web never delays the first claim."""
+def helper_path(home: Optional[Path] = None) -> Path:
+    return (home or Path.home()) / ".canopy" / "bin" / "canopy-device-key"
+
+
+def _mtime(path: Path) -> Optional[float]:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def start(cfg, *, watch_every: float = 60.0, sleep: Callable[[float], None] = None,
+          max_watches: Optional[int] = None, **kw) -> threading.Thread:
+    """Enroll in the background so a slow canopy-web never delays the first claim.
+
+    An enrollment that found no ECDH key because the helper predates it (`ecdh_note`)
+    keeps watching the helper and enrolls again once it is rebuilt — an update
+    rebuilds it, so the box gets its ECDH key without anyone restarting the runner.
+    One stat a minute; it stops once an enrollment registers an ECDH key."""
+    import time
+
+    sleep = sleep or time.sleep
+
     def run() -> None:
         try:
-            enroll(cfg, **kw)
+            st = enroll(cfg, **kw)
+            helper = helper_path(kw.get("home"))
+            seen = _mtime(helper)
+            watches = 0
+            while st.get("ecdh_note") and not st.get("ecdh_jkt"):
+                if max_watches is not None and watches >= max_watches:
+                    return
+                watches += 1
+                sleep(watch_every)
+                now = _mtime(helper)
+                if now is not None and now != seen:
+                    seen = now
+                    logger.info("device key: canopy-device-key was rebuilt — enrolling again "
+                                "for the ECDH key")
+                    st = enroll(cfg, **kw)
         except Exception as e:  # noqa: BLE001 — never take the runner down
             logger.warning("device key: enrollment failed (%s)", e)
 

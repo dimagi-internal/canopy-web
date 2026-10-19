@@ -321,6 +321,40 @@ install_job() {
   return 1
 }
 
+# --- device key helper (macOS) -----------------------------------------------
+# canopy-device-key holds this Mac's Secure Enclave key for Canopy Vault's device proof
+# (canopy#946). canopy's `vault device` / resolve client look for it at
+# ~/.canopy/bin/canopy-device-key; the runner enrolls the key at startup. Same shape as
+# the menu-bar app: rebuilt only when its source changes, best-effort (no swiftc is a
+# warning — canopy then refuses to make a key on this Mac rather than silently using a
+# software one). Not gated on launchd: a hand install wants it too. Opt out with
+# CANOPY_DEVICE_KEY=0. Built BEFORE the runner is (re)started below: the runner enrolls
+# the moment it starts, and a helper rebuilt seconds after that left a box logging "no
+# ECDH key" until its next restart (haldimagi, 2026-10-19).
+DEVKEY="$TMP/runner/device-key"
+DEVKEY_STAMP="$HOME/.canopy/device-key-bin.sha"
+DEVKEY_BIN="$HOME/.canopy/bin/canopy-device-key"
+if [ "$(uname -s)" = "Darwin" ] && [ "${CANOPY_DEVICE_KEY:-1}" = "1" ] \
+   && [ -f "$DEVKEY/build.sh" ]; then
+  want="$(cat "$DEVKEY/Sources/main.swift" "$DEVKEY/build.sh" | shasum | cut -d' ' -f1)"
+  have="$(cat "$DEVKEY_STAMP" 2>/dev/null || true)"
+  # The released app links this path into its own bundle; once that app is replaced
+  # the link dangles and the Secure Enclave key cannot sign. Build a real file again.
+  if [ -L "$DEVKEY_BIN" ]; then
+    rm -f "$DEVKEY_BIN"
+    have=""
+  fi
+  if [ -x "$DEVKEY_BIN" ] && [ "$want" = "$have" ]; then
+    echo "==> canopy-device-key unchanged"
+  elif ! command -v swiftc >/dev/null 2>&1; then
+    echo "WARNING: swiftc not found (xcode-select --install) — canopy-device-key not built." >&2
+  elif CANOPY_DEVICE_KEY_BIN="$DEVKEY_BIN" bash "$DEVKEY/build.sh"; then
+    mkdir -p "$HOME/.canopy" && printf '%s\n' "$want" > "$DEVKEY_STAMP"
+  else
+    echo "WARNING: canopy-device-key build failed — the runner itself is installed." >&2
+  fi
+fi
+
 if [ "$DO_LAUNCHD" -eq 1 ]; then
   sed -e "s|__CANOPY_RUNNER_BIN__|$BIN|g" -e "s|__HOME__|$HOME|g" \
     "$TMP/runner/canopy_runner/launchd/$LABEL.plist.template" > "$TMP/runner.plist"
@@ -392,38 +426,6 @@ if [ "$DO_LAUNCHD" -eq 1 ] && [ "$(uname -s)" = "Darwin" ] \
     mkdir -p "$HOME/.canopy" && printf '%s\n' "$want" > "$MENUBAR_STAMP"
   else
     echo "WARNING: menu-bar app build failed — the runner itself is installed and running." >&2
-  fi
-fi
-
-# --- device key helper (macOS) -----------------------------------------------
-# canopy-device-key holds this Mac's Secure Enclave key for Canopy Vault's device proof
-# (canopy#946). canopy's `vault device` / resolve client look for it at
-# ~/.canopy/bin/canopy-device-key; the runner enrolls the key at startup. Same shape as
-# the menu-bar app: rebuilt only when its source changes, best-effort (no swiftc is a
-# warning — canopy then refuses to make a key on this Mac rather than silently using a
-# software one). Not gated on launchd: a hand install wants it too. Opt out with
-# CANOPY_DEVICE_KEY=0.
-DEVKEY="$TMP/runner/device-key"
-DEVKEY_STAMP="$HOME/.canopy/device-key-bin.sha"
-DEVKEY_BIN="$HOME/.canopy/bin/canopy-device-key"
-if [ "$(uname -s)" = "Darwin" ] && [ "${CANOPY_DEVICE_KEY:-1}" = "1" ] \
-   && [ -f "$DEVKEY/build.sh" ]; then
-  want="$(cat "$DEVKEY/Sources/main.swift" "$DEVKEY/build.sh" | shasum | cut -d' ' -f1)"
-  have="$(cat "$DEVKEY_STAMP" 2>/dev/null || true)"
-  # The released app links this path into its own bundle; once that app is replaced
-  # the link dangles and the Secure Enclave key cannot sign. Build a real file again.
-  if [ -L "$DEVKEY_BIN" ]; then
-    rm -f "$DEVKEY_BIN"
-    have=""
-  fi
-  if [ -x "$DEVKEY_BIN" ] && [ "$want" = "$have" ]; then
-    echo "==> canopy-device-key unchanged"
-  elif ! command -v swiftc >/dev/null 2>&1; then
-    echo "WARNING: swiftc not found (xcode-select --install) — canopy-device-key not built." >&2
-  elif CANOPY_DEVICE_KEY_BIN="$DEVKEY_BIN" bash "$DEVKEY/build.sh"; then
-    mkdir -p "$HOME/.canopy" && printf '%s\n' "$want" > "$DEVKEY_STAMP"
-  else
-    echo "WARNING: canopy-device-key build failed — the runner itself is installed." >&2
   fi
 fi
 
