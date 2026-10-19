@@ -99,15 +99,25 @@ Spec: `docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md`.
   per unit (owner = the creator, its workspace, `machine_id` = the role,
   `capabilities.unit` from the invitation) with an ACTIVE software key. The creator must
   still have `agent.work` in **every** unit's workspace, or nothing is made.
-- **Re-attach and adoption.** The same role and unit names re-attach without approval:
-  each unit's new signing key replaces its runner's key row **in place** (`_rekey`), so
-  the runner id, bindings and every zero-knowledge wrap on that row are kept, and tokens
-  bought with the old key end. The same path adopts a box paired before units: its
-  runner is found by `machine_id` (or its role's aws-iam key) and name, its aws-iam key
-  becomes the unit's software key, and its KMS ECDH key — the same public key, now from
-  the broker — keeps its approval and wraps. A different ECDH key waits for a person and
-  drops the stale wraps. A unit with no active key (revoked) is refused. A capabilities
-  write that omits `unit` keeps the one recorded at pairing.
+- **Re-attach and adoption.** A unit that is already a unit — its active key a unit
+  software key, its runner on this `machine_id` — re-attaches with the same role and
+  unit name and no approval: its new signing key replaces its runner's key row **in
+  place** (`_rekey`), so the runner id, bindings and every zero-knowledge wrap on that row
+  are kept, and tokens bought with the old key end. **Anything else needs the approved
+  invitation that lists the unit** — above all *adopting* a box paired before units,
+  whose key is the instance role itself: a role proof alone (which any process on a box
+  without the IMDS rule can make) never re-keys a runner. Adoption finds the runner by
+  `machine_id` (or its role's aws-iam key) and name, turns its aws-iam key into the
+  unit's software key, and its KMS ECDH key — the same public key, now from the broker —
+  keeps its approval and wraps (`up.sh --in-place` makes that invitation). Every re-key
+  emits `runner.rekeyed` and mails/pushes the runner's approvers. A different ECDH key
+  waits for a person and drops the stale wraps; a unit with no active key (revoked) is
+  refused. `capabilities.unit` is server-owned once set: a capabilities write can neither
+  replace nor clear it.
+- **Unit key slots are pinned** (`up.sh`): each extra unit keeps the `-ecdh` slot
+  (`Unit1..4`) it was given — a re-run without `--units` keeps every slot, a reordered
+  list keeps each unit where it is, new units take free slots, and a slot is dropped only
+  with `--remove-unit <id>`. Unit keys (and the box's own) are `DeletionPolicy: Retain`.
 - A unit's token reaches only its own runner and the agents that runner serves:
   `tests/test_runner_units_isolation.py`.
 
@@ -116,9 +126,12 @@ Spec: `docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md`.
 - A turn's env is resolved in memory (`canopy cred env --runner --print-json`, cached per
   agent for 5 minutes), written 0600 to `/run/canopy/<uid>/<turn>/env` (a box without
   units: `/dev/shm/canopy-<uid>`), and handed to the turn as `CANOPY_AGENT_ENV_FILE`; it
-  is removed in the turn's `finally` and swept at start. `canopy agent prepare --runner`
+  is removed in the turn's `finally` and swept at start. A turn whose env cannot be
+  resolved (nothing cached) or written is not run: it fails with `[runner] could not
+  resolve <slug>'s credentials: <why>` and no session, which canopy-web re-queues. `canopy agent prepare --runner`
   gets `CANOPY_TURN_ENV_ROOT` and writes no `~/.<slug>/.env`, `<clone>/.env` or
-  `.gws-sa-key.json`; the runner removes the ones an older runner left.
+  `.gws-sa-key.json`; the runner removes the ones an older runner left — for an agent only after one of its
+  off-disk turns has succeeded (`~/.canopy-runner/off-disk-ok/<slug>`).
 - Gated on the installed canopy CLI (>= 0.2.736, `cloud_runner.OFF_DISK_MIN_CLI`): an
   older CLI cannot read `CANOPY_AGENT_ENV_FILE`, so the legacy files stay and the
   `secrets` health check says why. `RUNNER_SECRET_FILES=1` keeps them on purpose.

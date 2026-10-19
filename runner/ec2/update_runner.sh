@@ -515,6 +515,22 @@ BOOT_DIR="${RUNNER_SRC_DIR:-$RUNNER_HOME/src}"
 # prepare --runner` then writes no env files in this pass either (spec §4).
 TURN_ENV_ROOT_MARKER="${TURN_ENV_ROOT_MARKER:-$RUNNER_HOME/turn-env-root}"
 AS_UNIT="${AS_UNIT:-runuser -u}"
+# Run AS a unit: its own token (shared by its daemon, 0600 in its home) and tmpfs
+# root, read in its own process; then its bootstrap's credentials pass.
+# shellcheck disable=SC2016 # expanded by the unit's shell, not this one
+UNIT_REFRESH='
+t="$(python3 -c "
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+    if float(d.get(\"expires_at\") or 0) - time.time() > 120:
+        print(d.get(\"access_token\") or \"\")
+except Exception:
+    pass" "$HOME/.canopy-runner/runner-token.json" 2>/dev/null)"
+[ -n "$t" ] && export CANOPY_TOKEN="$t"
+r="$(tr -d "[:space:]" < "$HOME/.canopy-runner/turn-env-root" 2>/dev/null)"
+[ -n "$r" ] && export CANOPY_TURN_ENV_ROOT="$r"
+exec bash "$0" --credentials-only'
 if [ "$UNITS_MODE" = "1" ]; then
   # Each unit refreshes as ITSELF — its user, its env file, its own runner token —
   # from its own runner clone. Root never runs an agent's prepare.
@@ -525,20 +541,13 @@ if [ "$UNITS_MODE" = "1" ]; then
       [ -n "$home" ] || continue
       script="$home/.canopy-runner/src/runner/ec2/bootstrap_agents.sh"
       [ -x "$script" ] || { log "unit $id: no runner clone yet; skipping its credentials refresh"; continue; }
-      tok="$(python3 -c '
-import json, sys, time
-try:
-    d = json.load(open(sys.argv[1]))
-    if float(d.get("expires_at") or 0) - time.time() > 120:
-        print(d.get("access_token") or "")
-except Exception:
-    pass' "$home/.canopy-runner/runner-token.json" 2>/dev/null)"
-      root="$(tr -d '[:space:]' < "$home/.canopy-runner/turn-env-root" 2>/dev/null)"
       log "unit $id: refreshing credentials"
-      # shellcheck disable=SC2046,SC2086 # the unit's env file, one KEY=value per word
+      # The unit reads its OWN runner token and tmpfs root, inside its own process:
+      # a token passed here would sit in /proc/<pid>/cmdline for any local process
+      # to read. The env file holds no secret, so its words on the command line are safe.
+      # shellcheck disable=SC2046,SC2016 # the unit's env file, one KEY=value per word; $HOME is the unit's
       $AS_UNIT "$user" -- env -i $(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${UNIT_ETC:-/etc/canopy-runner}/$id.env" 2>/dev/null) \
-        ${tok:+CANOPY_TOKEN=$tok} ${root:+CANOPY_TURN_ENV_ROOT=$root} \
-        bash "$script" --credentials-only \
+        bash -c "$UNIT_REFRESH" "$script" \
         || log "unit $id: credentials refresh returned non-zero — the unit is otherwise untouched."
     done <<<"$(unit_rows)"
   fi

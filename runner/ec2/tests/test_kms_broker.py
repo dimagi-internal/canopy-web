@@ -163,6 +163,36 @@ def test_one_line_in_one_line_out_over_a_real_socket(kb):
         os.rmdir(d)
 
 
+def test_concurrent_connections_are_bounded(kb):
+    """Any local process may connect: idle connections past the bound are told
+    `busy` and closed, never given a thread each."""
+    d = tempfile.mkdtemp(prefix="kb", dir="/tmp")
+    path = os.path.join(d, "sock")
+    server = kb.Broker(path, FakeKms(), keys_loader=lambda: KEYS, uid_of=lambda sock: 2001, max_connections=1)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    idle = socket.socket(socket.AF_UNIX)
+    try:
+        idle.connect(path)             # holds the one slot, sends nothing
+        import time
+        time.sleep(0.2)
+        with socket.socket(socket.AF_UNIX) as c:
+            c.connect(path)
+            c.sendall(b'{"op": "public_key"}\n')
+            assert "busy" in json.loads(c.makefile().readline())["error"]
+        idle.close()                   # the slot comes back
+        time.sleep(0.2)
+        with socket.socket(socket.AF_UNIX) as c:
+            c.connect(path)
+            c.sendall(b'{"op": "public_key"}\n')
+            assert "jwk" in json.loads(c.makefile().readline())
+    finally:
+        idle.close()
+        server.shutdown()
+        server.server_close()
+        os.unlink(path)
+        os.rmdir(d)
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="SO_PEERCRED is Linux")
 def test_peer_uid_is_the_kernels_word(kb):
     a, b = socket.socketpair(socket.AF_UNIX)

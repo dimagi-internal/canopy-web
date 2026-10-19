@@ -47,6 +47,8 @@ UNITS_FILE = os.environ.get("CANOPY_UNITS_FILE", "/etc/canopy-runner/units.json"
 IMDS = (os.environ.get("CANOPY_AWS_IMDS_URL", "") or "http://169.254.169.254").rstrip("/")
 #: One request line, at most. A JWK is ~200 bytes.
 MAX_REQUEST = 16 * 1024
+#: Connections served at once; more are answered "busy" and closed.
+MAX_CONNECTIONS = 16
 TIMEOUT = 15
 
 #: SubjectPublicKeyInfo prefix of an uncompressed P-256 point (id-ecPublicKey, prime256v1).
@@ -252,13 +254,38 @@ def answer(line: bytes, uid: int, keys: dict[int, str], kms) -> dict:
 class Broker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, path: str, kms, keys_loader=load_keys, uid_of=peer_uid):
+    def __init__(self, path: str, kms, keys_loader=load_keys, uid_of=peer_uid,
+                 max_connections: int = MAX_CONNECTIONS):
         self.kms, self.keys_loader, self.uid_of = kms, keys_loader, uid_of
+        # Any local process may connect: a bound on threads, so a flood of idle
+        # connections cannot exhaust root's broker for every unit.
+        self._slots = threading.BoundedSemaphore(max_connections)
         super().__init__(path, _Handler)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(b'{"error": "busy: too many connections"}\n')
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 class _Handler(socketserver.StreamRequestHandler):
-    timeout = 30
+    #: An idle connection holds one of the slots: it is cut after this long.
+    timeout = 5
 
     def handle(self) -> None:
         server: Broker = self.server  # type: ignore[assignment]

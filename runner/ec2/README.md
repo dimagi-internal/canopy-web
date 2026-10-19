@@ -679,8 +679,11 @@ KMS key, for that unit's uid only), `canopy-pair.service` (pairs every unit in O
 **Pairing takes one passkey touch for the whole box.** `up.sh --units …` makes one
 invitation that lists every unit (the approve page shows them all); `canopy-pair`
 pairs them all once you approve. A replaced instance (same role, same unit names)
-re-attaches every unit with no approval, keeping each runner id and every vault wrap.
-A NEW unit's zero-knowledge agents need their vault key granted to it once (the
+re-attaches every unit with no approval, keeping each runner id and every vault wrap;
+each re-key is recorded (`runner.rekeyed`) and mailed to the runner's approvers.
+Adopting a box paired before units always takes an approved invitation. Each unit
+keeps its `-ecdh` key slot across re-runs; `./up.sh … --remove-unit <id>` is the only
+way to drop one, and the key is retained in KMS either way. A NEW unit's zero-knowledge agents need their vault key granted to it once (the
 existing "Grant pending" flow on the agent's page).
 
 **Wiring.** The box's own unit: `./wire.sh --name <box>`. Each other unit:
@@ -705,8 +708,9 @@ back to a PAT.
 
 Moving it to units is a deliberate step, **only with Jonathan's approval**, and it
 keeps the runner: the unit of the box's own workspace is named as the box, so
-canopy-web re-attaches the SAME runner (by machine and name) and replaces its
-aws-iam key row in place with the unit's software key — the runner id, its bindings
+canopy-web re-attaches the SAME runner (by machine and name) and — only under the
+approved invitation `up.sh --in-place` makes, never on a role proof alone — replaces
+its aws-iam key row in place with the unit's software key — the runner id, its bindings
 and every zero-knowledge wrap survive, because its KMS ECDH key is the same key, now
 served by the broker (tests: `tests/test_runner_units_pairing.py::test_the_live_single_unit_box_is_adopted_keeping_its_id_bindings_and_wraps`,
 `runner/ec2/tests/test_isolation_units.py::test_the_live_box_adopts_as_its_default_unit`).

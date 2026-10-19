@@ -546,14 +546,16 @@ class UnitsBox(Box):
                 {"access_token": f"crt_{uid}", "expires_at": time.time() + 3600}))
             src = home / ".canopy-runner" / "src" / "runner" / "ec2"
             src.mkdir(parents=True)
-            (src / "bootstrap_agents.sh").write_text("#!/bin/bash\n")
+            (src / "bootstrap_agents.sh").write_text(
+                f'#!/bin/bash\necho "$CANOPY_TOKEN $1" > "{home}/refreshed-with"\n')
             (src / "bootstrap_agents.sh").chmod(0o755)
             (self.etc / f"{uid}.env").write_text(f"CANOPY_UNIT={uid}\nHOME={home}\n")
             units.append({"id": uid, "user": f"cu-{uid}", "home": str(home), "uid": 2001 + i})
         (self.etc / "units.json").write_text(json.dumps({"box": "cloud-ec2-9", "units": units}))
         (self.etc / "box.env").write_text("CANOPY_BASE_URL=https://labs.example/canopy\n")
         self.as_unit_log = tmp_path / "as-unit.log"
-        self._write_stub("fake-as-unit", f'echo "$@" >> "{self.as_unit_log}"\n')
+        # Records its argv, then runs the command as runuser would (minus the user).
+        self._write_stub("fake-as-unit", f'echo "$*" | tr "\\n" " " >> "{self.as_unit_log}"; echo >> "{self.as_unit_log}"\nshift 2\nexec "$@"\n')
 
     def home_of(self, uid: str) -> pathlib.Path:
         return self.root / "home" / f"cu-{uid}"
@@ -612,4 +614,8 @@ def test_units_each_refreshes_its_credentials_as_itself(units_box):
     assert len(lines) == 2
     for uid, line in zip(units_box.UNITS, lines):
         assert line.startswith(f"cu-{uid} -- env -i CANOPY_UNIT={uid}")
-        assert f"CANOPY_TOKEN=crt_{uid}" in line and "--credentials-only" in line
+        # The token never rides the command line (visible in /proc/<pid>/cmdline)…
+        assert "crt_" not in line
+        # …the unit's own process read it from its own file.
+        assert (units_box.home_of(uid) / "refreshed-with").read_text().strip() == \
+            f"crt_{uid} --credentials-only"
