@@ -315,6 +315,23 @@ export function IdePage() {
 
   const tree = useMemo(() => buildTree(sessions, filters), [sessions, filters])
   const shown = useMemo(() => tree.flatMap((f) => f.sessions), [tree])
+  // A session opened here that the list does not hold yet — a fork just made
+  // from the open chat — is fetched now, not on the next poll, and its folder
+  // opened, so it shows highlighted under the session it came from.
+  const fetchedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (!id || loading || fetchedFor.current === id || sessions.some((s) => s.id === id)) return
+    fetchedFor.current = id
+    void refresh()
+  }, [id, loading, sessions, refresh])
+  // Once per opened session (adjusted during render, not in an effect), so a
+  // folder collapsed by hand afterwards stays collapsed.
+  const openFolderOf = tree.find((f) => f.sessions.some((s) => s.id === id))?.key
+  const [revealed, setRevealed] = useState<string | null>(null)
+  if (id && openFolderOf !== undefined && revealed !== id) {
+    setRevealed(id)
+    if (collapsed.has(openFolderOf)) setCollapsed((c) => new Set([...c].filter((k) => k !== openFolderOf)))
+  }
   // Sessions the filters keep out of the tree. Said in the list itself, with a
   // way back: a runner switched off weeks ago otherwise reads as "no sessions".
   const filteredOut = sessions.filter((s) => filters.archived || s.status !== 'archived').length - shown.length
@@ -676,6 +693,8 @@ export function IdePage() {
                     const st = sessionState(s)
                     const title = label(s)
                     const deleting = s.id in closing
+                    const depth = folder.depth[s.id] ?? 0
+                    const parent = depth > 0 ? shown.find((p) => p.id === s.parent_session_id) : undefined
                     return (
                       <Link
                         key={s.id}
@@ -688,6 +707,7 @@ export function IdePage() {
                         }}
                         title={[
                           s.title,
+                          parent ? `forked from ${label(parent)}` : '',
                           `${STATE_LABEL[st]} · ${MODE_LABEL[sessionMode(s)]}`,
                           s.runner_name ? `runner ${s.runner_name}${s.runner_host ? ` (${s.runner_host})` : ''}` : 'no runner',
                           `workspace ${s.workspace}`,
@@ -697,14 +717,18 @@ export function IdePage() {
                           .filter(Boolean)
                           .join('\n')}
                         className={clsx(
-                          'grid grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem] items-center gap-2 py-1 pl-7 pr-2',
+                          'grid grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem] items-center gap-2 py-1 pr-2',
                           s.id === id ? 'bg-primary/10 text-foreground' : 'text-foreground-secondary hover:bg-muted',
                           (s.status === 'archived' || deleting) && 'opacity-60',
                           menu?.session.id === s.id && 'ring-1 ring-inset ring-primary/50',
                         )}
+                        style={{ paddingLeft: `${1.75 + depth}rem` }}
                       >
                         <StateDot state={st} />
-                        <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
+                        <span className="truncate">
+                          {depth > 0 && <span className="text-muted-foreground">↳ </span>}
+                          {deleting ? `Deleting… ${title}` : title}
+                        </span>
                         <span className="max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground">
                           {s.runner_name ?? 'web'}
                         </span>

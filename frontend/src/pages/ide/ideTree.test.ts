@@ -95,6 +95,30 @@ describe('buildTree', () => {
     expect(tree.find((f) => f.key === 'repo')?.isAgent).toBe(false)
   })
 
+  it('nests a fork under the session it came from, and keeps the family together', () => {
+    const rows = [
+      s({ id: 'src', emdash_project: 'repo', last_activity_at: '2026-10-16T08:00:00Z' }),
+      s({ id: 'other', emdash_project: 'repo', last_activity_at: '2026-10-16T10:00:00Z' }),
+      // A fork's folder can differ before its runner reports; it follows its parent.
+      s({ id: 'fork', parent_session_id: 'src', last_activity_at: '2026-10-16T11:00:00Z' }),
+      s({ id: 'forkfork', emdash_project: 'repo', parent_session_id: 'fork', last_activity_at: '2026-10-16T09:00:00Z' }),
+    ]
+    const [folder, ...rest] = buildTree(rows, DEFAULT_FILTERS)
+    expect(rest).toEqual([])
+    expect(folder.sessions.map((r) => r.id)).toEqual(['src', 'fork', 'forkfork', 'other'])
+    expect(folder.depth).toEqual({ src: 0, fork: 1, forkfork: 2, other: 0 })
+  })
+
+  it('shows a fork at the top level when its parent is not in the list', () => {
+    const rows = [
+      s({ id: 'src', emdash_project: 'repo', status: 'archived' }),
+      s({ id: 'fork', emdash_project: 'repo', parent_session_id: 'src' }),
+    ]
+    const [folder] = buildTree(rows, DEFAULT_FILTERS)
+    expect(folder.sessions.map((r) => r.id)).toEqual(['fork'])
+    expect(folder.depth).toEqual({ fork: 0 })
+  })
+
   it('drops folders whose every session is filtered out', () => {
     const tree = buildTree([s({ emdash_project: 'x', runner_id: 'r1' })], with_({ hiddenRunners: ['r1'] }))
     expect(tree).toEqual([])
