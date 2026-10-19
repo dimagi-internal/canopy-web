@@ -96,6 +96,19 @@ def test_record_binds_existing_chat_session_by_uuid_thread_key():
     assert b.thread_key == str(chat.id)
 
 
+def test_a_cloud_session_uuid_is_not_written_as_the_chat_title():
+    """A cloud runner's key is a Claude session UUID. An untitled chat stays
+    untitled so autotitle names it from the first message."""
+    ws = _ws("w1")
+    a = _agent(ws)
+    r = _owned_runner(ws)
+    chat = Session.objects.create(workspace=ws, agent=a, origin=Session.ORIGIN_WEB, title="")
+    services.record_session(a, str(chat.id), runner=r,
+                            session_key="1fb14aa8-7289-4e43-827a-e989df77a07a")
+    chat.refresh_from_db()
+    assert chat.title == ""
+
+
 def test_reuse_denied_for_different_host():
     ws = _ws("w1")
     a = _agent(ws)

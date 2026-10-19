@@ -864,12 +864,15 @@ def _move_binding_to_successor(old, binding, *, transcript_id: str = "", success
     offset, any dialog, and the per-viewer flags (a viewer is attached to the OLD
     session's id, not the successor's)."""
     if successor is None:
+        from .autotitle import names_nothing
+
         meta = old.metadata or {}
         new_meta = {TRANSCRIPT_SOURCED: True} if meta.get(TRANSCRIPT_SOURCED) else {}
         successor = Session.objects.create(
             agent=old.agent, project=old.project, workspace=old.workspace,
             origin=old.origin, ordinal_scheme=old.ordinal_scheme,
-            title=(binding.session_key or old.title)[:200], metadata=new_meta,
+            title=(old.title if names_nothing(binding.session_key) else binding.session_key or old.title)[:200],
+            metadata=new_meta,
             # The successor of the session whose task name was reused.
             **provenance.session_fields(parent={"session": old}, forked_from=str(old.pk)),
         )
