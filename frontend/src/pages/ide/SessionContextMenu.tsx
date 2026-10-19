@@ -3,7 +3,7 @@ import { clsx } from 'clsx'
 import type { ChatSession } from '@/api/chat'
 import type { RunnerOut } from '@/api/harness'
 import { closeIntent } from '@/components/chat/closeAction'
-import { onlineSessionCapableRunners } from '@/components/chat/runnerEligibility'
+import { onlineSessionCapableRunners, runnerOptionLabel } from '@/components/chat/runnerEligibility'
 import { deleteConsequence } from './ideTree'
 
 /**
@@ -214,7 +214,7 @@ export function SessionContextMenu({
               testId={`ide-menu-transfer-${r.id}`}
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden />
-              <span className="truncate">{r.name}</span>
+              <span className="truncate">{runnerOptionLabel(r)}</span>
             </Item>
           ))}
         </div>

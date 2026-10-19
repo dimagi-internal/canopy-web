@@ -69,4 +69,14 @@ describe('RunnerStatus', () => {
     fireEvent.click(screen.getByTestId('runner-jj-mbp'))
     expect(onSelect).toHaveBeenCalled()
   })
+
+  it('labels a directed-only box: it takes only what is put on it', () => {
+    render(<RunnerStatus runners={[runner({ name: 'test-box', capabilities: { sessions: true, directed: true } })]} />)
+    expect(screen.getByTestId('runner-directed-test-box').textContent).toBe('directed only')
+  })
+
+  it('shows no directed chip on an ordinary box', () => {
+    render(<RunnerStatus runners={[runner()]} />)
+    expect(screen.queryByTestId('runner-directed-jj-mbp')).toBeNull()
+  })
 })

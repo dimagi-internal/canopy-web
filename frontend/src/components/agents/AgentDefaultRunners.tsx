@@ -161,6 +161,11 @@ export function AgentDefaultRunners({
           Skipped: {(state.cannot_hold ?? []).join(', ')} — its owner is not one of {agentName}&rsquo;s admins.
         </span>
       )}
+      {(state.directed ?? []).length > 0 && (
+        <span className="text-[11px] text-muted-foreground" data-testid="default-runners-directed">
+          Skipped: {(state.directed ?? []).join(', ')} — directed only, it takes only work put on it.
+        </span>
+      )}
       {error && <span className="text-[11px] text-destructive">{error}</span>}
       <RepoSetupDialog
         open={repoFor !== null}

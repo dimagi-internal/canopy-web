@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   isBoundRunnerOffline,
+  isDirectedOnly,
   isSessionCapable,
   findBoundRunner,
   onlineSessionCapableRunners,
   parkedReason,
   parkedSummary,
   partitionByRunnerReachability,
+  runnerOptionLabel,
   satisfiesRequirements,
 } from "./runnerEligibility";
 import type { RunnerOut } from "@/api/harness";
@@ -235,5 +237,24 @@ describe("parkedSummary — the hidden ones that are waiting", () => {
     expect(
       parkedSummary([{ runner_online: false, runner_status: "offline" }]),
     ).toBe("1 hidden — runner offline");
+  });
+});
+
+describe("directed-only boxes", () => {
+  it("reads capabilities.directed, defensively", () => {
+    expect(isDirectedOnly(runner({ capabilities: { sessions: true, directed: true } }))).toBe(true);
+    expect(isDirectedOnly(runner({ capabilities: { sessions: true } }))).toBe(false);
+    expect(isDirectedOnly(runner({ capabilities: { directed: "yes" } as never }))).toBe(false);
+  });
+
+  it("is still offered for a chat — a chat started on it binds to it", () => {
+    const box = runner({ id: "t", capabilities: { sessions: true, directed: true } });
+    expect(onlineSessionCapableRunners([box]).map((r) => r.id)).toEqual(["t"]);
+  });
+
+  it("is labelled directed only wherever it is offered", () => {
+    expect(runnerOptionLabel(runner({ name: "cloud-ec2-test", capabilities: { sessions: true, directed: true } })))
+      .toBe("cloud-ec2-test · directed only");
+    expect(runnerOptionLabel(runner({ name: "cloud-ec2-2", capabilities: { sessions: true } }))).toBe("cloud-ec2-2");
   });
 });

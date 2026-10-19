@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import type { RunnerOut } from '@/api/harness'
 import { relativeAge } from '@/lib/relativeAge'
+import { isDirectedOnly } from '@/components/chat/runnerEligibility'
 
 // Mirrors menubar.py's four derived states (_runner_state, menubar.py:224) so
 // the two surfaces read identically — until Phase 5, when the panel loads this
@@ -93,6 +94,17 @@ export function RunnerStatus({
           {/* Health problems the box reported about itself. A box can be online
               and ready while a feature is off (2026-09-22: no transcripts, no
               inbox), so this is its own chip rather than folded into ready. */}
+          {/* A test box that takes only what is put on it (pins, chats bound
+              to it): a fact about the box, not a problem. */}
+          {isDirectedOnly(r) && (
+            <span
+              data-testid={`runner-directed-${r.name}`}
+              className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground"
+              title="Takes only turns pinned to it and chats started on it — no routed work"
+            >
+              directed only
+            </span>
+          )}
           <HealthBadge runner={r} />
           {/* The host was `text-foreground-subtle` at 11px — 1.7:1 against this
               row, where AA asks 4.5:1 — AND `hidden sm:inline`, so on a phone it

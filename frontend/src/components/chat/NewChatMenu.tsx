@@ -13,7 +13,7 @@ import {
 import { createSession, type ChatSession } from '@/api/chat'
 import { getAgentDefaultOrder, getAgentRunners, type AgentOut, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
-import { onlineSessionCapableRunners, repoChoices, reportedRepos, type RepoChoice } from './runnerEligibility'
+import { onlineSessionCapableRunners, repoChoices, reportedRepos, runnerOptionLabel, type RepoChoice } from './runnerEligibility'
 
 // The "Run on" picker's pending target — set when the user picks an agent or
 // project from the menu, before they've confirmed a runner + Start.
@@ -156,12 +156,14 @@ export function NewChatMenu({
   }, [pending, selectedRunnerId, start])
 
   // Project chats route through the fleet-wide runner list, filtered to
-  // online + sessions-capable (only those can execute a chat turn at all) and
-  // to the runners that hold the picked repo (no other box could claim it).
+  // online + sessions-capable (only those can execute a chat turn at all), to
+  // the runners that hold the picked repo (no other box could claim it), and to
+  // the ones you administer (choosing a box for a project chat needs that; the
+  // server refuses any other).
   const pickedRepo = pending?.kind === 'project' ? pending.project.slug : null
   const projectRunnerOptions = useMemo(
     () => onlineSessionCapableRunners(fleetRunners ?? [])
-      .filter((r) => pickedRepo !== null && reportedRepos(r).includes(pickedRepo)),
+      .filter((r) => pickedRepo !== null && reportedRepos(r).includes(pickedRepo) && r.can_administer),
     [fleetRunners, pickedRepo],
   )
 
@@ -246,7 +248,7 @@ export function NewChatMenu({
                     ))
                   : projectRunnerOptions.map((r) => (
                       <option key={r.id} value={r.id}>
-                        ● {r.name}
+                        ● {runnerOptionLabel(r)}
                       </option>
                     ))}
               </select>

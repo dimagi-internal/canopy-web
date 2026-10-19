@@ -7,7 +7,7 @@ import {
 } from 'canopy-ui/ui'
 import { transferSession, type ChatSession, type TransferResult } from '@/api/chat'
 import { listRunners, type RunnerOut } from '@/api/harness'
-import { onlineSessionCapableRunners } from './runnerEligibility'
+import { onlineSessionCapableRunners, runnerOptionLabel } from './runnerEligibility'
 
 /**
  * "Transfer to…" — move a session onto another runner, picked from the
@@ -93,7 +93,7 @@ export function TransferSessionMenu({
               <option value="">{loading ? 'Loading runners…' : 'Pick a runner'}</option>
               {options.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.name}
+                  {runnerOptionLabel(r)}
                 </option>
               ))}
             </select>

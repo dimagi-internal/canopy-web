@@ -16,6 +16,21 @@ export function isSessionCapable(runner: Pick<RunnerOut, "capabilities">): boole
 }
 
 /**
+ * A directed-only box (`capabilities.directed === true`, a test box) takes only
+ * what is put on it: turns pinned to it and chats bound to it — never routed
+ * work. It is still session-capable, so it is offered for a chat (a chat started
+ * on it binds to it), labelled so nobody mistakes it for a box that shares load.
+ */
+export function isDirectedOnly(runner: Pick<RunnerOut, "capabilities">): boolean {
+  return (runner.capabilities as { directed?: unknown } | null)?.directed === true;
+}
+
+/** A runner's name as a picker offers it, marked when it is directed-only. */
+export function runnerOptionLabel(runner: Pick<RunnerOut, "name" | "capabilities">): string {
+  return isDirectedOnly(runner) ? `${runner.name} · directed only` : runner.name;
+}
+
+/**
  * Whether a runner declares every flag a conversation requires (e.g. `zdr`,
  * from `SessionOut.runner_requirements`). The server refuses a placement that
  * fails this, so offering one would only produce an error.
