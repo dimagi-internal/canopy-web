@@ -218,6 +218,9 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
                     )
                     spec["runner_id"] = str(runner.pk)
                     created.append(runner)
+                for name, runner in existing.items():   # re-attached in the same call
+                    if name in invited:
+                        invited[name]["runner_id"] = str(runner.pk)
                 locked.units = [invited[x["name"]] for x in units_of(invitation)]
                 locked.consumed_at = now
                 locked.runner = created[0] if created else None
