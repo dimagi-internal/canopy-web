@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('agents', '0066_agent_google_account'),
+        ('agents', '0067_agent_license'),
         ('canopy_sessions', '0046_retitle_uuid_named_sessions'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
