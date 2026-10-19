@@ -915,3 +915,31 @@ export async function setAgentRepository(slug: string, repoUrl: string, repoRef 
   })
   return normalizeAgentDetail(unwrap(res, 'setAgentRepository'))
 }
+
+export type AgentLicenseOut = Schemas['AgentLicenseOut']
+
+// Who uses this agent LOCALLY, in their own Claude Code (canopy-web#1704): every
+// license — active, requested (the caller list does not allow it yet) or revoked —
+// with the private_runners it ran on and when it was last used. Any member may read.
+export async function listAgentLicenses(slug: string): Promise<AgentLicenseOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/licenses', { params: { path: { slug } } })
+  return unwrap(res, 'listAgentLicenses') as unknown as AgentLicenseOut[]
+}
+
+// Agent admins only. Revoke is per person and never undone by the caller list;
+// approve re-asks the caller list and is refused (409) unless it gives them the
+// whole agent.
+export async function revokeAgentLicense(slug: string, userId: number): Promise<AgentLicenseOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/licenses/{user_id}/revoke', {
+    params: { path: { slug, user_id: userId } },
+    body: { note: '' },
+  })
+  return unwrap(res, 'revokeAgentLicense') as unknown as AgentLicenseOut
+}
+
+export async function approveAgentLicense(slug: string, userId: number): Promise<AgentLicenseOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/licenses/{user_id}/approve', {
+    params: { path: { slug, user_id: userId } },
+  })
+  return unwrap(res, 'approveAgentLicense') as unknown as AgentLicenseOut
+}

@@ -3446,6 +3446,72 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/licenses": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who uses this agent locally: its license holders
+         * @description Every license to use the agent in someone's own Claude Code — active,
+         *     requested (the caller list did not allow it yet) or revoked — with the
+         *     private_runners it ran on, its local turns and credential reads, and when it was
+         *     last used. Readable by any member, like the admin list.
+         */
+        readonly get: operations["list_agent_licenses"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/licenses/{user_id}/revoke": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Revoke a person's license to use this agent locally
+         * @description Per person, without editing the caller list: they may not open a local turn
+         *     or read the agent's credentials again until an admin approves them. A revoked
+         *     license is never re-issued automatically.
+         */
+        readonly post: operations["revoke_agent_license"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/licenses/{user_id}/approve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Issue or reinstate a person's license to use this agent locally
+         * @description Re-asks the caller list: refused (409) unless it gives them the whole agent —
+         *     make them an editor or add a `full:` rule first.
+         */
+        readonly post: operations["approve_agent_license"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/admins/{user_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -4246,7 +4312,7 @@ export interface paths {
          *        what makes "the browser never sees plaintext" a property of the system
          *        rather than a habit of the UI — a future page cannot accidentally acquire
          *        the ability to render a secret.
-         *     2. **The caller must be one of two principals** (`_credential_access`):
+         *     2. **The caller must be one of three principals** (`_credential_access`):
          *        - `runner`: pairs a live runner this agent routes to. Mirrors the runner
          *          credential fetch, whose boundary is "the caller who can claim turns as
          *          this runner".
@@ -4254,8 +4320,11 @@ export interface paths {
          *          resolving for a local Claude Code session (canopy#850). Not a widening
          *          in substance: an admin can already write every value, swap the vault
          *          key, and put their own box on the agent to read them back.
-         *        Anyone else — a member, an editor — is refused, and told which access to
-         *        ask for. Tighter than workspace membership on purpose.
+         *        - `license`: holds an ACTIVE license to use the agent locally and names
+         *          their OWN open local turn on it in `X-Canopy-Turn-Id` (canopy-web#1704).
+         *          The read is logged against that turn and license.
+         *        Anyone else — a member, an editor with no local turn — is refused, and
+         *        told which access to ask for. Tighter than workspace membership on purpose.
          *
          *     Every read is recorded, so a credential fetch is visible in the fleet log
          *     rather than silent.
@@ -7123,6 +7192,29 @@ export interface paths {
          *     workspace's — one serves every agent you use locally. It never claims turns.
          */
         readonly post: operations["register_private_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/private-runners/used": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Private runners people use this workspace's agents from
+         * @description Every private runner a local turn on one of `workspace`'s agents ran on: whose
+         *     it is, which agents, how many local turns, and when it was last seen. Shown
+         *     beside the runners ("aath-mbp — private runner, Aathithya"); a private runner never
+         *     claims work, so it has no status. Members of the workspace (else 404).
+         */
+        readonly get: operations["list_workspace_private_runners"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -17932,6 +18024,71 @@ export interface components {
             readonly capability?: string | null;
         };
         /**
+         * AgentLicenseOut
+         * @description One person's license to use the agent locally (`apps/agents/licenses.py`).
+         */
+        readonly AgentLicenseOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "requested" | "active" | "revoked";
+            /**
+             * Basis
+             * @default
+             */
+            readonly basis: string;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            readonly requested_at: string;
+            /** Issued At */
+            readonly issued_at?: string | null;
+            /** Issued By Email */
+            readonly issued_by_email?: string | null;
+            /** Revoked At */
+            readonly revoked_at?: string | null;
+            /** Revoked By Email */
+            readonly revoked_by_email?: string | null;
+            /** Last Used At */
+            readonly last_used_at?: string | null;
+            /**
+             * Private Runners
+             * @default []
+             */
+            readonly private_runners: readonly string[];
+            /**
+             * Local Turns
+             * @default 0
+             */
+            readonly local_turns: number;
+            /**
+             * Credential Reads
+             * @default 0
+             */
+            readonly credential_reads: number;
+        };
+        /** AgentLicenseRevokeIn */
+        readonly AgentLicenseRevokeIn: {
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
+        /**
          * RunnerPreferenceIn
          * @description Set an agent's ordered runner-kind preference (the runner-order UI).
          */
@@ -19737,8 +19894,10 @@ export interface components {
          *     (canopy#850). `may_resolve` mirrors GET /credentials/resolve exactly, minus
          *     its bearer requirement (that is a property of the request, not of the
          *     caller): `via` is `runner` when the caller pairs a live runner this agent
-         *     routes to, `admin` when they are the agent's owner or an admin, and null
-         *     when neither holds — then `reason` names the access to ask for.
+         *     routes to, `admin` when they are the agent's owner or an admin, `license`
+         *     when they hold an active license to use it locally and name their own open
+         *     local turn in `X-Canopy-Turn-Id`, and null when none holds — then `reason`
+         *     names the access to ask for.
          */
         readonly AgentCredentialAccessOut: {
             /** Agent */
@@ -19751,7 +19910,7 @@ export interface components {
             /** May Resolve */
             readonly may_resolve: boolean;
             /** Via */
-            readonly via?: ("runner" | "admin") | null;
+            readonly via?: ("runner" | "admin" | "license") | null;
             /**
              * Reason
              * @default
@@ -25024,6 +25183,34 @@ export interface components {
              * @default
              */
             readonly host: string;
+        };
+        /**
+         * PrivateRunnerUseOut
+         * @description A private runner as the runners page lists it: whose, which agents, how much.
+         */
+        readonly PrivateRunnerUseOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Owner Email */
+            readonly owner_email: string;
+            /** Owner Name */
+            readonly owner_name: string;
+            /** Agents */
+            readonly agents: readonly string[];
+            /** Local Turns */
+            readonly local_turns: number;
+            /** Last Seen At */
+            readonly last_seen_at?: string | null;
+            /**
+             * Retired
+             * @default false
+             */
+            readonly retired: boolean;
         };
         /**
          * HealthCheck
@@ -34968,6 +35155,78 @@ export interface operations {
             };
         };
     };
+    readonly list_agent_licenses: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentLicenseOut"][];
+                };
+            };
+        };
+    };
+    readonly revoke_agent_license: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentLicenseRevokeIn"] | null;
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentLicenseOut"];
+                };
+            };
+        };
+    };
+    readonly approve_agent_license: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentLicenseOut"];
+                };
+            };
+        };
+    };
     readonly grant_admin: {
         readonly parameters: {
             readonly query?: never;
@@ -39945,6 +40204,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PrivateRunnerOut"];
+                };
+            };
+        };
+    };
+    readonly list_workspace_private_runners: {
+        readonly parameters: {
+            readonly query: {
+                readonly workspace: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["PrivateRunnerUseOut"][];
                 };
             };
         };

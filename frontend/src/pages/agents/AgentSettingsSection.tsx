@@ -4,6 +4,7 @@ import { CheckCircle2 } from 'lucide-react'
 
 import { AgentAccessRoster } from '@/components/agents/AgentAccessRoster'
 import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
+import { AgentLicenses } from '@/components/agents/AgentLicenses'
 import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
 import { AgentRepositoryControl } from '@/components/agents/AgentRepositoryControl'
 import { AgentRouting } from '@/components/agents/AgentRouting'
@@ -135,6 +136,14 @@ export function AgentSettingsSection() {
               workspace={agent.workspace ?? undefined}
               canManage={agent.can_manage_admins ?? false}
             />
+          </Setting>
+          <Setting
+            title="Local use"
+            who={admins}
+            canEdit={isAdmin}
+            description={`Who runs ${agent.name} in their own Claude Code, on which workstations, and when they last did.`}
+          >
+            <AgentLicenses agentSlug={agent.slug} canEdit={isAdmin} />
           </Setting>
         </div>
       </Section>

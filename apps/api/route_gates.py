@@ -122,6 +122,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "unpublish_interface": ("agent-admin",),
     "list_admins": ("member",),
     "agent_access": ("member",),
+    # licenses to use the agent locally (apps/agents/licenses.py, canopy-web#1704)
+    "list_agent_licenses": ("member",),
+    "revoke_agent_license": ("agent-admin",),
+    "approve_agent_license": ("agent-admin",),  # + access.decide must give them the whole agent (409)
     "grant_admin": ("agent-owner",),
     "revoke_admin": ("agent-owner",),
     "delete_agent": ("agent.work",),
@@ -361,6 +365,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "register_private_runner": ("self",),
     "list_private_runners": ("self",),
     "retire_private_runner": ("self",),
+    "list_workspace_private_runners": ("member",),  # those local turns on the workspace's agents ran on
     # member of the agent's workspace (else 404), AND access.decide must give the
     # WHOLE agent (owner/admin, a `full:` rule, or a workspace editor) — else 403
     "open_local_turn": ("member",),
@@ -868,6 +873,7 @@ SETTINGS: frozenset[str] = frozenset({
     # agents: identity, ownership, access, integrations, credentials
     "upsert_agent", "move_agent", "delete_agent", "transfer_owner", "link_canopy_user", "mint_agent_canopy_token",
     "give_agent_canopy_login", "grant_admin", "revoke_admin",
+    "revoke_agent_license", "approve_agent_license",
     "publish_interface", "unpublish_interface",
     "set_credential_source", "set_repository", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",
     "set_device_binding", "approve_runner_device_key", "revoke_runner_device_key",

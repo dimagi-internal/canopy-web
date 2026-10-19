@@ -297,6 +297,23 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   `one_executing_turn_per_agent` and `routing.busy_agent_ids`: it is the person's
   session, not the agent's one continuous session, so it neither waits behind the
   agent's runner turns nor delays them, and two people may use the agent at once.
+* A **license** (`AgentLicense`, `apps/agents/licenses.py`) is person × agent: the
+  record that someone uses the agent locally. The caller list decides who MAY
+  (`decide`, above); the license is who DOES. Requested on the first local turn and
+  issued at once when `decide` gives the whole agent (basis `owner`, `admin`,
+  `full:<rule>`, `editor`); anyone else gets a `requested` row the agent's admins
+  see, and a refusal. An agent admin **revokes** it per person without editing the
+  rule, and a revoked license is never re-issued automatically; **approve**
+  reinstates it, re-asking `decide`, so it cannot license someone the caller list
+  does not give the whole agent. `GET /api/agents/{slug}/licenses` (any member)
+  lists holders, their private runners, local turns, credential reads and last use;
+  the agent's Settings → People → Local use shows it.
+* **Credentials.** `/credentials/resolve` has a third principal beside `runner` and
+  `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
+  read) AND the caller's OWN running local turn on that agent named in
+  `X-Canopy-Turn-Id`. No turn, no secrets. Each read is logged with `via=license`,
+  the turn and the license. Brokering every call through canopy-web so secrets
+  never leave the server is future work (canopy-web#1704).
 * **Reporting.** Only its initiator may renew, finish or append its transcript —
   there is no box. The lease is 8 hours, renewed by the session's prompts; a
   session that dies is swept `lost` like any turn.
