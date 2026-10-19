@@ -7,6 +7,7 @@ import type { AgentHealthOut, WorkspaceHealthOut } from '@/api/workspaces'
 
 const step = (key: string, status: 'done' | 'todo', href = '') => ({
   key, title: `Step ${key}`, status, detail: `detail ${key}`, where: 'web' as const, href, action: `Fix ${key}`, command: '',
+  links: [],
 })
 
 function agent(slug: string, over: Partial<AgentHealthOut> = {}): AgentHealthOut {

@@ -50,7 +50,7 @@ describe('mintOutcome', () => {
   it('sends a vault with no keys to setting up the vault first, with a link there', () => {
     const m = mintOutcome('zk-no-recipients')
     expect(m?.tone).toBe('error')
-    expect(m?.text).toMatch(/vault has no keys yet .* set up its vault \(passkey\) first, then connect Google/)
+    expect(m?.text).toMatch(/vault has no keys yet.* set up its vault \(passkey\) first, then connect Google/)
     expect(m?.link).toEqual({ href: '/settings#vault-key', label: 'Set up your vault key' })
   })
 })
