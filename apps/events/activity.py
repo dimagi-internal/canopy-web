@@ -28,7 +28,13 @@ CHAT_SESSION_CREATED = "chat.session.created"
 CHAT_MESSAGE = "chat.message"
 SETTING_CHANGED = "setting.changed"
 MCP_CALL = "mcp.call"
-KINDS = (TURN_ENQUEUED, TURN_FINISHED, CHAT_SESSION_CREATED, CHAT_MESSAGE, SETTING_CHANGED, MCP_CALL)
+#: A new cloud box's pairing invitation: made, approved, and used to pair
+#: (`apps/harness/api_runner_invitations.py`).
+RUNNER_INVITED = "runner.invited"
+RUNNER_INVITATION_APPROVED = "runner.invitation.approved"
+RUNNER_PAIRED = "runner.paired"
+KINDS = (TURN_ENQUEUED, TURN_FINISHED, CHAT_SESSION_CREATED, CHAT_MESSAGE, SETTING_CHANGED, MCP_CALL,
+         RUNNER_INVITED, RUNNER_INVITATION_APPROVED, RUNNER_PAIRED)
 
 
 def _actor_kind(actor, agent=None) -> str:

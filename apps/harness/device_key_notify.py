@@ -37,8 +37,6 @@ def approvers(runner) -> list:
 
 def notify_pending(key, *, reapproval: bool = False) -> dict:
     """Email + Web Push each approver about `key`, now pending. Never raises."""
-    from django.core.mail import EmailMultiAlternatives
-
     from .api_device_keys import approve_url
 
     result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
@@ -57,34 +55,73 @@ def notify_pending(key, *, reapproval: bool = False) -> dict:
                       f"secrets of agents that need an approved machine, so their turns there will fail. "
                       f"Approving takes one passkey touch and also gives it access to your agents.")
         foot = "You are getting this because you administer this runner. If you did not expect it, revoke it there."
-        text = f"{detail}\n\n{link}\n\n{foot}\n"
-        html = (f"<p>{escape(detail)}</p><p><a href=\"{escape(link)}\">Review it under Your machines</a></p>"
-                f"<p style=\"color:#78716c;font-size:13px\">{escape(foot)}</p>")
-        rel = link.split("://", 1)[-1]
-        rel = rel[rel.find("/"):] if "/" in rel else "/"
-        for person in approvers(runner):
-            if person.email:
-                message = EmailMultiAlternatives(subject=subject, body=text, to=[person.email])
-                message.attach_alternative(html, "text/html")
-                try:
-                    if message.send():
-                        result["emailed"].append(person.email)
-                    else:
-                        result["not_configured"] = True
-                except Exception:  # noqa: BLE001
-                    logger.exception("device key notice email failed: to=%s", person.email)
-                    result["failed"].append(person.email)
-            try:
-                from apps.push.services import send_to_user
-
-                result["pushed"] += send_to_user(person, subject.removeprefix("Canopy · ").capitalize(),
-                                                 detail[:180], rel)
-            except Exception:  # noqa: BLE001
-                logger.exception("device key notice push failed: user=%s", person.pk)
+        _send(approvers(runner), subject=subject, detail=detail, link=link, foot=foot,
+              link_text="Review it under Your machines", result=result)
     except Exception:  # noqa: BLE001
         logger.exception("device key notice failed for %s", getattr(key, "pk", "?"))
         result["error"] = True
     return result
+
+
+def _send(people, *, subject: str, detail: str, link: str, foot: str, link_text: str, result: dict) -> None:
+    """Mail and Web-Push `people` one notice deep-linking to `link`. Each failure
+    is logged and counted in `result`; none raises."""
+    from django.core.mail import EmailMultiAlternatives
+
+    text = f"{detail}\n\n{link}\n\n{foot}\n"
+    html = (f"<p>{escape(detail)}</p><p><a href=\"{escape(link)}\">{escape(link_text)}</a></p>"
+            f"<p style=\"color:#78716c;font-size:13px\">{escape(foot)}</p>")
+    rel = link.split("://", 1)[-1]
+    rel = rel[rel.find("/"):] if "/" in rel else "/"
+    for person in people:
+        if person.email:
+            message = EmailMultiAlternatives(subject=subject, body=text, to=[person.email])
+            message.attach_alternative(html, "text/html")
+            try:
+                if message.send():
+                    result["emailed"].append(person.email)
+                else:
+                    result["not_configured"] = True
+            except Exception:  # noqa: BLE001
+                logger.exception("runner notice email failed: to=%s", person.email)
+                result["failed"].append(person.email)
+        try:
+            from apps.push.services import send_to_user
+
+            result["pushed"] += send_to_user(person, subject.removeprefix("Canopy · ").capitalize(),
+                                             detail[:180], rel)
+        except Exception:  # noqa: BLE001
+            logger.exception("runner notice push failed: user=%s", person.pk)
+
+
+def notify_invitation(invitation, link: str) -> dict:
+    """Mail + push the person who invited a new box its approve link (spec
+    2026-10-19 #9). Only they can approve it, so only they are told. Never raises."""
+    result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
+    try:
+        person = invitation.created_by
+        if not person.is_active:
+            return result
+        subject = f"Canopy · approve the new runner {invitation.name}"
+        detail = (f"You invited a new cloud runner, {invitation.name}, into {invitation.workspace_id} "
+                  f"(instance role {invitation.role_arn}). It cannot pair until you approve it — one "
+                  f"passkey touch. The invitation runs out in an hour.")
+        foot = "You are getting this because you created this invitation. If you did not, ignore it: it expires unused."
+        _send([person], subject=subject, detail=detail, link=link, foot=foot,
+              link_text="Review and approve it", result=result)
+    except Exception:  # noqa: BLE001
+        logger.exception("runner invitation notice failed for %s", getattr(invitation, "pk", "?"))
+        result["error"] = True
+    return result
+
+
+def notify_invitation_on_commit(invitation, link: str) -> None:
+    from django.db import transaction
+
+    try:
+        transaction.on_commit(lambda: notify_invitation(invitation, link))
+    except Exception:  # noqa: BLE001
+        logger.exception("runner invitation notice could not be scheduled")
 
 
 def notify_pending_on_commit(key, *, reapproval: bool = False) -> None:

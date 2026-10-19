@@ -1742,3 +1742,78 @@ class RunnerAppPreference(models.Model):
             return cls.SUPERVISOR
         row = cls.objects.filter(user=user).first()
         return row.opens_on if row and row.opens_on in cls.PAGES else cls.SUPERVISOR
+
+
+#: How long a pairing invitation stays open: long enough for `up.sh` to bring a
+#: box up and the operator to touch their passkey, short enough that a forgotten
+#: one is no standing door.
+INVITATION_TTL = dt.timedelta(hours=1)
+
+
+class RunnerInvitation(models.Model):
+    """A person invites ONE new cloud box, named, into ONE workspace, bound to the
+    box's EC2 instance role — so the box pairs holding no long-lived secret.
+
+    `up.sh` creates it with the operator's own token once the stack's role exists.
+    The operator approves it from a browser, behind a passkey step-up
+    (`/api/harness/runner-invitations/{id}/approve`) — a token cannot, so neither
+    `up.sh` nor the box can approve its own. The box then proves its role
+    (`POST /api/harness/runners/pair-by-role`, `aws_iam_proof`) and canopy-web
+    creates the Runner (owned by the invitation's creator, in its workspace) with
+    an ACTIVE aws-iam device key, and marks the invitation consumed. Single use.
+
+    One live (unconsumed) invitation per (role, name): a new one replaces it.
+    """
+
+    PENDING, APPROVED, CONSUMED, EXPIRED = "pending", "approved", "consumed", "expired"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #: The Runner.name the box will pair as (`runner/ec2/_lib.sh::runner_name_ok`).
+    name = models.CharField(max_length=63)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="runner_invitations")
+    #: The person inviting the box: they approve it, and they own the runner.
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                                   related_name="+")
+    #: The box's instance role, canonical (`aws_iam_proof.canonical_role_arn`).
+    role_arn = models.CharField(max_length=300)
+    #: sha256 of `role_arn` — the `jkt` the box's aws-iam device key will carry.
+    role_jkt = models.CharField(max_length=64, db_index=True)
+    #: The box's zero-knowledge ECDH public key (the `<stack>-ecdh` KMS key), when
+    #: `up.sh` could read it: one approval covers both. {} when none.
+    ecdh_public_jwk = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="+")
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    runner = models.ForeignKey(Runner, on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name="+")
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["role_jkt", "name"], condition=models.Q(consumed_at__isnull=True),
+                                    name="one_live_runner_invitation_per_role_and_name"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"runner-invitation:{self.name}:{self.status}"
+
+    def save(self, *args, **kwargs):
+        if self.expires_at is None:
+            self.expires_at = (self.created_at or timezone.now()) + INVITATION_TTL
+        super().save(*args, **kwargs)
+
+    @property
+    def expired(self) -> bool:
+        return self.consumed_at is None and timezone.now() >= self.expires_at
+
+    @property
+    def status(self) -> str:
+        if self.consumed_at is not None:
+            return self.CONSUMED
+        if self.expired:
+            return self.EXPIRED
+        return self.APPROVED if self.approved_at is not None else self.PENDING

@@ -222,6 +222,7 @@ from apps.harness.api_investigations import router as investigations_router  # n
 from apps.harness.api_device_keys import router as device_keys_router  # noqa: E402
 from apps.harness.api_runner_sessions import router as runner_sessions_router  # noqa: E402
 from apps.harness.api_device_key_requests import router as device_key_requests_router  # noqa: E402
+from apps.harness.api_runner_invitations import router as runner_invitations_router  # noqa: E402
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.agents.engagement_api import router as engagement_router  # noqa: E402
 from apps.agents.proposals_api import router as proposals_router  # noqa: E402
@@ -298,6 +299,10 @@ api.add_router("/workspaces", connected_apps_router)
 api.add_router("/timeline", timeline_router)
 api.add_router("/system", system_router)
 api.add_router("/share", session_share_router)
+# Pairing invitations (a new cloud box pairs by its instance role, no PAT).
+# Before the harness router: its `/runners/{runner_id}` would shadow
+# `/runners/pair-by-role`.
+api.add_router("/harness/runner-invitations", runner_invitations_router)
 api.add_router("/harness", harness_router)
 # What the fleet's debugger agent reads and closes (apps/harness/auto_debug.py).
 api.add_router("/harness/failure-investigations", investigations_router)
