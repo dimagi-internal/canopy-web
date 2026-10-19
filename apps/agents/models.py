@@ -310,6 +310,51 @@ class AgentAdmin(models.Model):
         return f"{self.user_id} admin of {self.agent_id}"
 
 
+class AgentLicense(models.Model):
+    """A person's license to use an agent LOCALLY — "Aathithya uses ACE locally, since …".
+
+    The agent's caller list (`access.decide`) still decides who MAY hold one; this row
+    is who DOES (`apps/agents/licenses.py`, canopy-web#1704). Requested on first local
+    use and issued at once when `decide` gives the person the whole agent; an admin
+    revokes it per person without touching the rule, and a revoked license is not
+    re-issued automatically — only an admin's approve brings it back. Local turns and
+    credential reads point at it, so "who uses this agent outside canopy, and what did
+    they read" is one query.
+    """
+
+    REQUESTED, ACTIVE, REVOKED = "requested", "active", "revoked"
+    STATUS_CHOICES = [(REQUESTED, "Requested"), (ACTIVE, "Active"), (REVOKED, "Revoked")]
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="licenses")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="agent_licenses")
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=REQUESTED)
+    #: Why it was issued, in `access.decide`'s words: `admin`, `full:member@dimagi.com`,
+    #: `editor`, or `approved by <email>`.
+    basis = models.CharField(max_length=200, blank=True, default="")
+    requested_at = models.DateTimeField(auto_now_add=True)
+    issued_at = models.DateTimeField(null=True, blank=True)
+    issued_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                  null=True, blank=True, related_name="+",
+                                  help_text="Null when issued automatically by the caller list.")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    #: Why it was refused or revoked, for the person and the admins.
+    note = models.CharField(max_length=300, blank=True, default="")
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    last_private_runner = models.ForeignKey("harness.PrivateRunner", on_delete=models.SET_NULL,
+                                         null=True, blank=True, related_name="+")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["agent", "user"],
+                                               name="one_license_per_agent_and_person")]
+        ordering = ["-last_used_at", "requested_at"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"license:{self.agent_id}:{self.user_id}:{self.status}"
+
+
 class AgentBootstrapReport(models.Model):
     """What a BOX actually managed to materialize for an agent, as the box saw it.
 
@@ -508,8 +553,12 @@ class AgentCredentialRead(models.Model):
     runner = models.ForeignKey(
         "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
     )
-    #: `runner` (a box that runs the agent) or `admin` (a human resolving by hand).
+    #: `runner` (a box that runs the agent), `admin` (a human resolving by hand) or
+    #: `license` (a license holder's local turn, `licenses.py`).
     via = models.CharField(max_length=16, blank=True, default="")
+    #: The license a `license` read went out under.
+    license = models.ForeignKey("AgentLicense", on_delete=models.SET_NULL, null=True,
+                                blank=True, related_name="credential_reads")
     #: The `X-Canopy-Turn-Id` header, when the caller sent one.
     turn_id = models.CharField(max_length=120, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)

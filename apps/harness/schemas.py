@@ -1946,3 +1946,16 @@ class LocalTurnRenewOut(Schema):
     turn_id: uuid.UUID
     status: str
     lease_expires_at: dt.datetime | None = None
+
+
+class PrivateRunnerUseOut(Schema):
+    """A private runner as the runners page lists it: whose, which agents, how much."""
+
+    id: uuid.UUID
+    name: str
+    owner_email: str
+    owner_name: str
+    agents: list[str]
+    local_turns: int
+    last_seen_at: dt.datetime | None = None
+    retired: bool = False

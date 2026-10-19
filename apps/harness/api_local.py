@@ -23,7 +23,14 @@ from apps.workspaces import services as wsvc
 
 from . import local
 from .models import Turn, PrivateRunner
-from .schemas import LocalTurnIn, LocalTurnOut, LocalTurnRenewOut, PrivateRunnerIn, PrivateRunnerOut
+from .schemas import (
+    LocalTurnIn,
+    LocalTurnOut,
+    LocalTurnRenewOut,
+    PrivateRunnerIn,
+    PrivateRunnerOut,
+    PrivateRunnerUseOut,
+)
 
 private_runners_router = Router(auth=session_auth, tags=["harness"])
 local_turns_router = Router(auth=session_auth, tags=["harness"])
@@ -45,6 +52,42 @@ def register_private_runner(request: HttpRequest, payload: PrivateRunnerIn):
 @private_runners_router.get("/", response=list[PrivateRunnerOut], summary="Your private runners")
 def list_private_runners(request: HttpRequest):
     return list(PrivateRunner.objects.filter(owner=request.user, retired_at__isnull=True))
+
+
+@private_runners_router.get("/used", response=list[PrivateRunnerUseOut],
+                         summary="Private runners people use this workspace's agents from")
+def list_workspace_private_runners(request: HttpRequest, workspace: str):
+    """Every private runner a local turn on one of `workspace`'s agents ran on: whose
+    it is, which agents, how many local turns, and when it was last seen. Shown
+    beside the runners ("aath-mbp — private runner, Aathithya"); a private runner never
+    claims work, so it has no status. Members of the workspace (else 404)."""
+    from django.db.models import Count, Max
+
+    if not wsvc.is_member(request.user, workspace):
+        raise HttpError(404, "workspace not found")
+    rows = (Turn.objects.filter(origin=Turn.ORIGIN_LOCAL, agent__workspace_id=workspace)
+            .exclude(private_runner=None)
+            .values("private_runner_id", "private_runner__name", "private_runner__owner__email",
+                    "private_runner__owner__first_name", "private_runner__owner__last_name",
+                    "private_runner__last_seen_at", "private_runner__retired_at")
+            .annotate(turns=Count("id"), last_turn=Max("created_at")))
+    agents: dict = {}
+    for wid, slug in (Turn.objects.filter(origin=Turn.ORIGIN_LOCAL, agent__workspace_id=workspace)
+                      .exclude(private_runner=None).values_list("private_runner_id", "agent__slug").distinct()):
+        agents.setdefault(wid, set()).add(slug)
+    out = []
+    for r in rows:
+        name = " ".join(p for p in (r["private_runner__owner__first_name"],
+                                    r["private_runner__owner__last_name"]) if p)
+        out.append({
+            "id": r["private_runner_id"], "name": r["private_runner__name"],
+            "owner_email": r["private_runner__owner__email"],
+            "owner_name": name or r["private_runner__owner__email"],
+            "agents": sorted(agents.get(r["private_runner_id"], ())), "local_turns": r["turns"],
+            "last_seen_at": r["private_runner__last_seen_at"] or r["last_turn"],
+            "retired": r["private_runner__retired_at"] is not None,
+        })
+    return sorted(out, key=lambda w: w["last_seen_at"], reverse=True)
 
 
 @private_runners_router.post("/{private_runner_id}/retire", response=PrivateRunnerOut,

@@ -8,7 +8,10 @@ Three objects (canopy-web#1704, `docs/architecture/access.md` § Local use):
   agent, opened by the session's own SessionStart hook. It is a real turn: the
   person is its initiator, it carries the caller envelope, the turn mode, the
   credential reads and (when the session ends) the transcript;
-* a **license** (person × agent, `apps/agents/licenses.py`) — added in phase 2.
+* a **license** (person × agent, `apps/agents/licenses.py`) — requested when the
+  first local turn opens, issued at once when the caller list gives the person
+  the whole agent; the turn records it (`origin_ref.license`), and credential
+  reads during the turn go out under it.
 
 A local turn is RUNNING from the moment it opens and is never queued, claimed or
 routed. It does not serialize the agent (`one_executing_turn_per_agent` and
@@ -82,20 +85,16 @@ def private_runner_of(user, private_runner_id) -> PrivateRunner | None:
 
 
 def authorize(agent, user):
-    """The access decision for `user` running `agent` locally — `access.decide`,
-    asked as the person on a signed-in (verified) request. Raises LocalRefusedError
-    unless it grants the WHOLE agent: a confined capability is a door canopy holds
-    (the `ask` path), not something a session on someone's own machine can be held
-    to."""
-    from apps.agents import access
+    """The person's ACTIVE license for `agent` (`apps/agents/licenses.py`), issued now
+    when the caller list gives them the whole agent. Raises LocalRefusedError
+    otherwise: a confined capability is a door canopy holds (the `ask` path), not
+    something a session on someone's own machine can be held to."""
+    from apps.agents import licenses
 
-    decision = access.decide(agent, user, verified=True, origin=Turn.ORIGIN_LOCAL)
-    if decision.access != access.FULL:
-        why = decision.reason or (
-            f"{agent.slug}'s caller list gives you only "
-            f"{decision.capability or 'no'} access, not the whole agent")
-        raise LocalRefusedError(f"you may not run {agent.slug} locally: {why}")
-    return decision
+    try:
+        return licenses.request(agent, user)
+    except licenses.LicenseRefusedError as exc:
+        raise LocalRefusedError(str(exc)) from exc
 
 
 def mode_for(agent, user, requested: str = "") -> tuple[str, str]:
@@ -128,7 +127,10 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
     claude_session_id = (claude_session_id or "").strip()[:100]
     if not claude_session_id:
         raise ValueError("claude_session_id is required")
-    authorize(agent, user)
+    from apps.agents import licenses
+
+    lic = authorize(agent, user)
+    licenses.touch(lic, private_runner=private_runner)
     now = timezone.now()
     key = _key(agent, claude_session_id)
     live = (Turn.objects.filter(agent=agent, origin=Turn.ORIGIN_LOCAL, initiator_user=user,
@@ -145,6 +147,7 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
         agent=agent, origin=Turn.ORIGIN_LOCAL, routing=Turn.LOCAL_ONLY,
         idempotency_key=key, status=Turn.RUNNING, private_runner=private_runner,
         origin_ref={"private_runner": {"id": str(private_runner.pk), "name": private_runner.name},
+                    "license": {"id": lic.pk, "basis": lic.basis},
                     "claude_session_id": claude_session_id, "cwd": (cwd or "")[:300]},
         claimed_at=now, started_at=now, lease_expires_at=now + LOCAL_LEASE,
         session_key=claude_session_id, enqueued_by=user,
