@@ -14,7 +14,7 @@ def backfill_machine_ids(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("harness", "0083_runner_app_preference"),
+        ("harness", "0084_runner_invitation"),
     ]
 
     operations = [

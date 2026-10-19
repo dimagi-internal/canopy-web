@@ -242,8 +242,10 @@ def _chat(box, agent=None, bound_to=None, key="c"):
     sess = Session.objects.create(agent=agent, workspace=box["dimagi"], created_by=box["jj"])
     if bound_to is not None:
         RunnerBinding.objects.create(session=sess, runner=bound_to, session_key=f"k-{key}")
+    # Sent by jj, who administers every box here (a project chat with nobody
+    # behind it and no workspace order goes nowhere).
     t = Turn.objects.create(chat_session=sess, origin=Turn.ORIGIN_API, idempotency_key=key,
-                            routing=Turn.ANY, prompt="hi")
+                            routing=Turn.ANY, prompt="hi", enqueued_by=box["jj"])
     Turn.objects.filter(pk=t.pk).update(created_at=timezone.now() - dt.timedelta(hours=1))
     return t
 
