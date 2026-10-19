@@ -1913,7 +1913,7 @@ def _require_workspace_editor(request: HttpRequest, workspace: str, steward) -> 
     steward is not enough. Same 404 as a missing workspace for a non-member."""
     if not workspace or workspace == steward.workspace_id:
         return
-    if not wsvc.has_role_at_least(request.user, workspace, "editor"):
+    if not perms.can(request.user, workspace, perms.CONTENT_WRITE):
         raise HttpError(404, f"workspace '{workspace}' not found")
 
 
