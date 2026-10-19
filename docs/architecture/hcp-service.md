@@ -499,6 +499,11 @@ gcloud iam roles update canopyMemoryEmbeddings --project $P \
   --add-permissions=discoveryengine.rankingConfigs.rank
 ```
 
+It calls the US multi-region (`us-discoveryengine.googleapis.com`, `locations/us`) by
+default; `KB_RERANK_LOCATION` sets `eu` or `global`. Google's HIPAA BAA lists "Agent
+Search on Gemini Enterprise Agent Platform" with "Use regional APIs and resource
+locations for PHI", so keep it off `global` while queries could carry PHI.
+
 **Turning it on — Bedrock.** Deploy the task role (its `memory-embeddings` policy
 grants `bedrock:InvokeModel` on embedding models only, and the read-only logging
 check), enable the model under Bedrock model access, set `HCP_EMBEDDINGS_MODEL` to
