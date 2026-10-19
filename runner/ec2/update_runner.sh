@@ -60,6 +60,7 @@ REPO_DIR="${CANOPY_WEB_REPO_DIR:-/opt/canopy-web}"
 REPO_URL="${CANOPY_WEB_REPO_URL:-https://github.com/dimagi-internal/canopy-web.git}"
 STATE_FILE="${STATE_FILE:-$HOME/.canopy-cloud-runner.json}"
 SERVICE="${SERVICE:-canopy-runner.service}"
+RESTART_GIVEN="${RESTART_CMD:-}"
 RESTART_CMD="${RESTART_CMD:-sudo -n systemctl restart}"
 # The first-boot seed (runner/ec2/seed.py): a manifest + "<id>-part-<i>" parts.
 SEED_SECRET="${SEED_SECRET:-canopy/cloud-runner/runner-seed}"
@@ -78,11 +79,48 @@ RUNNER_SRC="runner/ec2/cloud_runner.py"
 # old script. Listing it here makes an updater change a deploy, as the shim's own
 # comment already claims. Keep in step with deploy-labs.yml's cloud_sha step —
 # runner/ec2/tests/test_update_runner_sh.py pins the two lists equal.
-SHA_PATHS=("runner/ec2/cloud_runner.py" "runner/ec2/bootstrap_agents.sh" "runner/ec2/update_runner.sh" "packages/canopy_transcript" "runner/canopy_acp")
+SHA_PATHS=("runner/ec2/cloud_runner.py" "runner/ec2/bootstrap_agents.sh" "runner/ec2/update_runner.sh" "runner/ec2/kms_broker.py" "packages/canopy_transcript" "runner/canopy_acp")
 # The daemon rewrites the busy marker every heartbeat (20s). Older than this means
 # it is not running its loop at all — stopped, wedged, or crash-looping. That is
 # NOT busy: it is the case this script exists to rescue, so it must never block.
 BUSY_MAX_AGE=120
+
+# --- isolation units (spec 2026-10-19-runner-isolation-units §1) -------------
+# A box of units (`cloud_runner.py --setup-units` wrote units.json) runs one
+# `canopy-runner@<unit>` per unit, each its own user. This script then runs as ROOT
+# (canopy-runner-update.service, installed by `cloud_runner.py --install-units`):
+# ONE install for every unit, deferred while ANY unit has a turn in flight, and a
+# restart of every `canopy-runner@*`. The runner bytes in /opt/canopy-runner and
+# the clone in /opt/canopy-web are root's there, so no unit can rewrite the code
+# the others run.
+UNITS_FILE="${UNITS_FILE:-/etc/canopy-runner/units.json}"
+UNITS_MODE=0
+if [ -r "$UNITS_FILE" ]; then
+  UNITS_MODE=1
+  ENV_FILE="${BOX_ENV_FILE:-/etc/canopy-runner/box.env}"
+  SERVICE="${SERVICE_UNITS:-canopy-runner@*.service canopy-kms-broker.service}"
+  [ -n "$RESTART_GIVEN" ] || RESTART_CMD="systemctl restart"
+fi
+# `unit_rows` -> "<id> <user> <home>" per unit, from units.json.
+unit_rows() {
+  python3 -c '
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+for u in doc.get("units") or []:
+    if u.get("id") and u.get("user") and u.get("home"):
+        print(u["id"], u["user"], u["home"])
+' "$UNITS_FILE" 2>/dev/null
+}
+if [ "$UNITS_MODE" = "1" ]; then
+  # The runner id (any unit's: they share an owner, so the runner list it reads
+  # names every unit) and a token to read it with.
+  read -r _FIRST_ID _FIRST_USER FIRST_HOME <<<"$(unit_rows | head -1)"
+  STATE_FILE="${FIRST_HOME:-/nonexistent}/.canopy-cloud-runner.json"
+  RUNNER_TOKEN_FILE="${FIRST_HOME:-/nonexistent}/.canopy-runner/runner-token.json"
+fi
 
 MODE="update"
 REF=""
@@ -115,8 +153,8 @@ PY
 INSTALLED_SHA="$(json_field "$STAMP" sha "")"
 
 # --- whether now is safe ----------------------------------------------------
-in_flight() {  # echoes a count, or "" when the marker cannot be trusted
-  python3 - "$BUSY" "$BUSY_MAX_AGE" <<'PY' 2>/dev/null
+in_flight_of() {  # <marker> -> a count, or "" when the marker cannot be trusted
+  python3 - "$1" "$BUSY_MAX_AGE" <<'PY' 2>/dev/null
 import json, sys, time
 path, max_age = sys.argv[1], float(sys.argv[2])
 try:
@@ -128,6 +166,20 @@ try:
 except Exception:
     pass
 PY
+}
+in_flight() {  # echoes a count, or "" when no marker can be trusted
+  if [ "$UNITS_MODE" != "1" ]; then
+    in_flight_of "$BUSY"
+    return
+  fi
+  # A box of units is busy while ANY unit is: the restart reaches them all.
+  local total="" id user home n
+  while read -r id user home; do
+    [ -n "$home" ] || continue
+    n="$(in_flight_of "$home/.canopy-runner/in-flight")"
+    [ -n "$n" ] && total=$(( ${total:-0} + n ))
+  done <<<"$(unit_rows)"
+  printf '%s' "$total"
 }
 
 # The moved-to address, or nothing. https only, like the runner's own reader.
@@ -192,6 +244,8 @@ except Exception as exc:
 '
 minted_runner_token() {  # <base> <runner id>
   [ "${CANOPY_DEVICE_KEY:-1}" = "0" ] && return 0
+  # A unit's key is in the unit's home, not root's: only its shared token is read.
+  [ "$UNITS_MODE" = "1" ] && return 0
   [ -n "$1" ] && [ -n "$2" ] && [ -r "$TARGET" ] || return 0
   python3 -c "$MINT_HELPER" "$TARGET" "$1" "$2" 2>/dev/null | tail -1
 }
@@ -302,8 +356,22 @@ with open(path, "w") as fh:
 PY
   log "installed ${sha:-<unknown>} ($ref) -> $TARGET; restarting $SERVICE"
   # The only privileged step, and the only reason this box grants the service user
-  # any sudo at all — scoped to this exact command by a sudoers drop-in.
-  $RESTART_CMD "$SERVICE"
+  # any sudo at all — scoped to this exact command by a sudoers drop-in. On a box of
+  # units this runs as root and restarts every unit (and the broker) at once.
+  # shellcheck disable=SC2086 # SERVICE is one or more unit patterns
+  $RESTART_CMD $SERVICE
+}
+
+install_broker_from_git() {  # <ref> — the units' KMS broker, beside the runner it serves
+  [ "$UNITS_MODE" = "1" ] || return 0
+  local tmp="$RUNNER_HOME/kms_broker.py.new"
+  if git -C "$REPO_DIR" show "$1:runner/ec2/kms_broker.py" > "$tmp" 2>/dev/null \
+     && python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$tmp" 2>/dev/null; then
+    chmod 0755 "$tmp" && mv "$tmp" "$RUNNER_HOME/kms_broker.py"
+  else
+    rm -f "$tmp"
+    log "ref $1 has no usable runner/ec2/kms_broker.py; the broker keeps its bytes"
+  fi
 }
 
 install_from_git() {  # <git ref or sha>
@@ -327,6 +395,7 @@ install_from_git() {  # <git ref or sha>
     rm -f "$tmp"
     return 1
   fi
+  install_broker_from_git "$ref"
   install_bytes "$tmp" "$sha" "${committed_at:-0}" "$ref"
 }
 
@@ -442,6 +511,39 @@ esac
 # shared clone is only the fallback for a box that predates the runner's own.
 BOOT_DIR="${RUNNER_SRC_DIR:-$RUNNER_HOME/src}"
 [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ] || BOOT_DIR="$REPO_DIR"
+# A runner that keeps secrets off disk records its tmpfs root here; `canopy agent
+# prepare --runner` then writes no env files in this pass either (spec §4).
+TURN_ENV_ROOT_MARKER="${TURN_ENV_ROOT_MARKER:-$RUNNER_HOME/turn-env-root}"
+AS_UNIT="${AS_UNIT:-runuser -u}"
+if [ "$UNITS_MODE" = "1" ]; then
+  # Each unit refreshes as ITSELF — its user, its env file, its own runner token —
+  # from its own runner clone. Root never runs an agent's prepare.
+  if [ "$V" = "busy" ]; then
+    log "busy — skipping the credentials refresh too."
+  else
+    while read -r id user home; do
+      [ -n "$home" ] || continue
+      script="$home/.canopy-runner/src/runner/ec2/bootstrap_agents.sh"
+      [ -x "$script" ] || { log "unit $id: no runner clone yet; skipping its credentials refresh"; continue; }
+      tok="$(python3 -c '
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+    if float(d.get("expires_at") or 0) - time.time() > 120:
+        print(d.get("access_token") or "")
+except Exception:
+    pass' "$home/.canopy-runner/runner-token.json" 2>/dev/null)"
+      root="$(tr -d '[:space:]' < "$home/.canopy-runner/turn-env-root" 2>/dev/null)"
+      log "unit $id: refreshing credentials"
+      # shellcheck disable=SC2046,SC2086 # the unit's env file, one KEY=value per word
+      $AS_UNIT "$user" -- env -i $(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${UNIT_ETC:-/etc/canopy-runner}/$id.env" 2>/dev/null) \
+        ${tok:+CANOPY_TOKEN=$tok} ${root:+CANOPY_TURN_ENV_ROOT=$root} \
+        bash "$script" --credentials-only \
+        || log "unit $id: credentials refresh returned non-zero — the unit is otherwise untouched."
+    done <<<"$(unit_rows)"
+  fi
+  exit 0
+fi
 if [ "$V" = "busy" ]; then
   log "busy — skipping the credentials refresh too."
 elif [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ]; then
@@ -468,6 +570,8 @@ elif [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ]; then
     # readiness report was a 401).
     rt="$(runner_token "${CANOPY_BASE_URL:-}" "$(json_field "$STATE_FILE" runner_id "")")"
     if [ -n "$rt" ]; then export CANOPY_TOKEN="$rt"; fi
+    root="$(tr -d '[:space:]' < "$TURN_ENV_ROOT_MARKER" 2>/dev/null)"
+    if [ -n "$root" ]; then export CANOPY_TURN_ENV_ROOT="$root"; fi
     "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" --credentials-only ) \
     || log "credentials refresh returned non-zero — the box is otherwise untouched."
 fi

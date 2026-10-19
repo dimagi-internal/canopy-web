@@ -2,11 +2,11 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Canopy cloud runner (Wave 4 SP2b) — an ephemeral EC2 instance that pairs a
   kind=cloud runner with canopy-web, claims harness Turns in its capabilities, and
-  runs `claude -p` on each. Secrets (the claude OAuth token + the canopy PAT) are
-  read from Secrets Manager by the instance role at boot — never baked into the
-  template. cloud_runner.py's first-boot seed is ALSO delivered via Secrets Manager
-  (up.sh publishes it there as a manifest + parts); single source of truth is
-  runner/ec2/cloud_runner.py.
+  runs `claude -p` on each — as one or more isolation units (RunnerUnits), each its
+  own Unix user, runner and device key, with IMDS closed to all but root. The box
+  holds no PAT, no Claude token and no box-wide keyring password. cloud_runner.py's
+  first-boot seed is delivered via Secrets Manager (up.sh publishes it there as a
+  manifest + parts); single source of truth is runner/ec2/cloud_runner.py.
 
 Parameters:
   SshCidr:
@@ -91,42 +91,23 @@ Parameters:
       here; RunnerAgents is what this runner may CLAIM turns for. Usually the
       same set, but a box can bootstrap the whole fleet while only claiming a
       subset (or vice versa, if bootstrap fails for one agent).
+  RunnerUnits:
+    Type: String
+    Default: ''
+    AllowedPattern: '^((tree|agent):[a-z0-9][a-z0-9@-]*)?(,(tree|agent):[a-z0-9][a-z0-9@-]*)*$'
+    Description: >
+      The box's isolation units (spec 2026-10-19-runner-isolation-units §1), e.g.
+      `tree:dimagi,tree:marshellis,agent:eva` — each its own Unix user (cu-<unit>),
+      runner (canopy-runner@<unit>), Runner row and device key. Empty = ONE unit,
+      `tree:<RunnerWorkspace>`, named <RunnerName> — so a single-tree box keeps its
+      shape and its runner. Every other unit is <RunnerName>-<unit>. An agent unit
+      for <slug> needs its ECDH key in the -ecdh stack (up.sh --units passes it).
   RunnerWorkspace:
     Type: String
     Default: dimagi
   RunnerName:
     Type: String
     Default: cloud-ec2-1
-  ClaudeTokenSecret:
-    Type: String
-    Default: canopy/cloud-runner/claude-oauth-token
-    Description: >
-      Secrets Manager id of the Claude BUILD FALLBACK: a long-lived
-      `claude setup-token` (CLAUDE_CODE_OAUTH_TOKEN), never ace-web's rotating OAuth
-      session. Intentionally rarely used. A box's working Claude logins are its
-      credential bundle on canopy-web (the runner page: primary + fallback login,
-      API key), which `wire.sh` copies from a live runner and which replaces this
-      value the moment the box stages it. This secret is read only when no live
-      runner has logins to copy, so it being old or at its usage cap is expected,
-      not a defect.
-  CanopyTokenSecret:
-    Type: String
-    Default: ''
-    Description: >
-      Secrets Manager id of a canopy-web PAT for the box to pair with — only for a
-      stack made before pairing by invitation (it keeps its value on update). A new
-      stack leaves it empty: the box holds no PAT and pairs by its instance role
-      once the operator approves up.sh's invitation (runner/ec2/README.md). A named
-      secret that no longer exists is tolerated: a paired box signs in with its
-      device key.
-  GogKeyringSecret:
-    Type: String
-    Default: canopy/cloud-runner/gog-keyring-password
-    Description: >
-      Secrets Manager id holding the password for gog's `file` keyring backend
-      (exported as GOG_KEYRING_PASSWORD). Optional — if the secret is absent the
-      runner still boots, but every `gog auth tokens import` fails and the fleet
-      has no Gmail/Drive auth. Stage it with `./secrets.sh gog <file|->`.
   RunnerSeedSecret:
     Type: String
     Default: canopy/cloud-runner/runner-seed
@@ -238,10 +219,9 @@ Resources:
               permissions: '0755'
               content: |
                 #!/usr/bin/env bash
-                # Re-materialize the runner env + claude credentials from Secrets
-                # Manager on every start, so a rotated secret is picked up on
-                # `systemctl restart` with no redeploy — and, on FIRST boot only,
-                # install the runner code seed (below).
+                # Re-materialize box.env (the stack's parameters, no secret) on every
+                # start of canopy-units.service — and, on FIRST boot only, install the
+                # runner code seed (below).
                 set -euo pipefail
                 R="${AWS::Region}"
                 secret() { aws --region "$R" secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text; }
@@ -283,22 +263,17 @@ Resources:
                   mv /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/cloud_runner.py
                   rm -rf "$SEED"
                 fi
-                # gog's `file` keyring backend (the only option on a headless box —
-                # there is no OS keychain) encrypts with a password it PROMPTS for.
-                # With no TTY the prompt is impossible, so every `gog auth tokens
-                # import` died with "no TTY available for keyring file backend
-                # password prompt; set GOG_KEYRING_PASSWORD" and the whole fleet had
-                # zero Gmail/Drive auth. It has to live in the runner's own env, not
-                # just bootstrap's: gog needs the password to READ tokens too, so
-                # every agent turn (which inherits this env) needs it as well.
-                # Optional — an absent secret must not wedge the service, so this
-                # tolerates failure and simply leaves gog unusable, as before.
-                GOG_PW=$(secret ${GogKeyringSecret} 2>/dev/null || true)
-                cat > /opt/canopy-runner/runner.env <<ENV
-                GOG_KEYRING_PASSWORD=$GOG_PW
+                # The stack's parameters for the box's isolation units (spec
+                # 2026-10-19-runner-isolation-units §1) — and NO secret: no PAT (a unit
+                # pairs by the box's one approved invitation and signs in with its own
+                # key), no Claude token (each unit's logins come from canopy-web), no
+                # box-wide gog password (each agent's is derived from its unit's own
+                # secret). Root-only; `cloud_runner.py --setup-units` makes each unit's
+                # env from it on every start.
+                install -d -m 755 /etc/canopy-runner
+                cat > /etc/canopy-runner/box.env <<ENV
                 CANOPY_BASE_URL=${CanopyBaseUrl}
-                CANOPY_TOKEN=$(if [ -n "${CanopyTokenSecret}" ]; then secret "${CanopyTokenSecret}" 2>/dev/null || true; fi)
-                CLAUDE_CODE_OAUTH_TOKEN=$(secret ${ClaudeTokenSecret})
+                RUNNER_UNITS=${RunnerUnits}
                 RUNNER_PROJECTS=${RunnerProjects}
                 RUNNER_AGENTS=${RunnerAgents}
                 RUNNER_SESSIONS=${RunnerSessions}
@@ -308,8 +283,7 @@ Resources:
                 RUNNER_NAME=${RunnerName}
                 AGENT_SLUGS=${AgentSlugs}
                 ENV
-                chown ubuntu:ubuntu /opt/canopy-runner/runner.env
-                chmod 600 /opt/canopy-runner/runner.env
+                chmod 600 /etc/canopy-runner/box.env
             - path: /usr/local/bin/canopy-runner-update
               permissions: '0755'
               content: |
@@ -332,29 +306,6 @@ Resources:
                   exit 0
                 fi
                 bash "$TMP" "$@"
-            - path: /etc/sudoers.d/canopy-runner-update
-              permissions: '0440'
-              content: |
-                # The auto-updater runs as the service user and needs exactly one
-                # privileged action: restarting the runner after installing new
-                # bytes. Scoped to that command rather than relying on the AMI's
-                # default blanket NOPASSWD for `ubuntu`.
-                ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart canopy-runner.service
-                # The daemon's update NUDGE (an `update_available` WS frame) starts
-                # the update unit off-cycle instead of waiting out the 30-min timer.
-                # `start`, never the script as a child — the restart above would
-                # kill a child in the daemon's own cgroup mid-install.
-                ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block canopy-runner-update.service
-            - path: /etc/systemd/system/canopy-runner-update.service
-              content: |
-                [Unit]
-                Description=Canopy cloud runner auto-update (install the deployed sha)
-                [Service]
-                Type=oneshot
-                User=ubuntu
-                Environment=HOME=/home/ubuntu
-                Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-                ExecStart=/usr/local/bin/canopy-runner-update
             - path: /etc/systemd/system/canopy-runner-update.timer
               content: |
                 [Unit]
@@ -369,49 +320,15 @@ Resources:
                 AccuracySec=1min
                 [Install]
                 WantedBy=timers.target
-            - path: /etc/systemd/system/canopy-runner.service
-              content: |
-                [Unit]
-                Description=Canopy cloud runner
-                After=network-online.target
-                Wants=network-online.target
-                [Service]
-                Type=simple
-                # '+' runs fetch-env as root (writes /opt + /home/ubuntu/.claude);
-                # '-' makes the env file optional so the first start (before
-                # cloud-init's one-shot fetch) can't wedge the unit.
-                ExecStartPre=+/usr/local/bin/canopy-fetch-env
-                EnvironmentFile=-/opt/canopy-runner/runner.env
-                # ~/.local/bin so `uv tool install`-shipped binaries (the canopy
-                # CLI, and gog when it falls back off /usr/local/bin — see
-                # bootstrap_agents.sh install_gog()) are on PATH for
-                # cloud_runner.py's own subprocess calls (bootstrap_agents.sh,
-                # claude turns, git). No ExecStartPre here for the canopy-web
-                # clone / bootstrap_agents.sh run — see cloud_runner.py's
-                # bootstrap_agent_fleet() docstring for why that runs from
-                # inside main(), after credentials are staged, not here.
-                Environment=PATH=/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-                ExecStart=/usr/bin/python3 /opt/canopy-runner/cloud_runner.py
-                Restart=on-failure
-                RestartSec=10
-                # One OOM-killed CHILD (a turn's claude or ACP adapter) must fail
-                # that turn only. systemd's default, OOMPolicy=stop, stopped the
-                # whole unit instead — every in-flight turn lost, twice on
-                # 2026-10-05 (04:02 and 12:02 on cloud-ec2-1).
-                OOMPolicy=continue
-                User=ubuntu
-                [Install]
-                WantedBy=multi-user.target
           runcmd:
             # Swap, so a memory spike slows a turn down instead of the kernel
             # killing one. A t3.medium has 3.8 GB and ships with none; 4 GB here
             # absorbs a test suite or build running beside two agent turns.
             - [ sh, -c, "[ -f /swapfile ] || { fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && echo '/swapfile none swap sw 0 0' >> /etc/fstab; }" ]
-            # /opt is root:root 0755 by default — pre-create the two directories
-            # cloud_runner.py's bootstrap_agent_fleet() writes into (as `ubuntu`,
-            # the service user) so it never needs root just to mkdir. Harmless to
-            # run before credentials exist; both start empty.
-            - [ install, -d, -o, ubuntu, -g, ubuntu, /opt/canopy-web, /opt/agents ]
+            # The updater's canopy-web clone: ROOT's on a box of units (no unit may
+            # rewrite the code every unit runs); each unit keeps its own clones in
+            # its home. --install-units clones it (a public repo: no token).
+            - [ install, -d, -o, root, -g, root, /opt/canopy-web ]
             # node 22, and the version is load-bearing rather than "latest LTS".
             # @agentclientprotocol/claude-agent-acp declares `engines: {node: >=22}`
             # from 0.63.0 onward, so on node 20 npm does not fail — it silently
@@ -431,16 +348,14 @@ Resources:
             # and a later `canopy-fetch-env`/manual apt-get can retry.
             - [ bash, -c, "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y gh || true" ]
             - [ bash, -c, "curl -fsSL https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor -o /usr/share/keyrings/1password-archive-keyring.gpg && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/amd64 stable main' > /etc/apt/sources.list.d/1password.list && mkdir -p /etc/debsig/policies/AC2D62742012EA22 /usr/share/debsig/keyrings/AC2D62742012EA22 && curl -fsSL https://downloads.1password.com/linux/debian/debsig/1password.pol -o /etc/debsig/policies/AC2D62742012EA22/1password.pol && curl -fsSL https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor -o /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg && apt-get update && apt-get install -y 1password-cli || true" ]
-            # Materialize the env + creds once (as root) BEFORE first start, so the
-            # unit doesn't fail on a missing EnvironmentFile on boot.
+            # Materialize the seed and box.env once (as root), then the systemd units
+            # for every isolation unit, from cloud_runner.py itself (spec 2026-10-19
+            # §1): users, the IMDS rule, the KMS broker, canopy-pair (ONE
+            # pair-by-role for every unit), one canopy-runner@<unit> each, and the
+            # auto-updater (root, every unit) — the unit files live in the runner,
+            # not here, so the 16 KB cap holds and a live box can be moved in place.
             - [ bash, -c, "/usr/local/bin/canopy-fetch-env" ]
-            - [ systemctl, daemon-reload ]
-            - [ systemctl, enable, --now, canopy-runner.service ]
-            # The auto-updater. A SEPARATE unit from the runner on purpose: a
-            # runner that crash-loops can never update itself (it never heartbeats,
-            # so it never learns it is behind), and an independent timer means
-            # shipping a fix is enough to rescue the box. Spec 2026-07-30.
-            - [ systemctl, enable, --now, canopy-runner-update.timer ]
+            - [ python3, /opt/canopy-runner/cloud_runner.py, --install-units ]
 
 Outputs:
   InstanceId:

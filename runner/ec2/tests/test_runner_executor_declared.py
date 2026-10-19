@@ -19,13 +19,14 @@ def _text() -> str:
 
 
 def test_the_env_file_carries_the_executor():
-    """The heredoc that BUILDS runner.env has to emit it, or nothing does."""
+    """The heredoc that BUILDS box.env (every unit's env is made from it on every
+    start) has to emit it, or nothing does."""
     text = _text()
-    heredoc = re.search(r"cat > /opt/canopy-runner/runner\.env <<ENV(.*?)\n\s*ENV\n",
+    heredoc = re.search(r"cat > /etc/canopy-runner/box\.env <<ENV(.*?)\n\s*ENV\n",
                         text, re.S)
-    assert heredoc, "runner.env heredoc not found — did canopy-fetch-env move?"
+    assert heredoc, "box.env heredoc not found — did canopy-fetch-env move?"
     assert "RUNNER_EXECUTOR=${RunnerExecutor}" in heredoc.group(1), (
-        "runner.env is rebuilt on every start; an executor not written HERE "
+        "box.env is rebuilt on every start; an executor not written HERE "
         "cannot survive a restart no matter where else it is set"
     )
 

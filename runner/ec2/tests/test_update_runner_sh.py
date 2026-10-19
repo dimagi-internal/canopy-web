@@ -522,3 +522,94 @@ def test_the_credentials_refresh_mints_a_token_when_the_daemon_shared_none(box):
     _only_accepts(box, "crt_box")
     assert box.run().returncode == 0
     assert "CANOPY_TOKEN=crt_box" in seen.read_text().splitlines()
+
+
+# --- a box of isolation units (spec 2026-10-19-runner-isolation-units §1) -----
+#
+# One install for every unit, deferred while ANY unit has a turn in flight, every
+# `canopy-runner@*` restarted (and the KMS broker), and each unit's credentials
+# refreshed AS that unit.
+
+class UnitsBox(Box):
+    UNITS = ("dimagi", "agent-eva")
+
+    def __init__(self, tmp_path: pathlib.Path):
+        super().__init__(tmp_path)
+        self.etc = tmp_path / "etc"
+        self.etc.mkdir()
+        units = []
+        for i, uid in enumerate(self.UNITS):
+            home = tmp_path / "home" / f"cu-{uid}"
+            (home / ".canopy-runner").mkdir(parents=True)
+            (home / ".canopy-cloud-runner.json").write_text(json.dumps({"runner_id": RUNNER_ID}))
+            (home / ".canopy-runner" / "runner-token.json").write_text(json.dumps(
+                {"access_token": f"crt_{uid}", "expires_at": time.time() + 3600}))
+            src = home / ".canopy-runner" / "src" / "runner" / "ec2"
+            src.mkdir(parents=True)
+            (src / "bootstrap_agents.sh").write_text("#!/bin/bash\n")
+            (src / "bootstrap_agents.sh").chmod(0o755)
+            (self.etc / f"{uid}.env").write_text(f"CANOPY_UNIT={uid}\nHOME={home}\n")
+            units.append({"id": uid, "user": f"cu-{uid}", "home": str(home), "uid": 2001 + i})
+        (self.etc / "units.json").write_text(json.dumps({"box": "cloud-ec2-9", "units": units}))
+        (self.etc / "box.env").write_text("CANOPY_BASE_URL=https://labs.example/canopy\n")
+        self.as_unit_log = tmp_path / "as-unit.log"
+        self._write_stub("fake-as-unit", f'echo "$@" >> "{self.as_unit_log}"\n')
+
+    def home_of(self, uid: str) -> pathlib.Path:
+        return self.root / "home" / f"cu-{uid}"
+
+    def busy_unit(self, uid: str, count: int, age_seconds: float = 0.0) -> None:
+        (self.home_of(uid) / ".canopy-runner" / "in-flight").write_text(
+            json.dumps({"count": count, "at": time.time() - age_seconds}))
+
+    def run(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(SCRIPT), *args], capture_output=True, text=True,
+            env={"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.root),
+                 "RUNNER_HOME": str(self.home), "CANOPY_WEB_REPO_DIR": str(self.repo),
+                 "RESTART_CMD": str(self.bin / "fake-restart"), "UNITS_FILE": str(self.etc / "units.json"),
+                 "BOX_ENV_FILE": str(self.etc / "box.env"), "UNIT_ETC": str(self.etc),
+                 "AS_UNIT": str(self.bin / "fake-as-unit")})
+
+
+@pytest.fixture
+def units_box(tmp_path):
+    return UnitsBox(tmp_path)
+
+
+def test_units_one_install_restarts_every_unit_and_the_broker(units_box):
+    units_box.stamp("0" * 40)
+    sha = units_box.seed_repo("#!/usr/bin/env python3\nprint('shipped to every unit')\n")
+    units_box.expect(sha)
+    out = units_box.run()
+    assert out.returncode == 0, out.stderr
+    assert "shipped to every unit" in units_box.installed
+    restarted = units_box.restart_log.read_text()
+    assert "canopy-runner@*.service" in restarted and "canopy-kms-broker.service" in restarted
+    # It read the fleet list with a UNIT's own token, never a PAT.
+    assert "Bearer crt_dimagi" in units_box.curl_log.read_text()
+
+
+def test_units_any_unit_in_flight_defers_the_install(units_box):
+    units_box.stamp("0" * 40)
+    units_box.expect(units_box.seed_repo(GOOD_RUNNER))
+    units_box.busy_unit("dimagi", 0)
+    units_box.busy_unit("agent-eva", 1)
+    assert units_box.run("--check").stdout.startswith("busy")
+    assert units_box.run().returncode == 0
+    assert not units_box.restarted
+    # A unit whose marker went stale is not busy (it is the one to rescue).
+    units_box.busy_unit("agent-eva", 3, age_seconds=600)
+    assert units_box.run("--check").stdout.startswith("stale")
+
+
+def test_units_each_refreshes_its_credentials_as_itself(units_box):
+    sha = units_box.seed_repo(GOOD_RUNNER)
+    units_box.stamp(sha)
+    units_box.expect(sha)
+    assert units_box.run().returncode == 0
+    lines = units_box.as_unit_log.read_text().splitlines()
+    assert len(lines) == 2
+    for uid, line in zip(units_box.UNITS, lines):
+        assert line.startswith(f"cu-{uid} -- env -i CANOPY_UNIT={uid}")
+        assert f"CANOPY_TOKEN=crt_{uid}" in line and "--credentials-only" in line

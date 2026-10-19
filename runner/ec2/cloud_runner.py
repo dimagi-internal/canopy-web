@@ -1882,6 +1882,189 @@ def pair_units_main(*, run=subprocess.run, post=None, sleep=time.sleep, chown=os
     return 1
 
 
+# ── systemd for a box of units (`cloud_runner.py --install-units`, root) ─────
+#
+# The unit files live HERE, not in runner.cfn.yaml's UserData: UserData is capped at
+# 16 KB, and cloud-init writes it only on an instance's first boot — so a box built
+# before units could never be moved in place. `--install-units` is the one path for
+# both: cloud-init runs it on a new box, and an operator runs it (with Jonathan's
+# approval) to move a live box to units (runner/ec2/README.md "Moving a box to units").
+SYSTEMD_DIR = pathlib.Path(os.environ.get("CANOPY_SYSTEMD_DIR", "/etc/systemd/system"))
+RUNNER_PY = "/opt/canopy-runner/cloud_runner.py"
+
+SYSTEMD_UNITS = {
+    # Every start: re-read the stack's parameters, then (re)make every unit's user,
+    # files and secrets and the IMDS rule — iptables does not survive a reboot.
+    "canopy-units.service": f"""[Unit]
+Description=Canopy isolation units: users, env files, secrets, the IMDS rule
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/canopy-fetch-env
+ExecStart=/usr/bin/python3 {RUNNER_PY} --setup-units
+[Install]
+WantedBy=multi-user.target
+""",
+    "canopy-kms-broker.service": """[Unit]
+Description=Canopy KMS broker: each unit's zero-knowledge ECDH key, for that unit only
+After=canopy-units.service
+Requires=canopy-units.service
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/canopy-runner/kms_broker.py
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+""",
+    # Pairs every unit in ONE pair-by-role call; waits for the invitation's approval.
+    "canopy-pair.service": f"""[Unit]
+Description=Canopy pairing: every isolation unit on this box, one approval
+After=canopy-kms-broker.service network-online.target
+Requires=canopy-units.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=infinity
+EnvironmentFile=-/etc/canopy-runner/box.env
+ExecStart=/usr/bin/python3 {RUNNER_PY} --pair-units
+Restart=on-failure
+RestartSec=30
+[Install]
+WantedBy=multi-user.target
+""",
+    # One runner per unit, as that unit's user. No sudo, no instance role (IMDS is
+    # root's), its own /tmp.
+    "canopy-runner@.service": f"""[Unit]
+Description=Canopy runner, isolation unit %i
+After=network-online.target canopy-units.service canopy-kms-broker.service
+Wants=network-online.target
+Requires=canopy-units.service
+[Service]
+Type=simple
+User=cu-%i
+EnvironmentFile=/etc/canopy-runner/%i.env
+WorkingDirectory=/home/cu-%i
+ExecStart=/usr/bin/python3 {RUNNER_PY}
+Restart=on-failure
+RestartSec=10
+OOMPolicy=continue
+NoNewPrivileges=yes
+PrivateTmp=yes
+[Install]
+WantedBy=multi-user.target
+""",
+    # The auto-updater, as ROOT on a box of units: one install, every unit restarted.
+    "canopy-runner-update.service": """[Unit]
+Description=Canopy cloud runner auto-update (every isolation unit)
+[Service]
+Type=oneshot
+User=root
+Environment=HOME=/root
+Environment=UNITS_FILE=/etc/canopy-runner/units.json
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/bin/canopy-runner-update
+""",
+}
+
+
+def _git_root(*args: str, run=subprocess.run) -> subprocess.CompletedProcess:
+    return run(["git", "-c", "safe.directory=*", "-C", CANOPY_WEB_REPO_DIR, *args],
+               capture_output=True, text=True, timeout=300)
+
+
+def install_broker(*, run=subprocess.run) -> bool:
+    """`/opt/canopy-runner/kms_broker.py` at the sha this runner was installed from
+    (build-info), from the root-owned canopy-web clone (a public repo: no token)."""
+    target = pathlib.Path(RUNNER_PY).with_name("kms_broker.py")
+    repo = pathlib.Path(CANOPY_WEB_REPO_DIR)
+    if not (repo / ".git").is_dir():
+        run(["git", "clone", "--quiet", CANOPY_WEB_REPO_URL, str(repo)], capture_output=True, timeout=600)
+    sha = build_info().get("sha") or ""
+    if sha:
+        _git_root("fetch", "--quiet", "origin", sha, run=run)
+    _git_root("fetch", "--quiet", "origin", "main", run=run)
+    for ref in ([sha] if sha else []) + ["origin/main"]:
+        res = _git_root("show", f"{ref}:runner/ec2/kms_broker.py", run=run)
+        if res.returncode == 0 and res.stdout.strip():
+            target.write_text(res.stdout)
+            os.chmod(target, 0o755)
+            return True
+    return False
+
+
+#: The stack parameters a box of units needs (never a secret), as the legacy
+#: runner.env names them — what an in-place move carries over into box.env.
+BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS", "RUNNER_DIRECTED",
+                "RUNNER_EXECUTOR", "RUNNER_WORKSPACE", "RUNNER_NAME", "AGENT_SLUGS", "RUNNER_UNITS")
+_IN_PLACE_FETCH_ENV = """#!/bin/sh
+# Replaced by `cloud_runner.py --install-units` when this box moved to isolation
+# units in place: the old script re-wrote /opt/canopy-runner/runner.env (a PAT, the
+# Claude token, the box-wide gog password) on every start. A box of units reads its
+# parameters from /etc/canopy-runner/box.env, which holds no secret.
+exit 0
+"""
+
+
+def write_box_env_from_legacy(*, units_spec: str, legacy: pathlib.Path | None = None,
+                              out: pathlib.Path | None = None) -> dict:
+    """An in-place move: box.env from the legacy runner.env's NON-secret keys, plus
+    the units the operator asked for. Leaves an existing box.env alone."""
+    out = out or BOX_ENV_FILE
+    if out.exists():
+        return read_env_file(out)
+    old = read_env_file(legacy or pathlib.Path(RUNNER_PY).with_name("runner.env"))
+    box = {k: old[k] for k in BOX_ENV_KEYS if k in old}
+    box["RUNNER_UNITS"] = units_spec or box.get("RUNNER_UNITS", "")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(_env_text(box))
+    return box
+
+
+def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None) -> list[str]:
+    """ROOT: the systemd units for a box of isolation units, the legacy single runner
+    retired, root ownership of the shared code, and everything enabled and started.
+    Idempotent. Returns the runner services it enabled.
+
+    On a box built before units (an in-place move), box.env is made from the legacy
+    runner.env's non-secret keys and `$RUNNER_UNITS`, and the legacy fetch-env that
+    re-wrote runner.env's secrets on every start is replaced."""
+    systemd = systemd or SYSTEMD_DIR
+    write_box_env_from_legacy(units_spec=os.environ.get("RUNNER_UNITS", ""))
+    fetch_env = pathlib.Path("/usr/local/bin/canopy-fetch-env")
+    try:
+        if "runner.env" in fetch_env.read_text() and "box.env" not in fetch_env.read_text():
+            fetch_env.write_text(_IN_PLACE_FETCH_ENV)
+    except OSError:
+        pass
+    for name, text in SYSTEMD_UNITS.items():
+        (systemd / name).write_text(text)
+    # The shared, read-only parts: root's, so no unit can rewrite what the others run.
+    for path in (pathlib.Path(RUNNER_PY).parent, pathlib.Path(CANOPY_WEB_REPO_DIR)):
+        if path.exists():
+            run(["chown", "-R", "root:root", str(path)], capture_output=True)
+    # The legacy single runner (User=ubuntu, the box-wide runner.env) stops here;
+    # its runner row is adopted by the unit that keeps the box's name.
+    run(["systemctl", "disable", "--now", "canopy-runner.service"], capture_output=True)
+    for stale in (pathlib.Path("/etc/sudoers.d/canopy-runner-update"), pathlib.Path(RUNNER_PY).with_name("runner.env")):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+    install_broker(run=run)
+    run(["systemctl", "daemon-reload"], capture_output=True)
+    run(["systemctl", "enable", "--now", "canopy-units.service"], capture_output=True)
+    units = load_units().get("units") or []
+    services = [f"canopy-runner@{u['id']}.service" for u in units]
+    run(["systemctl", "enable", "--now", "canopy-kms-broker.service", "canopy-pair.service",
+         "canopy-runner-update.timer", *services], capture_output=True)
+    return services
+
+
 def _wait_for_unit_state() -> str:
     """A unit never pairs itself (it has no role to prove): it waits for root's
     `canopy-pair` to write its state file."""
@@ -7999,16 +8182,27 @@ def _handle_stop(*_a):
 
 def _units_cli(argv: list[str]) -> int:
     """Root's box-wide steps for isolation units (systemd runs them; see runner.cfn.yaml):
-    `--setup-units` (users, env files, secrets, the IMDS rule; every start) and
-    `--pair-units` (canopy-pair: every unit in one pair-by-role call)."""
+    `--install-units` (the systemd units, once — cloud-init, or an operator moving a
+    live box), `--setup-units` (users, env files, secrets, the IMDS rule; every
+    start) and `--pair-units` (canopy-pair: every unit in one pair-by-role call)."""
     if os.geteuid() != 0:
-        print("--setup-units / --pair-units run as root", file=sys.stderr)
+        print("--install-units / --setup-units / --pair-units run as root", file=sys.stderr)
         return 2
+    if argv[0] == "--install-units":
+        services = install_units()
+        _log(f"install-units: {', '.join(services) or 'no units'} enabled")
+        return 0
     if argv[0] == "--setup-units":
         box = read_env_file(BOX_ENV_FILE)
         units = setup_units(box, role_name=_role_name())
         imds_rules()
         _log("setup-units: " + ", ".join(f"{u['id']} ({u['user']}, {u['name']})" for u in units))
+        # A unit added to RunnerUnits later: start its runner, and pair it.
+        for u in units:
+            subprocess.run(["systemctl", "enable", "--now", "--no-block",
+                            f"canopy-runner@{u['id']}.service"], capture_output=True)
+        if any(not _unit_state(u).get("runner_id") for u in units):
+            subprocess.run(["systemctl", "restart", "--no-block", "canopy-pair.service"], capture_output=True)
         return 0
     return pair_units_main()
 
@@ -8016,7 +8210,7 @@ def _units_cli(argv: list[str]) -> int:
 if __name__ == "__main__":
     if sys.argv[1:2] == ["repo-worktree"]:
         sys.exit(_repo_worktree_cli(sys.argv[2:]))
-    if sys.argv[1:2] in (["--setup-units"], ["--pair-units"]):
+    if sys.argv[1:2] in (["--install-units"], ["--setup-units"], ["--pair-units"]):
         sys.exit(_units_cli(sys.argv[1:]))
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)

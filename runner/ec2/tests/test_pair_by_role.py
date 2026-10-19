@@ -128,11 +128,12 @@ def test_main_starts_without_a_token(box, monkeypatch):
         box.main()
 
 
-def test_the_stack_writes_canopy_token_only_when_it_names_a_secret():
+def test_the_stack_writes_no_pat_no_claude_token_and_no_keyring_password():
+    """A box of isolation units holds no PAT (it pairs by invitation, each unit signs in
+    with its own key), no Claude token (each unit's logins come from canopy-web) and no
+    box-wide gog password (each agent's is derived from its unit's secret) — spec
+    2026-10-19-runner-isolation-units §5."""
     cfn = (EC2 / "runner.cfn.yaml").read_text()
-    line = next(ln for ln in cfn.splitlines() if ln.strip().startswith("CANOPY_TOKEN="))
-    # Guarded by a non-empty check, and tolerant of a deleted secret.
-    assert re.search(r'if \[ -n "\$\{CanopyTokenSecret\}" \]', line), line
-    assert "|| true" in line, line
-    # A new stack names no PAT secret; an existing one keeps its value on update.
-    assert re.search(r"\n  CanopyTokenSecret:\n    Type: String\n    Default: ''\n", cfn)
+    for banned in ("CANOPY_TOKEN=", "CLAUDE_CODE_OAUTH_TOKEN=", "GOG_KEYRING_PASSWORD=",
+                   "CanopyTokenSecret", "ClaudeTokenSecret", "GogKeyringSecret", "runner.env"):
+        assert banned not in cfn, banned

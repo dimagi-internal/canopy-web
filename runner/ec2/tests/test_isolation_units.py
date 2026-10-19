@@ -370,3 +370,67 @@ def test_a_unit_waits_for_canopy_pair_instead_of_pairing(load_cloud_runner, monk
     monkeypatch.setattr(cr, "pair_by_role", lambda: pytest.fail("a unit must not pair by role"))
     monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {}))
     assert cr.pair_or_load() == "rid-u" and ticks
+
+
+# ---- the template and the systemd units (lint-style) ----------------------------------
+
+EC2 = pathlib.Path(__file__).resolve().parent.parent
+
+
+def test_each_unit_runs_as_its_own_user_with_no_privilege(cloud_runner):
+    svc = cloud_runner.SYSTEMD_UNITS["canopy-runner@.service"]
+    assert "\nUser=cu-%i\n" in svc and "EnvironmentFile=/etc/canopy-runner/%i.env" in svc
+    assert "NoNewPrivileges=yes" in svc and "PrivateTmp=yes" in svc and "OOMPolicy=continue" in svc
+    assert "Requires=canopy-units.service" in svc
+    # Root's parts stay root's: setup (users, the IMDS rule), the broker, the pairing.
+    for name in ("canopy-units.service", "canopy-kms-broker.service", "canopy-pair.service",
+                 "canopy-runner-update.service"):
+        assert "User=" not in cloud_runner.SYSTEMD_UNITS[name].replace("User=root", ""), name
+    assert "--setup-units" in cloud_runner.SYSTEMD_UNITS["canopy-units.service"]
+    assert "--pair-units" in cloud_runner.SYSTEMD_UNITS["canopy-pair.service"]
+    assert "kms_broker.py" in cloud_runner.SYSTEMD_UNITS["canopy-kms-broker.service"]
+
+
+def test_the_template_installs_units_and_declares_runner_units():
+    cfn = (EC2 / "runner.cfn.yaml").read_text()
+    assert "\n  RunnerUnits:\n    Type: String\n    Default: ''\n" in cfn
+    assert "RUNNER_UNITS=${RunnerUnits}" in cfn
+    assert "- [ python3, /opt/canopy-runner/cloud_runner.py, --install-units ]" in cfn
+    # The legacy single runner (User=ubuntu, sudo for the updater) is not built any more.
+    assert "canopy-runner.service" not in cfn and "sudoers" not in cfn and "User=ubuntu" not in cfn
+
+
+def test_the_ecdh_stack_gives_each_extra_unit_its_own_key():
+    text = (EC2 / "ecdh-kms.cfn.yaml").read_text()
+    # The box's own unit keeps the key it always had (no wrap breaks).
+    assert "'alias/canopy-runner-ecdh/${RoleName}'" in text
+    for i in range(1, 5):
+        assert f"Unit{i}Key:\n    Type: AWS::KMS::Key\n    Condition: HasUnit{i}" in text
+        assert f"'alias/canopy-runner-ecdh/${{RoleName}}/${{Unit{i}}}'" in text
+
+
+@pytest.mark.parametrize("template", ["runner.cfn.yaml", "ecdh-kms.cfn.yaml"])
+def test_templates_pass_cfn_lint(template):
+    cfnlint = pytest.importorskip("cfnlint.api")
+    from cfnlint.api import lint_file
+
+    matches = [m for m in lint_file(EC2 / template) if m.rule.id.startswith("E")]
+    assert not matches, [str(m) for m in matches]
+
+
+def test_an_in_place_move_writes_box_env_without_secrets(cloud_runner, tmp_path):
+    legacy = tmp_path / "runner.env"
+    legacy.write_text("GOG_KEYRING_PASSWORD=pw\nCANOPY_BASE_URL=https://canopy.dimagi.com\nCANOPY_TOKEN=pat\n"
+                      "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-x\nRUNNER_NAME=cloud-ec2-2\nRUNNER_WORKSPACE=dimagi\n"
+                      "RUNNER_AGENTS=ace,eva\nAGENT_SLUGS=ace,eva\n")
+    out = tmp_path / "etc" / "box.env"
+    box = cloud_runner.write_box_env_from_legacy(units_spec="", legacy=legacy, out=out)
+    assert box == {"CANOPY_BASE_URL": "https://canopy.dimagi.com", "RUNNER_AGENTS": "ace,eva",
+                   "RUNNER_WORKSPACE": "dimagi", "RUNNER_NAME": "cloud-ec2-2", "AGENT_SLUGS": "ace,eva",
+                   "RUNNER_UNITS": ""}
+    assert (out.stat().st_mode & 0o777) == 0o600
+    text = out.read_text()
+    assert "pat" not in text and "sk-ant" not in text and "pw" not in text
+    # …and it is the live box's one default unit, named as the box.
+    [unit] = cloud_runner.parse_units(box["RUNNER_UNITS"], workspace="dimagi", box="cloud-ec2-2")
+    assert unit["name"] == "cloud-ec2-2"
