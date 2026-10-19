@@ -741,3 +741,43 @@ describe("SendBox — Esc stops the agent", () => {
     expect(onStop).not.toHaveBeenCalled();
   });
 });
+
+describe("SendBox — a stop you asked for shows at once", () => {
+  it("Esc says it is stopping before the server answers", () => {
+    const onStop = vi.fn();
+    const { textarea } = setup({ isStreaming: true, onStop });
+
+    fireEvent.keyDown(textarea(), { key: "Escape" });
+
+    expect(onStop).toHaveBeenCalledWith(null);
+    expect(screen.getByRole("button", { name: /stopping/i })).toBeTruthy();
+    expect(screen.getByText(/stopping the agent/i)).toBeTruthy();
+  });
+
+  it("keeps Stop on screen while the stop is in flight, even if the host stops calling it streaming", () => {
+    // The host clears `awaitingReply` the moment you stop, which used to take
+    // the button — the only thing that said "stopping…" — away with it.
+    const onStop = vi.fn();
+    const { textarea, rerender } = setup({ isStreaming: true, onStop });
+    fireEvent.keyDown(textarea(), { key: "Escape" });
+    rerender(
+      <SendBox
+        draft={draft()}
+        connected
+        isStreaming
+        streamingMessageId={null}
+        onUpdate={vi.fn()}
+        onSend={vi.fn()}
+        onStop={onStop}
+        stopState="requested"
+      />,
+    );
+    expect(screen.getByRole("button", { name: /stopping/i })).toBeTruthy();
+  });
+
+  it("says stopped once the server confirms and the turn has ended", () => {
+    setup({ isStreaming: false, stopState: "stopped" });
+    expect(screen.getByText(/^stopped$/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /stop/i })).toBeNull();
+  });
+});

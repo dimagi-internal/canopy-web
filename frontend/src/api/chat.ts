@@ -228,6 +228,18 @@ export function setSessionNotify(id: string, everyCompletion: boolean): Promise<
   });
 }
 
+/**
+ * Rename this session. A typed title is never replaced by the emdash task name
+ * or the first message; blank clears it. The emdash task keeps its own name.
+ */
+export function setSessionTitle(id: string, title: string): Promise<ChatSession> {
+  return request<ChatSession>(`/api/canopy-sessions/${encodeURIComponent(id)}/title`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
 export type SlackDetachResult = components["schemas"]["SlackDetachOut"];
 
 /**

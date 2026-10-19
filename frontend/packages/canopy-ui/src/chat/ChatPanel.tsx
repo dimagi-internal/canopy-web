@@ -303,7 +303,11 @@ export function ChatPanel({
       <SendBox
         draft={state.active_draft}
         connected={connected}
-        isStreaming={inFlightMessage != null || awaitingReply}
+        // The same answer the "Thinking…" bubble and the header give. Gating Stop
+        // (and Esc) on a streaming ROW alone hid it for most of a runner turn:
+        // that row only exists once the reply's first text does, so a turn busy
+        // in tools had a bubble saying it was working and no way to stop it.
+        isStreaming={inFlightMessage != null || awaitingReply || agentHasFloor}
         streamingMessageId={inFlightMessage?.id ?? null}
         onUpdate={onUpdateDraft}
         onSend={onSend}

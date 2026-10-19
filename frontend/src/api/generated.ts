@@ -9717,6 +9717,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/title": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Rename a session
+         * @description Give this session a title of your own. A title somebody typed is never
+         *     replaced by the emdash task name or the first message; a blank one clears
+         *     it, and the session is named again the way an untitled one is. Renames the
+         *     session in canopy only — the emdash task keeps its name.
+         */
+        readonly put: operations["set_session_title"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/move": {
         readonly parameters: {
             readonly query?: never;
@@ -28101,6 +28124,11 @@ export interface components {
             /** Every Completion */
             readonly every_completion: boolean;
         };
+        /** SessionTitleIn */
+        readonly SessionTitleIn: {
+            /** Title */
+            readonly title: string;
+        };
         /** SessionMoveIn */
         readonly SessionMoveIn: {
             /** Workspace */
@@ -42559,6 +42587,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["SessionNotifyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly set_session_title: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionTitleIn"];
             };
         };
         readonly responses: {

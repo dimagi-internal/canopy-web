@@ -389,6 +389,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "reset_session": ("session-acl",),  # write
     "unarchive_session": ("session-acl",),  # write
     "set_session_notify": ("session-acl",),  # write
+    "set_session_title": ("session-acl",),  # write
     # filing.move: read gate, then the session's own person (creator / runner owner),
     # then content.write in the TARGET workspace; an agent's session is a 422.
     "move_session": ("session-acl", "content.write"),
@@ -991,7 +992,7 @@ NOT_SETTINGS: dict[str, str] = {
     "app_view_message": "conversation", "app_view_read": "conversation", "archive_session": "conversation",
     "attach_session": "conversation", "upload_attachment": "conversation", "request_backfill": "conversation",
     "close_session": "conversation", "detach_session": "conversation", "move_session": "conversation",
-    "set_session_notify": "conversation", "canopy_sessions_declare_page_actions": "conversation",
+    "set_session_notify": "conversation", "set_session_title": "conversation", "canopy_sessions_declare_page_actions": "conversation",
     "invoke_page_action": "conversation", "canopy_sessions_resolve_page_action": "conversation",
     "canopy_sessions_declare_page_state": "conversation", "place": "conversation",
     "reset_session": "conversation", "declare_run_input": "conversation", "share_secret": "conversation",
