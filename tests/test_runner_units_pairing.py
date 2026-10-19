@@ -453,3 +453,24 @@ def test_a_box_cannot_replace_or_clear_its_server_owned_unit(two_trees):
                            content_type="application/json")
         assert res.status_code == 200, res.content
         assert Runner.objects.get(pk=rid).unit() == {"kind": "agent", "slug": "eva"}
+
+
+def test_adopting_as_an_agent_unit_restricts_the_runner_at_once(live_box):
+    """The unit an adopted runner becomes is the invitation's, set by canopy-web in
+    the same call: adopted as the agent unit for eva, it runs nothing else."""
+    from apps.harness import routing
+
+    unit = [{"name": "cloud-ec2-2", "workspace": "connect", "kind": "agent", "slug": "eva"}]
+    _approve(live_box, _invite(live_box, units=unit, name="cloud-ec2-2").json()["id"])
+    res = _pair_units({"cloud-ec2-2": {"public_jwk": _jwk(), "ecdh_public_jwk": live_box["kms"]}},
+                      name="cloud-ec2-2")
+    assert res.status_code == 200, res.content
+    runner = Runner.objects.get(pk=live_box["runner"].pk)
+    assert runner.unit() == {"kind": "agent", "slug": "eva"}
+    assert routing.unit_refusal(runner, "ada") and not routing.unit_refusal(runner, "eva")
+
+
+def test_adopting_as_a_tree_unit_records_its_root(live_box):
+    _approve(live_box, _invite(live_box, units=LIVE_UNIT, name="cloud-ec2-2").json()["id"])
+    _pair_units({"cloud-ec2-2": {"public_jwk": _jwk(), "ecdh_public_jwk": live_box["kms"]}}, name="cloud-ec2-2")
+    assert Runner.objects.get(pk=live_box["runner"].pk).unit() == {"kind": "tree", "root": "connect"}

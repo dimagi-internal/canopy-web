@@ -205,7 +205,12 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
                 caps = declared_capabilities(u.capabilities)
                 caps.pop("unit", None)
                 prior_unit = runner.unit()
-                if prior_unit:
+                if name in adopt:
+                    # Adopted under the invitation a person approved: its unit is the
+                    # one that invitation names — an agent unit is restricted at once.
+                    spec = next(x for x in units_of(invitation) if x["name"] == name)
+                    caps["unit"] = unit_capability(spec, roots.get(spec["workspace"], spec["workspace"]))
+                elif prior_unit:
                     caps["unit"] = prior_unit
                 Runner.objects.filter(pk=runner.pk).update(
                     host=u.host or runner.host, machine_id=machine,
