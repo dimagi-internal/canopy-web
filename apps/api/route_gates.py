@@ -356,7 +356,15 @@ GATES: dict[str, tuple[str, ...]] = {
     "append_turn_transcript": ("runner", "agent.work", "session-acl"),
     "read_turn_transcript": ("turn-content",),
     "start_turn": ("runner", "agent.work", "session-acl"),
-    "finish_turn": ("runner", "agent.work", "session-acl"),
+    "finish_turn": ("runner", "agent.work", "session-acl"),  # a LOCAL turn: its initiator only
+    # --- apps/harness/api_local.py: local use (a person's private runner + its local turns)
+    "register_private_runner": ("self",),
+    "list_private_runners": ("self",),
+    "retire_private_runner": ("self",),
+    # member of the agent's workspace (else 404), AND access.decide must give the
+    # WHOLE agent (owner/admin, a `full:` rule, or a workspace editor) — else 403
+    "open_local_turn": ("member",),
+    "renew_local_turn": ("self",),  # the local turn's own initiator
     "cancel_turn": ("agent.work", "session-acl", "self"),  # agent/project: agent.work; chat: write access, or your own send
     # --- apps/harness/api.py: runner-fired schedules + drills
     "sync_schedules": ("runner",),
@@ -820,6 +828,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "resolve_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "record_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "preview_cron": "POST but read-only: computes next fire times, writes nothing",
+    "open_local_turn": "records the caller's OWN session on their own private runner; access.decide must give them the whole agent (403 otherwise), so a viewer is refused in the route",
     "create_session": "starting a chat with an agent is the interaction tier a viewer holds",
     "create_idea": "any member may put their OWN want on a project, in their own words, as themself — a suggested kind=idea task carrying only their quote, with no on_approve; it names nobody else, and recording someone else's words is create_tasks (agent.work)",
     "put_contributor_summary": "an agent's login is a member, and that is who writes a contributor page — only while the person lets agents learn about them and has granted that agent; otherwise only the person themself",
@@ -911,6 +920,7 @@ SETTINGS: frozenset[str] = frozenset({
     "create_token", "revoke_token", "tokens_disconnect_app", "github_disconnect",
     "set_presence_preference", "set_session_workspace_preference", "set_preferences",
     "set_runner_app_preference",
+    "register_private_runner", "retire_private_runner",  # your own machines (local use)
     "set_my_agent_memory", "set_my_grant_collection",
     "add_my_viewer", "remove_my_viewer",  # who may see your memory page
     "finish_passkey_registration", "delete_passkey",  # the second factor a step-up asks for
@@ -1007,6 +1017,7 @@ NOT_SETTINGS: dict[str, str] = {
     # turn
     "create_turn": "turn", "enqueue_turn": "turn", "cancel_turn": "turn", "append_turn_events": "turn",
     "finish_turn": "turn", "start_turn": "turn", "append_turn_transcript": "turn",
+    "open_local_turn": "turn", "renew_local_turn": "turn",
     "fire_schedule_route": "turn",
     "finish_checkin_run": "turn",  # the project agent's turn reporting its check-in run done
     "finish_huddle_group_run": "turn",  # the same, through the one-release alias

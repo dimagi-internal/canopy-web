@@ -265,6 +265,37 @@ an actor routing rule (an `auto` naming a person needs a verified message) → a
 source routing rule → the agent's own switch (`Agent.turn_mode`). Setting `auto`
 on any rung is for the agent's admins.
 
+## Local use of an agent
+
+A person may run an agent in their **own** Claude Code, with the agent's plugin and
+skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
+
+* A **private runner** (`PrivateRunner`) is a person's machine: plain Claude Code with
+  the canopy plugin, no runner app. It is registered once with the person's own
+  token (`canopy private-runner register`) and belongs to the PERSON — one serves
+  every agent they use. It never claims a turn, and nothing routes to it; it is
+  not a `Runner` row.
+* A **local turn** (`Turn.origin = local`) is one session there with one agent,
+  opened by the canopy plugin's SessionStart hook
+  (`POST /api/harness/local-turns/`). It is a real turn: the person is its
+  initiator (verified, `via=local`), it is RUNNING from the start and never
+  claimed, and it carries the same caller envelope a runner turn gets
+  (`trigger.private_runner` names the machine; `trigger.runner` is null).
+* **Who may.** Exactly whom `decide` gives the WHOLE agent (rows 1–4): its owner
+  or an admin, a `full:` rule, a workspace editor. A viewer or contact is refused
+  (403) and keeps the confined `ask` path through canopy.
+* **Mode.** `manual`, always — except an agent admin who asks for `auto`. Stamped
+  at open, like a dispatch's request; a `full:`-rule member does not get the
+  routing ladder here, because nothing about a session on their own machine is a
+  channel the owner set a posture for.
+* **It never holds the agent.** A local turn is excluded from
+  `one_executing_turn_per_agent` and `routing.busy_agent_ids`: it is the person's
+  session, not the agent's one continuous session, so it neither waits behind the
+  agent's runner turns nor delays them, and two people may use the agent at once.
+* **Reporting.** Only its initiator may renew, finish or append its transcript —
+  there is no box. The lease is 8 hours, renewed by the session's prompts; a
+  session that dies is swept `lost` like any turn.
+
 ## What a caller's turn tells the owner
 
 A confined turn can act on nothing, so a caller's procedure ends its final

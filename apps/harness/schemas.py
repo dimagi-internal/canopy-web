@@ -1898,3 +1898,51 @@ class RunnerPairByRoleOut(Schema):
     #: Each unit's device key id, by unit name — what the box records so its
     #: proofs are sent (`canopy vault device --registered`).
     device_keys: dict[str, uuid.UUID] = {}
+
+
+# --- local use: private runners + local turns (apps/harness/local.py, canopy-web#1704)
+
+
+class PrivateRunnerIn(Schema):
+    name: str = Field(min_length=1, max_length=100)
+    host: str = Field(default="", max_length=200)
+
+
+class PrivateRunnerOut(Schema):
+    id: uuid.UUID
+    name: str
+    host: str
+    created_at: dt.datetime
+    last_seen_at: dt.datetime | None = None
+    retired_at: dt.datetime | None = None
+
+
+class LocalTurnIn(Schema):
+    """Open (or re-open) the local turn for one Claude Code session."""
+
+    agent: str = Field(min_length=1, max_length=100)
+    private_runner: uuid.UUID
+    claude_session_id: str = Field(min_length=1, max_length=100)
+    cwd: str = Field(default="", max_length=300)
+    #: "auto" is honoured only for an agent admin; anything else runs manual.
+    turn_mode: Literal["", "manual", "auto"] = ""
+
+
+class LocalTurnOut(Schema):
+    turn_id: uuid.UUID
+    created: bool
+    agent: str
+    workspace: str
+    turn_mode: str
+    turn_mode_basis: str
+    lease_expires_at: dt.datetime | None = None
+    #: Where the person reads this turn on canopy-web.
+    url: str
+    #: The caller envelope, as a runner would have received it at claim.
+    envelope: dict[str, Any]
+
+
+class LocalTurnRenewOut(Schema):
+    turn_id: uuid.UUID
+    status: str
+    lease_expires_at: dt.datetime | None = None
