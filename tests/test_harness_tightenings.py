@@ -8,7 +8,8 @@ legitimate path through it pinned beside the bypass.
    pin arm skips target matching, so the enqueue is the only place to ask.
 3. `record-session` with a session-id thread_key binds only a session of THIS
    target, in a tenant the runner's owner belongs to (404 otherwise).
-4. A new chat's `runner_id` is a pin, decided at create by `may_pin_runner`.
+4. A new chat's `runner_id` is a pin, decided at create by `may_pin_runner`;
+   the agent's own login may pin a box its runner order already routes it to.
 5. Changing an existing agent's repo/engine/secrets/sources is its admins';
    re-sending the stored values is not a change.
 """
@@ -20,7 +21,7 @@ from django.test import Client
 
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness.models import Runner, Turn
+from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
@@ -224,6 +225,43 @@ def test_a_new_chat_may_pin_a_box_the_caller_administers_or_any_box_as_admin(wor
     r2 = _post(_as(owner), "/api/w/canopy/canopy-sessions/",
                {"agent_slug": "echo", "runner_id": str(eds_box.id)})
     assert r2.status_code == 200, r2.content
+
+
+def _agent_login(agent, ws):
+    """The agent's own canopy login (`Agent.user`), a workspace member as hal@ is."""
+    me = User.objects.create_user("echo-bot", "echo@dimagi-ai.com", "pw")
+    WorkspaceMembership.objects.create(user=me, workspace=ws, role=WorkspaceMembership.EDITOR)
+    agent.user = me
+    agent.save(update_fields=["user"])
+    return me
+
+
+def test_an_agent_may_pin_its_own_chat_to_a_box_in_its_runner_order(world):
+    owner, _e, ws, agent = world
+    me = _agent_login(agent, ws)
+    box = _runner(owner, ws, projects=["echo"], name="jj-box2")
+    RunnerAssignment.objects.create(agent=agent, runner=box, rank=0)
+    r = _post(_as(me), "/api/w/canopy/canopy-sessions/",
+              {"agent_slug": "echo", "runner_id": str(box.id)})
+    assert r.status_code == 200, r.content
+
+
+def test_an_agent_may_not_pin_a_box_outside_its_order_or_kept_off_by_a_strict_rule(world):
+    owner, _e, ws, agent = world
+    me = _agent_login(agent, ws)
+    ordered = _runner(owner, ws, projects=["echo"], name="jj-box2")
+    stray = _runner(owner, ws, projects=["echo"], name="jj-box3")
+    RunnerAssignment.objects.create(agent=agent, runner=ordered, rank=0)
+    r = _post(_as(me), "/api/w/canopy/canopy-sessions/",
+              {"agent_slug": "echo", "runner_id": str(stray.id)})
+    assert r.status_code == 403, r.content
+    # A strict rule for the agent's own address keeps its work on `stray` only.
+    RunnerAssignment.objects.create(agent=agent, runner=stray, rank=0, source="api",
+                                    actor="echo@dimagi-ai.com", strict=True)
+    r2 = _post(_as(me), "/api/w/canopy/canopy-sessions/",
+               {"agent_slug": "echo", "runner_id": str(ordered.id)})
+    assert r2.status_code == 403, r2.content
+    assert not Session.objects.exists()
 
 
 # --- 5. agent definition fields ----------------------------------------------------
