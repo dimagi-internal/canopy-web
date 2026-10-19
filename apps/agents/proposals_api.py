@@ -36,6 +36,7 @@ from .api import (
     _visible_agent_workspace_ids,
 )
 from .models import Agent, AgentTask
+from apps.harness.models import Turn
 from .schemas import (
     AgentBackingIn,
     ProjectBackingIn,
@@ -159,6 +160,27 @@ def unback_project(request: HttpRequest, slug: str, ref: str) -> Status:
     return Status(204, None)
 
 
+def _leads_huddle(request: HttpRequest, huddle_id: str, backer) -> bool:
+    """The caller's own agent led huddle `huddle_id` and `backer` was one of its members.
+    A huddle files each survivor on its LEAD's board (rarely the leader's own), then
+    records the members' round-3 answers there — so the leader must be able to, not only
+    the project's agent."""
+    if not huddle_id:
+        return False
+    for ref in Turn.objects.filter(origin_ref__kind="huddle", origin_ref__huddle=huddle_id,
+                                   agent__user_id=request.user.pk).values_list("origin_ref", flat=True):
+        if isinstance(ref, dict) and backer.slug in (ref.get("members") or []):
+            return True
+    return False
+
+
+def _may_record_stance(request: HttpRequest, agent, who, huddle_id: str | None) -> None:
+    if not (_is_agent_itself(request, who) or _is_agent_itself(request, agent)
+            or _leads_huddle(request, huddle_id or "", who)):
+        raise HttpError(403, f"only {who.slug} itself, {agent.slug} (the project's agent), "
+                             f"or the leader of the huddle it took part in records {who.slug}'s stance")
+
+
 @router.put("/{slug}/projects/{ref}/backings/agents/{backer}/", response=ProjectBackingOut,
             summary="Record an agent's stance on a project (a co-sign)")
 def back_project_as_agent(request: HttpRequest, slug: str, ref: str, backer: str,
@@ -171,9 +193,7 @@ def back_project_as_agent(request: HttpRequest, slug: str, ref: str, backer: str
     who = services.get_agent(backer)
     if who is None or who.workspace_id not in _visible_agent_workspace_ids(request):
         raise HttpError(404, f"agent '{backer}' not found")
-    if not (_is_agent_itself(request, who) or _is_agent_itself(request, agent)):
-        raise HttpError(403, f"only {backer} itself, or {agent.slug} (the project's agent), "
-                             f"records {backer}'s stance")
+    _may_record_stance(request, agent, who, payload.huddle_id)
     try:
         proposals.back(project, stance=payload.stance, line=payload.line, agent=who,
                        source="huddle" if payload.huddle_id else engagement.surface_of(request),
@@ -294,9 +314,7 @@ def back_task_as_agent(request: HttpRequest, slug: str, ref: str, task: str, bac
     who = services.get_agent(backer)
     if who is None or who.workspace_id not in _visible_agent_workspace_ids(request):
         raise HttpError(404, f"agent '{backer}' not found")
-    if not (_is_agent_itself(request, who) or _is_agent_itself(request, agent)):
-        raise HttpError(403, f"only {backer} itself, or {agent.slug} (the project's agent), "
-                             f"records {backer}'s stance")
+    _may_record_stance(request, agent, who, payload.huddle_id)
     try:
         proposals.back(None, task=row, stance=payload.stance, line=payload.line, agent=who,
                        source="huddle" if payload.huddle_id else engagement.surface_of(request),
