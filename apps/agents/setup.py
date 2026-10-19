@@ -145,6 +145,18 @@ def _canopy_vault(agent: Agent, settings: str, vh: dict) -> dict:
     from .pat_rotation import CANOPY_PAT_REF
 
     title = "Give it a vault"
+    if agent.zk_enabled:
+        from . import zk_seal
+
+        if not zk_seal.recipients_for(agent):
+            # Every value is sealed to the vault's readers (its approved runners'
+            # device keys, its admins' vault keys). With none, nothing can be stored —
+            # connecting Google ends in `zk-no-recipients` — so this comes first.
+            return _step("vault", title, TODO,
+                         "Nobody can open its vault yet, so it cannot store a secret — Google "
+                         "included. Set up your vault key with a passkey (or approve one of its "
+                         "runners' device keys) first.",
+                         href="/settings#vault-key", action="Set up your vault key")
     # Its canopy login has its own step (and button); listing it here too would be
     # one missing thing reported twice.
     leftover = [n for n in vh["in_1password"] + vh["missing"] if n != CANOPY_PAT_REF]
@@ -342,6 +354,12 @@ def setup_steps(agent: Agent, viewer=None) -> list[dict]:
     base = f"/w/{agent.workspace_id}/agents/{agent.slug}"
     settings = f"{base}/settings"
     repo = delegations.agent_repo(agent)
+    mailbox = _mailbox(agent, settings)
+    vault = [_vault(agent, settings), *[s for s in [_canopy_login(agent, settings)] if s]]
+    # A zero-knowledge agent on the canopy-web vault seals what Google hands back to
+    # whoever can open its vault, so the vault comes first; otherwise the mint fails
+    # with `zk-no-recipients`.
+    zk_first = agent.zk_enabled and agent.credential_source == Agent.CANOPY_WEB
     return [
         _step("repo", "Give it a repository", DONE if agent.repo_url else TODO,
               f"Code lives in {repo or agent.repo_url}." if agent.repo_url else
@@ -352,9 +370,7 @@ def setup_steps(agent: Agent, viewer=None) -> list[dict]:
               href=agent.repo_url or f"{settings}#repository",
               action="Open on GitHub" if agent.repo_url else "Set its repository"),
         _github(agent, settings),
-        _mailbox(agent, settings),
-        _vault(agent, settings),
-        *[s for s in [_canopy_login(agent, settings)] if s],
+        *([*vault, mailbox] if zk_first else [mailbox, *vault]),
         _runner(agent, settings, viewer),
         _job(agent),
         _first_turn(agent, base),

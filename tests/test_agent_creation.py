@@ -462,3 +462,45 @@ def test_the_runner_step_offers_pairing_to_whoever_could_hold_the_agent(editor, 
     RunnerAssignment.objects.create(agent=agent, runner=box, rank=0)
     AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud")
     assert next(s for s in setup_steps(agent, viewer=editor) if s["key"] == "runner")["links"] == []
+
+
+def _zk_agent(ws, owner):
+    """A new agent as creation makes it: zero-knowledge, on the canopy-web vault, at kv 0."""
+    return _agent(ws, owner, zk_enabled=True, zk_kv=0, credential_source=Agent.CANOPY_WEB)
+
+
+def test_a_zero_knowledge_agent_sets_up_its_vault_before_google(editor, ws):
+    """Connecting Google seals the token to whoever can open the vault; with nobody yet
+    the mint ends in `zk-no-recipients`. So the vault comes first."""
+    steps = setup_steps(_zk_agent(ws, editor))
+    assert [s["key"] for s in steps] == ["repo", "github", "vault", "canopy_login", "mailbox", "runner",
+                                         "job", "first_turn"]
+
+
+def test_a_vault_nobody_can_open_is_not_done(editor, ws):
+    from apps.passkeys.models import UserVaultKeyset
+
+    agent = _zk_agent(ws, editor)
+    vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
+    assert vault["status"] == "todo"
+    assert vault["href"] == "/settings#vault-key" and vault["action"] == "Set up your vault key"
+    assert "passkey" in vault["detail"] and "Google" in vault["detail"]
+
+    # An admin of the agent with a vault key can open it.
+    UserVaultKeyset.objects.create(user=editor, public_jwk={"kty": "EC", "crv": "P-256", "x": "x", "y": "y"})
+    assert _status(agent)["vault"] == "done"
+
+
+def test_a_vault_open_only_to_a_non_admin_still_has_nobody(editor, ws):
+    from apps.passkeys.models import UserVaultKeyset
+
+    agent = _zk_agent(ws, editor)
+    viewer = a_member(ws, email="v@dimagi.com", role=WorkspaceMembership.VIEWER)
+    UserVaultKeyset.objects.create(user=viewer, public_jwk={"kty": "EC", "crv": "P-256", "x": "x", "y": "y"})
+    assert _status(agent)["vault"] == "todo"
+
+
+def test_an_agent_that_is_not_zero_knowledge_keeps_google_before_its_vault(editor, ws):
+    agent = _agent(ws, editor, credential_source=Agent.CANOPY_WEB)
+    keys = [s["key"] for s in setup_steps(agent)]
+    assert keys.index("mailbox") < keys.index("vault")

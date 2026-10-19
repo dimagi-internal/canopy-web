@@ -68,7 +68,13 @@ export function mintOutcome(status: string | null, ctx: MintContext = {}): MintO
     case 'zk-no-recipients':
       // A zero-knowledge agent: the token is sealed to its devices and members,
       // and it has neither yet (canopy-web#1550).
-      return { tone: 'error', text: 'This agent is zero-knowledge and nobody can read its secrets yet. Approve one of its runners’ device keys, or set up your vault key, then connect again.' }
+      // The setup checklist puts the vault step first for exactly this reason, and
+      // the link is that step's own.
+      return {
+        tone: 'error',
+        text: 'This agent’s vault has no keys yet, so nothing was stored — set up its vault (passkey) first, then connect Google.',
+        link: { href: '/settings#vault-key', label: 'Set up your vault key' },
+      }
     default:
       return null
   }

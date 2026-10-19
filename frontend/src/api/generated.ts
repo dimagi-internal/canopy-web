@@ -4753,8 +4753,8 @@ export interface paths {
         };
         /**
          * What is left before this agent can do its job
-         * @description The setup checklist, in order: repository, GitHub identity, mailbox, vault, runner,
-         *     its first real skill (done in Claude Code — `command` starts that session), first
+         * @description The setup checklist, in order: repository, GitHub identity, mailbox, vault (the
+         *     vault before the mailbox for a zero-knowledge agent), runner, its first real skill (done in Claude Code — `command` starts that session), first
          *     turn. Each step reads the same check the system runs for that thing.
          */
         readonly get: operations["agent_setup"];

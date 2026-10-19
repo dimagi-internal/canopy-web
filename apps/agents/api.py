@@ -2999,8 +2999,8 @@ def agent_readiness(request: HttpRequest, slug: str) -> list[BootstrapReportOut]
 @router.get("/{slug}/setup", response=list[AgentSetupStepOut],
             summary="What is left before this agent can do its job")
 def agent_setup(request: HttpRequest, slug: str) -> list[AgentSetupStepOut]:
-    """The setup checklist, in order: repository, GitHub identity, mailbox, vault, runner,
-    its first real skill (done in Claude Code — `command` starts that session), first
+    """The setup checklist, in order: repository, GitHub identity, mailbox, vault (the
+    vault before the mailbox for a zero-knowledge agent), runner, its first real skill (done in Claude Code — `command` starts that session), first
     turn. Each step reads the same check the system runs for that thing."""
     from .setup import setup_steps
 
