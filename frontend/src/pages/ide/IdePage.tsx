@@ -36,7 +36,9 @@ import {
   DEFAULT_FILTERS,
   NO_RUNNER,
   buildTree,
+  childLinks,
   deleteConsequence,
+  linkKind,
   runnerKey,
   sessionMode,
   sessionState,
@@ -69,10 +71,23 @@ const RAIL_MIN = 260
 const RAIL_MAX = 900
 const clampRail = (w: number) => Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, w)))
 
-type Prefs = { filters: Omit<IdeFilters, 'query'>; collapsed: string[]; railWidth: number; railHidden: boolean }
+type Prefs = {
+  filters: Omit<IdeFilters, 'query'>
+  collapsed: string[]
+  /** Sessions whose links (the sessions started from them) are folded away. */
+  collapsedLinks: string[]
+  railWidth: number
+  railHidden: boolean
+}
 
 function loadPrefs(): Prefs {
-  const fallback: Prefs = { filters: { ...DEFAULT_FILTERS }, collapsed: [], railWidth: RAIL_DEFAULT, railHidden: false }
+  const fallback: Prefs = {
+    filters: { ...DEFAULT_FILTERS },
+    collapsed: [],
+    collapsedLinks: [],
+    railWidth: RAIL_DEFAULT,
+    railHidden: false,
+  }
   try {
     const raw = window.localStorage.getItem(PREFS_KEY)
     if (!raw) return fallback
@@ -85,6 +100,7 @@ function loadPrefs(): Prefs {
         modes: { ...DEFAULT_FILTERS.modes, ...p.filters?.modes },
       },
       collapsed: Array.isArray(p.collapsed) ? p.collapsed : [],
+      collapsedLinks: Array.isArray(p.collapsedLinks) ? p.collapsedLinks : [],
       railWidth: typeof p.railWidth === 'number' ? clampRail(p.railWidth) : RAIL_DEFAULT,
       railHidden: p.railHidden === true,
     }
@@ -182,6 +198,7 @@ export function IdePage() {
   const [initial] = useState(loadPrefs)
   const [filters, setFilters] = useState<IdeFilters>({ ...initial.filters, query: '' })
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initial.collapsed))
+  const [collapsedLinks, setCollapsedLinks] = useState<Set<string>>(() => new Set(initial.collapsedLinks))
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [runners, setRunners] = useState<RunnerOut[]>([])
   const [agents, setAgents] = useState<AgentOut[]>([])
@@ -206,8 +223,14 @@ export function IdePage() {
 
   useEffect(() => {
     const { hiddenRunners, states, modes, archived } = filters
-    savePrefs({ filters: { hiddenRunners, states, modes, archived }, collapsed: [...collapsed], railWidth, railHidden })
-  }, [filters, collapsed, railWidth, railHidden])
+    savePrefs({
+      filters: { hiddenRunners, states, modes, archived },
+      collapsed: [...collapsed],
+      collapsedLinks: [...collapsedLinks],
+      railWidth,
+      railHidden,
+    })
+  }, [filters, collapsed, collapsedLinks, railWidth, railHidden])
 
   const state = filters.archived ? 'all' : 'active'
   const refresh = useCallback(() => {
@@ -315,9 +338,10 @@ export function IdePage() {
 
   const tree = useMemo(() => buildTree(sessions, filters), [sessions, filters])
   const shown = useMemo(() => tree.flatMap((f) => f.sessions), [tree])
+  const links = useMemo(() => childLinks(sessions, filters), [sessions, filters])
   // A session opened here that the list does not hold yet — a fork just made
   // from the open chat — is fetched now, not on the next poll, and its folder
-  // opened, so it shows highlighted under the session it came from.
+  // opened, so it shows highlighted in its place and linked under its parent.
   const fetchedFor = useRef<string | null>(null)
   useEffect(() => {
     if (!id || loading || fetchedFor.current === id || sessions.some((s) => s.id === id)) return
@@ -359,6 +383,13 @@ export function IdePage() {
     })
   const toggleState = (k: IdeState) => setFilters((f) => ({ ...f, states: { ...f.states, [k]: !f.states[k] } }))
   const toggleMode = (k: IdeMode) => setFilters((f) => ({ ...f, modes: { ...f.modes, [k]: !f.modes[k] } }))
+  const toggleLinks = (sessionId: string) =>
+    setCollapsedLinks((prev) => {
+      const next = new Set(prev)
+      if (next.has(sessionId)) next.delete(sessionId)
+      else next.add(sessionId)
+      return next
+    })
   const toggleFolder = (key: string) =>
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -693,11 +724,25 @@ export function IdePage() {
                     const st = sessionState(s)
                     const title = label(s)
                     const deleting = s.id in closing
-                    const depth = folder.depth[s.id] ?? 0
-                    const parent = depth > 0 ? shown.find((p) => p.id === s.parent_session_id) : undefined
+                    const parent = s.parent_session_id ? sessions.find((p) => p.id === s.parent_session_id) : undefined
+                    const kids = links.get(s.id) ?? []
+                    const kidsOpen = !collapsedLinks.has(s.id)
                     return (
+                      <div key={s.id} className="relative">
+                      {kids.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => toggleLinks(s.id)}
+                          aria-expanded={kidsOpen}
+                          aria-label={kidsOpen ? 'Hide the sessions started from this one' : 'Show the sessions started from this one'}
+                          title={`${kids.length} ${kids.length === 1 ? 'session' : 'sessions'} started from this one`}
+                          data-testid={`ide-links-toggle-${s.id}`}
+                          className="absolute left-2 top-0 z-[1] flex h-[26px] w-4 items-center justify-center text-[11px] text-muted-foreground hover:text-foreground"
+                        >
+                          {kidsOpen ? '▾' : '▸'}
+                        </button>
+                      )}
                       <Link
-                        key={s.id}
                         to={`/ide/${s.id}`}
                         data-testid={`ide-row-${s.id}`}
                         aria-current={s.id === id ? 'page' : undefined}
@@ -707,7 +752,7 @@ export function IdePage() {
                         }}
                         title={[
                           s.title,
-                          parent ? `forked from ${label(parent)}` : '',
+                          parent ? `${linkKind(s) === 'fork' ? 'forked' : 'started'} from ${label(parent)}` : '',
                           `${STATE_LABEL[st]} · ${MODE_LABEL[sessionMode(s)]}`,
                           s.runner_name ? `runner ${s.runner_name}${s.runner_host ? ` (${s.runner_host})` : ''}` : 'no runner',
                           `workspace ${s.workspace}`,
@@ -722,13 +767,10 @@ export function IdePage() {
                           (s.status === 'archived' || deleting) && 'opacity-60',
                           menu?.session.id === s.id && 'ring-1 ring-inset ring-primary/50',
                         )}
-                        style={{ paddingLeft: `${1.75 + depth}rem` }}
+                        style={{ paddingLeft: '1.75rem' }}
                       >
                         <StateDot state={st} />
-                        <span className="truncate">
-                          {depth > 0 && <span className="text-muted-foreground">↳ </span>}
-                          {deleting ? `Deleting… ${title}` : title}
-                        </span>
+                        <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
                         <span className="max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground">
                           {s.runner_name ?? 'web'}
                         </span>
@@ -742,6 +784,38 @@ export function IdePage() {
                           {deleting ? '…' : st === 'running' ? 'live' : shortAge(s.last_activity_at, now)}
                         </span>
                       </Link>
+                      {kidsOpen &&
+                        kids.map((k) => {
+                          const kst = sessionState(k)
+                          return (
+                            // A reference to the real session, wherever it sits: opening it is
+                            // opening that row, which the reveal above then highlights.
+                            <Link
+                              key={k.id}
+                              to={`/ide/${k.id}`}
+                              data-testid={`ide-link-${s.id}-${k.id}`}
+                              title={`${linkKind(k) === 'fork' ? 'Forked' : 'Started'} from this session · opens ${label(k)} where it lives`}
+                              className={clsx(
+                                'grid grid-cols-[minmax(0,1fr)_auto_2.25rem] items-center gap-2 py-0.5 pr-2 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground-secondary',
+                                k.id === id && 'bg-primary/5',
+                              )}
+                              style={{ paddingLeft: '2.75rem' }}
+                            >
+                              <span className="truncate">
+                                ↳ {linkKind(k) === 'fork' && <span className="text-muted-foreground/80">fork · </span>}
+                                {label(k)}
+                              </span>
+                              <span className="flex items-center gap-1 text-[11px]">
+                                <StateDot state={kst} />
+                                {STATE_LABEL[kst]}
+                              </span>
+                              <span className="text-right text-[11px] tabular-nums">
+                                {kst === 'running' ? 'live' : shortAge(k.last_activity_at, now)}
+                              </span>
+                            </Link>
+                          )
+                        })}
+                      </div>
                     )
                   })}
               </div>

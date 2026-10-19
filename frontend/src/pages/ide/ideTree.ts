@@ -8,8 +8,9 @@
  * stable: folders alphabetically, sessions by last activity, so rows do not
  * jump around because one of them was judged important.
  *
- * A fork sits under the session it was forked from while that session is in
- * the list, and the family moves together, ordered by its newest activity.
+ * Every session sits in its own place. A session another one was started from
+ * (forked, Slack-branched, dispatched) also carries a LINK to it underneath —
+ * a reference to the real row, never a move (`childLinks`).
  */
 
 export type IdeSession = {
@@ -25,8 +26,10 @@ export type IdeSession = {
   emdash_project?: string
   project?: string
   runner_reported?: boolean
-  /** The session this one was forked (or Slack-branched) from. */
+  /** The session this one was started from: forked, Slack-branched or dispatched. */
   parent_session_id?: string | null
+  /** What created it; a fork records `forked_from`. */
+  provenance?: { [key: string]: unknown }
   last_activity_at: string
 }
 
@@ -92,74 +95,37 @@ export type IdeFolder<T extends IdeSession = IdeSession> = {
   key: string
   /** The folder is an agent's own repo (its sessions are chats with that agent). */
   isAgent: boolean
-  /** In display order: each fork right after the session it came from. */
+  /** Newest activity first. */
   sessions: T[]
-  /** How far each session is nested under the one it was forked from (0 = top). */
-  depth: Record<string, number>
   counts: Record<IdeState, number>
 }
 
 const activity = (s: IdeSession) => Date.parse(s.last_activity_at) || 0
+const byNewest = (a: IdeSession, b: IdeSession) => activity(b) - activity(a)
 
 /** Filtered sessions, one folder per emdash project, folders A→Z with the
- *  unfiled ("") folder last, sessions newest-activity first, each fork nested
- *  under its parent when the parent is shown (in the parent's folder). */
+ *  unfiled ("") folder last, sessions newest-activity first. */
 export function buildTree<T extends IdeSession>(
   sessions: readonly T[],
   filters: IdeFilters,
   agentSlugs: ReadonlySet<string> = new Set(),
 ): IdeFolder<T>[] {
-  const shown = sessions.filter((s) => matches(s, filters))
-  const byId = new Map(shown.map((s) => [s.id, s]))
-  const children = new Map<string, T[]>()
-  const roots: T[] = []
-  for (const s of shown) {
-    const parent = s.parent_session_id && s.parent_session_id !== s.id ? byId.get(s.parent_session_id) : undefined
-    if (parent) {
-      const list = children.get(parent.id)
-      if (list) list.push(s)
-      else children.set(parent.id, [s])
-    } else {
-      roots.push(s)
-    }
-  }
-  // A family's place is its newest activity, so a busy fork keeps its parent beside it.
-  const newest = new Map<string, number>()
-  const newestOf = (s: T, seen: Set<string>): number => {
-    const known = newest.get(s.id)
-    if (known !== undefined) return known
-    seen.add(s.id)
-    let n = activity(s)
-    for (const c of children.get(s.id) ?? []) if (!seen.has(c.id)) n = Math.max(n, newestOf(c, seen))
-    newest.set(s.id, n)
-    return n
-  }
-  const byNewest = (a: T, b: T) => newestOf(b, new Set()) - newestOf(a, new Set())
-
   const byKey = new Map<string, T[]>()
-  for (const r of roots) {
-    const key = folderKey(r)
+  for (const s of sessions) {
+    if (!matches(s, filters)) continue
+    const key = folderKey(s)
     const list = byKey.get(key)
-    if (list) list.push(r)
-    else byKey.set(key, [r])
+    if (list) list.push(s)
+    else byKey.set(key, [s])
   }
-  const folders = [...byKey.entries()].map(([key, tops]) => {
-    const rows: T[] = []
-    const depth: Record<string, number> = {}
-    const walk = (s: T, d: number) => {
-      if (s.id in depth) return
-      depth[s.id] = d
-      rows.push(s)
-      for (const c of [...(children.get(s.id) ?? [])].sort(byNewest)) walk(c, d + 1)
-    }
-    for (const t of [...tops].sort(byNewest)) walk(t, 0)
+  const folders = [...byKey.entries()].map(([key, list]) => {
+    const rows = [...list].sort(byNewest)
     const counts: Record<IdeState, number> = { running: 0, input: 0, idle: 0 }
     for (const r of rows) counts[sessionState(r)] += 1
     return {
       key,
       isAgent: agentSlugs.has(key) || rows.some((r) => r.agent_slug === key),
       sessions: rows,
-      depth,
       counts,
     }
   })
@@ -167,6 +133,31 @@ export function buildTree<T extends IdeSession>(
     if (!a.key !== !b.key) return a.key ? -1 : 1
     return a.key.localeCompare(b.key)
   })
+}
+
+/** How a linked session came from its parent, for the link's words. */
+export function linkKind(s: IdeSession): 'fork' | 'started' {
+  return s.provenance?.forked_from ? 'fork' : 'started'
+}
+
+/** parent id → the sessions started from it, newest first: the links shown
+ *  under the parent's row. Drawn from the list the server gave the viewer — it
+ *  holds only sessions they can read, so a child they cannot open is never
+ *  linked. A link is a reference, so the runner/state/mode filters do not hide
+ *  it (its own row may be hidden; the link still opens it); an archived child
+ *  is linked only while archived sessions are shown. */
+export function childLinks<T extends IdeSession>(sessions: readonly T[], filters: IdeFilters): Map<string, T[]> {
+  const out = new Map<string, T[]>()
+  for (const s of sessions) {
+    const parent = s.parent_session_id
+    if (!parent || parent === s.id) continue
+    if (!filters.archived && s.status === 'archived') continue
+    const list = out.get(parent)
+    if (list) list.push(s)
+    else out.set(parent, [s])
+  }
+  for (const list of out.values()) list.sort(byNewest)
+  return out
 }
 
 /** What deleting a session does, in the words a confirm shows. Only a session

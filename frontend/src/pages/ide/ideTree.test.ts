@@ -3,8 +3,10 @@ import {
   DEFAULT_FILTERS,
   NO_RUNNER,
   buildTree,
+  childLinks,
   deleteConsequence,
   folderKey,
+  linkKind,
   matches,
   sessionMode,
   sessionState,
@@ -95,33 +97,45 @@ describe('buildTree', () => {
     expect(tree.find((f) => f.key === 'repo')?.isAgent).toBe(false)
   })
 
-  it('nests a fork under the session it came from, and keeps the family together', () => {
+  it('keeps a fork in its own place, sorted by its own activity', () => {
     const rows = [
       s({ id: 'src', emdash_project: 'repo', last_activity_at: '2026-10-16T08:00:00Z' }),
       s({ id: 'other', emdash_project: 'repo', last_activity_at: '2026-10-16T10:00:00Z' }),
-      // A fork's folder can differ before its runner reports; it follows its parent.
-      s({ id: 'fork', parent_session_id: 'src', last_activity_at: '2026-10-16T11:00:00Z' }),
-      s({ id: 'forkfork', emdash_project: 'repo', parent_session_id: 'fork', last_activity_at: '2026-10-16T09:00:00Z' }),
+      s({ id: 'fork', emdash_project: 'repo', parent_session_id: 'src', last_activity_at: '2026-10-16T11:00:00Z' }),
     ]
     const [folder, ...rest] = buildTree(rows, DEFAULT_FILTERS)
     expect(rest).toEqual([])
-    expect(folder.sessions.map((r) => r.id)).toEqual(['src', 'fork', 'forkfork', 'other'])
-    expect(folder.depth).toEqual({ src: 0, fork: 1, forkfork: 2, other: 0 })
-  })
-
-  it('shows a fork at the top level when its parent is not in the list', () => {
-    const rows = [
-      s({ id: 'src', emdash_project: 'repo', status: 'archived' }),
-      s({ id: 'fork', emdash_project: 'repo', parent_session_id: 'src' }),
-    ]
-    const [folder] = buildTree(rows, DEFAULT_FILTERS)
-    expect(folder.sessions.map((r) => r.id)).toEqual(['fork'])
-    expect(folder.depth).toEqual({ fork: 0 })
+    expect(folder.sessions.map((r) => r.id)).toEqual(['fork', 'other', 'src'])
   })
 
   it('drops folders whose every session is filtered out', () => {
     const tree = buildTree([s({ emdash_project: 'x', runner_id: 'r1' })], with_({ hiddenRunners: ['r1'] }))
     expect(tree).toEqual([])
+  })
+})
+
+describe('childLinks', () => {
+  const rows = [
+    s({ id: 'src', emdash_project: 'repo' }),
+    s({ id: 'fork', emdash_project: 'repo', parent_session_id: 'src', provenance: { forked_from: 'src' }, last_activity_at: '2026-10-16T11:00:00Z' }),
+    s({ id: 'job', emdash_project: 'elsewhere', runner_id: 'r1', parent_session_id: 'src', last_activity_at: '2026-10-16T12:00:00Z' }),
+    s({ id: 'old', parent_session_id: 'src', status: 'archived' }),
+    s({ id: 'self', parent_session_id: 'self' }),
+  ]
+
+  it('links every session started from a parent under it, newest first, wherever it lives', () => {
+    expect(childLinks(rows, DEFAULT_FILTERS).get('src')?.map((r) => r.id)).toEqual(['job', 'fork'])
+    expect(childLinks(rows, DEFAULT_FILTERS).has('self')).toBe(false)
+  })
+
+  it('still links a child whose own row the filters hide, and an archived one only when archived is shown', () => {
+    expect(childLinks(rows, with_({ hiddenRunners: ['r1'] })).get('src')?.map((r) => r.id)).toContain('job')
+    expect(childLinks(rows, with_({ archived: true })).get('src')?.map((r) => r.id)).toContain('old')
+  })
+
+  it('says a fork is a fork', () => {
+    expect(linkKind(rows[1])).toBe('fork')
+    expect(linkKind(rows[2])).toBe('started')
   })
 })
 
