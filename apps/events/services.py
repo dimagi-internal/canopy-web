@@ -16,7 +16,7 @@ from apps.events.models import Event
 _FIELDS = ("source", "kind", "level", "key", "summary", "payload")
 
 
-def record(items: list[dict], *, workspace) -> dict:
+def record(items: list[dict], *, workspace, first_today: list[int] | None = None) -> dict:
     """Write events, coalescing repeats of ``(workspace, source, key)``.
 
     The whole batch commits in one transaction, so a runner reporting six
@@ -29,12 +29,18 @@ def record(items: list[dict], *, workspace) -> dict:
     runner — just made durable and fleet-visible.
 
     A blank ``key`` never coalesces. Two independent actions are two events.
+
+    ``first_today``, when given, collects the index of each item that is news
+    today (UTC): it made a row, or touched one last seen on an earlier day. A
+    caller that tells a person about an event uses it to tell them once a day,
+    not once a row and not once a repeat.
     """
     created = 0
     coalesced = 0
+    today = timezone.now().astimezone(dt.UTC).date()
 
     with transaction.atomic():
-        for raw in items:
+        for index, raw in enumerate(items):
             data = {k: raw.get(k) for k in _FIELDS if raw.get(k) is not None}
             source = (data.get("source") or "").strip()
             if not source:
@@ -46,6 +52,14 @@ def record(items: list[dict], *, workspace) -> dict:
             data["key"] = key
 
             if key:
+                if first_today is not None:
+                    # Locked, so two boxes posting the same alert at once cannot
+                    # both read yesterday's last_seen_at and both notify.
+                    last = (Event.objects.select_for_update()
+                            .filter(workspace=workspace, source=source, key=key)
+                            .values_list("last_seen_at", flat=True).first())
+                    if last is not None and last.astimezone(dt.UTC).date() < today:
+                        first_today.append(index)
                 # F() so two runners reporting the same streak in the same
                 # instant both count, rather than one clobbering the other with
                 # a read-modify-write.
@@ -65,6 +79,8 @@ def record(items: list[dict], *, workspace) -> dict:
 
             Event.objects.create(workspace=workspace, **data)
             created += 1
+            if first_today is not None and index not in first_today:
+                first_today.append(index)
 
     return {"created": created, "coalesced": coalesced}
 

@@ -84,6 +84,7 @@ import socket
 import shutil
 import subprocess
 import sys
+import tempfile
 import termios
 import threading
 import time
@@ -585,6 +586,12 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
     unprepared = agents_unprepared()
     if unprepared is not None:
         body["agents_unprepared"] = unprepared
+    # Omitted while any credential might work, so the server default (ready)
+    # stands; a box whose every credential was just proven not to answer says so.
+    ready, ready_note = _credential_readiness()
+    if not ready:
+        body["ready"] = False
+        body["ready_note"] = ready_note[:200]   # Runner.ready_note is 200 chars
     return {**body, **extra}
 
 
@@ -628,6 +635,16 @@ def _package_checks() -> None:
 
 
 def _credential_check() -> None:
+    # A credential that left the cascade takes its probe with it: a dot for a
+    # token nobody holds any more would be a report about nothing.
+    staged = {c[0] for c in _CLAUDE_CREDS}
+    with _PROBES_LOCK:
+        for label in [lb for lb in _PROBES if lb not in staged]:
+            del _PROBES[label]
+    with _HEALTH_LOCK:
+        for name in [k for k in _HEALTH
+                     if k.startswith("claude.probe.") and k[len("claude.probe."):] not in staged]:
+            del _HEALTH[name]
     n = len(_CLAUDE_CREDS)
     if n == 0:
         _set_check("claude.credentials", "fail",
@@ -1815,16 +1832,23 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             return ok, text, session_id
         capped, dead = _is_usage_cap(text), _is_auth_required(text)
         hint = _CAP_RESET_HINT.pop(turn_id, None)
+        reset = None
         if capped and not ok:
             reset = hint or _cap_reset_epoch(text)
             if reset and reset > time.time():
                 resets.append(reset)
+            else:
+                reset = None
         if ok or not (capped or dead):
             if ok:
+                _record_outcome(label, "ok", detail="ran a turn")
                 _promote_working_subscription(turn_id)
             return ok, text, session_id
         if capped:
             capped_labels.append(label)
+            _record_outcome(label, "capped", detail=next(
+                (ln.strip() for ln in text.splitlines() if _is_usage_cap(ln)), ""),
+                reset=reset)
             cap_line = cap_line or next(
                 (ln.strip() for ln in text.splitlines() if _is_usage_cap(ln)), "")
             _log(f"turn {turn_id[:8]}: {label} is at its usage cap")
@@ -1838,13 +1862,26 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             # has seen a cap it counts as capped. A token that is really dead
             # still shows up as dead on the first turn after the caps reset.
             capped_labels.append(label)
+            _record_outcome(label, "capped", detail="refused the session after a cap")
             _log(f"turn {turn_id[:8]}: {label} refused the session after a cap — "
                  "counted as capped")
+        elif _is_bare_acp_refusal(text) and _probe_says_capped(label, resets, turn_id):
+            # cloud-ec2-fork, 2026-10-18: ONE setup-token, at its weekly cap,
+            # answered ACP's bare refusal, and with nothing else in the turn to
+            # have capped first, every turn said "not signed in". The refusal
+            # does not say which it is, so the credential is asked directly.
+            capped_labels.append(label)
+            cap_line = cap_line or _PROBES.get(label, {}).get("detail", "")
         else:
             # An unusable credential either way, so it advances the same as a cap
             # — but the REASON is carried to the terminal message below, because
             # "wait for the reset" is wrong advice for a token that has none.
             dead_labels.append(label)
+            if not _is_bare_acp_refusal(text):
+                # The CLI's own sentence: evidence. A bare refusal's probe has
+                # already recorded what it found, and "unknown" stays unknown.
+                _record_outcome(label, "dead", detail=next(
+                    (ln.strip() for ln in text.splitlines() if _is_auth_required(ln)), ""))
             _log(f"turn {turn_id[:8]}: {label} is not signed in")
             _notify_auth_required(label, turn_id)
         if not _advance_claude_credential(turn_id=turn_id):
@@ -1887,6 +1924,20 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
         # have written a partial session, and resuming it under a different
         # credential is not a state we want to debug at 2am.
         resume_session_id = None
+
+
+def _probe_says_capped(label: str, resets: list[float], turn_id: str) -> bool:
+    """Probe the credential a bare ACP refusal came from. True (and its reset
+    appended) when it is at its usage cap; the result is recorded either way."""
+    probe = _probe_credential(_CLAUDE_CRED_I)
+    _record_probe(probe)
+    _log(f"turn {turn_id[:8]}: {label} refused the session; probe says {probe['status']}")
+    if probe["status"] != "capped":
+        return False
+    reset = probe.get("reset")
+    if reset and reset > time.time():
+        resets.append(reset)
+    return True
 
 
 def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
@@ -3805,6 +3856,7 @@ def _adopt_box_login() -> bool:
     if not any(c[0] == BOX_LOGIN_LABEL for c in _CLAUDE_CREDS):
         _CLAUDE_CREDS.insert(0, (BOX_LOGIN_LABEL, "CLAUDE_CONFIG_DIR", _login_config_env()))
     _apply_claude_credential(0)
+    _reprobe([BOX_LOGIN_LABEL])
     return True
 
 
@@ -3990,7 +4042,7 @@ def _park_until_cap_resets(resets: list[float], text: str, turn_id: str) -> str:
     until = min(resets) if resets else time.time() + CAP_PAUSE_FALLBACK_SECONDS
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until))
     first = next((ln.strip() for ln in (text or "").splitlines() if _is_usage_cap(ln)), "")
-    note = (f"Claude usage cap — resumes {stamp}"
+    note = (f"{SELF_PAUSE_PREFIX}Claude usage cap — resumes {stamp}"
             + ("" if resets else " (reset unreadable; retrying then)")
             + (f": {first}" if first else ""))[:200]
     if _RUNNER_ID:
@@ -3998,6 +4050,7 @@ def _park_until_cap_resets(resets: list[float], text: str, turn_id: str) -> str:
             status, _ = _api("POST", f"/runners/{_RUNNER_ID}/pause",
                              {"note": note, "until": stamp})
             if status == 200:
+                _SELF_PAUSED["set"] = True
                 _log(f"turn {turn_id[:8]}: every credential capped — paused until {stamp}")
             else:
                 _log(f"warn: pausing for the usage cap returned {status}")
@@ -4030,6 +4083,332 @@ def _apply_claude_credential(index: int) -> None:
     if var and value:
         os.environ[var] = value
     _log(f"claude credential: using {label} ({var or 'the stored login on this box'})")
+
+
+# ── the credential probe ─────────────────────────────────────────────────────
+# "Ready" used to mean "a value is stored". On 2026-10-18 cloud-ec2-fork read
+# ready with one setup-token that was at its weekly cap, and every turn it took
+# failed as "not signed in". So each credential is asked one short question with
+# no tools, and what it answers is what the runner page and readiness report.
+#
+# Probes spend real usage, so they run only when a credential is staged or
+# changes, when a capped one's reset has passed, and when a turn's own failure is
+# ambiguous (a bare ACP refusal). Never on a plain heartbeat.
+
+#: How long one probe may take. A hung CLI gives `unknown`, which counts as
+#: possibly-working: a probe must never be what keeps a box from serving.
+PROBE_TIMEOUT_SECONDS = 90
+PROBE_PROMPT = "Reply with OK"
+#: Off switch for an operator (CLAUDE_PROBE=0): every probe answers `unknown`.
+PROBE_ENABLED = _bool_env("CLAUDE_PROBE", True)
+#: The latest probe per credential label: {label, status, detail, reset, at}.
+_PROBES: dict[str, dict] = {}
+_PROBES_LOCK = threading.Lock()
+
+
+def _env_for_credential(entry: tuple[str, str, str]) -> dict:
+    """The environment `_apply_claude_credential` would give this credential, as
+    a COPY. Turns run concurrently, so a probe must never touch `os.environ`."""
+    _label, var, value = entry
+    env = _child_safe_env()
+    for other in _CLAUDE_AUTH_VARS:
+        env.pop(other, None)
+    if _BASE_CONFIG_DIR:
+        env["CLAUDE_CONFIG_DIR"] = _BASE_CONFIG_DIR
+    else:
+        env.pop("CLAUDE_CONFIG_DIR", None)
+    if var and value:
+        env[var] = value
+    return env
+
+
+def _credential_env(index: int) -> dict:
+    return _env_for_credential(_CLAUDE_CREDS[index])
+
+
+def _probe_entry(entry: tuple[str, str, str]) -> dict:
+    """Ask one credential one question. Never raises."""
+    label = entry[0]
+    out = {"label": label, "status": "unknown", "detail": "", "reset": None, "at": time.time()}
+    if not PROBE_ENABLED:
+        out["detail"] = "probing is off on this box (CLAUDE_PROBE=0)"
+        return out
+    try:
+        with tempfile.TemporaryDirectory(prefix="claude-probe-") as scratch:
+            proc = subprocess.run(
+                [CLAUDE_BIN, "-p", PROBE_PROMPT, "--output-format", "json", "--max-turns", "1"],
+                cwd=scratch, env=_env_for_credential(entry), stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=PROBE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        out["detail"] = f"no answer within {PROBE_TIMEOUT_SECONDS}s"
+        return out
+    except Exception as exc:  # noqa: BLE001 — a probe that cannot run is unknown
+        out["detail"] = f"the probe could not run ({exc})"[:300]
+        return out
+    stdout, stderr = proc.stdout or "", proc.stderr or ""
+    result, is_error = "", True
+    try:
+        doc = json.loads(stdout)
+        if isinstance(doc, dict):
+            result = str(doc.get("result") or "")
+            is_error = bool(doc.get("is_error"))
+    except ValueError:
+        pass
+    text = "\n".join(t for t in (result, stdout, stderr) if t)
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if _is_usage_cap(text):
+        out["status"] = "capped"
+        out["detail"] = next((ln for ln in lines if _is_usage_cap(ln)), "")[:300]
+        out["reset"] = _cap_reset_epoch(text)
+    elif _is_auth_required(text):
+        out["status"] = "dead"
+        out["detail"] = next((ln for ln in lines if _is_auth_required(ln)), "")[:300]
+    elif proc.returncode == 0 and not is_error:
+        out["status"] = "ok"
+        out["detail"] = "answered a prompt"
+    else:
+        out["detail"] = (f"exit {proc.returncode}: " + (lines[-1] if lines else "no output"))[:300]
+    return out
+
+
+def _probe_credential(index: int) -> dict:
+    return _probe_entry(_CLAUDE_CREDS[index])
+
+
+def _iso(epoch: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+def _record_probe(result: dict) -> None:
+    """Keep a probe's answer and publish it as the `claude.probe.<label>` check."""
+    label, status = result["label"], result["status"]
+    with _PROBES_LOCK:
+        _PROBES[label] = dict(result)
+    # When it was asked, at the end of every detail: wire.sh waits for a probe
+    # taken after it staged, so a result left from an earlier staging cannot pass.
+    when = f" · probed {_iso(result.get('at') or time.time())}"
+    if status == "ok":
+        _set_check(f"claude.probe.{label}", "ok", "answered a prompt" + when)
+    elif status == "capped":
+        reset = result.get("reset")
+        _set_check(f"claude.probe.{label}", "warn",
+                   (f"at its usage cap — resets {_iso(reset)}" if reset
+                    else "at its usage cap (reset unreadable)") + when)
+    elif status == "dead":
+        _set_check(f"claude.probe.{label}", "fail",
+                   "not signed in — someone has to sign it in again" + when)
+    else:
+        _set_check(f"claude.probe.{label}", "warn",
+                   f"could not check: {result.get('detail') or 'no answer'}" + when)
+
+
+def _record_outcome(label: str, status: str, *, detail: str = "", reset: float | None = None) -> None:
+    """A turn's own outcome is a probe that cost nothing extra."""
+    if label and label != "none":
+        _record_probe({"label": label, "status": status, "detail": detail,
+                       "reset": reset, "at": time.time()})
+
+
+def _probe_all(labels: list[str] | None = None) -> None:
+    """Probe the named credentials (all when None), one after another."""
+    for entry in list(_CLAUDE_CREDS):
+        if labels is None or entry[0] in labels:
+            result = _probe_entry(entry)
+            _record_probe(result)
+            _log(f"claude credential probe: {entry[0]} {result['status']}"
+                 + (f" ({result['detail']})" if result["detail"] else ""))
+
+
+#: One probe thread at a time: two would spend usage asking the same question.
+_PROBE_RUNNING = threading.Lock()
+
+
+#: Labels waiting for the background prober. A request made while it runs is
+#: queued here and picked up by the same thread, never dropped.
+_PROBE_PENDING: set = set()
+
+
+def _probe_job() -> None:
+    while True:
+        try:
+            while True:
+                with _PROBES_LOCK:
+                    labels = sorted(_PROBE_PENDING)
+                    _PROBE_PENDING.clear()
+                if not labels:
+                    break
+                _probe_all(labels)
+        except Exception as exc:  # noqa: BLE001 — a probe never takes the box down
+            _log(f"warn: credential probe failed ({exc})")
+        finally:
+            _PROBE_RUNNING.release()
+        # Something queued between the last drain and the release: go again.
+        with _PROBES_LOCK:
+            more = bool(_PROBE_PENDING)
+        if not more or not _PROBE_RUNNING.acquire(blocking=False):
+            return
+
+
+def _probe_in_background(labels: list[str]) -> None:
+    with _PROBES_LOCK:
+        _PROBE_PENDING.update(labels)
+    if not _PROBE_RUNNING.acquire(blocking=False):
+        return   # the running prober drains the queue
+    threading.Thread(target=_probe_job, daemon=True, name="claude-probe").start()
+
+
+def _reprobe(labels: list[str]) -> None:
+    """Forget what these credentials last proved and ask them again — after a
+    person signs one in anew, which leaves its value (a config dir) unchanged."""
+    with _PROBES_LOCK:
+        for label in labels:
+            _PROBES.pop(label, None)
+    with _HEALTH_LOCK:
+        for label in labels:
+            _HEALTH.pop(f"claude.probe.{label}", None)
+    _probe_in_background(labels)
+
+
+def _probe_reset(p: dict) -> float:
+    """When a capped credential is worth asking again: its reset, or the fallback
+    window after the probe when the reset was unreadable."""
+    return p.get("reset") or (p.get("at", 0.0) + CAP_PAUSE_FALLBACK_SECONDS)
+
+
+def _credential_readiness(now: float | None = None) -> tuple[bool, str]:
+    """(ready, note). Not ready only when EVERY staged credential has been probed
+    and none is `ok`, `unknown`, or capped with its reset already passed — a box
+    that might work is never held back on a guess."""
+    now = time.time() if now is None else now
+    staged = [c[0] for c in _CLAUDE_CREDS]
+    if not staged:
+        return True, ""
+    with _PROBES_LOCK:
+        probes = {lb: dict(_PROBES[lb]) for lb in staged if lb in _PROBES}
+    if len(probes) < len(staged):
+        return True, ""
+    parts, resets = [], []
+    for lb in staged:
+        p = probes[lb]
+        if p["status"] in ("ok", "unknown"):
+            return True, ""
+        if p["status"] == "capped":
+            reset = _probe_reset(p)
+            if reset <= now:
+                return True, ""
+            resets.append(reset)
+            parts.append(f"{lb}: at its usage cap until {_iso(reset)}")
+        else:
+            parts.append(f"{lb}: not signed in")
+    note = "no working Claude credential — " + "; ".join(parts)
+    if len(resets) == len(staged):
+        note += f"; earliest reset {_iso(min(resets))}"
+    return False, note
+
+
+#: Marks a pause THIS box set (credentials, or the usage-cap park). The box lifts
+#: only a pause whose note starts with it; a person's pause is theirs to lift.
+SELF_PAUSE_PREFIX = "[box] "
+#: Whether the runner is under a pause this box set, as the last heartbeat reply
+#: said (so a server-side scheduled wake clears it too).
+_SELF_PAUSED = {"set": False}
+#: The last heartbeat reply (REST RunnerOut or the WS ack): pause state rides it.
+#: Empty when the last beat got no usable reply — then the pause is not touched.
+_LAST_BEAT: dict = {}
+#: The pause state the box last saw, and when it last saw it CHANGE. A pause or
+#: unpause by anyone (a person included) is a decision; the box re-pauses only on
+#: probe evidence newer than it.
+_PAUSE_SEEN: dict = {"paused": None, "at": 0.0}
+#: How often a credential proven dead is asked again — the only way a dead
+#: credential fixed out of band (a token rotated by hand) is noticed on a box
+#: that, being paused, runs no turns.
+DEAD_REPROBE_SECONDS = int(os.environ.get("DEAD_REPROBE_SECONDS", "600"))
+
+
+def _observe_beat(reply) -> None:
+    """Take in one heartbeat reply. A reply without pause state (none, an error,
+    an older server) leaves `_LAST_BEAT` empty, so the pause is left alone."""
+    _LAST_BEAT.clear()
+    if not isinstance(reply, dict) or "paused" not in reply:
+        return
+    _LAST_BEAT.update(reply)
+    paused = bool(reply.get("paused"))
+    _SELF_PAUSED["set"] = paused and str(reply.get("paused_note") or "").startswith(SELF_PAUSE_PREFIX)
+    if _PAUSE_SEEN["paused"] is not None and _PAUSE_SEEN["paused"] != paused:
+        _PAUSE_SEEN["at"] = time.time()
+    _PAUSE_SEEN["paused"] = paused
+
+
+def _sync_self_pause(beat: dict | None = None) -> None:
+    """Step aside when no credential works; step back when one does.
+
+    `ready` alone does not stop claims (it only lets a lower-ranked box go
+    first), so a box whose probes find nothing working PAUSES itself — what the
+    claim, the chat banner and turn_reach already understand. Until the earliest
+    reset when every credential is capped; open-ended when any is dead.
+    """
+    if not _RUNNER_ID:
+        return
+    beat = _LAST_BEAT if beat is None else (beat or {})
+    if "paused" not in beat:
+        return   # no reply this beat: never guess at the pause
+    paused = bool(beat.get("paused"))
+    mine = str(beat.get("paused_note") or "").startswith(SELF_PAUSE_PREFIX)
+    ready, note = _credential_readiness()
+    try:
+        if not ready:
+            if paused:
+                return   # already parked — by itself, or by a person whose note stays
+            with _PROBES_LOCK:
+                probes = [dict(_PROBES[c[0]]) for c in _CLAUDE_CREDS if c[0] in _PROBES]
+            if any(p.get("at", 0.0) <= _PAUSE_SEEN["at"] for p in probes):
+                # Someone (a person, or the clock) changed the pause after this
+                # evidence was taken: their decision stands until a probe newer
+                # than it says otherwise.
+                return
+            body: dict = {"note": (SELF_PAUSE_PREFIX + note)[:200]}
+            if probes and all(p["status"] == "capped" for p in probes):
+                body["until"] = _iso(min(_probe_reset(p) for p in probes))
+            status, _ = _api("POST", f"/runners/{_RUNNER_ID}/pause", body)
+            if status == 200:
+                _SELF_PAUSED["set"] = True
+                _log(f"paused: {note}")
+            else:
+                _log(f"warn: pausing for credentials returned {status}")
+            return
+        with _PROBES_LOCK:
+            proven = any(p["status"] == "ok" for p in _PROBES.values())
+        if paused and mine and proven:
+            status, _ = _api("POST", f"/runners/{_RUNNER_ID}/unpause")
+            if status == 200:
+                _SELF_PAUSED["set"] = False
+                _log("unpaused: a Claude credential answered a prompt again")
+            else:
+                _log(f"warn: unpausing after a working probe returned {status}")
+    except Exception as exc:  # noqa: BLE001 — never take the main loop down
+        _log(f"warn: could not sync the credential pause ({exc})")
+
+
+_CRED_TICK_AT = 0.0
+
+
+def _credential_tick(beat: dict | None = None) -> None:
+    """The main loop's credential step, at most once per POLL_SECONDS: ask a
+    capped credential again once its reset has passed, then pause or unpause."""
+    global _CRED_TICK_AT
+    now = time.monotonic()
+    if _CRED_TICK_AT and now - _CRED_TICK_AT < POLL_SECONDS:
+        return
+    _CRED_TICK_AT = now
+    wall = time.time()
+    with _PROBES_LOCK:
+        due = [lb for lb, p in _PROBES.items()
+               if (p["status"] == "capped" and _probe_reset(p) <= wall
+                   and p.get("at", 0.0) < _probe_reset(p))
+               or (p["status"] == "dead" and wall - p.get("at", 0.0) >= DEAD_REPROBE_SECONDS)]
+    if due:
+        _probe_in_background(due)
+    _sync_self_pause(beat)
 
 
 def _advance_claude_credential(*, turn_id: str = "") -> bool:
@@ -4082,6 +4461,15 @@ def _promote_working_subscription(turn_id: str = "") -> None:
     # not reset to index 0, which would now be the capped login again).
     (l1, v1, t1), (l2, v2, t2) = _CLAUDE_CREDS[base], _CLAUDE_CREDS[base + 1]
     _CLAUDE_CREDS[base], _CLAUDE_CREDS[base + 1] = (l1, v1, t2), (l2, v2, t1)
+    # A probe is about a VALUE, and the values just changed slots.
+    with _PROBES_LOCK:
+        p1, p2 = _PROBES.pop(l1, None), _PROBES.pop(l2, None)
+    for label, probe in ((l1, p2), (l2, p1)):
+        if probe is not None:
+            _record_probe({**probe, "label": label})
+        else:
+            with _HEALTH_LOCK:
+                _HEALTH.pop(f"claude.probe.{label}", None)
     _apply_claude_credential(base)
     _log(f"turn {turn_id[:8]}: the fallback login worked while the primary is capped "
          "— swapped them on canopy-web")
@@ -4184,6 +4572,11 @@ def _notify_auth_required(label: str, turn_id: str) -> None:
              "unauthenticated and nobody has been told")
 
 
+#: The bundle's `updated_at` as last read: a write that changes no value still
+#: moves it, and is a request to prove the bundle again.
+_BUNDLE_STAMP = {"updated_at": ""}
+
+
 def _reload_claude_credentials() -> bool:
     """Re-read the credential bundle mid-run. True when it yielded something new.
 
@@ -4204,12 +4597,28 @@ def _reload_claude_credentials() -> bool:
         return False
     _reconcile_logins(_CLAUDE_CRED_RUNNER_ID, cred)
     fresh = _cascade_from(cred)
+    restaged = (cred.get("updated_at") or "") != _BUNDLE_STAMP["updated_at"]
+    _BUNDLE_STAMP["updated_at"] = cred.get("updated_at") or ""
     if not fresh or [(c[0], c[2]) for c in fresh] == before:
+        if restaged and fresh and before:
+            # Someone wrote the bundle again with the same values (wire.sh on a
+            # running box): they are waiting to hear whether it works.
+            _reprobe([c[0] for c in fresh])
         return False
+    changed = [c[0] for c in fresh if (c[0], c[2]) not in before]
+    with _PROBES_LOCK:
+        for label in changed:
+            _PROBES.pop(label, None)     # what the old value proved says nothing of the new
+    with _HEALTH_LOCK:
+        for label in changed:
+            _HEALTH.pop(f"claude.probe.{label}", None)
     _CLAUDE_CREDS.clear()
     _CLAUDE_CREDS.extend(fresh)
     _apply_claude_credential(0)
     _log("re-read credential bundle: " + ", ".join(c[0] for c in _CLAUDE_CREDS))
+    if changed:
+        # In the background: this runs on the main loop, or mid-turn.
+        _probe_in_background(changed)
     return True
 
 
@@ -4248,6 +4657,7 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
                 cred and (cred.get("claude_token") or cred.get("claude_api_key")))):
             global _CLAUDE_CRED_RUNNER_ID
             _CLAUDE_CRED_RUNNER_ID = runner_id
+            _BUNDLE_STAMP["updated_at"] = (cred or {}).get("updated_at") or ""
             _CLAUDE_CREDS.clear()
             _CLAUDE_CREDS.extend(_cascade_from(cred))
             _apply_claude_credential(0)
@@ -4263,6 +4673,17 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
             # agent's key (`_agent_env`), and bootstrap reads each vault with
             # the key for that vault.
             _log("staged credential bundle from canopy-web (claude)")
+            # Before the first ready heartbeat, so "ready" means a credential
+            # answered. The box is not serving yet, so nothing waits on this; a
+            # hung CLI costs PROBE_TIMEOUT_SECONDS and reads `unknown`.
+            _probe_all()
+            # Report them now. The next beat is otherwise the first after the
+            # bootstrap (up to 40 min), and wire.sh is waiting on these checks.
+            try:
+                _, reply = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body([]))
+                _observe_beat(reply)
+            except Exception as exc:  # noqa: BLE001 — the beat is a report, not a gate
+                _log(f"warn: heartbeat after the credential probe failed ({exc})")
             return True
         _log("waiting for this runner's credential bundle to be set on canopy-web…")
         _beat_while_waiting(runner_id)
@@ -4806,6 +5227,10 @@ def _drain_mint(runner_id: str) -> None:
                         _log("picked up the new login in the credential cascade")
                     elif key == DEFAULT_LOGIN and _adopt_box_login():
                         _log("box login is now first in the credential cascade")
+                    # Its value (a config dir) did not change, so the re-read
+                    # probes nothing: ask this login directly, whatever it
+                    # proved before the sign-in.
+                    _reprobe([_login_label(key)])
                     return
                 # The token goes straight to canopy-web, which writes it into the
                 # encrypted bundle — it never touches the browser, so the only
@@ -6317,6 +6742,7 @@ def run_over_rest(runner_id: str) -> None:
         # their leases — with concurrency, reporting only the newest would let
         # the others expire mid-run.
         _, beat = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body(_in_flight_ids()))
+        _observe_beat(beat)
         honour_stops(beat)
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
         # Attached viewers are served on this path too — a runner that fell back
@@ -6327,6 +6753,7 @@ def run_over_rest(runner_id: str) -> None:
         # the operator on the runners that fail most.
         _drain_mint(runner_id)
         _maybe_reread_credentials()
+        _credential_tick()
         _drain_inbox(runner_id)
         if (len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS or not _memory_headroom_ok()
                 or _token_refused()):
@@ -6531,6 +6958,7 @@ def run_over_ws(runner_id: str) -> bool:
             # what the REST paths reported, every 20 seconds.
             ack = _ws_request(ws, {"action": "heartbeat", **_heartbeat_body(_in_flight_ids())},
                               "heartbeat.ack", timeout=15)
+            _observe_beat(ack)
             honour_stops(ack)
             # This thread is the one that claims, so "idle" holds until the
             # restart; see maybe_self_refresh.
@@ -6594,6 +7022,7 @@ def run_over_ws(runner_id: str) -> bool:
                     _sync_session_views(runner_id)          # incl. backfills
                     _drain_mint(runner_id)
                     _maybe_reread_credentials()
+                    _credential_tick()
                     _drain_inbox(runner_id)
                     last_poll = time.monotonic()
                     last_stream = time.monotonic()

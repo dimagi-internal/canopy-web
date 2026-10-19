@@ -116,3 +116,84 @@ def test_authentication_required_in_prose_is_not_a_dead_token(cr):
     answers "authentication required" must not mark the box dead."""
     assert not cr._is_auth_required(
         "The HQ endpoint returned 401 Authentication required, so I used the API key.")
+
+
+# ── a lone credential's bare ACP refusal is probed, not assumed dead ────────
+
+CAP_LINE = "You've hit your weekly limit · resets 11pm (UTC)"
+
+
+@pytest.fixture()
+def lone(cr, monkeypatch):
+    """One setup-token, which ACP refused with its bare `auth_required`."""
+    import time as _time
+    cr._CLAUDE_CREDS[:] = [("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
+    monkeypatch.setattr(cr, "_RUNNER_ID", "rid-1")
+    monkeypatch.setattr(cr, "_reload_claude_credentials", lambda: False)
+    seen = {"auth": [], "usage": [], "park": [], "probed": 0}
+    monkeypatch.setattr(cr, "_notify_auth_required", lambda label, tid: seen["auth"].append(label))
+    monkeypatch.setattr(cr, "_notify_out_of_usage",
+                        lambda capped, dead, until, tid: seen["usage"].append((capped, dead)))
+
+    def park(resets, text, tid):
+        seen["park"].append(list(resets))
+        return "2026-10-18T23:00:00Z"
+
+    monkeypatch.setattr(cr, "_park_until_cap_resets", park)
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (
+        False, "runner error (acp): Authentication required", ""))
+
+    def with_probe(status, detail="", reset=None):
+        def probe(index):
+            seen["probed"] += 1
+            return {"label": cr._CLAUDE_CREDS[index][0], "status": status, "detail": detail,
+                    "reset": reset, "at": _time.time()}
+        monkeypatch.setattr(cr, "_probe_credential", probe)
+
+    cr._apply_claude_credential(0)
+    return cr, seen, with_probe
+
+
+def test_a_lone_capped_token_over_acp_is_a_cap(lone):
+    """cloud-ec2-fork, 2026-10-18: one setup-token at its weekly cap, and every
+    turn said "not signed in", because nothing else in the turn had capped first."""
+    import time as _time
+    cr, seen, with_probe = lone
+    with_probe("capped", CAP_LINE, reset=_time.time() + 3600)
+    ok, text, _ = cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
+    assert ok is False
+    assert seen["auth"] == []
+    assert seen["usage"] == [(["subscription-1"], [])]
+    assert seen["park"] and seen["park"][0]
+    assert "out of Claude usage" in text and "weekly limit" in text
+    assert "not signed in" not in text
+    assert cr._PROBES["subscription-1"]["status"] == "capped"
+
+
+def test_a_lone_dead_token_over_acp_stays_dead(lone):
+    cr, seen, with_probe = lone
+    with_probe("dead", "Not logged in · Please run /login")
+    ok, text, _ = cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
+    assert seen["auth"] == ["subscription-1"]
+    assert "not signed in" in text
+    assert seen["usage"] == [] and seen["park"] == []
+
+
+def test_probe_unknown_keeps_todays_dead_path(lone):
+    cr, seen, with_probe = lone
+    with_probe("unknown", "no answer within 90s")
+    ok, text, _ = cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
+    assert seen["auth"] == ["subscription-1"]
+    assert "this box is not signed in" in text
+    # An inconclusive probe is not evidence the credential is dead.
+    assert cr._PROBES["subscription-1"]["status"] == "unknown"
+
+
+def test_cli_sentence_needs_no_probe(lone, monkeypatch):
+    cr, seen, with_probe = lone
+    with_probe("capped", CAP_LINE)
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (False, "Not logged in", ""))
+    cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
+    assert seen["probed"] == 0
+    assert seen["auth"] == ["subscription-1"]
+    assert cr._PROBES["subscription-1"]["status"] == "dead"

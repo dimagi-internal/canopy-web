@@ -49,9 +49,21 @@ def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
     count, so a permanently-stuck retry loop stays one row instead of one row
     per tick. A blank key never coalesces."""
     pinned = getattr(request, "workspace_slug", None)
+    # A box posting with its own runner token records in the runner's workspace
+    # when nothing is pinned: its owner may belong to several, and a credential
+    # alert that 422'd for want of a default was an alert nobody got.
+    # Only a workspace the owner may record in: `Runner.workspace` is where the
+    # box was paired, which the owner may since have lost write in — then the
+    # owner's default, as for any caller.
+    rtok = getattr(request, "runner_token", None)
+    runner_home = None
+    if rtok is not None and rtok.runner.workspace_id:
+        ws = rtok.runner.workspace
+        if perms.can(request.user, ws, perms.EVENTS_WRITE):
+            runner_home = ws
     home = (
         wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
-    ) or wsvc.user_default_workspace(request.user)
+    ) or runner_home or wsvc.user_default_workspace(request.user)
     if home is None:
         # Only reachable for an authenticated user who belongs to nothing.
         # Fail with a real message rather than an IntegrityError on the FK.
@@ -63,7 +75,17 @@ def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
     # and pairing an agent's box already needs more than viewer.
     if not perms.can(request.user, home, perms.EVENTS_WRITE):
         raise HttpError(403, "recording events requires the editor role in this workspace")
-    return services.record([item.model_dump() for item in payload.items], workspace=home)
+    items = [item.model_dump() for item in payload.items]
+    first_today: list[int] = []
+    result = services.record(items, workspace=home, first_today=first_today)
+    if rtok is not None:
+        # Recording alone tells nobody: a box's credential alert also reaches
+        # the people who can fix it, once a day per alert.
+        from apps.harness import credential_notify
+
+        for index in first_today:
+            credential_notify.notify(rtok.runner, items[index])
+    return result
 
 
 @router.get("/", response=EventListOut, summary="List events")

@@ -599,7 +599,7 @@ async def test_ws_heartbeat_records_health_and_acks_refresh():
     })
     ack = await comm.receive_json_from(timeout=2)
     assert ack == {"type": "heartbeat.ack", "refresh_pending": False,
-                   "cancel_turn_ids": []}
+                   "cancel_turn_ids": [], "paused": False, "paused_note": ""}
     fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
     assert fresh.health["checks"][0]["name"] == "transcripts"
 
@@ -609,6 +609,29 @@ async def test_ws_heartbeat_records_health_and_acks_refresh():
     # A beat WITHOUT health leaves the last report alone.
     fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
     assert fresh.health["checks"][0]["status"] == "fail"
+    await comm.disconnect()
+
+
+async def test_ws_heartbeat_carries_not_ready_in_and_the_pause_out():
+    """A box that proved none of its Claude credentials answers beats `ready:
+    false` over the socket, and is told whether it is paused and by whose note —
+    it lifts only a pause it set itself."""
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "heartbeat", "active_turn_ids": [], "ready": False,
+                             "ready_note": "no working Claude credential — subscription-1: not signed in"})
+    await comm.receive_json_from(timeout=2)
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.ready is False and fresh.ready_note.startswith("no working Claude credential")
+
+    await database_sync_to_async(services.pause)(fresh, note="[box] no working Claude credential")
+    await comm.send_json_to({"action": "heartbeat", "active_turn_ids": []})
+    ack = await comm.receive_json_from(timeout=2)
+    assert ack["paused"] is True and ack["paused_note"] == "[box] no working Claude credential"
+    # A beat that says nothing about readiness (an older box) is ready.
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.ready is True and fresh.ready_note == ""
     await comm.disconnect()
 
 

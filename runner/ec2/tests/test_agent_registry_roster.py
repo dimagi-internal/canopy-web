@@ -25,16 +25,9 @@ import pathlib
 import subprocess
 
 import pytest
+from _bash import BASH, pytestmark  # noqa: F401 — a bash 5 (the box's), or skip
 
 SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "bootstrap_agents.sh"
-
-_HAS_ASSOC = subprocess.run(
-    ["bash", "-c", "declare -A _t=( [k]=v ) 2>/dev/null && echo yes"],
-    capture_output=True, text=True,
-).stdout.strip() == "yes"
-pytestmark = pytest.mark.skipif(
-    not _HAS_ASSOC, reason="bash lacks associative arrays (macOS ships 3.2; the box and CI run 5)"
-)
 
 
 def _extract_function(name: str) -> str:
@@ -64,6 +57,8 @@ STATE = pathlib.Path({str(state)!r})
 if {fail!r}:
     sys.exit(22)                      # curl -f on an HTTP error
 url = next(a for a in sys.argv[1:] if a.startswith("http"))
+with (STATE / "calls").open("a") as fh:
+    fh.write(url + chr(10))
 if {garbage!r}:
     print("<html>not json</html>"); raise SystemExit
 TREES = json.loads((STATE / "trees.json").read_text())
@@ -109,7 +104,7 @@ def _run(tmp: pathlib.Path, fn: str, call: str, *, env_extra=None, **curl_kw) ->
     defs = "\n".join(_extract_function(n)
                      for n in ("agent_registry", "served_agents", "resolve_roster"))
     res = subprocess.run(
-        ["bash", "-c", f"set -euo pipefail\n{defs}\n{call}"],
+        [BASH, "-c", f"set -euo pipefail\n{defs}\n{call}"],
         capture_output=True, text=True, timeout=60, env=env,
     )
     assert res.returncode == 0, f"exited {res.returncode}\n{res.stdout}\n{res.stderr}"
@@ -209,7 +204,7 @@ def test_the_roster_is_only_the_agents_this_box_serves(tmp_path):
 
 @pytest.mark.parametrize("served,paired", [
     (None, True),     # an older canopy-web: no such route
-    ([], True),       # an empty answer reads as unknown, like an empty registry
+    ({"detail": "x"}, True),  # an answer that is not a list
     (["ace"], False),  # not paired yet: no runner id to ask about
 ])
 def test_an_unknown_answer_keeps_the_whole_registry(tmp_path, served, paired):
@@ -217,6 +212,23 @@ def test_an_unknown_answer_keeps_the_whole_registry(tmp_path, served, paired):
                slugs=["ace", "fizzy"], repos={}, served=served,
                env_extra=_paired(tmp_path) if paired else
                {"STATE_FILE": str(tmp_path / "absent.json")})
+    assert out == "ace,fizzy"
+
+
+def test_empty_served_answer_provisions_nothing(tmp_path):
+    """cloud-ec2-fork, 2026-10-18: a new box serves nothing, and reading that
+    empty answer as "unknown" sent it down the whole registry — every resolve
+    403'd ("does not run echo"). An answer is final, even an empty one."""
+    out = _run(tmp_path, "resolve_roster", "resolve_roster",
+               slugs=["ace", "fizzy"], repos={}, served=[], env_extra=_paired(tmp_path))
+    assert out == ""
+    calls = (tmp_path / "state" / "calls").read_text().splitlines()
+    assert calls and all(c.endswith("/agents") and "/api/harness/runners/" in c for c in calls)
+
+
+def test_unreachable_served_falls_back_to_registry(tmp_path):
+    out = _run(tmp_path, "resolve_roster", "resolve_roster",
+               slugs=["ace", "fizzy"], repos={}, served=None, env_extra=_paired(tmp_path))
     assert out == "ace,fizzy"
 
 

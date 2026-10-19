@@ -273,7 +273,7 @@ def test_an_exhausted_cascade_pauses_the_runner_until_the_earliest_reset(cr, mon
     assert len(pauses) == 1
     body = pauses[0][2]
     assert body["until"] == _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(now + 3600))
-    assert body["note"].startswith("Claude usage cap — resumes")
+    assert body["note"].startswith(cr.SELF_PAUSE_PREFIX + "Claude usage cap — resumes")
     assert "paused itself until" in text
     # Back to the primary for when the pause lifts.
     assert cr._claude_cred_label() == "subscription-1"

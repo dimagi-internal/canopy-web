@@ -101,7 +101,7 @@ def _wire(tmp: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
     (home / ".claude" / "canopy").mkdir(parents=True, exist_ok=True)
     (home / ".claude" / "canopy" / "workbench-token").write_text("t0ken\n")
     return subprocess.run(
-        ["bash", str(SCRIPT), "--runner-id", NEW, "--name", "cloud-ec2-test", *args],
+        ["bash", str(SCRIPT), "--probe-minutes", "0", "--runner-id", NEW, "--name", "cloud-ec2-test", *args],
         capture_output=True, text=True, timeout=120,
         env={"PATH": f"{tmp / 'bin'}:/usr/bin:/bin", "HOME": str(home)},
         cwd=str(SCRIPT.parent),

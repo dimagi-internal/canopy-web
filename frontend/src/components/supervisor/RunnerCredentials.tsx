@@ -127,8 +127,56 @@ export function boxLoginAccount(detail: string | undefined): string {
   return detail?.match(/signed in on this box as (\S+@\S+)/)?.[1] ?? ''
 }
 
-export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }: {
+/** The label the box probes each slot under (cloud_runner.py `_BUNDLE_SLOTS`) —
+ *  the one frontend source; tests/test_probe_labels_match.py pins it to the box. */
+export const PROBE_LABEL: Record<SlotKey, string> = {
+  claude_token: 'subscription-1',
+  claude_token_secondary: 'subscription-2',
+  claude_api_key: 'api-key',
+}
+
+/** A full login's probe label — the box's `_login_label(key)`. */
+export function loginProbeLabel(key: string): string {
+  return key === 'default' ? 'box-login' : `box-login:${key}`
+}
+
+export interface ProbeCheck {
+  name?: string
+  status: string
+  detail?: string
+}
+
+export type ProbeTone = 'ok' | 'warn' | 'fail' | null
+
+/** What the box last proved about one credential: its `claude.probe.<label>`
+ *  health check. Null tone when the box has not probed it (an older runner, or
+ *  not yet) — the page then says only that a value is set. */
+export function probeFor(
+  checks: Record<string, ProbeCheck> | null | undefined,
+  label: string,
+): { tone: ProbeTone; detail: string } {
+  const check = checks?.[`claude.probe.${label}`]
+  if (!check) return { tone: null, detail: '' }
+  const tone: ProbeTone = check.status === 'ok' ? 'ok' : check.status === 'fail' ? 'fail' : 'warn'
+  return { tone, detail: check.detail ?? '' }
+}
+
+/** The dot's colour: what the probe found, else whether a value is held. */
+function dotClass(tone: ProbeTone, held: boolean): string {
+  if (tone === 'ok') return 'text-success'
+  if (tone === 'warn') return 'text-warning'
+  if (tone === 'fail') return 'text-destructive'
+  return held ? 'text-success' : 'text-muted-foreground'
+}
+
+function probeTextClass(tone: ProbeTone): string {
+  return tone === 'fail' ? 'text-destructive' : tone === 'warn' ? 'text-warning' : 'text-foreground-subtle'
+}
+
+export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', healthChecks = null }: {
   runnerId: string
+  /** The runner's health checks, for each credential's `claude.probe.<label>`. */
+  healthChecks?: Record<string, ProbeCheck> | null
   /** Whether the box reports a full Claude sign-in (its `claude.login` health
    *  check). Null when the runner has not said — an older runner, or no
    *  heartbeat yet. */
@@ -214,6 +262,7 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
   const emptySlot = status ? SLOTS.find((s) => s.login && !status[s.statusKey]) : undefined
   const apiSlot = SLOTS.find((s) => !s.login)!
   const apiKeySet = status?.has_claude_api_key ?? false
+  const apiProbe = probeFor(healthChecks, PROBE_LABEL[apiSlot.key])
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" data-testid="runner-credentials">
@@ -240,6 +289,7 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
       <ClaudeLogins
         runnerId={runnerId}
         logins={status?.logins ?? []}
+        healthChecks={healthChecks}
         signedIn={signedIn}
         signedInAs={signedInAs}
         busy={busy}
@@ -273,6 +323,7 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
         const isSet = true
         const isLast = heldTokens === 1
         const dropHere = dragging && dragging !== login.slot && dropTarget === login.slot
+        const probe = probeFor(healthChecks, PROBE_LABEL[slot.key])
         return (
           <div key={slot.key}>
             {/* Between the two logins: the keyboard/touch way to reorder, since
@@ -331,7 +382,13 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
                 >
                   ⋮⋮
                 </span>
-                <span className={isSet ? 'text-success' : 'text-muted-foreground'}>{isSet ? '●' : '○'}</span>
+                <span
+                  className={dotClass(probe.tone, isSet)}
+                  title={probe.detail || undefined}
+                  data-testid={`cred-dot-${slot.key}`}
+                >
+                  {isSet ? '●' : '○'}
+                </span>
                 <span className="font-medium">{slot.label}</span>
                 <LoginName
                   slotKey={slot.key}
@@ -352,6 +409,11 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
                   </button>
                 )}
               </div>
+              {probe.detail && probe.tone !== 'ok' && (
+                <span className={`text-[11px] ${probeTextClass(probe.tone)}`} data-testid={`cred-probe-${slot.key}`}>
+                  {probe.detail}
+                </span>
+              )}
               <RunnerReauth runnerId={runnerId} slot={login.slot} isSet onSignedIn={load} />
             </div>
           </div>
@@ -368,10 +430,21 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }
           the one credential still pasted. */}
       <label className="flex flex-col gap-0.5 pt-1" data-testid={`cred-slot-${apiSlot.key}`}>
         <span className="flex items-center gap-2 text-[12px] text-foreground">
-          <span className={apiKeySet ? 'text-success' : 'text-muted-foreground'}>{apiKeySet ? '●' : '○'}</span>
+          <span
+            className={dotClass(apiKeySet ? apiProbe.tone : null, apiKeySet)}
+            title={apiProbe.detail || undefined}
+            data-testid={`cred-dot-${apiSlot.key}`}
+          >
+            {apiKeySet ? '●' : '○'}
+          </span>
           {apiSlot.label}
           <span className="text-[11px] text-foreground-subtle">{apiKeySet ? 'set' : 'not set'}</span>
         </span>
+        {apiKeySet && apiProbe.detail && apiProbe.tone !== 'ok' && (
+          <span className={`text-[11px] ${probeTextClass(apiProbe.tone)}`} data-testid={`cred-probe-${apiSlot.key}`}>
+            {apiProbe.detail}
+          </span>
+        )}
         <div className="flex gap-2">
           <input
             type="password"
@@ -423,9 +496,10 @@ export function moved(keys: string[], key: string, to: number): string[] {
  *  here. As many as a person adds, tried in the order shown — when one hits its
  *  usage cap the runner moves to the next. The box reports which account each
  *  one is, so nobody types a name that can disagree with the login it holds. */
-function ClaudeLogins({ runnerId, logins, signedIn, signedInAs, busy, write, reload }: {
+function ClaudeLogins({ runnerId, logins, healthChecks, signedIn, signedInAs, busy, write, reload }: {
   runnerId: string
   logins: readonly RunnerLogin[]
+  healthChecks: Record<string, ProbeCheck> | null
   signedIn: boolean | null
   signedInAs: string
   busy: boolean
@@ -461,6 +535,15 @@ function ClaudeLogins({ runnerId, logins, signedIn, signedInAs, busy, write, rel
 
       {/* A box signed in before there was a list: the runner adds it here on
           its next re-read. Until then, say what the box says. */}
+      {/* A full login's refresh token rotates, so it cannot be copied from
+          another runner the way a long-lived token is: say so where it is
+          missing, rather than leave a person wondering why it did not come. */}
+      {!signedIn && !logins.some((l) => l.signed_in) && (
+        <p className="text-[12px] text-muted-foreground" data-testid="cred-no-login">
+          No full login on this runner. Logins don&apos;t copy between runners: add one here to use claude.ai connectors.
+        </p>
+      )}
+
       {logins.length === 0 && signedIn && (
         <div className="flex items-center gap-2 rounded-md border border-border p-2 text-[12px]" data-testid="cred-login-pending-adopt">
           <span className="text-success">●</span>
@@ -471,6 +554,7 @@ function ClaudeLogins({ runnerId, logins, signedIn, signedInAs, busy, write, rel
 
       {logins.map((login, i) => {
         const dropHere = dragging && dragging !== login.key && dropTarget === login.key
+        const probe = probeFor(healthChecks, loginProbeLabel(login.key))
         return (
           <div
             key={login.key}
@@ -513,7 +597,11 @@ function ClaudeLogins({ runnerId, logins, signedIn, signedInAs, busy, write, rel
                 ⋮⋮
               </span>
               <span className="w-4 text-right tabular-nums text-foreground-subtle">{i + 1}</span>
-              <span className={login.signed_in ? 'text-success' : 'text-muted-foreground'}>
+              <span
+                className={dotClass(login.signed_in ? probe.tone : null, login.signed_in)}
+                title={probe.detail || undefined}
+                data-testid={`cred-login-dot-${login.key}`}
+              >
                 {login.signed_in ? '●' : '○'}
               </span>
               <span className="truncate font-medium" data-testid={`cred-login-account-${login.key}`}>
@@ -555,6 +643,11 @@ function ClaudeLogins({ runnerId, logins, signedIn, signedInAs, busy, write, rel
                 </button>
               </span>
             </div>
+            {login.signed_in && probe.detail && probe.tone !== 'ok' && (
+              <span className={`text-[11px] ${probeTextClass(probe.tone)}`} data-testid={`cred-login-probe-${login.key}`}>
+                {probe.detail}
+              </span>
+            )}
             <RunnerReauth
               runnerId={runnerId}
               slot="box"

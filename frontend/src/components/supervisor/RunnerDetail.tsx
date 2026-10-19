@@ -374,6 +374,7 @@ export function RunnerDetail({
             ? runner.health_checks['claude.login'].status === 'ok'
             : null}
           signedInAs={boxLoginAccount(runner.health_checks?.['claude.login']?.detail)}
+          healthChecks={runner.health_checks}
         />
       )}
       {/* Who else may fix this box. Rendered for an administrator (who may read

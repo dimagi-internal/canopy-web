@@ -7,6 +7,9 @@ import {
   RunnerCredentials,
   SLOTS,
   credentialSummary,
+  loginProbeLabel,
+  probeFor,
+  PROBE_LABEL,
   moved,
   nextPayload,
   type CredentialStatus,
@@ -327,5 +330,86 @@ describe('RunnerCredentials', () => {
       fireEvent.keyDown(screen.getByTestId('cred-label-claude_token'), { key: 'Enter' })
     })
     expect(api.setRunnerCredential).toHaveBeenCalledWith('r1', { claude_token_label: 'c@dimagi.com' })
+  })
+})
+
+// Each dot is what the box last PROVED (its `claude.probe.<label>` check), not
+// that a value is stored: cloud-ec2-fork read ready with a capped token.
+describe('credential probes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.getRunnerMint.mockResolvedValue(null)
+  })
+  afterEach(cleanup)
+
+  const dot = (key: string) =>
+    within(screen.getByTestId(`cred-slot-${key}`)).getByTestId(`cred-dot-${key}`)
+
+  it('maps the slots and logins to the labels the box probes under', () => {
+    expect(PROBE_LABEL).toEqual({
+      claude_token: 'subscription-1',
+      claude_token_secondary: 'subscription-2',
+      claude_api_key: 'api-key',
+    })
+    expect(loginProbeLabel('default')).toBe('box-login')
+    expect(loginProbeLabel('a44d94c3')).toBe('box-login:a44d94c3')
+  })
+
+  it('reads one probe out of the health checks', () => {
+    const checks = { 'claude.probe.api-key': { name: 'claude.probe.api-key', status: 'fail', detail: 'not signed in' } }
+    expect(probeFor(checks, 'api-key')).toEqual({ tone: 'fail', detail: 'not signed in' })
+    expect(probeFor(checks, 'subscription-1')).toEqual({ tone: null, detail: '' })
+    expect(probeFor(null, 'api-key')).toEqual({ tone: null, detail: '' })
+  })
+
+  it('colours a capped token as a warning and says when it resets', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
+    render(<RunnerCredentials runnerId="r1" healthChecks={{
+      'claude.probe.subscription-1': { name: 'claude.probe.subscription-1', status: 'warn',
+        detail: 'at its usage cap — resets 2026-10-18T23:00Z' },
+    }} />)
+    await waitFor(() => screen.getByTestId('cred-slot-claude_token'))
+    expect(dot('claude_token').className).toContain('text-warning')
+    expect(screen.getByTestId('cred-probe-claude_token').textContent)
+      .toContain('at its usage cap — resets 2026-10-18T23:00Z')
+  })
+
+  it('colours a dead credential as destructive', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue({ ...ONE_CLAUDE, has_claude_api_key: true })
+    render(<RunnerCredentials runnerId="r1" healthChecks={{
+      'claude.probe.api-key': { name: 'claude.probe.api-key', status: 'fail',
+        detail: 'not signed in — someone has to sign it in again' },
+    }} />)
+    await waitFor(() => screen.getByTestId('cred-slot-claude_api_key'))
+    expect(dot('claude_api_key').className).toContain('text-destructive')
+  })
+
+  it('keeps the plain "set" dot when the box has not probed', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => screen.getByTestId('cred-slot-claude_token'))
+    expect(dot('claude_token').className).toContain('text-success')
+    expect(screen.queryByTestId('cred-probe-claude_token')).toBeNull()
+  })
+
+  it('colours a login by its probe', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue({
+      ...NONE, logins: [{ key: 'default', account: 'a@dimagi.com', signed_in: true }],
+    })
+    render(<RunnerCredentials runnerId="r1" healthChecks={{
+      'claude.probe.box-login': { name: 'claude.probe.box-login', status: 'warn',
+        detail: 'at its usage cap — resets 2026-10-18T23:00Z' },
+    }} />)
+    await waitFor(() => screen.getByTestId('cred-login-default'))
+    expect(screen.getByTestId('cred-login-dot-default').className).toContain('text-warning')
+    expect(screen.getByTestId('cred-login-probe-default').textContent).toContain('resets')
+  })
+
+  it('says a full login does not copy between runners when there is none', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => screen.getByTestId('cred-no-login'))
+    expect(screen.getByTestId('cred-no-login').textContent).toBe(
+      "No full login on this runner. Logins don't copy between runners: add one here to use claude.ai connectors.")
   })
 })

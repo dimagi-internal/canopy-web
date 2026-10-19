@@ -24,10 +24,12 @@
 # point: prove a second box end to end without moving any traffic onto it.
 # `down.sh --name <same>` retires the runner, which deletes those rows again.
 #
-# --test (for a box `up.sh --test` made: directed-only) stops after step 2: a test
-# box takes only turns pinned to it and chats bound to it, so there is no routing
-# to change — no predecessor retired, no assignment row, rule or workspace order
-# touched, and no --agents. It prints how to point a chat at the box.
+# --test (for a box `up.sh --test` made: directed-only) stops after step 2 and the
+# probe wait: a test box takes only turns pinned to it and chats bound to it, so
+# there is no routing to change — no predecessor retired, no assignment row, rule
+# or workspace order touched, and no --agents. It still waits for a staged
+# credential to answer (a test box with a dead token tests nothing), then prints
+# how to point a chat at the box.
 #
 # Pure curl + python3 — no deps, matching up.sh/down.sh/secrets.sh's house style.
 set -euo pipefail
@@ -46,6 +48,8 @@ TEST=0
 CRED_FROM=""  # runner name|id whose Claude logins to copy (see step 2)
 DISCOVER_MINUTES=15   # cloud-init (node, claude, aws, gh, op) takes 4-6 min before the first pair
 BOOTSTRAP_MINUTES=40  # first bootstrap clones + provisions every registered agent
+PROBE_MINUTES=5       # how long to wait for the box to prove one staged credential answers
+POLL_SECONDS="${WIRE_POLL_SECONDS:-10}"
 AWS_PROFILE_="${AWS_PROFILE:-labs}"
 AWS_REGION_="${AWS_REGION:-us-east-1}"
 
@@ -63,15 +67,20 @@ usage: ./wire.sh [options]
                          nothing else: no retire, no swap, no rule/order edit. For a second
                          box you want to prove (with --drill) without routing work to it.
   --test                 a directed-only test box (up.sh --test): discover it, stage its
-                         credentials and stop — no routing change of any kind, no --agents.
-                         Prints how to point a chat at it.
+                         credentials, wait for one to answer (--probe-minutes) and stop — no
+                         routing change of any kind, no --agents. Prints how to point a chat
+                         at it.
   --drill                wait for the box's first bootstrap, fire a readiness drill, poll to
                          completion, print the grid; exits non-zero unless every drill passes
   --credential-from <runner>
                          copy the Claude logins (primary, fallback, API key) from this
                          runner (name or id). Default: the same-name predecessor, else the
-                         live box (cloud-ec2-1), else Secrets Manager's bootstrap token
+                         live cloud box (online, ready, not paused, latest heartbeat), else
+                         Secrets Manager's bootstrap token
   --discover-minutes <n> how long to wait for the fresh box to pair (default 15)
+  --probe-minutes <n>    after staging, how long to wait for the box to prove a credential
+                         answers a prompt (default 5); exits non-zero, before any routing
+                         change, when none does. 0 skips the wait
   -h, --help             this
 USAGE
 }
@@ -85,6 +94,7 @@ while [[ $# -gt 0 ]]; do
     --test) TEST=1; shift ;;
     --credential-from) CRED_FROM="$2"; shift 2 ;;
     --discover-minutes) DISCOVER_MINUTES="$2"; shift 2 ;;
+    --probe-minutes) PROBE_MINUTES="$2"; shift 2 ;;
     --agents) AGENTS="$2"; shift 2 ;;
     --shared-vault) echo "   (--shared-vault is ignored: wire.sh no longer reads a shared GitHub token)"; shift 2 ;;
     --drill) DRILL=1; shift ;;
@@ -228,24 +238,54 @@ fi
 
 # ── Step 1: discover (or accept) the fresh runner ───────────────────────────────
 if [[ -z "$RUNNER_ID" ]]; then
-  echo ">> waiting up to ${DISCOVER_MINUTES} min for a fresh '$RUNNER_NAME' cloud runner (paired, not yet online)…"
+  echo ">> waiting up to ${DISCOVER_MINUTES} min for a fresh '$RUNNER_NAME' cloud runner (paired, no credential staged)…"
   for _ in $(seq 1 $(( DISCOVER_MINUTES * 12 ))); do
     api GET /api/harness/runners/ > "$TMP/runners.json"
-    RUNNER_ID=$(python3 -c "
-import json
+    # The fresh box is the one with NO CREDENTIAL STAGED: on boot it pairs
+    # (creating this row) and waits in fetch_and_stage_credential for the bundle
+    # we are about to POST. It used to be found as "never heartbeated", which
+    # stopped being true when that wait started heartbeating (online, not ready),
+    # and a paired-but-unstaged cloud-ec2-fork was never discovered (2026-10-18).
+    # A dead predecessor left by down.sh --keep-runner has its bundle staged, so
+    # it is never mistaken for the new box. Most recent heartbeat first.
+    # Live only: online, and heartbeating within the last 2 minutes (the wait
+    # beats every 15 s). A dead unstaged row — a box that paired and died — must
+    # not be taken for the one that is waiting now.
+    CANDIDATES=$(python3 -c "
+import datetime as dt, json
 rows = json.load(open('$TMP/runners.json'))
-# The genuinely-fresh box is the one that has NEVER heartbeated: on boot the
-# runner pairs (creating this row) and then BLOCKS in fetch_and_stage_credential
-# BEFORE it starts heartbeating — so a NULL last_heartbeat_at means 'paired,
-# waiting for the credential bundle we are about to POST'. A dead predecessor
-# left by down.sh carries a real (stale) timestamp, and since GET orders by
-# last_heartbeat_at desc nulls_last it would otherwise sort AHEAD of the new
-# box and get picked by mistake. Filter on the never-heartbeated signal, not
-# status, to survive the standard down.sh --keep-runner && up.sh && wire.sh recycle.
-for r in rows:
-    if r['kind'] == 'cloud' and r['name'] == '$RUNNER_NAME' and not r.get('last_heartbeat_at'):
-        print(r['id']); break
-")
+now = dt.datetime.now(dt.timezone.utc)
+def fresh(r):
+    raw = r.get('last_heartbeat_at') or ''
+    try:
+        at = dt.datetime.fromisoformat(raw.replace('Z', '+00:00'))
+    except ValueError:
+        return False
+    return (now - at).total_seconds() <= 120
+hits = [r for r in rows if r.get('kind') == 'cloud' and r.get('name') == '$RUNNER_NAME'
+        and r.get('status') == 'online' and fresh(r)]
+hits.sort(key=lambda r: r.get('last_heartbeat_at') or '', reverse=True)
+print(' '.join(r['id'] for r in hits))
+" 2>/dev/null || true)
+    for cid in $CANDIDATES; do
+      api GET "/api/harness/runners/${cid}/credential/status" > "$TMP/cand-status.json" 2>/dev/null || true
+      if python3 - "$TMP/cand-status.json" <<'PY'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+if not isinstance(s, dict) or "has_claude_token" not in s:
+    sys.exit(1)   # unreadable: not evidence the box is unstaged
+staged = (s.get("has_claude_token") or s.get("has_claude_token_secondary") or s.get("has_claude_api_key")
+          or any(lg.get("signed_in") for lg in s.get("logins") or []))
+sys.exit(1 if staged else 0)
+PY
+      then
+        RUNNER_ID="$cid"
+        break
+      fi
+    done
     [[ -n "$RUNNER_ID" ]] && break
     sleep 5
   done
@@ -260,8 +300,12 @@ echo "==> runner: $RUNNER_ID"
 # WHERE the Claude logins come from, in order:
 #   1. --credential-from <runner name|id>
 #   2. the predecessor this box replaces (a same-name runner)
-#   3. the live box (cloud-ec2-1), if this is a different, second box
+#   3. the live cloud box: not retired, online, ready, not paused, latest heartbeat.
+#      Not a box by name: defaulting to cloud-ec2-1 copied a retired box's tokens
+#      onto cloud-ec2-fork (2026-10-18).
 #   4. Secrets Manager canopy/cloud-runner/claude-oauth-token — the BUILD FALLBACK
+# Full logins never copy: their refresh token rotates, so a copy breaks both. What
+# was copied and what stayed behind is printed, with the link to add a login.
 # By design the fleet's logins live on the runner page (/supervisor → Runners →
 # Claude login, primary + fallback), and a new box inherits them from a live one:
 # copying the whole bundle (both logins, the API key, their labels) server-to-server
@@ -271,7 +315,7 @@ echo "==> runner: $RUNNER_ID"
 # The values pass through this process only, never a file outside $TMP or the screen.
 echo ">> staging credential bundle"
 api GET /api/harness/runners/ > "$TMP/runners-cred.json"
-CRED_SRC=$(FROM="$CRED_FROM" NAME="$RUNNER_NAME" NEW="$RUNNER_ID" DEFAULT_NAME="$DEFAULT_RUNNER_NAME" \
+CRED_PICK=$(FROM="$CRED_FROM" NAME="$RUNNER_NAME" NEW="$RUNNER_ID" \
   python3 - "$TMP/runners-cred.json" <<'PY'
 import json, os, sys
 rows = [r for r in json.load(open(sys.argv[1])) if r.get("kind") == "cloud"
@@ -281,13 +325,22 @@ def pick(match):
     # Most recently heartbeating first: a live box's logins over a dead one's.
     hits = sorted((r for r in rows if match(r)), key=lambda r: r.get("last_heartbeat_at") or "", reverse=True)
     return hits[0]["id"] + " " + hits[0]["name"] if hits else ""
+def live(r):
+    return (r.get("status") == "online" and r.get("ready", True) is not False
+            and not r.get("paused"))
 if want:
-    print(pick(lambda r: r["id"] == want or r["name"] == want) or "MISSING")
+    print((pick(lambda r: r["id"] == want or r["name"] == want) or "MISSING") + "|--credential-from")
 else:
-    print(pick(lambda r: r["name"] == os.environ["NAME"])
-          or pick(lambda r: r["name"] == os.environ["DEFAULT_NAME"]))
+    same = pick(lambda r: r["name"] == os.environ["NAME"])
+    if same:
+        print(same + "|the predecessor this box replaces")
+    else:
+        box = pick(live)
+        print(box + "|the live cloud box (online, ready, not paused, latest heartbeat)" if box else "|")
 PY
 )
+CRED_SRC="${CRED_PICK%%|*}"
+CRED_WHY="${CRED_PICK#*|}"
 if [[ "$CRED_SRC" == "MISSING" ]]; then
   echo "!! --credential-from '$CRED_FROM': no such (non-retired, cloud) runner" >&2
   exit 1
@@ -310,12 +363,14 @@ for k in ("claude_token_label", "claude_token_secondary_label"):
 json.dump(out, open(sys.argv[3], "w"))
 PY
   then
-    STAGED_FROM="runner ${CRED_SRC#* } ($SRC_ID)"
+    STAGED_FROM="runner ${CRED_SRC#* } ($SRC_ID) — ${CRED_WHY}"
   else
     echo "   WARN: could not read a Claude login from ${CRED_SRC#* } — falling back to Secrets Manager"
   fi
 fi
 if [[ -z "$STAGED_FROM" ]]; then
+  # Nothing to copy from: no point listing a source's logins below.
+  rm -f "$TMP/src-status.json"
   CLAUDE_TOKEN=$(aws --profile "$AWS_PROFILE_" --region "$AWS_REGION_" \
     secretsmanager get-secret-value --secret-id canopy/cloud-runner/claude-oauth-token \
     --query SecretString --output text)
@@ -327,9 +382,113 @@ json.dump({'claude_token': os.environ['CLAUDE_TOKEN']}, open('$TMP/cred.json', '
   STAGED_FROM="Secrets Manager canopy/cloud-runner/claude-oauth-token"
 fi
 echo "   from: $STAGED_FROM"
-api POST "/api/harness/runners/${RUNNER_ID}/credential" "$TMP/cred.json" | python3 -m json.tool
+# What was copied, by name — never a value.
+python3 - "$TMP/cred.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+got = []
+for key, label, name in (("claude_token", "Token 1", "claude_token_label"),
+                         ("claude_token_secondary", "Token 2", "claude_token_secondary_label"),
+                         ("claude_api_key", "the API key", "")):
+    if c.get(key):
+        got.append(label + (f" ({c[name]})" if name and c.get(name) else ""))
+print("   copied: " + (", ".join(got) if got else "nothing"))
+PY
+api POST "/api/harness/runners/${RUNNER_ID}/credential" "$TMP/cred.json" > "$TMP/staged.json"
+python3 -m json.tool < "$TMP/staged.json" || cat "$TMP/staged.json"
+# The staging moment, on the SERVER's clock (the bundle's updated_at): the probe
+# wait below counts only probes taken after it, so a result left from an earlier
+# staging (--runner-id on a running box) cannot pass.
+STAGED_AT=$(python3 - "$TMP/staged.json" <<'PY'
+import datetime as dt, json, sys
+try:
+    raw = (json.load(open(sys.argv[1])) or {}).get("updated_at") or ""
+    at = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+except Exception:
+    at = dt.datetime.now(dt.timezone.utc)
+print(at.astimezone(dt.timezone.utc).isoformat())
+PY
+)
 rm -f "$TMP/cred.json" "$TMP/src-cred.json"
-echo "==> credential staged"
+CREDENTIALS_URL="${BASE_URL}/supervisor?tab=runners&runner=${RUNNER_ID}"
+# …and what could not be: the source's full logins stay where they were made.
+if [[ -s "$TMP/src-status.json" ]]; then
+  python3 - "$TMP/src-status.json" <<'PY'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+except Exception:
+    s = {}
+for lg in (s.get("logins") or []) if isinstance(s, dict) else []:
+    if lg.get("signed_in"):
+        print(f"   not copied: {lg.get('account') or 'a full login'} — full logins stay on the box they were made on")
+PY
+fi
+echo "==> credential staged — to use claude.ai connectors, + Add a login on its credentials: $CREDENTIALS_URL"
+
+# ── Prove a credential works, before anything routes to it ──────────────────────
+# A stored value is not a working one: cloud-ec2-fork was wired onto a token at
+# its weekly cap and failed every turn as "not signed in" (2026-10-18). The box
+# asks each credential one short question after staging (its claude.probe.<label>
+# health checks); nothing below runs until one has answered.
+if [[ "$PROBE_MINUTES" != "0" ]]; then
+  echo ">> waiting up to ${PROBE_MINUTES} min for the box to prove a Claude credential works…"
+  # Reads the runner row: `state` prints none|ok|bad over the probes taken AFTER
+  # the staging moment (each check's detail ends "· probed <ISO>", on the box's
+  # clock; the row's health_received_at is the server's), `show` prints them.
+  cat > "$TMP/probes.py" <<'PY'
+import datetime as dt, json, re, sys
+mode, path, rid, staged = sys.argv[1:5]
+SLACK = dt.timedelta(seconds=5)
+def when(raw):
+    try:
+        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+staged_at = when(staged)
+try:
+    rows = json.load(open(path))
+    r = next((x for x in rows if x.get("id") == rid), {})
+except Exception:
+    r = {}
+received = when(r.get("health_received_at") or "")
+fresh = {}
+if not (received and staged_at and received < staged_at - SLACK):
+    for name, v in sorted((r.get("health_checks") or {}).items()):
+        if not name.startswith("claude.probe."):
+            continue
+        m = re.search(r"probed (\S+)\s*$", v.get("detail") or "")
+        taken = when(m.group(1)) if m else None
+        if taken and staged_at and taken >= staged_at - SLACK:
+            fresh[name[len("claude.probe."):]] = v
+if mode == "show":
+    for label, v in fresh.items():
+        print(f"   {label:22s} {v.get('status', '?'):5s} {v.get('detail', '')}")
+elif not fresh:
+    print("none")
+else:
+    print("ok" if any(v.get("status") == "ok" for v in fresh.values()) else "bad")
+PY
+  PROBE_STATE="none"
+  for _ in $(seq 1 $(( PROBE_MINUTES * 6 ))); do
+    api GET /api/harness/runners/ > "$TMP/runner-probe.json" 2>/dev/null || true
+    PROBE_STATE=$(python3 "$TMP/probes.py" state "$TMP/runner-probe.json" "$RUNNER_ID" "$STAGED_AT")
+    [[ "$PROBE_STATE" == "ok" ]] && break
+    sleep "$POLL_SECONDS"
+  done
+  python3 "$TMP/probes.py" show "$TMP/runner-probe.json" "$RUNNER_ID" "$STAGED_AT"
+  if [[ "$PROBE_STATE" != "ok" ]]; then
+    if [[ "$PROBE_STATE" == "none" ]]; then
+      echo "!! the box reported no credential probe taken since staging (${STAGED_AT}) within ${PROBE_MINUTES} min." >&2
+    else
+      echo "!! no staged Claude credential answered a prompt." >&2
+    fi
+    echo "!! Nothing was routed to it. + Add a login (or set a token) on its credentials, then re-run:" >&2
+    echo "!!   $CREDENTIALS_URL" >&2
+    exit 3
+  fi
+  echo "==> a Claude credential answered"
+fi
 
 # ── --test: a directed-only box has no routing to change — stop here ───────────
 if [[ "$TEST" == "1" ]]; then

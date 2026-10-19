@@ -88,7 +88,7 @@ box and agent pair:
 | Reader | Uses |
 |---|---|
 | **The vault**: a resolve's device proof (`device_keys.runner_serves_agent`) | the rule, OR the box holds a live turn of the agent (a pinned dispatch, a bound chat), OR it is the agent owner's own LAPTOP working by hand. An owner's cloud box reads only what it runs. |
-| **The box's refresh**: `GET /runners/{id}/agents`, read by `bootstrap_agents.sh` | exactly the rule. A box prepares the agents it runs, not every agent its token can list. |
+| **The box's refresh**: `GET /runners/{id}/agents`, read by `bootstrap_agents.sh` | exactly the rule. A box prepares the agents it runs, not every agent its token can list. An answer is final, an empty one included (a new box prepares nothing); only no answer (not paired, an error, not a list) falls back to the registry. |
 | **Readiness and the fleet view** (`agents_served_by`) | exactly the rule. |
 
 A resolve refused because an APPROVED box does not run the agent is routing, not
@@ -431,6 +431,72 @@ The runner reports a `claude.login` health check (ok = signed in on the box as
 the first login's account, warn = backup tokens only). Tests:
 `runner/ec2/tests/test_box_login.py`, `tests/test_runner_logins.py`,
 `tests/test_runner_mint.py`, `tests/test_runner_credential.py`.
+
+**Full logins never copy.** `wire.sh` copies a source box's long-lived tokens and
+API key (by name, printed), never its full logins, and prints each one it left
+behind with the new box's credentials link. A cloud box with no signed-in full
+login says so on its page: logins don't copy between runners, add one here.
+
+### The credential probe: "ready" means a credential answered
+
+A stored value is not a working one. So the box asks each credential one short
+question with no tools (`cloud_runner._probe_credential`: `claude -p "Reply with
+OK" --output-format json --max-turns 1` in a scratch dir, with that credential's
+environment built as a copy — never `os.environ`, turns run concurrently; 90 s
+timeout) and classifies the answer with the same `_is_usage_cap` /
+`_is_auth_required` turns use: `ok`, `capped` (+ the reset when readable), `dead`,
+or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
+(every probe answers `unknown`).
+
+- **When:** after `fetch_and_stage_credential` stages a bundle, synchronously,
+  then reported at once in a heartbeat (the next one is otherwise after the
+  bootstrap); after a re-read changes the bundle, only the new or changed entries,
+  in the background — and every entry when the bundle was re-written unchanged
+  (its `updated_at` moved); after a login is signed in again or the default login
+  is adopted (its value, a config dir, does not change); for a capped entry once
+  its reset has passed and a dead one every `DEAD_REPROBE_SECONDS` (10 min) — the
+  main loop's poll tick; and when a turn's own failure is ambiguous (below).
+  Background requests queue on one prober thread. Each check's detail ends
+  `· probed <ISO>`. Never on a plain heartbeat — probes spend usage. A turn's own outcome
+  updates the same state for free (a turn that ran marks its credential `ok`; a
+  classified cap or dead marks it so). A promoted subscription carries its probe.
+- **Health:** one check per credential, `claude.probe.<label>` (`subscription-1`,
+  `subscription-2`, `api-key`, `box-login`, `box-login:<key>`): ok / warn "at its
+  usage cap — resets <ISO>" / fail "not signed in — someone has to sign it in
+  again" / warn "could not check: …". The runner page colours each token and login
+  dot by it (`RunnerCredentials.tsx` `PROBE_LABEL` / `loginProbeLabel`, pinned to
+  the box's labels by `tests/test_probe_labels_match.py`); with no check the dot
+  says only that a value is set.
+- **Readiness:** the heartbeat sends `ready=False` with a note naming each
+  credential's state (and, when all are capped, the earliest reset) only when every
+  staged credential was probed and none is `ok`, `unknown`, or capped with its
+  reset passed. A hung probe is `unknown`, so it never keeps a box from serving.
+  The WS beat carries `ready`/`ready_note` like the REST beat.
+- **Self-pause:** `ready` alone does not stop claims (it feeds only
+  `Runner.is_available`), so the box also pauses itself (`POST …/pause`, note
+  prefixed `[box] `): until the earliest reset when every credential is capped,
+  open-ended when any is dead. The usage-cap park after a turn uses the same
+  prefix. It lifts its own pause (`POST …/unpause`) once a probe answers `ok` —
+  only a pause whose note carries the prefix, read off the heartbeat reply
+  (`paused`/`paused_note`, on both the REST reply and the WS ack). It never
+  pauses over, or lifts, a person's pause. A beat with no usable reply leaves
+  the pause alone. After anyone changes the pause (a person's unpause, the
+  scheduled wake) the box pauses again only on probes taken after that change.
+- **A bare ACP refusal is probed.** Over ACP a capped token and a signed-out one
+  both fail with `runner error (acp): authentication required`. When nothing
+  earlier in the turn capped, the box probes that credential: capped → it is a cap
+  (reset from the probe, the probe's line in the turn note, the out-of-usage park
+  and alert); dead or inconclusive → not signed in, as before. The CLI's own
+  sentences (`_AUTH_REQUIRED_MARKERS`) still win without a probe.
+
+**The alerts reach a person.** The box posts `claude_auth_required`,
+`claude_usage_exhausted` and `claude_api_key_fallback` to `POST /api/events/` with
+its runner token; with no workspace pinned they file in `Runner.workspace`, and
+each also mails and Web-Pushes the runner's approvers (owner + runner admins)
+once per (runner, alert) per UTC day, linking to the runner on `/supervisor`
+(`apps/harness/credential_notify.py`). Tests:
+`runner/ec2/tests/test_credential_probe.py`, `runner/ec2/tests/test_auth_required.py`,
+`tests/test_credential_notify.py`, `tests/test_realtime_runner_consumer.py`.
 
 ## How a runner signs in (keyless)
 
