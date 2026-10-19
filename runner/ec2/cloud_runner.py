@@ -1862,13 +1862,26 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             # has seen a cap it counts as capped. A token that is really dead
             # still shows up as dead on the first turn after the caps reset.
             capped_labels.append(label)
+            _record_outcome(label, "capped", detail="refused the session after a cap")
             _log(f"turn {turn_id[:8]}: {label} refused the session after a cap — "
                  "counted as capped")
+        elif _is_bare_acp_refusal(text) and _probe_says_capped(label, resets, turn_id):
+            # cloud-ec2-fork, 2026-10-18: ONE setup-token, at its weekly cap,
+            # answered ACP's bare refusal, and with nothing else in the turn to
+            # have capped first, every turn said "not signed in". The refusal
+            # does not say which it is, so the credential is asked directly.
+            capped_labels.append(label)
+            cap_line = cap_line or _PROBES.get(label, {}).get("detail", "")
         else:
             # An unusable credential either way, so it advances the same as a cap
             # — but the REASON is carried to the terminal message below, because
             # "wait for the reset" is wrong advice for a token that has none.
             dead_labels.append(label)
+            if not _is_bare_acp_refusal(text):
+                # The CLI's own sentence: evidence. A bare refusal's probe has
+                # already recorded what it found, and "unknown" stays unknown.
+                _record_outcome(label, "dead", detail=next(
+                    (ln.strip() for ln in text.splitlines() if _is_auth_required(ln)), ""))
             _log(f"turn {turn_id[:8]}: {label} is not signed in")
             _notify_auth_required(label, turn_id)
         if not _advance_claude_credential(turn_id=turn_id):
@@ -1911,6 +1924,20 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
         # have written a partial session, and resuming it under a different
         # credential is not a state we want to debug at 2am.
         resume_session_id = None
+
+
+def _probe_says_capped(label: str, resets: list[float], turn_id: str) -> bool:
+    """Probe the credential a bare ACP refusal came from. True (and its reset
+    appended) when it is at its usage cap; the result is recorded either way."""
+    probe = _probe_credential(_CLAUDE_CRED_I)
+    _record_probe(probe)
+    _log(f"turn {turn_id[:8]}: {label} refused the session; probe says {probe['status']}")
+    if probe["status"] != "capped":
+        return False
+    reset = probe.get("reset")
+    if reset and reset > time.time():
+        resets.append(reset)
+    return True
 
 
 def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
