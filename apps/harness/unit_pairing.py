@@ -92,6 +92,19 @@ def _rekey(key: RunnerDeviceKey, name: str, jwk: dict, jkt: str,
         _set_ecdh_and_store(key, ecdh_jwk, ecdh_jkt, store)
 
 
+def _announce_rekey(runner: Runner, adopted: bool) -> None:
+    """Every re-key is a fact a person can see: an activity, and a notice to whoever
+    can approve the runner's keys (its owner and runner admins)."""
+    from . import device_key_notify
+
+    key = _active_key(runner)
+    activity.emit(activity.RUNNER_REKEYED, workspace=runner.workspace_id, actor=runner.owner,
+                  surface="runner", ref=str(runner.pk),
+                  meta={"name": runner.name, "adopted": adopted, "jkt": (key.jkt[:12] if key else "")})
+    if key is not None:
+        device_key_notify.notify_rekeyed_on_commit(key, adopted=adopted)
+
+
 def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls, status_cls):
     """`pair-by-role` for a box of units. `refuse(why)` builds the uniform refusal;
     `out_cls`/`status_cls` are the route's response types (kept out of this module's
@@ -129,6 +142,15 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
             # A key revoked on a live runner was a deliberate act its owner undoes —
             # never something re-pairing launders (PR 3's rule, per unit).
             raise refuse(f"{runner.name} on {machine} has no active key (revoked?)")
+    # Which existing runners may be re-keyed WITHOUT a person: only a unit already
+    # paired as one — its active key is a unit software key and the runner is on this
+    # machine. Anything else (adopting a box paired before units: its key is the
+    # instance role itself; a runner whose machine was never proved) re-keys only
+    # under an approved invitation that lists it. Otherwise a bare role proof —
+    # which any process on a box without the IMDS rule can make — would take the
+    # runner's identity for good.
+    adopt = [name for name, runner in existing.items()
+             if not (_active_key(runner).kind == RunnerDeviceKey.SOFTWARE and runner.machine_id == machine)]
     new = [u for u in units if u.name not in existing]
     for u in new:
         clash = (Runner.objects.filter(name=u.name, kind=Runner.CLOUD).exclude(status=Runner.RETIRED)
@@ -137,18 +159,18 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
             raise refuse(f"{u.name} is a live runner on another machine ({clash.machine_id or 'unknown'})")
 
     invitation = None
-    if new:
+    if new or adopt:
         invitation = (RunnerInvitation.objects.select_related("created_by", "approved_by")
                       .filter(role_jkt=role_jkt, name=payload.name, consumed_at__isnull=True).first())
         if invitation is None:
             raise refuse(f"no live invitation for {role_arn} as {payload.name} "
-                         f"(new units: {', '.join(u.name for u in new)})")
+                         f"(new units: {', '.join(u.name for u in new)}; to adopt: {', '.join(adopt)})")
         if invitation.expired:
             raise refuse(f"invitation {invitation.pk} expired")
         invited = {u["name"]: u for u in units_of(invitation)}
         if not invited:
             raise refuse(f"invitation {invitation.pk} names no units")
-        missing = [u.name for u in new if u.name not in invited]
+        missing = [u.name for u in new if u.name not in invited] + [n for n in adopt if n not in invited]
         if missing:
             raise refuse(f"invitation {invitation.pk} does not name units {missing}")
         absent = [n for n in invited if n not in names]
@@ -167,6 +189,7 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
 
         roots = wsvc.tree_roots({u["workspace"] for u in invited.values()})
 
+    changed = {n for n, r in existing.items() if _active_key(r).jkt != keys[n][1]}
     created: list[Runner] = []
     try:
         with transaction.atomic():
@@ -230,6 +253,9 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
         # pairing of the same box won.
         raise refuse(f"{role_arn}: a unit key is already registered, or a concurrent pairing won") from None
 
+    for name, runner in existing.items():
+        if name in changed:
+            _announce_rekey(runner, name in adopt)
     for runner in created:
         activity.emit(activity.RUNNER_PAIRED, workspace=runner.workspace_id, actor=runner.owner,
                       surface="runner", ref=str(runner.pk),

@@ -1285,10 +1285,11 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     for key in ("projects", "profiles", "envelope", "midturn", "unprepared"):
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
-    # The isolation unit canopy-web recorded at pairing (`unit_pairing`) survives a
-    # write that omits it: a unit's box re-declares only what it knows, and dropping
-    # it would lift the agent unit's restriction as a side effect.
-    if "unit" not in payload.capabilities and runner.capabilities.get("unit"):
+    # The isolation unit is SERVER-OWNED once it is set (`unit_pairing` records it
+    # from the invitation a person approved): a write can neither replace nor clear
+    # it, or an agent unit could lift its own restriction. A box-sent value is
+    # ignored; a runner with none may still declare one (a self-restriction).
+    if runner.capabilities.get("unit"):
         caps["unit"] = runner.capabilities["unit"]
     runner.capabilities = caps
     runner.save(update_fields=["capabilities"])

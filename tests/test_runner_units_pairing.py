@@ -264,17 +264,34 @@ def live_box(org):
     return {"runner": runner, "key": key, "kms": kms, "wrap": wrap, "binding": binding, **org}
 
 
-def test_the_live_single_unit_box_is_adopted_keeping_its_id_bindings_and_wraps(live_box):
+LIVE_UNIT = [{"name": "cloud-ec2-2", "workspace": "connect", "kind": "tree"}]
+
+
+def test_the_live_single_unit_box_is_adopted_keeping_its_id_bindings_and_wraps(
+        live_box, django_capture_on_commit_callbacks):
     """Moving cloud-ec2-2 to units: its default unit is `tree:connect`, named as the
-    box, with its existing KMS key (now served by the broker). No invitation: the
-    role is already approved."""
+    box, with its existing KMS key (now served by the broker). Adopting turns its
+    instance-role key into a unit key, so it takes the approved invitation that
+    `up.sh --in-place` makes, listing that unit."""
+    from django.core import mail
+
     from apps.agents.models import AgentVaultWrap
     from apps.canopy_sessions.models import RunnerBinding
+    from apps.events.models import Activity
 
+    inv = _invite(live_box, units=LIVE_UNIT, name="cloud-ec2-2").json()
+    _approve(live_box, inv["id"])
+    mail.outbox.clear()
     unit_key = _jwk()
-    res = _pair_units({"cloud-ec2-2": {"public_jwk": unit_key, "ecdh_public_jwk": live_box["kms"]}},
-                      name="cloud-ec2-2")
+    with django_capture_on_commit_callbacks(execute=True):
+        res = _pair_units({"cloud-ec2-2": {"public_jwk": unit_key, "ecdh_public_jwk": live_box["kms"]}},
+                          name="cloud-ec2-2")
     assert res.status_code == 200, res.content
+    assert RunnerInvitation.objects.get(pk=inv["id"]).status == "consumed"
+    # Every re-key is seen: an activity, and the runner's approvers are told.
+    rekey = Activity.objects.get(kind="runner.rekeyed")
+    assert rekey.meta["adopted"] is True and rekey.ref == str(live_box["runner"].pk)
+    assert [m.to for m in mail.outbox] == [["jj@dimagi.com"]] and "new key" in mail.outbox[0].subject
     assert res.json() == {"status": "reattached", "runner_id": str(live_box["runner"].pk),
                           "units": {"cloud-ec2-2": str(live_box["runner"].pk)},
                           "device_keys": {"cloud-ec2-2": str(live_box["key"].pk)}}
@@ -316,6 +333,7 @@ def test_adopting_the_live_box_and_adding_units_takes_one_approval(live_box):
 def test_adoption_with_a_different_ecdh_key_waits_for_a_person_and_drops_stale_wraps(live_box):
     from apps.agents.models import AgentVaultWrap
 
+    _approve(live_box, _invite(live_box, units=LIVE_UNIT, name="cloud-ec2-2").json()["id"])
     res = _pair_units({"cloud-ec2-2": {"public_jwk": _jwk(), "ecdh_public_jwk": _jwk()}}, name="cloud-ec2-2")
     assert res.status_code == 200
     key = RunnerDeviceKey.objects.get()
@@ -358,3 +376,80 @@ def test_a_capabilities_write_that_omits_the_unit_keeps_it(two_trees):
         content_type="application/json")
     assert res.status_code == 200, res.content
     assert Runner.objects.get(pk=rid).unit() == {"kind": "agent", "slug": "eva"}
+
+
+
+# ---- a bare role proof never takes a runner's identity (review: HIGH) -------------------
+
+def test_a_role_proof_alone_cannot_rekey_the_live_box(live_box):
+    """The live box has no IMDS rule: any agent turn on it can mint the instance
+    role's proof. Without an approved invitation that proof must not turn the
+    runner's role key into a key the attacker holds."""
+    from apps.events.models import Activity
+
+    before = RunnerDeviceKey.objects.get()
+    res = _pair_units({"cloud-ec2-2": {"public_jwk": _jwk(), "ecdh_public_jwk": live_box["kms"]}},
+                      name="cloud-ec2-2")
+    assert res.status_code == 401
+    after = RunnerDeviceKey.objects.get()
+    assert (after.kind, after.jkt, after.role_arn) == (RunnerDeviceKey.AWS_IAM, before.jkt, ROLE)
+    assert aws_iam_proof.known_key(ROLE) is not None
+    assert not Activity.objects.filter(kind="runner.rekeyed").exists()
+    # An invitation not yet approved changes nothing either.
+    _invite(live_box, units=LIVE_UNIT, name="cloud-ec2-2")
+    assert _pair_units({"cloud-ec2-2": {"public_jwk": _jwk()}}, name="cloud-ec2-2").status_code == 202
+    assert RunnerDeviceKey.objects.get().kind == RunnerDeviceKey.AWS_IAM
+
+
+def test_an_invitation_that_does_not_list_the_unit_cannot_adopt_it(live_box):
+    Workspace.objects.create(slug="marsh", display_name="Marsh", created_by=live_box["user"])
+    WorkspaceMembership.objects.create(workspace_id="marsh", user=live_box["user"],
+                                       role=WorkspaceMembership.EDITOR)
+    other = [{"name": "cloud-ec2-2-marsh", "workspace": "marsh", "kind": "tree"}]
+    _approve(live_box, _invite(live_box, units=other, name="cloud-ec2-2").json()["id"])
+    res = _pair_units({"cloud-ec2-2": {"public_jwk": _jwk()}, "cloud-ec2-2-marsh": {"public_jwk": _jwk()}},
+                      name="cloud-ec2-2")
+    assert res.status_code == 401
+    assert RunnerDeviceKey.objects.filter(kind=RunnerDeviceKey.AWS_IAM).count() == 1
+
+
+def test_a_unit_reattaching_on_its_machine_is_announced(two_trees, django_capture_on_commit_callbacks):
+    from django.core import mail
+
+    from apps.events.models import Activity
+
+    _approve(two_trees, _invite(two_trees).json()["id"])
+    first = _pair_units(_keys([u["name"] for u in UNITS])).json()["units"]
+    mail.outbox.clear()
+    same_ecdh = {n: {"public_jwk": _jwk(), "ecdh_public_jwk": RunnerDeviceKey.objects.get(runner_id=r).ecdh_public_jwk}
+                 for n, r in first.items()}
+    with django_capture_on_commit_callbacks(execute=True):
+        assert _pair_units(same_ecdh).status_code == 200
+    assert Activity.objects.filter(kind="runner.rekeyed").count() == 3
+    assert all(not a.meta["adopted"] for a in Activity.objects.filter(kind="runner.rekeyed"))
+    assert len(mail.outbox) == 3
+    # The same keys again (a restart before the state file landed) is not a re-key.
+    Activity.objects.filter(kind="runner.rekeyed").delete()
+
+
+def test_a_unit_on_another_machine_id_needs_an_invitation(two_trees):
+    """A software key alone is not enough: the runner must be on THIS machine."""
+    _approve(two_trees, _invite(two_trees).json()["id"])
+    first = _pair_units(_keys([u["name"] for u in UNITS])).json()["units"]
+    Runner.objects.filter(pk=first[BOX]).update(machine_id="")
+    res = _pair_units(_keys(list(first)))
+    assert res.status_code == 401
+
+
+def test_a_box_cannot_replace_or_clear_its_server_owned_unit(two_trees):
+    from apps.harness.models import RunnerAccessToken
+
+    _approve(two_trees, _invite(two_trees).json()["id"])
+    rid = _pair_units(_keys([u["name"] for u in UNITS])).json()["units"][f"{BOX}-agent-eva"]
+    raw, _ = RunnerAccessToken.mint(RunnerDeviceKey.objects.get(runner_id=rid))
+    client = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    for sent in ({"kind": "tree", "root": "connect"}, {}, None):
+        res = client.patch(f"/api/harness/runners/{rid}", data={"capabilities": {"unit": sent}},
+                           content_type="application/json")
+        assert res.status_code == 200, res.content
+        assert Runner.objects.get(pk=rid).unit() == {"kind": "agent", "slug": "eva"}
