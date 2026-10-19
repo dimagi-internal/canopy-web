@@ -2236,13 +2236,21 @@ def _turn_env_root(*, create: bool = True) -> pathlib.Path | None:
 def secrets_off_disk() -> bool:
     """Do this runner's turns get their env on tmpfs (and no `~/.<slug>/.env`)?
 
-    Only when the installed canopy CLI can read `CANOPY_AGENT_ENV_FILE` — on an older
-    CLI a turn's PAT reads would find nothing, so the legacy files stay and health
-    says why (Review Focus 5). `RUNNER_SECRET_FILES=1` keeps the legacy files on
-    purpose (an operator's escape hatch)."""
-    if os.environ.get("RUNNER_SECRET_FILES", "").strip() in ("1", "true", "yes"):
+    By default only on an isolation unit (`CANOPY_UNIT`, or a box with units.json): a
+    box built before units keeps its files until an operator opts it in with
+    `RUNNER_SECRET_FILES=0` — a new runner deploying must never change how a live box
+    hands its agents their secrets. `RUNNER_SECRET_FILES=1` keeps the files anywhere.
+    And only when the installed canopy CLI can read `CANOPY_AGENT_ENV_FILE` — on an
+    older CLI a turn's PAT reads would find nothing, so the legacy files stay and
+    health says why (Review Focus 5)."""
+    choice = os.environ.get("RUNNER_SECRET_FILES", "").strip().lower()
+    if choice in ("1", "true", "yes"):
         _set_check("secrets", "warn", "RUNNER_SECRET_FILES=1: agent secrets are kept in "
                    "~/.<agent>/.env files on purpose")
+        return False
+    if choice not in ("0", "false", "no") and not (UNIT or UNITS_FILE.exists()):
+        _set_check("secrets", "ok", "agent secrets are in ~/.<agent>/.env files (a box without "
+                   "isolation units; RUNNER_SECRET_FILES=0 moves them off disk)")
         return False
     v = _canopy_cli_version()
     want = ".".join(map(str, OFF_DISK_MIN_CLI))
@@ -2308,6 +2316,13 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
         hit = _TURN_VALUES.get(slug)
         if hit and now - hit[0] < _AGENT_ENV_TTL_SECONDS:
             return hit[1]
+    if not _has_env_source(slug):
+        # canopy's `_env_in_memory` "n/a": no template and no canopy-web values. An
+        # agent with nothing to resolve has an EMPTY env, not a failed one.
+        with _TURN_VALUES_LOCK:
+            _TURN_VALUES[slug] = (now, {})
+        _set_check(f"env.{slug}", "ok", "no env to resolve (no .env.tpl, not canopy-web-sourced)")
+        return {}
     env = {k: v for k, v in _child_safe_env().items()
            if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
     env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL, AGENT_ROOT=AGENT_ROOT)
@@ -2333,6 +2348,7 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
         return hit[1] if hit else None
     values = {str(k): str(v) for k, v in values.items()}
     _TURN_ENV_ERRORS.pop(slug, None)
+    note_cred_success(slug)
     # The resolve-time extras, when the CLI hands them over (`RESOLVE_EXTRAS`): it
     # resolved WITH this runner's device proof (and unwrapped a zero-knowledge
     # vault), which a unit's own resolve cannot attach.
@@ -2348,6 +2364,48 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
     _set_check(f"env.{slug}", "ok", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
                "held in memory")
     return values
+
+
+def _has_env_source(slug: str) -> bool:
+    """Does `slug` have an env to resolve: a `.env.tpl` in its clone, or canopy-web as
+    its credential source? Unknown (no clone yet, canopy-web unreachable) counts as
+    YES — a resolve that then fails fails the turn, rather than running it bare."""
+    clone = pathlib.Path(AGENT_ROOT) / slug
+    if (clone / ".env.tpl").is_file() or not (clone / ".git").is_dir():
+        return True
+    status, body = _api("GET", f"/{slug}/credentials/access", prefix="/api/agents")
+    if status != 200 or not isinstance(body, dict):
+        return True
+    return str(body.get("credential_source") or "") == "canopy-web"
+
+
+# ── backing off an agent whose credentials this box cannot resolve ──────────
+#: A turn that fails "could not resolve <slug>'s credentials" goes back to the queue
+#: (a sessionless failure is a non-attempt). Claimed straight back by this box it
+#: would spend the server's MAX_SESSIONLESS_RETRIES in a minute; so the box stops
+#: claiming that agent for a growing interval, reset by the next good resolve. It is
+#: the claim's `paused` list (the per-agent local pause), so the turn simply waits.
+CRED_BACKOFF_STEPS = (60, 120, 300, 600)
+_CRED_BACKOFF: dict = {}   # slug -> (consecutive failures, not before epoch)
+
+
+def note_cred_failure(slug: str, *, now: float | None = None) -> float:
+    """Back `slug` off; returns until when."""
+    now = time.time() if now is None else now
+    n = _CRED_BACKOFF.get(slug, (0, 0.0))[0] + 1
+    until = now + CRED_BACKOFF_STEPS[min(n, len(CRED_BACKOFF_STEPS)) - 1]
+    _CRED_BACKOFF[slug] = (n, until)
+    return until
+
+
+def note_cred_success(slug: str) -> None:
+    _CRED_BACKOFF.pop(slug, None)
+
+
+def backed_off_slugs(*, now: float | None = None) -> list[str]:
+    """The agents this box will not claim right now (credential-resolve backoff)."""
+    now = time.time() if now is None else now
+    return sorted(s for s, (_n, until) in _CRED_BACKOFF.items() if until > now)
 
 
 def _turn_env_dir(turn_id: str, *, create: bool = True) -> pathlib.Path | None:
@@ -7729,9 +7787,15 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # whose env cannot be had is NOT run without one: it fails with the
             # reason and no session, which the server re-queues (a sessionless
             # failure is a non-attempt, bounded by MAX_SESSIONLESS_RETRIES).
+            # The clone first: whether the agent has an env to resolve at all is read
+            # from its template (an agent this box has never seen is bootstrapped now).
+            _ensure_agent_clone(slug)
             if _turn_values(slug) is None:
                 note = (f"[runner] could not resolve {slug}'s credentials: "
                         f"{_TURN_ENV_ERRORS.get(slug) or 'no answer from the canopy CLI'}")
+                until = note_cred_failure(slug)
+                _log(f"{slug}: not claiming its turns until "
+                     f"{time.strftime('%H:%M:%S', time.gmtime(until))}Z (credentials)")
                 _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
                 _log(f"turn {turn_id[:8]} NOT run — {note}")
                 return
@@ -7944,7 +8008,9 @@ def run_over_rest(runner_id: str) -> None:
                 or _token_refused()):
             time.sleep(POLL_SECONDS)
             continue
-        status, turn = _api("POST", f"/runners/{runner_id}/claim")
+        paused = backed_off_slugs()
+        status, turn = _api("POST", f"/runners/{runner_id}/claim"
+                            + (f"?paused={','.join(paused)}" if paused else ""))
         if status != 200 or not turn:
             time.sleep(POLL_SECONDS)
             continue
@@ -8059,7 +8125,8 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
         return False  # the poll tick retries; the queued turn waits, nothing is lost
     if _token_refused():
         return False  # it could never report back; leave it for a box that can
-    res = _ws_request(ws, {"action": "claim"}, "claim.result")
+    paused = backed_off_slugs()
+    res = _ws_request(ws, {"action": "claim", **({"paused": paused} if paused else {})}, "claim.result")
     turn = res.get("turn") if res else None
     if not turn:
         return False

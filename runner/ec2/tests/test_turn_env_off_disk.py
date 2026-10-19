@@ -25,7 +25,7 @@ TID = "0b6c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3"
 @pytest.fixture
 def off_disk(cloud_runner, monkeypatch, tmp_path):
     """A runner whose canopy CLI is new enough, with a tmpfs root under tmp_path."""
-    monkeypatch.delenv("RUNNER_SECRET_FILES", raising=False)
+    monkeypatch.setenv("RUNNER_SECRET_FILES", "0")   # a box without units opts in
     root = tmp_path / "run" / str(os.getuid())
     root.parent.mkdir(parents=True)
     monkeypatch.setenv("CANOPY_TURN_ENV_ROOT", str(root))
@@ -70,6 +70,93 @@ def test_the_escape_hatch_keeps_files(off_disk, monkeypatch):
     mod, _ = off_disk
     monkeypatch.setenv("RUNNER_SECRET_FILES", "1")
     assert mod.secrets_off_disk() is False
+
+
+def test_a_box_without_units_keeps_its_files_unless_it_opts_in(off_disk, monkeypatch, tmp_path):
+    """Deploy safety: new runner code on the live box (no units) must not move its
+    agents' secrets on its own. Only a unit is off disk by default."""
+    mod, _ = off_disk
+    monkeypatch.delenv("RUNNER_SECRET_FILES", raising=False)
+    monkeypatch.setattr(mod, "UNITS_FILE", tmp_path / "no-units.json")
+    monkeypatch.setattr(mod, "UNIT", "")
+    assert mod.secrets_off_disk() is False
+    assert "RUNNER_SECRET_FILES=0" in mod._HEALTH["secrets"]["detail"]
+    monkeypatch.setenv("RUNNER_SECRET_FILES", "0")       # the operator's opt-in
+    assert mod.secrets_off_disk() is True
+    monkeypatch.delenv("RUNNER_SECRET_FILES")
+    monkeypatch.setattr(mod, "UNIT", "dimagi")           # a unit: on by default
+    assert mod.secrets_off_disk() is True
+    monkeypatch.setattr(mod, "UNIT", "")
+    (tmp_path / "units.json").write_text("{}")
+    monkeypatch.setattr(mod, "UNITS_FILE", tmp_path / "units.json")
+    assert mod.secrets_off_disk() is True
+
+
+def test_an_agent_with_nothing_to_resolve_has_an_empty_env_not_a_failure(off_disk, monkeypatch, tmp_path):
+    """canopy's "n/a": no .env.tpl and not canopy-web-sourced."""
+    mod, _ = off_disk
+    (tmp_path / "agents" / "bob" / ".git").mkdir(parents=True)
+    monkeypatch.setattr(mod, "_api", lambda m, p, *a, **k: (200, {"credential_source": "1password"}))
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: pytest.fail("nothing to resolve"))
+    assert mod._turn_values("bob") == {}
+    # A canopy-web-sourced agent does resolve (and fails, if the resolve does).
+    (tmp_path / "agents" / "cw" / ".git").mkdir(parents=True)
+    monkeypatch.setattr(mod, "_api", lambda m, p, *a, **k: (200, {"credential_source": "canopy-web"}))
+    monkeypatch.setattr(mod.subprocess, "run",
+                        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "refused"))
+    monkeypatch.setattr(mod, "_bearer", lambda min_life=0: "")
+    assert mod._turn_values("cw") is None
+    # A template is a source on its own.
+    (tmp_path / "agents" / "tpl" / ".git").mkdir(parents=True)
+    (tmp_path / "agents" / "tpl" / ".env.tpl").write_text("X=op://v/i/f\n")
+    assert mod._has_env_source("tpl") is True
+
+
+# ---- backing off an agent whose credentials fail (review: retry budget) ---------------
+
+def test_a_credential_failure_backs_the_agent_off_growing_and_resets(cloud_runner):
+    mod = cloud_runner
+    assert mod.backed_off_slugs(now=0) == []
+    steps = [mod.note_cred_failure("eva", now=1000.0) - 1000.0 for _ in range(5)]
+    assert steps == [60, 120, 300, 600, 600]
+    assert mod.backed_off_slugs(now=1000.0 + 599) == ["eva"]
+    assert mod.backed_off_slugs(now=1000.0 + 601) == []
+    mod.note_cred_failure("eva", now=2000.0)
+    mod.note_cred_success("eva")
+    assert mod.backed_off_slugs(now=2000.0) == []
+    assert mod.note_cred_failure("eva", now=3000.0) == 3060.0   # starts over
+
+
+def test_a_failed_resolve_backs_off_and_the_claim_skips_that_agent(turn_box, monkeypatch):
+    mod, root, timeline = turn_box
+    monkeypatch.setattr(mod, "_turn_values", lambda slug, **k: None)
+    monkeypatch.setattr(mod, "execute_prompt", lambda *a, **k: pytest.fail("ran without its credentials"))
+    mod._run_turn("rid", _turn())
+    assert mod.backed_off_slugs() == ["eva"]
+    # REST claim says so…
+    calls = []
+    monkeypatch.setattr(mod, "_api", lambda m, path, body=None, **k: calls.append(path) or (204, None))
+    monkeypatch.setattr(mod, "_observe_beat", lambda b: None)
+    monkeypatch.setattr(mod, "honour_stops", lambda b: None)
+    monkeypatch.setattr(mod, "maybe_self_refresh", lambda p: None)
+    for name in ("_sync_session_views", "_drain_mint", "_drain_inbox"):
+        monkeypatch.setattr(mod, name, lambda *a, **k: None)
+    monkeypatch.setattr(mod, "_maybe_reread_credentials", lambda: None)
+    monkeypatch.setattr(mod, "_credential_tick", lambda *a, **k: None)
+
+    def stop_after(_s):
+        mod._stop = True
+
+    monkeypatch.setattr(mod.time, "sleep", stop_after)
+    mod.run_over_rest("rid")
+    assert "/runners/rid/claim?paused=eva" in calls
+    # …and so does the WS claim frame.
+    sent = []
+    monkeypatch.setattr(mod, "_ws_request", lambda ws, frame, want, **k: sent.append(frame) or {})
+    monkeypatch.setattr(mod, "_token_refused", lambda: False)
+    monkeypatch.setattr(mod, "_memory_headroom_ok", lambda: True)
+    mod._claim_and_run_once(object(), "rid")
+    assert sent == [{"action": "claim", "paused": ["eva"]}]
 
 
 def test_the_cli_version_is_parsed_and_cached(cloud_runner, monkeypatch):
