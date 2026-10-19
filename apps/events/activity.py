@@ -135,7 +135,38 @@ def for_turn(kind: str, turn, *, at=None, dedupe: bool = False, **meta) -> Activ
     return emit(kind, workspace=turn.tenant_slug, actor=actor, actor_kind=kind_of_actor,
                 agent=agent, surface=_ORIGIN_SURFACE.get(turn.origin, turn.origin),
                 ref=f"{turn.pk}", at=at, dedupe=dedupe, project=repo_of(turn=turn),
-                meta={"status": turn.status, "origin": turn.origin, **runner_of(turn), **meta})
+                meta={"status": turn.status, "origin": turn.origin, **runner_of(turn),
+                      **who_and_where(turn, actor if kind_of_actor == Activity.AGENT else None), **meta})
+
+
+def thread_of(turn) -> str:
+    """The conversation a turn belongs to, as `session:<uuid>` (a chat, which is
+    also where a bound Slack thread lives) or `mail:<uuid>` (an email thread), or
+    "" for a turn that is not part of one (a schedule, a bare API dispatch)."""
+    if turn.chat_session_id:
+        return f"session:{turn.chat_session_id}"
+    thread_id = (turn.origin_ref or {}).get("thread_id") if isinstance(turn.origin_ref, dict) else None
+    if turn.origin == "email" and thread_id:
+        return f"mail:{thread_id}"
+    return ""
+
+
+def who_and_where(turn, agent_login=None) -> dict:
+    """The ids the network view (`analytics.network`) joins on, none of them
+    content: the thread, the contact who asked, and the agent that asked —
+    `initiator_agent`, else the agent whose own login the actor is."""
+    out = {}
+    if thread := thread_of(turn):
+        out["thread"] = thread
+    if turn.initiator_contact_id:
+        out["contact"] = turn.initiator_contact_id
+    by_agent = turn.initiator_agent
+    if not by_agent and agent_login is not None:
+        identity = getattr(agent_login, "agent_identity", None)
+        by_agent = identity.slug if identity is not None else ""
+    if by_agent:
+        out["by_agent"] = by_agent
+    return out
 
 
 def runner_of(turn) -> dict:
