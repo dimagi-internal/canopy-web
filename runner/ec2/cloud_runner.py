@@ -3222,8 +3222,14 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         # Hooks: reachable by the WS thread (`stop_turn`) while it runs, and
         # Unregister BEFORE close: a stop/cancel that arrives in the gap would
         # otherwise reach a closed connection and raise inside the WS thread.
+        make_agent = core.AcpAgent
+        ask_human = _ask_human_for_turn(_RUNNER_ID, turn_id,
+                                        getattr(_TURN_ENV, "chat_session", "") or "")
+        if ask_human is not None:
+            def make_agent(**kwargs):
+                return core.AcpAgent(ask_human=ask_human, **kwargs)
         res = drive_turn(
-            prompt, make_agent=core.AcpAgent, reducer=core.UpdateReducer(), emit=emit,
+            prompt, make_agent=make_agent, reducer=core.UpdateReducer(), emit=emit,
             cwd=workdir, env=_agent_env(agent_slug), resume=resume,
             on_start=lambda agent: _acp_register(turn_id, agent),
             on_session=on_session,
@@ -3249,6 +3255,150 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             if isinstance(resets, (int, float)) and resets > 0:
                 _CAP_RESET_HINT[turn_id] = float(resets)
     return res.ok, final_text, res.session_id
+
+
+# ── an ACP ask in a chat: posted to the session, answered like a laptop's ─────
+# A laptop's agent draws its dialog on a terminal and the runner reports it; here
+# the adapter hands the ask over as a request it waits on (`elicitation/create`
+# for AskUserQuestion, `session/request_permission` for a bypass-immune prompt).
+# It goes on the chat's binding (`/session-menu`) — the field every channel
+# already renders — and the person's tap comes back through `/menu-answers`, the
+# durable record a laptop drains (a `menu_answer` frame only rings the bell).
+# docs/architecture/blocked-agent-menus.md.
+#: How often a waiting ask polls `/menu-answers` itself, so an answer lands even
+#: when the doorbell frame was lost.
+MENU_ANSWER_POLL_SECONDS = 3.0
+_ASKS_LOCK = threading.Lock()
+#: Chat session id -> the ask waiting on a person there.
+_ASKS: dict[str, dict] = {}
+_PERMISSION = "session/request_permission"
+
+
+def _ask_human_for_turn(runner_id: str, turn_id: str, chat_session_id: str):
+    """Someone to ask, for a chat turn; None for a turn nobody is watching, whose
+    agent keeps the unattended policy (and AskUserQuestion stays off)."""
+    if not chat_session_id:
+        return None
+    return _ask_a_person(runner_id, turn_id, chat_session_id)
+
+
+def _unattended_answer(core, method: str, params: dict) -> dict:
+    if method == _PERMISSION:
+        return {"outcome": core.allow_first_option(params).outcome()}
+    return {"action": "decline"}
+
+
+def _answer_for(core, method: str, menu: dict, answer: dict) -> dict:
+    """A drained answer -> the reply the adapter is waiting on. Raises ValueError
+    for a number the dialog does not offer."""
+    option, selections = answer.get("option"), answer.get("selections")
+    if method == _PERMISSION:
+        if option is None and selections:
+            option = (selections[0] or [None])[0]
+        return {"outcome": core.PermissionDecision(core.option_id_for(menu, option)).outcome()}
+    return core.elicitation_answer(menu, option, selections, answer.get("texts"))
+
+
+def _post_session_menu(runner_id: str, chat_session_id: str, menu: dict | None) -> bool:
+    status, payload = _api("POST", f"/runners/{runner_id}/session-menu",
+                           {"session_id": chat_session_id, "menu": menu})
+    return status == 200 and bool((payload or {}).get("ok"))
+
+
+def _menu_answer_result(runner_id: str, chat_session_id: str, answer_id: str,
+                        outcome: str) -> None:
+    _api("POST", f"/runners/{runner_id}/menu-answer-result",
+         {"session_id": chat_session_id, "answer_id": answer_id, "outcome": outcome})
+
+
+def _ask_a_person(runner_id: str, turn_id: str, chat_session_id: str):
+    """`ask_human` for canopy_acp: show the ask on the chat, wait for the answer.
+
+    Runs on its own thread (the connection hands it off), so it may wait as long
+    as the person takes — a stop ends the wait. When the ask cannot be shown
+    (an older canopy-web, a session this box does not hold) it is answered as an
+    unattended box would: blocking on a dialog nobody can see is worse.
+    """
+    def ask(method: str, params: dict) -> dict:
+        core = _acp_core()
+        if method == _PERMISSION:
+            menu = core.menu_from_permission_request(params)
+            if menu is not None:
+                menu = {**menu, "source": "acp", "observed_at": time.time()}
+        else:
+            menu = core.menu_from_elicitation(params)
+        if menu is None:
+            return _unattended_answer(core, method, params)
+        waiter = {"answer": None, "ring": threading.Event(), "seen": set()}
+        with _ASKS_LOCK:
+            _ASKS[chat_session_id] = waiter
+        try:
+            if not _post_session_menu(runner_id, chat_session_id, menu):
+                _log(f"turn {turn_id[:8]}: could not show the agent's ask on its chat; "
+                     "answering it unattended")
+                return _unattended_answer(core, method, params)
+            _log(f"turn {turn_id[:8]}: waiting on a person — {str(menu.get('question'))[:80]}")
+            while True:
+                if stop_requested(turn_id):
+                    return ({"outcome": {"outcome": "cancelled"}} if method == _PERMISSION
+                            else {"action": "cancel"})
+                waiter["ring"].wait(MENU_ANSWER_POLL_SECONDS)
+                waiter["ring"].clear()
+                _drain_menu_answers(runner_id)
+                with _ASKS_LOCK:
+                    answer, waiter["answer"] = waiter["answer"], None
+                if answer is None:
+                    continue
+                try:
+                    result = _answer_for(core, method, menu, answer)
+                except ValueError:
+                    # Same refusal a laptop reports, riding the dialog we keep up.
+                    _menu_answer_result(runner_id, chat_session_id, answer["answer_id"],
+                                        "not_on_menu")
+                    _post_session_menu(runner_id, chat_session_id, {
+                        **menu, "answer_error": "not_on_menu",
+                        "answer_note": "That option is not on this dialog — pick one that is."})
+                    continue
+                _menu_answer_result(runner_id, chat_session_id, answer["answer_id"], "answered")
+                _log(f"turn {turn_id[:8]}: the person answered its ask")
+                return result
+        finally:
+            with _ASKS_LOCK:
+                if _ASKS.get(chat_session_id) is waiter:
+                    _ASKS.pop(chat_session_id, None)
+            _post_session_menu(runner_id, chat_session_id, None)
+
+    return ask
+
+
+def _drain_menu_answers(runner_id: str) -> None:
+    """Hand each answer to the ask waiting on it. An answer with no ask waiting
+    here (it ended first) is retired `no_dialog`, or it would be re-listed forever."""
+    status, payload = _api("GET", f"/runners/{runner_id}/menu-answers")
+    if status != 200 or not isinstance(payload, dict):
+        return
+    for a in payload.get("answers") or []:
+        sid, answer_id = a.get("session_id") or "", a.get("answer_id") or ""
+        if not answer_id:
+            continue
+        with _ASKS_LOCK:
+            waiter = _ASKS.get(sid)
+            if waiter is not None:
+                # Listed until its result is posted; deliver it once.
+                if answer_id not in waiter["seen"]:
+                    waiter["seen"].add(answer_id)
+                    waiter["answer"] = a
+                    waiter["ring"].set()
+                continue
+        _menu_answer_result(runner_id, sid, answer_id, "no_dialog")
+
+
+def _ring_menu_answers(runner_id: str) -> None:
+    """The `menu_answer` frame: drain now rather than at the next poll."""
+    try:
+        _drain_menu_answers(runner_id)
+    except Exception as exc:  # noqa: BLE001 — the socket thread must survive
+        _log(f"menu answer drain failed: {exc}")
 
 
 def _execute_once(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
@@ -8074,6 +8224,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                         **ONE_SHOT_TURN_ENV}
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
+        # The chat a person is watching, whose agent may ask them (run_acp). Not a
+        # confined turn's: it is never recorded, so there is no binding to show on.
+        _TURN_ENV.chat_session = "" if confined else _chat_session_id(turn)
         slug = _turn_agent_slug(turn)
         off_disk_env = False
         if not confined and slug and secrets_off_disk():
@@ -8183,6 +8336,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.extra = {}
         _TURN_ENV.settings = None
         _TURN_ENV.confined = None
+        _TURN_ENV.chat_session = ""
         if cli_session_id and cwd is not None:
             _record_session_cwd(cli_session_id, cwd)
         if cli_session_id:
@@ -8536,6 +8690,10 @@ def run_over_ws(runner_id: str) -> bool:
                     elif mtype == "session_interrupt":
                         # A stop aimed at a session: the turn driving it, if any.
                         stop_session(str(msg.get("session_key") or ""), "session interrupt")
+                    elif mtype == "menu_answer":
+                        # A person answered an ask. The bell only: the answer is
+                        # read from /menu-answers, which a waiting ask also polls.
+                        _ring_menu_answers(runner_id)
                     elif mtype == "check_inbox":
                         # Mark it due; the POLL thread does the read. Same split
                         # the laptop uses, for the same reason: a `gog` subprocess

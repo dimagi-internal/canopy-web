@@ -8772,6 +8772,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/session-menu": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Session Menu
+         * @description A dialog the agent of one session on this runner is waiting on, or `menu:
+         *     null` once it is not. A cloud runner's way to say what a laptop says inside
+         *     its session report; answers come back through `/menu-answers`. `ok: false`
+         *     when this runner does not hold the session.
+         */
+        readonly post: operations["post_session_menu"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/admission-notices": {
         readonly parameters: {
             readonly query?: never;
@@ -27298,6 +27321,23 @@ export interface components {
              */
             readonly outcome: string;
         };
+        /** SessionMenuOut */
+        readonly SessionMenuOut: {
+            /** Ok */
+            readonly ok: boolean;
+        };
+        /** SessionMenuIn */
+        readonly SessionMenuIn: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Menu */
+            readonly menu?: {
+                readonly [key: string]: unknown;
+            } | null;
+        };
         /** AdmissionNoticeClaimOut */
         readonly AdmissionNoticeClaimOut: {
             /**
@@ -42571,6 +42611,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MenuAnswerResultOut"];
+                };
+            };
+        };
+    };
+    readonly post_session_menu: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionMenuIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionMenuOut"];
                 };
             };
         };

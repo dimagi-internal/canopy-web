@@ -35,6 +35,9 @@ logger = logging.getLogger("canopy_acp.client")
 # block on gets this rather than nothing.
 METHOD_NOT_FOUND = -32601
 INTERNAL_ERROR = -32603
+#: The agent->client requests that mean "a person has to decide": a permission
+#: the agent's mode could not grant, and a form elicitation (AskUserQuestion).
+HUMAN_METHODS = frozenset({"session/request_permission", "elicitation/create"})
 #: How many adapter stderr lines AcpAgent keeps for `exit_report`.
 STDERR_TAIL_LINES = 50
 
@@ -104,7 +107,8 @@ class AcpConnection:
 
     def __init__(self, *, write_to, read_from, permission_policy=None,
                  on_update: Callable[[str, dict], None] | None = None,
-                 fs_root: pathlib.Path | None = None):
+                 fs_root: pathlib.Path | None = None,
+                 ask_human: Callable[[str, dict], dict] | None = None):
         self._out = write_to
         self._in = read_from
         self._next_id = 1
@@ -114,6 +118,12 @@ class AcpConnection:
         self._reader: threading.Thread | None = None
         self.permission_policy = permission_policy or allow_first_option
         self.on_update = on_update
+        # Someone who can answer: `ask_human(method, params)` returns the result
+        # for a `session/request_permission` or `elicitation/create`, however long
+        # the person takes. Set only where a person can see the ask (a chat
+        # session); without it a permission falls to the policy and an
+        # elicitation is refused — an unattended turn never waits on nobody.
+        self.ask_human = ask_human
         # When set, fs/* requests are confined to this directory. The agent runs
         # in a worktree; a read outside it is a bug or worse.
         self.fs_root = pathlib.Path(fs_root).resolve() if fs_root else None
@@ -259,6 +269,12 @@ class AcpConnection:
             logger.debug("update handler raised (non-fatal)", exc_info=True)
 
     def _handle_agent_request(self, message_id, method: str, params: dict) -> None:
+        if self.ask_human is not None and method in HUMAN_METHODS:
+            # Off the reader thread: a person can take minutes, and meanwhile the
+            # agent's updates — and the reply to a stop's cancel — must keep flowing.
+            threading.Thread(target=self._ask_human, args=(message_id, method, params),
+                             daemon=True, name="acp-ask-human").start()
+            return
         try:
             if method == "session/request_permission":
                 decision = self.permission_policy(params)
@@ -277,6 +293,12 @@ class AcpConnection:
                                 METHOD_NOT_FOUND)
         except Exception as exc:  # noqa: BLE001
             self._respond_error(message_id, str(exc))
+
+    def _ask_human(self, message_id, method: str, params: dict) -> None:
+        try:
+            self._respond(message_id, self.ask_human(method, params))
+        except Exception as exc:  # noqa: BLE001 — the agent is blocked on this reply
+            self._respond_error(message_id, f"could not ask a person: {exc}")
 
     def _resolve_path(self, params: dict) -> pathlib.Path:
         path = pathlib.Path(str(params.get("path") or "")).expanduser()
@@ -382,8 +404,10 @@ class AcpAgent:
     """
 
     def __init__(self, *, cwd, argv: list[str] | None = None, env: dict | None = None,
-                 on_update=None, permission_policy=None, confine_fs: bool = True):
+                 on_update=None, permission_policy=None, confine_fs: bool = True,
+                 ask_human=None):
         self.cwd = pathlib.Path(cwd)
+        self._ask_human = ask_human
         self._argv = argv or find_adapter(os.environ.get("ACP_ADAPTER_PATH"))
         if not self._argv:
             raise RuntimeError(
@@ -413,13 +437,20 @@ class AcpAgent:
         self.conn = AcpConnection(
             write_to=self.proc.stdin, read_from=self.proc.stdout,
             on_update=self._on_update, permission_policy=self._permission_policy,
-            fs_root=self.cwd if self._confine_fs else None,
+            fs_root=self.cwd if self._confine_fs else None, ask_human=self._ask_human,
         )
         self.conn.start()
-        return self.conn.request("initialize", {
-            "protocolVersion": 1,
-            "clientCapabilities": {"fs": {"readTextFile": True, "writeTextFile": True}},
-        }).result(timeout=60)
+        return self.conn.request("initialize", self.initialize_params()).result(timeout=60)
+
+    def initialize_params(self) -> dict:
+        """What this client says it can do. Form elicitation only when someone can
+        answer: the adapter turns AskUserQuestion on iff the client advertises it
+        (claude-agent-acp's `disallowedTools`), so an unattended turn keeps the
+        tool off rather than blocking on a question nobody sees."""
+        caps: dict = {"fs": {"readTextFile": True, "writeTextFile": True}}
+        if self._ask_human is not None:
+            caps["elicitation"] = {"form": {}}
+        return {"protocolVersion": 1, "clientCapabilities": caps}
 
     def _drain_stderr(self) -> None:
         try:

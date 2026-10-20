@@ -1164,6 +1164,7 @@ def finish_turn(
             push_services.on_session_turn_finished(turn)
         except Exception:  # noqa: BLE001
             logger.exception("push: could not arm the finish push for turn %s", turn.pk)
+        end_turns_ask(turn)
     # A finished scheduled occurrence discharges any open nag for its schedule —
     # you no longer owe attention to a slot that has since completed.
     if status == Turn.DONE:
@@ -2270,50 +2271,102 @@ def replace_reported_sessions(
         from apps.harness.signals import sessions_reported
 
         sessions_reported.send(sender=Runner, runner=runner)
-
-        # The dialog, to anyone already looking at that chat. Its own frame
-        # rather than an overloaded `session.activity`: activity is "is the
-        # agent producing", which the hook path owns and answers within a
-        # tick — inventing a state here to carry a menu would mean reporting
-        # an agent as idle or blocked on this path's much slower clock.
-        from apps.realtime import groups
-
-        for session_id, menu in menu_changes:
-            groups.publish(groups.session_group(session_id),
-                           {"type": "session.menu", "menu": menu})
-
-        from apps.harness.signals import session_menu_changed
-
-        for session_id, menu in menu_changes:
-            try:
-                session_menu_changed.send(sender=RunnerBinding, session_id=session_id, menu=menu)
-            except Exception:  # noqa: BLE001 — a consumer must not break the report
-                logger.exception("session_menu_changed receiver failed")
-
-        # And to the phone in your pocket, for the agents that just STARTED
-        # waiting. Only the null -> menu edge: a retraction is not news, and the
-        # UI it would correct is already corrected by the frame above.
-        #
-        # This is the half no rendering fix could cover. A menu that renders
-        # perfectly still needs somebody to open the app, and the failure being
-        # fixed here is 52 minutes of nobody knowing there was anything to open.
-        asking = new_asks
-        if asking:
-            from apps.canopy_sessions.models import Session
-            from apps.push import services as push_services
-
-            sessions = Session.objects.select_related(
-                "agent", "runner_binding", "runner_binding__runner"
-            ).in_bulk([sid for sid, _ in asking])
-            for session_id, menu in asking:
-                session = sessions.get(session_id)
-                if session is not None:
-                    push_services.notify_session_question(session, menu)
+        _publish_menu_changes(menu_changes, new_asks)
 
     transaction.on_commit(_fire_reported)
     if newly_closed:
         transaction.on_commit(lambda: fire_sessions_closed(newly_closed))
     return len(deduped)
+
+
+def _publish_menu_changes(menu_changes: list[tuple], new_asks: list[tuple]) -> None:
+    """Tell everyone a session's dialog changed. Called after commit by both
+    producers: the laptop's wholesale report and a cloud box's `report_session_menu`."""
+    from apps.canopy_sessions.models import RunnerBinding
+
+    # The dialog, to anyone already looking at that chat. Its own frame
+    # rather than an overloaded `session.activity`: activity is "is the
+    # agent producing", which the hook path owns and answers within a
+    # tick — inventing a state here to carry a menu would mean reporting
+    # an agent as idle or blocked on this path's much slower clock.
+    from apps.realtime import groups
+
+    for session_id, menu in menu_changes:
+        groups.publish(groups.session_group(session_id),
+                       {"type": "session.menu", "menu": menu})
+
+    from apps.harness.signals import session_menu_changed
+
+    for session_id, menu in menu_changes:
+        try:
+            session_menu_changed.send(sender=RunnerBinding, session_id=session_id, menu=menu)
+        except Exception:  # noqa: BLE001 — a consumer must not break the report
+            logger.exception("session_menu_changed receiver failed")
+
+    # And to the phone in your pocket, for the agents that just STARTED
+    # waiting. Only the null -> menu edge: a retraction is not news, and the
+    # UI it would correct is already corrected by the frame above.
+    #
+    # This is the half no rendering fix could cover. A menu that renders
+    # perfectly still needs somebody to open the app, and the failure being
+    # fixed here is 52 minutes of nobody knowing there was anything to open.
+    if new_asks:
+        from apps.canopy_sessions.models import Session
+        from apps.push import services as push_services
+
+        sessions = Session.objects.select_related(
+            "agent", "runner_binding", "runner_binding__runner"
+        ).in_bulk([sid for sid, _ in new_asks])
+        for session_id, menu in new_asks:
+            session = sessions.get(session_id)
+            if session is not None:
+                push_services.notify_session_question(session, menu)
+
+
+def end_turns_ask(turn: Turn) -> None:
+    """A finished chat turn retires the ACP ask it was holding open.
+
+    A cloud box's ask lives exactly as long as the turn: the agent is blocked
+    inside it. When the box clears it itself this is a no-op; when the box died
+    mid-ask it is the only signal left, since a cloud box makes no wholesale
+    report to retract it. A laptop's menu (any other `source`) is what its
+    terminal shows, which outlives a turn — only its report clears that.
+    """
+    from apps.canopy_sessions.models import RunnerBinding
+
+    if not turn.claimed_by_id:
+        return
+    binding = (RunnerBinding.objects.select_related("runner")
+               .filter(session_id=turn.chat_session_id, runner_id=turn.claimed_by_id).first())
+    if binding is not None and (binding.pending_question or {}).get("source") == "acp":
+        report_session_menu(binding.runner, binding.session_id, None)
+
+
+def report_session_menu(runner: Runner, session_id, menu: dict | None) -> bool:
+    """A cloud box's dialog for ONE session it holds: set it, or clear it (None).
+
+    The laptop says the same thing inside its wholesale emdash report; a cloud
+    box makes no such report — it holds the agent's ask open over ACP, so it
+    knows exactly when one starts and ends, and says so per session. Same field,
+    same frames, same once-per-ask push. False when this runner does not hold
+    the session: one box never writes a dialog onto another's.
+    """
+    from apps.canopy_sessions.models import RunnerBinding
+
+    binding = RunnerBinding.objects.filter(session_id=session_id, runner=runner).first()
+    if binding is None:
+        return False
+    was_asking = binding.pending_question or None
+    binding.pending_question = menu or None
+    if was_asking == binding.pending_question:
+        return True
+    binding.save(update_fields=["pending_question"])
+    changes = [(binding.session_id, binding.pending_question)]
+    asks = ([(binding.session_id, binding.pending_question)]
+            if binding.pending_question
+            and _ask_identity(was_asking) != _ask_identity(binding.pending_question) else [])
+    transaction.on_commit(lambda: _publish_menu_changes(changes, asks))
+    return True
 
 
 @dataclass

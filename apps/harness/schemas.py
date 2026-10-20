@@ -1530,6 +1530,17 @@ class MenuAnswerResultIn(Schema):
     outcome: str = ""
 
 
+class SessionMenuIn(Schema):
+    session_id: uuid.UUID
+    # The canopy menu dict (`canopy_acp.menus`), or null to clear it. The same
+    # shape a laptop puts in a reported session's `question`.
+    menu: dict | None = None
+
+
+class SessionMenuOut(Schema):
+    ok: bool
+
+
 class CloseOut(Schema):
     session_id: str
     session_key: str

@@ -227,6 +227,91 @@ def test_notifications_carry_no_id(wired):
     assert msg["method"] == "session/cancel"
 
 
+ASK = {"mode": "form", "sessionId": "s", "toolCallId": "toolu_1", "message": "Pick a colour",
+       "requestedSchema": {"type": "object", "properties": {
+           "question_0": {"type": "string", "oneOf": [{"const": "Aubergine", "title": "Aubergine"},
+                                                      {"const": "Beige", "title": "Beige"}]}}}}
+
+
+def test_without_a_human_an_elicitation_is_refused_not_ignored(wired):
+    """Nobody to ask: the agent still gets an answer, so the turn never wedges."""
+    conn, agent = wired
+    agent.request(21, "elicitation/create", ASK)
+    reply = json.loads(_readline(agent.to_agent_r, 2))
+    assert reply["id"] == 21
+    assert "error" in reply
+
+
+def test_an_elicitation_is_answered_by_the_human_handler(wired):
+    conn, agent = wired
+    conn.ask_human = lambda method, params: {"action": "accept",
+                                             "content": {"question_0": "Aubergine"}}
+    agent.request(22, "elicitation/create", ASK)
+    reply = json.loads(_readline(agent.to_agent_r, 2))
+    assert reply["id"] == 22
+    assert reply["result"] == {"action": "accept", "content": {"question_0": "Aubergine"}}
+
+
+def test_a_permission_request_goes_to_the_human_handler_when_there_is_one(wired):
+    conn, agent = wired
+    conn.ask_human = lambda method, params: {
+        "outcome": {"outcome": "selected", "optionId": "deny"}} if method == \
+        "session/request_permission" else None
+    agent.request(23, "session/request_permission",
+                  {"sessionId": "s", "options": [{"optionId": "allow", "kind": "allow_once"},
+                                                 {"optionId": "deny", "kind": "reject_once"}]})
+    reply = json.loads(_readline(agent.to_agent_r, 2))
+    assert reply["result"]["outcome"] == {"outcome": "selected", "optionId": "deny"}
+
+
+def test_waiting_on_a_human_does_not_stall_the_reader(wired):
+    """A person can take minutes to answer. Updates — and a cancel's reply —
+    must keep flowing meanwhile, so the wait runs off the reader thread."""
+    conn, agent = wired
+    release = threading.Event()
+    seen = []
+    conn.on_update = lambda session_id, update: seen.append(update)
+
+    def slow_human(method, params):
+        release.wait(5)
+        return {"action": "decline"}
+
+    conn.ask_human = slow_human
+    agent.request(24, "elicitation/create", ASK)
+    agent.notify("session/update", {"sessionId": "s", "update": {"sessionUpdate": "z"}})
+    _wait(lambda: seen)
+    release.set()
+    reply = json.loads(_readline(agent.to_agent_r, 2))
+    assert reply == {"jsonrpc": "2.0", "id": 24, "result": {"action": "decline"}}
+
+
+def test_a_human_handler_that_raises_still_answers(wired):
+    conn, agent = wired
+
+    def broken(method, params):
+        raise RuntimeError("canopy-web unreachable")
+
+    conn.ask_human = broken
+    agent.request(25, "elicitation/create", ASK)
+    reply = json.loads(_readline(agent.to_agent_r, 2))
+    assert reply["id"] == 25
+    assert "error" in reply
+
+
+def test_form_elicitation_is_advertised_only_when_someone_can_answer(tmp_path):
+    """The adapter disables AskUserQuestion outright unless the client says it
+    can render a form, and a box with nobody to ask must keep it disabled — an
+    unattended turn would otherwise block on a question no one sees."""
+    from canopy_acp.client import AcpAgent
+
+    headless = AcpAgent(cwd=tmp_path, argv=["true"]).initialize_params()
+    assert "elicitation" not in headless["clientCapabilities"]
+    asked = AcpAgent(cwd=tmp_path, argv=["true"],
+                     ask_human=lambda method, params: {}).initialize_params()
+    assert asked["clientCapabilities"]["elicitation"] == {"form": {}}
+    assert asked["clientCapabilities"]["fs"] == headless["clientCapabilities"]["fs"]
+
+
 def _wait(predicate, timeout=2.0):
     import time
     deadline = time.monotonic() + timeout
