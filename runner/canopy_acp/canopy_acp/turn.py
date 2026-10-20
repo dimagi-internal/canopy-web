@@ -113,7 +113,7 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
                flush_seconds: float = 10, idle_timeout: float | None = None,
                timeout: float | None = None, clock=time.time, log=logger.info,
                release_wait: float = RELEASE_WAIT_SECONDS,
-               processes=session_processes) -> TurnResult:
+               processes=session_processes, mode: str | None = None) -> TurnResult:
     """Run one prompt as one turn and close the adapter.
 
     `make_agent(cwd=, env=, on_update=)` builds the agent (canopy_acp.AcpAgent,
@@ -121,7 +121,10 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
     `on_start(agent)` once it is up (register it for a stop from another thread),
     `on_session(sid)` once the session exists and before the prompt goes in,
     `on_end(agent)` before it is closed (unregister it: a cancel arriving after
-    the close would reach a dead connection). `cancelled()` is polled; true sends
+    the close would reach a dead connection). `mode` is the permission mode the
+    session is put in before the prompt (`session/set_mode`, every turn: each is a
+    fresh adapter, which starts in `default`); a refusal is logged and the turn runs
+    in the mode it has. `cancelled()` is polled; true sends
     the Escape equivalent once. A resume whose `session/load` fails starts a
     fresh session — `on_session` then names the new id.
 
@@ -200,6 +203,11 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
                 reducer.reset_stream_state()
         if not session_id:
             session_id = agent.new_session(timeout=session_start_timeout)
+        if mode:
+            try:
+                agent.set_mode(mode).result(timeout=session_start_timeout)
+            except Exception as exc:  # noqa: BLE001 — the turn still runs, in the adapter's mode
+                log(f"warn: could not put session {session_id[:8]} in {mode} mode: {exc}")
         if on_session is not None:
             on_session(session_id)
 

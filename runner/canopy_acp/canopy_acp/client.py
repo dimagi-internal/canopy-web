@@ -505,9 +505,9 @@ class AcpAgent:
         """The Escape equivalent. A notification, not a request."""
         self.conn.notify("session/cancel", {"sessionId": self.session_id})
 
-    def set_mode(self, mode_id: str) -> None:
-        self.conn.request("session/set_mode",
-                          {"sessionId": self.session_id, "modeId": mode_id})
+    def set_mode(self, mode_id: str) -> Pending:
+        return self.conn.request("session/set_mode",
+                                 {"sessionId": self.session_id, "modeId": mode_id})
 
     def close(self, timeout: float = 10) -> None:
         if self.conn is not None:

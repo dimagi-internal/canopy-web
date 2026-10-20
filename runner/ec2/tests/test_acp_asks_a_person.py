@@ -185,6 +185,14 @@ def _built_with(mod, monkeypatch, tmp_path, chat_session):
         def new_session(self, timeout=None):
             return self.session_id
 
+        def set_mode(self, mode_id):
+            built["mode"] = mode_id
+
+            class Set:
+                def result(self, timeout=None):
+                    return {}
+            return Set()
+
         def prompt(self, _p):
             class Done:
                 def result(self, timeout=None):
@@ -230,6 +238,13 @@ def test_run_acp_gives_a_chat_turn_s_agent_someone_to_ask(box, monkeypatch, tmp_
 def test_run_acp_leaves_a_headless_turn_unattended(box, monkeypatch, tmp_path):
     mod, _server = box
     assert "ask_human" not in _built_with(mod, monkeypatch, tmp_path, "")
+
+
+@pytest.mark.parametrize("chat_session", [SID, ""])
+def test_run_acp_runs_every_turn_in_bypass_like_claude_p(box, monkeypatch, tmp_path, chat_session):
+    """Someone to ask is for what bypass holds back, not a dialog per edit."""
+    mod, _server = box
+    assert _built_with(mod, monkeypatch, tmp_path, chat_session)["mode"] == "bypassPermissions"
 
 
 def _wait(predicate, timeout=2.0):
