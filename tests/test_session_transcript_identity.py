@@ -11,8 +11,12 @@ whose highest possible ordinal was 24,575, so every record of the live session s
 below the marker and shipped nothing for 23.5 hours.
 
 `ensure_transcript_identity` is the sibling of `_ensure_current_ordinal_scheme`:
-the other way a session's ordinal space is invalidated, handled the same way —
-drop the derived rows and re-derive.
+the other way a session's ordinal space is invalidated. A changed transcript opens
+a new EPOCH above the held rows rather than dropping them (issue #1731: a
+credential failover moved a live session to a fresh claude conversation and the
+drop deleted history nothing could re-derive). Name reuse — the case dropping was
+built for — is caught earlier by the forks. Only rows of unknown provenance (a
+blank recorded id) are still dropped and re-derived.
 """
 from __future__ import annotations
 
@@ -49,18 +53,52 @@ def _rows(session, indices, prefix="old"):
     )
 
 
-def test_a_different_transcript_drops_the_predecessors_rows():
-    """The core case: same task name, different conversation."""
-    session, binding = _ctx(transcript_id="6ee00fa8")
+def test_a_different_transcript_keeps_the_held_rows_and_opens_an_epoch():
+    """Issue #1731: same session, new claude conversation (a credential failover
+    that could not resume). The new file holds none of the old history, so the
+    old rows are the only copy left — they stay, and the new file lands above."""
+    session, binding = _ctx(transcript_id="fc41aa1a")
     _rows(session, [64, 128, 37696])
+
+    assert services.ensure_transcript_identity(session, "737c1a0a") == 0
+
     assert Message.objects.filter(session=session).count() == 3
-
-    dropped = services.ensure_transcript_identity(session, "b8c44ef3")
-
-    assert dropped == 3
-    assert Message.objects.filter(session=session).count() == 0
     binding.refresh_from_db()
-    assert binding.transcript_id == "b8c44ef3"
+    assert binding.transcript_id == "737c1a0a"
+    assert binding.index_offset > 37696
+    assert binding.index_offset % services.BLOCK_STRIDE == 0
+
+
+def test_the_new_transcript_lands_above_the_old_one_without_colliding():
+    """The #615 hazard the drop used to prevent: the new file's ordinals restart
+    near 0 and would collide with, or sort among, the old ones. The epoch shifts
+    them past the high-water mark instead, so the render stays chronological."""
+    session, binding = _ctx(transcript_id="fc41aa1a")
+    _rows(session, [64, 128, 37696])
+    services.ensure_transcript_identity(session, "737c1a0a")
+
+    _rows(session, [64, 128], prefix="new")
+
+    texts = list(
+        Message.objects.filter(session=session).order_by("turn_index")
+        .values_list("plaintext", flat=True)
+    )
+    assert texts == ["old 64", "old 128", "old 37696", "new 64", "new 128"]
+
+
+def test_a_second_change_opens_another_epoch_above_both():
+    """Epochs stack: each change keeps everything below it."""
+    session, binding = _ctx(transcript_id="a")
+    _rows(session, [64])
+    services.ensure_transcript_identity(session, "b")
+    _rows(session, [64], prefix="b")
+    first = RunnerBinding.objects.get(pk=binding.pk).index_offset
+
+    services.ensure_transcript_identity(session, "c")
+    _rows(session, [64], prefix="c")
+
+    assert RunnerBinding.objects.get(pk=binding.pk).index_offset > first
+    assert Message.objects.filter(session=session).count() == 3
 
 
 def test_the_same_transcript_keeps_everything():
@@ -103,7 +141,7 @@ def test_a_chunked_ship_cannot_delete_its_own_earlier_chunks():
     """A transcript is shipped in byte-budgeted chunks, every one of them naming
     the same transcript. Only the first can drop; if a later chunk could, a long
     history would arrive and destroy itself one chunk at a time."""
-    session, _ = _ctx(transcript_id="6ee00fa8")
+    session, _ = _ctx(transcript_id="")
     _rows(session, [64])
 
     assert services.ensure_transcript_identity(session, "b8c44ef3") == 1   # chunk 1
@@ -111,6 +149,22 @@ def test_a_chunked_ship_cannot_delete_its_own_earlier_chunks():
     assert services.ensure_transcript_identity(session, "b8c44ef3") == 0   # chunk 2
     _rows(session, [192], prefix="new")
     assert services.ensure_transcript_identity(session, "b8c44ef3") == 0   # chunk 3
+    assert Message.objects.filter(session=session).count() == 3
+
+
+def test_a_chunked_ship_opens_its_epoch_only_once():
+    """Same idempotence for a changed id: chunk 1 opens the epoch and records the
+    id; later chunks match and must not lift the offset again, or each chunk
+    would land in an epoch of its own."""
+    session, binding = _ctx(transcript_id="6ee00fa8")
+    _rows(session, [64])
+
+    services.ensure_transcript_identity(session, "b8c44ef3")                # chunk 1
+    offset = RunnerBinding.objects.get(pk=binding.pk).index_offset
+    _rows(session, [64, 128], prefix="new")
+    services.ensure_transcript_identity(session, "b8c44ef3")                # chunk 2
+
+    assert RunnerBinding.objects.get(pk=binding.pk).index_offset == offset
     assert Message.objects.filter(session=session).count() == 3
 
 
