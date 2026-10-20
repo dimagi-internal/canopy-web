@@ -33,7 +33,7 @@ import shutil
 import subprocess
 import sys
 
-KEEP_NEWEST = 2
+KEEP_NEWEST = 1
 NPM_MAX_MB = 500
 
 
