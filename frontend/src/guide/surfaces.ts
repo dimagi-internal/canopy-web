@@ -81,8 +81,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/home',
     title: 'Home',
     audience: 'Everyone',
-    what: 'What is waiting on you, across every workspace you are in: chats whose agent needs your next message, tasks asking you to approve, decline or answer (or parked on you), and requests to join a workspace you manage. Newest first. Anything nobody has touched for three days moves to Gone quiet. Let go takes something off your list without deciding it — nothing is sent and the agent is not told — and it comes back by itself when something new happens on it. Beside it, the active projects you own.',
-    actions: ['Approve, decline or reply to a task in place', 'Let go of what you will not get to', 'Let go of everything gone quiet at once', 'Bring back something you let go'],
+    what: 'What is waiting on you, across every workspace you are in. Sessions whose agent needs your next message come first; tasks asking you to approve, decline or answer (or parked on you) and requests to join a workspace you manage are folded below them. Newest first. Anything nobody has touched for three days moves to Gone quiet. Hide takes something off your own Home and nothing more — the task stays open, nobody is told — and it comes back by itself when something new happens on it. Beside it, the active projects you own.',
+    actions: ['Open a session waiting on you', 'Approve, decline or reply to a task in place', 'Hide what you will not get to', 'Hide everything gone quiet at once', 'Show again something you hid'],
   },
   {
     path: '/supervisor',

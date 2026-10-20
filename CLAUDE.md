@@ -73,7 +73,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 
 **Root:**
 - `/` — public product site (Astro, `site/`, `config/public_site.py`) for everyone; `/app` — the door into the app (`LOGIN_REDIRECT_URL`); `/about` — public explainer; `/get-started` — public: how to use a canopy agent in your own Claude Code
-- `/home` — what is waiting on you across your workspaces (`/api/attention/`, one list every client reads; Let go sets an item aside until something new happens on it); where `/app` lands
+- `/home` — what is waiting on you across your workspaces (`/api/attention/`, one list every client reads; Hide takes a thing off your own Home, closing nothing, until something new happens on it); where `/app` lands
 - `/supervisor` — cross-fleet Feed, Waiting on you, Sessions, Agents, Runners (phone PWA + menubar)
 - `/ide` (+ `/:id`) — desktop session IDE: project tree of every session (state, runner, mode, age) beside the open chat
 - `/activity`, `/schedules` — turn log and schedules across your workspaces

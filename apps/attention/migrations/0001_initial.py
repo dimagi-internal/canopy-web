@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name="LetGo",
+            name="Hidden",
             fields=[
                 (
                     "id",
@@ -26,13 +26,13 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("key", models.CharField(max_length=200)),
-                ("let_go_at", models.DateTimeField()),
+                ("hidden_at", models.DateTimeField()),
                 ("until", models.DateTimeField(blank=True, null=True)),
                 (
                     "user",
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.CASCADE,
-                        related_name="let_gos",
+                        related_name="hidden_attention",
                         to=settings.AUTH_USER_MODEL,
                     ),
                 ),
@@ -40,7 +40,7 @@ class Migration(migrations.Migration):
             options={
                 "constraints": [
                     models.UniqueConstraint(
-                        fields=("user", "key"), name="attention_letgo_user_key"
+                        fields=("user", "key"), name="attention_hidden_user_key"
                     )
                 ],
             },

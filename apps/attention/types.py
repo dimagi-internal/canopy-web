@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class AttentionRow:
-    #: Stable across reads: `<kind>:<id>`. What a let-go is recorded against.
+    #: Stable across reads: `<kind>:<id>`. What a hide is recorded against.
     key: str
     kind: str
     #: Why it is waiting on you, in a few words ("Approve or decline", "Your move").
@@ -23,7 +23,7 @@ class AttentionRow:
     workspace: str
     #: App-relative page for it, under its workspace.
     url: str
-    #: The last time anything happened on it. A let-go lasts until this moves.
+    #: The last time anything happened on it. A hide lasts until this moves.
     last_activity_at: dt.datetime
     body: str = ""
     agent_slug: str = ""

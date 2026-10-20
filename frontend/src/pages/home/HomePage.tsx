@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } f
 import { Link } from 'react-router-dom'
 
 import { actOnTask, type ProjectOut } from '@/api/agents'
-import { attentionPins, loadAttention, letGo, takeBack, type Attention, type AttentionRow } from '@/api/attention'
+import { attentionPins, hide, loadAttention, unhide, type Attention, type AttentionRow } from '@/api/attention'
 import { apiV2, WORKSPACE_HEADER } from '@/api/client.v2'
 import { useAuth } from '@/auth/AuthProvider'
 import { relativeTime } from '@/components/activity/turnLog'
@@ -12,13 +12,18 @@ import { useWorkspace } from '@/workspace/WorkspaceProvider'
 //
 // One list, read from `/api/attention/` (the same list MCP and any client get),
 // ranked by what just happened rather than as a queue: an oldest-first queue
-// floated whatever had gone stale to the top, where it stayed. Anything nobody
-// has touched in a few days drops into "Gone quiet", folded, with one button to
-// let all of it go. Letting go is not deciding: the agent is not told and the
-// task is unchanged; it comes back by itself when something new happens on it.
+// floated whatever had gone stale to the top, where it stayed.
+//
+// Sessions lead: a chat whose agent is waiting on your next message is where
+// work actually moves. Tasks and requests sit folded under them as a count —
+// the board is noisy, and listing it alongside the chats buried them. Anything
+// nobody has touched in a few days drops into "Gone quiet", folded, with one
+// button to hide all of it. Hiding is not deciding: the task stays open, the
+// chat stays as it is, nobody is told; it comes back by itself when something
+// new happens on it.
 
-/** How many rows "Needs you" shows before "Show more" — the list is meant to be
- *  read in one look, not worked through. */
+/** How many sessions show before "Show more" — the list is meant to be read in
+ *  one look, not worked through. */
 const SHOWN = 8
 
 const KIND_LABEL: Record<string, string> = {
@@ -34,8 +39,9 @@ export function HomePage(): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('')
   const [showAll, setShowAll] = useState(false)
+  const [showTasks, setShowTasks] = useState(false)
   const [showQuiet, setShowQuiet] = useState(false)
-  const [showLetGo, setShowLetGo] = useState(false)
+  const [showHidden, setShowHidden] = useState(false)
   const [undo, setUndo] = useState<{ keys: string[]; label: string } | null>(null)
 
   const refresh = useCallback(async () => {
@@ -59,7 +65,9 @@ export function HomePage(): JSX.Element {
   const inFilter = (i: AttentionRow) => !filter || i.workspace === filter
   const now = (data?.now ?? []).filter(inFilter)
   const quiet = (data?.quiet ?? []).filter(inFilter)
-  const lettingGo = (data?.let_go ?? []).filter(inFilter)
+  const hidden = (data?.hidden ?? []).filter(inFilter)
+  const sessions = now.filter((i) => i.kind === 'session')
+  const others = now.filter((i) => i.kind !== 'session')
   const counts = useMemo(() => {
     const c = new Map<string, number>()
     for (const i of data?.now ?? []) c.set(i.workspace, (c.get(i.workspace) ?? 0) + 1)
@@ -72,28 +80,28 @@ export function HomePage(): JSX.Element {
       d && {
         now: d.now.filter((i) => !keys.includes(i.key)),
         quiet: d.quiet.filter((i) => !keys.includes(i.key)),
-        let_go: d.let_go,
+        hidden: d.hidden,
       },
     )
   }
 
-  async function onLetGo(items: AttentionRow[], days?: number) {
+  async function onHide(items: AttentionRow[], days?: number) {
     const keys = items.map((i) => i.key)
     drop(keys)
     setUndo({
       keys,
-      label: items.length === 1 ? `Let go of “${items[0].title}”` : `Let go of ${items.length} items`,
+      label: items.length === 1 ? `Hid “${items[0].title}”` : `Hid ${items.length}`,
     })
     try {
-      await letGo(keys, days)
+      await hide(keys, days)
     } finally {
       void refresh()
     }
   }
 
-  async function onTakeBack(keys: string[]) {
+  async function onUnhide(keys: string[]) {
     setUndo(null)
-    await Promise.all(keys.map((k) => takeBack(k)))
+    await Promise.all(keys.map((k) => unhide(k)))
     void refresh()
   }
 
@@ -107,7 +115,7 @@ export function HomePage(): JSX.Element {
   }
 
   const firstName = auth.status === 'authenticated' ? (auth.user.name || auth.user.email).split(/[ @]/)[0] : ''
-  const shown = showAll ? now : now.slice(0, SHOWN)
+  const shown = showAll ? sessions : sessions.slice(0, SHOWN)
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
@@ -119,7 +127,9 @@ export function HomePage(): JSX.Element {
               ? 'What is waiting on you, across every workspace you are in.'
               : now.length === 0
                 ? `Nothing new needs you${firstName ? `, ${firstName}` : ''}.`
-                : `${now.length} ${now.length === 1 ? 'thing needs' : 'things need'} you. Newest first — let go of anything you won't get to.`}
+                : `${plural(sessions.length, 'session')} waiting on you${
+                    others.length ? `, and ${plural(others.length, 'task or request', 'tasks or requests')}` : ''
+                  }. Newest first.`}
           </p>
         </div>
 
@@ -148,9 +158,9 @@ export function HomePage(): JSX.Element {
         {undo && (
           <div className="mb-3 flex items-center justify-between gap-3 rounded border border-border bg-card px-3 py-2 text-[13px]">
             <span className="truncate text-foreground-secondary">
-              {undo.label}. It comes back when something new happens on it.
+              {undo.label} from your Home. Nothing was closed; it comes back when something new happens on it.
             </span>
-            <button type="button" onClick={() => void onTakeBack(undo.keys)} className="shrink-0 font-medium text-primary hover:underline">
+            <button type="button" onClick={() => void onUnhide(undo.keys)} className="shrink-0 font-medium text-primary hover:underline">
               Undo
             </button>
           </div>
@@ -159,24 +169,36 @@ export function HomePage(): JSX.Element {
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
         {(data == null && !error) || wsLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
-        <Section title="Needs you" count={now.length}>
-          {data && now.length === 0 && (
-            <p className="px-3 py-4 text-[13px] text-muted-foreground">
-              Nothing has happened that needs you in the last few days.
-              {quiet.length > 0 && ' Older things that are still open are under Gone quiet.'}
-            </p>
+        <Section title="Sessions" count={sessions.length} hint="Waiting on your next message.">
+          {data && sessions.length === 0 && (
+            <p className="px-3 py-4 text-[13px] text-muted-foreground">No session is waiting on you.</p>
           )}
           {shown.map((item) => (
             <AttentionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
-              onAct={onAct} onLetGo={onLetGo} />
+              onAct={onAct} onHide={onHide} />
           ))}
-          {now.length > SHOWN && (
+          {sessions.length > SHOWN && (
             <button type="button" onClick={() => setShowAll((v) => !v)}
               className="w-full border-t border-border px-3 py-2 text-left text-[12px] text-muted-foreground hover:text-foreground">
-              {showAll ? 'Show fewer' : `Show ${now.length - SHOWN} more`}
+              {showAll ? 'Show fewer' : `Show ${sessions.length - SHOWN} more`}
             </button>
           )}
         </Section>
+
+        {others.length > 0 && (
+          <Section
+            title="Tasks and requests"
+            count={others.length}
+            hint="Approvals, questions and tasks parked on you."
+            open={showTasks}
+            onToggle={() => setShowTasks((v) => !v)}
+          >
+            {others.map((item) => (
+              <AttentionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
+                onAct={onAct} onHide={onHide} />
+            ))}
+          </Section>
+        )}
 
         {quiet.length > 0 && (
           <Section
@@ -186,33 +208,34 @@ export function HomePage(): JSX.Element {
             open={showQuiet}
             onToggle={() => setShowQuiet((v) => !v)}
             action={
-              <button type="button" onClick={() => void onLetGo(quiet)}
+              <button type="button" onClick={() => void onHide(quiet)}
+                title="Takes them off your Home only. Nothing is closed and nobody is told."
                 className="rounded border border-border px-2 py-0.5 text-[12px] text-foreground-secondary hover:bg-muted">
-                Let go of all {quiet.length}
+                Hide all {quiet.length}
               </button>
             }
           >
             {quiet.map((item) => (
               <AttentionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
-                onAct={onAct} onLetGo={onLetGo} />
+                onAct={onAct} onHide={onHide} />
             ))}
           </Section>
         )}
 
-        {lettingGo.length > 0 && (
+        {hidden.length > 0 && (
           <Section
-            title="Let go"
-            count={lettingGo.length}
-            hint="Set aside by you. Each comes back on its own when something new happens on it."
-            open={showLetGo}
-            onToggle={() => setShowLetGo((v) => !v)}
+            title="Hidden"
+            count={hidden.length}
+            hint="Off your Home, still open. Each comes back when something new happens on it."
+            open={showHidden}
+            onToggle={() => setShowHidden((v) => !v)}
           >
-            {lettingGo.map((item) => (
+            {hidden.map((item) => (
               <div key={item.key} className="flex items-center gap-3 border-t border-border px-3 py-2 text-[13px] first:border-t-0">
                 <KindBadge kind={item.kind} />
                 <Link to={item.url} className="min-w-0 flex-1 truncate text-foreground-secondary hover:text-primary">{item.title}</Link>
-                <button type="button" onClick={() => void onTakeBack([item.key])} className="shrink-0 text-[12px] text-primary hover:underline">
-                  Bring back
+                <button type="button" onClick={() => void onUnhide([item.key])} className="shrink-0 text-[12px] text-primary hover:underline">
+                  Show again
                 </button>
               </div>
             ))}
@@ -234,6 +257,8 @@ export function HomePage(): JSX.Element {
     </div>
   )
 }
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 function Section({ title, count, hint, open = true, onToggle, action, children }: {
   title: string
@@ -270,11 +295,11 @@ function KindBadge({ kind }: { kind: string }): JSX.Element {
   )
 }
 
-function AttentionRow({ item, workspaceName, onAct, onLetGo }: {
+function AttentionRow({ item, workspaceName, onAct, onHide }: {
   item: AttentionRow
   workspaceName?: string
   onAct: (i: AttentionRow, a: 'approve' | 'decline' | 'reply', comment?: string) => Promise<void>
-  onLetGo: (items: AttentionRow[], days?: number) => Promise<void>
+  onHide: (items: AttentionRow[], days?: number) => Promise<void>
 }): JSX.Element {
   const [replying, setReplying] = useState(false)
   const [text, setText] = useState('')
@@ -313,8 +338,9 @@ function AttentionRow({ item, workspaceName, onAct, onLetGo }: {
           {!canTask && (
             <Link to={item.url} className="rounded border border-border px-2 py-0.5 text-foreground-secondary hover:bg-muted">Open</Link>
           )}
-          <button type="button" onClick={() => void onLetGo([item])} title="Take it off your list without deciding. It comes back when something new happens on it."
-            className="rounded px-2 py-0.5 text-muted-foreground hover:bg-muted hover:text-foreground">Let go</button>
+          <button type="button" onClick={() => void onHide([item])}
+            title="Off your Home only. Nothing is closed or decided and nobody is told. It comes back when something new happens on it."
+            className="rounded px-2 py-0.5 text-muted-foreground hover:bg-muted hover:text-foreground">Hide</button>
         </div>
       </div>
       {replying && (

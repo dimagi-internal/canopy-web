@@ -397,11 +397,14 @@ Every browser-facing address canopy-web serves. The SPA route table is
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
 - **`/home`** — what is waiting on you across every workspace you are in
-  (`GET /api/attention/`, read once per organisation and merged): **Needs you**
-  (newest first, eight shown), **Gone quiet** (nothing for 3+ days, folded,
-  "Let go of all"), **Let go** (folded, "Bring back"). Tasks are approved,
-  declined or answered in place; **Let go** sets an item aside without deciding
-  it until something new happens on it. Beside it, the active projects you own.
+  (`GET /api/attention/`, read once per organisation and merged): **Sessions**
+  waiting on your next message (the Supervisor feed's rule), first and open;
+  **Tasks and requests** (approvals, questions, tasks parked on you, access
+  requests), folded with a count; **Gone quiet** (nothing for 3+ days, folded,
+  "Hide all"); **Hidden** (folded, "Show again"). Tasks are approved, declined
+  or answered in place. **Hide** only takes a thing off your own Home — the task
+  stays open, the chat stays as it is, nobody is told — until something new
+  happens on it. Beside it, the active projects you own.
   `/app` (and an in-app link to `/`) lands here.
 - **`/supervisor`** — cross-fleet screens: Feed (home), **Waiting on you**
   (`GET /api/tasks/?waiting=me`, the same `TaskCard` tagged with its agent,

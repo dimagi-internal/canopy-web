@@ -5,13 +5,13 @@ import { MemoryRouter } from 'react-router-dom'
 import type { Attention, AttentionRow } from '@/api/attention'
 
 const loadAttention = vi.fn<() => Promise<Attention>>()
-const letGo = vi.fn(async () => 1)
-const takeBack = vi.fn(async () => {})
+const hide = vi.fn(async () => 1)
+const unhide = vi.fn(async () => {})
 vi.mock('@/api/attention', async (orig) => ({
   ...(await orig<typeof import('@/api/attention')>()),
   loadAttention: () => loadAttention(),
-  letGo: (...a: unknown[]) => letGo(...(a as [])),
-  takeBack: (...a: unknown[]) => takeBack(...(a as [])),
+  hide: (...a: unknown[]) => hide(...(a as [])),
+  unhide: (...a: unknown[]) => unhide(...(a as [])),
 }))
 const actOnTask = vi.fn(async () => ({}))
 vi.mock('@/api/agents', async (orig) => ({
@@ -45,36 +45,51 @@ afterEach(() => {
 
 const show = () => render(<MemoryRouter><HomePage /></MemoryRouter>)
 
+const chat = (over: Partial<AttentionRow>): AttentionRow =>
+  item({ key: 'session:s1', kind: 'session', reason: 'Your move', title: 'Fix the deploy', url: '/chat/s1',
+    actions: ['open'], target: { session: 's1' }, ...over })
+
 describe('HomePage', () => {
-  it('approves a task in place, pinned to its workspace', async () => {
-    loadAttention.mockResolvedValue({ now: [item({})], quiet: [], let_go: [] })
+  it('leads with sessions and folds tasks under a count', async () => {
+    loadAttention.mockResolvedValue({ now: [item({}), chat({})], quiet: [], hidden: [] })
     show()
+    expect(await screen.findByText('Fix the deploy')).toBeTruthy()
+    // The task is behind its fold until opened.
+    expect(screen.queryByText('Send EOI?')).toBeNull()
+    fireEvent.click(screen.getByText('Tasks and requests'))
+    expect(await screen.findByText('Send EOI?')).toBeTruthy()
+  })
+
+  it('approves a task in place, pinned to its workspace', async () => {
+    loadAttention.mockResolvedValue({ now: [item({})], quiet: [], hidden: [] })
+    show()
+    fireEvent.click(await screen.findByText('Tasks and requests'))
     fireEvent.click(await screen.findByText('Approve'))
     await waitFor(() => expect(actOnTask).toHaveBeenCalledWith('eva', 'T1', 'approve', '', 'connect'))
   })
 
-  it('lets go without deciding, and can undo', async () => {
-    loadAttention.mockResolvedValue({ now: [item({})], quiet: [], let_go: [] })
+  it('hides without deciding anything, and can undo', async () => {
+    loadAttention.mockResolvedValue({ now: [chat({})], quiet: [], hidden: [] })
     show()
-    fireEvent.click(await screen.findByText('Let go'))
-    await waitFor(() => expect(letGo).toHaveBeenCalledWith(['task:eva:T1'], undefined))
+    fireEvent.click(await screen.findByText('Hide'))
+    await waitFor(() => expect(hide).toHaveBeenCalledWith(['session:s1'], undefined))
     expect(actOnTask).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText('Undo'))
-    await waitFor(() => expect(takeBack).toHaveBeenCalledWith('task:eva:T1'))
+    await waitFor(() => expect(unhide).toHaveBeenCalledWith('session:s1'))
   })
 
-  it('folds what has gone quiet and lets all of it go at once', async () => {
+  it('folds what has gone quiet and hides all of it at once', async () => {
     const old = new Date(Date.now() - 10 * 864e5).toISOString()
     loadAttention.mockResolvedValue({
       now: [],
       quiet: [item({ key: 'task:eva:T2', title: 'Old one', last_activity_at: old }),
         item({ key: 'task:eva:T3', title: 'Older', last_activity_at: old })],
-      let_go: [],
+      hidden: [],
     })
     show()
-    expect(await screen.findByText(/Nothing has happened that needs you/)).toBeTruthy()
+    expect(await screen.findByText('No session is waiting on you.')).toBeTruthy()
     expect(screen.queryByText('Old one')).toBeNull()
-    fireEvent.click(screen.getByText('Let go of all 2'))
-    await waitFor(() => expect(letGo).toHaveBeenCalledWith(['task:eva:T2', 'task:eva:T3'], undefined))
+    fireEvent.click(screen.getByText('Hide all 2'))
+    await waitFor(() => expect(hide).toHaveBeenCalledWith(['task:eva:T2', 'task:eva:T3'], undefined))
   })
 })

@@ -1,9 +1,9 @@
-"""What is waiting on a person, and what they have let go.
+"""What is waiting on a person, and what they have hidden.
 
 The list is ranked by what just happened, newest first — not as a queue. An
 oldest-first queue floated whatever had gone stale to the top, where it stayed;
 here a thing nobody has touched in `QUIET_AFTER` drops into `quiet`, a separate
-fold a person can let go of in one move.
+fold a person can hide in one move.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import datetime as dt
 from django.db import transaction
 from django.utils import timezone
 
-from .models import LetGo
+from .models import Hidden
 from .sources import gather
 from .types import AttentionRow
 
@@ -20,23 +20,23 @@ from .types import AttentionRow
 QUIET_AFTER = dt.timedelta(days=3)
 
 
-def _hidden(item: AttentionRow, let_go: LetGo | None, now: dt.datetime) -> bool:
-    if let_go is None:
+def _hidden(item: AttentionRow, mark: Hidden | None, now: dt.datetime) -> bool:
+    if mark is None:
         return False
-    if let_go.until is not None and let_go.until > now:
+    if mark.until is not None and mark.until > now:
         return True
-    return let_go.until is None and item.last_activity_at <= let_go.let_go_at
+    return mark.until is None and item.last_activity_at <= mark.hidden_at
 
 
 def attention(request, *, slugs: set[str], now: dt.datetime | None = None) -> dict[str, list[AttentionRow]]:
-    """`{"now": [...], "quiet": [...], "let_go": [...]}`, each newest first."""
+    """`{"now": [...], "quiet": [...], "hidden": [...]}`, each newest first."""
     now = now or timezone.now()
     items = gather(request, slugs=slugs)
-    let_gos = {g.key: g for g in LetGo.objects.filter(user=request.user, key__in=[i.key for i in items])}
-    out: dict[str, list[AttentionRow]] = {"now": [], "quiet": [], "let_go": []}
+    marks = {g.key: g for g in Hidden.objects.filter(user=request.user, key__in=[i.key for i in items])}
+    out: dict[str, list[AttentionRow]] = {"now": [], "quiet": [], "hidden": []}
     for item in sorted(items, key=lambda i: i.last_activity_at, reverse=True):
-        if _hidden(item, let_gos.get(item.key), now):
-            out["let_go"].append(item)
+        if _hidden(item, marks.get(item.key), now):
+            out["hidden"].append(item)
         elif now - item.last_activity_at > QUIET_AFTER:
             out["quiet"].append(item)
         else:
@@ -44,17 +44,17 @@ def attention(request, *, slugs: set[str], now: dt.datetime | None = None) -> di
     return out
 
 
-def let_go(user, keys: list[str], *, days: int | None = None, now: dt.datetime | None = None) -> int:
-    """Set `keys` aside for `user` — until something new happens on each, or for
-    `days` when given. Re-letting-go moves the mark forward."""
+def hide(user, keys: list[str], *, days: int | None = None, now: dt.datetime | None = None) -> int:
+    """Hide `keys` from `user`'s list — until something new happens on each, or
+    for `days` when given. Hiding again moves the mark forward."""
     now = now or timezone.now()
     until = now + dt.timedelta(days=days) if days else None
     with transaction.atomic():
         for key in dict.fromkeys(keys):
-            LetGo.objects.update_or_create(user=user, key=key, defaults={"let_go_at": now, "until": until})
+            Hidden.objects.update_or_create(user=user, key=key, defaults={"hidden_at": now, "until": until})
     return len(set(keys))
 
 
-def take_back(user, key: str) -> bool:
-    """Undo a let-go: the item returns to the list."""
-    return LetGo.objects.filter(user=user, key=key).delete()[0] > 0
+def unhide(user, key: str) -> bool:
+    """Undo a hide: it returns to the list."""
+    return Hidden.objects.filter(user=user, key=key).delete()[0] > 0

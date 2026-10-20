@@ -23,15 +23,15 @@ class AttentionOut(Schema):
     now: list[AttentionRowOut]
     # Still waiting, but nothing has happened on it for a while.
     quiet: list[AttentionRowOut]
-    # Set aside by this person; each comes back when something new happens on it.
-    let_go: list[AttentionRowOut]
+    # Hidden by this person; each comes back when something new happens on it.
+    hidden: list[AttentionRowOut]
 
 
-class LetGoIn(Schema):
+class HideIn(Schema):
     keys: list[str] = Field(min_length=1, max_length=500)
-    # Set aside for this many days instead of until something new happens.
+    # Hide for this many days instead of until something new happens.
     days: int | None = Field(default=None, ge=1, le=90)
 
 
-class LetGoOut(Schema):
+class HideOut(Schema):
     count: int

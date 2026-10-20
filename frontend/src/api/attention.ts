@@ -15,7 +15,7 @@ const normalize = (i: AttentionRowWire): AttentionRow => ({
   actions: Array.from(i.actions ?? []),
   target: { ...(i.target ?? {}) },
 })
-export type Attention = { now: AttentionRow[]; quiet: AttentionRow[]; let_go: AttentionRow[] }
+export type Attention = { now: AttentionRow[]; quiet: AttentionRow[]; hidden: AttentionRow[] }
 
 /**
  * The workspaces to pin so that, between them, every workspace you are in is
@@ -44,11 +44,11 @@ function unwrap<T>(res: { data?: T; error?: unknown; response?: { status: number
 async function readOne(workspace: string): Promise<Attention> {
   const res = await apiV2.GET('/api/attention/', { headers: { [WORKSPACE_HEADER]: workspace } })
   // openapi-fetch's Readable<T> degrades readonly arrays to ArrayLike; read the plain shape.
-  const body = unwrap(res, 'listAttention') as unknown as Record<'now' | 'quiet' | 'let_go', AttentionRowWire[]>
+  const body = unwrap(res, 'listAttention') as unknown as Record<'now' | 'quiet' | 'hidden', AttentionRowWire[]>
   return {
     now: Array.from(body.now, normalize),
     quiet: Array.from(body.quiet, normalize),
-    let_go: Array.from(body.let_go, normalize),
+    hidden: Array.from(body.hidden, normalize),
   }
 }
 
@@ -58,9 +58,9 @@ const newestFirst = (a: AttentionRow, b: AttentionRow) =>
 /** Everything waiting on you across every workspace you are in, newest first. */
 export async function loadAttention(workspaces: readonly WorkspaceOut[]): Promise<Attention> {
   const parts = await Promise.all(attentionPins(workspaces).map(readOne))
-  const merged: Attention = { now: [], quiet: [], let_go: [] }
+  const merged: Attention = { now: [], quiet: [], hidden: [] }
   const seen = new Set<string>()
-  for (const group of ['now', 'quiet', 'let_go'] as const) {
+  for (const group of ['now', 'quiet', 'hidden'] as const) {
     for (const part of parts) {
       for (const item of part[group]) {
         if (seen.has(item.key)) continue
@@ -73,14 +73,16 @@ export async function loadAttention(workspaces: readonly WorkspaceOut[]): Promis
   return merged
 }
 
-/** Set items aside without deciding them; each returns when something new
- *  happens on it, or after `days`. */
-export async function letGo(keys: string[], days?: number): Promise<number> {
-  const res = await apiV2.POST('/api/attention/let-go', { body: { keys, days: days ?? null } })
-  return unwrap(res, 'letGo').count
+/** Take things off your own list and nothing more: no task is closed or
+ *  decided and nobody is told. Each returns when something new happens on it,
+ *  or after `days`. */
+export async function hide(keys: string[], days?: number): Promise<number> {
+  const res = await apiV2.POST('/api/attention/hide', { body: { keys, days: days ?? null } })
+  return unwrap(res, 'hide').count
 }
 
-export async function takeBack(key: string): Promise<void> {
-  const res = await apiV2.DELETE('/api/attention/let-go/{key}', { params: { path: { key } } })
-  unwrap(res, 'takeBack')
+/** Put something you hid back on your list. */
+export async function unhide(key: string): Promise<void> {
+  const res = await apiV2.DELETE('/api/attention/hide/{key}', { params: { path: { key } } })
+  unwrap(res, 'unhide')
 }

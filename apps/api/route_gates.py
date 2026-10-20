@@ -208,10 +208,10 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/agents/fleet_api.py  (fleet-wide lists, scoped to visible agents)
     "list_fleet_tasks": ("member",),
     "agent_roster": ("member",),  # counts over the same agents list_agents shows; turns through visible_turns_qs
-    # --- apps/attention/api.py  (what is waiting on the caller; the let-go list is their OWN)
+    # --- apps/attention/api.py  (what is waiting on the caller; what they hide is their OWN list)
     "list_attention": ("member",),  # each source applies its own gate: tasks by the board filter, chats by the session ACL, access requests by members.manage
-    "let_go": ("self",),
-    "take_back": ("self",),
+    "hide_attention": ("self",),
+    "unhide_attention": ("self",),
     "list_fleet_projects": ("member",),
     "list_workspace_projects": ("member",),
     "get_workspace_project": ("member",),
@@ -993,7 +993,7 @@ WRITE_KINDS: dict[str, str] = {
 
 NOT_SETTINGS: dict[str, str] = {
     # a person setting things aside on their OWN list: nothing is decided or sent
-    "let_go": "action", "take_back": "action",
+    "hide_attention": "action", "unhide_attention": "action",
     # a box registering its own key: lands `pending`, trusted only once a person
     # approves it (approve_runner_device_key, a setting)
     "register_runner_device_key": "runner-protocol",

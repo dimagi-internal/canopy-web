@@ -1,8 +1,8 @@
-"""`/api/attention/` — what is waiting on you, in one list, and letting go.
+"""`/api/attention/` — what is waiting on you, in one list, and hiding things from it.
 
 Each source keeps its owner's rule (the board's waiting-on-you filter, the
 session feed's `feed.status`, `members.manage`), so these tests pin that the
-list agrees with those routes — and that a let-go hides an item only until
+list agrees with those routes — and that hiding something hides it only until
 something new happens on it.
 """
 from __future__ import annotations
@@ -82,7 +82,7 @@ def test_never_another_workspaces_items(jj):
     ws2 = Workspace.objects.create(slug="other", display_name="Other", created_by=other)
     zed = Agent.objects.create(slug="zed", name="Zed", workspace=ws2, owner=other)
     AgentTask.objects.create(agent=zed, ext_id="T1", title="secret?", ask_kind="review")
-    assert jj["client"].get("/api/attention/").json() == {"now": [], "quiet": [], "let_go": []}
+    assert jj["client"].get("/api/attention/").json() == {"now": [], "quiet": [], "hidden": []}
     assert jj["client"].get("/api/w/other/attention/").status_code == 404
 
 
@@ -95,13 +95,13 @@ def test_untouched_items_go_quiet_newest_first(jj):
     assert [i["key"] for i in body["quiet"]] == ["task:eva:T1"]
 
 
-def test_let_go_hides_until_something_new_happens(jj):
+def test_hiding_lasts_until_something_new_happens(jj):
     t = AgentTask.objects.create(agent=jj["agent"], ext_id="T1", title="q", ask_kind="question")
     c = jj["client"]
-    r = c.post("/api/attention/let-go", {"keys": ["task:eva:T1"]}, content_type="application/json")
+    r = c.post("/api/attention/hide", {"keys": ["task:eva:T1"]}, content_type="application/json")
     assert r.status_code == 200 and r.json() == {"count": 1}
     assert _keys(c.get("/api/attention/")) == []
-    assert _keys(c.get("/api/attention/"), "let_go") == ["task:eva:T1"]
+    assert _keys(c.get("/api/attention/"), "hidden") == ["task:eva:T1"]
     # Nothing was decided: the task is exactly as it was.
     t.refresh_from_db()
     assert t.ask_is_open and t.status == AgentTask._meta.get_field("status").default
@@ -110,21 +110,21 @@ def test_let_go_hides_until_something_new_happens(jj):
     assert _keys(c.get("/api/attention/")) == ["task:eva:T1"]
 
 
-def test_let_go_for_days_and_take_back(jj):
+def test_hide_for_days_and_unhide(jj):
     AgentTask.objects.create(agent=jj["agent"], ext_id="T1", title="q", ask_kind="question")
     c = jj["client"]
-    c.post("/api/attention/let-go", {"keys": ["task:eva:T1"], "days": 3}, content_type="application/json")
+    c.post("/api/attention/hide", {"keys": ["task:eva:T1"], "days": 3}, content_type="application/json")
     assert _keys(c.get("/api/attention/")) == []
-    assert c.delete("/api/attention/let-go/task:eva:T1").json() == {"count": 1}
+    assert c.delete("/api/attention/hide/task:eva:T1").json() == {"count": 1}
     assert _keys(c.get("/api/attention/")) == ["task:eva:T1"]
 
 
-def test_a_let_go_is_only_ever_your_own(jj):
+def test_hiding_is_only_ever_your_own_list(jj):
     AgentTask.objects.create(agent=jj["agent"], ext_id="T1", title="q", ask_kind="question")
-    services.let_go(jj["user"], ["task:eva:T1"])
+    services.hide(jj["user"], ["task:eva:T1"])
     peer = User.objects.create_user("pe", "pe@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=peer, workspace=jj["ws"], role=WorkspaceMembership.EDITOR)
     pc = Client()
     pc.force_login(peer)
-    # An unrouted open ask is in every member's list; jj letting go of it leaves peer's alone.
+    # An unrouted open ask is in every member's list; jj hiding it leaves peer's alone.
     assert _keys(pc.get("/api/attention/")) == ["task:eva:T1"]

@@ -9545,8 +9545,8 @@ export interface paths {
          * @description Everything waiting on the caller in scope — chats whose agent needs your
          *     next message, tasks asking you to decide or parked on you, requests to join a
          *     workspace you manage — as `now` (something happened in the last few days),
-         *     `quiet` (nothing has for a while) and `let_go` (set aside by you; each returns
-         *     when something new happens on it). Newest first.
+         *     `quiet` (nothing has for a while) and `hidden` (taken off your list by you;
+         *     each returns when something new happens on it). Newest first.
          */
         readonly get: operations["list_attention"];
         readonly put?: never;
@@ -9557,7 +9557,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/attention/let-go": {
+    readonly "/api/attention/hide": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -9567,19 +9567,20 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Set things aside without deciding them
-         * @description Takes `keys` off your list without answering them: nothing is approved,
-         *     declined or sent, and the agent is not told. Each returns when something new
-         *     happens on it, or after `days` when given. Touches only your own list.
+         * Hide things from your list without deciding them
+         * @description Takes `keys` off your own list and nothing more: no task is closed,
+         *     approved or declined, no chat is ended, nothing is sent, and the agent is not
+         *     told. Each returns when something new happens on it, or after `days` when
+         *     given.
          */
-        readonly post: operations["let_go"];
+        readonly post: operations["hide_attention"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/attention/let-go/{key}": {
+    readonly "/api/attention/hide/{key}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -9589,8 +9590,8 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Bring something you let go back */
-        readonly delete: operations["take_back"];
+        /** Put something you hid back on your list */
+        readonly delete: operations["unhide_attention"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -28535,8 +28536,8 @@ export interface components {
             readonly now: readonly components["schemas"]["AttentionRowOut"][];
             /** Quiet */
             readonly quiet: readonly components["schemas"]["AttentionRowOut"][];
-            /** Let Go */
-            readonly let_go: readonly components["schemas"]["AttentionRowOut"][];
+            /** Hidden */
+            readonly hidden: readonly components["schemas"]["AttentionRowOut"][];
         };
         /** AttentionRowOut */
         readonly AttentionRowOut: {
@@ -28579,13 +28580,13 @@ export interface components {
                 readonly [key: string]: string;
             };
         };
-        /** LetGoOut */
-        readonly LetGoOut: {
+        /** HideOut */
+        readonly HideOut: {
             /** Count */
             readonly count: number;
         };
-        /** LetGoIn */
-        readonly LetGoIn: {
+        /** HideIn */
+        readonly HideIn: {
             /** Keys */
             readonly keys: readonly string[];
             /** Days */
@@ -43889,7 +43890,7 @@ export interface operations {
             };
         };
     };
-    readonly let_go: {
+    readonly hide_attention: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -43898,7 +43899,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["LetGoIn"];
+                readonly "application/json": components["schemas"]["HideIn"];
             };
         };
         readonly responses: {
@@ -43908,12 +43909,12 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["LetGoOut"];
+                    readonly "application/json": components["schemas"]["HideOut"];
                 };
             };
         };
     };
-    readonly take_back: {
+    readonly unhide_attention: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -43930,7 +43931,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["LetGoOut"];
+                    readonly "application/json": components["schemas"]["HideOut"];
                 };
             };
         };
