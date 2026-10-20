@@ -6,6 +6,7 @@ import { attentionPins, hide, loadAttention, unhide, type Attention, type Attent
 import { apiV2, WORKSPACE_HEADER } from '@/api/client.v2'
 import { useAuth } from '@/auth/AuthProvider'
 import { relativeTime } from '@/components/activity/turnLog'
+import { shortAge } from '@/pages/ide/ideTree'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 
 // HOME — what is waiting on you, across every workspace you are in.
@@ -23,8 +24,8 @@ import { useWorkspace } from '@/workspace/WorkspaceProvider'
 // new happens on it.
 
 /** How many sessions show before "Show more" — the list is meant to be read in
- *  one look, not worked through. */
-const SHOWN = 8
+ *  one look, not worked through. Rows are one line each, like /ide's tree. */
+const SHOWN = 15
 
 const KIND_LABEL: Record<string, string> = {
   task: 'Task',
@@ -169,13 +170,22 @@ export function HomePage(): JSX.Element {
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
         {(data == null && !error) || wsLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
-        <Section title="Sessions" count={sessions.length} hint="Waiting on your next message.">
+        <Section
+          title="Sessions"
+          count={sessions.length}
+          hint="Waiting on your next message."
+          action={
+            <Link to="/ide" className="hidden text-[12px] text-muted-foreground hover:text-primary md:inline">
+              All sessions in the IDE →
+            </Link>
+          }
+        >
           {data && sessions.length === 0 && (
             <p className="px-3 py-4 text-[13px] text-muted-foreground">No session is waiting on you.</p>
           )}
           {shown.map((item) => (
-            <AttentionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
-              onAct={onAct} onHide={onHide} />
+            <SessionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
+              onHide={onHide} />
           ))}
           {sessions.length > SHOWN && (
             <button type="button" onClick={() => setShowAll((v) => !v)}
@@ -215,10 +225,15 @@ export function HomePage(): JSX.Element {
               </button>
             }
           >
-            {quiet.map((item) => (
-              <AttentionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
-                onAct={onAct} onHide={onHide} />
-            ))}
+            {quiet.map((item) =>
+              item.kind === 'session' ? (
+                <SessionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
+                  onHide={onHide} />
+              ) : (
+                <AttentionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
+                  onAct={onAct} onHide={onHide} />
+              ),
+            )}
           </Section>
         )}
 
@@ -292,6 +307,71 @@ function KindBadge({ kind }: { kind: string }): JSX.Element {
     <span className="w-12 shrink-0 rounded bg-muted px-1.5 py-0.5 text-center text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
       {KIND_LABEL[kind] ?? kind}
     </span>
+  )
+}
+
+/** On a computer a session opens in /ide (the tree beside the chat); on a
+ *  phone, in its chat page. `md` is where the account menu starts offering IDE. */
+function useDesktop(): boolean {
+  const query = '(min-width: 768px)'
+  const [desktop, setDesktop] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.(query)
+    if (!mq) return
+    const on = () => setDesktop(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return desktop
+}
+
+/** One session on one line, the way /ide lists them: a state dot (amber when a
+ *  dialog is waiting on you), the title, its agent and workspace, and its age.
+ *  The agent's last words are the row's tooltip, not a second line. */
+function SessionRow({ item, workspaceName, onHide }: {
+  item: AttentionRow
+  workspaceName?: string
+  onHide: (items: AttentionRow[], days?: number) => Promise<void>
+}): JSX.Element {
+  const desktop = useDesktop()
+  const asking = item.reason === 'Needs an answer'
+  const to = desktop && item.target.session ? `/ide/${item.target.session}` : item.url
+  return (
+    <div
+      className="group grid grid-cols-[8px_minmax(0,1fr)_auto_auto] items-center gap-2 border-t border-border px-3 py-1.5 text-[13px] first:border-t-0 hover:bg-muted sm:grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem_auto]"
+      data-testid="attention-row"
+    >
+      <span
+        aria-hidden
+        className={`inline-block h-2 w-2 rounded-full ${asking ? 'bg-warning' : 'bg-muted-foreground/40'}`}
+      />
+      <Link
+        to={to}
+        title={[item.title, item.reason, item.body].filter(Boolean).join('\n\n')}
+        className="truncate text-foreground hover:text-primary"
+      >
+        {item.title}
+        {asking && <span className="ml-2 text-[11px] text-warning">needs an answer</span>}
+      </Link>
+      <span className="hidden max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground sm:inline">
+        {item.agent_slug || 'chat'}
+      </span>
+      <span className="hidden max-w-[120px] truncate text-[11px] text-muted-foreground sm:inline">{workspaceName ?? ''}</span>
+      <span
+        className="text-right text-[11px] tabular-nums text-muted-foreground"
+        title={new Date(item.last_activity_at).toLocaleString()}
+      >
+        {shortAge(item.last_activity_at, new Date())}
+      </span>
+      <button
+        type="button"
+        onClick={() => void onHide([item])}
+        title="Off your Home only. Nothing is closed and nobody is told. It comes back when something new happens on it."
+        className="rounded px-1.5 text-[12px] text-muted-foreground hover:bg-background hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+      >
+        Hide
+      </button>
+    </div>
   )
 }
 
