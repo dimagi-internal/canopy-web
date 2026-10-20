@@ -23,6 +23,7 @@ import { FleetHoldCard } from '@/components/supervisor/FleetHoldCard'
 import { RunnerAlerts } from '@/components/supervisor/RunnerAlerts'
 import { runnerAlerts } from '@/components/supervisor/runnerAlertRules'
 import { SessionFeed } from '@/components/supervisor/SessionFeed'
+import { SignInRequests } from '@/components/supervisor/SignInRequests'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
@@ -316,6 +317,8 @@ export default function SupervisorPage(): JSX.Element {
           is for moving work forward, but a stalled queue must not go unseen. */}
       {tab === 'feed' && (
         <>
+          {/* A box waiting on you to approve a sign-in — the push's twin. */}
+          <SignInRequests />
           {alertCount > 0 && (
             <button
               type="button"

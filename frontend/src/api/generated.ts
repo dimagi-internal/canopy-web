@@ -7955,11 +7955,56 @@ export interface paths {
          *     asking, the runner, and why, so the owner can decide from the lock screen.
          *
          *     `sent` is how many devices the notification reached. 0 means nobody saw
-         *     it, so the caller falls back to another channel. canopy-web stores nothing.
-         *     See `apps/harness/sign_in_requests.py` for why the push goes only to the
-         *     owner and only to AWS hosts.
+         *     it, so the caller falls back to another channel. The request is also kept
+         *     until its code expires and shown on the owner's supervisor feed; `id` is
+         *     what the box sends back to `sign-in-requests/{id}/result` when it ends.
+         *     See `apps/harness/sign_in_requests.py` for why it goes only to the owner
+         *     and only to AWS hosts.
          */
         readonly post: operations["post_sign_in_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/sign-in-requests/{request_id}/result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The box reports how a sign-in request ended
+         * @description `approved`, `failed` or `expired`. Takes the request off the owner's
+         *     supervisor feed and clears its URL. Reporting twice keeps the first outcome.
+         */
+        readonly post: operations["post_sign_in_request_result"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/sign-in-requests/mine": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Sign-ins your boxes are waiting on you to approve
+         * @description Only the caller's own: the requests their runners put in front of them
+         *     that are still open, newest first. What the supervisor feed shows beside
+         *     the push, for when the phone never displayed it.
+         */
+        readonly get: operations["list_my_sign_in_requests"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -26416,6 +26461,11 @@ export interface components {
         readonly SignInRequestOut: {
             /** Sent */
             readonly sent: number;
+            /**
+             * Id
+             * @default
+             */
+            readonly id: string;
         };
         /** SignInRequestIn */
         readonly SignInRequestIn: {
@@ -26441,6 +26491,53 @@ export interface components {
              * @default
              */
             readonly reason: string;
+        };
+        /** SignInResultOut */
+        readonly SignInResultOut: {
+            /** Id */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+        };
+        /** SignInResultIn */
+        readonly SignInResultIn: {
+            /** Outcome */
+            readonly outcome: string;
+        };
+        /**
+         * OpenSignInRequestOut
+         * @description A sign-in still waiting on you, for the supervisor feed. `url` opens the
+         *     AWS approval page with the code filled in, as the push does.
+         */
+        readonly OpenSignInRequestOut: {
+            /** Id */
+            readonly id: string;
+            /** Runner Id */
+            readonly runner_id: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Provider */
+            readonly provider: string;
+            /** Label */
+            readonly label: string;
+            /** Requested By */
+            readonly requested_by: string;
+            /** Reason */
+            readonly reason: string;
+            /** Url */
+            readonly url: string;
+            /** Sent */
+            readonly sent: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
         };
         /**
          * RunnerAdminOut
@@ -41815,6 +41912,53 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SignInRequestOut"];
+                };
+            };
+        };
+    };
+    readonly post_sign_in_request_result: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SignInResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SignInResultOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_sign_in_requests: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["OpenSignInRequestOut"][];
                 };
             };
         };

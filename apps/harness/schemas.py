@@ -1396,6 +1396,36 @@ class SignInRequestIn(Schema):
 class SignInRequestOut(Schema):
     # Devices the notification reached. 0 = nobody saw it; fall back to another channel.
     sent: int
+    # The stored request. The box sends it back with the outcome (empty for a
+    # runner with no owner, where nothing is stored).
+    id: str = ""
+
+
+class SignInResultIn(Schema):
+    # How the sign-in ended: "approved", "failed" or "expired".
+    outcome: str
+
+
+class SignInResultOut(Schema):
+    id: str
+    status: str
+
+
+class OpenSignInRequestOut(Schema):
+    """A sign-in still waiting on you, for the supervisor feed. `url` opens the
+    AWS approval page with the code filled in, as the push does."""
+
+    id: str
+    runner_id: str
+    runner_name: str
+    provider: str
+    label: str
+    requested_by: str
+    reason: str
+    url: str
+    sent: int
+    created_at: dt.datetime
+    expires_at: dt.datetime
 
 
 class RunnerCredentialStatusOut(Schema):

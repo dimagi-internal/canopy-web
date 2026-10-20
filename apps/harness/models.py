@@ -1233,6 +1233,58 @@ class RunnerMint(models.Model):
         return f"mint:{self.runner_id}:{self.status}"
 
 
+class SignInRequest(models.Model):
+    """One device-code sign-in a box put in front of its owner (AWS SSO today).
+
+    The push notification alone was not enough. Google accepting a push only
+    means it will try to deliver it, and on 2026-10-19 three real requests were
+    accepted and never shown on the owner's phone, with nothing anywhere else
+    saying a box was waiting. So the request is also kept here, and the
+    supervisor feed shows the owner every one still open.
+
+    Nothing secret is added by keeping it. canopy-web already saw the URL when
+    it built the push, and the code in it only signs the box in as whoever
+    approves it, which is why only the owner is shown it, in the push or here.
+    The row lives as long as the code: `url` is cleared the moment the box
+    reports the outcome, and a row whose box never reported is treated as
+    expired once `expires_at` passes. What stays is the audit line: who asked,
+    on which box, and why.
+    """
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    FAILED = "failed"
+    EXPIRED = "expired"
+    STATUS_CHOICES = [(PENDING, "pending"), (APPROVED, "approved"),
+                      (FAILED, "failed"), (EXPIRED, "expired")]
+    #: What the box may report. EXPIRED is also what an unreported row becomes.
+    OUTCOMES = (APPROVED, FAILED, EXPIRED)
+
+    # UUID pk: the id travels in URLs, and the box echoes it back with the outcome.
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="sign_in_requests")
+    #: The person it was put in front of: the runner's owner when it was asked.
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    provider = models.CharField(max_length=16)
+    url = models.TextField(blank=True, default="")
+    label = models.CharField(max_length=60, blank=True, default="")
+    requested_by = models.CharField(max_length=60, blank=True, default="")
+    reason = models.CharField(max_length=200)
+    #: Devices the push reached when it was asked.
+    sent = models.IntegerField(default=0)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["owner", "status", "expires_at"])]
+
+    def __str__(self) -> str:
+        return f"sign-in:{self.runner_id}:{self.status}"
+
+
 class RunnerAdmin(models.Model):
     """Someone who may ADMINISTER this runner without speaking FOR it.
 

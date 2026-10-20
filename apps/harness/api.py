@@ -81,8 +81,11 @@ from .schemas import (
     RunnerMintResultIn,
     RunnerMintStartIn,
     RunnerMintUrlIn,
+    OpenSignInRequestOut,
     SignInRequestIn,
     SignInRequestOut,
+    SignInResultIn,
+    SignInResultOut,
     RunnerDrillOut,
     RunnerGitHubReadinessOut,
     TurnGitHubTokenOut,
@@ -969,21 +972,56 @@ def post_sign_in_request(request: HttpRequest, runner_id: uuid.UUID, payload: Si
     asking, the runner, and why, so the owner can decide from the lock screen.
 
     `sent` is how many devices the notification reached. 0 means nobody saw
-    it, so the caller falls back to another channel. canopy-web stores nothing.
-    See `apps/harness/sign_in_requests.py` for why the push goes only to the
-    owner and only to AWS hosts.
+    it, so the caller falls back to another channel. The request is also kept
+    until its code expires and shown on the owner's supervisor feed; `id` is
+    what the box sends back to `sign-in-requests/{id}/result` when it ends.
+    See `apps/harness/sign_in_requests.py` for why it goes only to the owner
+    and only to AWS hosts.
     """
     from . import sign_in_requests
 
     runner = _runner_or_404(request, runner_id)
     try:
-        sent = sign_in_requests.push_sign_in_request(
+        row, sent = sign_in_requests.push_sign_in_request(
             runner, provider=payload.provider, url=payload.url,
             label=payload.label, requested_by=payload.requested_by,
             reason=payload.reason)
     except sign_in_requests.SignInRequestError as exc:
         raise HttpError(422, str(exc)) from exc
-    return {"sent": sent}
+    return {"sent": sent, "id": str(row.pk) if row else ""}
+
+
+@router.post("/runners/{runner_id}/sign-in-requests/{request_id}/result", response=SignInResultOut,
+             summary="The box reports how a sign-in request ended")
+def post_sign_in_request_result(request: HttpRequest, runner_id: uuid.UUID, request_id: uuid.UUID,
+                                payload: SignInResultIn):
+    """`approved`, `failed` or `expired`. Takes the request off the owner's
+    supervisor feed and clears its URL. Reporting twice keeps the first outcome."""
+    from . import sign_in_requests
+
+    runner = _runner_or_404(request, runner_id)
+    try:
+        row = sign_in_requests.resolve(runner, request_id, payload.outcome)
+    except sign_in_requests.SignInRequestError as exc:
+        raise HttpError(422, str(exc)) from exc
+    if row is None:
+        raise HttpError(404, "sign-in request not found")
+    return {"id": str(row.pk), "status": row.status}
+
+
+@router.get("/sign-in-requests/mine", response=list[OpenSignInRequestOut],
+            summary="Sign-ins your boxes are waiting on you to approve")
+def list_my_sign_in_requests(request: HttpRequest):
+    """Only the caller's own: the requests their runners put in front of them
+    that are still open, newest first. What the supervisor feed shows beside
+    the push, for when the phone never displayed it."""
+    from . import sign_in_requests
+
+    return [{"id": str(r.pk), "runner_id": str(r.runner_id), "runner_name": r.runner.name,
+             "provider": r.provider, "label": r.label, "requested_by": r.requested_by,
+             "reason": r.reason, "url": r.url, "sent": r.sent,
+             "created_at": r.created_at, "expires_at": r.expires_at}
+            for r in sign_in_requests.open_for(request.user)]
 
 def _admin_row(a) -> dict:
     return {"user_id": a.user_id, "email": a.user.email,
