@@ -174,3 +174,18 @@ def presign(key: str, filename: str) -> str:
         "get_object", ExpiresIn=300,
         Params={"Bucket": settings.MAIL_INBOUND_BUCKET, "Key": key,
                 "ResponseContentDisposition": _disposition(filename)})
+
+
+def wire_message_id(ses_message_id: str) -> str:
+    """The Message-ID header SES actually sends: it replaces the one canopy wrote with
+    `<ses-id@email.amazonses.com>` (us-east-1; `<ses-id@REGION.amazonses.com>` elsewhere).
+    That is what a recipient's reply cites in In-Reply-To/References."""
+    region = settings.MAIL_SES_REGION
+    host = "email.amazonses.com" if region == "us-east-1" else f"{region}.amazonses.com"
+    return f"<{ses_message_id}@{host}>"
+
+
+def ses_id_of(header_id: str) -> str:
+    """The SES message id inside a Message-ID SES assigned (`<id@…amazonses.com>`), else ""."""
+    local, _, host = header_id.strip("<>").rpartition("@")
+    return local if local and host.lower().endswith("amazonses.com") else ""

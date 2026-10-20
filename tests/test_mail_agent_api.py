@@ -286,3 +286,33 @@ def test_thread_detail_counterpart_matches_the_list(w):
     assert detail["counterpart"] == listed[str(w.t.uuid)]["counterpart"] == "z@z.org"
     empty = MailThread.objects.create(workspace=w.d.workspace, route=w.r, subject="Empty")
     assert c.get(f"/api/mail/threads/marshellis/{empty.uuid}").json()["counterpart"] == ""
+
+
+# SES replaces the Message-ID canopy writes on an outbound message with its own
+# (<ses-id@email.amazonses.com>), so that is what the recipient's client cites when they
+# reply, and what canopy must cite when it replies again (2026-10-20: Jonathan's reply to
+# Ada's first mail from ada@dimagi.ai opened a new thread).
+def test_a_reply_citing_the_ses_message_id_joins_the_thread(w, settings):
+    from types import SimpleNamespace
+
+    from apps.mail import threads
+
+    settings.MAIL_SES_REGION = "us-east-1"
+    r = _c(w.owner).post("/api/mail/send/marshellis", {"agent": "mada", "to": ["jj@x.org"],
+                         "subject": "Test", "text": "reply please"}, content_type="application/json")
+    assert r.status_code == 200, r.content
+    t = MailThread.objects.get(subject="Test", route=w.r)
+    parsed = SimpleNamespace(references=[], in_reply_to="<ses-1@email.amazonses.com>", subject="Re: Test")
+    assert threads.place(w.r, parsed) == t
+
+
+def test_our_reply_cites_the_message_id_ses_sent(w, settings):
+    settings.MAIL_SES_REGION = "us-east-1"
+    MailMessage.objects.create(thread=w.t, direction="out", message_id="<ours@marshellis.com>",
+                               ses_message_id="ses-0", from_addr="ada@marshellis.com", subject="Re: Hello")
+    MailMessage.objects.create(thread=w.t, direction="in", message_id="<in-2@x.org>",
+                               from_addr="x@x.org", subject="Re: Hello", text="again")
+    assert _reply(w, {"text": "Thanks!"}).status_code == 200
+    raw = w.sent[0]["raw"]
+    assert b"<ses-0@email.amazonses.com>" in raw and b"<ours@marshellis.com>" not in raw
+    assert b"In-Reply-To: <in-2@x.org>" in raw

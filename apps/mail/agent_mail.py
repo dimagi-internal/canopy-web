@@ -184,7 +184,11 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
     msg["Date"] = formatdate(localtime=False)
     msg["Message-ID"] = make_msgid(domain=domain.name)
     if thread is not None:
-        prior = list(thread.messages.order_by("created_at", "pk").values_list("message_id", flat=True))
+        # The ids the other side saw: for our own sent messages that is SES's Message-ID,
+        # not the one canopy wrote (SES replaces it), else their client cannot thread.
+        prior = [ses.wire_message_id(sid) if d == MailMessage.OUT and sid else mid
+                 for mid, sid, d in thread.messages.order_by("created_at", "pk")
+                 .values_list("message_id", "ses_message_id", "direction")]
         if prior:
             msg["In-Reply-To"] = _line(prior[-1])
             msg["References"] = " ".join(_line(p) for p in prior[-20:])
