@@ -347,3 +347,54 @@ def test_suggested_name_is_a_runner_name(account, host, expected):
 
     name = api_runner_pairings.suggested_name(account, host)
     assert name == expected and re.match(RUNNER_NAME_PATTERN, name)
+
+
+# --- a box whose token stopped working gets its own runner back (canopy-web#1705) ---
+
+def _dead_box(org, name="jj-mbp-cdp"):
+    return Runner.objects.create(name=name, kind=Runner.EMDASH, owner=org["user"], workspace=org["ws"],
+                                 capabilities={"sessions": True})
+
+
+def test_its_owner_reconnects_a_runner_whose_token_died(org):
+    box = _dead_box(org)
+    key = _key()
+    opened = _open(key, reconnect_runner=str(box.pk))
+    assert opened.status_code == 201, opened.content
+    code = opened.json()["user_code"]
+    seen = org["browser"].get(f"{PAIRINGS}{code}").json()
+    assert seen["reconnect_name"] == "jj-mbp-cdp"
+    # The page's workspace and name are ignored: it is that runner, where it was.
+    approved = _approve(org["browser"], code, workspace="dimagi", name="something-else")
+    assert approved.status_code == 200, approved.content
+    pid, secret = _secret(approved)
+    claimed = _claim(key, pid, secret)
+    assert claimed.status_code == 201, claimed.content
+    assert claimed.json()["runner_id"] == str(box.pk)
+    assert Runner.objects.filter(owner=org["user"]).count() == 1
+    dk = RunnerDeviceKey.objects.get(runner=box)
+    assert dk.status == RunnerDeviceKey.ACTIVE and dk.jkt == device_keys.thumbprint(public_jwk(key))
+
+
+def test_someone_elses_runner_named_by_the_box_pairs_fresh(org):
+    stranger = _person("stranger")
+    WorkspaceMembership.objects.create(workspace=org["other"], user=stranger, role=WorkspaceMembership.EDITOR)
+    theirs = Runner.objects.create(name="their-box", kind=Runner.EMDASH, owner=stranger,
+                                   workspace=org["other"])
+    key = _key()
+    code = _open(key, reconnect_runner=str(theirs.pk)).json()["user_code"]
+    assert org["browser"].get(f"{PAIRINGS}{code}").json()["reconnect_name"] == ""
+    pid, secret = _secret(_approve(org["browser"], code))
+    claimed = _claim(key, pid, secret)
+    assert claimed.status_code == 201
+    assert claimed.json()["runner_id"] != str(theirs.pk)
+    assert not RunnerDeviceKey.objects.filter(runner=theirs).exists()
+
+
+def test_a_retired_runner_is_not_reconnected(org):
+    box = _dead_box(org)
+    box.status = Runner.RETIRED
+    box.save()
+    key = _key()
+    code = _open(key, reconnect_runner=str(box.pk)).json()["user_code"]
+    assert org["browser"].get(f"{PAIRINGS}{code}").json()["reconnect_name"] == ""

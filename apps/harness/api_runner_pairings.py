@@ -17,6 +17,10 @@ The installed box makes its device key first, then (spec
 * `POST /api/harness/runner-pairings/{id}/claim` — anonymous, with a DPoP proof
   of the same key and the secret: makes the Runner (owned by the approver) and
   its ACTIVE device key. Then the box signs in at `POST /api/runner-sessions/`.
+
+A box whose token stopped working names the runner it already is
+(`reconnect_runner`). When that runner's OWNER approves, the claim adds the key to
+it — same runner, nothing new — so a dead PAT is fixed from the browser.
 """
 from __future__ import annotations
 
@@ -156,6 +160,7 @@ def create_runner_pairing(request: HttpRequest, payload: RunnerPairingIn):
                     hostname=payload.hostname.strip(), account=payload.account.strip(),
                     platform=payload.platform, has_emdash=payload.has_emdash,
                     redirect_port=payload.redirect_port, created_at=now,
+                    reconnect_runner=_live_runner(payload.reconnect_runner),
                 )
             break
         except IntegrityError:  # a user_code collision; draw again
@@ -203,12 +208,16 @@ def claim_runner_pairing(request: HttpRequest, pairing_id: uuid.UUID, payload: R
                       .first())
             if locked is None:  # a concurrent claim, or a re-approval with a new secret
                 raise _refuse(f"pairing {pairing.pk} changed under the claim")
-            runner = Runner.objects.create(
-                name=locked.name, kind=Runner.EMDASH,
-                engine=Runner.ENGINE_EMDASH if locked.has_emdash else Runner.ENGINE_CLAUDE_CLI,
-                capabilities=declared_capabilities({"sessions": True}),
-                host=locked.hostname, owner=owner, workspace_id=locked.workspace_id,
-            )
+            # A box whose token stopped working gets its OWN runner back (approved by
+            # that runner's owner): same id, routing, sessions — only a key is added.
+            runner = _reconnect_for(locked, owner)
+            if runner is None:
+                runner = Runner.objects.create(
+                    name=locked.name, kind=Runner.EMDASH,
+                    engine=Runner.ENGINE_EMDASH if locked.has_emdash else Runner.ENGINE_CLAUDE_CLI,
+                    capabilities=declared_capabilities({"sessions": True}),
+                    host=locked.hostname, owner=owner, workspace_id=locked.workspace_id,
+                )
             ecdh_jkt = device_keys.thumbprint(locked.ecdh_public_jwk) if locked.ecdh_public_jwk else ""
             key = RunnerDeviceKey.objects.create(
                 runner=runner, kind=locked.kind, public_jwk=locked.public_jwk, jkt=locked.jkt,
@@ -230,6 +239,21 @@ def claim_runner_pairing(request: HttpRequest, pairing_id: uuid.UUID, payload: R
 
 
 # ---- the person: see, approve or decline (browser session) ---------------------------
+
+def _live_runner(runner_id):
+    if runner_id is None:
+        return None
+    return Runner.objects.filter(pk=runner_id).exclude(status=Runner.RETIRED).first()
+
+
+def _reconnect_for(pairing: RunnerPairing, user):
+    """The runner this pairing reconnects, when `user` owns it and it is live — else
+    None (a fresh pairing). The box only NAMES a runner; owning it is what counts."""
+    runner = pairing.reconnect_runner
+    if runner is None or user is None or runner.owner_id != user.pk or runner.status == Runner.RETIRED:
+        return None
+    return runner
+
 
 def _pairing_or_404(user_code: str) -> RunnerPairing:
     pairing = RunnerPairing.objects.filter(user_code=_normalize_code(user_code)).first()
@@ -259,6 +283,7 @@ def get_runner_pairing(request: HttpRequest, user_code: str):
         suggested_name=pairing.name or suggested_name(pairing.account, pairing.hostname),
         workspaces=_workspaces_for(request.user),
         runner_id=pairing.runner_id if pairing.approved_by_id == request.user.pk else None,
+        reconnect_name=getattr(_reconnect_for(pairing, request.user), "name", ""),
     )
 
 
@@ -288,19 +313,21 @@ def approve_runner_pairing(request: HttpRequest, user_code: str, payload: Runner
     # A runner is owned by a person (apps/harness/api.py::pair_runner).
     if getattr(request.user, "agent_identity", None) is not None:
         raise HttpError(403, "a runner must be owned by a person; approve it as yourself")
-    slug = payload.workspace.strip()
+    reconnect = _reconnect_for(pairing, request.user)
+    slug = reconnect.workspace_id if reconnect is not None else payload.workspace.strip()
+    name = reconnect.name if reconnect is not None else payload.name
     if not wsvc.is_member(request.user, slug):
         raise HttpError(404, f"workspace '{slug}' not found")
     if not perms.can(request.user, slug, perms.AGENT_WORK):
         raise HttpError(403, "pairing a runner into a workspace needs permission to run work there")
     _refuse_finished(pairing)
-    if (Runner.objects.filter(owner=request.user, name=payload.name)
-            .exclude(status=Runner.RETIRED).exists()):
-        raise HttpError(409, f"you already have a runner named '{payload.name}'; choose another name")
+    if reconnect is None and (Runner.objects.filter(owner=request.user, name=name)
+                              .exclude(status=Runner.RETIRED).exists()):
+        raise HttpError(409, f"you already have a runner named '{name}'; choose another name")
     raw = secrets.token_urlsafe(32)
     now = timezone.now()
     first = pairing.approved_at is None
-    pairing.workspace_id, pairing.name = slug, payload.name
+    pairing.workspace_id, pairing.name = slug, name
     pairing.approved_by, pairing.approved_at = request.user, now
     pairing.secret_hash = _secret_hash(raw)
     if first:
@@ -308,7 +335,7 @@ def approve_runner_pairing(request: HttpRequest, user_code: str, payload: Runner
     pairing.save(update_fields=["workspace", "name", "approved_by", "approved_at", "secret_hash",
                                 "expires_at"])
     activity.emit(activity.RUNNER_PAIRING_APPROVED, workspace=slug, actor=request.user, surface="runner",
-                  ref=str(pairing.pk), meta={"name": payload.name, "hostname": pairing.hostname,
+                  ref=str(pairing.pk), meta={"name": name, "hostname": pairing.hostname,
                                              "platform": pairing.platform})
     return RunnerPairingApprovedOut(
         status="approved",

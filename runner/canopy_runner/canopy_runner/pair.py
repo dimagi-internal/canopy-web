@@ -232,6 +232,15 @@ def write_config(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def replace_config(path: Path, data: dict) -> None:
+    """Rewrite an EXISTING runner.json in place (a reconnect drops its dead token and
+    keeps the rest). Same mode as `write_config`."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
 # --- the launcher -------------------------------------------------------------
 
 

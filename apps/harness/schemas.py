@@ -1990,6 +1990,8 @@ class RunnerPairingIn(Schema):
     platform: Literal["macos", "windows", "linux"]
     has_emdash: bool = False
     redirect_port: int = Field(ge=1024, le=65535)
+    # The runner this box already is (its runner.json) when its token stopped working.
+    reconnect_runner: uuid.UUID | None = None
 
 
 class RunnerPairingCreatedOut(Schema):
@@ -2035,6 +2037,9 @@ class RunnerPairingOut(Schema):
     #: Where the caller may put it: their workspaces where they may run work.
     workspaces: list[RunnerPairingWorkspaceOut]
     runner_id: uuid.UUID | None = None
+    # Set when this box asks to reconnect to a runner of YOURS: approving gives that
+    # runner its key back, with its name and workspace, instead of making a new one.
+    reconnect_name: str = ""
 
 
 class RunnerPairingApproveIn(Schema):

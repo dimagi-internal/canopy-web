@@ -1972,6 +1972,11 @@ class RunnerPairing(models.Model):
     declined_at = models.DateTimeField(null=True, blank=True)
     consumed_at = models.DateTimeField(null=True, blank=True)
     runner = models.ForeignKey(Runner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    #: The runner this box says it already IS (its runner.json), when its token stopped
+    #: working: approved by that runner's owner, the claim adds the key to that runner
+    #: instead of making a new one. The box's word alone changes nothing (canopy-web#1705).
+    reconnect_runner = models.ForeignKey(Runner, on_delete=models.SET_NULL, null=True, blank=True,
+                                         related_name="+")
 
     class Meta:
         ordering = ["-created_at"]

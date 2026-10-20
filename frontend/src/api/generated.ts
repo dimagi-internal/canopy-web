@@ -25753,6 +25753,8 @@ export interface components {
             readonly has_emdash: boolean;
             /** Redirect Port */
             readonly redirect_port: number;
+            /** Reconnect Runner */
+            readonly reconnect_runner?: string | null;
         };
         /** RunnerPairingClaimIn */
         readonly RunnerPairingClaimIn: {
@@ -25796,6 +25798,11 @@ export interface components {
             readonly workspaces: readonly components["schemas"]["RunnerPairingWorkspaceOut"][];
             /** Runner Id */
             readonly runner_id?: string | null;
+            /**
+             * Reconnect Name
+             * @default
+             */
+            readonly reconnect_name: string;
         };
         /** RunnerPairingWorkspaceOut */
         readonly RunnerPairingWorkspaceOut: {

@@ -42,6 +42,7 @@ function pairing(over: Partial<RunnerPairingOut> = {}): RunnerPairingOut {
       { slug: 'dimagi', name: 'Dimagi' },
     ],
     runner_id: null,
+    reconnect_name: '',
     ...over,
   }
 }
@@ -89,6 +90,20 @@ describe('PairRunnerPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     await waitFor(() => expect(assign).toHaveBeenCalledWith('http://127.0.0.1:53682/paired?pairing=x&secret=y'))
     expect(approveRunnerPairing).toHaveBeenCalledWith('ABCD-EFGH', { workspace: 'dimagi', name: 'jj-laptop' })
+  })
+
+  it('reconnects a runner of yours whose sign-in died, with no name or workspace to pick', async () => {
+    const assign = vi.fn()
+    vi.stubGlobal('location', { ...window.location, assign })
+    getRunnerPairing.mockResolvedValue(pairing({ reconnect_name: 'jj-mbp-cdp' }))
+    approveRunnerPairing.mockResolvedValue({
+      status: 'approved', redirect_url: 'http://127.0.0.1:53682/paired?pairing=x&secret=y',
+    })
+    renderPage()
+    expect((await screen.findByTestId('pairing-reconnect')).textContent).toMatch(/jj-mbp-cdp/)
+    expect(screen.queryByRole('combobox')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+    await waitFor(() => expect(assign).toHaveBeenCalled())
   })
 
   it('shows why an approval was refused', async () => {
