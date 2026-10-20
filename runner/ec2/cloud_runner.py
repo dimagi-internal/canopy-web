@@ -3235,6 +3235,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             on_session=on_session,
             on_end=lambda agent: _acp_unregister(turn_id),
             cancelled=lambda: stop_requested(turn_id),
+            mode=ACP_PERMISSION_MODE,
             session_start_timeout=ACP_SESSION_START_TIMEOUT_SECONDS,
             flush_seconds=TRANSCRIPT_FLUSH_SECONDS, clock=time.time, log=_log)
     except TurnError as exc:
@@ -3272,6 +3273,12 @@ _ASKS_LOCK = threading.Lock()
 #: Chat session id -> the ask waiting on a person there.
 _ASKS: dict[str, dict] = {}
 _PERMISSION = "session/request_permission"
+#: The mode an ACP turn runs in: bypass, as a `claude -p` turn here
+#: (`--dangerously-skip-permissions`) and a laptop's emdash session do. The adapter
+#: starts every session in `default`, which asks before each edit and command — with
+#: someone to ask that is a dialog per tool call. What still reaches `ask_human`
+#: under bypass is what Claude Code holds back from bypass on purpose.
+ACP_PERMISSION_MODE = "bypassPermissions"
 
 
 def _ask_human_for_turn(runner_id: str, turn_id: str, chat_session_id: str):

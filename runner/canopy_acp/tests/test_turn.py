@@ -25,9 +25,10 @@ class Agent:
     """Plays `updates` from inside `prompt`; records the calls the driver makes."""
 
     def __init__(self, cwd, env, on_update, *, updates=(), replay=(), stop="end_turn",
-                 load_fails=False, result_raises=None, log=None):
+                 load_fails=False, result_raises=None, mode_refused=False, log=None):
         self.on_update, self.updates, self.replay = on_update, list(updates), list(replay)
         self.stop, self.load_fails, self.result_raises = stop, load_fails, result_raises
+        self.mode_refused = mode_refused
         self.log = log if log is not None else []
         self.session_id = ""
 
@@ -46,6 +47,18 @@ class Agent:
         if self.load_fails:
             raise RuntimeError("no such session")
         self.session_id = sid
+
+    def set_mode(self, mode_id):
+        self.log.append(f"mode:{mode_id}")
+        agent = self
+
+        class Pending:
+            def result(self, timeout=None):
+                if agent.mode_refused:
+                    raise RuntimeError("Invalid mode")
+                return {}
+
+        return Pending()
 
     def prompt(self, _text):
         self.log.append("prompt")
@@ -73,7 +86,7 @@ class Agent:
 
 def run(**agent_kw):
     events, log = [], []
-    hooks = {k: agent_kw.pop(k) for k in ("resume", "on_session", "cancelled", "on_end")
+    hooks = {k: agent_kw.pop(k) for k in ("resume", "on_session", "cancelled", "on_end", "mode")
              if k in agent_kw}
 
     def make_agent(cwd, env, on_update):
@@ -111,6 +124,23 @@ def test_a_resume_that_cannot_load_starts_fresh_and_says_so():
     res, _, log = run(resume="gone-sid", load_fails=True, on_session=named.append)
     assert res.ok and res.session_id == "new-sid" and named == ["new-sid"]
     assert log.index("load:gone-sid") < log.index("new_session") < log.index("prompt")
+
+
+def test_the_mode_is_set_on_the_session_before_the_prompt():
+    _, _, log = run(mode="bypassPermissions")
+    assert log.index("new_session") < log.index("mode:bypassPermissions") < log.index("prompt")
+    _, _, log = run(mode="bypassPermissions", resume="old-sid")
+    assert log.index("load:old-sid") < log.index("mode:bypassPermissions") < log.index("prompt")
+
+
+def test_a_refused_mode_still_runs_the_turn():
+    res, _, log = run(mode="bypassPermissions", mode_refused=True)
+    assert res.ok and "prompt" in log
+
+
+def test_no_mode_leaves_the_session_as_the_adapter_starts_it():
+    _, _, log = run()
+    assert not any(e.startswith("mode:") for e in log)
 
 
 def test_the_session_is_named_before_the_prompt_and_unregistered_before_close():

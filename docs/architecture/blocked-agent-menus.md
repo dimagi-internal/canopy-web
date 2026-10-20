@@ -4,7 +4,7 @@ When an agent stops and waits on a human (an `AskUserQuestion`, a permission pro
 
 ## What you will actually meet
 
-Fleet sessions run with permissions bypassed (`⏵⏵ bypass permissions on` in emdash; the cloud runner passes `--dangerously-skip-permissions`, `runner/ec2/cloud_runner.py`), so permission dialogs basically never appear. The menu that matters is **`AskUserQuestion`**: part of the conversation, independent of permission mode, and shaped differently from a permission prompt (a description line under each option, a box rule *between* options, no `?` in the question, plus two options Claude Code appends itself). Test against that shape, not against a permission prompt.
+Fleet sessions run with permissions bypassed (`⏵⏵ bypass permissions on` in emdash; the cloud runner passes `--dangerously-skip-permissions` to `claude -p` and puts every ACP session in `bypassPermissions` before its prompt — `ACP_PERMISSION_MODE`, sent by `canopy_acp.drive_turn`'s `mode` as `session/set_mode`, since the adapter starts each session in `default`, `runner/ec2/cloud_runner.py`), so permission dialogs basically never appear. The menu that matters is **`AskUserQuestion`**: part of the conversation, independent of permission mode, and shaped differently from a permission prompt (a description line under each option, a box rule *between* options, no `?` in the question, plus two options Claude Code appends itself). Test against that shape, not against a permission prompt.
 
 ## One payload, several producers
 
