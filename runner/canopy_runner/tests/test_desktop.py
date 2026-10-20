@@ -562,6 +562,29 @@ def test_a_helper_that_timed_out_does_not_open_twice(monkeypatch):
     assert len(calls) == 1
 
 
+def test_windows_opens_the_session_through_the_protocol_handler(monkeypatch):
+    """No osascript or `open` on Windows: calling them crashed every new desktop session."""
+    from canopy_runner import platform_jobs
+
+    calls = _record_runs(monkeypatch, [])
+    started = []
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    monkeypatch.setattr(desktop.os, "startfile", started.append, raising=False)
+    desktop.open_session("sid-9")
+    assert started == ["claude://resume?session=sid-9"]
+    assert calls == []
+
+
+def test_windows_without_the_app_logs_instead_of_crashing(monkeypatch):
+    from canopy_runner import platform_jobs
+
+    def no_handler(url):
+        raise OSError("no application is associated")
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    monkeypatch.setattr(desktop.os, "startfile", no_handler, raising=False)
+    desktop.open_session("sid-9")  # does not raise
+
+
 # ── closing a session from the web ──────────────────────────────────────────
 
 def _desktop_session(cfg, tmp_path, sid="sid-c1"):
