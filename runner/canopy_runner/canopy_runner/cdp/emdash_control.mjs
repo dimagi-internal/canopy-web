@@ -31,6 +31,7 @@
 // clicks so it works while emdash is backgrounded (no foreground focus needed).
 import { chromium } from 'playwright-core';
 import { isSidebarLabel, pickInSection } from './sidebar_section.mjs';
+import { asTyped } from './typed_text.mjs';
 
 
 // WHICH terminal is "the" terminal. Injected as source into page.evaluate calls
@@ -544,7 +545,9 @@ try {
     };
     const submit = async (body) => {
       await ensureFocus(task);
-      await page.keyboard.insertText(body);   // atomic commit, not char-by-char
+      // A lone "?", "!" or "/" is a key binding in an empty prompt, not text — see
+      // typed_text.mjs. The recheck below squashes whitespace, so it still matches.
+      await page.keyboard.insertText(asTyped(body));   // atomic commit, not char-by-char
       await page.waitForTimeout(PASTE_SETTLE_MS);
       await page.keyboard.press('Enter');
       // Only ever called on a composer that was empty (or just cleared), so
