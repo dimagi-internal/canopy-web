@@ -164,11 +164,12 @@ def test_stream_ingest_folds_activity_and_reships_do_not_double_count():
 
 def test_backfill_carries_context_and_a_transcript_change_recounts():
     user, ws, runner, s, c = _ctx()
-    _stream(c, runner, s, _events(), transcript_id="tx1")
+    # No recorded transcript (an old runner wrote these rows): unknown provenance.
+    _stream(c, runner, s, _events(), transcript_id="")
     msgs = [{"role": e["kind"], "index": e["index"], "text": e["payload"].get("text", ""),
              "content": e["payload"], "cwd": LABS, "git_branch": "hal/other"}
             for e in _events()]
-    # A different transcript: rows are dropped and replaced — counts must not double.
+    # The first named transcript drops and replaces them — counts must not double.
     r = c.post(f"/api/harness/runners/{runner.id}/session-backfill",
                {"session_id": str(s.id), "messages": msgs, "transcript_id": "tx2"},
                content_type="application/json")

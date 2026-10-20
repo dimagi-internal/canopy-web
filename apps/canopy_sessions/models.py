@@ -423,9 +423,10 @@ class RunnerBinding(models.Model):
     # day-old conversation with no way to self-heal.
     #
     # Recording the identity makes the mismatch detectable, which is the whole
-    # point: on a change the derived rows are dropped and re-derived (see
-    # services.ensure_transcript_identity), exactly as `Session.ordinal_scheme`
-    # already does for a change of ordinal SCHEME. Blank = never reported (an old
+    # point: on a change the new transcript opens a new epoch above the held rows
+    # (see services.ensure_transcript_identity; a blank prior id still drops and
+    # re-derives, as `Session.ordinal_scheme` does for a change of ordinal
+    # SCHEME). Blank = never reported (an old
     # runner, or a session whose runner has not shipped since this landed).
     transcript_id = models.CharField(max_length=100, blank=True, default="")
     # WHICH emdash task this binding is for — emdash's own `tasks.id`, reported by

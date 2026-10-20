@@ -736,39 +736,59 @@ def _ensure_current_ordinal_scheme(locked_session, offset: int = 0) -> int:
     return deleted
 
 
+def _open_epoch(binding, session) -> None:
+    """Lift `binding.index_offset` past every row `session` already holds, so the
+    next transcript's ordinals land ABOVE that history instead of on top of it.
+
+    Rounded UP to a stride boundary past the high-water mark, so a stored index
+    minus the offset still decomposes into (record, block). `+ BLOCK_STRIDE`
+    rather than a bare ceiling leaves one clear stride of gap between the epochs —
+    without it an offset landing exactly on the mark lets the new transcript's
+    record 0 sit in the same stride as the old tail. A session with no rows keeps
+    its offset. Caller holds the binding lock and saves the binding."""
+    high = Message.objects.filter(session=session).aggregate(m=Max("turn_index"))["m"]
+    if high is not None:
+        binding.index_offset = ((int(high) // BLOCK_STRIDE) + 2) * BLOCK_STRIDE
+
+
 def ensure_transcript_identity(session, transcript_id: str) -> int:
-    """Drop derived rows that came from a DIFFERENT transcript than the one now
-    being shipped, so two conversations can't share one session's ordinals.
+    """Keep two transcripts from sharing one session's ordinals when the transcript
+    being shipped is not the one the held rows came from.
 
     The sibling of `_ensure_current_ordinal_scheme`, for the other way a session's
-    `turn_index` space can be invalidated. A binding is keyed on the emdash task
-    NAME, and names get reused — close "bednet", open another "bednet", and the
-    binding is re-pointed at a new conversation with the old one's rows still
-    attached. Because `turn_index` is a PER-FILE ordinal, that is not merely
-    untidy: the first_index/last_index markers derived from the old file are
-    nonsense against the new one, and a shorter successor sits entirely below the
-    old high-water mark and is suppressed forever (issue #615).
+    `turn_index` space can be invalidated. `turn_index` is a PER-FILE ordinal, so
+    rows from two files in one index space are not merely untidy: the
+    first_index/last_index markers derived from the old file are nonsense against
+    the new one, and a shorter successor sits entirely below the old high-water
+    mark and is suppressed forever (issue #615).
 
-    A change of transcript is therefore treated exactly like a change of ordinal
-    scheme — drop and re-derive. That is safe because the runner ships the WHOLE
-    history whenever its transcript id disagrees with the descriptor's (see
-    `canopy_runner.streams`), so the rows are replaced, not lost, and the
-    transcript on disk remains the source either way.
+    A changed id opens a NEW EPOCH — exactly what `transfer_session` does — so the
+    new transcript's rows land above the old ones and the old ones stay. It used
+    to drop them and re-derive, on the claim that the runner re-ships the whole
+    history; that holds only when the new file CONTAINS the old conversation, and
+    nothing guarantees it. Measured 2026-10-20 (issue #1731) on session f6e30263:
+    a credential failover on cloud-ec2-2 started a fresh claude conversation for
+    the same session, the next ship carried its id, and every earlier row was
+    deleted with nothing left that could re-derive them. A changed id inside one
+    session is the same conversation continuing in a new file (a failover,
+    `/clear`, a box that could not resume), and its history is the session's.
 
-    Blank `transcript_id` (an old runner) is a no-op: it carries no claim about
-    provenance, and dropping rows on no evidence would wipe a healthy session.
-    Returns rows deleted.
+    The case dropping was built for — a reused emdash task NAME pointing this
+    binding at a genuinely different conversation — no longer reaches here: the
+    forks catch it first and move the binding to a new Session, leaving the old
+    one whole (`fork_if_name_reused` on the ship path, `fork_if_task_changed` on
+    the report path).
 
-    Scoped to the CURRENT EPOCH — rows at or above `binding.index_offset`. Below
-    it is history carried across a TRANSFER (`transfer_session`), which is the one
-    case where a changed `transcript_id` does NOT mean "a different conversation's
-    rows are attached": it is the same conversation on a new box, which
-    necessarily opened a fresh claude session with a fresh id. Unscoped, this
-    function deletes exactly the thing a transfer exists to preserve — measured
-    2026-09-12 on session 169212e2 moving cloud-ec2-1 -> jj-mbp-cdp, which lost
-    every one of its 60+ pre-transfer rows the moment the laptop shipped its
-    first transcript. For a never-transferred session the offset is 0 and the
-    scope is the whole session, i.e. exactly the previous behaviour.
+    Dropping remains for the one case it is provably safe: a BLANK recorded id
+    (a session that predates this field, or a binding a transfer or fork just
+    reset). Those rows are of unknown provenance, the shipper sends the full
+    history for exactly that reason, and the drop is scoped to the current epoch —
+    at or above `binding.index_offset` — so history carried across a transfer is
+    never touched (session 169212e2, 2026-09-12, lost 60+ rows before that scope
+    existed).
+
+    Blank incoming `transcript_id` (an old runner) is a no-op: it carries no claim
+    about provenance. Returns rows deleted (0 when an epoch was opened instead).
     """
     if not transcript_id:
         return 0
@@ -785,6 +805,15 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
             RunnerBinding.objects.select_for_update().filter(session=session).first()
         )
         if binding is None or binding.transcript_id == transcript_id:
+            return 0
+        if binding.transcript_id:
+            # Same session, new file: keep what is held and shift the new
+            # transcript above it. The markers reported back to the runner are
+            # scoped to the new epoch (apps/harness/api.py::get_session_streams),
+            # so they read empty and the runner ships the new file from its start.
+            _open_epoch(binding, session)
+            binding.transcript_id = transcript_id
+            binding.save(update_fields=["transcript_id", "index_offset", "updated_at"])
             return 0
         # First sighting (blank) still drops: a session that predates this field
         # is exactly the state issue #615 describes — rows of unknown provenance,
@@ -1842,14 +1871,7 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
         if source is not None and source.id == target.id:
             raise ValueError(f"session is already on '{target.name}'")
 
-        # Round UP to a stride boundary past the high-water mark, so a stored index
-        # minus the offset still decomposes into (record, block). `+ BLOCK_STRIDE`
-        # rather than a bare ceiling leaves one clear stride of gap between the
-        # epochs — without it an offset landing exactly on the mark lets the new
-        # transcript's record 0 sit in the same stride as the old tail.
-        high = Message.objects.filter(session=session).aggregate(m=Max("turn_index"))["m"]
-        if high is not None:
-            binding.index_offset = ((int(high) // BLOCK_STRIDE) + 2) * BLOCK_STRIDE
+        _open_epoch(binding, session)
 
         binding.runner = target
         binding.transferred_from = source
