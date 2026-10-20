@@ -32,6 +32,10 @@ status item like any other app.
   `canopy-runner close-sessions --project <p> | --all` — each one the same close as the
   phone's (the emdash task is deleted; transcripts and canopy's record are kept). The
   same command works from a terminal: `canopy-runner close-sessions --list`.
+- **Update runner now** (right-click): starts the updater job (`com.canopy.runner.updater`)
+  instead of waiting up to 30 min for its timer — the same job, so it installs only what
+  canopy has deployed and respects `~/.canopy/hold-updates`. Reads "Updating the runner…"
+  while it runs; the result is in `~/.canopy/updater.log`.
 
 ## Relationship to the daemon
 
