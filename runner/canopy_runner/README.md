@@ -54,6 +54,10 @@ canopy-web#1188):
   in.
 - **Keep the app running:** Claude.app must stay running (it may be hidden), and
   the runner starts it if it isn't. Quitting it stops that runtime's sessions.
+- **Windows:** the deep link goes to the claude:// protocol handler the app
+  registers (`os.startfile`), with no focus hand-back, and a stop cannot end the
+  turn's shells (no `ps`). Claude CLI is the better fit on a Windows box someone
+  is typing on: it never takes the focus and stops over ACP.
 
 How a Claude CLI session is driven (`desktop.py` + `headless.py`):
 - **Never the app, never a deep link, so nothing takes the focus.** A new thread
