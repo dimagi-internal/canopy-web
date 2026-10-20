@@ -3427,7 +3427,19 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
     USAGE-CAP failure advances — a turn that failed on its own merits must not be
     re-run against every credential in turn (that would triple the blast radius of
     an ordinary bug and spend real money doing it).
+
+    Every retry resumes the CALLER's session, never the failed attempt's: a
+    credential is not part of a conversation, and transcripts live in the one
+    `projects` directory every login links to (`_prepare_login_dir`), so the next
+    credential can pick it up. A retry that dropped `--resume` started a fresh
+    conversation, and the moment it announced itself (`_announce_session`) it
+    became the session's resume target. The next turn resumed that near-empty
+    transcript, and canopy-web dropped the session's history when its id changed.
+    That was Hal's session f6e30263 on cloud-ec2-2, 2026-10-19: a weekly cap
+    erased a 1,000-line build conversation. A turn that had no session to resume
+    still retries fresh: that attempt's partial session is never reused.
     """
+    original_resume = resume_session_id
     attempted: list[str] = []
     resets: list[float] = []      # each capped credential's reset, epoch seconds
     capped_labels: list[str] = []
@@ -3504,7 +3516,7 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             # invisible, until something bounces the runner.
             if _reload_claude_credentials():
                 _log(f"turn {turn_id[:8]}: picked up new credentials — retrying")
-                resume_session_id = None
+                resume_session_id = original_resume
                 continue
             # Nothing left to fail over to. Say so in the turn's own text: the
             # bare cap message names a reset time but never says the fleet has
@@ -3532,10 +3544,9 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
                              f"and will NOT clear on its own — someone has to "
                              f"re-authenticate it.")
             return ok, f"{text}\n\n{note}", session_id
-        # `--resume` is deliberately dropped on the retry: the failed attempt may
-        # have written a partial session, and resuming it under a different
-        # credential is not a state we want to debug at 2am.
-        resume_session_id = None
+        # Resume what the caller asked for, not whatever the failed attempt
+        # opened (see the docstring).
+        resume_session_id = original_resume
 
 
 def _probe_says_capped(label: str, resets: list[float], turn_id: str) -> bool:

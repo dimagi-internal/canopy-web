@@ -150,7 +150,31 @@ def test_exhausting_every_credential_says_so_in_the_turn_text(cr, monkeypatch):
     assert "subscription-1" in text and "api-key" in text
 
 
-def test_retry_drops_resume_so_a_partial_session_is_not_reused(cr, monkeypatch):
+def test_retry_resumes_the_callers_session_not_a_fresh_one(cr, monkeypatch):
+    """A cap must not cost a session its conversation (Hal f6e30263, 2026-10-19):
+    every retry resumes the session the caller named, and a turn whose attempts
+    all fail still reports that session, not the fresh one a failed attempt opened."""
+    monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(cr, "_notify_out_of_usage", lambda *a, **k: None)
+    monkeypatch.setattr(cr, "_park_until_cap_resets", lambda *a, **k: "later")
+    monkeypatch.setattr(cr, "_reload_claude_credentials", lambda: False)
+    cr._apply_claude_credential(0)
+    resumes = []
+
+    def fake_once(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
+        resumes.append(resume_session_id)
+        return False, CAP_TEXT, resume_session_id or "fresh"
+
+    monkeypatch.setattr(cr, "_execute_once", fake_once)
+    ok, _, session_id = cr.execute_prompt(
+        "p", "turn-abcdef12", lambda e: None, resume_session_id="sess-old")
+    assert ok is False
+    assert resumes == ["sess-old", "sess-old", "sess-old"]
+    assert session_id == "sess-old"
+
+
+def test_retry_without_a_session_stays_fresh(cr, monkeypatch):
+    """A first turn's failed attempt may leave a partial session; never reuse it."""
     monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
     cr._apply_claude_credential(0)
     resumes = []
@@ -158,12 +182,12 @@ def test_retry_drops_resume_so_a_partial_session_is_not_reused(cr, monkeypatch):
     def fake_once(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
         resumes.append(resume_session_id)
         if len(resumes) == 1:
-            return False, CAP_TEXT, ""
+            return False, CAP_TEXT, "partial"
         return True, "ok", "s"
 
     monkeypatch.setattr(cr, "_execute_once", fake_once)
-    cr.execute_prompt("p", "turn-abcdef12", lambda e: None, resume_session_id="sess-old")
-    assert resumes == ["sess-old", None]
+    cr.execute_prompt("p", "turn-abcdef12", lambda e: None)
+    assert resumes == [None, None]
 
 
 # --- mid-run reload: rescuing a box without restarting it --------------------
