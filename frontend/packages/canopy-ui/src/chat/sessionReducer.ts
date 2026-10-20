@@ -625,11 +625,16 @@ export function markSendFailed(prev: SessionState, clientId: string, detail: str
  *  looked lost. A row is kept only while the snapshot lacks it: once the
  *  transcript echo is in the snapshot (same words among its recent user rows),
  *  the snapshot's copy wins.
+ *
+ *  Only a row still unconfirmed is carried. A row the transcript already echoed
+ *  keeps its client_id but is a server row now, and a snapshot is only the TAIL:
+ *  a long reply's tool rows push the line out of its window, and carrying it
+ *  re-numbered it to the bottom, below the reply it started.
  */
 function keepUnechoedSends(previous: Message[], snapshot: Message[]): Message[] {
   const mine = previous.filter(
     (m) => m.role === "user" && typeof m.content?.client_id === "string" &&
-      !snapshot.some((s) => s.id === m.id),
+      isUnconfirmed(m) && !snapshot.some((s) => s.id === m.id),
   );
   if (mine.length === 0) return snapshot;
   const recent = new Set(

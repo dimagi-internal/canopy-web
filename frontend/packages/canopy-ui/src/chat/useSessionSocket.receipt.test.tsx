@@ -158,4 +158,23 @@ describe('a send carries its own text and waits for a receipt', () => {
     expect(hook.result.current.state.messages).toHaveLength(1)
     expect(hook.result.current.state.messages[0].id).toBe('m9')
   })
+
+  it('a line the agent already read is not carried below its own reply', () => {
+    const hook = user()
+    act(() => hook.result.current.updateDraft('can you check the jj runner'))
+    act(() => hook.result.current.sendChat())
+    // The agent reads it: the transcript echo gives the row its durable id.
+    act(() => FakeSocket.last!.receive({
+      event: 'chat.user_message',
+      data: { message_id: 'm1', turn_index: 74688, plaintext: 'can you check the jj runner' },
+    }))
+    // A reconnect snapshot is only the TAIL: a long reply's tool rows pushed
+    // the line above the window, so the snapshot holds just the reply.
+    const reply = {
+      id: 'm2', turn_index: 90048, role: 'assistant', content: {}, plaintext: 'Yes, checking now.',
+      status: 'complete', error_detail: null, started_at: null, completed_at: null, created_at: '',
+    }
+    act(() => FakeSocket.last!.receive({ ...SNAPSHOT, data: { ...SNAPSHOT.data, messages: [reply] } }))
+    expect(hook.result.current.state.messages.map((m) => m.id)).toEqual(['m2'])
+  })
 })
