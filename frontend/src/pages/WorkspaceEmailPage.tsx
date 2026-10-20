@@ -256,6 +256,33 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
 
       <div>
         <h4 className={heading}>Addresses</h4>
+        {owned && manage ? (
+          <label className="mt-1 flex items-start gap-2 text-[12px] text-foreground" data-testid="mail-agent-addresses">
+            <input type="checkbox" className="mt-0.5 accent-primary" checked={domain.agent_addresses ?? false}
+              disabled={busy}
+              onChange={(e) => {
+                const on = e.target.checked
+                void run(async () => onChange(await updateMailDomain(workspace, domain.id, { agent_addresses: on })),
+                  'Could not change the agent addresses')
+              }} />
+            <span>
+              Give every agent an address: <span className="font-mono">{`<agent>@${domain.name}`}</span>
+              <span className="block text-muted-foreground">
+                Every agent in this workspace and in the workspaces this domain is shared with, kept up to date
+                as agents are added or moved. An address someone already has is never taken.
+              </span>
+            </span>
+          </label>
+        ) : domain.agent_addresses ? (
+          <p className="mt-1 text-[12px] text-muted-foreground" data-testid="mail-agent-addresses">
+            {`Every agent here gets <agent>@${domain.name} automatically.`}
+          </p>
+        ) : null}
+        {(domain.agent_addresses_skipped ?? []).length > 0 && (
+          <p className="mt-1 text-[12px] text-warning" data-testid="mail-agent-addresses-skipped">
+            {`No automatic address for ${(domain.agent_addresses_skipped ?? []).join(', ')}: another route already has it.`}
+          </p>
+        )}
         {domain.routes.length === 0 ? (
           <p className="mt-1 text-[12px] text-muted-foreground">No addresses yet.</p>
         ) : (
@@ -271,7 +298,15 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
             <tbody>
               {domain.routes.map((r) => (
                 <tr key={r.id} className="border-b border-border">
-                  <td className="py-1.5 pr-3 text-foreground">{r.address}</td>
+                  <td className="py-1.5 pr-3 text-foreground">
+                    {r.address}
+                    {r.auto && (
+                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        title="Made by “Give every agent an address”. Editing it makes it yours.">
+                        automatic
+                      </span>
+                    )}
+                  </td>
                   <td className="py-1.5 pr-3 text-foreground-secondary">{goesTo(r)}</td>
                   <td className="py-1.5 pr-3 text-foreground-secondary">
                     {manage ? (
@@ -289,13 +324,13 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                           setMember(r.forward_to_user_id ? String(r.forward_to_user_id) : '')
                           setEnabled(r.enabled)
                         }}>Edit</button>
-                      <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
+                      {!r.auto && <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
                         onClick={() => {
                           if (!window.confirm(`Remove ${r.address}? It stops receiving mail. Existing threads are kept.`)) return
                           void run(async () => { await deleteMailRoute(workspace, domain.id, r.id); await reload() }, 'Could not remove the address')
                         }}>
                         Remove
-                      </button>
+                      </button>}
                     </td>
                   )}
                 </tr>

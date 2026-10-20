@@ -384,7 +384,8 @@ def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: st
         with transaction.atomic():
             route, _ = MailRoute.objects.update_or_create(
                 domain=domain, local_part=local, workspace=workspace,
-                defaults={"kind": kind, "agent": agent, "forward_to": forward_to, "enabled": enabled})
+                defaults={"kind": kind, "agent": agent, "forward_to": forward_to, "enabled": enabled,
+                          "auto": False})
     except IntegrityError:  # another workspace took it between the check and the write
         raise DomainError(409, "that address is already taken") from None
     return route

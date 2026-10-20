@@ -47,7 +47,7 @@ export async function refreshMailDomain(workspace: string, domainId: number): Pr
 }
 
 export async function updateMailDomain(workspace: string, domainId: number,
-  body: { daily_send_cap?: number; unsuspend?: boolean; sign_in?: boolean }): Promise<MailDomainOut> {
+  body: { daily_send_cap?: number; unsuspend?: boolean; sign_in?: boolean; agent_addresses?: boolean }): Promise<MailDomainOut> {
   const res = await apiV2.PATCH('/api/mail/domains/{workspace}/{domain_id}', {
     params: { path: { workspace, domain_id: domainId } }, body: { unsuspend: false, ...body } })
   if (!res.response.ok) fail(res, 'Failed to update the domain')

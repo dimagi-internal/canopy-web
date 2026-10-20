@@ -13,6 +13,7 @@ const domain = {
   daily_send_cap: 200, can_manage: true,
   owned: true, owner_workspace: 'marshellis', can_share: false, shares: [] as { workspace: string; daily_send_cap: number }[],
   sign_in: false, can_set_sign_in: true, mx_points_at_google: false,
+  agent_addresses: false, agent_addresses_skipped: [] as string[],
   records: [
     { purpose: 'spf', type: 'TXT', name: 'marshellis.com',
       value: 'v=spf1 include:zohomail.com include:amazonses.com -all', priority: null, ok: false, found: [] },
@@ -20,7 +21,7 @@ const domain = {
       value: 'inbound-smtp.us-east-1.amazonaws.com', priority: 10, ok: false, found: ['10 mx.zoho.com.'] },
   ],
   routes: [{ id: 9, local_part: '*', address: '*@marshellis.com', kind: 'forward', agent_slug: '',
-             forward_to_user_id: 1, forward_to_email: 'jjackson@dimagi.com', enabled: true }],
+             forward_to_user_id: 1, forward_to_email: 'jjackson@dimagi.com', enabled: true, auto: false }],
 }
 
 vi.mock('@/api/mail', async (orig) => ({
@@ -266,5 +267,24 @@ describe('WorkspaceEmailPage', () => {
     expect(text.indexOf('DNS records')).toBeLessThan(text.indexOf('Remove domain'))
     fireEvent.click(screen.getByRole('button', { name: 'Show records' }))
     expect(screen.getByTestId('mail-records')).toBeTruthy()
+  })
+
+  // Every agent gets <slug>@domain: the owner's switch, and the addresses it made are
+  // tagged and cannot be removed by hand (untick Enabled, or edit to take one over).
+  it('switches every-agent addresses on, and tags the addresses it made', async () => {
+    const live = {
+      ...domain, agent_addresses: true, agent_addresses_skipped: ['sift'],
+      routes: [{ id: 3, local_part: 'hal', address: 'hal@marshellis.com', kind: 'agent', agent_slug: 'hal',
+                 forward_to_user_id: null, forward_to_email: '', enabled: true, auto: true }],
+    }
+    vi.mocked(mail.updateMailDomain).mockResolvedValueOnce(live as never)
+    renderPage()
+    const box = (await screen.findByTestId('mail-agent-addresses')).querySelector('input') as HTMLInputElement
+    expect(box.checked).toBe(false)
+    fireEvent.click(box)
+    await waitFor(() => expect(mail.updateMailDomain).toHaveBeenCalledWith('marshellis', 1, { agent_addresses: true }))
+    expect(await screen.findByText('automatic')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
+    expect(screen.getByTestId('mail-agent-addresses-skipped').textContent).toMatch(/sift/)
   })
 })

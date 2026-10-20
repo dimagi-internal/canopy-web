@@ -113,6 +113,19 @@ both headers from the thread.
    current MX provider ("Zoho currently receives mail for this domain — switching MX
    moves all of it here") so nobody breaks a working mailbox by accident.
 
+### Every agent gets an address (`MailDomain.agent_addresses`, `auto_addresses.py`)
+
+The domain's owner can switch on "Give every agent an address". Every agent in a workspace
+that may use the domain (its own workspace, and every workspace it is shared with and the
+workspaces below those) then holds `<slug>@<domain>` as a real agent route marked `auto`.
+Nothing downstream knows the difference: threads, replies, `send --from` and the agent's
+address list treat it like a hand-made address, and an agent keeps any other inboxes it has.
+`sync` keeps the automatic routes true when the switch flips, a share is added or removed,
+an agent is created or moved (post_save, after commit), or a workspace is re-parented. It
+never takes a held address (skipped, and reported to that agent's own workspace only); an
+admin who edits an automatic route takes it over, and a hand removal is refused (untick
+Enabled instead).
+
 ### Inbound
 SES → S3 `incoming/<id>` + SNS → `POST /api/mail/ses/inbound/`:
 1. Verify the SNS signature (cert URL host must be `sns.<region>.amazonaws.com`, the

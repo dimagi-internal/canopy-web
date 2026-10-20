@@ -23,4 +23,18 @@ class MailConfig(AppConfig):
         from . import domains
 
         mailbox.register(domains.MailboxProvider())
+
+        # Every agent gets <slug>@<domain> where a domain says so: kept in sync as agents
+        # are created and moved and workspaces re-parented (auto_addresses.py).
+        from django.db.models.signals import post_save
+
+        from apps.agents.models import Agent
+        from apps.workspaces.models import Workspace
+
+        from . import auto_addresses
+
+        post_save.connect(auto_addresses.on_agent_saved, sender=Agent,
+                          dispatch_uid="mail.agent_addresses.agent")
+        post_save.connect(auto_addresses.on_workspace_saved, sender=Workspace,
+                          dispatch_uid="mail.agent_addresses.workspace")
         wsvc.register_verified_domain_owner(domains.verified_domain_owner)
