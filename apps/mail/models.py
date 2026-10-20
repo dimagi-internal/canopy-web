@@ -36,6 +36,10 @@ class MailDomain(models.Model):
     SES read; "" while it is verifying or verified. Status stays `pending` meanwhile."""
     verification_restarted_at = models.DateTimeField(null=True, blank=True)
     """When a Re-check last asked SES to start verifying again (rate-limits restarts)."""
+    agent_addresses = models.BooleanField(default=False)
+    """Every agent that may use this domain gets `<slug>@<domain>` as a real agent route,
+    created and removed as agents come, go and move (apps/mail/auto_addresses.py). Covers
+    the domain's own workspace and every workspace it is shared with, and their children."""
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                    on_delete=models.SET_NULL, related_name="+")
@@ -94,6 +98,9 @@ class MailRoute(models.Model):
                                    on_delete=models.CASCADE, related_name="mail_forwards")
     """A canopy USER, never a typed address — the feature cannot be used as a relay."""
     enabled = models.BooleanField(default=True)
+    auto = models.BooleanField(default=False)
+    """Made by the domain's `agent_addresses` switch and kept in sync by it. An admin who
+    edits the route takes it over (auto → False); the switch never touches it again."""
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

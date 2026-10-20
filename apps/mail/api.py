@@ -25,7 +25,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import agent_mail, domains, inbound, reputation, ses, sns
+from . import agent_mail, auto_addresses, domains, inbound, reputation, ses, sns
 from .models import MailDomain, MailMessage, MailRoute, MailThread
 from .schemas import (
     AgentMailboxIn,
@@ -90,7 +90,7 @@ def _route_out(r: MailRoute) -> dict:
             "agent_slug": r.agent.slug if r.agent_id else "",
             "forward_to_user_id": r.forward_to_id,
             "forward_to_email": r.forward_to.email if r.forward_to_id else "",
-            "enabled": r.enabled}
+            "enabled": r.enabled, "auto": r.auto}
 
 
 def _domain_out(d: MailDomain, user, ws=None) -> dict:
@@ -117,6 +117,8 @@ def _domain_out(d: MailDomain, user, ws=None) -> dict:
            "can_share": owned and user.is_superuser, "shares": [],
            "sign_in": owned and d.name in [str(x).lower() for x in (ws.access_request_domains or [])],
            "can_set_sign_in": owned and d.routes_live and perms.can(user, ws, perms.OWN),
+           "agent_addresses": d.agent_addresses,
+           "agent_addresses_skipped": auto_addresses.skipped_here(d, ws),
            "mx_points_at_google": "google" in (d.mx_provider or "").lower()}
     if user.is_superuser:
         out["shares"] = [{"workspace": s.workspace_id, "daily_send_cap": s.daily_send_cap}
@@ -189,12 +191,13 @@ def _iso(when) -> str | None:
 
 
 @router.patch("/domains/{workspace}/{domain_id}", response=MailDomainOut,
-              summary="Change a domain's send cap or lift its suspension (admin or owner)")
+              summary="Change a domain's send cap, every-agent addresses, or lift its suspension (admin or owner)")
 def update_mail_domain(request: HttpRequest, workspace: str, domain_id: int,
                        payload: MailDomainPatchIn) -> dict:
     ws = _admin_ws(request.user, workspace)
     d = _domain(ws, domain_id)
-    before = {"daily_send_cap": d.daily_send_cap, "status": d.status}
+    before = {"daily_send_cap": d.daily_send_cap, "status": d.status,
+              "agent_addresses": d.agent_addresses}
     fields = []
     if payload.daily_send_cap is not None:
         if not 1 <= payload.daily_send_cap <= 5000:
@@ -207,11 +210,18 @@ def update_mail_domain(request: HttpRequest, workspace: str, domain_id: int,
     # Only the fields this request changes: a concurrent auto-suspension must not be undone.
     if fields:
         d.save(update_fields=fields)
+    if payload.agent_addresses is not None:
+        # The domain's owner decides, for every workspace it is shared with: those
+        # workspaces' agents get addresses, never anyone's existing one.
+        MailDomain.objects.filter(pk=d.pk).update(agent_addresses=payload.agent_addresses)
+        d.agent_addresses = payload.agent_addresses
+        auto_addresses.sync(d)
     if payload.sign_in is not None:
         _set_sign_in(request.user, ws, d, payload.sign_in)
     d.refresh_from_db()
     audit.note_change(scope=f"mail.domain:{d.name}", before=before,
-                      after={"daily_send_cap": d.daily_send_cap, "status": d.status})
+                      after={"daily_send_cap": d.daily_send_cap, "status": d.status,
+                             "agent_addresses": d.agent_addresses})
     return _domain_out(d, request.user)
 
 
@@ -271,6 +281,9 @@ def delete_mail_route(request: HttpRequest, workspace: str, domain_id: int, rout
     r = _usable_domain(ws, domain_id).routes.filter(pk=route_id, workspace=ws).first()
     if r is None:
         raise HttpError(404, "no such route")
+    if r.auto:
+        raise HttpError(409, f"{r.address} is automatic: every agent on {r.domain.name} gets "
+                             "one. Untick Enabled to stop it, or edit it to make it yours.")
     audit.note_change(scope=f"mail.route:{r.address}", before=_route_out(r), after=None)
     r.delete()
     return 204, None
@@ -302,6 +315,7 @@ def share_mail_domain(request: HttpRequest, workspace: str, domain_id: int, payl
     audit.note_change(scope=f"mail.share:{d.name}:{target.pk}",
                       before={"daily_send_cap": prior.daily_send_cap} if prior else None,
                       after={"daily_send_cap": s.daily_send_cap})
+    auto_addresses.sync(d)
     return _domain_out(d, request.user)
 
 
@@ -316,6 +330,7 @@ def unshare_mail_domain(request: HttpRequest, workspace: str, domain_id: int, sh
     audit.note_change(scope=f"mail.share:{d.name}:{share_workspace}",
                       before={"daily_send_cap": s.daily_send_cap}, after=None)
     s.delete()  # its routes stay but go inert (domains.route_is_live); re-sharing revives them
+    auto_addresses.sync(d)  # ...except the automatic ones: they go, and come back on a re-share
     return _domain_out(d, request.user)
 
 

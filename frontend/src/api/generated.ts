@@ -692,7 +692,7 @@ export interface paths {
         readonly delete: operations["remove_mail_domain"];
         readonly options?: never;
         readonly head?: never;
-        /** Change a domain's send cap or lift its suspension (admin or owner) */
+        /** Change a domain's send cap, every-agent addresses, or lift its suspension (admin or owner) */
         readonly patch: operations["update_mail_domain"];
         readonly trace?: never;
     };
@@ -12945,6 +12945,16 @@ export interface components {
              */
             readonly can_set_sign_in: boolean;
             /**
+             * Agent Addresses
+             * @default false
+             */
+            readonly agent_addresses: boolean;
+            /**
+             * Agent Addresses Skipped
+             * @default []
+             */
+            readonly agent_addresses_skipped: readonly string[];
+            /**
              * Mx Points At Google
              * @default false
              */
@@ -12981,6 +12991,11 @@ export interface components {
             readonly forward_to_email: string;
             /** Enabled */
             readonly enabled: boolean;
+            /**
+             * Auto
+             * @default false
+             */
+            readonly auto: boolean;
         };
         /** MailDomainIn */
         readonly MailDomainIn: {
@@ -12996,6 +13011,8 @@ export interface components {
              * @default false
              */
             readonly unsuspend: boolean;
+            /** Agent Addresses */
+            readonly agent_addresses?: boolean | null;
             /** Sign In */
             readonly sign_in?: boolean | null;
         };

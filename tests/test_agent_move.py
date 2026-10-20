@@ -273,6 +273,7 @@ _NOT_THE_AGENTS = {
     "agents.EngagementEvent": "what people did, recorded in the workspace they did it in; telemetry stays there",
     "events.Activity": "an analytics fact, counted in the workspace it happened in; telemetry stays there",
     "events.SessionUsage": "what a Claude session spent, counted in the workspace it ran in; telemetry stays there",
+    "mail.MailDomain": "`agent_addresses` is a domain switch, not an agent; its routes move (mail.MailRoute)",
 }
 
 

@@ -23,6 +23,8 @@ class MailRouteOut(Schema):
     forward_to_user_id: int | None = None
     forward_to_email: str = ""
     enabled: bool
+    auto: bool = False
+    """Made and kept by the domain's every-agent switch; editing it makes it yours."""
 
 
 class MailDomainShareOut(Schema):
@@ -55,6 +57,10 @@ class MailDomainOut(Schema):
     """People with a verified Google account at this domain may sign in and ask to join
     the workspace (Google Workspace logins on a domain whose mail canopy hosts)."""
     can_set_sign_in: bool = False
+    agent_addresses: bool = False
+    """Every agent that may use the domain gets `<slug>@<domain>`, kept in sync."""
+    agent_addresses_skipped: list[str] = []
+    """This workspace's agents the switch could not give an address: another route holds it."""
     mx_points_at_google: bool = False
     """Its MX goes to Google: mail for it would reach Google, not canopy — a warning."""
 
@@ -72,6 +78,9 @@ class MailDomainIn(Schema):
 class MailDomainPatchIn(Schema):
     daily_send_cap: int | None = None
     unsuspend: bool = False
+    agent_addresses: bool | None = None
+    """Give every agent that may use the domain `<slug>@<domain>` (and keep it so); False
+    removes the addresses it made. Sending it again re-syncs."""
     sign_in: bool | None = None
     """Owner only, verified domains only: let Google accounts @this domain sign in and
     ask to join (they are approved at the workspace's auto-approve role, if any)."""
