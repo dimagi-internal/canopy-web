@@ -103,9 +103,25 @@ def relationship(turn, agent) -> str:
     user = turn.initiator_user if kind == who.USER else None
     if user is None:
         return CONTACT
+    acting_cap(turn)
     if agent is None:
         return _relationship_without_agent(turn, user)
     return relationship_for_user(user, agent)
+
+
+def acting_cap(turn) -> str:
+    """The role a turn's initiator acts as, applied to `turn.initiator_user`: the cap a
+    local turn was opened under, or the `acts_as` of the private runner that claimed it
+    (canopy-web#1705). "" when they act as themselves."""
+    from apps.workspaces import role_cap
+
+    cap = (turn.origin_ref or {}).get("acts_as") or ""
+    runner = getattr(turn, "claimed_by", None) if turn.claimed_by_id else None
+    if not cap and runner is not None and runner.private and runner.owner_id == turn.initiator_user_id:
+        cap = runner.acts_as
+    if cap and turn.initiator_user is not None:
+        role_cap.apply(turn.initiator_user, cap)
+    return cap
 
 
 def _relationship_without_agent(turn, user) -> str:
@@ -157,14 +173,18 @@ def relationship_for_user(user, agent) -> str:
     # Owner only while still in the tenant: an owner removed from the workspace
     # who messages the agent (Slack, email) is an outsider now, and must reach
     # it through its interface like one — not with an unconfined profile.
-    if agent.owner_id == user.pk and wsvc.is_member(user, agent.workspace_id):
+    from apps.workspaces import role_cap
+
+    # Acting as an editor or viewer (a private runner's acts_as): judged as a member.
+    capped = bool(role_cap.cap_of(user))
+    if not capped and agent.owner_id == user.pk and wsvc.is_member(user, agent.workspace_id):
         return OWNER
     # The agent's OWN canopy login (`Agent.user`, #983) is the agent itself —
     # confining it against itself is nonsense. Only its own: another agent's
     # login stays whatever its membership makes it, or everyone with the whole
     # of agent A could steer agent B through A (anyone at dimagi.com with full
     # ACE shipping code through Hal).
-    if agent.user_id is not None and agent.user_id == user.pk:
+    if not capped and agent.user_id is not None and agent.user_id == user.pk:
         return SYSTEM
     is_admin = getattr(agent, "is_admin", None)
     if callable(is_admin) and is_admin(user):

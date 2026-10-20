@@ -241,8 +241,11 @@ class Agent(models.Model):
         """
         if not getattr(user, "is_authenticated", False) or not self.workspace_id:
             return False
+        from apps.workspaces import role_cap
         from apps.workspaces import services as wsvc
 
+        if role_cap.cap_of(user):
+            return False  # acting as an editor or viewer (a private runner's acts_as)
         role = wsvc.member_role(user, self.workspace_id)
         if role is None:
             return False

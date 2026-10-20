@@ -104,6 +104,12 @@ class RunnerFlagsIn(Schema):
     flags: list[str]
 
 
+class RunnerPrivateIn(Schema):
+    private: bool
+    # "" (themselves), "editor" or "viewer" — apps/workspaces/role_cap.py. Only on a private runner.
+    acts_as: str = ""
+
+
 class RunnerEngineIn(Schema):
     # emdash | claude-desktop | claude-cli (Runner.ENGINE_CHOICES). Validated in the view so the
     # error names the choices rather than a pydantic literal mismatch.
@@ -214,6 +220,10 @@ class RunnerOut(Schema):
 
     # What this box's owner has declared about it (RunnerFlag) — e.g. `zdr`.
     flags: list[str] = []
+    # Its owner's own machine: no fleet work, only what its owner puts on it.
+    private: bool = False
+    # The role everything from a private runner is judged as ("" = its owner themselves).
+    acts_as: str = ""
 
     # The roots of the workspace trees the box is enrolled in, as far as the
     # caller may know them: all of them for the box's owner, else only the trees
@@ -2076,12 +2086,16 @@ class RunnerDownloadsOut(Schema):
 class PrivateRunnerIn(Schema):
     name: str = Field(min_length=1, max_length=100)
     host: str = Field(default="", max_length=200)
+    # The runner app on this same machine, when there is one (a Runner you own): links them.
+    runner: uuid.UUID | None = None
 
 
 class PrivateRunnerOut(Schema):
     id: uuid.UUID
     name: str
     host: str
+    # The Runner this machine also is (canopy-web#1705), else None.
+    runner_id: uuid.UUID | None = None
     created_at: dt.datetime
     last_seen_at: dt.datetime | None = None
     retired_at: dt.datetime | None = None

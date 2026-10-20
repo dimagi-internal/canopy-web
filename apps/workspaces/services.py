@@ -225,6 +225,22 @@ def _inherited_role(user, workspace_id: str) -> str | None:
 
 
 def membership(user, workspace):
+    """The caller's membership row, lowered to their acting cap (`role_cap`) when one is
+    set — see `_uncapped_membership` for the row itself."""
+    from . import role_cap
+
+    row = _uncapped_membership(user, workspace)
+    cap = role_cap.cap_of(user)
+    lowered = role_cap.capped_role(row.role if row is not None else None, cap)
+    if row is None or lowered == row.role:
+        return row
+    # SYNTHETIC and unsaved, like an inherited row: a capped caller acts on no row.
+    synthetic = WorkspaceMembership(workspace=row.workspace, user=user, role=lowered)
+    synthetic.inherited = True
+    return synthetic
+
+
+def _uncapped_membership(user, workspace):
     """The caller's `WorkspaceMembership` ROW in `workspace`, or `None`.
 
     `member_role` answers the question; this returns the row, for the workspace
@@ -277,6 +293,11 @@ def member_roles(user) -> dict[str, str]:
                  .values_list("workspace_id", "role"))
     for slug, role in inherited_roles(user, roles).items():
         roles[slug] = _better(roles.get(slug), role)
+    from . import role_cap
+
+    cap = role_cap.cap_of(user)
+    if cap:
+        roles = {slug: role_cap.capped_role(role, cap) for slug, role in roles.items()}
     return roles
 
 

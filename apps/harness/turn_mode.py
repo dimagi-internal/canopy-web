@@ -117,8 +117,12 @@ def requested(turn, agent) -> Resolved | None:
         if mode == AUTO:
             return Resolved(MANUAL, f"dispatch by {who_}: auto withheld, requester gone")
         return Resolved(MANUAL, f"dispatch by {who_}")
-    from .caller_context import relationship_for_user
+    from apps.workspaces import role_cap
 
+    from .caller_context import acting_cap, relationship_for_user
+
+    cap = acting_cap(turn) if turn.initiator_user_id == user.pk else ""
+    role_cap.apply(user, cap)
     label = f"dispatch by {user.email} ({relationship_for_user(user, agent)})"
     if mode == AUTO and not agent.is_admin(user):
         return Resolved(MANUAL, f"{label}: auto withheld, not an admin of {agent.slug}")

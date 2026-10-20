@@ -122,13 +122,17 @@ def approve(agent, user, *, by) -> AgentLicense:
     return lic
 
 
-def credential_principal(agent, user, turn_id: str):
+def credential_principal(agent, user, turn_id: str, *, runner=None):
     """The license a credential read may go out under, or None.
 
-    Only during the person's OWN open local turn on this agent (the read names it in
+    Only during one of the person's OWN live turns on this agent (the read names it in
     `X-Canopy-Turn-Id`), and only on an ACTIVE license the caller list still backs.
-    No turn, no secrets: reads always go against a turn."""
+    No turn, no secrets: reads always go against a turn. The turn is their open local
+    turn, or — when the read comes from their PRIVATE runner (`runner`, its runner
+    token) — a turn of theirs that runner claimed (canopy-web#1705)."""
     import uuid
+
+    from django.db.models import Q
 
     from apps.harness.models import Turn
 
@@ -136,9 +140,12 @@ def credential_principal(agent, user, turn_id: str):
         tid = uuid.UUID(str(turn_id))
     except (TypeError, ValueError):
         return None
-    turn = Turn.objects.filter(pk=tid, agent=agent, origin=Turn.ORIGIN_LOCAL,
-                               initiator_user_id=getattr(user, "pk", None),
-                               status=Turn.RUNNING).first()
+    mine = Q(origin=Turn.ORIGIN_LOCAL, status=Turn.RUNNING)
+    if runner is not None and runner.private and runner.owner_id == getattr(user, "pk", None):
+        mine |= Q(claimed_by=runner, status__in=(Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN))
+    turn = (Turn.objects.filter(pk=tid, initiator_user_id=getattr(user, "pk", None))
+            .filter(Q(agent=agent) | Q(agent__isnull=True, chat_session__agent=agent))
+            .filter(mine).first())
     if turn is None:
         return None
     return active(agent, user)

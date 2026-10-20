@@ -141,7 +141,7 @@ def verify_proof(request, *, now: float | None = None) -> str:
 
 
 def runner_serves_agent(runner, agent) -> bool:
-    """May this box read `agent`'s secrets? Three ways, and only three:
+    """May this box read `agent`'s secrets? Four ways, and only four:
 
     - it RUNS the agent — `routing.runner_routes_agent`, the claim's own static
       gates (enabled routing, enrollment, the hold check), so a box the vault
@@ -149,7 +149,9 @@ def runner_serves_agent(runner, agent) -> bool:
     - it HOLDS a live turn of the agent right now — a pinned dispatch or a chat
       bound to it claims there without routing, and that turn needs the secrets;
     - it is the agent's OWNER'S OWN laptop (not a cloud box), for working on the
-      agent by hand.
+      agent by hand;
+    - it is a PRIVATE runner whose owner holds an active license for the agent
+      (`private_runner_licensed`).
 
     A cloud box the owner also owns is not a reason on its own: it reads only what
     it runs (canopy-web#1563)."""
@@ -166,8 +168,24 @@ def runner_serves_agent(runner, agent) -> bool:
                             status__in=(Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN))
             .filter(Q(agent=agent) | Q(chat_session__agent=agent)).exists()):
         return True
-    return (runner.kind != Runner.CLOUD and bool(agent.owner_id)
-            and runner.owner_id == agent.owner_id)
+    if (runner.kind != Runner.CLOUD and bool(agent.owner_id)
+            and runner.owner_id == agent.owner_id):
+        return True
+    return private_runner_licensed(runner, agent)
+
+
+def private_runner_licensed(runner, agent) -> bool:
+    """A PRIVATE runner whose owner holds an ACTIVE license for `agent`, judged at the
+    role the runner acts as (canopy-web#1705): the person uses the agent on their own
+    machine, and its secrets are read there only during their own turns
+    (`licenses.credential_principal`)."""
+    if not runner.private or runner.owner is None:
+        return False
+    from apps.agents import licenses
+    from apps.workspaces import role_cap
+
+    owner = role_cap.apply(runner.owner, runner.acts_as)
+    return licenses.active(agent, owner) is not None
 
 
 def agents_served(runner):

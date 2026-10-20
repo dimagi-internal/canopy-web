@@ -278,8 +278,25 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
 * A **private runner** (`PrivateRunner`) is a person's machine: plain Claude Code with
   the canopy plugin, no runner app. It is registered once with the person's own
   token (`canopy private-runner register`) and belongs to the PERSON — one serves
-  every agent they use. It never claims a turn, and nothing routes to it; it is
-  not a `Runner` row.
+  every agent they use. On its own it never claims a turn and nothing routes to it.
+* When the machine also runs the runner app, the two are **one private runner**:
+  `PrivateRunner.runner` links the registration to that `Runner`, and the runner is
+  marked **`private`** (`PUT /api/harness/runners/{id}/private`, owner only). A
+  private runner takes no fleet work — no routed turn, no workspace order, no source
+  rule (`Runner.directed_only`) — only what its owner pins or binds to it, plus the
+  local sessions on it. Its device key is what those sessions prove themselves
+  with, and it may read an agent's secrets while its owner holds an active license
+  (`device_keys.private_runner_licensed`), for that owner's own turns only.
+* **Acting as a lower role.** A private runner's `acts_as` (`editor` or `viewer`)
+  lowers the role EVERYTHING from that box is judged as: a request on its runner
+  token or naming it in `X-Canopy-Runner`, its local turns (stamped
+  `origin_ref.acts_as`, and every read during one keeps the cap), and its owner's
+  turns it claims (stamped at claim; `auto` becomes `manual`). The cap rides on the
+  user object (`apps/workspaces/role_cap.py`) and is honoured where roles are read —
+  `member_role`/`member_roles`/`membership`, `Agent.is_admin`,
+  `relationship_for_user`, `caller_runs_agent` — so `decide` places the person in
+  the tier the cap names. It only ever lowers, so it needs no proof. It is how an
+  agent's owner tests the non-admin path on their own machine.
 * A **local turn** (`Turn.origin = local`) is one session there with one agent,
   opened by the canopy plugin's SessionStart hook
   (`POST /api/harness/local-turns/`). It is a real turn: the person is its
@@ -310,8 +327,9 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   the agent's Settings → People → Local use shows it.
 * **Credentials.** `/credentials/resolve` has a third principal beside `runner` and
   `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
-  read) AND the caller's OWN running local turn on that agent named in
-  `X-Canopy-Turn-Id`. No turn, no secrets. Each read is logged with `via=license`,
+  read) AND one of the caller's OWN live turns on that agent named in
+  `X-Canopy-Turn-Id`: their running local turn, or — on their private runner's
+  token — a turn of theirs that runner claimed. No turn, no secrets. Each read is logged with `via=license`,
   the turn and the license. Brokering every call through canopy-web so secrets
   never leave the server is future work (canopy-web#1704).
 * **Reporting.** Only its initiator may renew, finish or append its transcript —

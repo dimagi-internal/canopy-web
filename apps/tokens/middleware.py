@@ -82,6 +82,7 @@ class BearerTokenAuthMiddleware:
             request.auth_method = "runner-key"
             request.auth_credential = _credential("runner-key", rtok.pk, rtok.runner.name)
             request._dont_enforce_csrf_checks = True
+            _apply_acting_cap(request)
             return None
 
         # An HCP service access token (apps/contacts/hcp_oauth.py): an app canopy
@@ -132,6 +133,7 @@ class BearerTokenAuthMiddleware:
                 request.auth_credential = _credential(
                     "oauth" if token.oauth_grant_id else "pat", token.pk, token.label)
                 request._dont_enforce_csrf_checks = True
+                _apply_acting_cap(request)
                 return
 
         # A CONTACT token first, because it is the one that must never be
@@ -268,3 +270,15 @@ def _credential(kind: str, pk, label: str) -> dict:
     provenance (apps/common/request_context.py). Never a secret — a row id and
     its human label."""
     return {"type": kind, "id": pk, "label": (label or "")[:200]}
+
+
+def _apply_acting_cap(request: HttpRequest) -> None:
+    """Lower `request.user` to the role its private runner acts as
+    (`apps/workspaces/role_cap.py`). Fails open to no cap: a cap only ever narrows,
+    so a lookup hiccup must not deny the request — it just runs as the person."""
+    try:
+        from apps.workspaces import role_cap
+
+        role_cap.apply_to_request(request)
+    except Exception:  # noqa: BLE001
+        logger.exception("acting cap lookup failed")
