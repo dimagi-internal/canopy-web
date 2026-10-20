@@ -59,6 +59,16 @@ def approve_url(key: RunnerDeviceKey) -> str:
     return f"{base}/settings?device_key={key.pk}#device-keys"
 
 
+def waiting_approval_url(runner) -> str:
+    """`approve_url` of this runner's newest key that waits for a person — pending,
+    or active with a new ECDH key not yet approved — or "" when none does."""
+    keys = RunnerDeviceKey.objects.filter(runner=runner).exclude(status=RunnerDeviceKey.REVOKED)
+    for key in keys.order_by("-created_at"):
+        if key.status == RunnerDeviceKey.PENDING or key.ecdh_waiting:
+            return approve_url(key)
+    return ""
+
+
 def key_out(key: RunnerDeviceKey, *, can_manage: bool) -> RunnerDeviceKeyOut:
     return RunnerDeviceKeyOut(
         id=key.pk, runner=key.runner_id, runner_name=key.runner.name,

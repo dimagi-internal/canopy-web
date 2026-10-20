@@ -178,6 +178,8 @@ struct ServerStatus {
     let ready: Bool
     let note: String
     let remedy: String
+    // Where to approve a key on this Mac that waits for a person; "" when none does.
+    let keyWaiting: String
 
     static func load() -> ServerStatus? {
         guard let data = try? Data(contentsOf: serverStatusFile),
@@ -188,7 +190,8 @@ struct ServerStatus {
             lastOk: (obj["last_ok_at"] as? Double).map { Date(timeIntervalSince1970: $0) },
             httpStatus: obj["status"] as? Int, detail: obj["detail"] as? String ?? "",
             runnerStatus: obj["runner_status"] as? String ?? "", ready: obj["ready"] as? Bool ?? true,
-            note: obj["note"] as? String ?? "", remedy: obj["remedy"] as? String ?? "")
+            note: obj["note"] as? String ?? "", remedy: obj["remedy"] as? String ?? "",
+            keyWaiting: obj["key_waiting"] as? String ?? "")
     }
 
     // Accepted, but canopy says the box cannot take work.
@@ -604,6 +607,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
                 string: item.title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
             menu.addItem(item)
             menu.addItem(.separator())
+        } else if let server = ServerStatus.load(), server.ok, !server.keyWaiting.isEmpty {
+            // A new key on this Mac waits for a person: until it is approved the agents
+            // whose secrets need it cannot run here. Canopy also emails and pushes this.
+            let item = NSMenuItem(title: "A new key on this Mac needs your approval…",
+                                  action: #selector(openKeyApproval), keyEquivalent: "")
+            item.target = self
+            item.attributedTitle = NSAttributedString(
+                string: item.title, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
+            menu.addItem(item)
+            menu.addItem(.separator())
         } else if isBundled, setupProc != nil {
             let item = NSMenuItem(title: "Setting up… \(setupLastLine)", action: #selector(showFirstRun),
                                   keyEquivalent: "")
@@ -935,6 +948,10 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         }
     }
 
+    @objc func openKeyApproval() {
+        guard let raw = ServerStatus.load()?.keyWaiting, let url = URL(string: raw) else { return }
+        NSWorkspace.shared.open(url)
+    }
     @objc func openSupervisor() {
         if let url = URL(string: baseURL() + "/supervisor") { NSWorkspace.shared.open(url) }
     }

@@ -26108,6 +26108,11 @@ export interface components {
              */
             readonly spans_trees: boolean;
             /**
+             * Key Waiting
+             * @default
+             */
+            readonly key_waiting: string;
+            /**
              * Known Flags
              * @default []
              */

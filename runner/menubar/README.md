@@ -32,6 +32,11 @@ status item like any other app.
   `canopy-runner close-sessions --project <p> | --all` — each one the same close as the
   phone's (the emdash task is deleted; transcripts and canopy's record are kept). The
   same command works from a terminal: `canopy-runner close-sessions --list`.
+- **A new key on this Mac needs your approval…** (top of the menu, bold): shown while a
+  device key on this box waits for a person — a new one, or an active one whose new ECDH
+  key does. canopy says so in its heartbeat reply (`key_waiting`, copied into
+  `server-status.json`); the item opens Settings → Your machines at that key. Canopy
+  also emails and pushes it, but that is easy to miss.
 - **Update runner now** (right-click): starts the updater job (`com.canopy.runner.updater`)
   instead of waiting up to 30 min for its timer — the same job, so it installs only what
   canopy has deployed and respects `~/.canopy/hold-updates`. Reads "Updating the runner…"
