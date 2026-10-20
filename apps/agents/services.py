@@ -1821,6 +1821,15 @@ def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
     # five agents, every one of them read "not checked" (labs, 2026-09-24).
     if turn_ready is not None:
         fields["turn_ready"] = bool(turn_ready)
+    elif not mailbox_ok:
+        # Except that a stored `turn_ready` TRUE cannot outlive a pass that just found no
+        # working mailbox: turns read mail through that mailbox, so "turns can read it" is
+        # no longer known. A box with no token computes no turn_ready at all, which left
+        # lex's row saying true for a day while its mailbox was down and the setup
+        # checklist read "done" off it (2026-10-20). A stored false stays: it names why.
+        AgentBootstrapReport.objects.filter(
+            agent=agent, runner_name=runner_name.strip(), turn_ready=True,
+        ).update(turn_ready=None)
     if env_ok is not None:
         fields["env_ok"] = bool(env_ok)
 

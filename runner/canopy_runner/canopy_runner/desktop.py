@@ -643,8 +643,22 @@ def open_session(sid: str) -> None:
     overridden — canopy-web#1188, Focus round 2), so on an account a person is
     using this would steal their focus. The helper undoes it within ~60ms. Plain
     `open -g` stays as the fallback: a session that opens with a flicker beats one
-    that never opens."""
+    that never opens.
+
+    Windows has neither `osascript` nor `open`: the URL goes to the shell's
+    protocol handler (`os.startfile`), which is what the app registers claude://
+    with there. No focus hand-back on Windows yet, so a new session raises the app."""
     url = f"claude://resume?session={sid}"
+    from .platform_jobs import is_windows
+
+    if is_windows():
+        try:
+            os.startfile(url)  # type: ignore[attr-defined]  # Windows-only
+            logger.info("desktop open %s: handed to the claude:// handler", sid)
+        except OSError as exc:
+            logger.warning("desktop open %s: no claude:// handler (%s) — is the Claude app "
+                           "installed on this account?", sid, exc)
+        return
     try:
         out = subprocess.run(["osascript", "-l", "JavaScript", str(QUIET_OPEN), url,
                               str(QUIET_OPEN_WATCH_SECONDS)],

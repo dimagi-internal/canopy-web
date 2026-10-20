@@ -7,7 +7,7 @@ finishing `/canopy:create-agent` can ask the same question instead of keeping it
 Each step reads the predicate the system itself uses for that thing, never a second
 opinion: GitHub is `delegations.readiness` (what a box's health check says), the runner is
 the routing module's own order + `runner_may_hold_agent` + `runner_tenant_slugs` (what the
-claim does), the mailbox is the stored `gog-token` credential. A step that disagreed with
+claim does), the mailbox is what the boxes that run its turns found (`bootstrap_reports`). A step that disagreed with
 the real check would be the "screen says fine, turn fails" bug this exists to prevent.
 
 `where` says which tool does it: "web" steps are a link to the control that does it;
@@ -73,7 +73,6 @@ def _mailbox(agent: Agent, settings: str) -> dict:
         return _step("mailbox", "Connect its mailbox", OPTIONAL,
                      "No mailbox set. Email is optional; add one later if it should send or read mail.")
     from . import mailbox
-    from .models import AgentBootstrapReport
 
     box = mailbox.describe(agent)
     if box["kind"] == "hosted":
@@ -95,20 +94,43 @@ def _mailbox(agent: Agent, settings: str) -> dict:
                      f"Canopy-hosted email: {why} on the workspace email page.",
                      href=email_page, action="Email settings")
 
-    # Done when canopy-web holds the token (Connect Google mailbox) OR a box has proved the
-    # mailbox works for turns — the box's verdict is the system's own check. Before this,
-    # only the first counted, so ada/hal/eva/echo (tokens from a laptop `gog login`, in the
-    # vault) read "todo" while cloud-ec2-2 reported turn_ready for every one (2026-10-15),
-    # and anything built on this list (canopy agent doctor) would have cried wolf.
-    proved = (AgentBootstrapReport.objects.filter(agent=agent, turn_ready=True)
-              .values_list("runner_name", flat=True).first())
+    # What the boxes that run its turns found is the answer; the stored token is only
+    # the fallback for an agent no box has checked yet. Before 2026-10-20 either one
+    # alone made this "done", so lex read done while cloud-ec2-2 reported it could not
+    # find the token at all: the checklist said green, the agent could not read mail.
+    # (The token-OR-proved rule itself is right for tokens minted by a laptop
+    # `gog login`, which live in the vault rather than here — ada/hal/eva/echo read
+    # "todo" under a token-only rule while cloud-ec2-2 had them working, 2026-10-15.)
+    from .services import bootstrap_reports
+
+    reports = bootstrap_reports(agent)
+    proved = next((r.runner_name for r in reports if r.turn_ready), "")
+    failing = next((r for r in reports if not r.mailbox_ok and r.turn_ready is not True), None)
     has = AgentCredential.objects.filter(agent=agent, name=GOG_TOKEN_REF).exists()
-    done = has or bool(proved)
-    return _step(
-        "mailbox", "Connect its mailbox", DONE if done else TODO,
-        (f"Signed in as {agent.email}" + (f"; {proved} reads it for turns." if proved else ".")
-         ) if done else f"Sign {agent.email} in with Google so it can send and read mail.",
-        href=f"{settings}#credentials", action="Connect the mailbox")
+    action = {"href": f"{settings}#credentials", "action": "Connect the mailbox"}
+    if proved:
+        return _step("mailbox", "Connect its mailbox", DONE,
+                     f"Signed in as {agent.email}; {proved} reads it for turns.", **action)
+    if failing is not None:
+        why = _first_reason(failing.detail)
+        return _step("mailbox", "Connect its mailbox", TODO,
+                     f"{failing.runner_name} cannot read {agent.email}"
+                     + (f": {why}" if why else ".")
+                     + (" Its Google sign-in is stored here, so the box is not getting it;"
+                        " connect the mailbox again if this does not clear on its next refresh."
+                        if has else f" Sign {agent.email} in with Google."),
+                     **action)
+    if has:
+        return _step("mailbox", "Connect its mailbox", DONE,
+                     f"Signed in as {agent.email}. No machine has checked it yet.", **action)
+    return _step("mailbox", "Connect its mailbox", TODO,
+                 f"Sign {agent.email} in with Google so it can send and read mail.", **action)
+
+
+def _first_reason(detail: str, limit: int = 160) -> str:
+    """The first reason in a box's `;`-joined report detail, shortened for one line."""
+    first = (detail or "").split(";")[0].strip()
+    return first if len(first) <= limit else first[:limit - 1].rstrip() + "…"
 
 
 def _vault(agent: Agent, settings: str) -> dict:

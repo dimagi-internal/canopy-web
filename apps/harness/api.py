@@ -1982,11 +1982,10 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     authors_by_index: dict[int, dict] = {}
     if chat_services.transcript_sourced(binding.session):
         # BEFORE any write: if these ordinals index a different transcript than the
-        # rows already held, those rows are a different conversation's and would
-        # interleave with (or silently swallow) this one. Dropping them is safe
-        # because a mismatch is exactly when the runner ships the full history.
-        # Unless a closed session's NAME was reused, in which case these rows are a
-        # new conversation's and go to a new session, leaving the old one whole.
+        # rows already held, the two would interleave (or the new one be silently
+        # swallowed). If a closed session's NAME was reused, these rows are a new
+        # conversation's and go to a new session, leaving the old one whole;
+        # otherwise the new transcript opens a new epoch above the held rows.
         if chat_services.fork_if_name_reused(binding.session, payload.transcript_id):
             binding = RunnerBinding.objects.select_related("session").get(pk=binding.pk)
         chat_services.ensure_transcript_identity(binding.session, payload.transcript_id)
@@ -2272,8 +2271,8 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
         raise HttpError(404, "session not bound to this runner")
     session = Session.objects.get(pk=payload.session_id)
     session = chat_services.fork_if_name_reused(session, payload.transcript_id) or session
-    # Same guard as the live path: history from a different transcript replaces
-    # what is held rather than merging into it. Idempotent across chunks — the
+    # Same guard as the live path: history from a different transcript lands in
+    # its own epoch rather than merging into what is held. Idempotent across chunks — the
     # first one records the id, so the rest of the ship matches and writes through.
     chat_services.ensure_transcript_identity(session, payload.transcript_id)
     written = chat_services.write_backfill(session, [m.dict() for m in payload.messages])

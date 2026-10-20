@@ -101,12 +101,9 @@ def test_transfer_preserves_history_when_the_new_box_ships_a_new_transcript():
     assert Message.objects.get(session=s, turn_index=offset).plaintext == "picking this up"
 
 
-def test_a_later_transcript_change_still_drops_only_the_current_epoch():
-    """Transfer does not disable #615's protection, it scopes it.
-
-    Reusing a task name ON the new box must still drop that box's rows — just not
-    the ones carried across.
-    """
+def test_a_later_transcript_change_opens_another_epoch_above_the_transfer():
+    """A transcript change on the new box stacks a further epoch: the inherited
+    rows and the new box's first transcript both stay (issue #1731)."""
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud, indices=(0, 64))
     chat.transfer_session(session=s, placement=str(laptop.id))
@@ -114,12 +111,13 @@ def test_a_later_transcript_change_still_drops_only_the_current_epoch():
 
     chat.ensure_transcript_identity(s, "transcript-A")
     chat.persist_transcript_rows(s, [{"index": 0, "role": Message.USER, "text": "A"}])
-    # A genuinely different conversation appears under the same task name.
     chat.ensure_transcript_identity(s, "transcript-B")
+    second = RunnerBinding.objects.get(session=s).index_offset
+    chat.persist_transcript_rows(s, [{"index": 0, "role": Message.USER, "text": "B"}])
 
     held = sorted(Message.objects.filter(session=s).values_list("turn_index", flat=True))
-    assert held == [0, 64], "epoch rows go; inherited rows stay"
-    assert offset not in held
+    assert held == [0, 64, offset, second]
+    assert second > offset
 
 
 def test_an_ordinal_scheme_upgrade_also_spares_the_inherited_epoch():
@@ -146,11 +144,12 @@ def test_an_ordinal_scheme_upgrade_also_spares_the_inherited_epoch():
     assert s.ordinal_scheme != 0, "the session is still moved onto the current scheme"
 
 
-def test_untransferred_session_keeps_the_old_drop_everything_behaviour():
-    """Offset 0 must be byte-for-byte the previous semantics — the overwhelming
-    majority of sessions, and the case #615 was actually about."""
+def test_untransferred_session_with_unknown_provenance_still_drops_everything():
+    """Offset 0 and no recorded transcript: rows of unknown provenance are
+    dropped and re-derived, exactly as before."""
     _u, ws, cloud, _laptop, _c = _ctx()
     s = _bound_session(ws, cloud, indices=(0, 64, 128))
+    RunnerBinding.objects.filter(session=s).update(transcript_id="")
     assert RunnerBinding.objects.get(session=s).index_offset == 0
     chat.ensure_transcript_identity(s, "a-different-transcript")
     assert Message.objects.filter(session=s).count() == 0
