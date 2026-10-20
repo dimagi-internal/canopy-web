@@ -626,7 +626,7 @@ The 20 GB root of `cloud-ec2-1` hit 100% on 2026-10-04 (every plugin version eve
 installed — 33 canopy, 24 ace, ~9 GB — plus npm/uv caches). Now:
 - `VolumeSize` defaults to 40 GiB;
 - bootstrap step 4b (`prune_caches.py`, every service start and daily self-refresh)
-  keeps each plugin's installed version(s) plus the newest two others and deletes
+  keeps each plugin's installed version(s) plus the newest one other and deletes
   the rest (nothing at all if `installed_plugins.json` is unreadable), cleans npm's
   cache past 500 MB, and runs `uv cache prune`;
 - the heartbeat health carries a **`disk`** check — warn ≥ 80%, fail ≥ 90% — so the

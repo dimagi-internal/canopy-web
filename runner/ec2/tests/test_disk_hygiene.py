@@ -56,14 +56,14 @@ def _left(cache: pathlib.Path, key: str) -> set[str]:
     return {p.name for p in (cache / key).iterdir()}
 
 
-def test_keeps_the_installed_version_and_the_newest_two(tmp_path):
+def test_keeps_the_installed_version_and_the_newest_one_other(tmp_path):
     mod = _prune()
     vs = [f"0.2.{n}" for n in range(500, 533)]  # 33 versions, as on the box
-    cache = _cache(tmp_path, {"canopy/canopy": vs, "ace/ace": ["a", "b", "c"]},
-                   {"canopy/canopy": "0.2.510", "ace/ace": "c"})
+    cache = _cache(tmp_path, {"canopy/canopy": vs, "ace/ace": ["a", "b"]},
+                   {"canopy/canopy": "0.2.510", "ace/ace": "b"})
     mod.main(["--home", str(tmp_path), "--npm-max-mb", "999999"])
-    assert _left(cache, "canopy/canopy") == {"0.2.510", "0.2.532", "0.2.531"}
-    assert _left(cache, "ace/ace") == {"a", "b", "c"}, "under the margin: nothing to prune"
+    assert _left(cache, "canopy/canopy") == {"0.2.510", "0.2.532"}
+    assert _left(cache, "ace/ace") == {"a", "b"}, "under the margin: nothing to prune"
 
 
 def test_an_unreadable_install_record_prunes_nothing(tmp_path):
