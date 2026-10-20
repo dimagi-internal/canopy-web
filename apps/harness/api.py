@@ -26,7 +26,7 @@ from apps.workspaces.models import Workspace
 from . import initiator as who
 from . import services
 from . import turn_mode as turn_modes
-from .models import AgentSchedule, FleetHold, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder, agent_turns_q
+from .models import AgentSchedule, FleetHold, PrivateRunner, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder, agent_turns_q
 from .schedule_services import serialize_schedule
 from .schemas import (
     RunnerPrivateIn,
@@ -1204,6 +1204,15 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
     if before != after:
         runner.private, runner.acts_as = after["private"], after["acts_as"]
         runner.save(update_fields=["private", "acts_as"])
+    if runner.private:
+        # The box IS its owner's private runner: link the registration here, so the
+        # runner writes it on its next heartbeat and no one runs `canopy private-runner
+        # register` on the machine.
+        from . import local
+
+        if not PrivateRunner.objects.filter(runner=runner, retired_at__isnull=True).exists():
+            local.register_private_runner(request.user, name=runner.name,
+                                          host=runner.host, runner=runner)
         audit.note_change(scope=f"runner-private:{runner.name}", before=before, after=after,
                           workspace=runner.workspace)
     out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)

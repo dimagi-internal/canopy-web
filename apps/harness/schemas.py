@@ -224,6 +224,9 @@ class RunnerOut(Schema):
     private: bool = False
     # The role everything from a private runner is judged as ("" = its owner themselves).
     acts_as: str = ""
+    # The private-runner registration linked to this box (canopy-web#1705): the runner
+    # writes it to ~/.canopy/private-runner.json, so local sessions there need no CLI.
+    private_runner_id: uuid.UUID | None = None
 
     # The roots of the workspace trees the box is enrolled in, as far as the
     # caller may know them: all of them for the box's owner, else only the trees
@@ -240,6 +243,14 @@ class RunnerOut(Schema):
     # heartbeat reply only (`api_device_keys.waiting_approval_url`), so the box's
     # menu bar can say so; the email and push about it are easy to miss.
     key_waiting: str = ""
+
+    @staticmethod
+    def resolve_private_runner_id(obj) -> uuid.UUID | None:
+        try:
+            pr = obj.private_runner
+        except Exception:  # noqa: BLE001 - the reverse one-to-one is absent
+            return None
+        return pr.pk if pr is not None and pr.retired_at is None else None
 
     @staticmethod
     def resolve_key_waiting(obj) -> str:

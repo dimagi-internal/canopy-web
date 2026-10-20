@@ -8,6 +8,7 @@ import { boxLoginAccount, RunnerCredentials } from '@/components/supervisor/Runn
 import { RunnerAdmins } from '@/components/supervisor/RunnerAdmins'
 import { RunnerWorkspaces } from '@/components/supervisor/RunnerWorkspaces'
 import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
+import { RunnerPrivate } from '@/components/supervisor/RunnerPrivate'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
 import { isDirectedOnly } from '@/components/chat/runnerEligibility'
@@ -215,6 +216,10 @@ export function RunnerDetail({
       {(runner.can_administer || runner.can_manage) && runner.kind !== 'cloud' && onChanged && (
         <RunnerEngine runner={runner} onChange={onChanged} />
       )}
+
+      {/* Private runner (canopy-web#1705): its owner's own work only, judged as a
+          role they pick. Owner-only, like Pause: the route 404s for anyone else. */}
+      {runner.can_manage && onChanged && <RunnerPrivate runner={runner} onChange={onChanged} />}
 
       {/* Pause — the one control this view offers on the runner itself, and the
           only way to park a box from a phone (the alternative is the local

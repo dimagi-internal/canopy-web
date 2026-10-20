@@ -26135,6 +26135,8 @@ export interface components {
              * @default
              */
             readonly acts_as: string;
+            /** Private Runner Id */
+            readonly private_runner_id?: string | null;
             /**
              * Roots
              * @default []

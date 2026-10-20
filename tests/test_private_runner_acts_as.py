@@ -206,3 +206,17 @@ def test_a_private_runner_takes_no_routed_fleet_work(world):
     }, content_type="application/json")
     box.refresh_from_db()
     assert services.claim_next_turn(box) is None
+
+
+# --- no CLI on the box ------------------------------------------------------------
+
+def test_making_it_private_links_a_registration_the_runner_reads(world):
+    res = _make_private(_pat(world["jj"]), world["box"], "editor")
+    pr_id = res.json()["private_runner_id"]
+    assert pr_id
+    pr = PrivateRunner.objects.get(pk=pr_id)
+    assert (pr.owner, pr.runner_id, pr.name) == (world["jj"], world["box"].pk, "jj-mbp-cdp")
+    # Idempotent: switching the role keeps the same registration.
+    again = _make_private(_pat(world["jj"]), world["box"], "viewer")
+    assert again.json()["private_runner_id"] == pr_id
+    assert PrivateRunner.objects.filter(owner=world["jj"]).count() == 1

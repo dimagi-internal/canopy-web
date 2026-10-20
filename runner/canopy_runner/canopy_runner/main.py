@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 
 from . import chat_bridge, chat_pump, close, desktop, emdash, hooks, inbox_due, mailbox_probe, sessions
-from . import activity, session_interrupt, streams, usage_report
+from . import activity, private_runner, session_interrupt, streams, usage_report
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -651,6 +651,10 @@ def run_once(cfg: Config, client: Client) -> str:
     # The session runtime canopy-web wants (Supervisor → this runner → Session
     # runtime) rides the heartbeat response; adopting it here is the whole flip.
     desktop.observe(me)
+
+    # Marked private on canopy-web: write this machine's private-runner registration,
+    # so local sessions here are recorded without `canopy private-runner register`.
+    _step("private runner", lambda: private_runner.observe(me, base_url=cfg.base_url))
 
     # Before the reports: an in-flight reply is the freshest thing on this box, and
     # finishing a turn here frees the session for the next message. Runs even while
