@@ -5,6 +5,7 @@ import re
 
 from django.db.models import Q
 
+from . import ses
 from .models import MailMessage, MailRoute, MailThread
 
 _IDS = re.compile(r"<[^<>\s]+>")
@@ -16,6 +17,10 @@ def place(route: MailRoute, parsed) -> MailThread:
         match = Q()
         for i in ids:
             match |= Q(message_id__iexact=i)
+            # SES replaces the Message-ID canopy wrote on an outbound message, so a reply
+            # to one cites SES's id: match it to the message's recorded `ses_message_id`.
+            if sid := ses.ses_id_of(i):
+                match |= Q(ses_message_id=sid)
         hit = (MailMessage.objects.filter(match, thread__route=route)
                .select_related("thread").order_by("-created_at").first())
         if hit is not None:
