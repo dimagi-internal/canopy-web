@@ -209,14 +209,27 @@ def run_browser_pair(config_path: Path, *, base_url: str = pair.DEFAULT_BASE_URL
                      ensure_key=device_proof.ensure, ensure_ecdh=device_proof.ensure_ecdh,
                      is_free=pair.port_free, live_cdp_port=pair.emdash_live_cdp_port,
                      clock: Callable[[], float] = time.time, out=print,
-                     loopback: Optional[Loopback] = None) -> int:
+                     loopback: Optional[Loopback] = None, reconnect: bool = False) -> int:
     """Pair this computer from the browser and write its runner.json. 0 on success
-    (including "already paired"); raises pair.PairError to refuse."""
+    (including "already paired"); raises pair.PairError to refuse.
+
+    `reconnect`: this computer IS a runner (runner.json) whose token canopy-web no
+    longer accepts. The pairing names that runner; when its owner approves, the
+    runner gets this computer's key back — same runner, same settings — and
+    runner.json keeps everything but the dead token (canopy-web#1705)."""
     home = home or Path.home()
     config_path = Path(config_path).expanduser()
+    existing: dict = {}
     if config_path.exists():
-        out(f"This computer is already paired ({config_path}). Nothing to do.")
-        return 0
+        if not reconnect:
+            out(f"This computer is already paired ({config_path}). Nothing to do.")
+            return 0
+        try:
+            existing = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise pair.PairError(f"cannot read {config_path} to reconnect it: {exc}") from None
+        if not existing.get("runner_id"):
+            raise pair.PairError(f"{config_path} names no runner to reconnect")
 
     try:
         key, created = ensure_key(allow_software=allow_software)
@@ -242,13 +255,15 @@ def run_browser_pair(config_path: Path, *, base_url: str = pair.DEFAULT_BASE_URL
         if ecdh is not None:
             body["ecdh_public_jwk"] = ecdh.public_jwk
             body["ecdh_store"] = ecdh.kind
+        if existing:
+            body["reconnect_runner"] = str(existing["runner_id"])
         status, ans = api.post(PAIRINGS_PATH, body)
         if status == 200 and ans.get("status") == "reattached":
             out(f"==> this computer is already a runner on Canopy: {ans.get('name')} "
                 f"({ans.get('workspace')}) — reconnecting it")
             return _finish(config_path, ans, key=key, ecdh=ecdh, base_url=base_url, home=home,
                            users_root=users_root, is_free=is_free,
-                           live_cdp_port=live_cdp_port, out=out)
+                           live_cdp_port=live_cdp_port, out=out, existing=existing)
         if status != 201 or not ans.get("id") or not ans.get("user_code"):
             raise pair.PairError(f"Canopy did not start a pairing (HTTP {status}) — check the "
                                  f"address ({base_url}) and your connection, then try again")
@@ -289,7 +304,8 @@ def run_browser_pair(config_path: Path, *, base_url: str = pair.DEFAULT_BASE_URL
                                  "Run setup again for a new code.")
         out(f"==> approved: this computer is runner {ans.get('name')} in {ans.get('workspace')}")
         rc = _finish(config_path, ans, key=key, ecdh=ecdh, base_url=base_url, home=home,
-                     users_root=users_root, is_free=is_free, live_cdp_port=live_cdp_port, out=out)
+                     users_root=users_root, is_free=is_free, live_cdp_port=live_cdp_port, out=out,
+                     existing=existing)
         try:
             pf.unlink()
         except OSError:
@@ -308,10 +324,18 @@ def run_browser_pair(config_path: Path, *, base_url: str = pair.DEFAULT_BASE_URL
 
 
 def _finish(config_path: Path, ans: dict, *, key, ecdh, base_url: str, home: Path,
-            users_root: Optional[Path], is_free, live_cdp_port, out) -> int:
+            users_root: Optional[Path], is_free, live_cdp_port, out, existing: Optional[dict] = None) -> int:
     runner_id = str(ans.get("runner_id") or "")
     if not runner_id:
         raise pair.PairError(f"Canopy named no runner: {ans!r}")
+    if existing:
+        # Reconnected: everything this box had stays (ports, emdash, mailboxes…); only
+        # the token the server stopped accepting goes — the key signs in from now on.
+        device_proof.write_status(device_proof.registered_status(
+            key, key_id=ans.get("device_key_id"), runner_id=runner_id, status="active", ecdh=ecdh))
+        pair.replace_config(config_path, {**existing, "runner_id": runner_id, "token": ""})
+        out(f"==> reconnected: {config_path} kept, its old token dropped (signs in with its device key)")
+        return 0
     users_root = users_root or home.parent
     taken = pair.sibling_ports(users_root, home)
     live = live_cdp_port(home)

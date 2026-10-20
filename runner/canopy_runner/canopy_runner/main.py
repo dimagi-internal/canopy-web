@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 
 from . import chat_bridge, chat_pump, close, desktop, emdash, hooks, inbox_due, mailbox_probe, sessions
-from . import activity, session_interrupt, streams, usage_report
+from . import activity, private_runner, session_interrupt, streams, usage_report
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -651,6 +651,10 @@ def run_once(cfg: Config, client: Client) -> str:
     # The session runtime canopy-web wants (Supervisor → this runner → Session
     # runtime) rides the heartbeat response; adopting it here is the whole flip.
     desktop.observe(me)
+
+    # Marked private on canopy-web: write this machine's private-runner registration,
+    # so local sessions here are recorded without `canopy private-runner register`.
+    _step("private runner", lambda: private_runner.observe(me, base_url=cfg.base_url))
 
     # Before the reports: an in-flight reply is the freshest thing on this box, and
     # finishing a turn here frees the session for the next message. Runs even while
@@ -1485,6 +1489,10 @@ def main() -> None:
     idle_streak = 0
     quiet_streak = 0  # consecutive ticks with nothing claimed, carried or observed
     paused = False
+    # A token canopy stopped accepting is fixed from the browser, not a shell (#1705).
+    from .reconnect import AuthWatch
+
+    auth_watch = AuthWatch(Path(args.config), cfg.base_url, cfg.runner_id)
     while True:
         _beat()
         # The pause is NOT short-circuited here any more, and that is deliberate.
@@ -1496,9 +1504,12 @@ def main() -> None:
         # plus the sync. One place owns the rule.
         try:
             result = run_once(cfg, client)
-        except Exception:  # noqa: BLE001 — the loop must survive anything
+            auth_watch.ok()
+        except Exception as exc:  # noqa: BLE001 — the loop must survive anything
             logger.exception("run_once crashed; continuing")
             result = "crashed"
+            auth_watch.note(exc)
+            auth_watch.maybe_reconnect()
         # Announce the pause TRANSITIONS loudly and exactly once each. A parked
         # runner is indistinguishable from a dead one in the log otherwise, and
         # "nobody remembered to unpause it" is the way this feature hurts you.

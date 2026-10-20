@@ -71,6 +71,23 @@ export async function setRunnerEngine(runnerId: string, engine: RunnerEngine): P
   return toRunner(unwrap(res, 'setRunnerEngine'))
 }
 
+// Make a runner its owner's PRIVATE runner (canopy-web#1705): no fleet work, only
+// what its owner puts on it and the local sessions on it. `actsAs` lowers the role
+// everything from the box is judged as — how an owner tests the non-admin path.
+export type RunnerActsAs = '' | 'editor' | 'viewer'
+
+export async function setRunnerPrivate(
+  runnerId: string,
+  isPrivate: boolean,
+  actsAs: RunnerActsAs = '',
+): Promise<RunnerOut> {
+  const res = await apiV2.PUT('/api/harness/runners/{runner_id}/private', {
+    params: { path: { runner_id: runnerId } },
+    body: { private: isPrivate, acts_as: isPrivate ? actsAs : '' },
+  })
+  return toRunner(unwrap(res, 'setRunnerPrivate'))
+}
+
 // Ask a box to refresh itself (re-run its bootstrap: plugins, the canopy CLI,
 // Claude Code, agent provisioning) at its next idle moment. Durable: the box
 // reads `refresh_pending` off its own heartbeat, so this survives a dropped

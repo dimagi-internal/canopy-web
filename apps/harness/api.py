@@ -26,9 +26,10 @@ from apps.workspaces.models import Workspace
 from . import initiator as who
 from . import services
 from . import turn_mode as turn_modes
-from .models import AgentSchedule, FleetHold, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder, agent_turns_q
+from .models import AgentSchedule, FleetHold, PrivateRunner, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder, agent_turns_q
 from .schedule_services import serialize_schedule
 from .schemas import (
+    RunnerPrivateIn,
     CallerContextOut,
     ClaimedTurnOut,
     BackfillSyncOut,
@@ -1173,6 +1174,49 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
     # to True, so an unstamped reply would show an admin who is not the owner
     # controls that then 404.
     out.can_manage = out.owner_id in (request.user.id, None)
+    out.can_administer = services.can_administer_runner(request.user, out)
+    return _with_roots(request, out)
+
+
+@router.put("/runners/{runner_id}/private", response=RunnerOut,
+            summary="Make this runner its owner's private runner, acting as a role")
+def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerPrivateIn):
+    """A private runner takes no fleet work: nothing routed, no workspace order, no
+    source rule — only what its owner pins or binds to it, and the local sessions
+    opened on it. `acts_as` (`editor` or `viewer`, empty for yourself) lowers the
+    role everything from the box is judged as: its turns, its credential reads, the
+    local sessions on it. Owner only. Turning `private` off clears `acts_as`."""
+    # canopy-web#1705. Owner only, not runner admins: it decides whose work the box
+    # takes and as whom its owner is judged, which are the owner's to say.
+    from apps.events import audit
+    from apps.workspaces import role_cap
+
+    runner = _runner_or_404(request, runner_id)
+    if runner.owner_id != request.user.pk:
+        raise HttpError(404, "only the runner's owner can make it private")
+    acts_as = (payload.acts_as or "").strip().lower()
+    if acts_as and acts_as not in role_cap.CAPS:
+        raise HttpError(422, f"acts_as must be empty or one of: {', '.join(role_cap.CAPS)}")
+    if acts_as and not payload.private:
+        raise HttpError(422, "acts_as applies only to a private runner")
+    before = {"private": runner.private, "acts_as": runner.acts_as}
+    after = {"private": payload.private, "acts_as": acts_as if payload.private else ""}
+    if before != after:
+        runner.private, runner.acts_as = after["private"], after["acts_as"]
+        runner.save(update_fields=["private", "acts_as"])
+    if runner.private:
+        # The box IS its owner's private runner: link the registration here, so the
+        # runner writes it on its next heartbeat and no one runs `canopy private-runner
+        # register` on the machine.
+        from . import local
+
+        if not PrivateRunner.objects.filter(runner=runner, retired_at__isnull=True).exists():
+            local.register_private_runner(request.user, name=runner.name,
+                                          host=runner.host, runner=runner)
+        audit.note_change(scope=f"runner-private:{runner.name}", before=before, after=after,
+                          workspace=runner.workspace)
+    out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
+    out.can_manage = True
     out.can_administer = services.can_administer_runner(request.user, out)
     return _with_roots(request, out)
 

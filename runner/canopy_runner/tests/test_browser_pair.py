@@ -168,3 +168,40 @@ def test_canopy_not_answering_is_a_pair_error(tmp_path):
     canopy = FakeCanopy(start=(503, "down"))
     with pytest.raises(PairError, match="did not start a pairing"):
         _pair(tmp_path, canopy, open_browser=lambda url: True)
+
+
+def test_a_dead_token_reconnects_the_same_runner_and_keeps_its_config(tmp_path):
+    canopy = FakeCanopy()
+    home = tmp_path / "home"
+    cfg = home / ".canopy" / "runner.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"base_url": BASE, "token": "@~/.claude/canopy/workbench-token",
+                               "runner_id": "r-77", "cdp_port": 9230, "hook_port": 8790,
+                               "mailboxes": {"hal@x": True}}))
+
+    def browser(url):
+        _get(f"http://127.0.0.1:{canopy.port}/paired?pairing=p-1&secret=s3cret")
+        return True
+
+    out = []
+    rc = browser_pair.run_browser_pair(
+        cfg, base_url=BASE, allow_software=True, home=home, users_root=tmp_path / "Users",
+        transport=canopy, open_browser=browser, is_free=lambda p: True,
+        live_cdp_port=lambda h: None, out=out.append, reconnect=True)
+    assert rc == 0
+    assert canopy.calls[0][1]["reconnect_runner"] == "r-77"
+    conf = json.loads(cfg.read_text())
+    assert conf["token"] == "" and conf["runner_id"] == "r-77"
+    assert (conf["cdp_port"], conf["hook_port"], conf["mailboxes"]) == (9230, 8790, {"hal@x": True})
+    st = device_proof.read_status()
+    assert st["status"] == "active" and st["runner"] == "r-77"
+
+
+def test_reconnect_needs_a_runner_to_name(tmp_path):
+    home = tmp_path / "home"
+    cfg = home / ".canopy" / "runner.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"base_url": BASE, "token": "x"}))
+    with pytest.raises(PairError, match="names no runner"):
+        browser_pair.run_browser_pair(cfg, base_url=BASE, allow_software=True, home=home,
+                                      transport=FakeCanopy(), reconnect=True, out=lambda s: None)

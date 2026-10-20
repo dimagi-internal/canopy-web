@@ -50,10 +50,12 @@ class LocalRefusedError(Exception):
         self.status = status
 
 
-def register_private_runner(user, *, name: str, host: str = "") -> tuple[PrivateRunner, bool]:
+def register_private_runner(user, *, name: str, host: str = "",
+                            runner=None) -> tuple[PrivateRunner, bool]:
     """The person's private runner called `name`, creating it on first use (idempotent
     per person and name — re-registering the same machine is not an error). A
-    retired one is brought back."""
+    retired one is brought back. `runner` — a Runner the person owns, the runner app
+    on this same machine — links the two (canopy-web#1705)."""
     name = (name or "").strip()[:100]
     if not name:
         raise ValueError("a private runner needs a name")
@@ -70,6 +72,13 @@ def register_private_runner(user, *, name: str, host: str = "") -> tuple[Private
     if ws.retired_at is not None:
         ws.retired_at = None
         fields.append("retired_at")
+    if runner is not None and ws.runner_id != runner.pk:
+        if runner.owner_id != user.pk:
+            raise ValueError("a private runner can only be linked to a runner you own")
+        # One machine, one private runner: release the link from any other row first.
+        PrivateRunner.objects.filter(runner=runner).exclude(pk=ws.pk).update(runner=None)
+        ws.runner = runner
+        fields.append("runner")
     if fields:
         ws.save(update_fields=fields)
     return ws, created
@@ -100,6 +109,11 @@ def authorize(agent, user):
 def mode_for(agent, user, requested: str = "") -> tuple[str, str]:
     """(mode, basis) for a local turn. `auto` only for an agent admin who asked."""
     email = getattr(user, "email", "") or "a member"
+    from apps.workspaces import role_cap
+
+    cap = role_cap.cap_of(user)
+    if cap:
+        email = f"{email} acting as {cap}"
     if requested == AUTO:
         if agent.is_admin(user):
             return AUTO, f"local turn: auto requested by {email} (admin of {agent.slug})"
@@ -123,7 +137,14 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
     session whose turn already ended (it was closed, or swept `lost` after a long
     sleep) gets a NEW turn, so a closed turn's transcript is never appended to by a
     later life of the session. Returns (turn, created)."""
+    from apps.workspaces import role_cap
+
     user = request.user
+    linked = private_runner.runner if private_runner.runner_id else None
+    if linked is not None and linked.private and linked.acts_as:
+        # The machine's runner acts as a lower role: so does every session on it.
+        role_cap.apply(user, linked.acts_as)
+    acts_as = role_cap.cap_of(user)
     claude_session_id = (claude_session_id or "").strip()[:100]
     if not claude_session_id:
         raise ValueError("claude_session_id is required")
@@ -148,7 +169,8 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
         idempotency_key=key, status=Turn.RUNNING, private_runner=private_runner,
         origin_ref={"private_runner": {"id": str(private_runner.pk), "name": private_runner.name},
                     "license": {"id": lic.pk, "basis": lic.basis},
-                    "claude_session_id": claude_session_id, "cwd": (cwd or "")[:300]},
+                    "claude_session_id": claude_session_id, "cwd": (cwd or "")[:300],
+                    **({"acts_as": acts_as} if acts_as else {})},
         claimed_at=now, started_at=now, lease_expires_at=now + LOCAL_LEASE,
         session_key=claude_session_id, enqueued_by=user,
         turn_mode=mode, turn_mode_basis=basis[:320],

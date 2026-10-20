@@ -1651,6 +1651,10 @@ def caller_runs_agent(user, agent) -> bool:
     this runner".
     """
     from apps.harness.models import Runner, RunnerAssignment
+    from apps.workspaces import role_cap
+
+    if role_cap.cap_of(user):
+        return False  # acting as a lower role: reads go through its license instead
 
     # ASSIGNED, not necessarily ENABLED. `enabled=False` removes a runner from
     # the automatic rotation — it stops being a fallback — but it does NOT stop

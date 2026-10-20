@@ -104,6 +104,12 @@ class RunnerFlagsIn(Schema):
     flags: list[str]
 
 
+class RunnerPrivateIn(Schema):
+    private: bool
+    # "" (themselves), "editor" or "viewer" — apps/workspaces/role_cap.py. Only on a private runner.
+    acts_as: str = ""
+
+
 class RunnerEngineIn(Schema):
     # emdash | claude-desktop | claude-cli (Runner.ENGINE_CHOICES). Validated in the view so the
     # error names the choices rather than a pydantic literal mismatch.
@@ -214,6 +220,13 @@ class RunnerOut(Schema):
 
     # What this box's owner has declared about it (RunnerFlag) — e.g. `zdr`.
     flags: list[str] = []
+    # Its owner's own machine: no fleet work, only what its owner puts on it.
+    private: bool = False
+    # The role everything from a private runner is judged as ("" = its owner themselves).
+    acts_as: str = ""
+    # The private-runner registration linked to this box (canopy-web#1705): the runner
+    # writes it to ~/.canopy/private-runner.json, so local sessions there need no CLI.
+    private_runner_id: uuid.UUID | None = None
 
     # The roots of the workspace trees the box is enrolled in, as far as the
     # caller may know them: all of them for the box's owner, else only the trees
@@ -230,6 +243,14 @@ class RunnerOut(Schema):
     # heartbeat reply only (`api_device_keys.waiting_approval_url`), so the box's
     # menu bar can say so; the email and push about it are easy to miss.
     key_waiting: str = ""
+
+    @staticmethod
+    def resolve_private_runner_id(obj) -> uuid.UUID | None:
+        try:
+            pr = obj.private_runner
+        except Exception:  # noqa: BLE001 - the reverse one-to-one is absent
+            return None
+        return pr.pk if pr is not None and pr.retired_at is None else None
 
     @staticmethod
     def resolve_key_waiting(obj) -> str:
@@ -1969,6 +1990,8 @@ class RunnerPairingIn(Schema):
     platform: Literal["macos", "windows", "linux"]
     has_emdash: bool = False
     redirect_port: int = Field(ge=1024, le=65535)
+    # The runner this box already is (its runner.json) when its token stopped working.
+    reconnect_runner: uuid.UUID | None = None
 
 
 class RunnerPairingCreatedOut(Schema):
@@ -2014,6 +2037,9 @@ class RunnerPairingOut(Schema):
     #: Where the caller may put it: their workspaces where they may run work.
     workspaces: list[RunnerPairingWorkspaceOut]
     runner_id: uuid.UUID | None = None
+    # Set when this box asks to reconnect to a runner of YOURS: approving gives that
+    # runner its key back, with its name and workspace, instead of making a new one.
+    reconnect_name: str = ""
 
 
 class RunnerPairingApproveIn(Schema):
@@ -2076,12 +2102,16 @@ class RunnerDownloadsOut(Schema):
 class PrivateRunnerIn(Schema):
     name: str = Field(min_length=1, max_length=100)
     host: str = Field(default="", max_length=200)
+    # The runner app on this same machine, when there is one (a Runner you own): links them.
+    runner: uuid.UUID | None = None
 
 
 class PrivateRunnerOut(Schema):
     id: uuid.UUID
     name: str
     host: str
+    # The Runner this machine also is (canopy-web#1705), else None.
+    runner_id: uuid.UUID | None = None
     created_at: dt.datetime
     last_seen_at: dt.datetime | None = None
     retired_at: dt.datetime | None = None

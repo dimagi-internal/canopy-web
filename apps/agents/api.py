@@ -2333,6 +2333,10 @@ def _credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
 
         if agent.is_admin(request.user) and runner_serves_agent(rtok.runner, agent):
             return "runner", ""
+        # A PRIVATE runner reads under its owner's license, for one of their own turns
+        # it holds (canopy-web#1705) — the same principal as their local sessions.
+        if _license_for_read(request, agent) is not None:
+            return "license", ""
         return None, (f"this runner token is {rtok.runner.name}'s, and {rtok.runner.name} "
                       f"does not run {agent.slug}")
     if services.caller_runs_agent(request.user, agent):
@@ -2356,12 +2360,14 @@ def _credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
 
 def _license_for_read(request: HttpRequest, agent):
     """The AgentLicense a credential read may go out under (`licenses.credential_principal`)."""
-    if getattr(request, "runner_token", None) is not None:
-        return None  # a box speaks for itself, never for a person's license
     from . import licenses
 
+    rtok = getattr(request, "runner_token", None)
+    if rtok is not None and not rtok.runner.private:
+        return None  # a fleet box speaks for itself, never for a person's license
     return licenses.credential_principal(
-        agent, request.user, request.META.get("HTTP_X_CANOPY_TURN_ID", ""))
+        agent, request.user, request.META.get("HTTP_X_CANOPY_TURN_ID", ""),
+        runner=rtok.runner if rtok is not None else None)
 
 
 @router.get("/{slug}/credentials/access", response=AgentCredentialAccessOut,

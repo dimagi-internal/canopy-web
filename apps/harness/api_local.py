@@ -42,8 +42,17 @@ def register_private_runner(request: HttpRequest, payload: PrivateRunnerIn):
     """Idempotent per (you, name): registering the same machine again returns it
     (and brings back a retired one). A private runner is yours, not an agent's or a
     workspace's — one serves every agent you use locally. It never claims turns."""
+    runner = None
+    if payload.runner is not None:
+        from .models import Runner
+
+        runner = Runner.objects.filter(pk=payload.runner, owner=request.user).exclude(
+            status=Runner.RETIRED).first()
+        if runner is None:
+            raise HttpError(422, "no live runner of yours with that id")
     try:
-        ws, created = local.register_private_runner(request.user, name=payload.name, host=payload.host)
+        ws, created = local.register_private_runner(request.user, name=payload.name, host=payload.host,
+                                                    runner=runner)
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
     return Status(201 if created else 200, ws)

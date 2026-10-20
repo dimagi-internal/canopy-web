@@ -312,6 +312,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "unenroll_runner_workspace": ("runner-admin",),
     "set_runner_flags": ("runner-admin",),
     "set_runner_engine": ("runner-admin",),
+    "set_runner_private": ("runner",),  # owner only (not RunnerAdmins)
     "list_runners": ("member",),  # _runner_read_q: the tenant's fleet
     "update_runner_capabilities": ("runner",),
     "retire_runner": ("runner",),
@@ -926,7 +927,7 @@ SETTINGS: frozenset[str] = frozenset({
     # runners
     "pair_runner", "retire_runner", "unretire_runner", "pause_runner", "unpause_runner",
     "grant_runner_admin", "revoke_runner_admin",
-    "set_runner_credential", "swap_runner_logins", "set_runner_engine", "set_runner_flags",
+    "set_runner_credential", "swap_runner_logins", "set_runner_engine", "set_runner_flags", "set_runner_private",
     "add_runner_login", "remove_runner_login", "order_runner_logins",
     "enroll_runner_workspace", "unenroll_runner_workspace",
     "hold_fleet", "release_fleet_hold",

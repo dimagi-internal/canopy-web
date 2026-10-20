@@ -830,7 +830,17 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # mid-turn cannot flip the posture of work already under way.
         from . import turn_mode as modes
 
+        # A PRIVATE runner acting as a lower role (canopy-web#1705) judges its
+        # owner's turn at that role — mode, envelope, credential reads — so the
+        # cap is on the turn before anything below asks who started it.
+        acts_as = ""
+        if runner.private and runner.acts_as and turn.initiator_user_id == runner.owner_id:
+            acts_as = runner.acts_as
+            turn.origin_ref = {**(turn.origin_ref or {}), "acts_as": acts_as}
         mode = modes.for_turn(turn, priorities, fresh=True)
+        if acts_as and mode is not None and mode.mode == modes.AUTO:
+            # Only an agent admin may run auto, and a capped owner is not one.
+            mode = modes.Resolved(modes.MANUAL, f"{runner.name} acts as {acts_as}: manual")
         # Admission rules (apps/admission): the one point where the runner's kind
         # and the resolved mode are both known. An `auto` rule may first raise a
         # standing manual to auto on this runner; then a rejected turn is closed
@@ -860,6 +870,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                     turn_mode=mode.mode if mode else "",
                     turn_mode_basis=mode.basis[:320] if mode else "",
                     rides_turn_id=rides,
+                    **({"origin_ref": turn.origin_ref} if acts_as else {}),
                 )
         except IntegrityError:
             continue  # another runner claimed for this agent between our check and update

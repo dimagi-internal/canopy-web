@@ -8137,6 +8137,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/private": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Make this runner its owner's private runner, acting as a role
+         * @description A private runner takes no fleet work: nothing routed, no workspace order, no
+         *     source rule — only what its owner pins or binds to it, and the local sessions
+         *     opened on it. `acts_as` (`editor` or `viewer`, empty for yourself) lowers the
+         *     role everything from the box is judged as: its turns, its credential reads, the
+         *     local sessions on it. Owner only. Turning `private` off clears `acts_as`.
+         */
+        readonly put: operations["set_runner_private"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/engine": {
         readonly parameters: {
             readonly query?: never;
@@ -25729,6 +25753,8 @@ export interface components {
             readonly has_emdash: boolean;
             /** Redirect Port */
             readonly redirect_port: number;
+            /** Reconnect Runner */
+            readonly reconnect_runner?: string | null;
         };
         /** RunnerPairingClaimIn */
         readonly RunnerPairingClaimIn: {
@@ -25772,6 +25798,11 @@ export interface components {
             readonly workspaces: readonly components["schemas"]["RunnerPairingWorkspaceOut"][];
             /** Runner Id */
             readonly runner_id?: string | null;
+            /**
+             * Reconnect Name
+             * @default
+             */
+            readonly reconnect_name: string;
         };
         /** RunnerPairingWorkspaceOut */
         readonly RunnerPairingWorkspaceOut: {
@@ -25934,6 +25965,8 @@ export interface components {
             readonly name: string;
             /** Host */
             readonly host: string;
+            /** Runner Id */
+            readonly runner_id?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -25953,6 +25986,8 @@ export interface components {
              * @default
              */
             readonly host: string;
+            /** Runner */
+            readonly runner?: string | null;
         };
         /**
          * PrivateRunnerUseOut
@@ -26097,6 +26132,18 @@ export interface components {
              * @default []
              */
             readonly flags: readonly string[];
+            /**
+             * Private
+             * @default false
+             */
+            readonly private: boolean;
+            /**
+             * Acts As
+             * @default
+             */
+            readonly acts_as: string;
+            /** Private Runner Id */
+            readonly private_runner_id?: string | null;
             /**
              * Roots
              * @default []
@@ -26617,6 +26664,16 @@ export interface components {
         readonly RunnerFlagsIn: {
             /** Flags */
             readonly flags: readonly string[];
+        };
+        /** RunnerPrivateIn */
+        readonly RunnerPrivateIn: {
+            /** Private */
+            readonly private: boolean;
+            /**
+             * Acts As
+             * @default
+             */
+            readonly acts_as: string;
         };
         /** RunnerEngineIn */
         readonly RunnerEngineIn: {
@@ -42118,6 +42175,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["RunnerFlagsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly set_runner_private: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerPrivateIn"];
             };
         };
         readonly responses: {

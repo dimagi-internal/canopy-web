@@ -282,6 +282,15 @@ class Runner(models.Model):
     # role). Read by `routing.unit_refusal` and the topology's grouping; never a
     # grant on its own.
     machine_id = models.CharField(max_length=300, blank=True, default="", db_index=True)
+    #: A PRIVATE runner is its owner's own machine (canopy-web#1705): it takes no fleet
+    #: work — nothing routed, no workspace order, no source rule — only what its owner
+    #: puts on it (a pin, a session bound to it) and the local sessions opened on it
+    #: (`apps/harness/local.py`). Set by its owner, never reported by the box.
+    private = models.BooleanField(default=False)
+    #: On a private runner: the role its owner ACTS AS for everything from this box —
+    #: "" (themselves), "editor" or "viewer" (`apps/workspaces/role_cap.py`). Only
+    #: ever lowers; how an agent's owner tests the non-admin path on their own Mac.
+    acts_as = models.CharField(max_length=10, blank=True, default="")
 
     class Meta:
         indexes = [models.Index(fields=["kind", "status"])]
@@ -355,7 +364,7 @@ class Runner(models.Model):
         `RUNNER_DIRECTED=1`) and safe to trust for the same reason `cannot_serve`
         is: it can only make a box take less. It stays session-capable, so a chat
         can still be started on it, and that chat binds to it."""
-        return bool((self.capabilities or {}).get("directed", False))
+        return self.private or bool((self.capabilities or {}).get("directed", False))
 
     @property
     def live_status(self) -> str:
@@ -1963,6 +1972,11 @@ class RunnerPairing(models.Model):
     declined_at = models.DateTimeField(null=True, blank=True)
     consumed_at = models.DateTimeField(null=True, blank=True)
     runner = models.ForeignKey(Runner, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    #: The runner this box says it already IS (its runner.json), when its token stopped
+    #: working: approved by that runner's owner, the claim adds the key to that runner
+    #: instead of making a new one. The box's word alone changes nothing (canopy-web#1705).
+    reconnect_runner = models.ForeignKey(Runner, on_delete=models.SET_NULL, null=True, blank=True,
+                                         related_name="+")
 
     class Meta:
         ordering = ["-created_at"]
@@ -1988,13 +2002,12 @@ class RunnerPairing(models.Model):
 class PrivateRunner(models.Model):
     """A PERSON's own machine: plain Claude Code with the canopy plugin, no runner app.
 
-    It never claims a turn and nothing routes to it. It exists so a session a person
+    On its own it never claims a turn and nothing routes to it. It exists so a session a person
     opens there with an agent is a real, recorded turn (`Turn.ORIGIN_LOCAL`,
     `apps/harness/local.py`): who ran it, on which machine, under which license.
     It belongs to the person, not to an agent or a workspace — one private runner serves
-    every agent they use. Deliberately not a `Runner` row: routing, reach, readiness
-    and the offline admission rules all iterate runners, and a machine that never
-    claims would have to be taught to each of them. canopy-web#1704.
+    every agent they use. canopy-web#1704. When the machine also runs the runner app,
+    `runner` links the two, and that runner is marked `private` (canopy-web#1705).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -2008,6 +2021,11 @@ class PrivateRunner(models.Model):
     #: Last time a local turn opened or renewed from it.
     last_seen_at = models.DateTimeField(null=True, blank=True)
     retired_at = models.DateTimeField(null=True, blank=True)
+    #: The runner this machine also is (canopy-web#1705): one machine, one object with
+    #: two powers — local sessions here, and the runner app's turns. Its device key is
+    #: what a local turn proves itself with, and its `acts_as` caps those sessions too.
+    runner = models.OneToOneField("harness.Runner", null=True, blank=True,
+                                  on_delete=models.SET_NULL, related_name="private_runner")
 
     class Meta:
         ordering = ["name"]

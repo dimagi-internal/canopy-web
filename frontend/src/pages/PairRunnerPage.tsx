@@ -138,7 +138,15 @@ export function PairRunnerPage(): JSX.Element | null {
 
       {open && (
         <section className="space-y-3 rounded-lg border border-border bg-card p-5" aria-label="Approve">
-          {noWorkspace ? (
+          {pairing.reconnect_name ? (
+            // A box whose token stopped working, naming a runner of yours: approving
+            // gives that runner its key back (same name, workspace, routing).
+            <p className="m-0 text-[13px] text-foreground" data-testid="pairing-reconnect">
+              This computer is your runner <span className="font-mono font-medium">{pairing.reconnect_name}</span>,
+              whose sign-in stopped working. Approving reconnects it with this computer&apos;s own key: same runner,
+              same settings, nothing new. You will be asked for your passkey.
+            </p>
+          ) : noWorkspace ? (
             <p className="m-0 text-[13px] text-muted-foreground">
               You cannot run work in any workspace, so you cannot pair a runner. Ask a workspace admin to make you an
               editor.
@@ -180,9 +188,14 @@ export function PairRunnerPage(): JSX.Element | null {
           )}
           {actionError && <p className="m-0 text-sm text-destructive">{actionError}</p>}
           <div className="flex gap-2">
-            {!noWorkspace && (
-              <Button type="button" size="sm" disabled={busy || !workspace || !name.trim()} onClick={() => void approve()}>
-                {busy ? 'Approving…' : 'Approve'}
+            {(pairing.reconnect_name || !noWorkspace) && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy || (!pairing.reconnect_name && (!workspace || !name.trim()))}
+                onClick={() => void approve()}
+              >
+                {busy ? 'Approving…' : pairing.reconnect_name ? 'Reconnect' : 'Approve'}
               </Button>
             )}
             <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void decline()}>
