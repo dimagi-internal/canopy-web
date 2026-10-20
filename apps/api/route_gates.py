@@ -302,6 +302,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "post_runner_mint_code": ("runner-admin",),
     "post_runner_mint_result": ("runner",),
     "post_sign_in_request": ("runner",),  # pushes only to the runner's owner
+    "post_sign_in_request_result": ("runner",),
+    "list_my_sign_in_requests": ("self",),  # only requests put in front of the caller
     "list_runner_admins": ("runner-admin",),
     "grant_runner_admin": ("runner",),  # owner only (not RunnerAdmins)
     "revoke_runner_admin": ("runner",),
@@ -1081,6 +1083,7 @@ NOT_SETTINGS: dict[str, str] = {
     "post_session_stream": "runner-protocol", "report_sessions": "runner-protocol",
     "post_runner_usage": "runner-protocol", "request_usage_scan": "action", "send_up_missing_sessions": "action",
     "post_sign_in_request": "runner-protocol", "turn_github_token": "runner-protocol",
+    "post_sign_in_request_result": "runner-protocol",
     "report_drill": "runner-protocol",
     # action
     "check_agent_github": "action", "check_agent_salesforce": "action", "preview_cron": "action",

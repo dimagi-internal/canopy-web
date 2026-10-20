@@ -197,6 +197,15 @@ export async function submitRunnerMintCode(
   return unwrap(res, 'submitRunnerMintCode')
 }
 
+export type OpenSignInRequest = components['schemas']['OpenSignInRequestOut']
+
+/** Sign-ins your boxes are waiting on you to approve — the push's twin, for a
+ *  phone that never showed it. Only ever the caller's own. */
+export async function listMySignInRequests(): Promise<OpenSignInRequest[]> {
+  const res = await apiV2.GET('/api/harness/sign-in-requests/mine')
+  return Array.from(unwrap(res, 'listMySignInRequests'))
+}
+
 export async function listUnclaimableTurns(): Promise<UnclaimableTurn[]> {
   const res = await apiV2.GET('/api/harness/turns/unclaimable')
   // Array.from for the same Readable<T> reason as listRunners above.
