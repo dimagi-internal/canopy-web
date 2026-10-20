@@ -81,3 +81,11 @@ def test_unconfigured_writes_nothing(monkeypatch, tmp_path):
     server_status._path = None
     _client(monkeypatch, {}).heartbeat("r1", [])
     assert not list(tmp_path.iterdir())
+
+
+def test_a_key_waiting_for_approval_reaches_the_menu_bar(monkeypatch, status_file):
+    url = "https://canopy.example/settings?device_key=k1#device-keys"
+    _client(monkeypatch, {"key_waiting": url}).heartbeat("r1", [])
+    assert json.loads(status_file.read_text())["key_waiting"] == url
+    _client(monkeypatch, {}).heartbeat("r1", [])  # approved, or an older canopy
+    assert json.loads(status_file.read_text())["key_waiting"] == ""

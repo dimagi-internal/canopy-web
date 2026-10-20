@@ -1,7 +1,8 @@
 """A pending runner device key tells the people who can approve it
 (apps/harness/device_key_notify.py): the owner and explicit runner admins get an
 email + Web Push linking to Settings → Your machines with the key highlighted —
-once per new key, again only when an active key is sent back to pending.
+once per new key, again only when an active key is sent back to pending — and
+the box's own heartbeat reply says so for as long as the key waits.
 """
 from __future__ import annotations
 
@@ -97,3 +98,26 @@ def test_a_failing_notice_never_fails_the_registration(box, monkeypatch, django_
     monkeypatch.setattr(device_key_notify, "approvers", lambda runner: 1 / 0)
     with django_capture_on_commit_callbacks(execute=True):
         assert _register(box, ec.generate_private_key(ec.SECP256R1())).status_code == 201
+
+
+def _heartbeat(box):
+    res = Client().post(f"/api/harness/runners/{box['runner'].pk}/heartbeat", data={"active_turn_ids": []},
+                        content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {box['pat']}")
+    assert res.status_code == 200, res.content
+    return res.json()
+
+
+def test_the_heartbeat_tells_the_box_a_key_waits_until_it_is_approved(box):
+    """The email is easy to miss; the box's own menu bar shows this field."""
+    from apps.workspaces.models import WorkspaceMembership
+
+    WorkspaceMembership.objects.create(user=box["runner"].owner, workspace=box["runner"].workspace,
+                                       role=WorkspaceMembership.OWNER)
+    assert _heartbeat(box)["key_waiting"] == ""
+    key = ec.generate_private_key(ec.SECP256R1())
+    kid = _register(box, key).json()["id"]
+    assert _heartbeat(box)["key_waiting"].endswith(f"/settings?device_key={kid}#device-keys")
+    RunnerDeviceKey.objects.filter(pk=kid).update(status=RunnerDeviceKey.ACTIVE, approved_at=timezone.now())
+    assert _heartbeat(box)["key_waiting"] == ""
+    _register(box, key, ecdh=ec.generate_private_key(ec.SECP256R1()))  # a new ECDH key waits again
+    assert _heartbeat(box)["key_waiting"].endswith(f"/settings?device_key={kid}#device-keys")

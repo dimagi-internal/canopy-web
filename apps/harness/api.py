@@ -1572,7 +1572,9 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
     if payload.host and payload.host != runner.host:
         runner.host = payload.host
         runner.save(update_fields=["host"])
-    return services.heartbeat(
+    from .api_device_keys import waiting_approval_url
+
+    beat = services.heartbeat(
         runner,
         active_turn_ids=payload.active_turn_ids,
         degraded=payload.degraded,
@@ -1591,6 +1593,8 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         mailboxes_readable=payload.mailboxes_readable,
         agents_unprepared=payload.agents_unprepared,
     )
+    beat.key_waiting_url = waiting_approval_url(runner)
+    return beat
 
 
 @router.post("/runners/{runner_id}/refresh", response=RunnerOut)

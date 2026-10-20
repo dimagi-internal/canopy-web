@@ -225,6 +225,15 @@ class RunnerOut(Schema):
     # Enrolled in more than one tree, whether or not the caller sees them all: on
     # that machine nothing separates the trees from each other.
     spans_trees: bool = False
+    # Where to approve a key on this box that waits for a person — a new key, or an
+    # active one whose new ECDH key does — or "" when none waits. Stamped on the
+    # heartbeat reply only (`api_device_keys.waiting_approval_url`), so the box's
+    # menu bar can say so; the email and push about it are easy to miss.
+    key_waiting: str = ""
+
+    @staticmethod
+    def resolve_key_waiting(obj) -> str:
+        return getattr(obj, "key_waiting_url", "") or ""
 
     @staticmethod
     def resolve_roots(obj) -> list[str]:
