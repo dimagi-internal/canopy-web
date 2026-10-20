@@ -398,9 +398,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
   one (`apps/harness/api_runner_pairings.py`).
 - **`/home`** — what is waiting on you across every workspace you are in
   (`GET /api/attention/`, read once per organisation and merged): **Sessions**
-  waiting on your next message (the Supervisor feed's rule), first and open,
+  waiting on your next message (the Supervisor feed's rule) and yours running
+  now (green, "live"), first and open,
   grouped and one line each like `/ide`'s tree (one group per emdash project —
-  a repo or an agent — newest group first; a row opens in `/ide` on a computer,
+  a repo or an agent — newest group first, each foldable and remembered per
+  browser; a row opens in `/ide` on a computer,
   the chat on a phone);
   **Tasks and requests** (approvals, questions, tasks parked on you, access
   requests), folded with a count; **Gone quiet** (nothing for 3+ days, folded,

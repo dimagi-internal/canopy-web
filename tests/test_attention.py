@@ -66,6 +66,29 @@ def test_a_chat_blocked_on_you_is_listed(jj):
     assert item["reason"] == "Needs an answer"
 
 
+def _working_session(jj, *, owner, title="busy"):
+    runner = Runner.objects.create(name=f"{owner.username}-mbp", kind=Runner.EMDASH, host="mac", owner=owner,
+                                   workspace=jj["ws"], status=Runner.ONLINE, last_heartbeat_at=timezone.now())
+    s = Session.objects.create(workspace=jj["ws"], agent=jj["agent"], title=title, origin=Session.ORIGIN_RUNNER)
+    RunnerBinding.objects.create(session=s, runner=runner, session_key=title, live_seen_at=timezone.now(),
+                                 agent_status="working")
+    return s
+
+
+def test_your_running_session_is_listed_apart_not_as_an_ask(jj):
+    s = _working_session(jj, owner=jj["user"])
+    body = jj["client"].get("/api/attention/").json()
+    assert [i["key"] for i in body["running"]] == [f"session:{s.id}"]
+    assert body["running"][0]["reason"] == "Running"
+    assert all(i["kind"] != "session" for i in body["now"] + body["quiet"])
+
+
+def test_a_colleagues_running_session_is_not_yours(jj):
+    peer = User.objects.create_user("pe", "pe@dimagi.com", "pw")
+    _working_session(jj, owner=peer)
+    assert jj["client"].get("/api/attention/").json()["running"] == []
+
+
 def test_access_requests_reach_only_those_who_manage_members(jj):
     asker = User.objects.create_user("ann", "ann@dimagi.com", "pw")
     req = WorkspaceAccessRequest.objects.create(workspace=jj["ws"], user=asker, note="hi")
@@ -82,7 +105,7 @@ def test_never_another_workspaces_items(jj):
     ws2 = Workspace.objects.create(slug="other", display_name="Other", created_by=other)
     zed = Agent.objects.create(slug="zed", name="Zed", workspace=ws2, owner=other)
     AgentTask.objects.create(agent=zed, ext_id="T1", title="secret?", ask_kind="review")
-    assert jj["client"].get("/api/attention/").json() == {"now": [], "quiet": [], "hidden": []}
+    assert jj["client"].get("/api/attention/").json() == {"now": [], "quiet": [], "hidden": [], "running": []}
     assert jj["client"].get("/api/w/other/attention/").status_code == 404
 
 

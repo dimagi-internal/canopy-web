@@ -9546,7 +9546,8 @@ export interface paths {
          *     next message, tasks asking you to decide or parked on you, requests to join a
          *     workspace you manage — as `now` (something happened in the last few days),
          *     `quiet` (nothing has for a while) and `hidden` (taken off your list by you;
-         *     each returns when something new happens on it). Newest first.
+         *     each returns when something new happens on it), plus `running` — not
+         *     waiting on you, but yours and being worked right now. Newest first.
          */
         readonly get: operations["list_attention"];
         readonly put?: never;
@@ -28538,6 +28539,8 @@ export interface components {
             readonly quiet: readonly components["schemas"]["AttentionRowOut"][];
             /** Hidden */
             readonly hidden: readonly components["schemas"]["AttentionRowOut"][];
+            /** Running */
+            readonly running?: readonly components["schemas"]["AttentionRowOut"][];
         };
         /** AttentionRowOut */
         readonly AttentionRowOut: {

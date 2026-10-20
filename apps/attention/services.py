@@ -29,13 +29,16 @@ def _hidden(item: AttentionRow, mark: Hidden | None, now: dt.datetime) -> bool:
 
 
 def attention(request, *, slugs: set[str], now: dt.datetime | None = None) -> dict[str, list[AttentionRow]]:
-    """`{"now": [...], "quiet": [...], "hidden": [...]}`, each newest first."""
+    """`{"now": [...], "quiet": [...], "hidden": [...], "running": [...]}`, each
+    newest first. `running` is never quiet or hidden: it is what is moving."""
     now = now or timezone.now()
     items = gather(request, slugs=slugs)
     marks = {g.key: g for g in Hidden.objects.filter(user=request.user, key__in=[i.key for i in items])}
-    out: dict[str, list[AttentionRow]] = {"now": [], "quiet": [], "hidden": []}
+    out: dict[str, list[AttentionRow]] = {"now": [], "quiet": [], "hidden": [], "running": []}
     for item in sorted(items, key=lambda i: i.last_activity_at, reverse=True):
-        if _hidden(item, marks.get(item.key), now):
+        if item.running:
+            out["running"].append(item)
+        elif _hidden(item, marks.get(item.key), now):
             out["hidden"].append(item)
         elif now - item.last_activity_at > QUIET_AFTER:
             out["quiet"].append(item)

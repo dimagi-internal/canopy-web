@@ -32,3 +32,6 @@ class AttentionRow:
     actions: tuple[str, ...] = ()
     #: Where those actions go: the existing routes' own identifiers.
     target: dict[str, str] = field(default_factory=dict)
+    #: Not waiting on you, but yours and in flight right now (a session its agent
+    #: is working in). Listed apart — `running` — so nothing counts it as an ask.
+    running: bool = False

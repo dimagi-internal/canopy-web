@@ -40,6 +40,7 @@ const item = (over: Partial<AttentionRow>): AttentionRow => ({
 
 afterEach(() => {
   cleanup()
+  try { window.localStorage.clear() } catch { /* none */ }
   vi.clearAllMocks()
 })
 
@@ -51,7 +52,7 @@ const chat = (over: Partial<AttentionRow>): AttentionRow =>
 
 describe('HomePage', () => {
   it('leads with sessions and folds tasks under a count', async () => {
-    loadAttention.mockResolvedValue({ now: [item({}), chat({})], quiet: [], hidden: [] })
+    loadAttention.mockResolvedValue({ now: [item({}), chat({})], quiet: [], hidden: [], running: [] })
     show()
     expect(await screen.findByText('Fix the deploy')).toBeTruthy()
     // The task is behind its fold until opened.
@@ -70,6 +71,7 @@ describe('HomePage', () => {
       ],
       quiet: [],
       hidden: [],
+      running: [],
     })
     show()
     await screen.findByText('Repo chat')
@@ -78,8 +80,23 @@ describe('HomePage', () => {
     expect(order).toEqual([...order].sort((x, y) => x - y))
   })
 
+  it('lists running sessions in their group, and folds a group', async () => {
+    loadAttention.mockResolvedValue({
+      now: [chat({ agent_slug: 'hal', project: 'canopy-web' })],
+      quiet: [],
+      hidden: [],
+      running: [chat({ key: 'session:r', title: 'Busy one', reason: 'Running', agent_slug: 'hal', project: 'canopy-web' })],
+    })
+    show()
+    expect(await screen.findByText('Busy one')).toBeTruthy()
+    expect(screen.getByText('live')).toBeTruthy()
+    fireEvent.click(screen.getByText('canopy-web'))
+    expect(screen.queryByText('Busy one')).toBeNull()
+    expect(screen.queryByText('Fix the deploy')).toBeNull()
+  })
+
   it('approves a task in place, pinned to its workspace', async () => {
-    loadAttention.mockResolvedValue({ now: [item({})], quiet: [], hidden: [] })
+    loadAttention.mockResolvedValue({ now: [item({})], quiet: [], hidden: [], running: [] })
     show()
     fireEvent.click(await screen.findByText('Tasks and requests'))
     fireEvent.click(await screen.findByText('Approve'))
@@ -87,7 +104,7 @@ describe('HomePage', () => {
   })
 
   it('hides without deciding anything, and can undo', async () => {
-    loadAttention.mockResolvedValue({ now: [chat({})], quiet: [], hidden: [] })
+    loadAttention.mockResolvedValue({ now: [chat({})], quiet: [], hidden: [], running: [] })
     show()
     fireEvent.click(await screen.findByText('Hide'))
     await waitFor(() => expect(hide).toHaveBeenCalledWith(['session:s1'], undefined))
@@ -103,9 +120,10 @@ describe('HomePage', () => {
       quiet: [item({ key: 'task:eva:T2', title: 'Old one', last_activity_at: old }),
         item({ key: 'task:eva:T3', title: 'Older', last_activity_at: old })],
       hidden: [],
+      running: [],
     })
     show()
-    expect(await screen.findByText('No session is waiting on you.')).toBeTruthy()
+    expect(await screen.findByText('No session is waiting on you or running.')).toBeTruthy()
     expect(screen.queryByText('Old one')).toBeNull()
     fireEvent.click(screen.getByText('Hide all 2'))
     await waitFor(() => expect(hide).toHaveBeenCalledWith(['task:eva:T2', 'task:eva:T3'], undefined))

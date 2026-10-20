@@ -68,6 +68,21 @@ export function HomePage(): JSX.Element {
   const quiet = (data?.quiet ?? []).filter(inFilter)
   const hidden = (data?.hidden ?? []).filter(inFilter)
   const sessions = now.filter((i) => i.kind === 'session')
+  const running = (data?.running ?? []).filter(inFilter)
+  // Waiting and running together, newest first — the list /ide's tree would show.
+  const live = [...sessions, ...running].sort(
+    (a, b) => Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at),
+  )
+  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed)
+  function toggleGroup(key: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      writeCollapsed(next)
+      return next
+    })
+  }
   const others = now.filter((i) => i.kind !== 'session')
   const counts = useMemo(() => {
     const c = new Map<string, number>()
@@ -82,6 +97,7 @@ export function HomePage(): JSX.Element {
         now: d.now.filter((i) => !keys.includes(i.key)),
         quiet: d.quiet.filter((i) => !keys.includes(i.key)),
         hidden: d.hidden,
+        running: d.running,
       },
     )
   }
@@ -116,7 +132,7 @@ export function HomePage(): JSX.Element {
   }
 
   const firstName = auth.status === 'authenticated' ? (auth.user.name || auth.user.email).split(/[ @]/)[0] : ''
-  const shown = showAll ? sessions : sessions.slice(0, SHOWN)
+  const shown = showAll ? live : live.slice(0, SHOWN)
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
@@ -128,7 +144,7 @@ export function HomePage(): JSX.Element {
               ? 'What is waiting on you, across every workspace you are in.'
               : now.length === 0
                 ? `Nothing new needs you${firstName ? `, ${firstName}` : ''}.`
-                : `${plural(sessions.length, 'session')} waiting on you${
+                : `${plural(sessions.length, 'session')} waiting on you${running.length ? `, ${running.length} running` : ''}${
                     others.length ? `, and ${plural(others.length, 'task or request', 'tasks or requests')}` : ''
                   }. Newest first.`}
           </p>
@@ -172,23 +188,37 @@ export function HomePage(): JSX.Element {
 
         <Section
           title="Sessions"
-          count={sessions.length}
-          hint="Waiting on your next message."
+          count={live.length}
+          hint="Waiting on your next message, and running now."
           action={
             <Link to="/ide" className="hidden text-[12px] text-muted-foreground hover:text-primary md:inline">
               All sessions in the IDE →
             </Link>
           }
         >
-          {data && sessions.length === 0 && (
-            <p className="px-3 py-4 text-[13px] text-muted-foreground">No session is waiting on you.</p>
+          {data && live.length === 0 && (
+            <p className="px-3 py-4 text-[13px] text-muted-foreground">No session is waiting on you or running.</p>
           )}
-          {groupSessions(shown).map((g) => (
+          {groupSessions(shown).map((g) => {
+            const open = !collapsed.has(g.key)
+            return (
             <div key={g.key} className="border-t border-border first:border-t-0">
-              <div className="flex items-center gap-1.5 bg-card/60 px-3 py-1 text-[12px] font-semibold text-foreground-secondary">
+              <button
+                type="button"
+                onClick={() => toggleGroup(g.key)}
+                aria-expanded={open}
+                className="flex w-full items-center gap-1.5 bg-card/60 px-3 py-1 text-left text-[12px] font-semibold text-foreground-secondary hover:bg-muted"
+              >
+                <span className="w-2 text-muted-foreground">{open ? '▾' : '▸'}</span>
                 <span className="truncate">{g.key || 'No project'}</span>
                 {g.isAgent && <span className="font-normal text-muted-foreground">agent</span>}
                 <span className="ml-auto flex shrink-0 items-center gap-2 font-normal text-[11px] text-muted-foreground">
+                  {g.running > 0 && (
+                    <span className="flex items-center gap-1" title="running">
+                      <span aria-hidden className="inline-block h-2 w-2 animate-pulse rounded-full bg-success" />
+                      {g.running}
+                    </span>
+                  )}
                   {g.asking > 0 && (
                     <span className="flex items-center gap-1" title="needs an answer">
                       <span aria-hidden className="inline-block h-2 w-2 rounded-full bg-warning" />
@@ -197,17 +227,18 @@ export function HomePage(): JSX.Element {
                   )}
                   <span>{g.rows.length}</span>
                 </span>
-              </div>
-              {g.rows.map((item) => (
+              </button>
+              {open && g.rows.map((item) => (
                 <SessionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
                   showAgent={!g.isAgent} onHide={onHide} />
               ))}
             </div>
-          ))}
-          {sessions.length > SHOWN && (
+            )
+          })}
+          {live.length > SHOWN && (
             <button type="button" onClick={() => setShowAll((v) => !v)}
               className="w-full border-t border-border px-3 py-2 text-left text-[12px] text-muted-foreground hover:text-foreground">
-              {showAll ? 'Show fewer' : `Show ${sessions.length - SHOWN} more`}
+              {showAll ? 'Show fewer' : `Show ${live.length - SHOWN} more`}
             </button>
           )}
         </Section>
@@ -343,18 +374,38 @@ function useDesktop(): boolean {
 }
 
 const ASKING = 'Needs an answer'
+const isRunning = (r: AttentionRow) => r.reason.startsWith('Running')
+
+// Which session groups are folded — a per-browser convenience, so storage that
+// throws (private window) just means everything starts open.
+const COLLAPSED_KEY = 'canopy.home.collapsed.v1'
+function readCollapsed(): Set<string> {
+  try {
+    return new Set(JSON.parse(window.localStorage.getItem(COLLAPSED_KEY) ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+function writeCollapsed(keys: Set<string>) {
+  try {
+    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...keys]))
+  } catch {
+    // Not remembered; fine.
+  }
+}
 
 /** Sessions folded the way /ide folds them — one group per emdash project (a
  *  repo, or an agent's own) — but ordered by each group's newest session, since
  *  Home is about what just happened. Rows keep their newest-first order. */
 function groupSessions(rows: AttentionRow[]) {
-  const groups = new Map<string, { key: string; isAgent: boolean; asking: number; rows: AttentionRow[] }>()
+  const groups = new Map<string, { key: string; isAgent: boolean; asking: number; running: number; rows: AttentionRow[] }>()
   for (const r of rows) {
     const key = r.project || r.agent_slug
-    const g = groups.get(key) ?? { key, isAgent: false, asking: 0, rows: [] }
+    const g = groups.get(key) ?? { key, isAgent: false, asking: 0, running: 0, rows: [] }
     g.rows.push(r)
     g.isAgent ||= r.agent_slug === key
     if (r.reason === ASKING) g.asking += 1
+    if (isRunning(r)) g.running += 1
     groups.set(key, g)
   }
   return [...groups.values()]
@@ -372,6 +423,7 @@ function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
 }): JSX.Element {
   const desktop = useDesktop()
   const asking = item.reason === ASKING
+  const runningNow = isRunning(item)
   const to = desktop && item.target.session ? `/ide/${item.target.session}` : item.url
   return (
     <div
@@ -380,7 +432,9 @@ function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
     >
       <span
         aria-hidden
-        className={`inline-block h-2 w-2 rounded-full ${asking ? 'bg-warning' : 'bg-muted-foreground/40'}`}
+        className={`inline-block h-2 w-2 rounded-full ${
+          asking ? 'bg-warning' : runningNow ? 'animate-pulse bg-success' : 'bg-muted-foreground/40'
+        }`}
       />
       <Link
         to={to}
@@ -389,16 +443,17 @@ function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
       >
         {item.title}
         {asking && <span className="ml-2 text-[11px] text-warning">needs an answer</span>}
+        {item.reason === 'Running on its own' && <span className="ml-2 text-[11px] text-muted-foreground">auto</span>}
       </Link>
       <span className="hidden max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground empty:border-0 sm:inline">
         {showAgent ? item.agent_slug : ''}
       </span>
       <span className="hidden max-w-[120px] truncate text-[11px] text-muted-foreground sm:inline">{workspaceName ?? ''}</span>
       <span
-        className="text-right text-[11px] tabular-nums text-muted-foreground"
+        className={`text-right text-[11px] tabular-nums ${runningNow ? 'text-success' : 'text-muted-foreground'}`}
         title={new Date(item.last_activity_at).toLocaleString()}
       >
-        {shortAge(item.last_activity_at, new Date())}
+        {runningNow ? 'live' : shortAge(item.last_activity_at, new Date())}
       </span>
       <button
         type="button"

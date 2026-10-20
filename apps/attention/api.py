@@ -27,7 +27,8 @@ def list_attention(request: HttpRequest) -> AttentionOut:
     next message, tasks asking you to decide or parked on you, requests to join a
     workspace you manage — as `now` (something happened in the last few days),
     `quiet` (nothing has for a while) and `hidden` (taken off your list by you;
-    each returns when something new happens on it). Newest first."""
+    each returns when something new happens on it), plus `running` — not
+    waiting on you, but yours and being worked right now. Newest first."""
     groups = services.attention(request, slugs=wsvc.request_workspace_slugs(request))
     return AttentionOut(**{k: [AttentionRowOut(**asdict(i)) for i in v] for k, v in groups.items()})
 

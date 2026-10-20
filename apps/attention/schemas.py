@@ -25,6 +25,8 @@ class AttentionOut(Schema):
     quiet: list[AttentionRowOut]
     # Hidden by this person; each comes back when something new happens on it.
     hidden: list[AttentionRowOut]
+    # Not waiting on you: yours and in flight right now (a session being worked).
+    running: list[AttentionRowOut] = Field(default_factory=list)
 
 
 class HideIn(Schema):

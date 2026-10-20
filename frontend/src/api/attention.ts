@@ -15,7 +15,7 @@ const normalize = (i: AttentionRowWire): AttentionRow => ({
   actions: Array.from(i.actions ?? []),
   target: { ...(i.target ?? {}) },
 })
-export type Attention = { now: AttentionRow[]; quiet: AttentionRow[]; hidden: AttentionRow[] }
+export type Attention = { now: AttentionRow[]; quiet: AttentionRow[]; hidden: AttentionRow[]; running: AttentionRow[] }
 
 /**
  * The workspaces to pin so that, between them, every workspace you are in is
@@ -44,11 +44,12 @@ function unwrap<T>(res: { data?: T; error?: unknown; response?: { status: number
 async function readOne(workspace: string): Promise<Attention> {
   const res = await apiV2.GET('/api/attention/', { headers: { [WORKSPACE_HEADER]: workspace } })
   // openapi-fetch's Readable<T> degrades readonly arrays to ArrayLike; read the plain shape.
-  const body = unwrap(res, 'listAttention') as unknown as Record<'now' | 'quiet' | 'hidden', AttentionRowWire[]>
+  const body = unwrap(res, 'listAttention') as unknown as Record<'now' | 'quiet' | 'hidden' | 'running', AttentionRowWire[]>
   return {
     now: Array.from(body.now, normalize),
     quiet: Array.from(body.quiet, normalize),
     hidden: Array.from(body.hidden, normalize),
+    running: Array.from(body.running ?? [], normalize),
   }
 }
 
@@ -58,9 +59,9 @@ const newestFirst = (a: AttentionRow, b: AttentionRow) =>
 /** Everything waiting on you across every workspace you are in, newest first. */
 export async function loadAttention(workspaces: readonly WorkspaceOut[]): Promise<Attention> {
   const parts = await Promise.all(attentionPins(workspaces).map(readOne))
-  const merged: Attention = { now: [], quiet: [], hidden: [] }
+  const merged: Attention = { now: [], quiet: [], hidden: [], running: [] }
   const seen = new Set<string>()
-  for (const group of ['now', 'quiet', 'hidden'] as const) {
+  for (const group of ['now', 'quiet', 'hidden', 'running'] as const) {
     for (const part of parts) {
       for (const item of part[group]) {
         if (seen.has(item.key)) continue
