@@ -26,7 +26,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents import creation
-from apps.agents.models import Agent, AgentBootstrapReport, AgentSkill
+from apps.agents.models import Agent, AgentBootstrapReport, AgentCredential, AgentSkill
 from apps.agents.setup import scaffold_skill_names, setup_steps
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces.models import WorkspaceMembership
@@ -351,6 +351,21 @@ def test_a_mailbox_a_box_has_proved_is_done_without_a_stored_token(editor, ws):
     AgentBootstrapReport.objects.filter(agent=agent).update(turn_ready=True)
     mailbox = next(s for s in setup_steps(agent) if s["key"] == "mailbox")
     assert mailbox["status"] == "done" and "cloud-ec2-2 reads it for turns" in mailbox["detail"]
+
+
+def test_a_box_that_cannot_read_the_mailbox_outranks_the_stored_token(editor, ws):
+    """lex, 2026-10-20: canopy-web held its gog-token, cloud-ec2-2 reported it could not
+    find one, and the checklist read "done" off the stored token. The box is the answer."""
+    agent = _agent(ws, editor)
+    AgentCredential.objects.create(agent=agent, name="gog-token", value_enc="t")
+    assert _status(agent)["mailbox"] == "done"
+    AgentBootstrapReport.objects.create(
+        agent=agent, runner_name="cloud-ec2-2", mailbox_ok=False,
+        detail="token: no gog token in the vault nor canopy-web; client creds missing")
+    mailbox = next(s for s in setup_steps(agent) if s["key"] == "mailbox")
+    assert mailbox["status"] == "todo"
+    assert mailbox["detail"].startswith("cloud-ec2-2 cannot read scout@example.org: token: no gog token")
+    assert "client creds" not in mailbox["detail"]
 
 
 def test_the_scaffolds_own_skills_are_not_a_job(editor, ws):
