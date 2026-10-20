@@ -60,6 +60,24 @@ describe('HomePage', () => {
     expect(await screen.findByText('Send EOI?')).toBeTruthy()
   })
 
+  it('groups sessions by agent or project, newest group first', async () => {
+    const t = (h: number) => new Date(Date.now() - h * 36e5).toISOString()
+    loadAttention.mockResolvedValue({
+      now: [
+        chat({ key: 'session:a', title: 'Repo chat', agent_slug: 'hal', project: 'canopy-web', last_activity_at: t(1) }),
+        chat({ key: 'session:b', title: 'Eva chat', agent_slug: 'eva', project: '', last_activity_at: t(2) }),
+        chat({ key: 'session:c', title: 'Older repo chat', agent_slug: 'hal', project: 'canopy-web', last_activity_at: t(3) }),
+      ],
+      quiet: [],
+      hidden: [],
+    })
+    show()
+    await screen.findByText('Repo chat')
+    const text = document.body.textContent ?? ''
+    const order = ['canopy-web', 'Repo chat', 'Older repo chat', 'eva', 'Eva chat'].map((w) => text.indexOf(w))
+    expect(order).toEqual([...order].sort((x, y) => x - y))
+  })
+
   it('approves a task in place, pinned to its workspace', async () => {
     loadAttention.mockResolvedValue({ now: [item({})], quiet: [], hidden: [] })
     show()

@@ -183,9 +183,26 @@ export function HomePage(): JSX.Element {
           {data && sessions.length === 0 && (
             <p className="px-3 py-4 text-[13px] text-muted-foreground">No session is waiting on you.</p>
           )}
-          {shown.map((item) => (
-            <SessionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
-              onHide={onHide} />
+          {groupSessions(shown).map((g) => (
+            <div key={g.key} className="border-t border-border first:border-t-0">
+              <div className="flex items-center gap-1.5 bg-card/60 px-3 py-1 text-[12px] font-semibold text-foreground-secondary">
+                <span className="truncate">{g.key || 'No project'}</span>
+                {g.isAgent && <span className="font-normal text-muted-foreground">agent</span>}
+                <span className="ml-auto flex shrink-0 items-center gap-2 font-normal text-[11px] text-muted-foreground">
+                  {g.asking > 0 && (
+                    <span className="flex items-center gap-1" title="needs an answer">
+                      <span aria-hidden className="inline-block h-2 w-2 rounded-full bg-warning" />
+                      {g.asking}
+                    </span>
+                  )}
+                  <span>{g.rows.length}</span>
+                </span>
+              </div>
+              {g.rows.map((item) => (
+                <SessionRow key={item.key} item={item} workspaceName={multi ? names.get(item.workspace) : undefined}
+                  showAgent={!g.isAgent} onHide={onHide} />
+              ))}
+            </div>
           ))}
           {sessions.length > SHOWN && (
             <button type="button" onClick={() => setShowAll((v) => !v)}
@@ -325,20 +342,40 @@ function useDesktop(): boolean {
   return desktop
 }
 
+const ASKING = 'Needs an answer'
+
+/** Sessions folded the way /ide folds them — one group per emdash project (a
+ *  repo, or an agent's own) — but ordered by each group's newest session, since
+ *  Home is about what just happened. Rows keep their newest-first order. */
+function groupSessions(rows: AttentionRow[]) {
+  const groups = new Map<string, { key: string; isAgent: boolean; asking: number; rows: AttentionRow[] }>()
+  for (const r of rows) {
+    const key = r.project || r.agent_slug
+    const g = groups.get(key) ?? { key, isAgent: false, asking: 0, rows: [] }
+    g.rows.push(r)
+    g.isAgent ||= r.agent_slug === key
+    if (r.reason === ASKING) g.asking += 1
+    groups.set(key, g)
+  }
+  return [...groups.values()]
+}
+
 /** One session on one line, the way /ide lists them: a state dot (amber when a
  *  dialog is waiting on you), the title, its agent and workspace, and its age.
  *  The agent's last words are the row's tooltip, not a second line. */
-function SessionRow({ item, workspaceName, onHide }: {
+function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
   item: AttentionRow
   workspaceName?: string
+  /** Off inside an agent's own group, where its name is the heading. */
+  showAgent?: boolean
   onHide: (items: AttentionRow[], days?: number) => Promise<void>
 }): JSX.Element {
   const desktop = useDesktop()
-  const asking = item.reason === 'Needs an answer'
+  const asking = item.reason === ASKING
   const to = desktop && item.target.session ? `/ide/${item.target.session}` : item.url
   return (
     <div
-      className="group grid grid-cols-[8px_minmax(0,1fr)_auto_auto] items-center gap-2 border-t border-border px-3 py-1.5 text-[13px] first:border-t-0 hover:bg-muted sm:grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem_auto]"
+      className="group grid grid-cols-[8px_minmax(0,1fr)_auto_auto] items-center gap-2 border-t border-border py-1.5 pl-5 pr-3 text-[13px] hover:bg-muted sm:grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem_auto]"
       data-testid="attention-row"
     >
       <span
@@ -353,8 +390,8 @@ function SessionRow({ item, workspaceName, onHide }: {
         {item.title}
         {asking && <span className="ml-2 text-[11px] text-warning">needs an answer</span>}
       </Link>
-      <span className="hidden max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground sm:inline">
-        {item.agent_slug || 'chat'}
+      <span className="hidden max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground empty:border-0 sm:inline">
+        {showAgent ? item.agent_slug : ''}
       </span>
       <span className="hidden max-w-[120px] truncate text-[11px] text-muted-foreground sm:inline">{workspaceName ?? ''}</span>
       <span
