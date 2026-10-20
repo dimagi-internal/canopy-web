@@ -6049,6 +6049,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agent-roster/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Every agent you can see, with what it is doing
+         * @description One row per agent: open tasks and those waiting on a person, active
+         *     projects, skills, schedules, and its turns — the last one and how it ended,
+         *     and how many ran and failed in the last 7 days.
+         */
+        readonly get: operations["agent_roster"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-projects/": {
         readonly parameters: {
             readonly query?: never;
@@ -9506,6 +9528,69 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/attention/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What is waiting on you
+         * @description Everything waiting on the caller in scope — chats whose agent needs your
+         *     next message, tasks asking you to decide or parked on you, requests to join a
+         *     workspace you manage — as `now` (something happened in the last few days),
+         *     `quiet` (nothing has for a while) and `let_go` (set aside by you; each returns
+         *     when something new happens on it). Newest first.
+         */
+        readonly get: operations["list_attention"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/attention/let-go": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Set things aside without deciding them
+         * @description Takes `keys` off your list without answering them: nothing is approved,
+         *     declined or sent, and the agent is not told. Each returns when something new
+         *     happens on it, or after `days` when given. Touches only your own list.
+         */
+        readonly post: operations["let_go"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/attention/let-go/{key}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Bring something you let go back */
+        readonly delete: operations["take_back"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -23313,6 +23398,78 @@ export interface components {
             readonly replace: boolean;
         };
         /**
+         * AgentRosterRowOut
+         * @description One agent as a row in the workspace's agent list: what it is, and what it
+         *     is doing — the counts its own pages count with (`health._counts`), and its
+         *     turns as `/api/harness/turns/` would list them.
+         */
+        readonly AgentRosterRowOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Avatar Url */
+            readonly avatar_url: string;
+            /** Email */
+            readonly email: string;
+            /** Owner Email */
+            readonly owner_email?: string | null;
+            /**
+             * Turn Mode
+             * @default manual
+             * @enum {string}
+             */
+            readonly turn_mode: "manual" | "auto";
+            /** Url */
+            readonly url: string;
+            /**
+             * Skills
+             * @default 0
+             */
+            readonly skills: number;
+            /**
+             * Schedules
+             * @default 0
+             */
+            readonly schedules: number;
+            /**
+             * Active Projects
+             * @default 0
+             */
+            readonly active_projects: number;
+            /**
+             * Open Tasks
+             * @default 0
+             */
+            readonly open_tasks: number;
+            /**
+             * Waiting Tasks
+             * @default 0
+             */
+            readonly waiting_tasks: number;
+            /** Last Turn At */
+            readonly last_turn_at?: string | null;
+            /**
+             * Last Turn Status
+             * @default
+             */
+            readonly last_turn_status: string;
+            /**
+             * Turns 7D
+             * @default 0
+             */
+            readonly turns_7d: number;
+            /**
+             * Failed 7D
+             * @default 0
+             */
+            readonly failed_7d: number;
+        };
+        /**
          * WorkspaceProjectIn
          * @description Create a workspace project directly: owned by `workspace` — the steward's
          *     own (default) or one below it.
@@ -28371,6 +28528,68 @@ export interface components {
             readonly next_action: string;
             /** Updated At */
             readonly updated_at?: string | null;
+        };
+        /** AttentionOut */
+        readonly AttentionOut: {
+            /** Now */
+            readonly now: readonly components["schemas"]["AttentionRowOut"][];
+            /** Quiet */
+            readonly quiet: readonly components["schemas"]["AttentionRowOut"][];
+            /** Let Go */
+            readonly let_go: readonly components["schemas"]["AttentionRowOut"][];
+        };
+        /** AttentionRowOut */
+        readonly AttentionRowOut: {
+            /** Key */
+            readonly key: string;
+            /** Kind */
+            readonly kind: string;
+            /** Reason */
+            readonly reason: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Body
+             * @default
+             */
+            readonly body: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Agent Slug
+             * @default
+             */
+            readonly agent_slug: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Last Activity At
+             * Format: date-time
+             */
+            readonly last_activity_at: string;
+            /** Actions */
+            readonly actions?: readonly string[];
+            /** Target */
+            readonly target?: {
+                readonly [key: string]: string;
+            };
+        };
+        /** LetGoOut */
+        readonly LetGoOut: {
+            /** Count */
+            readonly count: number;
+        };
+        /** LetGoIn */
+        readonly LetGoIn: {
+            /** Keys */
+            readonly keys: readonly string[];
+            /** Days */
+            readonly days?: number | null;
         };
         /** EngagementViewOut */
         readonly EngagementViewOut: {
@@ -39465,6 +39684,26 @@ export interface operations {
             };
         };
     };
+    readonly agent_roster: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentRosterRowOut"][];
+                };
+            };
+        };
+    };
     readonly list_workspace_projects: {
         readonly parameters: {
             readonly query?: {
@@ -43626,6 +43865,72 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HuddleOut"];
+                };
+            };
+        };
+    };
+    readonly list_attention: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AttentionOut"];
+                };
+            };
+        };
+    };
+    readonly let_go: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LetGoIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LetGoOut"];
+                };
+            };
+        };
+    };
+    readonly take_back: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LetGoOut"];
                 };
             };
         };

@@ -523,3 +523,19 @@ def test_a_viewer_answering_a_question_wakes_the_agent(c):
                        content_type="application/json")
     assert r.status_code == 200, r.content
     assert len(r.json()["turn_ids"]) == 1 and r.json()["action"]["status"] == "applied"
+
+
+def test_agent_roster_counts_what_the_agent_is_doing(c):
+    client, agent, u = c
+    AgentProject.objects.create(agent=agent, ext_id="P1", name="IDM", status="active")
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="q", ask_kind="question")
+    AgentTask.objects.create(agent=agent, ext_id="T2", title="w", status="in_progress")
+    Turn.objects.create(agent=agent, workspace=agent.workspace, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+                        status=Turn.FAILED)
+    rows = client.get("/api/w/connect/agent-roster/").json()
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["slug"], row["url"], row["owner_email"]) == ("eva", "/w/connect/agents/eva", "jj@dimagi.com")
+    assert (row["active_projects"], row["open_tasks"], row["waiting_tasks"]) == (1, 2, 1)
+    assert (row["turns_7d"], row["failed_7d"], row["last_turn_status"]) == (1, 1, "failed")
+    assert client.get("/api/w/elsewhere/agent-roster/").status_code == 404

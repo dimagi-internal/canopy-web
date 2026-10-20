@@ -1,137 +1,61 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { WorkspaceBadge } from '@/components/WorkspaceBadge'
-import { listAgents, type AgentOut } from '@/api/agents'
-import { agentHref } from './agentHref'
-import { WorkspaceProjectsSection } from './projects/WorkspaceProjects'
+import { listAgentRoster, type AgentRosterRow } from '@/api/agents'
+import { relativeTime } from '@/components/activity/turnLog'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
-function formatDate(s: string): string {
-  return new Date(s).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
-}
+// The workspace's agents, one row each: who it is and what it is doing — tasks
+// open and waiting on a person, active projects, and its turns (the last one and
+// how it ended, and how many ran and failed this week). A table, so the fleet
+// can be scanned; each row opens the agent's own workspace.
 
-function CountStat({ value, label }: { value: number; label: string }) {
-  return (
-    <div className="flex flex-col">
-      <span className="text-base font-semibold text-foreground leading-none">{value}</span>
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground mt-1">{label}</span>
-    </div>
+const FAILED = new Set(['failed', 'lost'])
+
+function Avatar({ agent }: { agent: AgentRosterRow }) {
+  return agent.avatar_url ? (
+    <img src={agent.avatar_url} alt="" className="h-7 w-7 shrink-0 rounded-full border border-border object-cover" />
+  ) : (
+    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/90 text-[12px] font-semibold text-primary-foreground">
+      {(agent.name || agent.slug).slice(0, 1).toUpperCase()}
+    </span>
   )
 }
 
-function AgentCard({ agent }: { agent: AgentCardData }) {
+function Num({ n, warn }: { n: number; warn?: boolean }) {
   return (
-    <Link
-      to={agentHref(agent)}
-      className="group block bg-card border border-border rounded-xl p-5 hover:border-primary/40 hover:bg-card/80 transition-colors"
-    >
-      <div className="flex items-start gap-3">
-        {agent.avatar_url ? (
-          <img
-            src={agent.avatar_url}
-            alt=""
-            className="h-10 w-10 rounded-full shrink-0 object-cover border border-border"
-          />
-        ) : (
-          <span className="h-10 w-10 rounded-full shrink-0 bg-primary/90 text-white text-sm font-semibold flex items-center justify-center">
-            {(agent.name || agent.slug).slice(0, 1).toUpperCase()}
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <h3 className="text-[15px] font-semibold text-foreground leading-snug group-hover:text-primary transition-colors truncate">
-              {agent.name}
-            </h3>
-            <WorkspaceBadge workspace={agent.workspace} />
-          </div>
-          {agent.email && (
-            <p className="text-[11px] text-muted-foreground truncate">{agent.email}</p>
-          )}
-        </div>
-      </div>
-
-      {agent.description && (
-        <p className="text-[13px] text-foreground-secondary leading-relaxed mt-3 line-clamp-3">
-          {agent.description}
-        </p>
-      )}
-
-      <div className="flex items-end gap-5 mt-4 pt-4 border-t border-border">
-        <CountStat value={agent.sync_count} label="Syncs" />
-        <CountStat value={agent.skill_count} label="Skills" />
-      </div>
-
-      <p className="text-[11px] text-muted-foreground mt-3">
-        {agent.latest_sync_at
-          ? `Last sync ${formatDate(agent.latest_sync_at)}`
-          : 'No syncs yet'}
-      </p>
-    </Link>
+    <span className={`tabular-nums ${n === 0 ? 'text-muted-foreground' : warn ? 'font-medium text-warning' : 'text-foreground'}`}>
+      {n}
+    </span>
   )
-}
-
-// AgentOut from the list endpoint is the bare shape, but the workspace cards
-// want the counts + latest_sync_at that only AgentDetailOut carries. The list
-// endpoint returns AgentOut; counts default to 0 when absent so the same card
-// renders for both shapes.
-type AgentCardData = AgentOut & {
-  sync_count: number
-  skill_count: number
-  latest_sync_at: string | null
-}
-
-function toCardData(a: AgentOut): AgentCardData {
-  const anyA = a as Partial<AgentCardData>
-  return {
-    ...a,
-    sync_count: anyA.sync_count ?? 0,
-    skill_count: anyA.skill_count ?? 0,
-    latest_sync_at: anyA.latest_sync_at ?? null,
-  }
 }
 
 export function AgentsPage() {
   const { workspace = '' } = useParams<{ workspace: string }>()
   const canCreate = roleAllows(useWorkspaceRole(workspace), 'agent.work')
-  const [agents, setAgents] = useState<AgentCardData[]>([])
-  const [loading, setLoading] = useState(true)
+  const [agents, setAgents] = useState<AgentRosterRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    void (async () => {
-      try {
-        const page = await listAgents({ limit: 200 })
-        if (!cancelled) setAgents(page.items.map(toCardData))
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load agents')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
+    listAgentRoster()
+      .then((rows) => !cancelled && setAgents(rows))
+      .catch((err: unknown) => !cancelled && setError(err instanceof Error ? err.message : 'Failed to load agents'))
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [workspace])
+
+  const now = new Date()
 
   return (
     <div>
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-foreground">Agents</h1>
-          <p className="text-[13px] text-muted-foreground mt-1">
-            Each agent's workspace — its projects, tasks, turns and skill catalog. Pick one to
-            open its workspace. To use one in your own Claude Code,{' '}
-            <Link to="/get-started" className="text-primary hover:underline">
-              get started
-            </Link>
-            .
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            Every agent in this workspace and what it is doing. To use one in your own Claude Code,{' '}
+            <Link to="/get-started" className="text-primary hover:underline">get started</Link>.
           </p>
         </div>
         {canCreate && (
@@ -144,43 +68,65 @@ export function AgentsPage() {
         )}
       </div>
 
-      {workspace && <WorkspaceProjectsSection workspace={workspace} />}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {!agents && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
 
-      {error && (
-        <div className="flex items-center justify-center h-48 text-destructive text-sm">{error}</div>
-      )}
-
-      {loading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              className="bg-card border border-border rounded-xl p-5 animate-pulse"
-              style={{ animationDelay: `${i * 80}ms` }}
-            >
-              <div className="flex items-center gap-3 mb-4">
-                <div className="h-10 w-10 rounded-full bg-muted" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-4 bg-muted rounded w-2/3" />
-                  <div className="h-3 bg-muted/70 rounded w-1/2" />
-                </div>
-              </div>
-              <div className="h-3 bg-muted/70 rounded w-full mb-2" />
-              <div className="h-3 bg-muted/70 rounded w-4/5" />
-            </div>
-          ))}
+      {agents && agents.length > 0 && (
+        <div className="overflow-x-auto rounded border border-border">
+          <table className="w-full text-[13px]">
+            <thead className="bg-card text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Agent</th>
+                <th className="px-3 py-2 font-medium">Last turn</th>
+                <th className="px-3 py-2 text-right font-medium" title="Turns in the last 7 days">Turns 7d</th>
+                <th className="px-3 py-2 text-right font-medium" title="Failed or lost in the last 7 days">Failed</th>
+                <th className="px-3 py-2 text-right font-medium" title="Tasks not done">Open</th>
+                <th className="px-3 py-2 text-right font-medium" title="Open tasks waiting on a person">Waiting</th>
+                <th className="px-3 py-2 text-right font-medium" title="Active projects">Projects</th>
+                <th className="px-3 py-2 font-medium">Mode</th>
+                <th className="px-3 py-2 font-medium">Owner</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agents.map((a) => (
+                <tr key={a.slug} className="border-t border-border align-top hover:bg-card/60">
+                  <td className="px-3 py-2">
+                    <Link to={a.url} className="flex items-start gap-2.5">
+                      <Avatar agent={a} />
+                      <span className="min-w-0">
+                        <span className="block font-medium text-foreground hover:text-primary">{a.name}</span>
+                        {a.description && <span className="line-clamp-1 max-w-md text-[12px] text-muted-foreground">{a.description}</span>}
+                      </span>
+                    </Link>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2">
+                    {a.last_turn_at ? (
+                      <span className={FAILED.has(a.last_turn_status) ? 'text-destructive' : 'text-foreground-secondary'}
+                        title={`${a.last_turn_status} · ${new Date(a.last_turn_at).toLocaleString()}`}>
+                        {relativeTime(a.last_turn_at, now)}
+                        {FAILED.has(a.last_turn_status) && ' · failed'}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">never</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right"><Num n={a.turns_7d} /></td>
+                  <td className="px-3 py-2 text-right">
+                    {a.failed_7d ? <span className="tabular-nums font-medium text-destructive">{a.failed_7d}</span> : <Num n={0} />}
+                  </td>
+                  <td className="px-3 py-2 text-right"><Num n={a.open_tasks} /></td>
+                  <td className="px-3 py-2 text-right"><Num n={a.waiting_tasks} warn /></td>
+                  <td className="px-3 py-2 text-right"><Num n={a.active_projects} /></td>
+                  <td className="px-3 py-2 text-foreground-secondary">{a.turn_mode}</td>
+                  <td className="px-3 py-2 text-foreground-secondary">{a.owner_email ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {!loading && !error && agents.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {agents.map((a) => (
-            <AgentCard key={a.id} agent={a} />
-          ))}
-        </div>
-      )}
-
-      {!loading && !error && agents.length === 0 && (
+      {agents && agents.length === 0 && (
         <div className="rounded-lg border border-border bg-card p-4">
           <h2 className="text-sm font-semibold text-foreground">No agents in this workspace</h2>
           <p className="mt-2 text-[13px] leading-relaxed text-foreground-secondary">

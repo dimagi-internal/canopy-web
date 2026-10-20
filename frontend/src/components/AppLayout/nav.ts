@@ -5,19 +5,20 @@
  * testable without mounting the shell (which pulls in auth, workspaces,
  * presence sockets and the AI-status poll).
  *
- * The nav is FOUR MENUS, not a flat row. It was a flat row of 15 links, which
- * outgrew the header: the inline nav only appeared at `xl` (1280px) and even
- * there it ran past the viewport, so it carried an `overflow-x-auto` and every
- * page got a horizontal scrollbar — while 1280px is Desktop Chrome's default
- * and most laptops sit at or below it. Grouping is what buys the room back;
- * the breakpoint then drops to `md` so the nav is actually visible on those
- * laptops instead of collapsing into the hamburger.
+ * The header answers the four questions a person arrives with, one entry each:
  *
- * Every item lives in a group — deliberately no bare top-level links mixed in
- * with menu triggers, so a reader never has to guess which labels navigate and
- * which open. The workspace index has no entry of its own: it lands on Agents
- * (the workbench Projects page it used to render was retired 2026-10-06), and
- * the `Canopy.` wordmark already links there.
+ *   Home       — what needs me, and what changed (personal, every workspace)
+ *   Agents ▾   — what the agents are doing, will do, and run on
+ *   Projects ▾ — the work: projects, and what they produce (demos, shareouts)
+ *   Workspace ▾ — who is in it and how it is set up
+ *
+ * Chats sits beside Home as a plain link: it is where you talk to an agent, not
+ * a set of pages to browse. Help (Guide, Get started, System) is not workspace
+ * business and has its own `?` menu; personal pages are in the account menu.
+ *
+ * Links and menus are told apart by the chevron a menu carries. The menus are
+ * what keeps the header inside a laptop's width: the flat row of 15 links it
+ * replaced needed 1280px and still overflowed.
  */
 
 import { roleAllows, type Capability } from '@/lib/workspaceRoles'
@@ -34,67 +35,62 @@ export interface NavItem {
   capability?: Capability
 }
 
-export interface NavGroup {
-  label: string
-  items: NavItem[]
-}
+/** One header entry: a plain link, or a menu of links. */
+export type NavEntry =
+  | { kind: 'link'; item: NavItem }
+  | { kind: 'menu'; label: string; items: NavItem[] }
 
-export const NAV_GROUPS: NavGroup[] = [
+export const NAV: NavEntry[] = [
+  // Personal, across every workspace you are in — see pages/home.
+  { kind: 'link', item: { path: '/home', label: 'Home', tenant: false } },
+  { kind: 'link', item: { path: 'chat', label: 'Chats', tenant: true } },
   {
-    // What you are working on right now.
-    label: 'Work',
+    kind: 'menu',
+    label: 'Agents',
     items: [
-      { path: 'chat', label: 'Chats', tenant: true },
-    ],
-  },
-  {
-    // The agents, and what they are doing / will do / have done.
-    // Supervisor is not here: it is YOUR inbox across every workspace you are
-    // in (and the phone app's start page), so it lives in the account menu.
-    label: 'Fleet',
-    items: [
-      { path: 'agents', label: 'Agents', tenant: true },
-      { path: '/activity', label: 'Activity', tenant: false },
+      { path: 'agents', label: 'All agents', tenant: true },
+      { path: 'agents/new', label: 'New agent', tenant: true, capability: 'agent.work' },
       // The fleet syncing as a team: what each agent is on, and what they agree to push.
       { path: 'huddles', label: 'Huddles', tenant: true },
-      { path: '/schedules', label: 'Schedule', tenant: false },
+      // What will fire, and what did. Both scoped to this workspace, like every
+      // other entry in the menu; the cross-workspace twins are reached from Home.
+      { path: 'schedules', label: 'Schedules', tenant: true },
+      { path: 'activity', label: 'Turn log', tenant: true },
+      // What the agents run on. Admin pages (the map and its tables are `logs.read`).
+      { path: 'settings/topology', label: 'Runners', tenant: true, capability: 'logs.read' },
     ],
   },
   {
-    // The demo-driven-development artifacts.
-    label: 'Demos',
+    kind: 'menu',
+    label: 'Projects',
     items: [
-      { path: 'ddd', label: 'DDD', tenant: true },
-      { path: 'walkthroughs', label: 'Walkthroughs', tenant: true },
-      // The shared arcs — several narratives as one link. Without this entry a
-      // board was reachable only from the link it was last pasted into.
+      { path: 'projects', label: 'All projects', tenant: true },
+      // What projects produce for people to read and review.
       { path: 'storyboards', label: 'Storyboards', tenant: true },
+      { path: 'walkthroughs', label: 'Walkthroughs', tenant: true },
+      { path: 'ddd', label: 'DDD runs', tenant: true },
+      { path: 'shareouts', label: 'Shareouts', tenant: true },
     ],
   },
   {
-    // Things published for, or about, the team — plus the workspace's own
-    // admin. Shareouts live here rather than under Demos: it is work you
-    // publish for teammates to read, which is the workspace's business, not a
-    // demo artifact. Shared transcripts (/sessions) are deliberately NOT a
-    // menu item: a shared transcript is reached by its own /share/<token> link,
-    // and listing them beside Chats read as a second, emptier kind of session.
+    kind: 'menu',
     label: 'Workspace',
     items: [
-      { path: 'shareouts', label: 'Shareouts', tenant: true },
-      { path: 'timeline', label: 'Timeline', tenant: true },
-      // Is everything set up right (agents, the vault) and how is it used,
-      // tree-wide. One entry; Analytics is the page's second tab.
+      { path: 'settings/members', label: 'Members', tenant: true },
+      // Is everything set up right and how is it used, tree-wide. Analytics and
+      // Network are its tabs.
       { path: 'health', label: 'Health', tenant: true, capability: 'logs.read' },
-      // ONE entry for the workspace's configuration. Members, Slack and
-      // Inbound were three of the four sections behind it; the fourth
-      // (Connected sites) was in no menu at all, which is what a surface with
-      // no home looks like.
+      { path: 'timeline', label: 'Timeline', tenant: true },
       { path: 'settings', label: 'Settings', tenant: true },
-      { path: '/system', label: 'System', tenant: false },
-      { path: '/guide', label: 'Guide', tenant: false },
-      { path: '/get-started', label: 'Get started', tenant: false },
     ],
   },
+]
+
+/** The `?` menu: how canopy works, the same in every workspace. */
+export const HELP_ITEMS: NavItem[] = [
+  { path: '/guide', label: 'Guide', tenant: false },
+  { path: '/get-started', label: 'Get started', tenant: false },
+  { path: '/system', label: 'System', tenant: false },
 ]
 
 /** A destination with its href already resolved against the active tenant. */
@@ -103,38 +99,50 @@ export interface ResolvedNavItem {
   label: string
 }
 
-export interface ResolvedNavGroup {
-  label: string
-  items: ResolvedNavItem[]
+export type ResolvedNavEntry =
+  | { kind: 'link'; item: ResolvedNavItem }
+  | { kind: 'menu'; label: string; items: ResolvedNavItem[] }
+
+function resolveItem(
+  item: NavItem,
+  opts: { active: string | null; role?: string | null },
+): ResolvedNavItem[] {
+  if (!item.tenant) return [{ href: item.path, label: item.label }]
+  if (!opts.active) return []
+  if (item.capability && !roleAllows(opts.role, item.capability)) return []
+  return [{ href: `/w/${opts.active}${item.path ? `/${item.path}` : ''}`, label: item.label }]
 }
 
 /**
- * Resolve the groups for the current viewer.
+ * Resolve the header for the current viewer.
  *
  * Anonymous visitors get nothing: they only ever reach the app shell on a
  * public link route, and every nav destination is behind the login gate, so
  * the whole nav would be dead links that bounce to sign-in.
  *
  * Tenant items are omitted until the active workspace is known, which avoids
- * linking to a broken `/w//…` on first paint. A group left with no items
+ * linking to a broken `/w//…` on first paint. A menu left with no items
  * renders no trigger at all rather than an empty menu.
  */
-export function resolveNavGroups(opts: {
+export function resolveNav(opts: {
   isAuthed: boolean
   active: string | null
   /** The viewer's role in `active`, for items that name a `capability`. */
   role?: string | null
-}): ResolvedNavGroup[] {
+}): ResolvedNavEntry[] {
   if (!opts.isAuthed) return []
-  return NAV_GROUPS.flatMap((group) => {
-    const items = group.items.flatMap((item) => {
-      if (!item.tenant) return [{ href: item.path, label: item.label }]
-      if (!opts.active) return []
-      if (item.capability && !roleAllows(opts.role, item.capability)) return []
-      return [{ href: `/w/${opts.active}${item.path ? `/${item.path}` : ''}`, label: item.label }]
-    })
-    return items.length > 0 ? [{ label: group.label, items }] : []
+  return NAV.flatMap((entry): ResolvedNavEntry[] => {
+    if (entry.kind === 'link') {
+      return resolveItem(entry.item, opts).map((item) => ({ kind: 'link' as const, item }))
+    }
+    const items = entry.items.flatMap((item) => resolveItem(item, opts))
+    return items.length > 0 ? [{ kind: 'menu', label: entry.label, items }] : []
   })
+}
+
+/** Every resolved destination an entry stands for. */
+export function entryItems(entry: ResolvedNavEntry): ResolvedNavItem[] {
+  return entry.kind === 'link' ? [entry.item] : entry.items
 }
 
 /**
@@ -149,9 +157,29 @@ export function isNavItemActive(href: string, pathname: string): boolean {
   return pathname === href || (!isIndex && pathname.startsWith(href + '/'))
 }
 
-/** A group's trigger is active when the current route is one of its items. */
-export function isNavGroupActive(group: ResolvedNavGroup, pathname: string): boolean {
-  return group.items.some((item) => isNavItemActive(item.href, pathname))
+/**
+ * The one item the current route belongs to, across the whole header: the
+ * LONGEST matching href. Settings and Runners (settings/topology) both prefix
+ * /w/x/settings/topology/runners; only the more specific one is the page.
+ */
+export function activeHref(entries: ResolvedNavEntry[], pathname: string): string | null {
+  let best: string | null = null
+  for (const entry of entries) {
+    for (const { href } of entryItems(entry)) {
+      if (isNavItemActive(href, pathname) && (!best || href.length > best.length)) best = href
+    }
+  }
+  return best
+}
+
+/** An entry is active when the current route's item is one of its own. */
+export function isNavEntryActive(
+  entry: ResolvedNavEntry,
+  entries: ResolvedNavEntry[],
+  pathname: string,
+): boolean {
+  const href = activeHref(entries, pathname)
+  return href !== null && entryItems(entry).some((i) => i.href === href)
 }
 
 /**

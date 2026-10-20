@@ -16,11 +16,25 @@ from apps.api.auth import session_auth
 from apps.api.pagination import DEFAULT_LIMIT_CAP, clamp_limit
 
 from . import services
-from .api import (_agent_for_write, _listed_agent_workspace_ids, _require_workspace_editor,
-                  _visible_agent_workspace_ids, apply_project_patch, project_detail)
-from .models import AgentProject, AgentTask
-from .schemas import (AgentProjectDetailOut, AgentProjectOut, AgentProjectPatch, AgentTaskOut,
-                      KbPublishIn, KbUploadOut, WorkspaceProjectIn)
+from .api import (
+    _agent_for_write,
+    _listed_agent_workspace_ids,
+    _require_workspace_editor,
+    _visible_agent_workspace_ids,
+    apply_project_patch,
+    project_detail,
+)
+from .models import Agent, AgentProject, AgentTask
+from .schemas import (
+    AgentProjectDetailOut,
+    AgentProjectOut,
+    AgentProjectPatch,
+    AgentRosterRowOut,
+    AgentTaskOut,
+    KbPublishIn,
+    KbUploadOut,
+    WorkspaceProjectIn,
+)
 
 router = Router(auth=session_auth, tags=["tasks"])
 
@@ -76,6 +90,52 @@ def list_fleet_projects(request: HttpRequest, status: str = "active",
     for p in projects:
         p._task_count, p._open_task_count, p._waiting_task_count = p.n_tasks, p.n_open, p.n_waiting
     return [AgentProjectOut.model_validate(p) for p in projects]
+
+
+@router.get("/agent-roster/", response=list[AgentRosterRowOut],
+            summary="Every agent you can see, with what it is doing")
+def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
+    """One row per agent: open tasks and those waiting on a person, active
+    projects, skills, schedules, and its turns — the last one and how it ended,
+    and how many ran and failed in the last 7 days."""
+    import datetime as dt
+
+    from django.db.models import Max
+    from django.utils import timezone
+
+    from apps.harness.api import visible_turns_qs
+    from apps.harness.models import Turn
+    from apps.workspaces.services import scoped_path
+
+    from .health import _counts
+
+    visible = _listed_agent_workspace_ids(request)
+    agents = list(Agent.objects.filter(workspace_id__in=visible).select_related("owner").order_by("name"))
+    counts = _counts(agents)
+    since = timezone.now() - dt.timedelta(days=7)
+    failed = [Turn.FAILED, Turn.LOST]
+    turns = visible_turns_qs(request).filter(agent__in=agents).order_by()
+    stats = {r["agent_id"]: r for r in turns.values("agent_id").annotate(
+        last=Max("created_at"),
+        n7=Count("id", filter=Q(created_at__gte=since)),
+        f7=Count("id", filter=Q(created_at__gte=since, status__in=failed)))}
+    last_status = {(r["agent_id"], r["created_at"]): r["status"] for r in turns.filter(
+        created_at__in=[r["last"] for r in stats.values()]).values("agent_id", "created_at", "status")}
+    rows = []
+    for a in agents:
+        c, t = counts.get(a.pk, {}), stats.get(a.pk, {})
+        rows.append(AgentRosterRowOut(
+            slug=a.slug, name=a.name, description=a.description, workspace=a.workspace_id,
+            avatar_url=a.avatar_url, email=a.email, turn_mode=a.turn_mode,
+            owner_email=a.owner.email if a.owner_id else None,
+            url=scoped_path(a.workspace_id, f"/agents/{a.slug}"),
+            skills=c.get("skills", 0), schedules=c.get("schedules", 0),
+            active_projects=c.get("projects", 0), open_tasks=c.get("open_tasks", 0),
+            waiting_tasks=c.get("waiting_tasks", 0),
+            last_turn_at=t.get("last"), last_turn_status=last_status.get((a.pk, t.get("last")), ""),
+            turns_7d=t.get("n7", 0), failed_7d=t.get("f7", 0),
+        ))
+    return rows
 
 
 # ---- workspace projects: owned by a workspace, kept current by a steward ----

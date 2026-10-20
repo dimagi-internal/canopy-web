@@ -46,9 +46,22 @@ Every browser-facing address canopy-web serves. The SPA route table is
 
 ## Tenant-scoped (`/w/:workspace/…`)
 
-- **`/w/:workspace`** (and `/w/:workspace/projects`) → redirects to
-  `/w/:workspace/agents`. An agent's projects and tasks (`AgentProject` /
-  `AgentTask`) are canopy's one project system.
+- **The header** (`frontend/src/components/AppLayout/nav.ts`): **Home** and
+  **Chats** are links; **Agents** (All agents, New agent, Huddles, Schedules,
+  Turn log, Runners), **Projects** (All projects, Storyboards, Walkthroughs, DDD
+  runs, Shareouts) and **Workspace** (Members, Health, Timeline, Settings) are
+  menus, every entry scoped to the active workspace; Guide, Get started and
+  System sit behind `?`; personal pages (account settings, `/people/me`,
+  `/sessions`, `/supervisor`, `/ide`) in the account menu. The active entry is
+  the longest matching href, so Runners (`settings/topology`) and not Settings
+  lights on the topology pages.
+- **`/w/:workspace`** → redirects to `/w/:workspace/agents`. An agent's projects
+  and tasks (`AgentProject` / `AgentTask`) are canopy's one project system.
+- **`/projects`** — every project in the workspace as a row (agent or steward,
+  status, open, waiting, owner, updated): `GET /api/projects/` merged with this
+  workspace's `GET /api/workspace-projects/` (a workspace project kept by a
+  parent workspace's agent is only in the second). Active and proposed by
+  default; a row opens the project's one page on its agent's board.
 - **`/projects/:agent/:ref`** (+ `/people/:person`) → redirects to the
   project's one page, `/agents/:agent/projects/:ref`.
   **An idea is a task with `kind: "idea"`** — never inferred; `work` is the
@@ -58,7 +71,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   subtasks finishing never ship it — its owner or its person marks it done (the
   person may, on `act_on_task`). Every tally on every page is a count over
   `ideas.of_project` (top-level idea tasks), so the views cannot disagree.
-- **`/agents`** — the workspace's agents; editors get **New agent**.
+- **`/agents`** — the workspace's agents as a table (`GET /api/agent-roster/`): last turn and whether it failed, turns and failures in 7 days, open and waiting tasks, active projects, mode, owner; editors get **New agent**.
 - **`/agents/new`** — create an agent (`NewAgentPage`). Name, slug, mandate,
   optional mailbox; then the GitHub owner + repo name and a fine-grained token,
   with links to GitHub's new-repo and new-token forms filled in (the token steps
@@ -383,6 +396,13 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `http://127.0.0.1:<port>/paired?…` with the one-time secret; Decline refuses
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
+- **`/home`** — what is waiting on you across every workspace you are in
+  (`GET /api/attention/`, read once per organisation and merged): **Needs you**
+  (newest first, eight shown), **Gone quiet** (nothing for 3+ days, folded,
+  "Let go of all"), **Let go** (folded, "Bring back"). Tasks are approved,
+  declined or answered in place; **Let go** sets an item aside without deciding
+  it until something new happens on it. Beside it, the active projects you own.
+  `/app` (and an in-app link to `/`) lands here.
 - **`/supervisor`** — cross-fleet screens: Feed (home), **Waiting on you**
   (`GET /api/tasks/?waiting=me`, the same `TaskCard` tagged with its agent,
   actionable in place; `?tab=inbox` lands here), Sessions, Agents, Runners

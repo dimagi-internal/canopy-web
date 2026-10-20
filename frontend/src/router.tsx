@@ -47,6 +47,8 @@ import { PeopleMePage, PersonPageView } from './pages/PeopleMePage'
 import { HcpClientsPage } from './pages/HcpClientsPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { WorkspaceProjectRedirect } from './pages/projects/WorkspaceProjects'
+import { ProjectsPage } from './pages/projects/ProjectsPage'
+import { HomePage } from './pages/home/HomePage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import SessionSharePage from './pages/SessionSharePage'
 import DddReleasePage from './pages/DddReleasePage'
@@ -183,7 +185,7 @@ export function RootRedirect() {
   const { active, loading } = useWorkspace()
   if (loading) return null
   if (!active) return <FirstRunPage />
-  return <Navigate to={`/w/${active}`} replace />
+  return <Navigate to="/home" replace />
 }
 
 // A page that became a SECTION of /w/:workspace/settings. The workspace is
@@ -266,6 +268,8 @@ export const routeTable: RouteObject[] = [
       { path: '/people/me', element: <PeopleMePage /> },
       { path: '/people/:personId/page', element: <PersonPageView /> },
       { path: '/hcp-clients', element: <HcpClientsPage /> },
+      // What is waiting on you, across every workspace — the app's front door.
+      { path: '/home', element: <HomePage /> },
       { path: '/supervisor', element: <SupervisorPage /> },
       { path: '/ide', element: <LazySection><IdePage /></LazySection> },
       { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
@@ -347,8 +351,9 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
       // Static, so it outranks `agents/:slug`; the server reserves the slug `new`.
       { path: '/w/:workspace/agents/new', element: <LazySection><NewAgentPage /></LazySection> },
-      // The retired workbench Projects page. Agent projects/tasks replaced it.
-      { path: '/w/:workspace/projects', element: <WorkspaceIndex /> },
+      // Every project in the workspace, across its agents — an index of rows;
+      // each project's one page is on its agent's board.
+      { path: '/w/:workspace/projects', element: <ProjectsPage /> },
       // The old team-view address (hal T82) — a second page about the same
       // project, outside the agent console. A project has one page now; links
       // already sent land on it.

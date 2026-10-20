@@ -3,20 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
-const listWorkspaceProjects = vi.fn()
 const getWorkspaceProject = vi.fn()
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
-  listWorkspaceProjects: (...a: unknown[]) => listWorkspaceProjects(...a),
   getWorkspaceProject: (...a: unknown[]) => getWorkspaceProject(...a),
 }))
 
-const { ProjectMcpInstall, WorkspaceProjectLine, WorkspaceProjectRedirect, WorkspaceProjectsSection } = await import('./WorkspaceProjects')
+const { ProjectMcpInstall, WorkspaceProjectLine, WorkspaceProjectRedirect } = await import('./WorkspaceProjects')
 const { AgentApiError } = await import('@/api/agents')
 
 afterEach(() => {
   cleanup()
-  listWorkspaceProjects.mockReset()
   getWorkspaceProject.mockReset()
 })
 
@@ -26,25 +23,6 @@ const kb = {
   board_url: '/w/dimagi/agents/eva/projects/P12', ext_id: 'P12', name: 'GiveWell Knowledge Base',
   outcome: 'Everything GiveWell publishes, cited', status: 'active', task_count: 3, open_task_count: 1,
 } as never
-
-describe('WorkspaceProjectsSection', () => {
-  it("lists this workspace's projects with address and steward", async () => {
-    listWorkspaceProjects.mockResolvedValue([kb, { ...(kb as object), id: 2, workspace: 'connect', name: 'Elsewhere' }])
-    render(<MemoryRouter><WorkspaceProjectsSection workspace="dimagi" /></MemoryRouter>)
-
-    expect(await screen.findByText('GiveWell Knowledge Base')).toBeTruthy()
-    expect(screen.getByText('dimagi/givewell-kb')).toBeTruthy()
-    expect(screen.getByText(/Steward eva · 1 open of 3 tasks/)).toBeTruthy()
-    expect(screen.queryByText('Elsewhere')).toBeNull()
-  })
-
-  it('renders nothing when the workspace has none', async () => {
-    listWorkspaceProjects.mockResolvedValue([])
-    const { container } = render(<MemoryRouter><WorkspaceProjectsSection workspace="dimagi" /></MemoryRouter>)
-    await Promise.resolve()
-    expect(container.textContent).toBe('')
-  })
-})
 
 describe('WorkspaceProjectRedirect', () => {
   const at = (path: string) =>

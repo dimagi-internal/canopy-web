@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { Outlet, Link, matchPath, useLocation, useParams, useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, CircleHelp } from 'lucide-react'
 import { PresenceBadge, pageKeyFor, usePresence } from 'canopy-ui/presence'
 import {
   DropdownMenu,
@@ -16,7 +16,7 @@ import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
 import { CanopyWidget } from '@/widget/CanopyWidget'
-import { isNavGroupActive, isNavItemActive, resolveNavGroups, switchWorkspacePath } from './nav'
+import { HELP_ITEMS, activeHref, isNavEntryActive, resolveNav, switchWorkspacePath, type ResolvedNavEntry } from './nav'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { useAppBarHidden } from './appBarStore'
 
@@ -88,30 +88,22 @@ function UserMenu() {
             </div>
           </div>
 
-          {/* Your inbox across every workspace you belong to — personal, not a
-              workspace page, so it sits with your account rather than in the
-              nav. The installed phone app opens straight onto it. */}
-          <Link
-            to="/supervisor"
-            onClick={() => setOpen(false)}
-            className="block px-3 py-2 text-sm text-foreground-secondary hover:bg-muted"
-          >
-            Supervisor
-          </Link>
-          <Link
-            to="/ide"
-            onClick={() => setOpen(false)}
-            className="hidden px-3 py-2 text-sm text-foreground-secondary hover:bg-muted md:block"
-          >
-            IDE
-          </Link>
-          <Link
-            to="/settings"
-            onClick={() => setOpen(false)}
-            className="block px-3 py-2 text-sm text-foreground-secondary hover:bg-muted"
-          >
-            Settings
-          </Link>
+          {/* Personal pages: yours in every workspace, so they sit with your
+              account rather than in the workspace nav. Supervisor is the phone
+              and menubar view of Home; IDE is desktop only. */}
+          {ACCOUNT_LINKS.map(({ to, label, desktopOnly }) => (
+            <Link
+              key={to}
+              to={to}
+              onClick={() => setOpen(false)}
+              className={clsx(
+                'px-3 py-2 text-sm text-foreground-secondary hover:bg-muted',
+                desktopOnly ? 'hidden md:block' : 'block',
+              )}
+            >
+              {label}
+            </Link>
+          ))}
 
           <form method="post" action="/accounts/logout/" className="border-t border-border">
             <input type="hidden" name="csrfmiddlewaretoken" value={decodeURIComponent(csrfToken)} />
@@ -125,6 +117,36 @@ function UserMenu() {
         </div>
       )}
     </div>
+  )
+}
+
+const ACCOUNT_LINKS: { to: string; label: string; desktopOnly?: boolean }[] = [
+  { to: '/settings', label: 'Account settings' },
+  { to: '/people/me', label: 'What agents know about me' },
+  { to: '/sessions', label: 'Shared transcripts' },
+  { to: '/supervisor', label: 'Supervisor' },
+  { to: '/ide', label: 'IDE', desktopOnly: true },
+]
+
+// The `?` menu — Guide, Get started, System: how canopy works, the same in
+// every workspace, so not filed under any of them.
+function HelpMenu() {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Help"
+        className="hidden min-h-11 items-center rounded px-2 text-muted-foreground hover:bg-card/50 hover:text-foreground-secondary sm:min-h-0 md:flex md:py-1.5"
+      >
+        <CircleHelp className="h-4 w-4" aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-40">
+        {HELP_ITEMS.map((item) => (
+          <DropdownMenuItem key={item.path} className="cursor-pointer" render={<Link to={item.path} />}>
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -229,6 +251,46 @@ function PresenceHeaderBadge() {
   return <PresenceBadge viewers={viewers} />
 }
 
+const triggerClass = (active: boolean) =>
+  clsx(
+    'flex shrink-0 items-center gap-1 rounded px-3 py-1.5 text-sm font-medium transition-colors',
+    active
+      ? 'text-foreground bg-card'
+      : 'text-muted-foreground hover:text-foreground-secondary hover:bg-card/50',
+  )
+
+function DesktopNavEntry({ entry, nav }: { entry: ResolvedNavEntry; nav: ResolvedNavEntry[] }) {
+  const { pathname } = useLocation()
+  const active = isNavEntryActive(entry, nav, pathname)
+  if (entry.kind === 'link') {
+    return (
+      <Link to={entry.item.href} className={triggerClass(active)} aria-current={active ? 'page' : undefined}>
+        {entry.item.label}
+      </Link>
+    )
+  }
+  const current = activeHref(nav, pathname)
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className={triggerClass(active)}>
+        {entry.label}
+        <ChevronDown className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-44">
+        {entry.items.map((item) => (
+          <DropdownMenuItem
+            key={item.href}
+            className={clsx('cursor-pointer', item.href === current && 'text-foreground font-medium')}
+            render={<Link to={item.href} />}
+          >
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function AppLayout() {
   // Read the workspace off the address, not the matched route's params: an
   // address no route matches (a stale or mistyped /w/<slug>/… link) has no
@@ -268,7 +330,8 @@ function AppShell() {
   // See `nav.ts` for the grouping and why the header is menus rather than a
   // flat row of links.
   const role = useWorkspaceRole(active)
-  const navGroups = resolveNavGroups({ isAuthed, active, role })
+  const nav = resolveNav({ isAuthed, active, role })
+  const currentHref = activeHref(nav, location.pathname)
 
   // Collapse the mobile menu whenever the route changes (e.g. tapping a link).
   useEffect(() => {
@@ -279,7 +342,7 @@ function AppShell() {
     return clsx(
       'text-sm font-medium rounded transition-colors',
       block ? 'block px-3 py-2' : 'px-3 py-1.5',
-      isNavItemActive(path, location.pathname)
+      path === currentHref
         ? 'text-foreground bg-card'
         : 'text-muted-foreground hover:text-foreground-secondary hover:bg-card/50',
     )
@@ -316,51 +379,19 @@ function AppShell() {
       <header className="shrink-0 border-b border-border bg-background relative">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           {isAuthed ? (
-            <Link to="/" className="flex min-h-11 shrink-0 items-center text-lg font-semibold text-foreground sm:min-h-0"><CanopyWordmark /></Link>
+            <Link to="/home" className="flex min-h-11 shrink-0 items-center text-lg font-semibold text-foreground sm:min-h-0"><CanopyWordmark /></Link>
           ) : (
             <span className="text-lg font-semibold text-foreground shrink-0"><CanopyWordmark /></span>
           )}
           <div className="flex min-w-0 items-center gap-2 md:gap-3">
-            {/* Four menu triggers, so the inline nav fits from `md` up. It was
-                15 flat links needing `xl` plus an `overflow-x-auto` — which put
-                a horizontal scrollbar on every page at 1280px (Tailwind's xl,
-                and Desktop Chrome's default width) and showed no nav at all
-                below it. Grouping is what makes the room; see `nav.ts`. */}
+            {/* Home and Chats are links; Agents, Projects and Workspace are
+                menus (they carry the chevron). See `nav.ts`. */}
             <nav className="hidden md:flex gap-0.5" aria-label="Main">
-              {navGroups.map((group) => {
-                const groupActive = isNavGroupActive(group, location.pathname)
-                return (
-                  <DropdownMenu key={group.label}>
-                    <DropdownMenuTrigger
-                      className={clsx(
-                        'flex shrink-0 items-center gap-1 rounded px-3 py-1.5 text-sm font-medium transition-colors',
-                        groupActive
-                          ? 'text-foreground bg-card'
-                          : 'text-muted-foreground hover:text-foreground-secondary hover:bg-card/50',
-                      )}
-                    >
-                      {group.label}
-                      <ChevronDown className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="min-w-44">
-                      {group.items.map((item) => (
-                        <DropdownMenuItem
-                          key={item.href}
-                          className={clsx(
-                            'cursor-pointer',
-                            isNavItemActive(item.href, location.pathname) &&
-                              'text-foreground font-medium',
-                          )}
-                          render={<Link to={item.href} />}
-                        >
-                          {item.label}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )
-              })}
+              {nav.map((entry) => (
+                <DesktopNavEntry key={entry.kind === 'link' ? entry.item.href : entry.label} entry={entry} nav={nav} />
+              ))}
             </nav>
+            {isAuthed && <HelpMenu />}
             {isAuthed && <WorkspaceSwitcher />}
             {isAuthed && <PresenceHeaderBadge key={presenceReconnectNonce} />}
             <UserMenu />
@@ -411,18 +442,34 @@ function AppShell() {
               aria-label="Main"
               className="md:hidden absolute left-0 right-0 top-full z-40 border-b border-border bg-background px-3 py-2 shadow-lg flex flex-col gap-1 max-h-[calc(100dvh-69px)] overflow-y-auto"
             >
-              {navGroups.map((group) => (
-                <div key={group.label} className="flex flex-col gap-0.5 pb-1">
-                  <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {group.label}
+              {nav.map((entry) =>
+                entry.kind === 'link' ? (
+                  <Link key={entry.item.href} to={entry.item.href} className={navLinkClass(entry.item.href, true)}>
+                    {entry.item.label}
+                  </Link>
+                ) : (
+                  <div key={entry.label} className="flex flex-col gap-0.5 pb-1">
+                    <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      {entry.label}
+                    </div>
+                    {entry.items.map((item) => (
+                      <Link key={item.href} to={item.href} className={navLinkClass(item.href, true)}>
+                        {item.label}
+                      </Link>
+                    ))}
                   </div>
-                  {group.items.map((item) => (
-                    <Link key={item.href} to={item.href} className={navLinkClass(item.href, true)}>
-                      {item.label}
-                    </Link>
-                  ))}
+                ),
+              )}
+              <div className="flex flex-col gap-0.5 pb-1">
+                <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Help
                 </div>
-              ))}
+                {HELP_ITEMS.map((item) => (
+                  <Link key={item.path} to={item.path} className={navLinkClass(item.path, true)}>
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
             </nav>
           </>
         )}

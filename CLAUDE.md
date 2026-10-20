@@ -58,7 +58,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 - A new page also needs a descriptor in `frontend/src/guide/surfaces.ts` (the `/guide` coverage test fails without one).
 
 **Tenant-scoped (`/w/:workspace/…`):**
-- (index) → `agents` — the workspace's agents
+- (index) → `agents` — the workspace's agents (a table, `GET /api/agent-roster/`); `projects` — every project in the workspace
 - `agents/new` — create an agent: pushes the factory scaffold into an empty repo the person made, with their fine-grained token (which then becomes its GitHub identity), registers it, lands on its Settings setup checklist (persona + first skill are handed to Claude Code)
 - `agents/:slug` — agent workspace: Projects (landing), Project, Tasks, Turns, Schedules, Huddles, Mail, Skills (+ History), Capabilities, Settings
 - `agents/:slug/projects/:ref` is a project's ONE page, for teammates and editors alike (`projects/:agent/:ref` redirects there, and a workspace project's address `projects/:handle` opens it on its steward's board, at `board_url` — the steward's workspace, which for a division's project kept from the parent is not the address's); an idea is a task with `kind: "idea"` (never inferred) carrying a person's words, its work as subtasks
@@ -73,6 +73,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 
 **Root:**
 - `/` — public product site (Astro, `site/`, `config/public_site.py`) for everyone; `/app` — the door into the app (`LOGIN_REDIRECT_URL`); `/about` — public explainer; `/get-started` — public: how to use a canopy agent in your own Claude Code
+- `/home` — what is waiting on you across your workspaces (`/api/attention/`, one list every client reads; Let go sets an item aside until something new happens on it); where `/app` lands
 - `/supervisor` — cross-fleet Feed, Waiting on you, Sessions, Agents, Runners (phone PWA + menubar)
 - `/ide` (+ `/:id`) — desktop session IDE: project tree of every session (state, runner, mode, age) beside the open chat
 - `/activity`, `/schedules` — turn log and schedules across your workspaces
