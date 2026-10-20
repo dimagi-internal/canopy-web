@@ -32,6 +32,7 @@ let launchLabel = "com.canopy.runner"
 // the launch is fire-and-forget. install-runner.sh generates this file.
 let plistPath = home.appendingPathComponent("Library/LaunchAgents/com.canopy.runner.plist")
 let updaterPlistPath = home.appendingPathComponent("Library/LaunchAgents/com.canopy.runner.updater.plist")
+let updaterLabel = "com.canopy.runner.updater"
 
 // ── bundled mode (the downloadable installer) ────────────────────────────────────
 // A release build carries its whole runtime in Contents/Resources/runtime
@@ -234,6 +235,11 @@ func run(_ args: [String]) -> (code: Int32, out: String) {
 
 func daemonLoaded() -> Bool {
     run(["launchctl", "print", "gui/\(getuid())/\(launchLabel)", ">/dev/null", "2>&1"]).code == 0
+}
+
+// The updater job is mid-run (launchctl reports a pid only while it runs).
+func updaterRunning() -> Bool {
+    run(["launchctl", "print", "gui/\(getuid())/\(updaterLabel)"]).out.contains("pid = ")
 }
 
 func heartbeatAgeSeconds() -> Int? {
@@ -647,6 +653,13 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
         // Take exactly ONE queued turn without running the whole daemon — works even
         // while paused. Dispatch a turn (composer / a session Continue), then tap this.
         add(menu, "Take one turn", #selector(takeOneTurn))
+        if updaterRunning() {
+            let item = NSMenuItem(title: "Updating the runner…", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        } else {
+            add(menu, "Update runner now", #selector(updateNow))
+        }
         let closeItem = NSMenuItem(title: "Close sessions", action: nil, keyEquivalent: "")
         let sub = NSMenu(title: "Close sessions")
         sub.delegate = self
@@ -710,6 +723,16 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
             proc.waitUntilExit()
             DispatchQueue.main.async { self.rebuild() }
         }
+    }
+
+    // Start the updater job now instead of waiting up to 30 min for its timer. It is the
+    // same job either way (a developer install's canopy-runner-update, the released app's
+    // `self-update`), so it installs what canopy has deployed and nothing newer, honours
+    // ~/.canopy/hold-updates, and runs outside this app — which the released app's update
+    // replaces. Its answer lands in ~/.canopy/updater.log like every timed run.
+    @objc func updateNow() {
+        run(["launchctl", "kickstart", "gui/\(getuid())/\(updaterLabel)"])
+        rebuild()
     }
 
     // -- close sessions --
