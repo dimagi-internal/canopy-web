@@ -249,6 +249,26 @@ def test_a_pass_that_did_not_check_does_not_erase_what_did(fleet):
     assert rows[0]["turn_ready"] is True
 
 
+def test_a_dead_mailbox_clears_a_stale_turn_ready(fleet):
+    """A box with no token computes no turn_ready, so the last TRUE used to survive the
+    pass that found the mailbox dead (lex, 2026-10-20). A stored false, which names why,
+    stays."""
+    from apps.agents import services
+
+    agent = fleet["agent"]
+    services.record_bootstrap_report(
+        agent, runner_name="cloud-ec2-1", client_creds_ok=True, mailbox_ok=True, turn_ready=True)
+    services.record_bootstrap_report(
+        agent, runner_name="cloud-ec2-1", client_creds_ok=False, mailbox_ok=False)
+    assert fleet["client"].get("/api/agents/ace/readiness").json()[0]["turn_ready"] is None
+
+    services.record_bootstrap_report(
+        agent, runner_name="cloud-ec2-1", client_creds_ok=True, mailbox_ok=True, turn_ready=False)
+    services.record_bootstrap_report(
+        agent, runner_name="cloud-ec2-1", client_creds_ok=False, mailbox_ok=False)
+    assert fleet["client"].get("/api/agents/ace/readiness").json()[0]["turn_ready"] is False
+
+
 def test_a_real_observation_still_flips_it(fleet):
     from apps.agents import services
 
