@@ -2430,3 +2430,27 @@ class EngagementSummaryOut(StrictModel):
     task_proposals: list[EngagementProposalOut] = Field(default_factory=list)
     unanswered_tasks: list[EngagementProposalOut] = Field(default_factory=list)
     runs: EngagementRunsOut
+
+
+class AgentRosterRowOut(StrictModel):
+    """One agent as a row in the workspace's agent list: what it is, and what it
+    is doing — the counts its own pages count with (`health._counts`), and its
+    turns as `/api/harness/turns/` would list them."""
+    slug: str
+    name: str
+    description: str
+    workspace: str
+    avatar_url: str
+    email: str
+    owner_email: str | None = None
+    turn_mode: Literal["manual", "auto"] = "manual"
+    url: str
+    skills: int = 0
+    schedules: int = 0
+    active_projects: int = 0
+    open_tasks: int = 0
+    waiting_tasks: int = 0
+    last_turn_at: dt.datetime | None = None
+    last_turn_status: str = ""
+    turns_7d: int = 0
+    failed_7d: int = 0

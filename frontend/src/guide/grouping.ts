@@ -1,4 +1,4 @@
-import { NAV_GROUPS } from '@/components/AppLayout/nav'
+import { HELP_ITEMS, NAV } from '@/components/AppLayout/nav'
 import { SURFACES, type SurfaceDescriptor } from './surfaces'
 
 /**
@@ -129,7 +129,13 @@ export function guideGroups(surfaces: SurfaceDescriptor[] = SURFACES): GuideGrou
   // first, because that is the order a reader already knows from the header.
   const clusterGroups = CLUSTERS.map((c) => ({ label: c.label, surfaces: take(c.match) }))
 
-  const navGroups = NAV_GROUPS.map((nav) => {
+  // The header's entries, then the `?` menu. A plain link (Home, Chats) is a
+  // group of one, named for itself.
+  const headerGroups = [
+    ...NAV.map((e) => (e.kind === 'link' ? { label: e.item.label, items: [e.item] } : e)),
+    { label: 'Help', items: HELP_ITEMS },
+  ]
+  const navGroups = headerGroups.map((nav) => {
     const wanted = nav.items.map(navItemPath)
     return { label: nav.label, surfaces: take((p) => wanted.some((w) => navMatch(p, w))) }
   })

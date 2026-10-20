@@ -11,8 +11,8 @@ describe('guideGroups', () => {
 
   it('uses the nav group labels', () => {
     const labels = guideGroups().map((g) => g.label)
-    expect(labels).toContain('Work')
-    expect(labels).toContain('Fleet')
+    expect(labels).toContain('Agents')
+    expect(labels).toContain('Projects')
   })
 
   it('never drops a surface, even one nothing claims', () => {
@@ -24,15 +24,15 @@ describe('guideGroups', () => {
     ])
   })
 
-  it('clusters the agent rail rather than letting Fleet absorb it', () => {
+  it('clusters the agent rail rather than letting Agents absorb it', () => {
     // The rail sits under /w/:workspace/agents/:slug/, and nav has
     // /w/:workspace/agents — so without cluster-first assignment every rail
-    // section would land in Fleet and this group would be empty.
+    // section would land in Agents and this group would be empty.
     const rail = guideGroups().find((g) => g.label === 'Agent workspace')
     // Projects, one project, a contributor page, Tasks, Turns, Huddles, Schedules,
     // Mail, Skills, skill history, Capabilities, Settings.
     expect(rail?.surfaces.length).toBe(12)
-    const fleet = guideGroups().find((g) => g.label === 'Fleet')
+    const fleet = guideGroups().find((g) => g.label === 'Agents')
     expect(fleet?.surfaces.map((s) => s.path)).toContain('/w/:workspace/agents')
     expect(fleet?.surfaces.map((s) => s.path)).not.toContain('/w/:workspace/agents/:slug/tasks')
   })

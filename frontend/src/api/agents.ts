@@ -261,9 +261,12 @@ export async function actOnTask(
   ref: string,
   action: TaskAction,
   comment?: string,
+  /** Pin the agent's workspace, for a page that is not under it (Home). */
+  workspace?: string,
 ): Promise<ActResult> {
   const res = await apiV2.POST('/api/agents/{slug}/tasks/{ref}/actions', {
     params: { path: { slug, ref } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
     body: { action, comment: comment ?? '' },
   })
   return unwrap(res, 'actOnTask') as ActResult
@@ -296,8 +299,25 @@ export async function getProject(slug: string, ref: string): Promise<ProjectDeta
 }
 
 /** Workspace projects: owned by a workspace, kept current by a steward agent. */
-export async function listWorkspaceProjects(): Promise<ProjectOut[]> {
-  const res = await apiV2.GET('/api/workspace-projects/', { params: { query: {} } })
+export type AgentRosterRow = Schemas['AgentRosterRowOut']
+
+// Every agent in the workspace with what it is doing (counts and recent turns).
+export async function listAgentRoster(): Promise<AgentRosterRow[]> {
+  const res = await apiV2.GET('/api/agent-roster/', {})
+  return Array.from(unwrap(res, 'listAgentRoster')) as AgentRosterRow[]
+}
+
+// Every project across the agents the caller can see (one workspace on a tenant
+// page). `status` defaults to active on the server; '' asks for all.
+export async function listFleetProjects(status = ''): Promise<ProjectOut[]> {
+  const res = await apiV2.GET('/api/projects/', { params: { query: { status } } })
+  return Array.from(unwrap(res, 'listFleetProjects')) as ProjectOut[]
+}
+
+// `workspace` pins the read: the flat list 422s for someone whose workspaces
+// span more than one organisation.
+export async function listWorkspaceProjects(workspace?: string): Promise<ProjectOut[]> {
+  const res = await apiV2.GET('/api/workspace-projects/', { params: { query: {} }, ...pin(workspace) })
   return Array.from(unwrap(res, 'listWorkspaceProjects')) as ProjectOut[]
 }
 

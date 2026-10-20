@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import type { WorkspaceOut } from '@/api/workspaces'
-import type { AgentOut } from '@/api/agents'
+import type { AgentRosterRow } from '@/api/agents'
 
 const listWorkspaces = vi.fn<() => Promise<WorkspaceOut[]>>()
 vi.mock('@/api/workspaces', () => ({ listWorkspaces }))
@@ -20,13 +20,12 @@ vi.mock('@/api/workspaces', () => ({ listWorkspaces }))
 // the URL the page is on when it asks — the same thing the server keys on.
 let currentWorkspace = ''
 const AGENTS: Record<string, string[]> = { strategy: [], connect: ['ace', 'hal'] }
-const listAgents = vi.fn(async () => ({
-  items: (AGENTS[currentWorkspace] ?? []).map(
-    (slug, id) => ({ id, slug, name: slug.toUpperCase() }) as unknown as AgentOut,
+const listAgentRoster = vi.fn(async () =>
+  (AGENTS[currentWorkspace] ?? []).map(
+    (slug) => ({ slug, name: slug.toUpperCase(), url: `/w/${currentWorkspace}/agents/${slug}` }) as unknown as AgentRosterRow,
   ),
-  count: 0,
-}))
-vi.mock('@/api/agents', () => ({ listAgents, listWorkspaceProjects: async () => [] }))
+)
+vi.mock('@/api/agents', () => ({ listAgentRoster }))
 
 const { AppLayout } = await import('./AppLayout')
 const { AgentsPage } = await import('@/pages/AgentsPage')
@@ -73,6 +72,6 @@ describe('AppLayout — switching workspace', () => {
     expect(await screen.findByText('ACE')).toBeTruthy()
     expect(screen.getByText('HAL')).toBeTruthy()
     expect(screen.queryByText('No agents in this workspace')).toBeNull()
-    expect(listAgents).toHaveBeenCalledTimes(2)
+    expect(listAgentRoster).toHaveBeenCalledTimes(2)
   })
 })

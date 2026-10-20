@@ -213,6 +213,7 @@ from apps.feedback.api import router as feedback_router  # noqa: E402
 from apps.storyboards.api import router as storyboards_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.huddles.api import router as huddles_router  # noqa: E402
+from apps.attention.api import router as attention_router  # noqa: E402
 from apps.huddles.checkins_api import legacy_router as huddle_groups_legacy_router  # noqa: E402
 from apps.huddles.checkins_api import project_router as checkins_project_router  # noqa: E402
 from apps.huddles.checkins_api import router as checkins_router  # noqa: E402
@@ -324,6 +325,7 @@ api.add_router("/runner-device-keys", device_keys_router)
 api.add_router("/runner-sessions", runner_sessions_router)
 api.add_router("/runner-device-key-requests", device_key_requests_router)
 api.add_router("/huddles", huddles_router)
+api.add_router("/attention", attention_router)
 api.add_router("/engagement", engagement_router)  # what people do with projects + huddles
 # Project check-ins across projects, and their runs (apps/huddles/checkins.py).
 api.add_router("/checkins", checkins_router)

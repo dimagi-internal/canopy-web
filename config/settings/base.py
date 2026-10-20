@@ -100,6 +100,7 @@ INSTALLED_APPS = [
     "apps.system",
     "apps.harness",
     "apps.huddles",
+    "apps.attention",
     "apps.threads",
     "apps.feedback",
     "apps.storyboards",

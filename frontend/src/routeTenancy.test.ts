@@ -30,6 +30,7 @@ const FLAT_ALLOWED: Record<string, string> = {
   '/people/me': 'personal/global: what agents know about you, the subject',
   '/people/:personId/page': 'personal/global: a person\'s own memory page, read-only, for an agent they let see it',
   '/hcp-clients': 'global: the HCP service\'s client registry spans every person, not a workspace (superusers)',
+  '/home': 'personal/global: what is waiting on you across every workspace you are in — read once per organisation and shown side by side',
   '/supervisor': 'personal/global: the cross-fleet Waiting on you — the fleet spans workspaces',
   '/ide': 'personal/global: the desktop session IDE — your sessions across every workspace and runner',
   '/ide/:id': 'personal/global: one session open in the IDE; the session itself names its workspace',

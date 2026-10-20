@@ -1,100 +1,82 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import {
-  NAV_GROUPS,
-  isNavGroupActive,
+  HELP_ITEMS,
+  NAV,
+  activeHref,
+  entryItems,
+  isNavEntryActive,
   isNavItemActive,
-  resolveNavGroups,
+  resolveNav,
   switchWorkspacePath,
+  type ResolvedNavEntry,
 } from './nav'
 
-const authed = { isAuthed: true, active: 'connect' }
+const authed = { isAuthed: true, active: 'connect', role: 'owner' }
+const label = (e: ResolvedNavEntry) => (e.kind === 'link' ? e.item.label : e.label)
 
-describe('NAV_GROUPS', () => {
-  it('keeps every destination the flat nav carried', () => {
-    // The row this replaced held 15 links (Storyboards and Guide were added
-    // since). Grouping is meant to reorganize the header, never to quietly
-    // drop a surface out of it.
-    //
-    // `Settings` is the one deliberate collapse: Members, Inbound and Slack
-    // were three entries for three pages, and those pages are now sections of
-    // /w/:workspace/settings. Nothing was dropped — the destinations moved
-    // behind one entry, and Connected sites (which was in no menu) came with
-    // them. Everything else still earns its own line — except shared
-    // transcripts (/sessions), which are reached by their /share/<token> link
-    // and deliberately have no menu entry. Insights was retired outright
-    // (2026-10): its job moved to agent tasks and items, reached via Agents.
-    // So was the workbench Projects page (2026-10-06): the workspace index now
-    // lands on Agents, whose projects and tasks are the one project system.
-    const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
-    expect(labels.sort()).toEqual(
-      [
-        'Activity', 'Agents', 'Chats', 'DDD', 'Get started', 'Guide', 'Health', 'Huddles',
-        'Schedule', 'Settings', 'Shareouts', 'Storyboards',
-        'System', 'Timeline', 'Walkthroughs',
-      ].sort(),
-    )
+describe('NAV', () => {
+  it('answers the four questions a person arrives with, plus Chats', () => {
+    // Home: what needs me. Agents: what they are doing. Projects: the work and
+    // what it produces. Workspace: who is in it and how it is set up.
+    expect(NAV.map((e) => (e.kind === 'link' ? e.item.label : e.label))).toEqual([
+      'Home', 'Chats', 'Agents', 'Projects', 'Workspace',
+    ])
   })
 
-  it('files each destination in exactly one group', () => {
-    const hrefs = NAV_GROUPS.flatMap((g) => g.items.map((i) => `${i.tenant}:${i.path}`))
-    expect(new Set(hrefs).size).toBe(hrefs.length)
+  it('files each destination once across the header and the help menu', () => {
+    const items = [...NAV.flatMap((e) => (e.kind === 'link' ? [e.item] : e.items)), ...HELP_ITEMS]
+    const keys = items.map((i) => `${i.tenant}:${i.path}`)
+    expect(new Set(keys).size).toBe(keys.length)
   })
 
-  it('fits the header — four triggers, which is what buys back the room', () => {
-    expect(NAV_GROUPS.map((g) => g.label)).toEqual(['Work', 'Fleet', 'Demos', 'Workspace'])
+  it('keeps help out of the workspace menu — it is the same in every workspace', () => {
+    expect(HELP_ITEMS.map((i) => i.label)).toEqual(['Guide', 'Get started', 'System'])
+    const workspace = NAV.find((e) => e.kind === 'menu' && e.label === 'Workspace')!
+    expect(entryItems(resolveNav(authed).find((e) => label(e) === 'Workspace')!).map((i) => i.label))
+      .not.toContain('Guide')
+    expect(workspace.kind).toBe('menu')
+  })
+
+  it('scopes every Agents entry to the workspace — no silent cross-workspace twin', () => {
+    const agents = NAV.find((e) => e.kind === 'menu' && e.label === 'Agents')
+    expect(agents?.kind === 'menu' && agents.items.every((i) => i.tenant)).toBe(true)
   })
 })
 
-describe('resolveNavGroups', () => {
-  it('offers Health only to a role that can read it, so an editor never lands on a refusal', () => {
+describe('resolveNav', () => {
+  it('offers admin pages only to a role that can read them, so an editor never lands on a refusal', () => {
     const labels = (role: string | null) =>
-      resolveNavGroups({ ...authed, role }).flatMap((g) => g.items.map((i) => i.label))
-    expect(labels('admin')).toContain('Health')
+      resolveNav({ ...authed, role }).flatMap((e) => entryItems(e).map((i) => i.label))
+    expect(labels('admin')).toEqual(expect.arrayContaining(['Health', 'Runners']))
     expect(labels('editor')).not.toContain('Health')
-    expect(labels(null)).not.toContain('Health')
+    expect(labels('editor')).not.toContain('Runners')
+    expect(labels('editor')).toContain('New agent')
+    expect(labels('viewer')).not.toContain('New agent')
   })
 
-  it('resolves tenant items under the active workspace', () => {
-    const work = resolveNavGroups(authed).find((g) => g.label === 'Work')!
-    expect(work.items).toEqual([
-      { href: '/w/connect/chat', label: 'Chats' },
-    ])
-  })
-
-  it('leaves global items on their absolute path', () => {
-    const fleet = resolveNavGroups(authed).find((g) => g.label === 'Fleet')!
-    expect(fleet.items.map((i) => i.href)).toEqual([
-      '/w/connect/agents', '/activity', '/w/connect/huddles', '/schedules',
-    ])
+  it('resolves tenant items under the active workspace and leaves Home at root', () => {
+    const nav = resolveNav(authed)
+    expect(nav[0]).toEqual({ kind: 'link', item: { href: '/home', label: 'Home' } })
+    expect(nav[1]).toEqual({ kind: 'link', item: { href: '/w/connect/chat', label: 'Chats' } })
+    const projects = nav.find((e) => label(e) === 'Projects')!
+    expect(entryItems(projects)[0]).toEqual({ href: '/w/connect/projects', label: 'All projects' })
   })
 
   it('omits tenant items before the workspace resolves, rather than linking to /w//…', () => {
-    const groups = resolveNavGroups({ isAuthed: true, active: null })
-    const hrefs = groups.flatMap((g) => g.items.map((i) => i.href))
-    expect(hrefs.some((h) => h.includes('/w//'))).toBe(false)
-    expect(hrefs).toEqual(['/activity', '/schedules', '/system', '/guide', '/get-started'])
-  })
-
-  it('drops a group whose items are all tenant-scoped while the workspace is unknown', () => {
-    // Demos is DDD + Walkthroughs + Storyboards, and Work is Chats —
-    // all tenant items. An empty menu would be a trigger that opens onto nothing.
-    const labels = resolveNavGroups({ isAuthed: true, active: null }).map((g) => g.label)
-    expect(labels).not.toContain('Demos')
-    expect(labels).not.toContain('Work')
-    expect(labels).toEqual(['Fleet', 'Workspace'])
+    const nav = resolveNav({ isAuthed: true, active: null })
+    const hrefs = nav.flatMap((e) => entryItems(e).map((i) => i.href))
+    expect(hrefs).toEqual(['/home'])
   })
 
   it('shows an anonymous visitor no nav at all', () => {
-    // Every destination is behind the login gate; the links would bounce to
-    // sign-in. Public link routes render the shell but must not offer them.
-    expect(resolveNavGroups({ isAuthed: false, active: 'connect' })).toEqual([])
+    expect(resolveNav({ isAuthed: false, active: 'connect' })).toEqual([])
   })
 })
 
 describe('isNavItemActive', () => {
   it('matches the exact path', () => {
-    expect(isNavItemActive('/activity', '/activity')).toBe(true)
+    expect(isNavItemActive('/home', '/home')).toBe(true)
   })
 
   it('matches a nested route below the item', () => {
@@ -106,51 +88,48 @@ describe('isNavItemActive', () => {
   })
 
   it('matches the workspace index only exactly', () => {
-    // /w/<slug> prefixes every tenant route, so a prefix match would light an
-    // item linking there up on every page in the workspace.
     expect(isNavItemActive('/w/connect', '/w/connect')).toBe(true)
     expect(isNavItemActive('/w/connect', '/w/connect/timeline')).toBe(false)
   })
 })
 
-describe('isNavGroupActive', () => {
-  const groups = resolveNavGroups(authed)
-  const group = (label: string) => groups.find((g) => g.label === label)!
+describe('active entry', () => {
+  const nav = resolveNav(authed)
+  const hits = (pathname: string) => nav.filter((e) => isNavEntryActive(e, nav, pathname)).map(label)
 
-  it('marks the group holding the current route', () => {
-    expect(isNavGroupActive(group('Fleet'), '/w/connect/agents/hal/turns')).toBe(true)
-    expect(isNavGroupActive(group('Workspace'), '/w/connect/shareouts/2026-09-01')).toBe(true)
-  })
-
-  it('does not mark Work on some other tenant page', () => {
-    expect(isNavGroupActive(group('Work'), '/w/connect/members')).toBe(false)
-    expect(isNavGroupActive(group('Work'), '/w/connect/ddd/onboarding')).toBe(false)
-  })
-
-  it('marks exactly one group for any given route', () => {
-    for (const pathname of [
-      '/w/connect/chat',
-      '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd', '/w/connect/huddles',
-      '/w/connect/walkthroughs', '/w/connect/storyboards', '/w/connect/shareouts', '/w/connect/timeline',
-      '/w/connect/settings', '/w/connect/settings/slack', '/system',
-    ]) {
-      const hits = groups.filter((g) => isNavGroupActive(g, pathname)).map((g) => g.label)
-      expect(hits, pathname).toHaveLength(1)
+  it('marks exactly one entry for any route the header owns', () => {
+    const expected: Record<string, string> = {
+      '/home': 'Home',
+      '/w/connect/chat/abc': 'Chats',
+      '/w/connect/agents/hal/turns': 'Agents',
+      '/w/connect/agents/new': 'Agents',
+      '/w/connect/activity': 'Agents',
+      '/w/connect/schedules': 'Agents',
+      '/w/connect/huddles/4': 'Agents',
+      '/w/connect/settings/topology/runners': 'Agents',
+      '/w/connect/projects': 'Projects',
+      '/w/connect/ddd/onboarding': 'Projects',
+      '/w/connect/storyboards': 'Projects',
+      '/w/connect/shareouts/2026-09-01': 'Projects',
+      '/w/connect/settings': 'Workspace',
+      '/w/connect/settings/slack': 'Workspace',
+      '/w/connect/settings/members': 'Workspace',
+      '/w/connect/timeline': 'Workspace',
+    }
+    for (const [pathname, entry] of Object.entries(expected)) {
+      expect(hits(pathname), pathname).toEqual([entry])
     }
   })
 
-  it('marks no group on a route the nav does not own', () => {
-    // Both are personal: they live in the account menu, not the nav.
-    for (const pathname of ['/settings', '/supervisor']) {
-      expect(groups.some((g) => isNavGroupActive(g, pathname)), pathname).toBe(false)
-    }
+  it('picks the most specific item: Runners, not Settings, on the topology pages', () => {
+    expect(activeHref(nav, '/w/connect/settings/topology/runners')).toBe('/w/connect/settings/topology')
+    expect(activeHref(nav, '/w/connect/settings/members')).toBe('/w/connect/settings/members')
   })
 
-  it('does not light Demos up on the public storyboard page', () => {
-    // /w/:ws/storyboard/:slug is the chrome-less share page, not the index;
-    // the index is the tenant route /w/:ws/storyboards.
-    expect(groups.some((g) => isNavGroupActive(g, '/w/connect/storyboard/oes-supply'))).toBe(false)
-    expect(isNavGroupActive(group('Demos'), '/w/connect/storyboards')).toBe(true)
+  it('marks nothing on a personal page or a public share page', () => {
+    for (const pathname of ['/settings', '/supervisor', '/w/connect/storyboard/oes-supply']) {
+      expect(hits(pathname), pathname).toEqual([])
+    }
   })
 })
 
@@ -164,7 +143,7 @@ describe('switchWorkspacePath', () => {
     expect(switchWorkspacePath('/w/dimagi/chat/abc', 'm')).toBe('/w/m/chat')
     expect(switchWorkspacePath('/w/dimagi/threads/7', 'm')).toBe('/w/m/huddles')
     expect(switchWorkspacePath('/w/dimagi', 'm')).toBe('/w/m/agents')
-    expect(switchWorkspacePath('/activity', 'm')).toBe('/w/m/agents')
+    expect(switchWorkspacePath('/home', 'm')).toBe('/w/m/agents')
   })
 
   it('never switches to a section that has no page of its own', async () => {
