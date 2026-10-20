@@ -249,9 +249,14 @@ jobs:
       # against the module itself by tests/test_stdlib_only.py (#1351), not
       # inferred from the env — a `--no-project` run would still have to carry
       # canopy_transcript and yaml for the tests, which proves nothing.
+      #
+      # -n auto: at ~100s on one core this was the longest step in the job.
+      # Each test builds its own tmp state, so it splits cleanly (6/6 clean
+      # local runs under xdist). canopy_runner's suite stays serial: under
+      # xdist its pause-sentinel test failed 1 run in 10.
       - name: Run cloud_runner tests
         working-directory: runner/ec2
-        run: uv run --with pytest --with pytest-timeout pytest -q
+        run: uv run --with pytest --with pytest-timeout --with pytest-xdist pytest -q -n auto
 
       # canopy_transcript is the Claude Code transcript core BOTH runners execute
       # against — ordinals, block extraction, payload caps, NUL scrubbing. It was
