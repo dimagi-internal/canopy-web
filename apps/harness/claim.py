@@ -90,6 +90,13 @@ def sweep_expired_leases() -> int:
 
             turn.status = status
             activity.for_turn(activity.TURN_FINISHED, turn, at=now)
+            if turn.chat_session_id:
+                # The box that held this turn's ask open is gone, and nothing
+                # else would ever retract the dialog it left (finish_turn's hook,
+                # mirrored because this update bypasses it).
+                from .services import end_turns_ask
+
+                end_turns_ask(turn)
             # A LOST/CANCELLED turn is marked via a queryset update, bypassing
             # finish_turn — so the FAILED-drill hook there never fires and a
             # drill's RunnerDrill would otherwise strand as pending forever.

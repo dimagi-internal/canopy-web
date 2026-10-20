@@ -42,6 +42,8 @@ from .schemas import (
     MenuAnswerResultIn,
     MenuAnswerResultOut,
     MenuAnswerSyncOut,
+    SessionMenuIn,
+    SessionMenuOut,
     DrillIn,
     DrillReportIn,
     EmdashSessionOut,
@@ -2134,6 +2136,16 @@ def post_menu_answer_result(request: HttpRequest, runner_id: uuid.UUID,
     binding.pending_answer = None
     binding.save(update_fields=["pending_answer"])
     return {"ok": True}
+
+
+@router.post("/runners/{runner_id}/session-menu", response=SessionMenuOut)
+def post_session_menu(request: HttpRequest, runner_id: uuid.UUID, payload: SessionMenuIn):
+    """A dialog the agent of one session on this runner is waiting on, or `menu:
+    null` once it is not. A cloud runner's way to say what a laptop says inside
+    its session report; answers come back through `/menu-answers`. `ok: false`
+    when this runner does not hold the session."""
+    runner = _runner_or_404(request, runner_id)
+    return {"ok": services.report_session_menu(runner, payload.session_id, payload.menu)}
 
 
 @router.post("/runners/{runner_id}/admission-notices", response=AdmissionNoticeClaimOut)

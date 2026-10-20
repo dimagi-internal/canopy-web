@@ -10,7 +10,13 @@ client needs two renderers and the two paths drift.
 """
 import pytest
 
-from canopy_acp.menus import menu_from_permission_request, option_id_for
+from canopy_acp.menus import (
+    elicitation_answer,
+    menu_from_elicitation,
+    menu_from_permission_request,
+    option_id_for,
+)
+from canopy_transcript.questions import menu_from_hook
 
 LIVE_REQUEST = {
     "options": [
@@ -100,3 +106,111 @@ def test_a_file_operation_reads_sensibly():
     })
     assert menu["title"] == "File edit"
     assert menu["body"] == "/repo/app/settings.py"
+
+
+# -- AskUserQuestion, which ACP carries as a form elicitation ----------------
+#
+# Shapes are what claude-agent-acp 0.93.0's `askUserQuestionsToCreateRequest`
+# builds (dist/elicitation.js): one `question_<n>` field per question — a titled
+# `oneOf` enum, or an array of `anyOf` for a multi-select — each followed by an
+# optional free-text `question_<n>_custom`. A single question's text rides
+# `message`; with several, each field's `description` carries its own.
+
+ONE_QUESTION = {
+    "mode": "form", "sessionId": "s", "toolCallId": "toolu_01Ask",
+    "message": "Pick a colour",
+    "requestedSchema": {"type": "object", "properties": {
+        "question_0": {"type": "string", "title": "Colour", "oneOf": [
+            {"const": "Aubergine", "title": "Aubergine", "description": "Deep purple"},
+            {"const": "Beige", "title": "Beige"}]},
+        "question_0_custom": {"type": "string", "title": "Other",
+                              "description": "Type your own answer (optional)."},
+    }},
+}
+
+TWO_QUESTIONS = {
+    "mode": "form", "sessionId": "s", "toolCallId": "toolu_02Ask",
+    "message": "Please answer the following questions.",
+    "requestedSchema": {"type": "object", "properties": {
+        "question_0": {"type": "string", "title": "Size", "description": "Which size?",
+                       "oneOf": [{"const": "Small", "title": "Small"},
+                                 {"const": "Large", "title": "Large"}]},
+        "question_0_custom": {"type": "string", "title": "Other"},
+        "question_1": {"type": "array", "title": "Toppings", "description": "Which toppings?",
+                       "items": {"anyOf": [{"const": "Cheese", "title": "Cheese"},
+                                           {"const": "Olives", "title": "Olives"},
+                                           {"const": "Basil", "title": "Basil"}]}},
+        "question_1_custom": {"type": "string", "title": "Other"},
+    }},
+}
+
+
+def test_an_ask_reads_exactly_like_the_same_ask_from_the_hook():
+    """Convergence: the laptop's hook sees the TOOL INPUT, the cloud sees the form
+    the adapter built from it. One client renders both, so both must be one shape."""
+    from_cloud = menu_from_elicitation(ONE_QUESTION)
+    from_laptop = menu_from_hook({
+        "hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [{
+            "question": "Pick a colour", "header": "Colour", "multiSelect": False,
+            "options": [{"label": "Aubergine", "description": "Deep purple"},
+                        {"label": "Beige"}]}]}})
+    for key in ("question", "title", "body", "selected", "options", "questions"):
+        assert from_cloud[key] == from_laptop[key], key
+    assert from_cloud["source"] == "acp"
+    assert from_cloud["observed_at"]
+
+
+def test_every_question_is_carried_with_its_own_text_and_kind():
+    menu = menu_from_elicitation(TWO_QUESTIONS)
+    assert [q["question"] for q in menu["questions"]] == ["Which size?", "Which toppings?"]
+    assert [q["multi_select"] for q in menu["questions"]] == [False, True]
+    assert [o["label"] for o in menu["questions"][1]["options"]] == ["Cheese", "Olives", "Basil"]
+    assert menu["question"] == "Which size?"
+    assert menu["body"] == "1 more question after this one."
+
+
+def test_a_form_that_is_not_an_ask_is_not_a_menu():
+    """An MCP server's own elicitation has its own fields; guessing at buttons for
+    it is how a tap answers the wrong thing. The runner declines those instead."""
+    assert menu_from_elicitation({"mode": "form", "message": "Log in",
+                                  "requestedSchema": {"properties": {
+                                      "username": {"type": "string"}}}}) is None
+    assert menu_from_elicitation({"mode": "url", "url": "https://x"}) is None
+    assert menu_from_elicitation(None) is None
+
+
+def test_a_tapped_option_becomes_the_label_the_tool_records():
+    menu = menu_from_elicitation(ONE_QUESTION)
+    assert elicitation_answer(menu, option=1) == {
+        "action": "accept", "content": {"question_0": "Aubergine"}}
+
+
+def test_a_multi_question_answer_fills_every_field():
+    menu = menu_from_elicitation(TWO_QUESTIONS)
+    answer = elicitation_answer(menu, option=2, selections=[[2], [1, 3]],
+                                texts=[None, "Extra garlic"])
+    assert answer == {"action": "accept", "content": {
+        "question_0": "Large", "question_1": ["Cheese", "Basil"],
+        "question_1_custom": "Extra garlic"}}
+
+
+def test_a_typed_answer_alone_is_an_answer():
+    menu = menu_from_elicitation(ONE_QUESTION)
+    assert elicitation_answer(menu, option=None, selections=[[]], texts=["Teal"]) == {
+        "action": "accept", "content": {"question_0_custom": "Teal"}}
+
+
+def test_a_refusal_declines_rather_than_aborting_the_turn():
+    """Escape at the TUI. `decline` tells the model the person skipped and the turn
+    goes on; `cancel` would abort the tool call mid-turn."""
+    menu = menu_from_elicitation(ONE_QUESTION)
+    assert elicitation_answer(menu, option=None) == {"action": "decline"}
+
+
+def test_an_answer_the_ask_never_offered_is_refused():
+    menu = menu_from_elicitation(TWO_QUESTIONS)
+    with pytest.raises(ValueError):
+        elicitation_answer(menu, option=7)
+    with pytest.raises(ValueError):
+        elicitation_answer(menu, option=1, selections=[[1], [9]])

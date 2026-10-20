@@ -19,7 +19,12 @@ from .client import (
     find_adapter,
     install_adapter,
 )
-from .menus import menu_from_permission_request, option_id_for
+from .menus import (
+    elicitation_answer,
+    menu_from_elicitation,
+    menu_from_permission_request,
+    option_id_for,
+)
 from .turn import TurnError, TurnResult, drive_turn
 from .updates import TERMINAL_STATUSES, ToolCall, UpdateReducer
 
@@ -28,5 +33,6 @@ __all__ = [
     "TERMINAL_STATUSES", "ToolCall", "UpdateReducer",
     "TurnError", "TurnResult", "drive_turn",
     "ADAPTER_PACKAGE", "allow_first_option", "find_adapter", "install_adapter",
-    "menu_from_permission_request", "option_id_for",
+    "elicitation_answer", "menu_from_elicitation", "menu_from_permission_request",
+    "option_id_for",
 ]
