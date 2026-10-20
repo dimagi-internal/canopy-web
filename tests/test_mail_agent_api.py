@@ -316,3 +316,10 @@ def test_our_reply_cites_the_message_id_ses_sent(w, settings):
     raw = w.sent[0]["raw"]
     assert b"<ses-0@email.amazonses.com>" in raw and b"<ours@marshellis.com>" not in raw
     assert b"In-Reply-To: <in-2@x.org>" in raw
+
+
+def test_only_an_amazonses_host_is_read_as_an_ses_id():
+    assert ses.ses_id_of("<abc@email.amazonses.com>") == "abc"
+    assert ses.ses_id_of("<abc@us-west-2.amazonses.com>") == "abc"
+    assert ses.ses_id_of("<abc@evilamazonses.com>") == ""
+    assert ses.ses_id_of("<abc@amazonses.com.evil.org>") == ""

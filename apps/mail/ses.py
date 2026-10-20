@@ -185,7 +185,10 @@ def wire_message_id(ses_message_id: str) -> str:
     return f"<{ses_message_id}@{host}>"
 
 
+_SES_HOST = re.compile(r"(?:[a-z0-9-]+\.)*amazonses\.com")
+
+
 def ses_id_of(header_id: str) -> str:
     """The SES message id inside a Message-ID SES assigned (`<id@…amazonses.com>`), else ""."""
     local, _, host = header_id.strip("<>").rpartition("@")
-    return local if local and host.lower().endswith("amazonses.com") else ""
+    return local if local and _SES_HOST.fullmatch(host.lower()) else ""
