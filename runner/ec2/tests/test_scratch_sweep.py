@@ -65,6 +65,10 @@ def box(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner, "WORK_DIR", str(work))
     monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(agents))
     monkeypatch.setattr(cloud_runner, "CLAUDE_PROJECTS_HOME", tmp_path / "projects")
+    # Its own in-flight set: a sweep stops at the first turn it sees, and under
+    # xdist a turn another test on this worker left running (or never popped) would
+    # stop it before the first candidate — every "kept" assertion then reads [].
+    monkeypatch.setattr(cloud_runner, "_IN_FLIGHT", {})
     return cloud_runner, scratch, work, origin, agents
 
 
