@@ -1179,31 +1179,24 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
 
 
 @router.put("/runners/{runner_id}/private", response=RunnerOut,
-            summary="Make this runner its owner's private runner, acting as a role")
+            summary="Make this runner its owner's private runner")
 def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerPrivateIn):
     """A private runner takes no fleet work: nothing routed, no workspace order, no
     source rule — only what its owner pins or binds to it, and the local sessions
-    opened on it. `acts_as` (`editor` or `viewer`, empty for yourself) lowers the
-    role everything from the box is judged as: its turns, its credential reads, the
-    local sessions on it. Owner only. Turning `private` off clears `acts_as`."""
+    opened on it. Owner only. (To run as a lower role, start the TURN with
+    `acts_as` — it is a property of one turn, not of a machine.)"""
     # canopy-web#1705. Owner only, not runner admins: it decides whose work the box
-    # takes and as whom its owner is judged, which are the owner's to say.
+    # takes, which is the owner's to say.
     from apps.events import audit
-    from apps.workspaces import role_cap
 
     runner = _runner_or_404(request, runner_id)
     if runner.owner_id != request.user.pk:
         raise HttpError(404, "only the runner's owner can make it private")
-    acts_as = (payload.acts_as or "").strip().lower()
-    if acts_as and acts_as not in role_cap.CAPS:
-        raise HttpError(422, f"acts_as must be empty or one of: {', '.join(role_cap.CAPS)}")
-    if acts_as and not payload.private:
-        raise HttpError(422, "acts_as applies only to a private runner")
-    before = {"private": runner.private, "acts_as": runner.acts_as}
-    after = {"private": payload.private, "acts_as": acts_as if payload.private else ""}
+    before = {"private": runner.private}
+    after = {"private": payload.private}
     if before != after:
-        runner.private, runner.acts_as = after["private"], after["acts_as"]
-        runner.save(update_fields=["private", "acts_as"])
+        runner.private = payload.private
+        runner.save(update_fields=["private"])
     if runner.private:
         # The box IS its owner's private runner: link the registration here, so the
         # runner writes it on its next heartbeat and no one runs `canopy private-runner
@@ -1734,10 +1727,15 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     """Claim the next eligible turn. `paused` is an optional comma-separated list of
     agent slugs the caller has locally paused (per-agent pause) — the server skips
     their queued turns so nothing is claimed-then-released. Omitted by older runners
-    (backward-compatible: no exclusions)."""
+    (backward-compatible: no exclusions). `X-Canopy-Acts-As: editor|viewer` claims in
+    that lower mode: a turn the runner's owner started runs as that role."""
     runner = _runner_or_404(request, runner_id)
     exclude = [s for s in (p.strip() for p in paused.split(",")) if s]
-    turn = services.claim_next_turn(runner, exclude_slugs=exclude or None)
+    from apps.workspaces import role_cap
+
+    # A runner may claim in a lower mode it put itself in (X-Canopy-Acts-As).
+    turn = services.claim_next_turn(runner, exclude_slugs=exclude or None,
+                                    acts_as=role_cap.header_cap(request))
     if turn is None:
         return Status(204, None)
     # The same credentials the WebSocket claim carries — see `claiming.py`,
@@ -2324,6 +2322,15 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         raise HttpError(422, f"unknown origin '{payload.origin}'")
     if payload.routing not in dict(Turn.ROUTING_CHOICES):
         raise HttpError(422, f"unknown routing '{payload.routing}'")
+    from apps.workspaces import role_cap
+
+    # Started as a lower role: every gate below judges the capped caller, and the turn
+    # carries the cap for the claim, its envelope and its credential reads. The cap is
+    # the server's to stamp, never a client's origin_ref to assert.
+    origin_ref = {k: v for k, v in (payload.origin_ref or {}).items() if k != "acts_as"}
+    if payload.acts_as:
+        role_cap.apply(request.user, payload.acts_as)
+        origin_ref["acts_as"] = role_cap.cap_of(request.user)
 
     agent = workspace = None
     if payload.agent_slug:
@@ -2450,7 +2457,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         origin=payload.origin,
         idempotency_key=payload.idempotency_key,
         prompt=payload.prompt,
-        origin_ref=payload.origin_ref,
+        origin_ref=origin_ref,
         routing=payload.routing,
         enqueued_by=request.user,  # the human launching a manual / composer turn
         pinned_runner=pinned,

@@ -287,16 +287,22 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   local sessions on it. Its device key is what those sessions prove themselves
   with, and it may read an agent's secrets while its owner holds an active license
   (`device_keys.private_runner_licensed`), for that owner's own turns only.
-* **Acting as a lower role.** A private runner's `acts_as` (`editor` or `viewer`)
-  lowers the role EVERYTHING from that box is judged as: a request on its runner
-  token or naming it in `X-Canopy-Runner`, its local turns (stamped
-  `origin_ref.acts_as`, and every read during one keeps the cap), and its owner's
-  turns it claims (stamped at claim; `auto` becomes `manual`). The cap rides on the
-  user object (`apps/workspaces/role_cap.py`) and is honoured where roles are read —
-  `member_role`/`member_roles`/`membership`, `Agent.is_admin`,
-  `relationship_for_user`, `caller_runs_agent` — so `decide` places the person in
-  the tier the cap names. It only ever lowers, so it needs no proof. It is how an
-  agent's owner tests the non-admin path on their own machine.
+* **Acting as a lower role.** `acts_as` (`editor` or `viewer`) is a property of
+  ONE turn or of one client's requests — never a setting left on a machine:
+  - a turn started with it (`TurnIn.acts_as`, `canopy agent dispatch --as editor`;
+    `LocalTurnIn.acts_as` for a local session) is judged at that role from start to
+    finish — whether it may start at all, its mode (`auto` becomes `manual`), its
+    envelope, and every read made during it (`X-Canopy-Turn-Id` by its initiator).
+    The server stamps `origin_ref.acts_as`; a client's own `origin_ref` cannot.
+  - a client puts ITSELF in a lower mode with `X-Canopy-Acts-As` on each request —
+    the canopy CLI and the runner send it when started with `CANOPY_ACTS_AS`. A
+    runner claiming in that mode stamps the cap on its owner's turns it claims
+    (never loosening one a turn was started with); someone else's turn keeps its own.
+  The cap rides on the user object (`apps/workspaces/role_cap.py`) and is honoured
+  where roles are read — `member_role`/`member_roles`/`membership`,
+  `Agent.is_admin`, `relationship_for_user`, `caller_runs_agent` — so `decide` places
+  the person in the tier the cap names. It only ever lowers, so anyone may ask for it
+  with no proof. It is how anyone, an agent included, runs the non-admin path for real.
 * **No PAT on a private runner.** The owner's local sessions there sign in with the
   box's own device key (its runner token), which on a private runner also reaches the
   local-turn routes and `/api/private-runners` (`runner_auth._PRIVATE_RULES`), and

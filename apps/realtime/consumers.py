@@ -305,7 +305,10 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             # `paused`: agent slugs the box has locally paused (its per-agent pause,
             # or a credential-resolve backoff) — the REST claim's `?paused=`.
             paused = content.get("paused") or []
-            turn = await self._claim([str(s) for s in paused if isinstance(s, str) and s][:50])
+            # `acts_as`: the lower mode the box claims in (role_cap) — the REST
+            # claim's X-Canopy-Acts-As.
+            turn = await self._claim([str(s) for s in paused if isinstance(s, str) and s][:50],
+                                     acts_as=str(content.get("acts_as") or ""))
             await self.send_json({"type": "claim.result", "turn": turn})
         elif action == "heartbeat":
             refresh, cancel_ids, pause = await self._heartbeat(content.get("active_turn_ids") or [], content)
@@ -357,11 +360,11 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         return sorted(user_workspace_slugs(runner.owner))
 
     @database_sync_to_async
-    def _claim(self, paused=None):
+    def _claim(self, paused=None, acts_as=""):
         runner = Runner.objects.filter(pk=self._runner_pk).first()
         if runner is None:
             return None
-        turn = harness_services.claim_next_turn(runner, exclude_slugs=paused or None)
+        turn = harness_services.claim_next_turn(runner, exclude_slugs=paused or None, acts_as=acts_as)
         if turn is None:
             return None
         # THE claim payload — the one the REST route returns, credentials and

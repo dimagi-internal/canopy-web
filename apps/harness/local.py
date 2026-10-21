@@ -129,21 +129,19 @@ def _key(agent, claude_session_id: str) -> str:
 
 
 def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_id: str,
-              cwd: str = "", requested_mode: str = "") -> tuple[Turn, bool]:
+              cwd: str = "", requested_mode: str = "", acts_as: str = "") -> tuple[Turn, bool]:
     """Open — or re-open — the local turn for one Claude Code session.
 
     Idempotent per (agent, Claude session): `/resume` and `/clear` fire SessionStart
     again and must land on the same turn, renewed, rather than a second one. A
     session whose turn already ended (it was closed, or swept `lost` after a long
     sleep) gets a NEW turn, so a closed turn's transcript is never appended to by a
-    later life of the session. Returns (turn, created)."""
+    later life of the session. `acts_as` opens it as a lower role (role_cap): the
+    license, the mode and every read of the turn are judged at that role. Returns
+    (turn, created)."""
     from apps.workspaces import role_cap
 
-    user = request.user
-    linked = private_runner.runner if private_runner.runner_id else None
-    if linked is not None and linked.private and linked.acts_as:
-        # The machine's runner acts as a lower role: so does every session on it.
-        role_cap.apply(user, linked.acts_as)
+    user = role_cap.apply(request.user, acts_as)
     acts_as = role_cap.cap_of(user)
     claude_session_id = (claude_session_id or "").strip()[:100]
     if not claude_session_id:

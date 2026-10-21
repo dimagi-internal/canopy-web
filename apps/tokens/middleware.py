@@ -274,7 +274,7 @@ def _credential(kind: str, pk, label: str) -> dict:
 
 
 def _apply_acting_cap(request: HttpRequest) -> None:
-    """Lower `request.user` to the role its private runner acts as
+    """Lower `request.user` to the role the client or its turn acts as
     (`apps/workspaces/role_cap.py`). Fails open to no cap: a cap only ever narrows,
     so a lookup hiccup must not deny the request — it just runs as the person."""
     try:

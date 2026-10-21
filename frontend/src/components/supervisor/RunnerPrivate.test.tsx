@@ -3,8 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RunnerOut } from '@/api/harness'
 
-// The owner turns their own runner private, and picks the role it acts as, from the
-// runner's page — no CLI on the box (canopy-web#1705).
+// The owner turns their own runner private from the runner's page — no CLI on the
+// box (canopy-web#1705). Acting as a lower role is a turn's, not a machine's.
 
 const setRunnerPrivate = vi.fn()
 vi.mock('@/api/harness', () => ({
@@ -13,7 +13,7 @@ vi.mock('@/api/harness', () => ({
 
 const { RunnerPrivate } = await import('./RunnerPrivate')
 
-const shared = { id: 'r1', name: 'jj-mbp-cdp', private: false, acts_as: '' } as unknown as RunnerOut
+const shared = { id: 'r1', name: 'jj-mbp-cdp', private: false } as unknown as RunnerOut
 const onChange = vi.fn()
 
 afterEach(() => {
@@ -32,29 +32,17 @@ describe('RunnerPrivate', () => {
     setRunnerPrivate.mockResolvedValue({ ...shared, private: true })
     render(<RunnerPrivate runner={shared} onChange={onChange} />)
     fireEvent.click(screen.getByRole('radio', { name: 'Private' }))
-    await waitFor(() => expect(setRunnerPrivate).toHaveBeenCalledWith('r1', true, ''))
+    await waitFor(() => expect(setRunnerPrivate).toHaveBeenCalledWith('r1', true))
   })
 
-  it('tests a private runner as an editor, and says so', async () => {
-    const priv = { ...shared, private: true } as unknown as RunnerOut
-    const updated = { ...priv, acts_as: 'editor' } as unknown as RunnerOut
-    setRunnerPrivate.mockResolvedValue(updated)
-    const { rerender } = render(<RunnerPrivate runner={priv} onChange={onChange} />)
-    expect(screen.queryByTestId('runner-test-role-on')).toBeNull()
-    fireEvent.click(screen.getByRole('radio', { name: 'Editor' }))
-    await waitFor(() => expect(setRunnerPrivate).toHaveBeenCalledWith('r1', true, 'editor'))
-    await waitFor(() => expect(onChange).toHaveBeenCalledWith(updated))
-    rerender(<RunnerPrivate runner={updated} onChange={onChange} />)
-    expect(screen.getByTestId('runner-test-role-on').textContent).toMatch(/judged as an editor/)
-  })
-
-  it('puts it back in the fleet', async () => {
+  it('puts it back in the fleet, and never offers a role to act as', async () => {
     setRunnerPrivate.mockResolvedValue(shared)
-    const priv = { ...shared, private: true, acts_as: 'viewer' } as unknown as RunnerOut
+    const priv = { ...shared, private: true } as unknown as RunnerOut
     render(<RunnerPrivate runner={priv} onChange={onChange} />)
-    expect(screen.getByRole('radio', { name: 'Viewer' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByText('Test as a lower role')).toBeNull()
+    expect(screen.queryByRole('radio', { name: 'Editor' })).toBeNull()
     fireEvent.click(screen.getByRole('radio', { name: 'Shared' }))
-    await waitFor(() => expect(setRunnerPrivate).toHaveBeenCalledWith('r1', false, ''))
+    await waitFor(() => expect(setRunnerPrivate).toHaveBeenCalledWith('r1', false))
   })
 
   it('shows the server error', async () => {

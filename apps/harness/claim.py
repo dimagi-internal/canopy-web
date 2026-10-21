@@ -637,7 +637,9 @@ def _capability_sweep() -> None:
 
 
 def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
-                    exclude_slugs: list[str] | None = None) -> Turn | None:
+                    exclude_slugs: list[str] | None = None, acts_as: str = "") -> Turn | None:
+    """`acts_as`: the lower mode the runner claims in (role_cap) — stamped on a turn
+    its OWNER started, so that turn runs as that role; anyone else's turn keeps its own."""
     # Cloud-capability leases: an EXTRA trigger for their sweep, ABOVE every early
     # return — a fleet hold or a paused runner stops turns, never a machine's
     # expiry. The sweep has its own clock in every web process
@@ -645,6 +647,9 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # finished for SWEEP_STALE_S (the clock is not keeping up), so normally it is
     # one cache read and no AWS call rides the claim. It never raises.
     _capability_sweep()
+    from apps.workspaces import role_cap
+
+    runner_cap = role_cap.cap_from(acts_as)
     # Covers the operator PAUSE too: `live_status` returns PAUSED for a parked
     # runner, so this one guard is the whole server-side enforcement. Spelled out
     # because it is easy to read this line as a pure liveness check and then
@@ -844,17 +849,22 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # mid-turn cannot flip the posture of work already under way.
         from . import turn_mode as modes
 
-        # A PRIVATE runner acting as a lower role (canopy-web#1705) judges its
-        # owner's turn at that role — mode, envelope, credential reads — so the
-        # cap is on the turn before anything below asks who started it.
-        acts_as = ""
-        if runner.private and runner.acts_as and turn.initiator_user_id == runner.owner_id:
-            acts_as = runner.acts_as
-            turn.origin_ref = {**(turn.origin_ref or {}), "acts_as": acts_as}
+        # A turn started as a lower role (canopy-web#1705) is judged at that role.
+        turn_cap = role_cap.cap_from((turn.origin_ref or {}).get("acts_as"))
+        stamp = ""
+        if runner_cap and turn.initiator_user_id and turn.initiator_user_id == runner.owner_id:
+            # The runner claims in a lower mode: its owner's turn runs in it too
+            # (never loosening a cap the turn was started with).
+            stamp = role_cap.stronger(turn_cap, runner_cap)
+            if stamp != turn_cap:
+                turn.origin_ref = {**(turn.origin_ref or {}), "acts_as": stamp}
+            else:
+                stamp = ""
+        acts_as = stamp or turn_cap
         mode = modes.for_turn(turn, priorities, fresh=True)
         if acts_as and mode is not None and mode.mode == modes.AUTO:
-            # Only an agent admin may run auto, and a capped owner is not one.
-            mode = modes.Resolved(modes.MANUAL, f"{runner.name} acts as {acts_as}: manual")
+            # Only an agent admin may run auto, and a capped initiator is not one.
+            mode = modes.Resolved(modes.MANUAL, f"started as {acts_as}: manual")
         # Admission rules (apps/admission): the one point where the runner's kind
         # and the resolved mode are both known. An `auto` rule may first raise a
         # standing manual to auto on this runner; then a rejected turn is closed
@@ -884,7 +894,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                     turn_mode=mode.mode if mode else "",
                     turn_mode_basis=mode.basis[:320] if mode else "",
                     rides_turn_id=rides,
-                    **({"origin_ref": turn.origin_ref} if acts_as else {}),
+                    **({"origin_ref": turn.origin_ref} if stamp else {}),
                 )
         except IntegrityError:
             continue  # another runner claimed for this agent between our check and update

@@ -175,17 +175,14 @@ def runner_serves_agent(runner, agent) -> bool:
 
 
 def private_runner_licensed(runner, agent) -> bool:
-    """A PRIVATE runner whose owner holds an ACTIVE license for `agent`, judged at the
-    role the runner acts as (canopy-web#1705): the person uses the agent on their own
-    machine, and its secrets are read there only during their own turns
-    (`licenses.credential_principal`)."""
+    """A PRIVATE runner whose owner holds an ACTIVE license for `agent` (canopy-web#1705):
+    the person uses the agent on their own machine, and its secrets are read there only
+    during their own turns (`licenses.credential_principal`)."""
     if not runner.private or runner.owner is None:
         return False
     from apps.agents import licenses
-    from apps.workspaces import role_cap
 
-    owner = role_cap.apply(runner.owner, runner.acts_as)
-    return licenses.active(agent, owner) is not None
+    return licenses.active(agent, runner.owner) is not None
 
 
 def agents_served(runner):

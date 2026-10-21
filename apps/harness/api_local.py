@@ -146,7 +146,7 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
     try:
         turn, created = local.open_turn(
             request, agent, private_runner=ws, claude_session_id=payload.claude_session_id,
-            cwd=payload.cwd, requested_mode=payload.turn_mode)
+            cwd=payload.cwd, requested_mode=payload.turn_mode, acts_as=payload.acts_as)
     except local.LocalRefusedError as exc:
         raise HttpError(exc.status, str(exc)) from exc
     except ValueError as exc:

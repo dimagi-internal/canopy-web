@@ -1,9 +1,17 @@
-"""Acting as a LOWER role than you hold — the private runner's `acts_as` (canopy-web#1705).
+"""Acting as a LOWER role than you hold — a turn's `acts_as` (canopy-web#1705).
 
-A person can set their own private runner to act as an `editor` or a `viewer`, so that
-everything from that box — its remote turns and the local sessions on it — is judged
-as if they held only that role. It is how the agent's owner tests the non-admin path
-(licenses, the manual cap, refusals) without a second account or a second machine.
+Whoever starts a turn may ask for it to run as an `editor` or a `viewer` (`TurnIn.acts_as`,
+`LocalTurnIn.acts_as`): everything about that turn — whether it may be started, its
+mode, its caller envelope, its credential reads — is judged as if they held only that
+role. It is how anyone, an agent included, runs the non-admin path (licenses, the manual
+cap, refusals) for real, without a second account, a second machine, or a setting left on.
+The cap lives on the turn (`origin_ref["acts_as"]`), so it ends with the turn.
+
+A client — a runner, a session, a script — can also put ITSELF in a lower mode, with
+nothing stored anywhere: every request carrying `X-Canopy-Acts-As: editor|viewer` is
+judged at that role, and a runner claiming with it stamps the cap on the turns of its
+owner's it claims (`claim.claim_next_turn(acts_as=)`). How a runner started with
+`CANOPY_ACTS_AS=editor` runs as an editor until it is restarted without it.
 
 The cap rides on the user OBJECT (`CAP_ATTR`), set once per request or per turn, and
 the few readers every gate goes through honour it:
@@ -25,8 +33,10 @@ from __future__ import annotations
 CAP_ATTR = "_canopy_acts_as"
 
 EDITOR, VIEWER = "editor", "viewer"
-#: The caps a private runner may act as. Owner/admin are not caps: they are the default.
+#: The caps a turn or a request may act as. Owner/admin are not caps: they are the default.
 CAPS = (EDITOR, VIEWER)
+#: The header a client puts itself in a lower mode with, request by request.
+HEADER = "HTTP_X_CANOPY_ACTS_AS"
 
 
 def cap_of(user) -> str:
@@ -46,6 +56,11 @@ def apply(user, cap: str):
     return user
 
 
+def stronger(a: str, b: str) -> str:
+    """The stronger restriction of two caps: viewer over editor over none."""
+    return VIEWER if VIEWER in (a, b) else (EDITOR if EDITOR in (a, b) else "")
+
+
 def capped_role(role: str | None, cap: str) -> str | None:
     """`role` lowered to `cap` (a workspace role string), or `role` unchanged."""
     if role is None or cap not in CAPS:
@@ -57,24 +72,30 @@ def capped_role(role: str | None, cap: str) -> str | None:
 
 
 def apply_to_request(request) -> None:
-    """Cap `request.user` by the private runner the request speaks for, if it acts as
-    a lower role: the runner a runner token belongs to, or the one named in
-    `X-Canopy-Runner` when the caller owns it. Called by the bearer middleware."""
+    """Cap `request.user` by the mode the client put itself in (`X-Canopy-Acts-As`),
+    and by the turn the request is made during (`X-Canopy-Turn-Id`) when they started
+    it as a lower role — a session cannot shed that cap mid-turn. Only the turn's own
+    initiator: a runner owner reading for someone else's capped turn is judged as
+    themselves, as for any turn their box runs. Called by the bearer middleware."""
     user = getattr(request, "user", None)
     if user is None or not getattr(user, "is_authenticated", False):
         return
-    rtok = getattr(request, "runner_token", None)
-    runner = rtok.runner if rtok is not None else _named_runner(request, user)
-    if runner is not None and getattr(runner, "private", False) and runner.acts_as:
-        apply(user, runner.acts_as)
-        request.acts_as_runner = runner
-    if rtok is None:
-        # A read made during the caller's own local turn keeps the cap the turn was
-        # opened under, header or not — a session cannot shed it mid-turn.
-        apply(user, _local_turn_cap(request, user))
+    apply(user, header_cap(request))
+    apply(user, _turn_cap(request, user))
 
 
-def _local_turn_cap(request, user) -> str:
+def header_cap(request) -> str:
+    """The mode the client put itself in for this request (`X-Canopy-Acts-As`)."""
+    return cap_from(request.META.get(HEADER, ""))
+
+
+def cap_from(value) -> str:
+    """`value` as a cap ("editor" / "viewer"), or "" — what a turn's `acts_as` holds."""
+    cap = str(value or "").strip().lower()
+    return cap if cap in CAPS else ""
+
+
+def _turn_cap(request, user) -> str:
     import uuid
 
     raw = request.META.get("HTTP_X_CANOPY_TURN_ID", "").strip()
@@ -86,21 +107,6 @@ def _local_turn_cap(request, user) -> str:
         return ""
     from apps.harness.models import Turn
 
-    ref = (Turn.objects.filter(pk=tid, origin=Turn.ORIGIN_LOCAL, initiator_user=user)
+    ref = (Turn.objects.filter(pk=tid, initiator_user=user)
            .values_list("origin_ref", flat=True).first())
-    return (ref or {}).get("acts_as") or ""
-
-
-def _named_runner(request, user):
-    import uuid
-
-    raw = request.META.get("HTTP_X_CANOPY_RUNNER", "").strip()
-    if not raw:
-        return None
-    try:
-        rid = uuid.UUID(raw)
-    except ValueError:
-        return None
-    from apps.harness.models import Runner
-
-    return Runner.objects.filter(pk=rid, owner=user).first()
+    return cap_from((ref or {}).get("acts_as"))

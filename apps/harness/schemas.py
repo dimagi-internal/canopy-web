@@ -109,8 +109,6 @@ class RunnerFlagsIn(Schema):
 
 class RunnerPrivateIn(Schema):
     private: bool
-    # "" (themselves), "editor" or "viewer" — apps/workspaces/role_cap.py. Only on a private runner.
-    acts_as: str = ""
 
 
 class RunnerEngineIn(Schema):
@@ -225,8 +223,6 @@ class RunnerOut(Schema):
     flags: list[str] = []
     # Its owner's own machine: no fleet work, only what its owner puts on it.
     private: bool = False
-    # The role everything from a private runner is judged as ("" = its owner themselves).
-    acts_as: str = ""
     # The private-runner registration linked to this box (canopy-web#1705): the runner
     # writes it to ~/.canopy/private-runner.json, so local sessions there need no CLI.
     private_runner_id: uuid.UUID | None = None
@@ -672,6 +668,11 @@ class TurnIn(Schema):
     # PAT; anyone else gets a 403. Refused on a project turn and on email, which a
     # runner posts on a stranger's behalf. Omit to let the rules decide.
     turn_mode: Literal["auto", "manual"] | None = None
+    # Run this turn as a LOWER role than the caller holds (apps/workspaces/role_cap.py):
+    # everything about it — whether it may be started, its mode, its envelope, its
+    # credential reads — is judged as an `editor` or a `viewer`. Only lowers, so
+    # anyone may ask; it ends with the turn. Omit to act as yourself.
+    acts_as: Literal["", "editor", "viewer"] = ""
     # What this request was made from (see ParentIn). Optional.
     parent: ParentIn | None = None
 
@@ -2129,6 +2130,8 @@ class LocalTurnIn(Schema):
     cwd: str = Field(default="", max_length=300)
     #: "auto" is honoured only for an agent admin; anything else runs manual.
     turn_mode: Literal["", "manual", "auto"] = ""
+    #: Open the session as a LOWER role ("editor" / "viewer"), as `TurnIn.acts_as`.
+    acts_as: Literal["", "editor", "viewer"] = ""
 
 
 class LocalTurnOut(Schema):

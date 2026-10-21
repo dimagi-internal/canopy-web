@@ -59,11 +59,10 @@ def observe(me: dict | None, *, base_url: str, path: Path | None = None) -> None
             return  # the person registered this machine themselves: theirs to keep
         doc = {"id": pr_id, "name": me.get("name", ""), "host": me.get("host", ""),
                "runner_id": str(me.get("id") or ""), "base_url": base_url,
-               "acts_as": me.get("acts_as") or "", "written_by": WRITTEN_BY}
+               "written_by": WRITTEN_BY}
         if {k: current.get(k) for k in doc} != doc:
             _write(path, {**doc, "registered_at": time.time()})
-            logger.info("private runner: local sessions here are recorded as %s's local turns%s",
-                        "the owner", f", acting as {doc['acts_as']}" if doc["acts_as"] else "")
+            logger.info("private runner: local sessions here are recorded as the owner's local turns")
     elif not me.get("private") and ours:
         try:
             path.unlink()
