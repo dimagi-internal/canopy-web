@@ -65,6 +65,8 @@ export const NAV: NavEntry[] = [
     label: 'Projects',
     items: [
       { path: 'projects', label: 'All projects', tenant: true },
+      // The tools projects serve as their own MCP servers, to add by hand.
+      { path: 'mcp', label: 'MCP servers', tenant: true },
       // What projects produce for people to read and review.
       { path: 'storyboards', label: 'Storyboards', tenant: true },
       { path: 'walkthroughs', label: 'Walkthroughs', tenant: true },

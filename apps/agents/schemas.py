@@ -964,6 +964,31 @@ class KbOriginalsOut(StrictModel):
     expires_in: int
 
 
+class McpServerOut(StrictModel):
+    """One MCP server in the directory: a workspace project serving its own tools.
+    Listed so a person or agent can decide to add it; nothing adds it for them."""
+
+    #: The name to add it under (its handle: two side by side never collide).
+    name: str
+    #: `<workspace>/<handle>`, the address that survives a change of steward.
+    address: str
+    workspace: str
+    workspace_name: str
+    title: str
+    #: What it is, in its steward's words (the project's outcome).
+    description: str
+    #: "kb" — a knowledge base.
+    kind: str
+    steward_slug: str
+    url: str
+    #: `claude mcp add --transport http <name> <url>`.
+    add_command: str
+    #: The project's page on canopy-web.
+    project_url: str
+    published_at: datetime | None = None
+    bytes: int | None = None
+
+
 class SpawnedFromOut(StrictModel):
     """The task a project grew out of: "from <task> in <project>"."""
 

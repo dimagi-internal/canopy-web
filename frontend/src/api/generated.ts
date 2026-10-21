@@ -6159,6 +6159,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/mcp-servers/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The MCP servers you can add: workspace projects serving their own tools
+         * @description A directory to browse, not a subscription: nothing here is added to anyone's
+         *     sessions. Pinned to a workspace (`/api/w/<ws>/…`, or the tool's `workspace`), it
+         *     covers that workspace and the ones below it you belong to. Every row is one you
+         *     can call: the readers a project's server admits (its workspace's members and
+         *     its steward's) are exactly the ones a list spanning those workspaces reaches.
+         */
+        readonly get: operations["list_mcp_servers"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-projects/{workspace}/{handle}/": {
         readonly parameters: {
             readonly query?: never;
@@ -23686,6 +23710,39 @@ export interface components {
             readonly workspace: string;
         };
         /**
+         * McpServerOut
+         * @description One MCP server in the directory: a workspace project serving its own tools.
+         *     Listed so a person or agent can decide to add it; nothing adds it for them.
+         */
+        readonly McpServerOut: {
+            /** Name */
+            readonly name: string;
+            /** Address */
+            readonly address: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Workspace Name */
+            readonly workspace_name: string;
+            /** Title */
+            readonly title: string;
+            /** Description */
+            readonly description: string;
+            /** Kind */
+            readonly kind: string;
+            /** Steward Slug */
+            readonly steward_slug: string;
+            /** Url */
+            readonly url: string;
+            /** Add Command */
+            readonly add_command: string;
+            /** Project Url */
+            readonly project_url: string;
+            /** Published At */
+            readonly published_at?: string | null;
+            /** Bytes */
+            readonly bytes?: number | null;
+        };
+        /**
          * KbUploadOut
          * @description Where to PUT a kb.sqlite.gz (straight to storage, never through canopy),
          *     then name `key` to `POST …/kb/publish`.
@@ -40064,6 +40121,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly list_mcp_servers: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["McpServerOut"][];
                 };
             };
         };

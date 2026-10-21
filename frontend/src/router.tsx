@@ -47,6 +47,7 @@ import { PeopleMePage, PersonPageView } from './pages/PeopleMePage'
 import { HcpClientsPage } from './pages/HcpClientsPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { WorkspaceProjectRedirect } from './pages/projects/WorkspaceProjects'
+import { McpServersPage } from './pages/projects/McpServersPage'
 import { ProjectsPage } from './pages/projects/ProjectsPage'
 import { HomePage } from './pages/home/HomePage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
@@ -354,6 +355,8 @@ export const routeTable: RouteObject[] = [
       // Every project in the workspace, across its agents — an index of rows;
       // each project's one page is on its agent's board.
       { path: '/w/:workspace/projects', element: <ProjectsPage /> },
+      // The MCP servers its projects serve, to browse and add by hand.
+      { path: '/w/:workspace/mcp', element: <McpServersPage /> },
       // The old team-view address (hal T82) — a second page about the same
       // project, outside the agent console. A project has one page now; links
       // already sent land on it.

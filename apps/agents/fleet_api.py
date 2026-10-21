@@ -38,6 +38,7 @@ from .schemas import (
     KbOriginalsOut,
     KbPublishIn,
     KbUploadOut,
+    McpServerOut,
     WorkspaceProjectIn,
 )
 
@@ -210,6 +211,36 @@ def list_workspace_projects(request: HttpRequest, status: str = "") -> list[Agen
         c = counts.get(p.pk, {})
         p._task_count, p._open_task_count, p._waiting_task_count = c.get("n", 0), c.get("live", 0), c.get("waiting", 0)
     return [AgentProjectOut.model_validate(p) for p in projects]
+
+
+@router.get("/mcp-servers/", response=list[McpServerOut],
+            summary="The MCP servers you can add: workspace projects serving their own tools")
+def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
+    """A directory to browse, not a subscription: nothing here is added to anyone's
+    sessions. Pinned to a workspace (`/api/w/<ws>/…`, or the tool's `workspace`), it
+    covers that workspace and the ones below it you belong to. Every row is one you
+    can call: the readers a project's server admits (its workspace's members and
+    its steward's) are exactly the ones a list spanning those workspaces reaches."""
+    from apps.tokens.views_mcp_oauth import issuer
+    from apps.workspaces.models import Workspace
+
+    listed = _listed_agent_workspace_ids(request)
+    projects = [p for p in services.workspace_projects(listed, steward_workspaces=listed)
+                if p.mcp_path and p.status != AgentProject.ARCHIVED]
+    names = dict(Workspace.objects.filter(slug__in={p.owner_workspace_id for p in projects})
+                 .values_list("slug", "display_name"))
+    base = issuer(request)
+    out = []
+    for p in projects:
+        url = f"{base}{p.mcp_path}".rstrip("/")
+        out.append(McpServerOut(
+            name=p.handle, address=f"{p.owner_workspace_id}/{p.handle}", workspace=p.owner_workspace_id,
+            workspace_name=names.get(p.owner_workspace_id, p.owner_workspace_id), title=p.name,
+            description=p.outcome, kind=p.mcp_kind, steward_slug=p.agent.slug, url=url,
+            add_command=f"claude mcp add --transport http {p.handle} {url}",
+            project_url=f"/w/{p.owner_workspace_id}/projects/{p.handle}",
+            published_at=p.kb_published_at, bytes=p.kb_bytes))
+    return out
 
 
 @router.post("/workspace-projects/", response={201: AgentProjectOut},
