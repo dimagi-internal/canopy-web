@@ -53,9 +53,9 @@ cd frontend && npm run gen:api                   # regenerate TS types (backend 
 
 Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**. Routes: `frontend/src/router.tsx` (SPA), `config/urls.py` (server).
 
-- **Tenant data lives under `/w/:workspace/`**; root holds personal/global pages, pre-tenant pages (invite, first run), redirects and the public site. Any route outside `/w/` must be listed with its reason in `frontend/src/routeTenancy.test.ts`.
+- **Tenant data lives under `/w/:workspace/`**; root holds personal/global pages, pre-tenant pages (invite, first run), redirects and the public site. Any route outside `/w/` carries its reason (`flat` on its descriptor, or `NOT_PAGES` for a redirect), checked by `frontend/src/routeTenancy.test.ts`.
 - **One URL per artifact, nothing forwarded** — except `/w/<ws>/review/<id>`, which forwards a narrative review to its storyboard (`apps/reviews/views.py`, `docs/architecture/pages.md`). Flat `/walkthrough/`, `/review/`, `/share/`, `/storyboard/`, `/narrative/`, `/ddd-release/` are a plain 404 (`config/views.py::flat_artifact_gone`). Build links with `scoped_path` / `useScopedPath` — no flat fallback.
-- A new page also needs a descriptor in `frontend/src/guide/surfaces.ts` (the `/guide` coverage test fails without one).
+- **One registry of pages: `frontend/src/guide/surfaces.ts`.** A new page needs a descriptor there (the `/guide` coverage test fails without one), saying where it lives (`home`/`group`/`flat`); the guide, the workspace switcher and the tenancy test read it → `docs/architecture/pages.md`.
 
 **Tenant-scoped (`/w/:workspace/…`):**
 - (index) → `agents` — the workspace's agents (a table, `GET /api/agent-roster/`); `projects` — every project in the workspace

@@ -1,12 +1,13 @@
-import { HELP_ITEMS, NAV } from '@/components/AppLayout/nav'
+import { ACCOUNT_ITEMS, HELP_ITEMS, NAV } from '@/components/AppLayout/nav'
 import { SURFACES, type SurfaceDescriptor } from './surfaces'
 
 /**
- * Group descriptors by the header's existing nav groups, so the guide's shape
- * matches the menu people actually look at. Anything the nav does not mention
- * (public viewers, agent rail sections) lands in a trailing "Elsewhere" group
- * rather than being dropped — a guide that silently omits a surface is the
- * failure this whole registry exists to prevent.
+ * Group descriptors by the header's menus, so the guide's shape matches the
+ * menu people actually look at. A page in no menu carries its own `group` in
+ * the registry (the agent rail, pages shared by link). Anything still unclaimed
+ * lands in a trailing "Elsewhere" group rather than being dropped — a guide that
+ * silently omits a surface is the failure this whole registry exists to
+ * prevent — and grouping.test.ts fails while it holds anything.
  */
 export interface GuideGroup {
   label: string
@@ -20,131 +21,51 @@ function navItemPath(item: { path: string; tenant: boolean }): string {
 }
 
 /**
- * Does `surfacePath` belong under the nav item at `navPath`?
+ * Does `surface` belong under the nav item at `navPath`?
  *
  * Exact match, or a detail route beneath it — `/w/:workspace/chat/:id` belongs
  * with `/w/:workspace/chat`, because a reader looking for "the chat page" wants
- * the list and the single chat together. (No nav item links the bare tenant
- * index any more — it redirects to Agents — so nothing here can prefix-match
- * the whole app.)
+ * the list and the single chat together. A page no menu links is matched by its
+ * registry `home`, the page a reader reaches it from. (No nav item links the
+ * bare tenant index any more — it redirects to Agents — so nothing here can
+ * prefix-match the whole app.)
  */
-function navMatch(surfacePath: string, navPath: string): boolean {
-  const p = NAV_HOME[surfacePath] ?? surfacePath
+function navMatch(surface: SurfaceDescriptor, navPath: string): boolean {
+  const p = surface.home ?? surface.path
   return p === navPath || p.startsWith(`${navPath}/`)
 }
 
-/**
- * Detail pages with no list of their own, filed under the nav item a reader
- * reaches them from: an agent thread (a direct agent→agent conversation) is
- * opened from the huddle it settles; Analytics and Network are tabs of Health.
- */
-const NAV_HOME: Record<string, string> = {
-  '/w/:workspace/threads/:id': '/w/:workspace/huddles/:id',
-  // The Health page's other tabs.
-  '/w/:workspace/analytics': '/w/:workspace/health',
-  '/w/:workspace/network': '/w/:workspace/health',
-  // Listed on the Agents page, above the agents.
-  '/w/:workspace/projects/:handle': '/w/:workspace/agents',
-}
-
-/**
- * Clusters for surfaces the nav does not name.
- *
- * Without these, 25 of the 41 descriptors land in one "Elsewhere" bucket — 61%
- * of the guide in a junk drawer, which defeats the point of grouping it by the
- * menu at all. (Measured before this existed.)
- *
- * These are assigned BEFORE the nav groups, which matters for exactly one case:
- * the eleven rail sections all sit under `/w/:workspace/agents/:slug/`, so nav's
- * `/w/:workspace/agents` would otherwise absorb them into Fleet and leave this
- * group empty.
- *
- * This is now a THIRD hardcoded path list, beside `NOT_DOCUMENTABLE` and
- * `nav.ts` — and unlike the coverage test, it fails SILENTLY: rename a route
- * (or its surface) and it just relocates here to "Elsewhere" rather than
- * erroring, which the `<= 8` cap in coverage.test.ts absorbs several times
- * before it goes red. The cap is the only tripwire on this list going stale.
- */
-const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
-  {
-    // One agent's left rail — ten sections under a single agent.
-    label: 'Agent workspace',
-    match: (p) => p.startsWith('/w/:workspace/agents/:slug/'),
-  },
-  {
-    // Pages someone reaches from a link you sent them, with no account of
-    // their own on the surface itself. NOT all of these are actually
-    // loginless: /invite/:token requires signing in with the invited
-    // address to accept, and a `private` walkthrough routes a logged-out
-    // visitor to sign-in — "shared by link" is the accurate claim, "no
-    // login" was not.
-    label: 'Shared by link',
-    match: (p) =>
-      ['/w/:workspace/share/:token', '/w/:workspace/storyboard/:slug', '/w/:workspace/narrative/:slug',
-       '/w/:workspace/walkthrough/:id', '/w/:workspace/review/:id', '/invite/:token'].includes(p) ||
-      p.startsWith('/w/:workspace/ddd-release/'),
-  },
-  {
-    // Requests for access to Canopy itself, answered from the notification
-    // email's link. In no menu: one person reads them.
-    label: 'Requests for access to Canopy',
-    match: (p) => p === '/beta-requests' || p.startsWith('/beta-requests/'),
-  },
-  {
-    // The HCP service's client registry: apps outside canopy that may ask people
-    // for their context. In no menu: canopy administrators open it by address.
-    label: 'The HCP service (administrators)',
-    match: (p) => p === '/hcp-clients',
-  },
-  {
-    // A person's memory page as they let one agent see it. In no menu: the agent
-    // opens it from the href /api/people/pages/shared-with-me/ hands it.
-    label: 'A memory page shared with an agent',
-    match: (p) => p === '/people/:personId/page',
-  },
-  {
-    // The link up.sh prints (and emails) for a new cloud box, and the page
-    // Canopy Runner opens after install. In no menu: only the person pairing
-    // that box opens it.
-    label: 'Approving a new runner',
-    match: (p) => p === '/w/:workspace/runner-invitations/:invitationId' || p === '/pair/:code',
-  },
-  {
-    // The desktop session IDE, opened from your account menu (it spans
-    // workspaces, so it is in no workspace nav).
-    label: 'Session IDE (desktop)',
-    match: (p) => p === '/ide' || p.startsWith('/ide/'),
-  },
-]
-
 export function guideGroups(surfaces: SurfaceDescriptor[] = SURFACES): GuideGroup[] {
   const claimed = new Set<string>()
-  const take = (pred: (p: string) => boolean) => {
-    const members = surfaces.filter((s) => !claimed.has(s.path) && pred(s.path))
+  const take = (pred: (s: SurfaceDescriptor) => boolean) => {
+    const members = surfaces.filter((s) => !claimed.has(s.path) && pred(s))
     members.forEach((m) => claimed.add(m.path))
     return members
   }
 
-  // Assign clusters first (see CLUSTERS' note), but DISPLAY the nav groups
-  // first, because that is the order a reader already knows from the header.
-  const clusterGroups = CLUSTERS.map((c) => ({ label: c.label, surfaces: take(c.match) }))
+  // Claim a page's own `group` first — the agent rail sits under
+  // /w/:workspace/agents/:slug/, which the Agents menu would otherwise absorb —
+  // but DISPLAY the menus first, in the order a reader knows from the header.
+  const labels = [...new Set(surfaces.flatMap((s) => (s.group ? [s.group] : [])))]
+  const ownGroups = labels.map((label) => ({ label, surfaces: take((s) => s.group === label) }))
 
-  // The header's entries, then the `?` menu. A plain link (Home, Chats) is a
-  // group of one, named for itself.
+  // The header's entries, then the `?` menu, then the account menu. A plain
+  // link (Home, Chats) is a group of one, named for itself.
   const headerGroups = [
     ...NAV.map((e) => (e.kind === 'link' ? { label: e.item.label, items: [e.item] } : e)),
     { label: 'Help', items: HELP_ITEMS },
+    { label: 'Your account', items: ACCOUNT_ITEMS },
   ]
   const navGroups = headerGroups.map((nav) => {
     const wanted = nav.items.map(navItemPath)
-    return { label: nav.label, surfaces: take((p) => wanted.some((w) => navMatch(p, w))) }
+    return { label: nav.label, surfaces: take((s) => wanted.some((w) => navMatch(s, w))) }
   })
 
   const rest = surfaces.filter((s) => !claimed.has(s.path))
 
   return [
     ...navGroups.filter((g) => g.surfaces.length),
-    ...clusterGroups.filter((g) => g.surfaces.length),
+    ...ownGroups,
     ...(rest.length ? [{ label: 'Elsewhere', surfaces: rest }] : []),
   ]
 }

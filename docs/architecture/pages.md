@@ -8,9 +8,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
 
 - **Tenant data lives under `/w/:workspace/`.** Personal/global surfaces, the
   pre-tenant pages and redirects stay at root. Every route outside
-  `/w/:workspace` must be listed WITH ITS REASON in
-  `frontend/src/routeTenancy.test.ts`; a flat route holding tenant data (a
-  "FOLLOW-UP") fails it.
+  `/w/:workspace` carries ITS REASON — a page's `flat` in
+  `frontend/src/guide/surfaces.ts`, a redirect's entry in `guide/coverage.ts`
+  `NOT_PAGES` — checked by `frontend/src/routeTenancy.test.ts`; a flat route
+  holding tenant data (a "FOLLOW-UP") fails it.
 - **One URL per artifact, nothing forwarded.** The flat `/walkthrough/…`,
   `/review/…`, `/share/…`, `/storyboard/…`, `/narrative/…`, `/ddd-release/…`
   and the pre-tenancy `/w/<uuid>/…` are a plain server 404, reachable signed
@@ -30,11 +31,20 @@ Every browser-facing address canopy-web serves. The SPA route table is
   login), the plugin catalog (self-enforced 401; old per-workspace URLs 410), and the flat-artifact 404.
   Every other `/w/` path is the authed tenant shell. Each viewer passes `ws` so
   the API 404s a row from another workspace.
-- **Adding a page:** add it to `routeTable`, give it a descriptor in
-  `frontend/src/guide/surfaces.ts` (the `/guide` coverage test,
-  `frontend/src/guide/coverage.test.ts`, fails on a documentable route without
-  one, or a descriptor without a route), and list it in `routeTenancy.test.ts`
-  if it is not under `/w/:workspace`. Every route gets an error boundary
+- **One registry of pages: `frontend/src/guide/surfaces.ts`.** Every route is
+  a descriptor there or a non-page (redirect, catch-all) in `guide/coverage.ts`
+  `NOT_PAGES` with its reason; `guide/coverage.test.ts` fails on either missing.
+  A descriptor says where the page lives — `home` (the page it is reached from:
+  the guide files it under that page's menu, and the workspace switcher lands
+  there when its section has no page), `group` (the guide heading for a page in
+  no menu), `flat` (why it is outside `/w/:workspace`). The guide's grouping,
+  the switcher's fallback (`nav.ts` `LIST_FOR`) and the tenancy test read these
+  fields; the menus themselves are `NAV`, `HELP_ITEMS` and `ACCOUNT_ITEMS` in
+  `components/AppLayout/nav.ts`, and a page in neither a menu nor a group fails
+  `guide/grouping.test.ts`.
+- **Adding a page:** add it to `routeTable` and give it a descriptor (with
+  `flat` if it is not under `/w/:workspace`, and `home` or `group` if no menu
+  links it). Every route gets an error boundary
   automatically (`guarded()` in `router.tsx`); a route needing a different one
   sets its own `errorElement`.
 - **Retired pages redirect, keeping query and hash** where a link may carry

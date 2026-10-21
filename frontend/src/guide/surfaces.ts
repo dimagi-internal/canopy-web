@@ -1,16 +1,30 @@
 /**
- * One descriptor per documented surface — the in-app guide's content, as DATA.
+ * One descriptor per documented surface — the registry of pages, as DATA.
  *
  * Data, not prose in a wiki, for the same reason systemWorkflows.ts is data: a
  * test can read this and a page can render it; prose in another repo can do
  * neither. guide/coverage.test.ts asserts this file covers every route and
  * names no route that does not exist.
  *
+ * Everything else that sorts pages reads it from here: the guide's grouping
+ * (`group`, `home`), the workspace switcher's fallback (`home`) and the tenancy
+ * test (`flat`). A route that is not a page (a redirect, a catch-all) is in
+ * coverage.ts's NOT_PAGES instead, with its own reason.
+ *
  * `path` MUST match the route path in router.tsx character for character.
  */
 export interface SurfaceDescriptor {
   /** Exactly the route path from routeTable. */
   path: string
+  /** The page a reader reaches this one from, when no menu links it: the guide
+   *  files it under that page's menu, and the workspace switcher lands there
+   *  when this page's section has no page of its own. */
+  home?: string
+  /** The guide's heading for a page in no menu at all. Wins over the menus. */
+  group?: string
+  /** Why this page lives outside /w/:workspace — required there, and only there
+   *  (routeTenancy.test.ts). */
+  flat?: string
   title: string
   /** Who this is for, in a few words. */
   audience: string
@@ -26,6 +40,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   // --- Personal / global (not tenant-scoped) ---
   {
     path: '/system',
+    flat: 'personal/global: the capability catalog, read from the canopy plugin — no tenant rows',
     title: 'Capabilities',
     audience: 'Anyone deciding what canopy can do',
     what: "Every skill, agent and command the canopy plugin ships, read live from the plugin's own files, plus curated chains showing how they compose.",
@@ -33,6 +48,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/guide',
+    flat: 'personal/global: the self-documenting route registry',
     title: 'Guide',
     audience: 'Anyone finding their way around',
     what: "What every surface in Canopy is for, generated from the app's own route table.",
@@ -40,6 +56,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/get-started',
+    flat: 'personal/global: the public getting-started guide (personalised when signed in)',
     title: 'Get started',
     audience: 'Anyone starting with canopy agents, including people with no account yet',
     what: "The three steps to use a canopy agent: install canopy, install an agent, set up the agent. Agents run in your own Claude Code, not through canopy-web's connector; setting one up needs the 1Password CLI with access to the agent's vault. Signed in, it lists every agent in your workspaces, each with its install and setup command.",
@@ -47,6 +64,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/sessions',
+    flat: 'personal/global: YOUR shared transcripts, across your workspaces',
     title: 'Shared transcripts',
     audience: 'Anyone who wants to hand someone a transcript link',
     what: 'Claude Code transcripts you (or your agents/teammates) have shared as read-only web pages — one row per transcript with its visibility and link. Not in the menus: a shared transcript is opened by its own /share/<token> link, and this page is where you manage the ones you shared. Live conversations with agents are Chats.',
@@ -55,6 +73,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/people/me',
+    flat: 'personal/global: what agents know about you, the subject',
     title: 'Your memory',
     audience: 'Anyone who talks to an agent',
     what: 'Your memory (your Human Context Protocol instance): everything canopy holds about you — what agents recorded in each workspace, and personal entries you wrote yourself (you need no workspace for those) — whether agents may learn from you and use your memory, which agents and apps may read it, and your audit log of every read and change. Apps outside canopy reach it only through a grant you approve on a consent screen (the HCP service, Dimagi accounts only for now).',
@@ -63,6 +82,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/people/:personId/page',
+    group: 'A memory page shared with an agent',
+    flat: 'personal/global: a person\'s own memory page, read-only, for an agent they let see it',
     title: 'Someone’s memory page',
     audience: 'An agent a person let see their memory page',
     what: 'A person’s memory page, read-only, as they let this agent see it from their own /people/me: what is remembered and how often agents were given it, the conversations that used it, who can read it, and what changed. Each look is in their log. Anyone they did not let in sees nothing here.',
@@ -71,6 +92,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/hcp-clients',
+    group: 'The HCP service (administrators)',
+    flat: 'global: the HCP service\'s client registry spans every person, not a workspace (superusers)',
     title: 'HCP service clients',
     audience: 'canopy administrators',
     what: 'The applications canopy does not operate that may ask people, on a consent screen, for access to parts of their Human Context Protocol instance: each one\'s name, operator, exact redirect addresses, the most it may ask for, and its revocation webhook. Register, change or disable one; disabling stops every token it holds at once.',
@@ -79,6 +102,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/home',
+    flat: 'personal/global: what is waiting on you across every workspace you are in — read once per organisation and shown side by side',
     title: 'Home',
     audience: 'Everyone',
     what: 'What is waiting on you, across every workspace you are in. Sessions come first — those whose agent needs your next message and yours that are running right now — grouped by agent or project like the IDE; tasks asking you to approve, decline or answer (or parked on you) and requests to join a workspace you manage are folded below them. Newest first. Anything nobody has touched for three days moves to Gone quiet. Hide takes something off your own Home and nothing more — the task stays open, nobody is told — and it comes back by itself when something new happens on it. Beside it, the active projects you own.',
@@ -86,6 +110,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/supervisor',
+    flat: 'personal/global: the cross-fleet Waiting on you — the fleet spans workspaces',
     title: 'Supervisor',
     audience: 'Someone who owns agents',
     what: 'The phone and menubar view of the fleet: the session feed, the Waiting on you queue (every task with an open ask or parked on you, actionable in place), agent KPI cards and runner status. Spans every workspace, so it is in your account menu rather than the workspace nav; on a desktop, Home is the same question in one list.',
@@ -94,6 +119,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/ide',
+    flat: 'personal/global: the desktop session IDE — your sessions across every workspace and runner',
     title: 'IDE',
     audience: 'Someone running sessions on several runners or laptop logins (desktop)',
     what: 'An emdash-style session viewer: a tree of emdash projects (repos and agents) with every session under it — whether it is running, waiting for input or idle, its runner, auto or manual mode, and how long since it last did anything — beside the open chat. Every filter is an on/off toggle: the state counts at the top, and each runner, each mode and archived under Filters. The app bar and the session list can each be folded away for room. Spans every workspace, so it is not tenant-scoped. Built for a wide screen; on a phone use the Supervisor.',
@@ -102,6 +128,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/ide/:id',
+    flat: 'personal/global: one session open in the IDE; the session itself names its workspace',
     title: 'IDE — one session',
     audience: 'Someone running sessions on several runners or laptop logins (desktop)',
     what: 'The IDE with one session open on the right: the same live chat as /w/:workspace/chat/:id, with the project tree still beside it. Arrow keys in the tree move between sessions.',
@@ -110,6 +137,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/schedules',
+    home: '/home',
+    flat: 'personal/global: every schedule across your workspaces (tenant twin: /w/:workspace/schedules)',
     title: 'Schedules (all workspaces)',
     audience: 'Anyone with recurring agent work',
     what: 'A personal weekly calendar of every recurring schedule across every workspace you belong to, filterable by workspace and agent. Same calendar component as the per-workspace and per-agent views.',
@@ -118,6 +147,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/activity',
+    home: '/home',
+    flat: 'personal/global: the fleet turn log across your workspaces (tenant twin: /w/:workspace/activity)',
     title: 'Activity (all workspaces)',
     audience: 'Anyone checking "did that actually run"',
     what: 'A read-only log of the last 20 triggered harness turns across your workspaces — time, agent, trigger, runner, status — with filters and a per-turn event-ledger drill-down. The "what DID fire" counterpart to Schedules ("what WILL fire").',
@@ -126,6 +157,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/settings',
+    flat: 'personal/global: your own account',
     title: 'Your settings',
     audience: 'Everyone',
     what: 'Your own account and this deployment (the workspace\'s own configuration is at /w/:workspace/settings): which AI backend is in use, your Claude subscription connection, presence visibility, and your personal access tokens.',
@@ -133,6 +165,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/new-workspace',
+    group: 'Your first workspace',
+    flat: 'pre-tenant: the create-a-workspace form',
     title: 'Create a workspace',
     audience: 'A brand-new user with no workspace yet',
     what: 'The first-run screen: explains what a workspace is, then either offers a create form (address + optional display name) or explains you need an invite, depending on your account\'s create eligibility.',
@@ -142,6 +176,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   // --- Public viewers (under their workspace; self-enforce visibility) ---
   {
     path: '/w/:workspace/walkthrough/:id',
+    home: '/w/:workspace/walkthroughs',
+    group: 'Shared by link',
     title: 'Walkthrough viewer',
     audience: 'Whoever was sent the link',
     what: 'Plays a single shared walkthrough — an HTML slideshow or a video — with owner-only controls to toggle public/private, rotate the share link, or delete it. Deep-links to a scene (`#scene-N`) or a video timestamp (`#t=`) are supported. A signed-out visitor on a private link is routed to sign in rather than shown a bare error.',
@@ -149,6 +185,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/review/:id',
+    home: '/w/:workspace/agents',
+    group: 'Shared by link',
     title: 'Review link (forwards to the storyboard)',
     audience: 'Whoever was sent a review link',
     what: "A narrative review is read, commented on and decided on its storyboard, so this address forwards there, to the narrative's entry. The review's gate (approve / redraft) is a decision row on the board; ruling it resolves the review for the agent waiting on it. A review link with a valid share token opens the board with the board's own link; a member needs none. A findings review, which belongs to no narrative, still opens here: answer each finding.",
@@ -156,6 +194,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/beta-requests',
+    group: 'Requests for access to Canopy',
+    flat: 'personal/global: requests for access to Canopy itself name no workspace',
     title: 'Requests for access to Canopy',
     audience: 'The person access requests are emailed to',
     what: "Everyone who asked for access through the public site's form, newest first, with whether each was invited or declined. Nobody else can see them.",
@@ -163,6 +203,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/beta-requests/:requestId',
+    group: 'Requests for access to Canopy',
+    flat: 'personal/global: one request for access to Canopy itself',
     title: 'Request for access to Canopy',
     audience: 'The person access requests are emailed to (the link in the notification email)',
     what: 'One request: who asked and why. Approve by picking a workspace you administer and a role — Canopy emails them the ordinary workspace invite — or decline, which emails nobody.',
@@ -170,6 +212,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/invite/:token',
+    group: 'Shared by link',
+    flat: 'pre-tenant: an invitee has no membership yet, so there is no tenant to scope it under',
     title: 'Accept invite',
     audience: 'Someone invited to a workspace',
     what: "The accept-invite landing page: previews the inviting workspace and role (masked email), then lets a signed-in matching account accept. Deliberately outside /w/:workspace — there's no tenant to scope into until the invite is accepted.",
@@ -177,6 +221,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/pair/:code',
+    group: 'Approving a new runner',
+    flat: 'pre-tenant: a runner pairing has no workspace until the person approving it picks one',
     title: 'Pair a computer as your runner',
     audience: 'Someone who just installed Canopy Runner (it opens this page)',
     what: "Approve a computer asking to become your runner: check the code matches the one Canopy Runner shows, pick a workspace you can run work in and a name, and approve with your passkey — the browser then hands the computer its one-time pairing secret on its own loopback address. Outside /w/:workspace: the pairing has no workspace until you pick one.",
@@ -215,6 +261,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/runner-invitations/:invitationId',
+    home: '/w/:workspace/agents',
+    group: 'Approving a new runner',
     title: 'Approve a new cloud runner',
     audience: 'The person who ran up.sh for a new cloud box (the link it prints and emails)',
     what: "One pairing invitation: the runner's name, the workspace it joins, the EC2 instance role it proves, who asked and when it expires (an hour after up.sh made it). Approving, with a passkey, lets that box pair as your runner, signing in with its instance role and holding no token. Only the invitation's creator can open or approve it; a token cannot.",
@@ -272,6 +320,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/analytics',
+    home: '/w/:workspace/health',
     title: 'Analytics',
     audience: 'Workspace admin or owner',
     what: "How this workspace and the ones below it are used, over 7, 30 or 90 days: turns started and how they ended, chats opened, messages sent, active people, tokens per day (cache reads apart); where turns came from (chat, email, Slack, schedules, the API); and a table each for agents, repositories (work no agent ran — people's own Claude Code sessions in a repo) and people — turns, messages, chats, settings changed, MCP calls, what they work with most, and tokens. Counts come from canopy's analytics log, which content retention never purges. Tokens cover the turns and answers whose usage was seen.",
@@ -279,6 +328,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/network',
+    home: '/w/:workspace/health',
     title: 'Network',
     audience: 'Workspace admin or owner',
     what: "Who works with whom, over 7, 30 or 90 days, across this workspace and the ones below it: every person, contact and agent as a dot, linked to each thread they wrote in — a chat (a Slack thread bound to a chat is one too) or an email thread — and each thread to the agent that answered it. Shows how many threads more than one person wrote in, and how many pairs of people wrote in the same thread: is an agent a room people meet in, or a private line? Colour by who, by channel or by workspace, and pull each workspace into its own cluster. Click a dot to see its threads and who else is in them; a thread opens if you may open that chat, and its title shows only then. Counts come from canopy's analytics log, which content retention never purges.",
@@ -368,6 +418,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/projects/:handle',
+    home: '/w/:workspace/agents',
     title: 'Workspace project',
     audience: 'Anyone in the workspace',
     what: 'A project the workspace owns rather than one agent, such as a funder knowledge base that many agents read. A steward agent keeps it current, and any agent here can file tasks into it. This address opens its page and keeps working when the steward changes.',
@@ -432,6 +483,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/threads/:id',
+    home: '/w/:workspace/huddles',
     title: 'Agent conversation',
     audience: 'Anyone following how the fleet works as a team',
     what: "A direct, bounded conversation between agents (an agent thread) — e.g. a huddle idea's lead and the teammate who asked for changes settling them. Its purpose, who is in it, how it ended, then each message: who said it to whom, whether they agree, suggest a change, don't agree or ask, and what they said. Messages are agent turns; nothing else is stored.",
@@ -440,6 +492,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/projects',
+    group: 'Agent workspace',
     title: 'Agent projects',
     audience: 'Anyone in the workspace',
     what: "Where an agent opens: the pieces of work with an end that it is working toward, one row per project (P1, P2 …) with its outcome, owner, open and waiting-on-you task counts, and when it last moved. Active projects first; done and archived collapse below.",
@@ -447,6 +500,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/projects/:ref',
+    group: 'Agent workspace',
     title: 'Project',
     audience: 'Anyone in the workspace — the link to send a teammate',
     what: "A project's one page. What it is (its outcome in a line, its links — the live app, the history docs — and who owns it); where it stands — what is built, what is in progress, and the decisions waiting on someone, one line each; the ideas, each with its status and whose it is in their own words; and the people behind them; the tasks its check-ins proposed, to start or decline right there; its check-ins (recurring meetings: lead, agents, cadence, an optional Slack channel read only when the lead confirms) and their timeline. Its editors also get the project's status, Drive folder and repo, task numbers on the ideas, the agent's tasks on the same card as the Tasks page, and the recent turns that touched them; a teammate sees none of that.",
@@ -454,6 +508,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/projects/:ref/people/:person',
+    group: 'Agent workspace',
     title: 'Contributor page',
     audience: 'Anyone in the workspace',
     what: "One person's page on one project: what they are trying to achieve, in their own words with a link to where they said each thing, and their ideas — built so far, in progress, proposed — plus wants not yet added as ideas. An agent writes it from their sessions, only while the person lets agents learn about them; read it before building on their idea, or against it.",
@@ -462,6 +517,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/tasks',
+    group: 'Agent workspace',
     title: 'Agent tasks',
     audience: 'Anyone in the workspace',
     what: "Every task this agent has (T1, T2 …), filtered to Waiting on you (an open ask, or parked on you), Open, or Done, and optionally to one project or grouped by project. A task that asks you something says so on its card and offers exactly the actions that apply: approve a review or suggestion (the agent starts on it at once) or decline it, answer a question, reply, and for editors nudge an in-progress task or mark it done. `?batch=` opens one sitting, e.g. a fleet audit.",
@@ -469,6 +525,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/turns',
+    group: 'Agent workspace',
     title: 'Agent turns',
     audience: 'The person(s) who own this agent',
     what: "The agent's full turn ledger — every packaged unit of work it has done, with what it advanced, what it did, its deliverables, and optionally a transcript link.",
@@ -476,6 +533,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/huddles',
+    group: 'Agent workspace',
     title: 'Agent huddles',
     audience: 'The person(s) who own this agent',
     what: 'The huddles this agent led or was a member of — each with its rounds, members and how many outcomes it filed.',
@@ -484,6 +542,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/schedules',
+    group: 'Agent workspace',
     title: 'Agent schedules',
     audience: 'The person(s) who own this agent',
     what: "A dense table of this agent's recurring activities — each row's server-computed next fire time and last outcome, plus the controls to run it off-cycle, pause it, or edit it.",
@@ -492,6 +551,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/mail',
+    group: 'Agent workspace',
     title: 'Agent mail',
     audience: 'Workspace members',
     what: "The email threads this agent has sent and received, read-only: a dense list of threads beside the open thread, with each message's direction, delivery status, body and attachments.",
@@ -500,6 +560,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/skills',
+    group: 'Agent workspace',
     title: 'Agent skills',
     audience: 'The person(s) who own this agent',
     what: "The catalog of skills this agent has available, as cards.",
@@ -507,6 +568,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/skills/history',
+    group: 'Agent workspace',
     title: 'Agent skill history',
     audience: 'The person(s) who own this agent',
     what: "How each skill in the agent's repository changed over time, read from its git history. Drill from all skills, to a group, to one skill, to one commit.",
@@ -514,6 +576,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/capabilities',
+    group: 'Agent workspace',
     title: 'Agent capabilities',
     audience: 'Workspace members (granting and revoking is for workspace admins)',
     what: "The cloud capabilities this agent declares — an ephemeral EC2 machine (its region, stack and limits) or a pool of named slots — whether this workspace grants each one, with the grant's limits, who granted it and when, and the leases holding or waiting for a machine now. Retired capabilities are collapsed below. The agent can lease a capability only once it is granted.",
@@ -522,6 +585,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/agents/:slug/settings',
+    group: 'Agent workspace',
     title: 'Agent settings',
     audience: "The agent's owner and admins (some controls are workspace-owner only)",
     what: "Everything that configures this agent, grouped by the question it answers: who operates it (owner, admins), who can reach it (callers, Slack), how it runs (turn mode, runners and their source rules, and the GitHub repository and branch its runners clone — set in place, the setup checklist's repository step links straight to it), and its credentials — the secrets it needs plus the 1Password vault and service account they are read from. The workspace's SHARED vault is elsewhere, under the workspace's own Settings → Secrets.",
@@ -553,6 +617,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   // --- Public, chrome-less routes (mounted outside the app shell) ---
   {
     path: '/w/:workspace/share/:token',
+    home: '/w/:workspace/agents',
+    group: 'Shared by link',
     title: 'Shared session (public)',
     audience: 'Whoever was sent the link',
     what: 'A public, chrome-less, read-only viewer for a shared Claude Code transcript — or for several grouped as one arc, which lands on a clickable list of the member sessions. No login required. Best-effort secret-scrubbed before sharing.',
@@ -560,6 +626,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/ddd-release/:narrative/:runId',
+    home: '/w/:workspace/ddd',
+    group: 'Shared by link',
     title: 'DDD run release (public)',
     audience: 'An external stakeholder sent the link',
     what: "The clean, shareable face of a DDD run: title, final video and the narrative story, with no phase/gate jargon or artifact dump. A member additionally sees a link into the operator console.",
@@ -567,6 +635,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/storyboard/:slug',
+    home: '/w/:workspace/storyboards',
+    group: 'Shared by link',
     title: 'Storyboard (public)',
     audience: 'An external stakeholder sent the link',
     what: 'The shared arc — several DDD narratives shown as one link, chrome-less and token-gated, following each narrative\'s current release so the link never goes stale.',
@@ -574,6 +644,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/narrative/:slug',
+    home: '/w/:workspace/storyboards',
+    group: 'Shared by link',
     title: 'Narrative (public)',
     audience: 'An external reviewer sent the link',
     what: "One narrative, scene by scene, for someone meeting the story for the first time — clean by default, with an optional toggle to see what changed since the last version. Editing (if allowed) opens the scene's own text directly.",
@@ -581,6 +653,8 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/about',
+    group: 'The public site',
+    flat: 'personal/global: the public explainer',
     title: 'About Canopy (public)',
     audience: 'Anyone, including people with no account',
     what: 'The public explainer — what Canopy is, the five components it is made of, live counts, and the five ways in. No login required, so this is the link to send someone outside the team.',

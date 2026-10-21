@@ -24,9 +24,9 @@ describe('guideGroups', () => {
     ])
   })
 
-  it('clusters the agent rail rather than letting Agents absorb it', () => {
+  it('groups the agent rail rather than letting Agents absorb it', () => {
     // The rail sits under /w/:workspace/agents/:slug/, and nav has
-    // /w/:workspace/agents — so without cluster-first assignment every rail
+    // /w/:workspace/agents — so without group-first assignment every rail
     // section would land in Agents and this group would be empty.
     const rail = guideGroups().find((g) => g.label === 'Agent workspace')
     // Projects, one project, a contributor page, Tasks, Turns, Huddles, Schedules,
@@ -49,10 +49,25 @@ describe('guideGroups', () => {
     expect(chats?.surfaces.map((s) => s.path)).toContain('/w/:workspace/chat/:id')
   })
 
-  it('keeps Elsewhere a small remainder, not a dumping ground', () => {
+  it('files every page under a menu, its home, or its own group', () => {
+    // Elsewhere is the safety net, not a place: a page lands there only when the
+    // registry forgot to say where it lives.
     const elsewhere = guideGroups().find((g) => g.label === 'Elsewhere')
-    // Measured at ~4 genuinely uncategorised surfaces. A jump here means a new
-    // cluster needs a rule, not that the bucket should grow.
-    expect(elsewhere?.surfaces.length ?? 0).toBeLessThanOrEqual(8)
+    const lost = elsewhere?.surfaces.map((s) => s.path) ?? []
+    expect(lost, `give these a home or group in guide/surfaces.ts: ${lost.join(', ')}`).toEqual([])
+  })
+
+  it('files every agent-console section in the agent workspace', () => {
+    const rail = SURFACES.filter((s) => s.path.startsWith('/w/:workspace/agents/:slug/'))
+    expect(rail.filter((s) => s.group !== 'Agent workspace').map((s) => s.path)).toEqual([])
+  })
+
+  it('files a page no menu links under the page it is reached from', () => {
+    const health = guideGroups().find((g) => g.label === 'Workspace')
+    expect(health?.surfaces.map((s) => s.path)).toEqual(
+      expect.arrayContaining(['/w/:workspace/analytics', '/w/:workspace/network']),
+    )
+    const home = guideGroups().find((g) => g.label === 'Home')
+    expect(home?.surfaces.map((s) => s.path)).toEqual(['/home', '/schedules', '/activity'])
   })
 })

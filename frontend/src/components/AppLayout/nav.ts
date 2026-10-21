@@ -21,6 +21,7 @@
  * replaced needed 1280px and still overflowed.
  */
 
+import { SURFACES } from '@/guide/surfaces'
 import { roleAllows, type Capability } from '@/lib/workspaceRoles'
 
 /** A single destination. `tenant` items resolve under /w/:workspace. */
@@ -91,6 +92,15 @@ export const HELP_ITEMS: NavItem[] = [
   { path: '/guide', label: 'Guide', tenant: false },
   { path: '/get-started', label: 'Get started', tenant: false },
   { path: '/system', label: 'System', tenant: false },
+]
+
+/** The account menu: pages about you, the same in every workspace. */
+export const ACCOUNT_ITEMS: (NavItem & { desktopOnly?: boolean })[] = [
+  { path: '/settings', label: 'Account settings', tenant: false },
+  { path: '/people/me', label: 'What agents know about me', tenant: false },
+  { path: '/sessions', label: 'Shared transcripts', tenant: false },
+  { path: '/supervisor', label: 'Supervisor', tenant: false },
+  { path: '/ide', label: 'IDE', tenant: false, desktopOnly: true },
 ]
 
 /** A destination with its href already resolved against the active tenant. */
@@ -199,10 +209,16 @@ export function switchWorkspacePath(pathname: string, slug: string): string {
 }
 
 /** Sections that exist only as one item's page (a shared walkthrough, a thread),
- *  and the list a switch lands on instead of a 404. `nav.test.ts` checks every
- *  routed section resolves to a page. */
-export const LIST_FOR: Record<string, string> = {
-  walkthrough: 'walkthroughs', storyboard: 'storyboards', narrative: 'storyboards',
-  'ddd-release': 'ddd', threads: 'huddles', review: 'agents', share: 'agents',
-  'runner-invitations': 'agents',
-}
+ *  and the list a switch lands on instead of a 404: each such page's `home` in
+ *  the registry. `nav.test.ts` checks every routed section resolves to a page. */
+export const LIST_FOR: Record<string, string> = (() => {
+  const section = (path: string) => path.replace('/w/:workspace/', '').split('/')[0]
+  const pages = new Set(SURFACES.map((s) => s.path))
+  const out: Record<string, string> = {}
+  for (const s of SURFACES) {
+    if (!s.home?.startsWith('/w/:workspace/') || !s.path.startsWith('/w/:workspace/')) continue
+    const own = section(s.path)
+    if (!pages.has(`/w/:workspace/${own}`)) out[own] = section(s.home)
+  }
+  return out
+})()

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
 import { routeTable } from '../router'
-import { flattenRoutePaths, isDocumentable } from './coverage'
+import { NOT_PAGES, flattenRoutePaths, isDocumentable } from './coverage'
 import { SURFACES } from './surfaces'
 
-const declared = flattenRoutePaths(routeTable).filter(isDocumentable)
+const routes = flattenRoutePaths(routeTable)
+const declared = routes.filter(isDocumentable)
 const described = new Set(SURFACES.map((s) => s.path))
 
 describe('guide coverage', () => {
@@ -29,6 +30,16 @@ describe('guide coverage', () => {
     expect(orphans, `descriptors naming no real route: ${orphans.join(', ')}`).toEqual([])
   })
 
+  it('lists no non-page that does not exist', () => {
+    const stale = Object.keys(NOT_PAGES).filter((p) => !routes.includes(p))
+    expect(stale, `NOT_PAGES names routes that are gone: ${stale.join(', ')}`).toEqual([])
+  })
+
+  it('points every home at a page that exists', () => {
+    const bad = SURFACES.filter((s) => s.home && !described.has(s.home)).map((s) => `${s.path} -> ${s.home}`)
+    expect(bad, `home names no described page: ${bad.join(', ')}`).toEqual([])
+  })
+
   it('gives every descriptor the fields the guide renders', () => {
     for (const s of SURFACES) {
       expect(s.title, `${s.path} has no title`).toBeTruthy()
@@ -40,7 +51,7 @@ describe('guide coverage', () => {
 
 describe('isDocumentable', () => {
   it('excludes the catch-all and legacy aliases', () => {
-    expect(isDocumentable('*')).toBe(false)
+    expect(isDocumentable('/*')).toBe(false)
     expect(isDocumentable('/ddd-plans')).toBe(false)
     expect(isDocumentable('/w/:workspace/agents/:slug/needs-you')).toBe(false)
   })
