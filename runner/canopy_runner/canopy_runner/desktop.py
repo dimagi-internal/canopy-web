@@ -716,10 +716,14 @@ def read_events(channel: Path) -> list[dict]:
     evs = []
     for p in channel.glob("ev-*.json"):
         try:
-            evs.append(json.loads(p.read_text()))
-        except (OSError, ValueError):
+            e = json.loads(p.read_text())
+            # `ev-<t>-<seq>-<kind>`: the mod's own counter orders two events of one
+            # millisecond (a card drawn and answered at once), which `t` cannot.
+            seq = int(p.name.split("-")[2])
+        except (OSError, ValueError, IndexError):
             continue
-    return sorted(evs, key=lambda e: e.get("t", 0))
+        evs.append((e.get("t", 0), seq, e))
+    return [e for _, _, e in sorted(evs, key=lambda x: x[:2])]
 
 
 def next_followup_index(channel: Path, prefix: str = "fu") -> int:
@@ -885,9 +889,9 @@ def kill_turn_shells(sid: str, since: float) -> int:
 
 def _agent_status(channel: Path, sid: str = "") -> str:
     """emdash's vocabulary, from the mod's events: `working` while a model turn
-    runs, `awaiting-input` when it raised a permission ask since that turn
-    started, "" when idle or the session's process is down. A Claude CLI session
-    with a turn running headless is `working`."""
+    runs, `awaiting-input` while a permission card it raised in that turn is
+    unanswered, "" when idle or the session's process is down. A Claude CLI
+    session with a turn running headless is `working`."""
     if not (channel_held_for(channel, sid) if sid else channel_alive(channel)):
         from . import headless
 
@@ -900,7 +904,9 @@ def _agent_status(channel: Path, sid: str = "") -> str:
         elif kind == "turn.complete":
             started = 0
         elif kind == "ask" and started:
-            asked = t
+            asked += 1
+        elif kind == "answered" and asked:
+            asked -= 1
     if not started:
         return ""
     return "awaiting-input" if asked else "working"
