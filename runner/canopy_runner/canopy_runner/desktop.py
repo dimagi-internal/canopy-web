@@ -104,11 +104,11 @@ TRANSCRIPT_BATCH_BYTES = 512 * 1024
 
 DEFAULT_ALLOW = ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit", "Bash",
                  "WebFetch", "WebSearch", "TodoWrite", "Task", "Skill", "mcp__*"]
-#: The app's start_session tool, allowed by exact name in every worktree the
-#: runner prepares, whatever `desktop_allow` says: the mod's start (start_in_app)
-#: calls it, and in auto mode a call no rule allows goes to the classifier, which
-#: refuses a call no model request asked for. A wildcard does not cover it. The
-#: mod denies the model's own calls, so this lets only the runner's starts through.
+#: The app's start_session tool, allowed by exact name when the start path is on
+#: (start_session_enabled): in auto mode a call no rule allows goes to the
+#: classifier, which refuses a call no model request asked for, and a wildcard
+#: does not cover it. The mod denies the model's own calls, so this lets only the
+#: runner's starts through.
 START_RULE = "mcp__ccd_session__start_session"
 SEED_PROMPT = "This session was prepared by canopy. Reply with exactly: ready"
 
@@ -445,7 +445,7 @@ def make_worktree(cfg, repo: Path, base_ref: str, name: str) -> Path:
 def worktree_settings(allow: list[str], existing: dict | None = None) -> dict:
     out = dict(existing or {})
     perms = dict(out.get("permissions") or {})
-    perms["allow"] = sorted(set(perms.get("allow") or []) | set(allow) | {START_RULE})
+    perms["allow"] = sorted(set(perms.get("allow") or []) | set(allow))
     out["permissions"] = perms
     plugins = dict(out.get("enabledPlugins") or {})
     plugins[PLUGIN] = True
@@ -519,7 +519,9 @@ def prepare_settings(cfg, wt: Path) -> None:
     path = wt / ".claude" / "settings.local.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = json.loads(path.read_text()) if path.exists() else {}
-    allow = getattr(cfg, "desktop_allow", None) or DEFAULT_ALLOW
+    allow = list(getattr(cfg, "desktop_allow", None) or DEFAULT_ALLOW)
+    if start_session_enabled():
+        allow.append(START_RULE)
     path.write_text(json.dumps(worktree_settings(allow, existing), indent=2) + "\n")
 
 
@@ -648,7 +650,8 @@ def describe_app_features(features: dict | None) -> str:
     if features is None:
         return "Claude desktop gates: unknown (no readable feature cache on this account)"
     when = time.strftime("%Y-%m-%d %H:%M", time.localtime(features["fetched_at"]))
-    start = {True: "ON (new sessions open with it when a live session can host the start, #1238)",
+    start = {True: ("ON, used (CANOPY_DESKTOP_START_SESSION=1)" if start_session_enabled() else
+                     "ON, unused: the app refuses automated starts (#1238); new sessions open by deep link"),
              False: "off (new sessions open by deep link)",
              None: "not in cache"}[features["start_session"]]
     idle = features["idle_timeout"]
@@ -658,12 +661,24 @@ def describe_app_features(features: dict | None) -> str:
 
 # ── starting a session with no deep link (canopy-web#1238) ──────────────────
 #
-# With `start_session` on, a new session needs no claude:// link: the runner asks
-# the mod in a live session it already holds (the host) to call the app's
-# start_session tool, which opens a sibling session in the folder the runner
-# prepared, in the background. The folder's `seeded` reads "start" until the new
-# session's mod claims it with its own id. No host, the gate off, or any step
-# failing: the deep link, as before.
+# OFF unless CANOPY_DESKTOP_START_SESSION=1. The idea: with the app's
+# `start_session` gate on, the runner asks the mod in a live session it already
+# holds (the host) to call the app's start_session tool, which opens a sibling
+# session in the folder the runner prepared, in the background, with no claude://
+# link. The folder's `seeded` reads "start" until the new session's mod claims it.
+#
+# Tried live on jj (2026-10-21, Claude 2.42304): the app refuses it by design —
+# "Start sessions only on the user's own words to you here; this turn runs an
+# automated event, another session's message, or the task another session gave
+# you." Only `initiation: "own_initiative"` is allowed, which shows a card for a
+# person to click: not unattended. Each refused try cost a new session ~9 s before
+# the deep link. The deep link took focus for ~0.25 s and the runner handed it
+# back. Kept, off, for the day the app allows it; any step failing still falls
+# back to the deep link.
+
+def start_session_enabled() -> bool:
+    return os.environ.get("CANOPY_DESKTOP_START_SESSION") == "1"
+
 
 #: How long the host's mod may take to answer a start request.
 START_REQUEST_SECONDS = 60
@@ -703,6 +718,8 @@ def start_in_app(cfg, wt: Path, title: str, features: dict | None = None) -> str
     """Open a new session in `wt` with start_session through a host's mod. The new
     session's id once it has claimed the folder and run its opening turn, or None
     to fall back to the deep link (the folder's `seeded` cleared)."""
+    if not start_session_enabled():
+        return None
     if not (features if features is not None else app_features() or {}).get("start_session"):
         return None
     host = start_host(cfg)
