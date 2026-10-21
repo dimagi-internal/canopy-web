@@ -16,7 +16,7 @@ import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
 import { CanopyWidget } from '@/widget/CanopyWidget'
-import { HELP_ITEMS, activeHref, isNavEntryActive, resolveNav, switchWorkspacePath, type ResolvedNavEntry } from './nav'
+import { ACCOUNT_ITEMS, HELP_ITEMS, activeHref, isNavEntryActive, resolveNav, switchWorkspacePath, type ResolvedNavEntry } from './nav'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { useAppBarHidden } from './appBarStore'
 
@@ -91,10 +91,10 @@ function UserMenu() {
           {/* Personal pages: yours in every workspace, so they sit with your
               account rather than in the workspace nav. Supervisor is the phone
               and menubar view of Home; IDE is desktop only. */}
-          {ACCOUNT_LINKS.map(({ to, label, desktopOnly }) => (
+          {ACCOUNT_ITEMS.map(({ path, label, desktopOnly }) => (
             <Link
-              key={to}
-              to={to}
+              key={path}
+              to={path}
               onClick={() => setOpen(false)}
               className={clsx(
                 'px-3 py-2 text-sm text-foreground-secondary hover:bg-muted',
@@ -119,14 +119,6 @@ function UserMenu() {
     </div>
   )
 }
-
-const ACCOUNT_LINKS: { to: string; label: string; desktopOnly?: boolean }[] = [
-  { to: '/settings', label: 'Account settings' },
-  { to: '/people/me', label: 'What agents know about me' },
-  { to: '/sessions', label: 'Shared transcripts' },
-  { to: '/supervisor', label: 'Supervisor' },
-  { to: '/ide', label: 'IDE', desktopOnly: true },
-]
 
 // The `?` menu — Guide, Get started, System: how canopy works, the same in
 // every workspace, so not filed under any of them.
