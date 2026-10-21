@@ -71,20 +71,40 @@ async function submitOnce($: any, file: string, marker: string, which: string) {
 // tool opens a sibling in the background. `$.mcp.call` is the mod's own call, so
 // it needs no rule or classifier: agents' turns gain no new power, only the
 // runner's request through this channel does.
+// The app's start_session tool. The runner's settings allow it by exact name
+// (START_RULE in desktop.py): in auto mode a call with no rule goes to the
+// classifier, which judges only calls a model request asked for, so the mod's
+// own call got "no verdict" and was refused (found live on jj). The model may
+// not call it: only a start the runner asked for goes through (see tool.call).
+const START_TOOL = 'mcp__ccd_session__start_session'
+let starting = false
+
 async function startOnce($: any, file: string, marker: string) {
   if (!(await $.fs.exists(file)) || (await $.fs.exists(marker))) return
   await $.fs.write(marker, JSON.stringify({ pending: true }))
+  let result = { isError: true, text: '' }
   try {
     const req = JSON.parse(await $.fs.read(file))
-    const r = await $.mcp.call('ccd_session', 'start_session', {
-      initiation: 'user_asked', context: 'fresh', use_worktree: false,
-      cwd: req.cwd, title: req.title, prompt: req.prompt, background: req.background,
-    })
-    const text = (r.content ?? []).map((b: any) => b.text ?? '').join('\n')
-    await $.fs.write(marker, JSON.stringify({ isError: !!r.isError, text }))
+    // Twice at most: a refusal with no verdict asks for one re-issue, as-is.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        starting = true
+        const r = await $.mcp.call('ccd_session', 'start_session', {
+          initiation: 'user_asked', context: 'fresh', use_worktree: false,
+          cwd: req.cwd, title: req.title, prompt: req.prompt, background: req.background,
+        })
+        result = { isError: !!r.isError, text: (r.content ?? []).map((b: any) => b.text ?? '').join('\n') }
+      } catch (err) {
+        result = { isError: true, text: String(err) }
+      } finally {
+        starting = false
+      }
+      if (!result.isError) break
+    }
   } catch (err) {
-    await $.fs.write(marker, JSON.stringify({ isError: true, text: String(err) }))
+    result = { isError: true, text: String(err) }
   }
+  await $.fs.write(marker, JSON.stringify(result))
 }
 
 async function stopOnce($: any, file: string, marker: string, which: string) {
@@ -210,6 +230,13 @@ export const register: Register = (on) => {
       await emit($, 'ask', { tool: e.tool_name }).catch(() => {})
     }
     return r
+  })
+
+  // Starting sessions is the runner's to ask for, never the model's: the allow
+  // rule that lets the mod's own call through would let the model's too.
+  on('tool.call', { tool: START_TOOL }, async ($, e, next) => {
+    if (dir && !starting) return { deny: 'canopy starts sessions on this runner; ask in canopy instead' }
+    return next(e)
   })
 
   // The card was answered, either way, once the call it held up settles.
