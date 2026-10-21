@@ -411,6 +411,20 @@ name = "canopy-kb"
 version = "0.1.0"
 source = { editable = "packages/canopy_kb" }
 
+[package.metadata]
+requires-dist = [
+    { name = "beautifulsoup4", marker = "extra == 'prep'", specifier = ">=4.12" },
+    { name = "httpx", marker = "extra == 'prep'", specifier = ">=0.27" },
+    { name = "lxml", marker = "extra == 'prep'", specifier = ">=5" },
+    { name = "markdownify", marker = "extra == 'prep'", specifier = ">=0.13" },
+    { name = "openpyxl", marker = "extra == 'prep'", specifier = ">=3.1" },
+    { name = "pymupdf", marker = "extra == 'prep'", specifier = ">=1.24" },
+    { name = "python-docx", marker = "extra == 'prep'", specifier = ">=1.1" },
+    { name = "requests", marker = "extra == 'prep'", specifier = ">=2.31" },
+    { name = "xlrd", marker = "extra == 'prep'", specifier = ">=2.0" },
+]
+provides-extras = ["prep"]
+
 [[package]]
 name = "canopy-runner"
 source = { editable = "runner/canopy_runner" }

@@ -16,17 +16,22 @@ Two artifacts, one direction:
     items.jsonl          one source item per line: id, type, title, url, date, text (markdown),
                          meta, sha256, fetched_at, and optionally card (the catalog card:
                          summary, kind, orgs, programs, countries, period, superseded, answers)
+                         and original (the file the text was read from: sha256, filename,
+                         content_type, bytes, source_url, fetched_at; `prep/originals.py`)
     tables/<name>.jsonl  structured rows (grants, model parameters, …)
     aliases.json         optional: {kind: [{canonical, names}]} entity names that are one thing
 
   kb.sqlite (what `build` makes from a bundle and every reader queries)
     items, chunks (passages: spans of the item's text with their bodies) + chunks_fts,
     cards + cards_fts, sections, links, entities + item_entities, one SQL table per
-    declared table (plus table_rows), changes, meta
+    declared table (plus table_rows), changes, originals, meta
 
 `build` diffs against the previous kb.sqlite by each item's sha256, so `changes`
 accumulates a dated history of what appeared or changed — that is what `whats_new`
 answers, and it survives rebuilds because each build carries the old rows forward.
+`originals` is carried the same way: a file an item no longer points at (the publisher
+changed or removed it) stays listed as an earlier version, and its bytes stay in the
+host's store, which never deletes one.
 
 Reading is for an agent doing research, not one-shot retrieval (`research.py`): it
 orients on the catalog (`overview`, `entity`), searches (words over passages and
@@ -60,7 +65,7 @@ from canopy_kb.vectors import embedding_text, passage_sha
 SCHEMA_VERSION = 3
 #: Tables of the file itself: a declared table with one of these names is stored as t_<name>.
 CORE_TABLES = frozenset({"meta", "items", "chunks", "chunks_fts", "cards", "cards_fts", "sections",
-                         "links", "entities", "item_entities", "table_rows", "changes"})
+                         "links", "entities", "item_entities", "table_rows", "changes", "originals"})
 
 
 class KBError(RuntimeError):
@@ -119,7 +124,13 @@ CREATE TABLE table_rows (tbl TEXT, n INTEGER, data TEXT);
 CREATE INDEX table_rows_tbl ON table_rows(tbl);
 CREATE TABLE changes (at TEXT, item_id TEXT, change TEXT, type TEXT, title TEXT, url TEXT, date TEXT);
 CREATE INDEX changes_at ON changes(at);
+CREATE TABLE originals (item_id TEXT, sha256 TEXT, filename TEXT, content_type TEXT, bytes INTEGER,
+                        source_url TEXT, fetched_at TEXT, first_seen TEXT, superseded_at TEXT);
+CREATE INDEX originals_item ON originals(item_id);
 """
+
+#: An original as stored; `path` (where the curator's copy sits) stays on the curator's machine.
+ORIGINAL_FIELDS = ("sha256", "filename", "content_type", "bytes", "source_url", "fetched_at")
 
 
 def _card(c: Any) -> dict | None:
@@ -149,11 +160,15 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
 
     prev: dict[str, tuple[str, str]] = {}
     prev_changes: list[tuple] = []
+    prev_originals: list[dict] = []
     if previous and Path(previous).is_file() and Path(previous).stat().st_size:
         pc = sqlite3.connect(f"file:{previous}?mode=ro", uri=True)
         try:
             prev = {r[0]: (r[1], r[2]) for r in pc.execute("SELECT id, sha256, first_seen FROM items")}
             prev_changes = list(pc.execute("SELECT at, item_id, change, type, title, url, date FROM changes"))
+            pc.row_factory = sqlite3.Row
+            if pc.execute("SELECT 1 FROM sqlite_master WHERE name = 'originals'").fetchone():
+                prev_originals = [dict(r) for r in pc.execute("SELECT * FROM originals")]
         except sqlite3.DatabaseError as e:
             raise KBError(f"--previous {previous} is not a knowledge base ({e})") from e
         finally:
@@ -173,6 +188,7 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
     titles: dict[str, str] = {}
     refs: dict[str, str] = {}        # url (and also_at urls) -> item id, for resolving links
     raw_links: list[tuple[str, str]] = []
+    originals: dict[tuple[str, str], dict] = {}
     for it in _read_jsonl(items_path):
         iid = it.get("id")
         if not iid or iid in seen:
@@ -211,6 +227,9 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
         if meta.get("parent"):
             raw_links.append((str(meta["parent"]), iid))
         counts[it.get("type", "")] = counts.get(it.get("type", ""), 0) + 1
+        o = it.get("original")
+        if isinstance(o, dict) and o.get("sha256"):
+            originals[(iid, o["sha256"])] = {f: o.get(f) for f in ORIGINAL_FIELDS}
 
     # links: a curator names an item's referrers by id or url
     pairs = set()
@@ -251,10 +270,11 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
         tables[name] = len(rows)
 
     db.executemany("INSERT INTO changes VALUES (?,?,?,?,?,?,?)", prev_changes)
+    n_originals = _write_originals(db, originals, prev_originals, now)
     n_passages = db.execute("SELECT count(*) FROM chunks").fetchone()[0]
     summary = {"schema": SCHEMA_VERSION, "built_at": now, "name": manifest.get("name", ""),
                "items": len(seen), "passages": n_passages, "cards": len(cards), "entities": len(ents),
-               "links": len(pairs), "by_type": counts, "tables": tables,
+               "links": len(pairs), "by_type": counts, "tables": tables, "originals": n_originals,
                "new": new, "changed": changed, "baseline": not bool(previous and prev)}
     db.executemany("INSERT INTO meta VALUES (?,?)", [
         ("manifest", json.dumps(manifest)), ("summary", json.dumps(summary)), ("schema", str(SCHEMA_VERSION))])
@@ -267,6 +287,25 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
     db.close()
     tmp.replace(out)
     return summary
+
+
+def _write_originals(db: sqlite3.Connection, current: dict[tuple[str, str], dict], prev: list[dict], now: str) -> dict:
+    """This build's originals, then every earlier one no item points at any more (kept as
+    a superseded version, dated when it was first found superseded)."""
+    seen = {(r["item_id"], r["sha256"]): r for r in prev}
+    rows = []
+    for (iid, sha), o in current.items():
+        old = seen.get((iid, sha))
+        rows.append((iid, sha, o["filename"] or "", o["content_type"] or "", int(o["bytes"] or 0),
+                     o["source_url"] or "", o["fetched_at"] or "", old["first_seen"] if old else now, ""))
+    for key, r in seen.items():
+        if key not in current:
+            rows.append((r["item_id"], r["sha256"], r["filename"], r["content_type"], r["bytes"], r["source_url"],
+                         r["fetched_at"], r["first_seen"], r["superseded_at"] or now))
+    db.executemany("INSERT INTO originals VALUES (?,?,?,?,?,?,?,?,?)", rows)
+    return {"current": len(current), "superseded": len(rows) - len(current),
+            "files": len({sha for _, sha in current}),
+            "bytes": sum({sha: int(o["bytes"] or 0) for (_, sha), o in current.items()}.values())}
 
 
 class KB:
@@ -362,6 +401,21 @@ class KB:
                 continue
             yield {"item_id": r["item_id"], "ord": r["ord"], "type": r["type"] or "", "title": r["title"] or "",
                    "url": r["url"] or "", "date": r["date"] or "", "text": text, "sha256": passage_sha(text)}
+
+    # -- originals -------------------------------------------------------------------
+    def originals(self, item_id: str) -> list[dict]:
+        """The item's original files: the current one first, then earlier versions, newest
+        first. Empty for a KB built before originals were kept."""
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE name = 'originals'").fetchone():
+            return []
+        return [dict(r) for r in self.db.execute(
+            "SELECT * FROM originals WHERE item_id = ? ORDER BY superseded_at != '', first_seen DESC", (item_id,))]
+
+    def has_originals(self) -> bool:
+        try:
+            return bool(self.db.execute("SELECT 1 FROM originals LIMIT 1").fetchone())
+        except sqlite3.OperationalError:
+            return False
 
     # -- items -----------------------------------------------------------------------
     def item_row(self, ref: str) -> sqlite3.Row | None:

@@ -12,6 +12,12 @@ publishes it here; canopy-web then answers the project's MCP tools from it
 * **Read** (`open_kb`): each instance keeps the decompressed copy on local disk,
   keyed by the published object's sha256, so a new publish is picked up on the
   next call and an unchanged one is never fetched twice.
+* **Originals** (`originals_upload`, `original_link`): the files each document's text
+  was read from (PDFs, spreadsheets, pages), stored under the project's
+  `originals/<sha256>`. The steward uploads only what the store lacks, on presigned
+  PUTs that S3 checks against the sha256; the `original` tool hands a reader a
+  15-minute download link. Never deleted: a file the publisher changed or removed is
+  the version a KB's `originals` table still lists, and the reason to keep originals.
 
 The bucket is `CANOPY_KB_BUCKET`, else the attachments bucket (same access: a
 bucket policy naming the task role). No bucket → `KbNotConfigured`, a clear 503,
@@ -19,6 +25,7 @@ never a half-published project.
 """
 from __future__ import annotations
 
+import base64
 import gzip
 import hashlib
 import shutil
@@ -26,6 +33,7 @@ import tempfile
 import threading
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from django.conf import settings
 from django.utils import timezone
@@ -33,6 +41,12 @@ from django.utils import timezone
 UPLOAD_TTL_SECONDS = 3600
 CONTENT_TYPE = "application/gzip"
 _SHA256_LEN = 64
+#: Originals a steward may ask about in one request (the CLI sends batches).
+ORIGINALS_PER_REQUEST = 1000
+#: S3's limit for a single PUT.
+ORIGINAL_MAX_BYTES = 5 * 1024**3
+#: How long an `original` download link works (canopy_kb.research.LINK_MINUTES says so).
+ORIGINAL_LINK_SECONDS = 15 * 60
 
 
 class KbNotConfigured(RuntimeError):
@@ -51,13 +65,25 @@ def _bucket() -> str:
 
 
 def _client():
+    """SigV4 always: an original's PUT then signs its `x-amz-checksum-sha256` header, so S3
+    refuses bytes that are not the sha256 they are stored under (SigV2, which botocore can
+    still pick for presigning, would leave the checksum unsigned)."""
     import boto3
+    from botocore.config import Config
 
-    return boto3.client("s3")
+    return boto3.client("s3", config=Config(signature_version="s3v4"))
 
 
 def _prefix(project) -> str:
     return f"workspace-projects/{project.owner_workspace_id}/{project.handle}/kb/"
+
+
+def _originals_prefix(project) -> str:
+    return f"workspace-projects/{project.owner_workspace_id}/{project.handle}/originals/"
+
+
+def _is_sha256(v: str) -> bool:
+    return len(v) == _SHA256_LEN and all(c in "0123456789abcdef" for c in v)
 
 
 def upload_target(project) -> dict:
@@ -75,7 +101,7 @@ def publish(project, key: str, sha256: str):
     sha256 = (sha256 or "").strip().lower()
     if not key.startswith(_prefix(project)) or "/../" in key:
         raise KbPublishError("that object is not one of this project's uploads")
-    if len(sha256) != _SHA256_LEN or any(c not in "0123456789abcdef" for c in sha256):
+    if not _is_sha256(sha256):
         raise KbPublishError("sha256 must be the 64-hex-digit hash of the uploaded file")
     s3 = _client()
     try:
@@ -95,6 +121,69 @@ def publish(project, key: str, sha256: str):
         except Exception:  # noqa: BLE001 - a stray old object costs storage, not correctness
             pass
     return project
+
+
+# ---- originals ----
+
+def _stored_originals(project) -> set[str]:
+    prefix = _originals_prefix(project)
+    have: set[str] = set()
+    for page in _client().get_paginator("list_objects_v2").paginate(Bucket=_bucket(), Prefix=prefix):
+        have.update(o["Key"][len(prefix):] for o in page.get("Contents") or [])
+    return have
+
+
+def originals_upload(project, files: list[dict]) -> dict:
+    """Presigned PUTs for the originals in `files` ({sha256, bytes, content_type}) that this
+    project's store does not hold yet. Each PUT must carry its `headers`: S3 refuses bytes
+    whose sha256 is not the one in the key."""
+    if len(files) > ORIGINALS_PER_REQUEST:
+        raise KbPublishError(f"at most {ORIGINALS_PER_REQUEST} originals per request")
+    for f in files:
+        f["sha256"] = (f.get("sha256") or "").strip().lower()
+        if not _is_sha256(f["sha256"]):
+            raise KbPublishError(f"not a sha256: {f['sha256'][:80]!r}")
+        if not 0 <= int(f.get("bytes") or 0) <= ORIGINAL_MAX_BYTES:
+            raise KbPublishError(f"{f['sha256']}: originals are at most {ORIGINAL_MAX_BYTES} bytes")
+    bucket, prefix, s3 = _bucket(), _originals_prefix(project), _client()
+    have = _stored_originals(project)
+    uploads, asked = [], set()
+    for f in files:
+        sha = f["sha256"]
+        if sha in have or sha in asked:
+            continue
+        asked.add(sha)
+        ctype = (f.get("content_type") or "application/octet-stream")[:200]
+        checksum = base64.b64encode(bytes.fromhex(sha)).decode()
+        url = s3.generate_presigned_url(
+            "put_object", Params={"Bucket": bucket, "Key": prefix + sha, "ContentType": ctype,
+                                  "ChecksumSHA256": checksum}, ExpiresIn=UPLOAD_TTL_SECONDS)
+        uploads.append({"sha256": sha, "url": url,
+                        "headers": {"Content-Type": ctype, "x-amz-checksum-sha256": checksum}})
+    return {"have": len({f["sha256"] for f in files} - asked), "uploads": uploads,
+            "expires_in": UPLOAD_TTL_SECONDS}
+
+
+def original_link(project):
+    """The `link` the `original` tool calls (`canopy_kb.research.OriginalLink`): a
+    download of one stored original under its file name, or None when it is not stored."""
+    bucket, prefix, s3 = _bucket(), _originals_prefix(project), _client()
+
+    def link(sha256: str, filename: str, content_type: str) -> str | None:
+        if not _is_sha256(sha256):
+            return None
+        try:
+            s3.head_object(Bucket=bucket, Key=prefix + sha256)
+        except Exception:  # noqa: BLE001 - not stored (or not ours): the tool says so
+            return None
+        name = (filename or sha256).replace('"', "")
+        return s3.generate_presigned_url(
+            "get_object", Params={"Bucket": bucket, "Key": prefix + sha256,
+                                  "ResponseContentType": content_type or "application/octet-stream",
+                                  "ResponseContentDisposition": f"attachment; filename*=UTF-8''{quote(name)}"},
+            ExpiresIn=ORIGINAL_LINK_SECONDS)
+
+    return link
 
 
 # ---- the serving copy ----

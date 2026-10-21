@@ -35,13 +35,23 @@ BASE = "https://canopy.test"
 
 
 class FakeS3:
-    """The four calls kb_store makes, over a dict."""
+    """The calls kb_store makes, over a dict."""
 
     def __init__(self):
         self.objects: dict[str, bytes] = {}
+        self.signed: list[tuple[str, dict]] = []
 
     def generate_presigned_url(self, op, Params, ExpiresIn):
+        self.signed.append((op, Params))
         return f"https://s3.test/{Params['Key']}?signed"
+
+    def get_paginator(self, op):
+        objects = self.objects
+
+        class Pages:
+            def paginate(self, Bucket, Prefix):
+                return [{"Contents": [{"Key": k} for k in objects if k.startswith(Prefix)]}]
+        return Pages()
 
     def head_object(self, Bucket, Key):
         if Key not in self.objects:
@@ -77,7 +87,12 @@ def world():
     return {"owner": owner, "connect": connect, "eva": eva, "project": project, "client": client}
 
 
-def _kb_gz(tmp_path) -> bytes:
+ORIGINAL = {"sha256": "c" * 64, "filename": "Diarrheal disease.txt", "content_type": "text/plain", "bytes": 52,
+            "source_url": "https://gw/1/transcript.txt", "fetched_at": "2026-10-20T00:00:00Z", "path": "/eva/raw/x"}
+ORIGINALS = "workspace-projects/{}/givewell-kb/originals/"
+
+
+def _kb_gz(tmp_path, original=None) -> bytes:
     b = tmp_path / "bundle"
     (b / "tables").mkdir(parents=True)
     (b / "manifest.json").write_text(json.dumps({
@@ -86,7 +101,8 @@ def _kb_gz(tmp_path) -> bytes:
                               "filter_columns": ["Recipient"]}}}))
     (b / "items.jsonl").write_text(json.dumps(
         {"id": "p:1", "type": "podcast_episode", "title": "Diarrheal disease", "url": "https://gw/1",
-         "date": "2026-07-23", "text": "WASHmobile follows up households after a cholera case.", "sha256": "a"}))
+         "date": "2026-07-23", "text": "WASHmobile follows up households after a cholera case.", "sha256": "a",
+         **({"original": original} if original else {})}))
     (b / "tables" / "grants.jsonl").write_text(json.dumps(
         {"Grant": "Water pilot", "Recipient": "Dimagi Inc", "Amount": 1069324, "Date": "2025-12-03"}))
     db = tmp_path / "kb.sqlite"
@@ -94,11 +110,11 @@ def _kb_gz(tmp_path) -> bytes:
     return gzip.compress(db.read_bytes())
 
 
-def _publish(world, s3, tmp_path, client=None):
+def _publish(world, s3, tmp_path, client=None, original=None):
     client = client or world["client"]
     up = client.post("/api/workspace-projects/connect/givewell-kb/kb/upload", content_type=J)
     assert up.status_code == 200, up.content
-    body = _kb_gz(tmp_path)
+    body = _kb_gz(tmp_path, original)
     s3.objects[up.json()["key"]] = body  # what the curator's PUT to the signed url does
     return client.post("/api/workspace-projects/connect/givewell-kb/kb/publish",
                        {"key": up.json()["key"], "sha256": hashlib.sha256(body).hexdigest()}, content_type=J)
@@ -155,6 +171,54 @@ def test_a_viewer_cannot_publish(world, s3):
     assert r.status_code in (403, 404)
 
 
+def test_the_steward_uploads_only_the_originals_the_store_lacks(world, s3):
+    prefix = ORIGINALS.format(world["connect"].pk)
+    s3.objects[prefix + "a" * 64] = b"already stored"
+    files = [{"sha256": "a" * 64, "bytes": 14, "content_type": "application/pdf"},
+             {"sha256": "B" * 64, "bytes": 9, "content_type": "application/pdf"},
+             {"sha256": "b" * 64, "bytes": 9, "content_type": "application/pdf"}]  # the same file twice
+
+    r = world["client"].post("/api/workspace-projects/connect/givewell-kb/kb/originals", {"files": files},
+                             content_type=J)
+
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["have"] == 1 and [u["sha256"] for u in body["uploads"]] == ["b" * 64]
+    up = body["uploads"][0]
+    assert up["url"].startswith(f"https://s3.test/{prefix}{'b' * 64}")
+    # S3 refuses bytes whose sha256 is not the key's: the checksum is signed in and sent
+    op, params = s3.signed[-1]
+    assert op == "put_object" and params["ChecksumSHA256"] == up["headers"]["x-amz-checksum-sha256"]
+    assert up["headers"]["Content-Type"] == "application/pdf"
+
+
+def test_an_original_upload_signs_its_checksum(world, monkeypatch):
+    """Real boto3, no network: the presigned PUT names x-amz-checksum-sha256 among its
+    signed headers, so S3 itself refuses bytes that do not hash to the key."""
+    from urllib.parse import parse_qs, urlparse
+
+    for k, v in {"AWS_ACCESS_KEY_ID": "AKIAEXAMPLE", "AWS_SECRET_ACCESS_KEY": "x", "AWS_DEFAULT_REGION": "us-east-1"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(kb_store, "_stored_originals", lambda project: set())
+    with override_settings(CANOPY_KB_BUCKET="kb-bucket"):
+        [up] = kb_store.originals_upload(world["project"], [{"sha256": "a" * 64, "bytes": 1}])["uploads"]
+    q = parse_qs(urlparse(up["url"]).query)
+    assert q["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
+    assert "x-amz-checksum-sha256" in q["X-Amz-SignedHeaders"][0].split(";")
+
+
+def test_originals_refuse_a_bad_hash_and_a_viewer(world, s3):
+    bad = world["client"].post("/api/workspace-projects/connect/givewell-kb/kb/originals",
+                               {"files": [{"sha256": "z" * 64, "bytes": 1}]}, content_type=J)
+    viewer = User.objects.create_user("v", "v@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=viewer, workspace=world["connect"], role=WorkspaceMembership.VIEWER)
+    vc = Client()
+    vc.force_login(viewer)
+    denied = vc.post("/api/workspace-projects/connect/givewell-kb/kb/originals",
+                     {"files": [{"sha256": "a" * 64, "bytes": 1}]}, content_type=J)
+    assert bad.status_code == 422 and denied.status_code in (403, 404)
+
+
 # ---- over HTTP, the way a reader's MCP client calls it ----
 
 
@@ -204,6 +268,28 @@ def test_a_reader_lists_and_calls_the_projects_tools(world, s3, tmp_path, http):
     assert status2 == 200, called
     result = called["result"]["structuredContent"]["result"]
     assert result["rows"][0]["Grant"] == "Water pilot"
+
+
+def test_a_reader_gets_a_download_of_the_original_under_its_file_name(world, s3, tmp_path, http):
+    _publish(world, s3, tmp_path, original=ORIGINAL)
+    tok = _token(_connect_reader())
+    _, listed = http("/api/mcp/projects/connect/givewell-kb/", tok, "tools/list")
+    assert "original" in [t["name"] for t in listed["result"]["tools"]]
+
+    _, missing = http("/api/mcp/projects/connect/givewell-kb/", tok, "tools/call",
+                      {"name": "original", "arguments": {"ref": "p:1"}})
+    s3.objects[ORIGINALS.format(world["connect"].pk) + ORIGINAL["sha256"]] = b"transcript"
+    _, called = http("/api/mcp/projects/connect/givewell-kb/", tok, "tools/call",
+                     {"name": "original", "arguments": {"ref": "p:1"}})
+
+    assert "the publisher's copy (may have changed): https://gw/1/transcript.txt" in (
+        missing["result"]["structuredContent"]["result"])
+    out = called["result"]["structuredContent"]["result"]
+    assert "download (valid 15 minutes): https://s3.test/" in out
+    op, params = s3.signed[-1]
+    assert op == "get_object" and params["Key"].endswith("c" * 64)
+    assert params["ResponseContentDisposition"] == "attachment; filename*=UTF-8''Diarrheal%20disease.txt"
+    assert params["ResponseContentType"] == "text/plain"
 
 
 def test_a_stranger_sees_no_tools_and_cannot_call(world, s3, tmp_path, http):

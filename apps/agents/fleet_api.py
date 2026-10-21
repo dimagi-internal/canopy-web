@@ -34,6 +34,8 @@ from .schemas import (
     AgentProjectPatch,
     AgentRosterRowOut,
     AgentTaskOut,
+    KbOriginalsIn,
+    KbOriginalsOut,
     KbPublishIn,
     KbUploadOut,
     WorkspaceProjectIn,
@@ -268,6 +270,21 @@ def kb_upload_target(request: HttpRequest, workspace: str, handle: str) -> KbUpl
     project = _workspace_project_or_404(request, workspace, handle)
     _agent_for_write(request, project.agent.slug)
     return KbUploadOut(**_kb_call(lambda: kb_store.upload_target(project)))
+
+
+@router.post("/workspace-projects/{workspace}/{handle}/kb/originals", response=KbOriginalsOut,
+             summary="Get presigned uploads for the original files a knowledge base points at")
+def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, payload: KbOriginalsIn) -> KbOriginalsOut:
+    """Before publishing a build: name the originals its items point at (sha256, size,
+    type); the answer has a PUT for each one the project's store lacks. Stored by
+    sha256 and never deleted, so an unchanged file uploads once and a changed one is
+    kept beside its earlier versions. The `original` tool hands readers these files."""
+    from . import kb_store
+
+    project = _workspace_project_or_404(request, workspace, handle)
+    _agent_for_write(request, project.agent.slug)
+    files = [f.model_dump() for f in payload.files]
+    return KbOriginalsOut(**_kb_call(lambda: kb_store.originals_upload(project, files)))
 
 
 @router.post("/workspace-projects/{workspace}/{handle}/kb/publish", response=AgentProjectOut,

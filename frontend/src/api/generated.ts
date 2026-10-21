@@ -6198,6 +6198,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/originals": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Get presigned uploads for the original files a knowledge base points at
+         * @description Before publishing a build: name the originals its items point at (sha256, size,
+         *     type); the answer has a PUT for each one the project's store lacks. Stored by
+         *     sha256 and never deleted, so an unchanged file uploads once and a changed one is
+         *     kept beside its earlier versions. The `original` tool hands readers these files.
+         */
+        readonly post: operations["kb_upload_originals"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-projects/{workspace}/{handle}/kb/publish": {
         readonly parameters: {
             readonly query?: never;
@@ -23682,6 +23705,52 @@ export interface components {
             /** Expires In */
             readonly expires_in: number;
         };
+        /** KbOriginalUploadOut */
+        readonly KbOriginalUploadOut: {
+            /** Sha256 */
+            readonly sha256: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Headers
+             * @default {}
+             */
+            readonly headers: {
+                readonly [key: string]: string;
+            };
+        };
+        /**
+         * KbOriginalsOut
+         * @description PUT each file to its `url` with its `headers`; `have` were already stored.
+         */
+        readonly KbOriginalsOut: {
+            /** Have */
+            readonly have: number;
+            /** Uploads */
+            readonly uploads: readonly components["schemas"]["KbOriginalUploadOut"][];
+            /** Expires In */
+            readonly expires_in: number;
+        };
+        /** KbOriginalIn */
+        readonly KbOriginalIn: {
+            /** Sha256 */
+            readonly sha256: string;
+            /** Bytes */
+            readonly bytes: number;
+            /**
+             * Content Type
+             * @default application/octet-stream
+             */
+            readonly content_type: string;
+        };
+        /**
+         * KbOriginalsIn
+         * @description The original files a build points at (`canopy kb push --originals`).
+         */
+        readonly KbOriginalsIn: {
+            /** Files */
+            readonly files: readonly components["schemas"]["KbOriginalIn"][];
+        };
         /** KbPublishIn */
         readonly KbPublishIn: {
             /** Key */
@@ -40068,6 +40137,33 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["KbUploadOut"];
+                };
+            };
+        };
+    };
+    readonly kb_upload_originals: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbOriginalsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbOriginalsOut"];
                 };
             };
         };
