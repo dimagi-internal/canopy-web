@@ -1427,6 +1427,11 @@ def main() -> None:
     from . import device_key as _device_key
     _device_key.start(cfg, bearer=getattr(client, "token", ""))
 
+    # The canopy CLI is a separate install from the runner and the plugin; keep it at
+    # the plugin's version so sessions here never run an old one. See cli_refresh.
+    from . import cli_refresh as _cli_refresh
+    _cli_refresh.start()
+
     # Pause sentinel: the menu-bar app (or `touch ~/.canopy/PAUSED`) drops this file
     # to halt ALL token-spending work instantly without killing the process or fighting
     # launchd's KeepAlive. Paused = we still heartbeat (so the control plane sees the
