@@ -459,6 +459,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "decline_transfer_request": ("runner-admin",),
     "cancel_transfer_request": ("self",),  # only whoever asked
     "list_participants": ("session-acl",),
+    "get_session_info": ("session-acl",),
     "add_participant": ("session-acl",),  # can_share (chat owner)
     "remove_participant": ("session-acl",),  # can_share, or self-removal
     "canopy_sessions_send": ("session-acl",),  # write

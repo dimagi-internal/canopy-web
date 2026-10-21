@@ -9,7 +9,7 @@ import uuid
 from ninja import Schema
 from pydantic import AliasChoices, Field, field_validator
 
-from apps.harness.schemas import Origin, ParentIn, normalize_origin
+from apps.harness.schemas import Origin, ParentIn, TurnOut, normalize_origin
 
 
 class SessionCreateIn(Schema):
@@ -399,6 +399,57 @@ class SessionDetailOut(SessionOut):
     # window starts, for scroll-back / "load full". See services.SESSION_TAIL_DEFAULT.
     has_more_before: bool = False
     oldest_loaded_turn_index: int | None = None
+
+
+class SessionBindingInfoOut(Schema):
+    """The runner side of a session, for Session info: where it lives right now
+    and how the runner names it. Every field is the binding's own, unprocessed."""
+    runner_id: uuid.UUID | None = None
+    runner_name: str | None = None
+    runner_kind: str | None = None
+    #: The macOS user@host whose emdash holds the session.
+    host: str = ""
+    #: The emdash project and task — the pair the runner resolves a transcript by.
+    emdash_project: str = ""
+    session_key: str = ""
+    #: The reuse key a turn is matched to this session by (`<target>:<turn>`, a
+    #: chat's own id, a phone topic).
+    thread_key: str = ""
+    #: The Claude session (the .jsonl stem) the transcript rows came from.
+    transcript_id: str = ""
+    task_uid: str = ""
+    agent_task_ext_id: str = ""
+    status: str = ""
+    agent_status: str = ""
+    summary: str = ""
+    transferred_at: dt.datetime | None = None
+    transferred_from_name: str | None = None
+    reported_at: dt.datetime | None = None
+    live_seen_at: dt.datetime | None = None
+    last_interacted_at: dt.datetime | None = None
+    updated_at: dt.datetime | None = None
+
+
+class SessionInfoOut(Schema):
+    """Everything canopy stores about a session, in one read — for the Session
+    info panel. `session` is the same shape the list and detail reads serve."""
+    session: SessionOut
+    #: Opaque product linkage (e.g. {"opp_slug": ...}), as stored.
+    metadata: dict = {}
+    #: The contact a visitor's session belongs to, by display name; null for a member's.
+    contact: str | None = None
+    updated_at: dt.datetime
+    #: Null when no runner has ever backed it (an unsent web chat).
+    binding: SessionBindingInfoOut | None = None
+    #: Every turn that drove this session, newest first, at most `turns_limit` —
+    #: who asked, through which credential and client, in which mode, on which
+    #: runner. Content you may not read is blanked (`content_hidden`), as on the
+    #: turn routes.
+    turns: list[TurnOut] = []
+    turn_count: int = 0
+    turns_limit: int = 0
+    participant_count: int = 0
+    message_count: int = 0
 
 
 class SendOut(Schema):

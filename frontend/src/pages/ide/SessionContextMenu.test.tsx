@@ -32,6 +32,12 @@ function open(s: ChatSession, runners: RunnerOut[] = []) {
 }
 
 describe('SessionContextMenu', () => {
+  it('opens Session info', () => {
+    const onAction = open(session())
+    fireEvent.click(screen.getByTestId('ide-menu-info'))
+    expect(onAction).toHaveBeenCalledWith({ kind: 'info' })
+  })
+
   it('transfers to an eligible runner other than the current one', () => {
     const onAction = open(session(), [runner('cloud'), runner('laptop'), runner('off', { status: 'offline' })])
     fireEvent.click(screen.getByTestId('ide-menu-transfer'))

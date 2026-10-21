@@ -10290,6 +10290,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/info": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Everything stored about a session
+         * @description What canopy stores about one session: the session itself (who opened it,
+         *     what created it and under which parent, what it did), the runner binding
+         *     that backs it, and the turns that drove it — each with who asked, through
+         *     which credential and client, in which mode and on which runner. Readable by
+         *     anyone who can read the session; turn content you may not read is blanked.
+         */
+        readonly get: operations["get_session_info"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/messages": {
         readonly parameters: {
             readonly query?: never;
@@ -29780,6 +29804,129 @@ export interface components {
             readonly note: string;
         };
         /**
+         * SessionBindingInfoOut
+         * @description The runner side of a session, for Session info: where it lives right now
+         *     and how the runner names it. Every field is the binding's own, unprocessed.
+         */
+        readonly SessionBindingInfoOut: {
+            /** Runner Id */
+            readonly runner_id?: string | null;
+            /** Runner Name */
+            readonly runner_name?: string | null;
+            /** Runner Kind */
+            readonly runner_kind?: string | null;
+            /**
+             * Host
+             * @default
+             */
+            readonly host: string;
+            /**
+             * Emdash Project
+             * @default
+             */
+            readonly emdash_project: string;
+            /**
+             * Session Key
+             * @default
+             */
+            readonly session_key: string;
+            /**
+             * Thread Key
+             * @default
+             */
+            readonly thread_key: string;
+            /**
+             * Transcript Id
+             * @default
+             */
+            readonly transcript_id: string;
+            /**
+             * Task Uid
+             * @default
+             */
+            readonly task_uid: string;
+            /**
+             * Agent Task Ext Id
+             * @default
+             */
+            readonly agent_task_ext_id: string;
+            /**
+             * Status
+             * @default
+             */
+            readonly status: string;
+            /**
+             * Agent Status
+             * @default
+             */
+            readonly agent_status: string;
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+            /** Transferred At */
+            readonly transferred_at?: string | null;
+            /** Transferred From Name */
+            readonly transferred_from_name?: string | null;
+            /** Reported At */
+            readonly reported_at?: string | null;
+            /** Live Seen At */
+            readonly live_seen_at?: string | null;
+            /** Last Interacted At */
+            readonly last_interacted_at?: string | null;
+            /** Updated At */
+            readonly updated_at?: string | null;
+        };
+        /**
+         * SessionInfoOut
+         * @description Everything canopy stores about a session, in one read — for the Session
+         *     info panel. `session` is the same shape the list and detail reads serve.
+         */
+        readonly SessionInfoOut: {
+            readonly session: components["schemas"]["SessionOut"];
+            /**
+             * Metadata
+             * @default {}
+             */
+            readonly metadata: {
+                readonly [key: string]: unknown;
+            };
+            /** Contact */
+            readonly contact?: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            readonly binding?: components["schemas"]["SessionBindingInfoOut"] | null;
+            /**
+             * Turns
+             * @default []
+             */
+            readonly turns: readonly components["schemas"]["TurnOut"][];
+            /**
+             * Turn Count
+             * @default 0
+             */
+            readonly turn_count: number;
+            /**
+             * Turns Limit
+             * @default 0
+             */
+            readonly turns_limit: number;
+            /**
+             * Participant Count
+             * @default 0
+             */
+            readonly participant_count: number;
+            /**
+             * Message Count
+             * @default 0
+             */
+            readonly message_count: number;
+        };
+        /**
          * HumanInputPageOut
          * @description One forward page of what PEOPLE typed into a session, oldest first.
          */
@@ -44965,6 +45112,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionDetailOut"];
+                };
+            };
+        };
+    };
+    readonly get_session_info: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionInfoOut"];
                 };
             };
         };

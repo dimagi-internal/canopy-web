@@ -20,6 +20,7 @@ import { ShareToSlackForm } from "./ShareToSlack";
 import { ShareSecretForm } from "./ShareSecret";
 import { MoveWorkspaceForm, type MoveTarget } from "./MoveWorkspaceForm";
 import { MemoryDots, SessionMemoryPanel, memorySummary, type SessionMemoryControl } from "./SessionMemoryToggles";
+import { SessionInfoPanel } from "./SessionInfoPanel";
 
 /**
  * Everything you can DO to a chat, behind one button.
@@ -41,6 +42,9 @@ import { MemoryDots, SessionMemoryPanel, memorySummary, type SessionMemoryContro
  * Your memory in this conversation joined them too (Jonathan, 2026-10-19): a
  * chip in the header gave a setting you rarely change top billing. The item
  * carries its dots (green working, red not) so the state is one tap away.
+ *
+ * Session info sits with People: both are about the conversation rather than
+ * something you do to it — who is in it, and where it came from.
  *
  * Ordered by how often each is used. Close is last and set apart, because it
  * is the one that cannot be undone (it deletes the emdash task).
@@ -112,7 +116,7 @@ export function ChatSessionMenu({
   /** Agent memory for this session; null/undefined hides the item. */
   memory?: SessionMemoryControl | null;
 }) {
-  const [panel, setPanel] = useState<"people" | "slack" | "secret" | "move" | "memory" | null>(null);
+  const [panel, setPanel] = useState<"people" | "info" | "slack" | "secret" | "move" | "memory" | null>(null);
   const canMove = Boolean(onMove && workspace && moveTargets && moveTargets.some((t) => t.slug !== workspace));
   // Every item is inset to the checkbox item's gutter, so the list is one column.
 
@@ -154,6 +158,9 @@ export function ChatSessionMenu({
             </>
           )}
           <DropdownMenuItem inset onClick={() => setPanel("people")}>People…</DropdownMenuItem>
+          <DropdownMenuItem inset data-testid="session-info-item" onClick={() => setPanel("info")}>
+            Session info…
+          </DropdownMenuItem>
           {memory && (
             <DropdownMenuItem
               inset
@@ -238,10 +245,12 @@ export function ChatSessionMenu({
       </DropdownMenu>
 
       <Dialog open={panel !== null} onOpenChange={(open: boolean) => !open && setPanel(null)}>
-        <DialogContent className="w-[calc(100%-2rem)] max-w-md bg-card">
+        <DialogContent className={`w-[calc(100%-2rem)] ${panel === "info" ? "max-w-2xl" : "max-w-md"} bg-card`}>
           <DialogTitle className="text-sm font-semibold text-foreground">
             {panel === "people"
               ? "People"
+              : panel === "info"
+                ? "Session info"
               : panel === "memory"
                 ? "Your memory in this conversation"
               : panel === "secret"
@@ -259,6 +268,7 @@ export function ChatSessionMenu({
             </div>
           )}
           {panel === "people" && <ChatPeoplePanel sessionId={sessionId} myRole={myRole} />}
+          {panel === "info" && <SessionInfoPanel sessionId={sessionId} />}
           {panel === "move" && canMove && (
             <MoveWorkspaceForm
               current={workspace!}
