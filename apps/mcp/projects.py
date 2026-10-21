@@ -102,8 +102,8 @@ def _call(workspace: str, handle: str, name: str, arguments: dict):
         raise ToolError(f"no workspace project {workspace}/{handle} serving tools")
     kb = kb_store.open_kb(project)
     try:
-        # `search` fuses BM25 with the project's vectors (pgvector) when it has
-        # them; with none yet, or no vector search here, it is lexical.
+        # `search` pools the project's nearest passages (pgvector) with its word
+        # matches when it has vectors, and reranks the pool when a reranker is set.
         semantic = kb_vectors.semantic_for(project) if name == "search" else None
         rerank = kb_vectors.reranker() if name == "search" else None
         return run(kb, name, arguments, semantic, rerank)
@@ -123,8 +123,10 @@ class ProjectTool(Tool):
     async def run(self, arguments: dict) -> ToolResult:
         out = await sync_to_async(_call, thread_sensitive=True)(
             self.workspace, self.handle, self.name, arguments or {})
-        return ToolResult(content=json.dumps(out, ensure_ascii=False, default=str),
-                          structured_content={"result": out})
+        # The research tools answer in text an agent reads as-is; JSON-quoting it would
+        # turn every newline into "\n" and cost the reader tokens for nothing.
+        text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str)
+        return ToolResult(content=text, structured_content={"result": out})
 
 
 class ProjectToolsProvider(Provider):

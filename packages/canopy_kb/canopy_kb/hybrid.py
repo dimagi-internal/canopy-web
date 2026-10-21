@@ -31,9 +31,9 @@ DENSE_WEIGHT = 0.7
 #: How deep each list goes before fusing. A good passage ranked 40th by one
 #: method and 3rd by the other should still make the fused top 10.
 CANDIDATES = 50
-#: The embedding input is capped (the models truncate at a few thousand tokens);
-#: a passage is at most ~1,800 chars, so the header and passage fit.
-TEXT_MAX = 2000
+#: The embedding input is capped (gemini-embedding-001 takes 2,048 tokens); a
+#: passage is at most 3,200 chars, so the header, context line and passage fit.
+TEXT_MAX = 4000
 TITLE_MAX = 200
 
 #: `semantic(query, types=, since=, until=, limit=)` → [(item_id, passage_ord)]
@@ -47,15 +47,18 @@ Rerank = Callable[[str, list[dict]], Optional[Sequence[int]]]
 RERANK_DEPTH = 50
 
 
-def embedding_text(title: str, type_: str, date: str, body: str) -> str:
+def embedding_text(title: str, type_: str, date: str, body: str, heading: str = "", context: str = "") -> str:
     """The text embedded for one passage: a deterministic header, then the passage.
 
     The header carries what a passage deep inside a long document no longer says
-    about itself (which report, what kind, when) — the same title on every
-    passage, not only the first, unlike the FTS index."""
+    about itself (which report, what kind, when, which section, and the curator's
+    one-line context when there is one) — on every passage, not only the first,
+    unlike the FTS index."""
     head = [f"Title: {title.strip()[:TITLE_MAX]}" if (title or "").strip() else "",
             f"Type: {type_.replace('_', ' ')}" if type_ else "",
-            f"Date: {date}" if date else ""]
+            f"Date: {date}" if date else "",
+            f"Section: {heading.strip()[:TITLE_MAX]}" if (heading or "").strip() else "",
+            (context or "").strip()]
     head_text = "\n".join(h for h in head if h)
     body = (body or "").strip()
     text = f"{head_text}\n\n{body}" if head_text and body else (head_text or body)
