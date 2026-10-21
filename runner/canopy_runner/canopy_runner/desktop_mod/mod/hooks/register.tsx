@@ -12,7 +12,12 @@ import type { Register } from 'claude-code'
 //   runner -> mod   task.txt          the turn's prompt, submitted once
 //                   fu-<n>.txt        a follow-up, submitted once (fu-<n>.done marks it)
 //                   stop-<n>.txt      stop the running turn (stop-<n>.done marks it)
+//                   start-<n>.json    start ANOTHER session with the app's start_session
+//                                     tool (canopy-web#1238); the result goes to start-<n>.done
+//                   seeded = "start"  this folder waits for a session start_session is
+//                                     opening: the first one to start here claims it
 //   mod -> runner   alive             a timestamp, rewritten every poll: "this session's process is up"
+//                   caps              what this mod can do for the runner (`start`)
 //                   ev-<t>-<n>-<kind>.json   session.start / submitted / turn.start /
 //                                     turn.complete / ask / answered / submit.error / stopped
 //
@@ -25,6 +30,9 @@ let seq = 0
 let started = false
 // The model turn running now, from turn.start, so a stop can name it.
 let running = ''
+// Claimed by start_session: the session's first turn is the start's own brief,
+// and the task waits until it completes.
+let fresh = false
 // Permission cards drawn and not yet answered, by tool. PermissionRequest names
 // no call id, so a call settling clears a card for its own tool only.
 const asking = new Map<string, number>()
@@ -55,6 +63,27 @@ async function submitOnce($: any, file: string, marker: string, which: string) {
     await emit($, 'submitted', { which })
   } catch (err) {
     await emit($, 'submit.error', { which, err: String(err) })
+  }
+}
+
+// The runner cannot start a session in the app without a claude:// link, which
+// brings the app to the front. A live session can: the app's own start_session
+// tool opens a sibling in the background. `$.mcp.call` is the mod's own call, so
+// it needs no rule or classifier: agents' turns gain no new power, only the
+// runner's request through this channel does.
+async function startOnce($: any, file: string, marker: string) {
+  if (!(await $.fs.exists(file)) || (await $.fs.exists(marker))) return
+  await $.fs.write(marker, JSON.stringify({ pending: true }))
+  try {
+    const req = JSON.parse(await $.fs.read(file))
+    const r = await $.mcp.call('ccd_session', 'start_session', {
+      initiation: 'user_asked', context: 'fresh', use_worktree: false,
+      cwd: req.cwd, title: req.title, prompt: req.prompt, background: req.background,
+    })
+    const text = (r.content ?? []).map((b: any) => b.text ?? '').join('\n')
+    await $.fs.write(marker, JSON.stringify({ isError: !!r.isError, text }))
+  } catch (err) {
+    await $.fs.write(marker, JSON.stringify({ isError: true, text: String(err) }))
   }
 }
 
@@ -89,7 +118,12 @@ async function poll($: any) {
     if (!(await $.fs.exists(stop))) break
     await stopOnce($, stop, `${dir}/stop-${n}.done`, `stop-${n}`)
   }
-  await submitOnce($, `${dir}/task.txt`, `${dir}/task.claimed`, 'task')
+  for (let n = 1; n <= 200; n++) {
+    const start = `${dir}/start-${n}.json`
+    if (!(await $.fs.exists(start))) break
+    await startOnce($, start, `${dir}/start-${n}.done`)
+  }
+  if (!fresh) await submitOnce($, `${dir}/task.txt`, `${dir}/task.claimed`, 'task')
   for (let n = 1; n <= 200; n++) {
     const fu = `${dir}/fu-${n}.txt`
     if (!(await $.fs.exists(fu))) break
@@ -111,7 +145,14 @@ export const register: Register = (on) => {
     if (await $.env.get('CANOPY_HEADLESS')) return r
     dir = candidate
     sid = await $.session.id()
+    // A folder the runner handed to start_session: the session it opened is the
+    // only one that starts here, so the first to arrive is it.
+    if ((await $.fs.read(`${dir}/seeded`)).trim() === 'start') {
+      await $.fs.write(`${dir}/seeded`, sid)
+      fresh = true
+    }
     if (!(await mine($))) { dir = ''; return r }
+    await $.fs.write(`${dir}/caps`, 'start')
     await emit($, 'session.start', { surface: e.surface, isInteractive: e.isInteractive })
     // Submitting is left to the clock, never done in this hook: a command run
     // from inside a hook the session is waiting on is refused.
@@ -131,6 +172,7 @@ export const register: Register = (on) => {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     if (running === e.turnId) running = ''
+    fresh = false
     await emit($, 'turn.complete', {
       turnId: e.turnId, isAborted: e.isAborted, reason: e.reason,
       answer: String(e.answer ?? '').slice(0, 4000),
