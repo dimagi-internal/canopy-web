@@ -73,6 +73,9 @@ class UnclaimableTurnOut(Schema):
     # does, but no runner is reachable right now (usually transient); "parked" =
     # every runner that could take it is paused (`reason` says by whom, until when).
     kind: str = "config"
+    # Whether the caller may cancel it (POST /turns/{id}/cancel) — the fix the
+    # warning offers in place.
+    can_cancel: bool = False
 
 
 class RunnerCapabilitiesIn(Schema):

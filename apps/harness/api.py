@@ -1423,6 +1423,10 @@ def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
         orders = [row.workspace for row in WorkspaceRunnerOrder.objects.filter(runner=runner)
                   .select_related("workspace")]
         WorkspaceRunnerOrder.objects.filter(runner=runner).delete()
+    # Turns pinned to it would wait for it forever: nothing else may take a pin.
+    for turn in Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner):
+        services.finish_turn(turn, status=Turn.CANCELLED, allow_queued=True,
+                             result_note=f"cancelled: {runner.name}, the runner it was pinned to, was retired")
     dropped = [{"agent": r.agent.slug, "source": r.source, "actor": r.actor} for r in rows]
     if orders:
         from apps.events import services as events
@@ -2296,9 +2300,16 @@ def list_unclaimable_turns(request: HttpRequest):
     # a caller in two trees who names none gets a 422).
     ws_slugs = wsvc.request_workspace_slugs(request)
     site_q = _site_turn_q(request)
-    if site_q is not None:
-        return services.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs, turn_q=site_q)
-    return services.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs)
+    rows = (services.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs, turn_q=site_q)
+            if site_q is not None else
+            services.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs))
+    # Each row says whether the caller may cancel it, so the warning offers the
+    # one fix that always works right where it is shown.
+    turns = Turn.objects.select_related("agent", "chat_session").in_bulk([r["turn_id"] for r in rows])
+    for r in rows:
+        t = turns.get(uuid.UUID(r["turn_id"]))
+        r["can_cancel"] = t is not None and not _cancel_refusal(request.user, t)
+    return rows
 
 
 @router.post("/turns/", response={200: TurnOut, 201: TurnOut})
@@ -2804,6 +2815,35 @@ def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn)
     return result
 
 
+def _cancel_refusal(user, turn: Turn) -> str:
+    """Why `user` may not cancel `turn`, or "" when they may.
+
+    Same tier as the enqueue that produced it: an AGENT turn is the author
+    tier, so a viewer who cannot dispatch one may not withdraw one either.
+
+    The session carve-out is STRUCTURAL rather than a condition spelled out
+    here — `turn_targets_agent_xor_project_xor_session` makes a session turn
+    carry `agent=NULL` and derive its agent through `chat_session`, so the agent
+    branch cannot see one. That is the right outcome: a viewer may chat, so a
+    viewer must be able to take back a misfired send, which is the misfire
+    case the phone composer exists for. Project turns likewise have no agent."""
+    if turn.agent_id:
+        if not perms.can(user, turn.agent.workspace_id, perms.AGENT_WORK):
+            return "running a turn for this agent requires the editor or owner role"
+    elif turn.initiator_user_id != user.pk:
+        # Not your own send: a chat turn needs write access to that chat (a
+        # viewer participant may not withdraw someone else's message), and a
+        # project turn the same tier that enqueued it.
+        if turn.chat_session_id:
+            from apps.canopy_sessions import access as session_access
+
+            if not session_access.can_write(user, turn.chat_session):
+                return "you can only cancel your own send in this chat"
+        elif not perms.can(user, turn.workspace_id, perms.AGENT_WORK):
+            return "cancelling a turn requires the editor role or above"
+    return ""
+
+
 @router.post("/turns/{turn_id}/cancel", response=TurnOut)
 def cancel_turn(request: HttpRequest, turn_id: uuid.UUID):
     """Cancel a QUEUED turn that has not started — the misfire case the phone
@@ -2816,28 +2856,10 @@ def cancel_turn(request: HttpRequest, turn_id: uuid.UUID):
     deliberately not wired to this route yet.
     """
     turn = _turn_or_404(request, turn_id)
-    # Same tier as the enqueue that produced it: an AGENT turn is the author
-    # tier, so a viewer who cannot dispatch one may not withdraw one either.
-    #
-    # The session carve-out is STRUCTURAL rather than a condition spelled out
-    # here — `turn_targets_agent_xor_project_xor_session` makes a session turn
-    # carry `agent=NULL` and derive its agent through `chat_session`, so this
-    # branch cannot see one. That is the right outcome: a viewer may chat, so a
-    # viewer must be able to take back a misfired send, which is the misfire
-    # case the phone composer exists for. Project turns likewise have no agent.
     if turn.agent_id:
-        _agent_for_write_or_404(request, turn.agent.slug)
-    elif turn.initiator_user_id != request.user.pk:
-        # Not your own send: a chat turn needs write access to that chat (a
-        # viewer participant may not withdraw someone else's message), and a
-        # project turn the same tier that enqueued it.
-        if turn.chat_session_id:
-            from apps.canopy_sessions import access as session_access
-
-            if not session_access.can_write(request.user, turn.chat_session):
-                raise HttpError(403, "you can only cancel your own send in this chat")
-        elif not perms.can(request.user, turn.workspace_id, perms.AGENT_WORK):
-            raise HttpError(403, "cancelling a turn requires the editor role or above")
+        _agent_or_404(request, turn.agent.slug)  # a non-member gets a 404, never a 403
+    if refusal := _cancel_refusal(request.user, turn):
+        raise HttpError(403, refusal)
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent
     cancelled = services.cancel_queued_turn(turn)

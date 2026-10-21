@@ -59,6 +59,7 @@ from .routing import (
     runner_tenant_slugs,
     turn_unit_refusal,
 )
+from .drills import expire_stale_drills
 from .schedule_turns import release_stale_occurrence_turns_all, skip_late_scheduled_turns
 
 DEFAULT_LEASE_SECONDS = 900
@@ -465,7 +466,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         # chat_session + its binding are read per turn by the per-source
         # refinement below (once per turn PER RUNNER), so preload them.
         .select_related("agent", "chat_session", "chat_session__runner_binding",
-                        "chat_session__agent", "enqueued_by")
+                        "chat_session__agent", "enqueued_by", "pinned_runner")
         .filter(turn_q if turn_q is not None else Q())
         # A user sees a session turn (and its prompt) only in a chat they may
         # read — the chat ACL, not the tenant. A contact is already narrowed to
@@ -546,7 +547,16 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         else:
             target, what = f"project {t.project}", f"declares the repo '{t.project}'"
         reqs = rr.requirements_of(t)
-        if reqs and t.pk in blocked_by_reqs:
+        pin = t.pinned_runner if t.pinned_runner_id else None
+        if pin is not None and t.pk not in claimable_ever and (
+                pin.status == Runner.RETIRED or pin not in runners):
+            # A pin trumps routing, so "no runner routes the agent" sends its
+            # owner to fix routing that is not broken: the turn waits for ONE box.
+            kind = "config"
+            reason = (f"pinned to {pin.name}, which has been retired — it will never run"
+                      if pin.status == Runner.RETIRED else
+                      f"pinned to {pin.name}, which is not in this workspace — it will never run")
+        elif reqs and t.pk in blocked_by_reqs:
             kind = "config"
             reason = (f"this conversation's site requires a {rr.describe(reqs)} runner, and "
                       f"no runner that serves it is declared {rr.describe(reqs)}")
@@ -572,11 +582,13 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         elif t.pk in claimable_ever and _parked(takers := [
                 r for r, pks in ever_by_runner.items() if t.pk in pks])[0]:
             kind = "parked"
-            reason = f"every runner that {what} is paused: " + "; ".join(
-                runner_situation(r) for r in takers)
+            reason = (f"pinned to one runner: {runner_situation(pin)}" if pin is not None else
+                      f"every runner that {what} is paused: " + "; ".join(
+                          runner_situation(r) for r in takers))
         elif t.pk in claimable_ever:
             kind = "offline"
-            reason = f"a runner {what}, but none are reachable right now (offline or heartbeat lapsed)"
+            reason = (f"pinned to one runner: {runner_situation(pin)}" if pin is not None else
+                      f"a runner {what}, but none are reachable right now (offline or heartbeat lapsed)")
         elif is_project_session_turn(t):
             kind = "config"
             reason = project_session_waits_why(t, orders)
@@ -642,7 +654,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # operator intent, but the pause is the more specific and more recent one, and
     # a pin that could resurrect a parked box would re-open exactly the hole pause
     # closes — work landing on an account that must not spend tokens. The pinned
-    # turn stays QUEUED (queued turns never expire) and lands on unpause.
+    # turn stays QUEUED and lands on unpause (only a readiness drill expires:
+    # `expire_stale_drills`).
     if runner.live_status != Runner.ONLINE:
         return None
     # The FLEET-WIDE hold (FleetHold): nothing is claimed, ridden or pinned anywhere
@@ -659,6 +672,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # its agent for the very claim we are about to make.
     release_stale_occurrence_turns_all()
     skip_late_scheduled_turns()
+    expire_stale_drills()
     projects = runner.project_names()
     session_capable = runner.session_capable()
     has_pins = Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner).exists()

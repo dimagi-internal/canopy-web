@@ -8,6 +8,7 @@ which still re-exports every name here.
 """
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 
 from django.conf import settings
@@ -139,6 +140,7 @@ def start_drill(runner: Runner, agents: list, *, started_by=None) -> list[Runner
 
     drills: list[RunnerDrill] = []
     for agent in agents:
+        _supersede(runner, agent)
         drill, _ = RunnerDrill.objects.update_or_create(
             runner=runner, agent=agent,
             defaults={"outcome": RunnerDrill.OUTCOME_PENDING, "summary": "",
@@ -153,7 +155,7 @@ def start_drill(runner: Runner, agents: list, *, started_by=None) -> list[Runner
         turn, _created = enqueue_turn(
             agent=agent,
             origin=Turn.ORIGIN_API,
-            idempotency_key=f"drill:{runner.id}:{agent.slug}:{uuid.uuid4().hex[:8]}",
+            idempotency_key=f"{DRILL_KEY_PREFIX}{runner.id}:{agent.slug}:{uuid.uuid4().hex[:8]}",
             prompt=DRILL_PROMPT.format(agent_slug=agent.slug, report_url=report_url,
                                        github_check=_drill_github_check(agent)),
             pinned_runner=runner,
@@ -165,6 +167,52 @@ def start_drill(runner: Runner, agents: list, *, started_by=None) -> list[Runner
         drill.save(update_fields=["turn"])
         drills.append(drill)
     return drills
+
+
+#: How long a drill may wait for its runner. A readiness check answers "can this
+#: box run the agent NOW"; one that has waited a day for a paused or offline box
+#: answers nothing, and every other queued turn waits for its runner forever.
+DRILL_EXPIRY = dt.timedelta(hours=24)
+
+#: Every drill turn's idempotency key starts with this (`start_drill`). It, not
+#: the RunnerDrill FK, identifies a drill turn: a re-drill points the row at its
+#: new turn, and the old one is then linked to nothing.
+DRILL_KEY_PREFIX = "drill:"
+
+
+def _cancel(turn: Turn, note: str) -> None:
+    from .services import finish_turn  # services.py imports this module
+
+    finish_turn(turn, status=Turn.CANCELLED, result_note=note, allow_queued=True)
+
+
+def _supersede(runner: Runner, agent) -> None:
+    """A re-drill replaces the (runner, agent) check still waiting to run."""
+    for turn in Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner, agent=agent,
+                                    idempotency_key__startswith=f"{DRILL_KEY_PREFIX}{runner.id}:"):
+        _cancel(turn, "cancelled: a newer readiness check of this runner replaced it")
+
+
+def expire_stale_drills() -> int:
+    """Close readiness drills still QUEUED after DRILL_EXPIRY, their drill marked
+    failed with the runner's situation — the box was paused, offline or retired
+    the whole time, which is the drill's answer. Lazy, from the claim loop."""
+    from .claim import runner_situation
+
+    cutoff = timezone.now() - DRILL_EXPIRY
+    count = 0
+    for turn in (Turn.objects.filter(status=Turn.QUEUED, created_at__lt=cutoff,
+                                     idempotency_key__startswith=DRILL_KEY_PREFIX)
+                 .select_related("pinned_runner")):
+        box = turn.pinned_runner
+        why = ("its runner was retired" if box is not None and box.status == Runner.RETIRED
+               else runner_situation(box) if box is not None else "it had no runner")
+        summary = f"expired, never ran within a day: {why}"
+        RunnerDrill.objects.filter(turn=turn, outcome=RunnerDrill.OUTCOME_PENDING).update(
+            outcome=RunnerDrill.OUTCOME_FAIL, summary=summary, finished_at=timezone.now())
+        _cancel(turn, f"cancelled: readiness check {summary}")
+        count += 1
+    return count
 
 
 def report_drill(drill: RunnerDrill, *, outcome: str, summary: str) -> RunnerDrill:
