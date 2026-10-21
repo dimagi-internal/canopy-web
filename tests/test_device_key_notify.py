@@ -121,3 +121,31 @@ def test_the_heartbeat_tells_the_box_a_key_waits_until_it_is_approved(box):
     assert _heartbeat(box)["key_waiting"] == ""
     _register(box, key, ecdh=ec.generate_private_key(ec.SECP256R1()))  # a new ECDH key waits again
     assert _heartbeat(box)["key_waiting"].endswith(f"/settings?device_key={kid}#device-keys")
+
+
+def test_the_notice_names_the_computer_not_its_kernel(box, django_capture_on_commit_callbacks):
+    """A default label is `host (platform.system())`; "Darwin" read to a Mac owner as a
+    machine they had never heard of (2026-10-21). The notice says "the Mac named …"."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    data = {"runner": str(box["runner"].pk), "public_jwk": _jwk(key), "kind": "secure-enclave",
+            "label": "DIM-SA-A126 (Darwin)"}
+    with django_capture_on_commit_callbacks(execute=True):
+        assert Client().post("/api/runner-device-keys/", data=data, content_type="application/json",
+                             HTTP_AUTHORIZATION=f"Bearer {box['pat']}").status_code == 201
+    body = mail.outbox[0].body
+    assert "the canopy runner on the Mac named DIM-SA-A126" in body
+    assert "Darwin" not in body
+    assert "asked by itself when it started" in body
+
+
+@pytest.mark.parametrize("label,kind,said", [
+    ("Jonathans-MBP (Darwin)", "secure-enclave", "the Mac named Jonathans-MBP"),
+    ("DIM-SA-A126 (macOS)", "secure-enclave", "the Mac named DIM-SA-A126"),
+    ("BOX (Windows)", "tpm", "the Windows PC named BOX"),
+    ("cloud-ec2-1 instance role", "aws-iam", "cloud-ec2-1 instance role"),
+    ("", "software", "a software key"),
+])
+def test_machine_phrases_a_key(label, kind, said):
+    from apps.harness.device_key_notify import machine
+
+    assert machine(RunnerDeviceKey(label=label, kind=kind)) == said

@@ -17,6 +17,7 @@ BEST-EFFORT: a failed notice never fails the registration.
 from __future__ import annotations
 
 import logging
+import re
 from html import escape
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,23 @@ def approvers(runner) -> list:
     return people
 
 
+#: `platform.system()` names, as the canopy CLI's default key label carries them
+#: ("DIM-SA-A126 (Darwin)"). "Darwin" read to a Mac owner as a machine they had
+#: never heard of (2026-10-21), so a notice names the kind of computer instead.
+_SYSTEMS = {"Darwin": "Mac", "macOS": "Mac", "Windows": "Windows PC", "Linux": "Linux machine"}
+
+
+def machine(key) -> str:
+    """The computer a key belongs to, in words its owner recognises:
+    "the Mac named DIM-SA-A126" for a default `host (System)` label, else the
+    label as given, else the key's kind."""
+    label = (key.label or "").strip()
+    found = re.fullmatch(r"(.+?) \((\w+)\)", label)
+    if found and found.group(2) in _SYSTEMS:
+        return f"the {_SYSTEMS[found.group(2)]} named {found.group(1)}"
+    return label or f"a {key.kind} key"
+
+
 def notify_pending(key, *, reapproval: bool = False) -> dict:
     """Email + Web Push each approver about `key`, now pending. Never raises."""
     from .api_device_keys import approve_url
@@ -43,16 +61,18 @@ def notify_pending(key, *, reapproval: bool = False) -> dict:
     try:
         runner = key.runner
         link = approve_url(key)
-        what = key.label or key.kind
+        where = f"{runner.name}, the canopy runner on {machine(key)},"
         if reapproval:
             subject = f"Canopy · {runner.name} needs re-approving"
-            detail = (f"{runner.name} ({what}) has a new key for reading agents' private secrets. It stays "
+            detail = (f"{where} has a new key for reading agents' private secrets. It stays "
                       f"online and keeps running other agents, but it cannot read those secrets until you "
                       f"approve the new key — one passkey touch, which also gives it access.")
         else:
             subject = f"Canopy · approve {runner.name}"
-            detail = (f"{runner.name} ({what}) is asking to be approved. Until you approve it, it cannot read the "
-                      f"secrets of agents that need an approved machine, so their turns there will fail. "
+            detail = (f"{where} is asking to be approved. The runner asked by itself when it started: it "
+                      f"registers its machine's key so it can read agents' secrets. Until you approve it, it "
+                      f"cannot read the secrets of agents that need an approved machine, so their turns there "
+                      f"will fail. "
                       f"Approving takes one passkey touch and also gives it access to your agents.")
         foot = "You are getting this because you administer this runner. If you did not expect it, revoke it there."
         _send(approvers(runner), subject=subject, detail=detail, link=link, foot=foot,
