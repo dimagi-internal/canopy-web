@@ -297,6 +297,12 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   `relationship_for_user`, `caller_runs_agent` — so `decide` places the person in
   the tier the cap names. It only ever lowers, so it needs no proof. It is how an
   agent's owner tests the non-admin path on their own machine.
+* **No PAT on a private runner.** The owner's local sessions there sign in with the
+  box's own device key (its runner token), which on a private runner also reaches the
+  local-turn routes and `/api/private-runners` (`runner_auth._PRIVATE_RULES`), and
+  reads credentials under the owner's license. Such a turn's initiator assurance is
+  `private-runner-key` (verified, like a PAT). A shared runner's token opens no local
+  session, and a private runner's opens only its own registration.
 * A **local turn** (`Turn.origin = local`) is one session there with one agent,
   opened by the canopy plugin's SessionStart hook
   (`POST /api/harness/local-turns/`). It is a real turn: the person is its

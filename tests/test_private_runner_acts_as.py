@@ -220,3 +220,60 @@ def test_making_it_private_links_a_registration_the_runner_reads(world):
     again = _make_private(_pat(world["jj"]), world["box"], "viewer")
     assert again.json()["private_runner_id"] == pr_id
     assert PrivateRunner.objects.filter(owner=world["jj"]).count() == 1
+
+
+# --- the box's own key signs its owner's local sessions in: no PAT on a private runner ---
+
+def _box_token(box):
+    from apps.harness.models import RunnerAccessToken, RunnerDeviceKey
+
+    key = RunnerDeviceKey.objects.create(runner=box, kind=RunnerDeviceKey.SOFTWARE,
+                                         jkt=f"jkt-{box.pk}", status=RunnerDeviceKey.ACTIVE)
+    raw, _ = RunnerAccessToken.mint(key)
+    return raw
+
+
+def test_a_private_runners_key_opens_and_closes_its_owners_local_turn(world):
+    jj, box = world["jj"], world["box"]
+    pr_id = _make_private(_pat(jj), box, "editor").json()["private_runner_id"]
+    as_box = Client(HTTP_AUTHORIZATION=f"Bearer {_box_token(box)}")
+    res = as_box.post("/api/harness/local-turns/", data={
+        "agent": "hal", "private_runner": pr_id, "claude_session_id": "s-key"},
+        content_type="application/json")
+    assert res.status_code == 201, res.content
+    turn = Turn.objects.get(pk=res.json()["turn_id"])
+    assert turn.initiator_user == jj and turn.initiator_assurance == "private-runner-key"
+    assert turn.origin_ref["acts_as"] == "editor" and turn.turn_mode == "manual"
+    read = as_box.get("/api/agents/hal/credentials/resolve", HTTP_X_CANOPY_TURN_ID=str(turn.pk))
+    assert read.status_code == 200, read.content
+    assert read.json()["values"]["hal-key"] == SECRET
+    from apps.agents.models import AgentCredentialRead
+    assert set(AgentCredentialRead.objects.values_list("via", flat=True)) == {"license"}
+    renew = as_box.post(f"/api/harness/local-turns/{turn.pk}/renew")
+    assert renew.status_code == 200, renew.content
+    done = as_box.post(f"/api/harness/turns/{turn.pk}/finish", data={"status": "done"},
+                       content_type="application/json")
+    assert done.status_code == 200, done.content
+    turn.refresh_from_db()
+    assert turn.status == Turn.DONE
+
+
+def test_a_shared_runners_key_opens_no_local_session(world):
+    jj, box = world["jj"], world["box"]
+    pr = PrivateRunner.objects.create(owner=jj, name="jj-mbp", runner=box)
+    as_box = Client(HTTP_AUTHORIZATION=f"Bearer {_box_token(box)}")
+    res = as_box.post("/api/harness/local-turns/", data={
+        "agent": "hal", "private_runner": str(pr.pk), "claude_session_id": "s-shared"},
+        content_type="application/json")
+    assert res.status_code == 403
+
+
+def test_a_private_runners_key_opens_only_its_own_registration(world):
+    jj, box = world["jj"], world["box"]
+    _make_private(_pat(jj), box, "editor")
+    elsewhere = PrivateRunner.objects.create(owner=jj, name="jj-other-laptop")
+    as_box = Client(HTTP_AUTHORIZATION=f"Bearer {_box_token(box)}")
+    res = as_box.post("/api/harness/local-turns/", data={
+        "agent": "hal", "private_runner": str(elsewhere.pk), "claude_session_id": "s-other"},
+        content_type="application/json")
+    assert res.status_code == 403

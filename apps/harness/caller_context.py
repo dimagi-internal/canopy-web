@@ -51,7 +51,7 @@ VERSION = 3
 #: `slack_email` is a full member of our own Slack matched by the profile email
 #: that Slack's owning organisation provisioned (`slack.services.auto_link`
 #: refuses guests and other teams' members).
-_VERIFIED_USER = frozenset({who.SESSION, who.PAT, who.DELEGATED, who.SLACK_LINKED, who.SLACK_EMAIL,
+_VERIFIED_USER = frozenset({who.SESSION, who.PAT, who.PRIVATE_RUNNER_KEY, who.DELEGATED, who.SLACK_LINKED, who.SLACK_EMAIL,
                             who.APPROVAL, Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED})
 
 #: Relationships, strongest first — the agent roles of docs/architecture/access.md.

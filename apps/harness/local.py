@@ -164,6 +164,11 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
         key = f"{key[:100]}-{uuid.uuid4().hex[:12]}"
     mode, basis = mode_for(agent, user, requested_mode)
     asker = who.for_request(request, via=Turn.ORIGIN_LOCAL)
+    if getattr(request, "runner_token", None) is not None:
+        # The owner's session, signed in with their own private runner's device key
+        # (the API checked the box is private and is this private runner's): as strong
+        # a claim as their PAT, and one that cannot expire unnoticed.
+        asker = who.for_user(user, via=Turn.ORIGIN_LOCAL, assurance=who.PRIVATE_RUNNER_KEY)
     turn = Turn.objects.create(
         agent=agent, origin=Turn.ORIGIN_LOCAL, routing=Turn.LOCAL_ONLY,
         idempotency_key=key, status=Turn.RUNNING, private_runner=private_runner,
