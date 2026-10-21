@@ -48,7 +48,9 @@ def accepted(reply: dict) -> None:
     `status` (online / degraded / paused), `ready`, the box's own notes and the
     fix for a known cause — so the menu bar shows what Health shows. And where to
     approve a key on this box that waits for a person (`key_waiting`), so the
-    menu bar says so rather than leaving it to an email."""
+    menu bar says so rather than leaving it to an email. And whether the box is its
+    owner's private runner (`private`), which decides whose sign-in a local Claude
+    Code session here uses — None from a server too old to say."""
     global _last_ok_at
     _last_ok_at = time.time()
     note = " · ".join(dict.fromkeys(n for n in (reply.get("status_note"), reply.get("ready_note")) if n))
@@ -56,7 +58,8 @@ def accepted(reply: dict) -> None:
             "paused": bool(reply.get("paused")),
             "runner_status": str(reply.get("status") or ""), "ready": reply.get("ready", True) is not False,
             "note": note, "remedy": str(reply.get("remedy") or ""),
-            "key_waiting": str(reply.get("key_waiting") or "")})
+            "key_waiting": str(reply.get("key_waiting") or ""),
+            "private": bool(reply["private"]) if "private" in reply else None})
 
 
 def refused(exc: Exception) -> None:

@@ -89,3 +89,14 @@ def test_a_key_waiting_for_approval_reaches_the_menu_bar(monkeypatch, status_fil
     assert json.loads(status_file.read_text())["key_waiting"] == url
     _client(monkeypatch, {}).heartbeat("r1", [])  # approved, or an older canopy
     assert json.loads(status_file.read_text())["key_waiting"] == ""
+
+
+def test_whether_the_box_is_private_reaches_the_menu_bar(monkeypatch, status_file):
+    """It decides whose sign-in a local session here uses (canopy-web#1761)."""
+    _client(monkeypatch, {"private": True}).heartbeat("r1", [])
+    assert json.loads(status_file.read_text())["private"] is True
+    _client(monkeypatch, {"private": False}).heartbeat("r1", [])
+    assert json.loads(status_file.read_text())["private"] is False
+    # A server too old to say says nothing, rather than "shared".
+    _client(monkeypatch, {}).heartbeat("r1", [])
+    assert json.loads(status_file.read_text())["private"] is None

@@ -10,7 +10,10 @@ import { relativeAge } from '@/lib/relativeAge'
 // itself off with a single journald line. This is where they now show up.
 //
 // No report is not the same as a clean report: a runner that does not send
-// health (the laptops, an older box) renders as "not reported", never green.
+// health (a laptop that has not refreshed yet, an older box) renders as "not
+// reported", never green. Every runner can be refreshed (canopy-web#1763): a cloud
+// box restarts into its bootstrap; a laptop updates its plugins and the canopy CLI
+// in place and reports one `refresh` check.
 
 const TONE: Record<string, { dot: string; text: string }> = {
   ok: { dot: 'bg-success', text: 'text-foreground-secondary' },
@@ -43,7 +46,8 @@ export function RunnerHealth({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const reported = runner.health_checks != null
-  const canRefresh = runner.can_administer && runner.kind === 'cloud'
+  const canRefresh = runner.can_administer
+  const cloud = runner.kind === 'cloud'
   if (!reported && !canRefresh) return null
 
   const refresh = () => {
@@ -80,8 +84,9 @@ export function RunnerHealth({
       </div>
       {runner.refresh_pending && (
         <p className="text-[12px] text-muted-foreground" data-testid="runner-refresh-pending">
-          Waiting for the box to go idle — it restarts, updates its plugins, the canopy CLI and Claude Code,
-          then reports back here.
+          {cloud
+            ? 'Waiting for the box to go idle — it restarts, updates its plugins, the canopy CLI and Claude Code, then reports back here.'
+            : 'The machine updates its plugins and the canopy CLI at its next heartbeat, then reports back here. Sessions already open keep what they loaded.'}
         </p>
       )}
       {checks.length > 0 && (
@@ -115,7 +120,7 @@ export function RunnerHealth({
       )}
       {runner.health_bootstrapped_at ? (
         <p className="text-[11px] text-muted-foreground">
-          last bootstrap {relativeAge(new Date(runner.health_bootstrapped_at * 1000).toISOString())}
+          last {cloud ? 'bootstrap' : 'refresh'} {relativeAge(new Date(runner.health_bootstrapped_at * 1000).toISOString())}
         </p>
       ) : null}
       {err && <p className="text-[12px] text-destructive" data-testid="runner-refresh-error">{err}</p>}

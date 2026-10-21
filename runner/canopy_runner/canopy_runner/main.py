@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 
 from . import chat_bridge, chat_pump, close, desktop, emdash, hooks, inbox_due, mailbox_probe, sessions
-from . import activity, private_runner, session_interrupt, streams, usage_report
+from . import activity, private_runner, refresh, session_interrupt, streams, usage_report
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -621,7 +621,8 @@ def run_once(cfg: Config, client: Client) -> str:
         me = client.heartbeat(cfg.runner_id, _active_turn_ids(), host=host,
                               ready=_ready, ready_note=_rnote,
                               projects=sessions.reported_projects(cfg),
-                              mailboxes_readable=mailbox_probe.readable())
+                              mailboxes_readable=mailbox_probe.readable(),
+                              health=refresh.health())
     else:
         _cdp_down_ticks += 1
         # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
@@ -655,6 +656,10 @@ def run_once(cfg: Config, client: Client) -> str:
     # Marked private on canopy-web: write this machine's private-runner registration,
     # so local sessions here are recorded without `canopy private-runner register`.
     _step("private runner", lambda: private_runner.observe(me, base_url=cfg.base_url))
+
+    # Refresh on the runner's page: update this account's plugins and the canopy CLI
+    # in the background; the healthy heartbeat reports when it finished. See refresh.
+    _step("refresh", refresh.observe, me)
 
     # Before the reports: an in-flight reply is the freshest thing on this box, and
     # finishing a turn here frees the session for the next message. Runs even while

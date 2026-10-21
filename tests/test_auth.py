@@ -73,6 +73,13 @@ def test_health_is_public(db):
     assert resp.status_code == 200
 
 
+@override_settings(REQUIRE_AUTH=True, RUNNER_CODE_SHA="a" * 40)
+def test_health_names_the_deployed_runner_version_without_a_token(db):
+    """A runner whose token canopy refuses still learns it is behind (canopy-web#1762)."""
+    resp = Client().get("/health/")
+    assert resp.json() == {"status": "ok", "runner_code_sha": "a" * 40}
+
+
 @override_settings(REQUIRE_AUTH=True)
 def test_csrf_endpoint_is_public(db):
     client = Client()

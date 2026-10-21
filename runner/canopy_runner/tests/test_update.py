@@ -21,10 +21,15 @@ def cfg(tmp_path):
 
 
 class FakeClient:
-    def __init__(self, rows=None, boom=None):
+    def __init__(self, rows=None, boom=None, deployed=""):
         self._rows = rows if rows is not None else []
         self._boom = boom
+        self._deployed = deployed
         self.calls = []
+
+    def deployed_runner_sha(self):
+        self.calls.append("deployed_runner_sha")
+        return self._deployed
 
     def list_runners(self):
         self.calls.append("list_runners")
@@ -82,6 +87,33 @@ def test_a_flaky_network_never_triggers_an_update(cfg):
     status, _ = update.update_status(cfg, FakeClient(boom=RuntimeError("no route")),
                                      installed_sha=OLD)
     assert status == update.UNKNOWN
+
+
+def test_a_refused_token_compares_with_the_public_deployed_version(cfg):
+    """A dead token repeats every cycle, and newer code is what recovers it — so
+    the updater must still be able to reach that code (canopy-web#1762)."""
+    from canopy_runner.client import ClientError
+
+    for code in (401, 403):
+        client = FakeClient(boom=ClientError("refused", status=code), deployed=SHIPPED)
+        assert update.update_status(cfg, client, installed_sha=OLD) == (update.STALE, SHIPPED)
+        assert update.update_status(cfg, client, installed_sha=SHIPPED) == (update.CURRENT, SHIPPED)
+
+
+def test_a_refused_token_with_no_public_answer_is_still_unknown(cfg):
+    from canopy_runner.client import ClientError
+
+    client = FakeClient(boom=ClientError("refused", status=401), deployed="")
+    assert update.update_status(cfg, client, installed_sha=OLD)[0] == update.UNKNOWN
+
+
+def test_a_server_error_does_not_fall_back(cfg):
+    """Only a refusal falls back; a 5xx or a network fault is a blip."""
+    from canopy_runner.client import ClientError
+
+    client = FakeClient(boom=ClientError("down", status=502, transient=True), deployed=SHIPPED)
+    assert update.update_status(cfg, client, installed_sha=OLD)[0] == update.UNKNOWN
+    assert "deployed_runner_sha" not in client.calls
 
 
 # --- the idle gate ----------------------------------------------------------

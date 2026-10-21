@@ -6,7 +6,9 @@ The question has three parts, and each is answered by whoever actually knows:
   server's record of `code_sha`: that is only as fresh as the last heartbeat, and
   a runner that is crash-looping (the case where auto-update matters MOST) has not
   sent one.
-- **What should be installed** — `expected_code_sha` off the runner's own row.
+- **What should be installed** — `expected_code_sha` off the runner's own row,
+  or, when canopy refuses the token, the deployed version off the public health
+  check: a box whose sign-in died must still reach the code that recovers it.
   This is the sha of the runner source in the DEPLOYED image, so it has already
   been through CI, the merge queue and a deploy. Tracking `origin/main` instead
   would install code nothing has deployed AND leave the box permanently
@@ -145,6 +147,12 @@ def update_status(cfg, client, *, installed_sha: str | None = None,
                   UNKNOWN, never "different": a dev server bakes in no
                   expectation, and auto-installing an empty sha would be a
                   reinstall loop against a target that does not exist.
+
+    A token canopy REFUSES (401/403) is not a flaky network: it repeats every
+    cycle, and the fix for it — newer runner code that recovers the sign-in — is
+    exactly what this check would install. So that answer falls back to the
+    deployed version the public health check names (canopy-web#1762); before it,
+    jj-mbp-cdp logged `unknown` every 30 minutes for nine hours with a dead token.
     """
     from . import provenance
 
@@ -152,6 +160,11 @@ def update_status(cfg, client, *, installed_sha: str | None = None,
     try:
         rows = client.list_runners()
     except Exception as exc:  # noqa: BLE001 — a flaky network is not a reason to update
+        if getattr(exc, "status", None) in (401, 403):
+            expected = client.deployed_runner_sha()
+            logger.warning("update check: canopy refused this runner's token (%s); comparing "
+                           "with the deployed version %s instead", exc.status, expected[:12] or "?")
+            return _compare(cfg, installed, expected, now)
         logger.warning("update check: could not reach the control plane: %s", exc)
         return UNKNOWN, ""
 
@@ -162,7 +175,10 @@ def update_status(cfg, client, *, installed_sha: str | None = None,
         logger.warning("update check: runner %s is not in the fleet list", cfg.runner_id)
         return UNKNOWN, ""
 
-    expected = (mine.get("expected_code_sha") or "").strip()
+    return _compare(cfg, installed, (mine.get("expected_code_sha") or "").strip(), now)
+
+
+def _compare(cfg, installed: str, expected: str, now: float | None) -> tuple[str, str]:
     if not expected or not installed:
         return UNKNOWN, expected
     if expected == installed:

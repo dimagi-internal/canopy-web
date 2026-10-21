@@ -67,8 +67,15 @@ describe('RunnerHealth', () => {
   })
 
   it('renders nothing for a runner that neither reports nor can be refreshed', () => {
-    const { container } = render(<RunnerHealth runner={runner({ kind: 'emdash' })} />)
+    const { container } = render(<RunnerHealth runner={runner({ kind: 'emdash', can_administer: false })} />)
     expect(container.innerHTML).toBe('')
+  })
+
+  it('offers refresh on a laptop too, and says what it does there', () => {
+    render(<RunnerHealth runner={runner({ kind: 'emdash', refresh_pending: true })} />)
+    expect(screen.getByTestId('runner-refresh')).toBeTruthy()
+    expect(screen.getByTestId('runner-refresh-pending').textContent).toContain('updates its plugins and the canopy CLI')
+    expect(screen.getByTestId('runner-refresh-pending').textContent).not.toContain('restarts')
   })
 
   it('refresh asks the server and shows the request as pending', async () => {
