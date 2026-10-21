@@ -246,3 +246,28 @@ def test_an_agent_thread_belongs_to_whoever_runs_the_agent():
     assert access.role_for(people["owner"], thread) == SessionParticipant.OWNER  # workspace owner
     assert access.role_for(admin, thread) == SessionParticipant.OWNER
     assert access.role_for(people["mate"], thread) is None
+
+
+def test_the_owner_of_the_runner_watches_what_it_runs():
+    """A colleague's web chat with your agent runs on your box: emdash there
+    lists it and the transcript is on your disk, so canopy shows it to you too
+    (2026-10-21: /ide hid a teammate's 17 Eva chats running on the owner's
+    laptop). Read-only — you watch it, you do not type into their chat. The
+    runner's owner only: a co-tenant does not get a colleague's chat this way."""
+    people, s, ws = _world()
+    carlos = _user("carlos")
+    _member(carlos, ws)
+    chat = Session.objects.create(workspace=ws, created_by=carlos, origin=Session.ORIGIN_WEB)
+    assert not access.can_read(people["owner"], chat)  # not on the box yet
+
+    RunnerBinding.objects.create(session=chat, runner=Runner.objects.get(name="r"),
+                                 session_key="c", live_seen_at=timezone.now())
+    assert access.role_for(people["owner"], chat) == SessionParticipant.VIEWER
+    assert access.role_for(carlos, chat) == SessionParticipant.OWNER
+    assert access.role_for(people["mate"], chat) is None
+    assert access.role_for(people["outsider"], chat) is None  # tenant first, still
+
+    c = _client(people["owner"])
+    assert str(chat.id) in {r["id"] for r in c.get("/api/canopy-sessions/?state=all").json()}
+    assert c.post(f"/api/canopy-sessions/{chat.id}/send", {"text": "hi"},
+                  content_type="application/json").status_code == 403

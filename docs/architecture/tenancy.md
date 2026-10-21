@@ -198,10 +198,11 @@ failure again.
 
 One module decides who may see and act on a chat session: `apps/canopy_sessions/access.py`.
 
-- **Tenant first** (member of `Session.workspace`), then one of four legs: creator ·
+- **Tenant first** (member of `Session.workspace`), then one of five legs: creator ·
   explicit participant (`SessionParticipant`) · runner-discovered emdash session · the own
   thread of an agent you administer (`Agent.is_admin`: its owner, a workspace owner, or an
-  `AgentAdmin`).
+  `AgentAdmin`) · any session bound to a runner you own (read-only: your box ran it, so it is
+  already on your disk and in your emdash).
 - Acting needs participant role owner/editor; a `viewer` reads; sharing is the owner's
   (`/participants`, the chat header's People control).
 - Every door calls it: REST, the chat socket, attachments, bulk reset, MCP, Slack share, push

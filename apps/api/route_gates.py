@@ -437,7 +437,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "update_schedule": ("agent.work",),
     "delete_schedule": ("agent.work",),
     "run_schedule_now": ("agent.work",),
-    # --- apps/canopy_sessions/api.py  (access.py: tenant, then four legs; write = owner/editor role)
+    # --- apps/canopy_sessions/api.py  (access.py: tenant, then five legs; write = owner/editor role)
     "create_session": ("member",),  # wsvc.current_workspace; any member may start a chat
     "canopy_sessions_list_sessions": ("session-acl",),  # readable_sessions
     "list_my_sessions": ("session-acl",),  # the same list per organisation (wsvc.each_organisation)
