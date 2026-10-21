@@ -46,14 +46,30 @@ export function AgentSettingsSection() {
   // `#credentials` is a link people hold: the Google mailbox mint returns to it,
   // and it was the old Credentials page's address twice over. The router does
   // not scroll to a hash by itself.
-  const { hash } = useLocation()
+  //
+  // Keyed on the navigation (`key`), not just the hash: the setup checklist's
+  // "Give it its canopy login" links to `#canopy-login`, and clicking it when the
+  // address already ends in that hash changes nothing else. And the target may
+  // not exist yet: the credentials sections render after their own data loads,
+  // so wait for it (up to ~5s) instead of giving up on the first look.
+  const { hash, key } = useLocation()
   // Set by the New agent page on its way here, so the person sees it worked.
   const created = useSearchParams()[0].get('created')
   useEffect(() => {
     if (!hash) return
-    const el = document.getElementById(decodeURIComponent(hash.slice(1)))
-    el?.scrollIntoView?.({ block: 'start' })
-  }, [hash])
+    const id = decodeURIComponent(hash.slice(1))
+    let tries = 0
+    const look = (): boolean => {
+      const el = document.getElementById(id)
+      el?.scrollIntoView?.({ block: 'start' })
+      return Boolean(el) || ++tries >= 50
+    }
+    if (look()) return
+    const timer = window.setInterval(() => {
+      if (look()) window.clearInterval(timer)
+    }, 100)
+    return () => window.clearInterval(timer)
+  }, [hash, key])
 
   return (
     <div className="max-w-4xl px-6 py-8">

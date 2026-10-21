@@ -4,8 +4,8 @@
 // AgentOverviewSection.test.tsx: the controls were sections of a dashboard, so
 // "change something about this agent" had no destination and the page had no
 // name that said configuration.
-import { cleanup, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/api/agents', async (orig) => ({
@@ -77,6 +77,25 @@ describe('AgentSettingsSection', () => {
 
     const credentials = screen.getByRole('region', { name: 'Credentials' })
     expect(await within(credentials).findByTestId('cred-CANOPY_PAT')).toBeTruthy()
+  })
+
+  it('scrolls to a section that renders late, and again when its link is clicked twice', async () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const to = '/w/connect/agents/hal/settings#canopy-login'
+    render(
+      <MemoryRouter initialEntries={[to]}>
+        <Routes>
+          <Route path="/w/:workspace/agents/:slug/settings" element={<><Link to={to}>again</Link><AgentSettingsSection /></>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    // `#canopy-login` is inside the credentials panel, which waits on its own fetch.
+    const onTarget = () => scroll.mock.contexts.filter((el) => (el as Element).id === 'canopy-login').length
+    await waitFor(() => expect(onTarget()).toBe(1))
+    // The address already ends in #canopy-login: the checklist's link must still move the page.
+    fireEvent.click(screen.getByRole('link', { name: 'again' }))
+    await waitFor(() => expect(onTarget()).toBe(2))
   })
 
   it('sends the old Credentials address here, keeping the query', () => {
