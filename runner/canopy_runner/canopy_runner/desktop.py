@@ -454,6 +454,13 @@ def worktree_settings(allow: list[str], existing: dict | None = None) -> dict:
 # FileNotFoundError: 'claude' (canopy-web#1188), though every test from a shell
 # had passed — a shell's PATH has ~/.local/bin.
 
+def claude_app_dir(home: Path | None = None) -> Path:
+    """The Claude app's own userData folder on this box (macOS or Windows)."""
+    from .platform_jobs import app_data_dir
+
+    return app_data_dir(home or Path.home()) / "Claude"
+
+
 def _cli_candidates() -> list[Path]:
     home = Path.home()
     found = [shutil.which("claude")]
@@ -461,8 +468,10 @@ def _cli_candidates() -> list[Path]:
               "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
     # The CLI the desktop app bundles for its own sessions — always present where
     # the app is, so the runtime works even on a box that never installed the CLI.
-    bundled = glob.glob(str(home / "Library" / "Application Support" / "Claude" / "claude-code"
+    bundled = glob.glob(str(claude_app_dir(home) / "claude-code"
                             / "*" / "claude.app" / "Contents" / "MacOS" / "claude"))
+    # Windows: the same versioned folder under %APPDATA%\Claude, holding claude.exe.
+    bundled += glob.glob(str(claude_app_dir(home) / "claude-code" / "*" / "claude.exe"))
     found += sorted(bundled, key=lambda p: Path(p).stat().st_mtime, reverse=True)
     return [Path(p) for p in found if p]
 
@@ -552,6 +561,15 @@ def app_running() -> bool:
 
 
 def ensure_app() -> bool:
+    """Is the app up (starting it if not)? On Windows there is no `pgrep` or
+    `open -a`, and no need for them: every path that needs the app's process
+    (a new session, a wake) goes through `open_session`, and the claude://
+    protocol handler starts the app when it is not running. A follow-up into a
+    live session (`alive` fresh) already proves the app is up."""
+    from .platform_jobs import is_windows
+
+    if is_windows():
+        return True
     if app_running():
         return True
     subprocess.run(["open", "-g", "-j", "-a", "Claude"], check=False)
@@ -584,7 +602,7 @@ GATE_IDLE_TIMEOUT = "4041267332"
 
 
 def fcache_path(home: Path | None = None) -> Path:
-    return (home or Path.home()) / "Library" / "Application Support" / "Claude" / "fcache"
+    return claude_app_dir(home) / "fcache"
 
 
 def app_features(path: Path | None = None) -> dict | None:
@@ -842,6 +860,12 @@ def turn_shells(sid: str, since: float, procs=None) -> list[int]:
 def kill_turn_shells(sid: str, since: float) -> int:
     import signal
 
+    from .platform_jobs import is_windows
+
+    if is_windows():
+        # No process table is read on Windows (`_processes`), and there is no
+        # SIGKILL: the mod's abort still stops the turn, its shells run on.
+        return 0
     victims = turn_shells(sid, since)
     for sig in (signal.SIGTERM, signal.SIGKILL):
         for pid in victims:

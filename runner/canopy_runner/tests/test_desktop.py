@@ -585,6 +585,40 @@ def test_windows_without_the_app_logs_instead_of_crashing(monkeypatch):
     desktop.open_session("sid-9")  # does not raise
 
 
+def test_windows_ensure_app_leaves_the_start_to_the_protocol_handler(monkeypatch):
+    """`app_running` is pgrep + os.getuid, neither of which exists on Windows: every
+    new desktop session there crashed in ensure_app, before open_session ran."""
+    from canopy_runner import platform_jobs
+
+    calls = _record_runs(monkeypatch, [])
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    monkeypatch.setattr(desktop, "app_running", lambda: pytest.fail("pgrep on Windows"))
+    assert desktop.ensure_app() is True
+    assert calls == []
+
+
+def test_windows_stop_kills_no_shells_and_does_not_crash(monkeypatch):
+    """No SIGKILL on Windows: reaching for it raised mid-stop."""
+    from canopy_runner import platform_jobs
+
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    monkeypatch.setattr(desktop, "turn_shells", lambda *a: pytest.fail("ps on Windows"))
+    assert desktop.kill_turn_shells("sid-9", 0) == 0
+
+
+def test_windows_finds_the_cli_the_app_bundles(monkeypatch, tmp_path):
+    from canopy_runner import platform_jobs
+
+    exe = tmp_path / "Roaming" / "Claude" / "claude-code" / "2.1.300" / "claude.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+    monkeypatch.setattr(desktop.shutil, "which", lambda _: None)
+    assert exe in desktop._cli_candidates()
+    assert desktop.fcache_path() == tmp_path / "Roaming" / "Claude" / "fcache"
+
+
 # ── closing a session from the web ──────────────────────────────────────────
 
 def _desktop_session(cfg, tmp_path, sid="sid-c1"):
