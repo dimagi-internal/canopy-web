@@ -434,25 +434,26 @@ Specs: `docs/superpowers/specs/2026-07-15-agent-scheduled-turns-design.md`,
 
 ## The GitHub identity a turn gets
 
-**An agent acts on GitHub as its OWNER, through a delegation — never a box
-credential.** Boxes hold no GitHub token. `AgentDelegation` (person, agent,
+**An agent acts on GitHub as its OWNER (or, while the owner has lent none, one of
+its ADMINS), through a delegation — never a box credential.** Boxes hold no GitHub token. `AgentDelegation` (person, agent,
 service) is the third credential kind beside the agent's own vault and the
 workspace's shared vault: a person lending their identity to one agent
 (`apps/agents/delegations.py`).
 
-- The owner pastes a fine-grained PAT on the agent's Settings → Credentials →
+- The owner or an admin pastes a fine-grained PAT on the agent's Settings → Credentials →
   GitHub (canopy pre-fills GitHub's creation form, `delegations.create_url`; GitHub
-  has no API to mint one). Its repository selection IS the agent's scope. Only the
-  agent's owner may set it, and it is refused unless it can push and open a pull
+  has no API to mint one). Its repository selection IS the agent's scope. The
+  agent's owner or an admin (`Agent.is_admin`) may set it, and it is refused unless it can push and open a pull
   request on the agent's repo (`check_repo`: probes that GitHub answers 422 for a
   branch/commit that cannot exist, 403/404 for no permission — nothing is created).
-- In force only while that person OWNS the agent and is a member of its workspace
-  (`delegation_for`).
+- In force (`delegation_for`): the owner's, while they are a member of its
+  workspace; else the most recently saved one whose person is still an admin. The
+  owner's always wins. Salesforce delegations stay owner-only.
 - Issued per turn by `POST /api/harness/runners/{rid}/turns/{tid}/github-token`:
   only for a turn that runner is executing, re-checking `runner_may_hold_agent`;
   the principal is resolved server-side (`delegations.turn_agent`); **409 with the
   reason and no shared fallback** when absent or expired; always refused for a
-  confined (caller) turn. Returns the token, the owner's git identity (noreply
+  confined (caller) turn. Returns the token, the lender's git identity (noreply
   email) and `requested_by` for a `Requested-by:` trailer — the caller is recorded,
   never the principal. Stopping bad writes is the agent's own gating, not the token
   layer's. Each issue is an `agent.github.issued` event.

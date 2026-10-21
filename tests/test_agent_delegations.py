@@ -27,7 +27,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents import delegations
-from apps.agents.models import Agent, AgentDelegation
+from apps.agents.models import Agent, AgentAdmin, AgentDelegation
 from apps.common.encryption import decrypt_secret
 from apps.harness import services
 from apps.harness.models import Runner, RunnerAssignment, Turn
@@ -144,11 +144,52 @@ def test_a_token_github_rejects_is_refused(agent, owner, github):
         _lend(agent, owner, github)
 
 
-def test_only_the_owner_can_lend(agent, github):
-    admin = User.objects.create_user("adam", "adam@dimagi.com", "pw")
-    with pytest.raises(delegations.DelegationError, match="owner"):
-        delegations.set_github(agent, admin, "github_pat_adam")
+def test_only_the_owner_or_an_admin_can_lend(agent, github):
+    editor = User.objects.create_user("adam", "adam@dimagi.com", "pw")
+    wsvc.ensure_member(agent.workspace, editor, WorkspaceMembership.EDITOR)
+    with pytest.raises(delegations.DelegationError, match="owner or an admin"):
+        delegations.set_github(agent, editor, "github_pat_adam")
     assert not AgentDelegation.objects.exists()
+
+
+def _admin(agent, username="ada"):
+    user = User.objects.create_user(username, f"{username}@dimagi-ai.com", "pw")
+    wsvc.ensure_member(agent.workspace, user, WorkspaceMembership.EDITOR)
+    AgentAdmin.objects.create(agent=agent, user=user)
+    return user
+
+
+def test_an_admin_lends_when_the_owner_has_not(agent, github):
+    ada = _admin(agent)
+    delegations.set_github(agent, ada, "github_pat_ada")
+    assert delegations.delegation_for(agent).user == ada
+    st = delegations.status(agent)
+    assert st["set"] and st["lent_by_email"] == "ada@dimagi-ai.com"
+
+
+def test_the_owners_token_wins_over_an_admins(agent, owner, github):
+    delegations.set_github(agent, _admin(agent), "github_pat_ada")
+    _lend(agent, owner, github)
+    assert delegations.delegation_for(agent).user == owner
+
+
+def test_an_admin_who_loses_the_grant_stops_lending(agent, github):
+    ada = _admin(agent)
+    delegations.set_github(agent, ada, "github_pat_ada")
+    AgentAdmin.objects.filter(agent=agent, user=ada).delete()
+    assert delegations.delegation_for(agent) is None
+
+
+def test_the_route_says_whether_the_caller_may_lend(agent, owner, github):
+    ada = _admin(agent)
+    editor = User.objects.create_user("eve", "eve@dimagi.com", "pw")
+    wsvc.ensure_member(agent.workspace, editor, WorkspaceMembership.EDITOR)
+    assert _client(ada).get("/api/agents/echo/github").json()["can_lend"] is True
+    assert _client(editor).get("/api/agents/echo/github").json()["can_lend"] is False
+    r = _client(ada).put("/api/agents/echo/github", {"token": "github_pat_ada"},
+                         content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert r.json()["lent_by_email"] == "ada@dimagi-ai.com"
 
 
 def test_the_route_refuses_with_githubs_reason_and_never_echoes_the_token(agent, owner, github):
@@ -178,6 +219,9 @@ def test_create_url_prefills_githubs_form_for_this_agent(agent):
 
 def test_transferring_the_agent_stops_the_old_owners_identity(agent, owner, github):
     _lend(agent, owner, github)
+    # Still a member, but no longer an admin: neither the owner nor a workspace owner.
+    WorkspaceMembership.objects.filter(workspace=agent.workspace, user=owner).update(
+        role=WorkspaceMembership.EDITOR)
     agent.owner = User.objects.create_user("nina", "nina@dimagi.com", "pw")
     agent.save()
     assert delegations.delegation_for(agent) is None
@@ -261,7 +305,7 @@ def test_no_delegation_is_a_refusal_that_says_what_to_do(agent, runner):
     turn = _turn(agent, runner=runner)
     r = _as_runner(runner).post(_token_url(runner, turn))
     assert r.status_code == 409
-    assert "olive@dimagi.com has not lent it" in r.content.decode()
+    assert "olive@dimagi.com nor an admin has lent it" in r.content.decode()
 
 
 def test_an_expired_delegation_is_refused(agent, owner, github, runner):
@@ -320,7 +364,7 @@ def test_readiness_reports_each_agent_this_runner_serves(agent, owner, github, r
     assert r.status_code == 200
     [row] = r.json()
     assert row["agent_slug"] == "echo" and row["status"] == "fail"
-    assert "has not lent" in row["detail"]
+    assert "nor an admin has lent" in row["detail"]
 
     _lend(agent, owner, github)
     [row] = _as_runner(runner).get(f"/api/harness/runners/{runner.pk}/github-readiness").json()

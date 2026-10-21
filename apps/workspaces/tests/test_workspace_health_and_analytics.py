@@ -272,7 +272,7 @@ def test_the_repository_step_links_to_its_own_field_not_the_create_wizard(tree):
     assert step["action"] == "Set its repository" and "agents/new" not in step["href"]
     # And an ownerless agent's GitHub step says so, rather than "its owner, its owner".
     github = next(s for s in setup_steps(muse) if s["key"] == "github")
-    assert "its owner, its owner" not in github["detail"] and github["href"].endswith("#operators")
+    assert "its owner, its owner" not in github["detail"] and github["href"].endswith("#credentials")
 
 
 def test_an_admin_sets_just_the_repository_and_it_is_audited(tree):
