@@ -448,7 +448,7 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
 
     # Whoever registers a NEW agent owns it — from the create wizard and from a terminal's
     # `/canopy:create-agent` alike. An ownerless agent cannot be lent a GitHub identity
-    # (`delegations.set_github` is owner-only) and no box may hold it unless a workspace
+    # (`delegations.set_github` is for its owner and admins) and no box may hold it unless a workspace
     # owner pairs one, so leaving it unset left every new agent stuck until someone ran
     # `transfer_owner`. Applied on create only; an existing agent keeps its owner.
     agent = services.upsert_agent(payload, workspace=home, owner=request.user)
@@ -3013,8 +3013,8 @@ def delete_sender_trust(request: HttpRequest, slug: str, email: str):
     return Status(204, None)
 
 
-# ---- GitHub: the owner's identity, lent to this agent -------------------------
-# The owner pastes a fine-grained token here; a runner is handed it one turn at a
+# ---- GitHub: the owner's (or an admin's) identity, lent to this agent ---------
+# The owner or an admin pastes a fine-grained token here; a runner is handed it one turn at a
 # time. See apps/agents/delegations.py for the rule and AgentDelegation for why it
 # is not a vault item.
 
@@ -3024,13 +3024,18 @@ def get_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     """Whose GitHub identity this agent's pull requests use, when that token
     expires, and whether it can open a pull request on the agent's repo."""
     agent = _get_agent_or_404(request, slug)
-    return AgentGitHubOut(**delegations.status(agent))
+    return _github_out(request, agent)
+
+
+def _github_out(request: HttpRequest, agent) -> AgentGitHubOut:
+    return AgentGitHubOut(**delegations.status(agent), can_lend=agent.is_admin(request.user))
 
 
 @router.put("/{slug}/github", response=AgentGitHubOut,
-            summary="Lend this agent your GitHub identity (owner only, write-only)")
+            summary="Lend this agent your GitHub identity (owner or admin, write-only)")
 def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) -> AgentGitHubOut:
-    """Store the owner's fine-grained GitHub token for this agent.
+    """Store the caller's fine-grained GitHub token for this agent — its owner's,
+    or an admin's (used while the owner has lent none).
 
     Checked before it is stored: GitHub must accept it, and it must be able to
     open a pull request on the agent's own repo. A token that fails is refused
@@ -3040,7 +3045,7 @@ def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) ->
         delegations.set_github(agent, request.user, payload.token)
     except delegations.DelegationError as exc:
         raise HttpError(422, str(exc)) from exc
-    return AgentGitHubOut(**delegations.status(agent))
+    return _github_out(request, agent)
 
 
 @router.post("/{slug}/github/check", response=AgentGitHubOut,
@@ -3048,17 +3053,17 @@ def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) ->
 def check_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     agent = _get_agent_or_404(request, slug)
     delegations.check_github(agent)
-    return AgentGitHubOut(**delegations.status(agent))
+    return _github_out(request, agent)
 
 
 @router.delete("/{slug}/github", response=AgentGitHubOut,
                summary="Withdraw your GitHub identity from this agent")
 def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     """Removes the CALLER's own delegation — nobody can withdraw someone
-    else's, and an agent admin who is not its owner has none to withdraw."""
+    else's."""
     agent = _get_agent_or_404(request, slug)
     delegations.clear_github(agent, request.user)
-    return AgentGitHubOut(**delegations.status(agent))
+    return _github_out(request, agent)
 
 
 # ---- Salesforce: another agent's own identity, lent to this one ---------------

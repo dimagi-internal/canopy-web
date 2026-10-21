@@ -7,16 +7,18 @@ Request-free service layer: the agent routes (set / check / clear), the harness
 runner route (issue one token to one turn) and the runner-readiness route all
 call these, so they cannot drift about which delegation is in force.
 
-THE ONE RULE: a turn's GitHub credential is its agent owner's delegation to that
-agent, resolved here, server-side. The runner names a turn it has claimed and
+THE ONE RULE: a turn's GitHub credential is the delegation in force for its
+agent — its owner's, or when the owner has lent none, one of its admins'
+(`delegation_for`) — resolved here, server-side. The runner names a turn it has claimed and
 nothing else — it never chooses whose identity to use, and there is no fallback
 to any shared token when the delegation is missing. A turn with no agent (a repo
 chat, a project turn) has no GitHub credential at all — unless its repo has a
 `RepoIdentity` row, in which case it runs as that agent, under the same rule.
 
 The caller of a turn (the person who emailed the agent, say) is deliberately NOT
-the principal: an agent's GitHub writes use its owner's identity, whoever caused
-them (Jonathan, 2026-09-24). Stopping an agent from doing something bad is the
+the principal: an agent's GitHub writes use the identity of whoever lent it
+(its owner, or an admin when the owner has not — Jonathan, 2026-10-21), whoever
+caused them (Jonathan, 2026-09-24). Stopping an agent from doing something bad is the
 agent's own design responsibility — its gating hooks and sender triage — not the
 token layer's. Who asked is RECORDED instead (`requested_by`), so attribution
 shows both the credential and the person who caused the change.
@@ -228,23 +230,37 @@ def delegation_for(agent: Agent, service: str = AgentDelegation.GITHUB) -> Agent
     Nor is an owner's who has left the workspace: lending a GitHub identity is
     something a member does for their tenant's agent, and an ex-member's token
     must stop acting the moment they are out — not when someone notices the
-    `owner` field still names them."""
-    if agent.owner_id is None:
-        return None
+    `owner` field still names them.
+
+    For GitHub only, when the owner has lent nothing, an ADMIN's delegation is
+    in force — the most recently saved one whose person is still an admin
+    (`Agent.is_admin`, which already fails closed on ex-members). An agent set
+    up on its owner's behalf by an admin should not wait on the owner to paste
+    a token (Jonathan, 2026-10-21). The owner's own token always wins, and
+    someone who stops being an admin stops lending at once. Salesforce stays
+    owner-only: its lender must belong to the same person (`_in_force_salesforce`)."""
     from apps.workspaces import services as wsvc
 
-    if not wsvc.is_member(agent.owner, agent.workspace_id):
+    if agent.owner_id is not None and wsvc.is_member(agent.owner, agent.workspace_id):
+        row = AgentDelegation.objects.filter(
+            agent=agent, user_id=agent.owner_id, service=service).first()
+        if row is not None or service != AgentDelegation.GITHUB:
+            return row
+    elif service != AgentDelegation.GITHUB:
         return None
-    return AgentDelegation.objects.filter(
-        agent=agent, user_id=agent.owner_id, service=service).first()
+    for row in (AgentDelegation.objects.filter(agent=agent, service=service)
+                .exclude(user_id=agent.owner_id).select_related("user").order_by("-updated_at")):
+        if agent.is_admin(row.user):
+            return row
+    return None
 
 
 def set_github(agent: Agent, user, token: str) -> AgentDelegation:
     """Store `user`'s GitHub token for `agent`, after proving it works.
 
-    Only the agent's OWNER may delegate: a delegation from anyone else would
-    never be used (see `delegation_for`), and accepting one would read as if it
-    were. Refused rather than stored when the token cannot open a pull request
+    The agent's owner or one of its admins may delegate (`Agent.is_admin`): a
+    delegation from anyone else would never be used (see `delegation_for`), and
+    accepting one would read as if it were. Refused rather than stored when the token cannot open a pull request
     on the agent's own repo — a token that fails its first check is the most
     common mistake (wrong resource owner, repo not selected) and the cheapest
     moment to say so.
@@ -252,9 +268,9 @@ def set_github(agent: Agent, user, token: str) -> AgentDelegation:
     token = (token or "").strip()
     if not token:
         raise DelegationError("paste the token")
-    if agent.owner_id != getattr(user, "pk", None):
+    if not agent.is_admin(user):
         raise DelegationError(
-            f"only {agent.slug}'s owner can lend it their GitHub identity")
+            f"only {agent.slug}'s owner or an admin can lend it their GitHub identity")
     meta = _meta_for(token, agent)
     failed = [c for c in meta["checks"] if not c["ok"]]
     if failed:
@@ -295,6 +311,7 @@ def status(agent: Agent) -> dict:
     base = {
         "repo": agent_repo(agent),
         "owner_email": owner.email if owner else "",
+        "lent_by_email": row.user.email if row else "",
         "create_url": create_url(agent),
         "set": row is not None,
         # Repos whose agentless project turns borrow this identity (RepoIdentity).
@@ -326,8 +343,8 @@ def readiness(agent: Agent) -> tuple[str, str]:
     st = status(agent)
     if not st["set"]:
         return "fail", (
-            f"owner {st['owner_email'] or '(none)'} has not lent {agent.slug} a GitHub "
-            f"token — /agents/{agent.slug}/settings → Credentials → GitHub")
+            f"neither owner {st['owner_email'] or '(none)'} nor an admin has lent {agent.slug} "
+            f"a GitHub token — /agents/{agent.slug}/settings → Credentials → GitHub")
     if st["expired"]:
         return "fail", f"token expired {st['expires_at']:%Y-%m-%d}"
     if st["error"]:
@@ -393,11 +410,11 @@ def github_token_for_turn(turn) -> dict:
     if row is None:
         who = agent.owner.email if agent.owner else "nobody (the agent has no owner)"
         raise DelegationError(
-            f"{agent.slug}'s owner {who} has not lent it their GitHub identity — "
+            f"neither {agent.slug}'s owner {who} nor an admin has lent it a GitHub identity — "
             f"add a token at /agents/{agent.slug}/settings → Credentials → GitHub")
     if row.expires_at and row.expires_at <= timezone.now():
         raise DelegationError(
-            f"{agent.slug}'s GitHub token expired {row.expires_at:%Y-%m-%d} — its owner "
+            f"{agent.slug}'s GitHub token expired {row.expires_at:%Y-%m-%d} — {row.user.email} "
             f"replaces it at /agents/{agent.slug}/settings → Credentials → GitHub")
     meta = row.meta or {}
     login, user_id = meta.get("login", ""), meta.get("user_id", 0)

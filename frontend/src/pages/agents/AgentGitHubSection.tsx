@@ -11,12 +11,13 @@ import { useAuth } from '@/auth/AuthProvider'
 import { GitHubTokenSteps } from '@/components/agents/GitHubTokenSteps'
 import type { CredStatus } from '@/pages/agents/agentCredentials'
 
-// GitHub is the OWNER's identity, lent to this one agent — not a secret of the
-// agent's (its vault) nor of the workspace (the shared vault). The owner makes a
-// fine-grained token on GitHub whose repository selection IS what this agent may
-// touch, pastes it here, and each of the agent's turns is handed it for that turn
-// alone. Hand the agent to someone else and it stops being used; they lend their
-// own. See apps/agents/delegations.py.
+// GitHub is a PERSON's identity, lent to this one agent — its owner's, or one of
+// its admins' while the owner has lent none — not a secret of the agent's (its
+// vault) nor of the workspace (the shared vault). The lender makes a fine-grained
+// token on GitHub whose repository selection IS what this agent may touch, pastes
+// it here, and each of the agent's turns is handed it for that turn alone. The
+// server says who may lend (`can_lend`) and whose token is in force
+// (`lent_by_email`). See apps/agents/delegations.py.
 //
 // canopy cannot mint the token: GitHub has no API that creates a fine-grained
 // token, only a form that accepts pre-filled values. So the button below opens
@@ -83,19 +84,19 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
   }
 
   if (!gh) return null
-  const isOwner = Boolean(user?.email && gh.owner_email && user.email === gh.owner_email)
+  const lentByMe = Boolean(user?.email && gh.lent_by_email && user.email === gh.lent_by_email)
   const failing = (gh.checks ?? []).filter((c) => !c.ok)
   const tone = !gh.set || gh.expired || gh.error || failing.length ? 'destructive' : gh.expiring_soon ? 'warning' : 'success'
 
   return (
     <section id="cred-github" className="mb-5 scroll-mt-6" data-testid="agent-github">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        GitHub — acting as its owner
+        GitHub — acting as whoever lent it
       </h3>
       <p className="mb-2 max-w-2xl text-[11px] text-muted-foreground">
-        Pushes and opens pull requests as its owner
-        {gh.owner_email ? <> ({gh.owner_email})</> : null}, on the repositories the owner&rsquo;s token
-        allows. No runner keeps the token.
+        Pushes and opens pull requests as the person who lent it a token — its owner
+        {gh.owner_email ? <> ({gh.owner_email})</> : null}, or one of its admins when the owner has
+        not — on the repositories that token allows. No runner keeps the token.
       </p>
       <div className="rounded-lg border border-border bg-card px-3 py-2 text-[12px]">
         <div className="flex flex-wrap items-center gap-2" data-testid="github-status">
@@ -105,6 +106,7 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
           {gh.set && (
             <span className="text-foreground-secondary">
               acts as <span className="font-mono">@{gh.login}</span>
+              {gh.lent_by_email ? <> · lent by {gh.lent_by_email}</> : null}
               {gh.expires_at ? <> · expires {day(gh.expires_at)}</> : <> · never expires</>}
               {gh.checked_at ? <> · checked {day(gh.checked_at)}</> : null}
             </span>
@@ -144,7 +146,7 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
           </p>
         )}
 
-        {isOwner ? (
+        {gh.can_lend ? (
           <div className="mt-3 border-t border-border pt-2" data-testid="github-setup">
             <GitHubTokenSteps tokenUrl={gh.create_url} repo={gh.repo} />
             <div className="flex flex-wrap items-center gap-2">
@@ -165,7 +167,7 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
               >
                 {busy ? 'Checking…' : 'Save'}
               </button>
-              {gh.set && (
+              {lentByMe && (
                 <button
                   type="button"
                   disabled={busy}
@@ -183,8 +185,8 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
         ) : (
           !gh.set && (
             <p className="mt-2 text-[11px] text-muted-foreground">
-              Only the agent&rsquo;s owner{gh.owner_email ? <> ({gh.owner_email})</> : null} can lend it their GitHub
-              identity.
+              Only the agent&rsquo;s owner{gh.owner_email ? <> ({gh.owner_email})</> : null} or one of its
+              admins can lend it their GitHub identity.
             </p>
           )
         )}

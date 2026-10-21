@@ -2035,6 +2035,11 @@ class AgentGitHubOut(StrictModel):
     #: `owner/repo`, parsed from the agent's repo URL; "" when it is not GitHub.
     repo: str = ""
     owner_email: str = ""
+    #: Whose delegation is in force: the owner's, or an admin's when the owner
+    #: has lent none (`delegations.delegation_for`). "" when none is.
+    lent_by_email: str = ""
+    #: Whether the CALLER may lend this agent a token — its owner or an admin.
+    can_lend: bool = False
     #: GitHub's new-token form, pre-filled for this agent.
     create_url: str = ""
     set: bool = False

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 //
-// An agent acts on GitHub as its OWNER. The owner gets the pre-filled GitHub
-// form and the paste box; anyone else is told whose it is. A refused token
+// An agent acts on GitHub as whoever lent it a token: its owner, or an admin
+// while the owner has not. Anyone the server says may lend (`can_lend`) gets the
+// pre-filled GitHub form and the paste box; anyone else is told whose it is. A refused token
 // shows the server's own reason — that sentence (wrong resource owner, repo not
 // selected) is the whole diagnosis.
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -22,11 +23,13 @@ const { AgentGitHubSection } = await import('./AgentGitHubSection')
 const UNSET = {
   repo: 'dimagi-internal/echo',
   owner_email: 'olive@dimagi.com',
+  lent_by_email: '',
+  can_lend: true,
   create_url: 'https://github.com/settings/personal-access-tokens/new?name=canopy+echo',
   set: false, login: '', name: '', expired: false, expiring_soon: false, checks: [], error: '',
 }
 const WORKING = {
-  ...UNSET, set: true, login: 'olive', name: 'Olive', expires_at: '2026-12-01T10:00:00Z',
+  ...UNSET, set: true, lent_by_email: 'olive@dimagi.com', login: 'olive', name: 'Olive', expires_at: '2026-12-01T10:00:00Z',
   checks: [{ repo: 'dimagi-internal/echo', ok: true, detail: 'can open pull requests' }],
 }
 
@@ -55,12 +58,27 @@ describe('AgentGitHubSection', () => {
     expect((screen.getByLabelText('GitHub token') as HTMLInputElement).type).toBe('password')
   })
 
-  it('tells anyone else it is the owner’s to lend', async () => {
-    getAgentGitHub.mockResolvedValue(UNSET)
+  it('gives an admin the paste box too, and says whose token is in force', async () => {
+    getAgentGitHub.mockResolvedValue({ ...WORKING, lent_by_email: 'ada@dimagi-ai.com', login: 'ada' })
+    show('ada@dimagi-ai.com')
+    await waitFor(() => expect(screen.getByTestId('github-setup')).toBeTruthy())
+    expect(screen.getByTestId('github-status').textContent).toContain('lent by ada@dimagi-ai.com')
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy()
+  })
+
+  it('offers Remove only to the person whose token is in force', async () => {
+    getAgentGitHub.mockResolvedValue(WORKING)
+    show('ada@dimagi-ai.com')
+    await waitFor(() => expect(screen.getByTestId('github-setup')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
+  })
+
+  it('tells anyone else it is the owner’s or an admin’s to lend', async () => {
+    getAgentGitHub.mockResolvedValue({ ...UNSET, can_lend: false })
     show('someone@dimagi.com')
     await waitFor(() => expect(screen.getByTestId('agent-github')).toBeTruthy())
     expect(screen.queryByTestId('github-setup')).toBeNull()
-    expect(screen.getByTestId('agent-github').textContent).toContain('Only the agent’s owner')
+    expect(screen.getByTestId('agent-github').textContent).toContain('or one of its')
   })
 
   it('shows the server’s reason when a pasted token is refused', async () => {

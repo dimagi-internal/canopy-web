@@ -831,9 +831,10 @@ class AgentDelegation(models.Model):
     Why a row of its own and not a vault item (Jonathan, 2026-09-24):
 
     - **It belongs to the person, not the agent.** A delegation is USED only
-      while its person owns the agent (`services.delegation_for`), so handing an
-      agent to someone else stops the old owner's identity travelling with it,
-      and the new owner is asked for their own. A vault item would have gone
+      while its person owns the agent — or, for GitHub, is one of its admins and
+      the owner has lent none (`delegations.delegation_for`) — so handing an
+      agent to someone else stops the old owner's identity travelling with it
+      unless they remain an admin. A vault item would have gone
       with the agent.
     - **It is scoped per agent.** For GitHub the owner pastes a fine-grained
       token whose repository selection IS what this agent may touch — the only

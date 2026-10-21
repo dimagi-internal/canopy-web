@@ -4661,8 +4661,9 @@ export interface paths {
          */
         readonly get: operations["get_agent_github"];
         /**
-         * Lend this agent your GitHub identity (owner only, write-only)
-         * @description Store the owner's fine-grained GitHub token for this agent.
+         * Lend this agent your GitHub identity (owner or admin, write-only)
+         * @description Store the caller's fine-grained GitHub token for this agent — its owner's,
+         *     or an admin's (used while the owner has lent none).
          *
          *     Checked before it is stored: GitHub must accept it, and it must be able to
          *     open a pull request on the agent's own repo. A token that fails is refused
@@ -4673,7 +4674,7 @@ export interface paths {
         /**
          * Withdraw your GitHub identity from this agent
          * @description Removes the CALLER's own delegation — nobody can withdraw someone
-         *     else's, and an agent admin who is not its owner has none to withdraw.
+         *     else's.
          */
         readonly delete: operations["delete_agent_github"];
         readonly options?: never;
@@ -20988,6 +20989,16 @@ export interface components {
              * @default
              */
             readonly owner_email: string;
+            /**
+             * Lent By Email
+             * @default
+             */
+            readonly lent_by_email: string;
+            /**
+             * Can Lend
+             * @default false
+             */
+            readonly can_lend: boolean;
             /**
              * Create Url
              * @default

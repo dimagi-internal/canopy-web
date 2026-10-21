@@ -60,12 +60,12 @@ def _github(agent: Agent, settings: str) -> dict:
         "github", "Lend it a GitHub identity",
         DONE if verdict in ("ok", "warn") else TODO,
         detail[:1].upper() + detail[1:] if verdict != "fail" else
-        (f"Its turns push code and open pull requests as its owner, {owner}. Only the owner "
-         "can add that GitHub token.") if agent.owner_id else
-        "Its turns push code and open pull requests as its owner, and it has none. A workspace "
-        "owner gives it one under People and roles; then the owner adds the GitHub token.",
-        href=f"{settings}#credentials" if agent.owner_id else f"{settings}#operators",
-        action="Add a GitHub token" if agent.owner_id else "Give it an owner")
+        (f"Its turns push code and open pull requests as whoever lends it a GitHub token: its "
+         f"owner, {owner}, or one of its admins.") if agent.owner_id else
+        "Its turns push code and open pull requests as whoever lends it a GitHub token, and it "
+        "has no owner yet. A workspace owner can add the token, or give it an owner under "
+        "People and roles.",
+        href=f"{settings}#credentials", action="Add a GitHub token")
 
 
 def _mailbox(agent: Agent, settings: str) -> dict:
