@@ -1,9 +1,13 @@
 """Chats waiting on a person — the supervisor feed's own rule (`feed.status`),
 read through the same list path, so Home and the feed and the phone's pushes
 can never disagree about which session needs you — and the person's chats that
-are running right now, listed apart (`running`) so nothing reads them as asks."""
+are running right now, listed apart (`running`) so nothing reads them as asks.
+
+A waiting chat held behind a paused or offline runner is listed as `parked`,
+naming the box, rather than dropped: it is still yours, a reply just queues."""
 from __future__ import annotations
 
+from apps.attention import types as att
 from apps.attention.types import AttentionRow
 from apps.workspaces.services import scoped_path
 
@@ -20,15 +24,14 @@ def items(request, *, slugs: set[str]) -> list[AttentionRow]:
         row = _out(s, reply=True, viewer=request.user)
         if row["workspace"] not in slugs:
             continue
-        if row["feed_status"] == feed.WAITING:
-            reason, running = ("Needs an answer" if row["waiting_on_you"] else "Your move"), False
-        elif row["running"] and _yours_running(request.user, s, row):
-            reason, running = ("Running on its own" if row["turn_mode"] == "auto" else "Running"), True
-        else:
+        said = _state(request.user, s, row)
+        if said is None:
             continue
+        state, reason = said
         out.append(AttentionRow(
             key=f"session:{row['id']}",
             kind="session",
+            state=state,
             reason=reason,
             title=row["title"] or row["opening"] or "Chat",
             body=(row["last_reply"] or "")[:400],
@@ -41,14 +44,24 @@ def items(request, *, slugs: set[str]) -> list[AttentionRow]:
             last_activity_at=row["last_activity_at"],
             actions=("open",),
             target={"session": str(row["id"])},
-            running=running,
         ))
     return out
 
 
-def _yours_running(viewer, session, row) -> bool:
-    # The feed's own ownership rule (`feed.held`): a colleague's session on their
-    # box is theirs to watch. An agent's own auto run counts — it is yours to see
-    # moving, just not to answer.
-    held = feed.held(viewer, session, turn_mode=row["turn_mode"], turn_origin=getattr(session, "_turn_origin", "") or "")
-    return held in ("", feed.AUTO)
+def _state(viewer, session, row) -> tuple[str, str] | None:
+    status = row["feed_status"]
+    if status == feed.WAITING:
+        return (att.ASKING, "Needs an answer") if row["waiting_on_you"] else (att.YOUR_MOVE, "Your move")
+    if status == feed.PARKED:
+        away = "paused" if row["runner_status"] == "paused" else "offline"
+        return att.PARKED, f"Waiting — {row['runner_name'] or 'its runner'} is {away}"
+    if row["running"]:
+        # The feed's own ownership rule (`feed.held`): a colleague's session on
+        # their box is theirs to watch. An agent's own auto run counts — yours to
+        # see moving, just not to answer.
+        held = feed.held(viewer, session, turn_mode=row["turn_mode"], turn_origin=getattr(session, "_turn_origin", "") or "")
+        if held == "":
+            return att.RUNNING, "Running"
+        if held == feed.AUTO:
+            return att.RUNNING_AUTO, "Running on its own"
+    return None

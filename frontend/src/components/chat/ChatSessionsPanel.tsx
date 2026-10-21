@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { closeSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
-import { listAgents, type AgentOut } from '@/api/agents'
+import { listMyAgents, type AgentOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { relativeTime } from '@/components/activity/turnLog'
 import { sessionTargetLabel } from './sessionTargetLabel'
@@ -95,7 +95,7 @@ export function ChatSessionsPanel({
     // Sessions + runners always load (the runners' reported repos feed the
     // "+ New chat" dropdown's repo chats); agents load unless provided by a prop.
     const jobs: Promise<unknown>[] = [listSessions(showArchived ? 'all' : 'active'), listRunners()]
-    if (!agentsProp) jobs.push(listAgents({ limit: 100 }))
+    if (!agentsProp) jobs.push(listMyAgents({ limit: 100 }))
     Promise.allSettled(jobs).then((results) => {
       if (!live) return
       const [s, p, a] = results

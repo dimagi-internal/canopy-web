@@ -1,9 +1,11 @@
-"""`/api/attention/` — what is waiting on you, in one list.
+"""`/api/me/attention/` — what is waiting on you, in one list.
 
-The same rule everywhere a person is asked for something: Home reads it, MCP
-serves it as a tool, any client can. Scope is the read rule (a pinned
-`/api/w/<ws>/attention/` is that workspace and the ones below it you are in);
-a page spanning organisations reads once per organisation and labels each row.
+A user-level view (`/api/me/…`): the caller's own list across every workspace
+they are in, read once per organisation (`wsvc.each_organisation`)
+and labelled with each row's `organisation`, so no client fans out or merges.
+Pinned — `/api/w/<ws>/me/attention/` — it is that workspace and the ones below
+it you are in. The same rule everywhere a person is asked for something: Home
+reads it, MCP serves it as a tool, any client can.
 """
 from __future__ import annotations
 
@@ -28,9 +30,15 @@ def list_attention(request: HttpRequest) -> AttentionOut:
     workspace you manage — as `now` (something happened in the last few days),
     `quiet` (nothing has for a while) and `hidden` (taken off your list by you;
     each returns when something new happens on it), plus `running` — not
-    waiting on you, but yours and being worked right now. Newest first."""
-    groups = services.attention(request, slugs=wsvc.request_workspace_slugs(request))
-    return AttentionOut(**{k: [AttentionRowOut(**asdict(i)) for i in v] for k, v in groups.items()})
+    waiting on you, but yours and being worked right now. Newest first. Branch
+    on each row's `state` (asking, your_move, parked, running, running_auto);
+    `reason` is display text."""
+    groups = services.attention(request)
+    roots = wsvc.tree_roots({i.workspace for v in groups.values() for i in v})
+    return AttentionOut(**{
+        k: [AttentionRowOut(**asdict(i), organisation=roots.get(i.workspace, i.workspace)) for i in v]
+        for k, v in groups.items()
+    })
 
 
 @router.post("/hide", response=HideOut, summary="Hide things from your list without deciding them")

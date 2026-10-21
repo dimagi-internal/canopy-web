@@ -122,7 +122,19 @@ function toPage<T>(p: {
 
 export async function listAgents(params: ListAgentsParams = {}): Promise<Page<AgentOut>> {
   const res = await apiV2.GET('/api/agents/', { params: { query: { limit: params.limit } } })
-  const page = toPage(unwrap(res, 'listAgents'))
+  return agentPage(toPage(unwrap(res, 'listAgents')))
+}
+
+/** Every agent you can see in every workspace you are in — a user-level view,
+ *  for pages off any one workspace (Supervisor, the IDE, the chat home). */
+export async function listMyAgents(params: ListAgentsParams = {}): Promise<Page<AgentOut>> {
+  const res = await apiV2.GET('/api/me/agents/', { params: { query: { limit: params.limit } } })
+  return agentPage(toPage(unwrap(res, 'listMyAgents')))
+}
+
+function agentPage<A extends Omit<AgentOut, 'runner_preference'> & { runner_preference?: ArrayLike<string> | null }>(
+  page: Page<A>,
+): Page<AgentOut> {
   // runner_preference degrades the same way one level down (see toPage's comment);
   // rebuild each item.
   return {
@@ -242,6 +254,15 @@ export async function listTasks(slug: string, f: TaskFilters = {}): Promise<Task
 }
 
 // Every task the caller can see across the fleet; `agent` narrows to one slug.
+/** Tasks across every workspace you are in — a user-level view (`waiting: 'me'`
+ *  is your inbox everywhere), for pages off any one workspace. */
+export async function listMyTasks(
+  f: Pick<TaskFilters, 'project' | 'status' | 'waiting' | 'ask'> & { agent?: string } = {},
+): Promise<TaskOut[]> {
+  const res = await apiV2.GET('/api/me/tasks/', { params: { query: definedOnly(f) } })
+  return Array.from(unwrap(res, 'listMyTasks')) as TaskOut[]
+}
+
 export async function listFleetTasks(f: TaskFilters & { agent?: string } = {}): Promise<TaskOut[]> {
   const res = await apiV2.GET('/api/tasks/', { params: { query: definedOnly(f) } })
   return Array.from(unwrap(res, 'listFleetTasks')) as TaskOut[]

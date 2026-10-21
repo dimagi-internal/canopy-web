@@ -1,15 +1,24 @@
 import datetime as dt
+from typing import Literal
 
 from ninja import Field, Schema
+
+# Mirrors `types.STATES`; `tests/test_attention.py` keeps the two equal.
+State = Literal["asking", "your_move", "parked", "running", "running_auto"]
 
 
 class AttentionRowOut(Schema):
     key: str
     kind: str
+    # What it asks of you — branch on this, never on `reason`, which is display text.
+    state: State
     reason: str
     title: str
     body: str = ""
     workspace: str
+    # The top of `workspace`'s tree: a user-level read spans organisations and
+    # labels each row with its own.
+    organisation: str = ""
     agent_slug: str = ""
     project: str = ""
     url: str

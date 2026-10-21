@@ -232,6 +232,7 @@ from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.agents.engagement_api import router as engagement_router  # noqa: E402
 from apps.agents.proposals_api import router as proposals_router  # noqa: E402
 from apps.push.api import router as push_router  # noqa: E402
+from apps.canopy_sessions.api import me_router as my_sessions_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
 from apps.canopy_sessions.app_views_api import router as app_views_router  # noqa: E402
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
@@ -325,7 +326,7 @@ api.add_router("/runner-device-keys", device_keys_router)
 api.add_router("/runner-sessions", runner_sessions_router)
 api.add_router("/runner-device-key-requests", device_key_requests_router)
 api.add_router("/huddles", huddles_router)
-api.add_router("/attention", attention_router)
+api.add_router("/me/attention", attention_router)
 api.add_router("/engagement", engagement_router)  # what people do with projects + huddles
 # Project check-ins across projects, and their runs (apps/huddles/checkins.py).
 api.add_router("/checkins", checkins_router)
@@ -334,6 +335,7 @@ api.add_router("/huddle-groups", huddle_groups_legacy_router)
 api.add_router("/threads", threads_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
+api.add_router("/me", my_sessions_router)
 # MCP Apps: a rendered View's browser plumbing (apps/tokens/mcp_apps_views.py).
 api.add_router("/canopy-sessions", app_views_router)
 api.add_router("/session-secrets", session_secrets_router)

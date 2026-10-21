@@ -2,16 +2,18 @@ import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } f
 import { Link } from 'react-router-dom'
 
 import { actOnTask, type ProjectOut } from '@/api/agents'
-import { attentionPins, hide, loadAttention, unhide, type Attention, type AttentionRow } from '@/api/attention'
-import { apiV2, WORKSPACE_HEADER } from '@/api/client.v2'
+import { hide, loadAttention, unhide, type Attention, type AttentionRow, type AttentionState } from '@/api/attention'
+import { apiV2 } from '@/api/client.v2'
 import { useAuth } from '@/auth/AuthProvider'
 import { relativeTime } from '@/components/activity/turnLog'
-import { shortAge } from '@/pages/ide/ideTree'
+import { StateDot, type DotTone } from '@/components/sessions/StateDot'
+import { folderKey, shortAge } from '@/pages/ide/ideTree'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 
 // HOME — what is waiting on you, across every workspace you are in.
 //
-// One list, read from `/api/attention/` (the same list MCP and any client get),
+// One list, read from `/api/me/attention/` (the same list MCP and any client
+// get: one user-level read across every organisation, each row labelled),
 // ranked by what just happened rather than as a queue: an oldest-first queue
 // floated whatever had gone stale to the top, where it stayed.
 //
@@ -48,7 +50,7 @@ export function HomePage(): JSX.Element {
   const refresh = useCallback(async () => {
     if (!workspaces.length) return
     try {
-      setData(await loadAttention(workspaces))
+      setData(await loadAttention())
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load')
@@ -373,8 +375,11 @@ function useDesktop(): boolean {
   return desktop
 }
 
-const ASKING = 'Needs an answer'
-const isRunning = (r: AttentionRow) => r.reason.startsWith('Running')
+const isRunning = (r: AttentionRow) => r.state === 'running' || r.state === 'running_auto'
+
+const TONE: Record<AttentionState, DotTone> = {
+  asking: 'asking', your_move: 'idle', parked: 'held', running: 'running', running_auto: 'running',
+}
 
 // Which session groups are folded — a per-browser convenience, so storage that
 // throws (private window) just means everything starts open.
@@ -400,11 +405,11 @@ function writeCollapsed(keys: Set<string>) {
 function groupSessions(rows: AttentionRow[]) {
   const groups = new Map<string, { key: string; isAgent: boolean; asking: number; running: number; rows: AttentionRow[] }>()
   for (const r of rows) {
-    const key = r.project || r.agent_slug
+    const key = folderKey(r)
     const g = groups.get(key) ?? { key, isAgent: false, asking: 0, running: 0, rows: [] }
     g.rows.push(r)
     g.isAgent ||= r.agent_slug === key
-    if (r.reason === ASKING) g.asking += 1
+    if (r.state === 'asking') g.asking += 1
     if (isRunning(r)) g.running += 1
     groups.set(key, g)
   }
@@ -422,7 +427,7 @@ function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
   onHide: (items: AttentionRow[], days?: number) => Promise<void>
 }): JSX.Element {
   const desktop = useDesktop()
-  const asking = item.reason === ASKING
+  const asking = item.state === 'asking'
   const runningNow = isRunning(item)
   const to = desktop && item.target.session ? `/ide/${item.target.session}` : item.url
   return (
@@ -430,12 +435,7 @@ function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
       className="group grid grid-cols-[8px_minmax(0,1fr)_auto_auto] items-center gap-2 border-t border-border py-1.5 pl-5 pr-3 text-[13px] hover:bg-muted sm:grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem_auto]"
       data-testid="attention-row"
     >
-      <span
-        aria-hidden
-        className={`inline-block h-2 w-2 rounded-full ${
-          asking ? 'bg-warning' : runningNow ? 'animate-pulse bg-success' : 'bg-muted-foreground/40'
-        }`}
-      />
+      <StateDot tone={TONE[item.state]} />
       <Link
         to={to}
         title={[item.title, item.reason, item.body].filter(Boolean).join('\n\n')}
@@ -443,7 +443,8 @@ function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
       >
         {item.title}
         {asking && <span className="ml-2 text-[11px] text-warning">needs an answer</span>}
-        {item.reason === 'Running on its own' && <span className="ml-2 text-[11px] text-muted-foreground">auto</span>}
+        {item.state === 'running_auto' && <span className="ml-2 text-[11px] text-muted-foreground">auto</span>}
+        {item.state === 'parked' && <span className="ml-2 text-[11px] text-muted-foreground">{item.reason}</span>}
       </Link>
       <span className="hidden max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground empty:border-0 sm:inline">
         {showAgent ? item.agent_slug : ''}
@@ -534,31 +535,22 @@ function AttentionRow({ item, workspaceName, onAct, onHide }: {
 
 /** Projects you own, across your workspaces — what you are steering. */
 function YourProjects(): JSX.Element | null {
-  const auth = useAuth()
   const { workspaces } = useWorkspace()
   const [projects, setProjects] = useState<ProjectOut[] | null>(null)
-  const me = auth.status === 'authenticated' ? auth.user.email : ''
 
   useEffect(() => {
     if (!workspaces.length) return
     let cancelled = false
-    Promise.all(
-      attentionPins(workspaces).map((ws) =>
-        apiV2.GET('/api/projects/', { params: { query: { status: 'active' } }, headers: { [WORKSPACE_HEADER]: ws } })
-          .then((r) => (r.data ? (Array.from(r.data) as ProjectOut[]) : [])),
-      ),
-    ).then((parts) => {
-      if (cancelled) return
-      const byId = new Map(parts.flat().map((p) => [p.id, p]))
-      setProjects([...byId.values()])
-    }).catch(() => !cancelled && setProjects([]))
+    // A user-level read: the server reads each organisation on its own.
+    apiV2.GET('/api/me/projects/', { params: { query: { status: 'active' } } })
+      .then((r) => !cancelled && setProjects(r.data ? (Array.from(r.data) as ProjectOut[]) : []))
+      .catch(() => !cancelled && setProjects([]))
     return () => {
       cancelled = true
     }
   }, [workspaces])
 
-  const mine = (projects ?? [])
-    .filter((p) => p.owner_email === me)
+  const mine = [...(projects ?? [])]
     .sort((a, b) => b.waiting_task_count - a.waiting_task_count || Date.parse(b.updated_at) - Date.parse(a.updated_at))
     .slice(0, 8)
 

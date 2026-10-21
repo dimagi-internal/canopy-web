@@ -2,17 +2,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 
-const listFleetTasks = vi.fn()
+const listMyTasks = vi.fn()
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
-  listFleetTasks: (...a: unknown[]) => listFleetTasks(...a),
+  listMyTasks: (...a: unknown[]) => listMyTasks(...a),
 }))
 
 const { WaitingOnYou, loadWaitingOnYou } = await import('./WaitingOnYou')
 
 afterEach(() => {
   cleanup()
-  listFleetTasks.mockReset()
+  listMyTasks.mockReset()
 })
 
 function task(over: object = {}) {
@@ -55,10 +55,10 @@ describe('WaitingOnYou', () => {
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
 
-  it('loads the fleet waiting-on-me filter', async () => {
-    listFleetTasks.mockResolvedValue([])
+  it('loads your waiting-on-me inbox across every workspace', async () => {
+    listMyTasks.mockResolvedValue([])
     await loadWaitingOnYou()
-    expect(listFleetTasks).toHaveBeenCalledWith({ waiting: 'me' })
+    expect(listMyTasks).toHaveBeenCalledWith({ waiting: 'me' })
   })
 
   it('renders a fleet task with its agent tag and an Approve button', () => {

@@ -2,7 +2,7 @@
 (`members.manage`)."""
 from __future__ import annotations
 
-from apps.attention.types import AttentionRow
+from apps.attention.types import ASKING, AttentionRow
 
 from . import permissions as perms
 from .models import WorkspaceAccessRequest
@@ -18,6 +18,7 @@ def items(request, *, slugs: set[str]) -> list[AttentionRow]:
         AttentionRow(
             key=f"access:{r.pk}",
             kind="access_request",
+            state=ASKING,
             reason="Wants to join",
             title=f"{r.user.get_full_name() or r.user.email} asked to join {r.workspace_id}",
             body=r.note[:400],

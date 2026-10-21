@@ -556,6 +556,31 @@ def request_write_slugs(request) -> set[str]:
     return write_scope(getattr(request, "user", None), pin)
 
 
+def each_organisation(request, read):
+    """A USER-LEVEL view (`/api/me/…`): `read()` once per organisation the
+    caller is in, the results concatenated — the caller's own list across every
+    workspace, side by side. Each run is an ordinary pinned list read (the pin
+    is a covering pin, `covering_pins`, which the caller belongs to), so every
+    route's own read rule applies unchanged and no query ever joins two trees.
+    Rows already carry their workspace; re-sort the result if order matters.
+
+    Already pinned (`/api/w/<ws>/me/…`, or a connected site acting for its
+    visitor) → one run, exactly as the list would take it."""
+    if _read_pin(request):
+        return list(read())
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return []
+    out = []
+    try:
+        for pin in covering_pins(user_workspace_slugs(user)):
+            request.workspace_slug = pin
+            out.extend(read())
+    finally:
+        request.workspace_slug = None
+    return out
+
+
 def request_member_slugs(request) -> set[str]:
     """The by-id twin of `request_workspace_slugs`: pinned → that workspace,
     else every membership, never refused (`member_scope`)."""

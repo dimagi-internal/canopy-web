@@ -1,16 +1,17 @@
 import type { JSX } from 'react'
-import { listFleetTasks, type TaskOut } from '@/api/agents'
+import { listMyTasks, type TaskOut } from '@/api/agents'
 import { TaskCard } from '@/components/TasksBoard'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 
 // The fleet's "Waiting on you" — every task across the agents you can see with an
 // open ask, or parked on you. The same filter as an agent's Tasks page
-// (`?waiting=me`) and the same card, fleet-wide (`GET /api/tasks/?waiting=me`).
+// (`?waiting=me`) and the same card, in every workspace you are in
+// (`GET /api/me/tasks/?waiting=me`, a user-level view).
 // On a phone the ranked queue matters more than per-agent grouping, so each card
 // is tagged with its agent instead. Fully actionable in place — no linking out.
 
 export function loadWaitingOnYou(): Promise<TaskOut[]> {
-  return listFleetTasks({ waiting: 'me' })
+  return listMyTasks({ waiting: 'me' })
 }
 
 // Reviews first (a yes/no), then questions (need typing), then tasks merely

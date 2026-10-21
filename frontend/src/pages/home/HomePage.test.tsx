@@ -32,8 +32,8 @@ vi.mock('@/auth/AuthProvider', () => ({
 const { HomePage } = await import('./HomePage')
 
 const item = (over: Partial<AttentionRow>): AttentionRow => ({
-  key: 'task:eva:T1', kind: 'task', reason: 'Approve or decline', title: 'Send EOI?', body: '',
-  workspace: 'connect', agent_slug: 'eva', project: '', url: '/w/connect/agents/eva/tasks?waiting=me',
+  key: 'task:eva:T1', kind: 'task', state: 'asking', reason: 'Approve or decline', title: 'Send EOI?', body: '',
+  workspace: 'connect', organisation: 'connect', agent_slug: 'eva', project: '', url: '/w/connect/agents/eva/tasks?waiting=me',
   last_activity_at: new Date().toISOString(), actions: ['approve', 'decline', 'reply'],
   target: { agent: 'eva', task: 'T1' }, ...over,
 })
@@ -47,10 +47,20 @@ afterEach(() => {
 const show = () => render(<MemoryRouter><HomePage /></MemoryRouter>)
 
 const chat = (over: Partial<AttentionRow>): AttentionRow =>
-  item({ key: 'session:s1', kind: 'session', reason: 'Your move', title: 'Fix the deploy', url: '/chat/s1',
+  item({ key: 'session:s1', kind: 'session', state: 'your_move', reason: 'Your move', title: 'Fix the deploy', url: '/chat/s1',
     actions: ['open'], target: { session: 's1' }, ...over })
 
 describe('HomePage', () => {
+  it('shows a session held behind an away runner as parked, with the reason', async () => {
+    loadAttention.mockResolvedValue({
+      now: [chat({ state: 'parked', reason: 'Waiting — jj-mbp is paused' })], quiet: [], hidden: [], running: [],
+    })
+    show()
+    expect(await screen.findByText('Fix the deploy')).toBeTruthy()
+    expect(screen.getByText('Waiting — jj-mbp is paused')).toBeTruthy()
+    expect(screen.queryByText('needs an answer')).toBeNull()
+  })
+
   it('leads with sessions and folds tasks under a count', async () => {
     loadAttention.mockResolvedValue({ now: [item({}), chat({})], quiet: [], hidden: [], running: [] })
     show()
@@ -85,7 +95,7 @@ describe('HomePage', () => {
       now: [chat({ agent_slug: 'hal', project: 'canopy-web' })],
       quiet: [],
       hidden: [],
-      running: [chat({ key: 'session:r', title: 'Busy one', reason: 'Running', agent_slug: 'hal', project: 'canopy-web' })],
+      running: [chat({ key: 'session:r', title: 'Busy one', state: 'running', reason: 'Running', agent_slug: 'hal', project: 'canopy-web' })],
     })
     show()
     expect(await screen.findByText('Busy one')).toBeTruthy()

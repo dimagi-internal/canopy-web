@@ -6029,6 +6029,49 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/tasks/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Tasks across every agent you can see, in every workspace you are in
+         * @description The fleet task list as a user-level view: each organisation is read on
+         *     its own (`each_organisation`). `waiting=me` is your inbox everywhere. Same
+         *     order: reviews, then questions, then the rest; oldest first within each.
+         */
+        readonly get: operations["list_my_tasks"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/agents/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Every agent you can see, in every workspace you are in
+         * @description The agent list as a user-level view: each organisation read on its own,
+         *     every row carrying its workspace. By name.
+         */
+        readonly get: operations["list_my_agents"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/projects/": {
         readonly parameters: {
             readonly query?: never;
@@ -6042,6 +6085,28 @@ export interface paths {
          *     (`agent` or `workspace`) narrow it.
          */
         readonly get: operations["list_fleet_projects"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/projects/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The projects you own, across every workspace you are in
+         * @description A user-level view: each organisation is read on its own
+         *     (`each_organisation`) and every row carries its workspace. Active by
+         *     default; `status=` (empty for all).
+         */
+        readonly get: operations["list_my_projects"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -9558,7 +9623,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/attention/": {
+    readonly "/api/me/attention/": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -9572,7 +9637,9 @@ export interface paths {
          *     workspace you manage — as `now` (something happened in the last few days),
          *     `quiet` (nothing has for a while) and `hidden` (taken off your list by you;
          *     each returns when something new happens on it), plus `running` — not
-         *     waiting on you, but yours and being worked right now. Newest first.
+         *     waiting on you, but yours and being worked right now. Newest first. Branch
+         *     on each row's `state` (asking, your_move, parked, running, running_auto);
+         *     `reason` is display text.
          */
         readonly get: operations["list_attention"];
         readonly put?: never;
@@ -9583,7 +9650,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/attention/hide": {
+    readonly "/api/me/attention/hide": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -9606,7 +9673,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/attention/hide/{key}": {
+    readonly "/api/me/attention/hide/{key}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -10939,6 +11006,30 @@ export interface paths {
          *     start from. Only the person who started the session can export it.
          */
         readonly get: operations["export_session"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/sessions/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your sessions, across every workspace you are in
+         * @description The session list (`GET /api/canopy-sessions/`) as a user-level view:
+         *     each organisation you are in is read on its own and every row carries its
+         *     workspace, so a page off any one workspace (Supervisor, the IDE) needs one
+         *     call. Same order — waiting on you, then running, then newest — and the same
+         *     `state`, `reply`, `q` and `limit` (≤ 500).
+         */
+        readonly get: operations["list_my_sessions"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -28621,6 +28712,11 @@ export interface components {
             readonly key: string;
             /** Kind */
             readonly kind: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "asking" | "your_move" | "parked" | "running" | "running_auto";
             /** Reason */
             readonly reason: string;
             /** Title */
@@ -28632,6 +28728,11 @@ export interface components {
             readonly body: string;
             /** Workspace */
             readonly workspace: string;
+            /**
+             * Organisation
+             * @default
+             */
+            readonly organisation: string;
             /**
              * Agent Slug
              * @default
@@ -39737,12 +39838,83 @@ export interface operations {
             };
         };
     };
+    readonly list_my_tasks: {
+        readonly parameters: {
+            readonly query?: {
+                readonly agent?: string;
+                readonly project?: string;
+                readonly status?: string;
+                readonly waiting?: string;
+                readonly ask?: string;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
+                };
+            };
+        };
+    };
+    readonly list_my_agents: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Page_AgentOut_"];
+                };
+            };
+        };
+    };
     readonly list_fleet_projects: {
         readonly parameters: {
             readonly query?: {
                 readonly status?: string;
                 readonly repo_slug?: string;
                 readonly scope?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentProjectOut"][];
+                };
+            };
+        };
+    };
+    readonly list_my_projects: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -45548,6 +45720,31 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionExportOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_sessions: {
+        readonly parameters: {
+            readonly query?: {
+                readonly state?: string;
+                readonly limit?: number;
+                readonly reply?: boolean;
+                readonly q?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SessionOut"][];
                 };
             };
         };
