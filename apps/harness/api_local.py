@@ -139,6 +139,10 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
     ws = local.private_runner_of(request.user, payload.private_runner)
     if ws is None:
         raise HttpError(404, "private runner not found — register it with `canopy private-runner register`")
+    rtok = getattr(request, "runner_token", None)
+    if rtok is not None and (not rtok.runner.private or ws.runner_id != rtok.runner_id):
+        # A box's key opens only ITS OWN owner's sessions, and only while it is private.
+        raise HttpError(403, "a runner signs in a local session only as its own private runner")
     try:
         turn, created = local.open_turn(
             request, agent, private_runner=ws, claude_session_id=payload.claude_session_id,

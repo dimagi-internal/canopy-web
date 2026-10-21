@@ -59,11 +59,25 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
 )
 
 
-def reaches(method: str, path: str, runner_id) -> bool:
-    """May a runner token for `runner_id` make this request?"""
+#: What a PRIVATE runner's token reaches beyond the protocol (canopy-web#1705): its
+#: owner's own Claude Code sessions on that machine sign in with the box's device key
+#: instead of a PAT, so they open, renew and close their local turns and read their
+#: agent's secrets under the owner's license (credentials/resolve, above). Only on a
+#: private runner — the owner's own machine, judged at its `acts_as` role — never on
+#: a shared box, whose token speaks for the fleet, not a person.
+_PRIVATE_RULES: tuple[tuple[frozenset[str], str], ...] = (
+    (frozenset({"POST"}), r"/api/harness/local-turns(/.*)?"),
+    (frozenset({"GET", "POST"}), r"/api/private-runners"),
+)
+
+
+def reaches(method: str, path: str, runner_id, *, private: bool = False) -> bool:
+    """May a runner token for `runner_id` make this request? `private`: the runner is
+    its owner's private runner, which also opens its owner's local sessions."""
     flat = _strip_to_flat(path)
     rid = re.escape(str(runner_id))
-    for methods, pattern in _RULES:
+    rules = _RULES + (_PRIVATE_RULES if private else ())
+    for methods, pattern in rules:
         if method.upper() in methods and re.fullmatch(pattern.replace("{runner}", rid), flat):
             return True
     return False

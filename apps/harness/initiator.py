@@ -43,6 +43,8 @@ KINDS = (USER, CONTACT, SYSTEM, AGENT, UNKNOWN)
 SESSION = "session"            # signed in to canopy in this very request
 PAT = "pat"                    # a personal access token (a machine acting as its owner)
 RUNNER_KEY = "runner-key"      # a runner's own token, bought with its approved device key
+PRIVATE_RUNNER_KEY = "private-runner-key"  # its owner's local session, signed in with their
+                               # OWN private runner's device key (canopy-web#1705)
 DELEGATED = "delegated"        # a token minted FOR the user by an app (the widget)
 HOST_SIGNED = "host_signed"    # a connected site signed for its visitor; canopy resolved
                                # them to an existing account (a weaker claim — not "verified")
