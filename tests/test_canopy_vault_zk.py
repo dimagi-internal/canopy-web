@@ -915,6 +915,24 @@ def test_a_pending_keys_listing_names_the_zk_agents_approving_it_will_need(fleet
     assert rows[str(key.pk)]["zk_pending_agents"] == []
 
 
+def test_an_approved_key_that_came_to_serve_an_agent_since_offers_give_access(fleet):
+    """A machine approved before it served the agent (made private later, a new
+    license) is not pending, yet waits on the agent: its row still lists it, so
+    Settings offers "Give access" — on both the account and the agent's listing."""
+    assert _enable(fleet).status_code == 200
+    sign, ecdh = ec.generate_private_key(ec.SECP256R1()), ec.generate_private_key(ec.SECP256R1())
+    key = _register(fleet, sign, ecdh)
+    RunnerDeviceKey.objects.filter(pk=key.pk).update(status=RunnerDeviceKey.ACTIVE, approved_at=timezone.now(),
+                                                    ecdh_approved_at=timezone.now())
+    rows = {r["id"]: r for r in fleet.client.get("/api/runner-device-keys/").json()}
+    assert (rows[str(key.pk)]["status"], rows[str(key.pk)]["ecdh_waiting"]) == ("active", False)
+    assert rows[str(key.pk)]["zk_pending_agents"] == ["eva"]
+    assert rows[str(key.pk)]["can_open"] == []
+    assert rows[str(fleet.device.pk)]["zk_pending_agents"] == []  # already wrapped
+    on_agent = {r["id"]: r for r in fleet.client.get("/api/agents/eva/device-keys").json()}
+    assert on_agent[str(key.pk)]["zk_pending_agents"] == ["eva"]
+
+
 def test_approving_a_key_covers_a_born_agent_whose_sealed_values_it_cannot_read(fleet):
     """kv 0: values sealed before this key existed are listed, so the approval
     touch creates the vault key; a value already sealed to the key is not."""

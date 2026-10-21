@@ -239,10 +239,11 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
     for k in qs:
         row = key_out(k, can_manage=True)
         row.can_open = agents_key_opens(k, agents)
-        if k.status == RunnerDeviceKey.PENDING or k.ecdh_waiting:
-            # What approving it will leave waiting on a vault-key wrap, so the
-            # browser can approve AND wrap in one passkey touch (canopy-web#1550).
-            row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=True)
+        # What it waits on a vault-key wrap for: for a key not yet approved, what
+        # approving it will leave waiting, so the browser approves AND wraps in one
+        # passkey touch (canopy-web#1550); for an approved key, what it came to
+        # serve since (a runner made private, a new license) — "Give access".
+        row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=not k.ecdh_ready)
         out.append(row)
     return out
 

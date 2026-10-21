@@ -40,7 +40,7 @@ describe('ZkAgentsPanel', () => {
     expect((await screen.findByTestId('zk-agent-status-hal')).textContent).toBe('Private ✓')
     expect(screen.getByTestId('zk-agent-status-eva').textContent).toBe('Private ✓')
     expect(screen.getByTestId('zk-agent-status-ada').textContent).toMatch(/^cloud-ec2-2 waiting — approve it under Your machines/)
-    expect(screen.getByTestId('zk-agent-status-ada').querySelector('a')!.getAttribute('href')).toBe('#your-machines')
+    expect(screen.getByTestId('zk-agent-status-ada').querySelector('a')!.getAttribute('href')).toBe('/settings?device_key=dk#your-machines')
     expect(screen.queryByTestId('zk-agent-ace')).toBeNull()
     expect(screen.queryByTestId('zk-agent-lex')).toBeNull()
     expect(screen.queryByRole('button')).toBeNull()
