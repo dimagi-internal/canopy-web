@@ -938,6 +938,32 @@ class KbPublishIn(StrictModel):
     sha256: str = Field(min_length=64, max_length=64)
 
 
+class KbOriginalIn(StrictModel):
+    sha256: str = Field(min_length=64, max_length=64)
+    bytes: int = Field(ge=0)
+    content_type: str = Field(default="application/octet-stream", max_length=200)
+
+
+class KbOriginalsIn(StrictModel):
+    """The original files a build points at (`canopy kb push --originals`)."""
+
+    files: list[KbOriginalIn] = Field(max_length=1000)
+
+
+class KbOriginalUploadOut(StrictModel):
+    sha256: str
+    url: str
+    headers: dict[str, str] = {}
+
+
+class KbOriginalsOut(StrictModel):
+    """PUT each file to its `url` with its `headers`; `have` were already stored."""
+
+    have: int
+    uploads: list[KbOriginalUploadOut]
+    expires_in: int
+
+
 class SpawnedFromOut(StrictModel):
     """The task a project grew out of: "from <task> in <project>"."""
 

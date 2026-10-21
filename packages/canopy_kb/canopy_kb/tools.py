@@ -8,13 +8,14 @@ how to work it), `search`, `entity`, `doc`, `read`, `grep`, `sql`. Beside them:
 `get` (an item as JSON, with `grep`), `list_items`, `whats_new`, `table`, and one tool
 per table the manifest declares (e.g. `grants`), whose arguments are that table's
 filter_columns — so a curator adding a table gives every reader a named tool for it.
+A KB that keeps its documents' original files also offers `original`.
 """
 from __future__ import annotations
 
 import re
 
 from canopy_kb.kb import KB, KBError
-from canopy_kb.research import Rerank
+from canopy_kb.research import OriginalLink, Rerank
 from canopy_kb.vectors import Semantic
 
 PROTOCOL = "2025-06-18"
@@ -71,6 +72,14 @@ def _base_tools() -> list[dict]:
     ]
 
 
+ORIGINAL_TOOL = {
+    "name": "original",
+    "description": "The file a document's text was read from, as the publisher served it (PDF, spreadsheet, Word file, page): a link to download it, plus its earlier versions. For what text loses: recomputing a spreadsheet model, a PDF's charts and layout, or a version the publisher has since changed or removed.",
+    "inputSchema": {"type": "object", "required": ["ref"], "properties": {
+        "ref": {**_STR, "description": "id or url"},
+        "version": {**_INT, "default": 0, "description": "0 is the newest; doc and this tool list the others"}}}}
+
+
 def _tool_name(table: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]", "_", table)[:60]
 
@@ -93,7 +102,7 @@ def table_tools(kb: KB) -> list[dict]:
 
 
 def call_tool(kb: KB, name: str, args: dict, tables: dict[str, dict], semantic: Semantic | None = None,
-              rerank: Rerank | None = None):
+              rerank: Rerank | None = None, link: OriginalLink | None = None):
     if name == "kb_info":
         return kb.overview()
     if name == "search":
@@ -112,6 +121,9 @@ def call_tool(kb: KB, name: str, args: dict, tables: dict[str, dict], semantic: 
         return kb.grep(args["pattern"], args.get("ref", ""), args.get("entity", ""), int(args.get("limit", 40)))
     if name == "sql":
         return kb.sql(args["query"], int(args.get("limit", 200)))
+    if name == "original":
+        from canopy_kb import research
+        return research.original(kb, args["ref"], int(args.get("version", 0)), link)
     if name == "get":
         return kb.get(args["ref"], int(args.get("max_chars", 20000)), args.get("passage"),
                       args.get("grep", ""), int(args.get("context", 1)))
@@ -133,12 +145,16 @@ def call_tool(kb: KB, name: str, args: dict, tables: dict[str, dict], semantic: 
 
 def tool_specs(kb: KB) -> list[dict]:
     """Every tool this KB offers, as MCP tool descriptions (name, description, inputSchema)."""
-    return _base_tools() + [{k: v for k, v in t.items() if k != "_table"} for t in table_tools(kb)]
+    return (_base_tools() + ([ORIGINAL_TOOL] if kb.has_originals() else [])
+            + [{k: v for k, v in t.items() if k != "_table"} for t in table_tools(kb)])
 
 
-def run(kb: KB, name: str, args: dict, semantic: Semantic | None = None, rerank: Rerank | None = None):
+def run(kb: KB, name: str, args: dict, semantic: Semantic | None = None, rerank: Rerank | None = None,
+        link: OriginalLink | None = None):
     """Call one tool by name: the result is text (the research tools) or JSON-serialisable;
     raises KBError (or KeyError/ValueError/TypeError on bad arguments). `rerank` is the
     host's reranker (`research.Rerank`); without it, `search` keeps the word order.
+    `link` signs a download of an original (`research.OriginalLink`); without it,
+    `original` describes the file and points at the publisher's copy.
     `semantic` is the dormant vector hook (`vectors.Semantic`): no host passes one today."""
-    return call_tool(kb, name, args or {}, {t["name"]: t for t in table_tools(kb)}, semantic, rerank)
+    return call_tool(kb, name, args or {}, {t["name"]: t for t in table_tools(kb)}, semantic, rerank, link)

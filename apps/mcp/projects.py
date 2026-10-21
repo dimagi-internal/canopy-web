@@ -106,7 +106,8 @@ def _call(workspace: str, handle: str, name: str, arguments: dict):
         # are dormant: `semantic_for` is None while KB_VECTORS is off (kb_vectors.py).
         rerank = kb_rerank.reranker() if name == "search" else None
         semantic = kb_vectors.semantic_for(project) if name == "search" else None
-        return run(kb, name, arguments, semantic, rerank)
+        link = kb_store.original_link(project) if name == "original" else None
+        return run(kb, name, arguments, semantic, rerank, link)
     except (KBError, KeyError, ValueError, TypeError) as exc:
         raise ToolError(f"{name}: {exc}") from exc
     finally:

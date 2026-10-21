@@ -224,10 +224,11 @@ jobs:
         run: uv run --with pytest pytest -q
 
       # canopy_kb is the knowledge-base engine canopy-web serves per workspace
-      # project; its own tests run Django-free, as the package is.
+      # project; its own tests run Django-free, as the package is. The [prep]
+      # extra brings the curator toolkit's format readers, so their tests run too.
       - name: Run canopy_kb tests
         working-directory: packages/canopy_kb
-        run: uv run --with pytest pytest -q
+        run: uv run --extra prep --with pytest pytest -q
 
       # The runner decides WHICH slot is due and fires it, so its suite is the only
       # thing standing between a scheduling bug and a fleet that silently never

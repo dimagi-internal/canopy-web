@@ -24,6 +24,13 @@ if TYPE_CHECKING:
 #: and `text`. canopy-web's is the Vertex AI ranking API (`apps/agents/kb_rerank.py`).
 Rerank = Callable[[str, list[dict]], Optional[Sequence[int]]]
 
+#: `link(sha256, filename, content_type)` → a short-lived URL that downloads that original,
+#: or None when the host does not hold it. canopy-web's signs a GET on its store
+#: (`apps/agents/kb_store.py`).
+OriginalLink = Callable[[str, str, str], Optional[str]]
+#: How long a host's original link should stay valid; `original` tells the reader.
+LINK_MINUTES = 15
+
 #: Passages pooled per search before reranking, and per document within that pool.
 POOL = 90
 PER_ITEM = 3
@@ -228,11 +235,17 @@ def overview(kb: "KB") -> str:
         cols = [r[1] for r in kb.db.execute(f'PRAGMA table_info("{tn}")')]
         out.append(f"  {tn} ({spec.get('rows') or 0} rows): {', '.join(cols)} — {spec.get('description', '')}")
     out.append("  items (no text column via sql; use read), cards, entities, item_entities(item_id, entity_id), "
-               "links(src, dst), sections(item_id, ord, level, path, start, end)")
+               "links(src, dst), sections(item_id, ord, level, path, start, end)"
+               + (", originals(item_id, sha256, filename, content_type, bytes, source_url, fetched_at, "
+                  "first_seen, superseded_at)" if kb.has_originals() else ""))
     out.append("""
 How to work: `entity` for a named organisation or program; `search` for topics (try several phrasings —
 a miss is not absence); open what matters with `doc` (outline, links, versions) and `read` (a section);
 `grep` a long document or spreadsheet for a number or name; `sql` for amounts, dates and counts.""")
+    if kb.has_originals():
+        out.append("Each document's text was read from an original file (PDF, spreadsheet, page); `original` hands "
+                   "you that file — to recompute a model, see a chart, or quote a version the publisher has since "
+                   "changed.")
     guide = m.get("guide")
     if guide:
         out.append("\nAbout this library:\n" + "\n".join(f"- {g}" for g in (guide if isinstance(guide, list) else [guide])))
@@ -298,6 +311,14 @@ def doc(kb: "KB", ref: str) -> str:
     alt = sorted(set(meta.get("also_at") or []) - {it["url"]})
     if alt:
         out.append("also at: " + ", ".join(alt[:5]))
+    origs = kb.originals(iid)
+    if origs:
+        o = origs[0]
+        line = (f"original: {o['filename']} · {o['content_type']} · {_size(o['bytes'])} · fetched "
+                f"{(o['fetched_at'] or '')[:10]}" + (" (no longer served; see original)" if o["superseded_at"] else ""))
+        if len(origs) > 1:
+            line += f" · {len(origs) - 1} earlier version{'s' if len(origs) > 2 else ''}"
+        out.append(line + f" — `original {iid}` for the file")
     c = kb.db.execute("SELECT * FROM cards WHERE item_id = ?", (iid,)).fetchone()
     if c:
         out.append(f"\nkind: {c['kind']}; period: {c['period']}\nsummary: {c['summary']}")
@@ -336,6 +357,42 @@ def doc(kb: "KB", ref: str) -> str:
     if rel:
         out.append("\nrelated (same organisations/programs):")
         out += [f"  - {r['id']} · {r['type']} · {r['date'] or 'undated'} · {clip(r['title'], 80)}" for r in rel]
+    return "\n".join(out)
+
+
+def _size(n) -> str:
+    n = int(n or 0)
+    return f"{n / 1e6:.1f} MB" if n >= 1e6 else f"{max(1, round(n / 1e3))} KB"
+
+
+def original(kb: "KB", ref: str, version: int = 0, link: "OriginalLink | None" = None) -> str:
+    """The file a document's text was read from, as the publisher served it: a link to
+    download it (the workbook to recompute, the PDF's charts and layout, a copy the
+    publisher has since changed or removed), and its earlier versions."""
+    it = kb.item_row(ref)
+    if not it:
+        return f"No document {ref!r}."
+    origs = kb.originals(it["id"])
+    if not origs:
+        return f"{it['id']} has no original file in this library (its text is the source); the publisher's copy: {it['url']}"
+    version = int(version or 0)
+    if not 0 <= version < len(origs):
+        return f"{it['id']} has versions 0–{len(origs) - 1}; 0 is the newest."
+    o = origs[version]
+    out = [f"{it['id']} · {clip(it['title'], 100)}",
+           f"{'current' if not o['superseded_at'] else 'superseded ' + o['superseded_at'][:10]} original "
+           f"(version {version}): {o['filename']} · {o['content_type']} · {_size(o['bytes'])} · fetched "
+           f"{(o['fetched_at'] or '')[:10]} from {o['source_url']} · sha256 {o['sha256']}"]
+    url = link(o["sha256"], o["filename"], o["content_type"]) if link else None
+    if url:
+        out.append(f"download (valid {LINK_MINUTES} minutes): {url}")
+    else:
+        out.append(f"This server does not hand out files; the publisher's copy (may have changed): {o['source_url']}")
+    if len(origs) > 1:
+        out.append("\nversions (pass version=N):")
+        out += [f"  {n}. {(r['fetched_at'] or '')[:10]} · {r['filename']} · {_size(r['bytes'])}"
+                + (f" · superseded {r['superseded_at'][:10]}" if r["superseded_at"] else " · current")
+                for n, r in enumerate(origs)]
     return "\n".join(out)
 
 

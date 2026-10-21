@@ -10,7 +10,8 @@ describes it as MCP tools. canopy-web serves those tools per workspace project a
 The tools are for an agent doing research: `kb_info` (what the library holds), `search`
 (documents with their cards and best passages), `entity` (everything about an
 organisation or program), `doc` (outline, links, versions), `read` (a section),
-`grep` (a figure or quote in a long document) and `sql` (the declared tables).
+`grep` (a figure or quote in a long document), `sql` (the declared tables) and
+`original` (the file a document was read from).
 
 | module | what |
 |---|---|
@@ -20,6 +21,20 @@ organisation or program), `doc` (outline, links, versions), `read` (a section),
 | `research.py` | the research tools, as text |
 | `vectors.py` | dormant: what a passage's vector would be made of, for a host that turns vectors on |
 | `tools.py` | MCP tool specs and dispatch |
+| `prep/` | the curator's toolkit: raw cache, a reader per format, OCR, dedupe, cards, aliases, originals (extra `[prep]`) |
+
+**Originals.** An item's text is a reading copy of a file (a PDF, a spreadsheet, a page):
+it is what search, `read` and `grep` work on. The file stays the record. A curator puts
+it on the item as `original` (`prep/originals.py`), `canopy kb push --originals` uploads
+each one to the host's store by sha256, and the `original` tool hands a reader a download
+link: the workbook to recompute, the PDF's charts, or a version the publisher has since
+changed or removed (a build carries superseded originals forward; the store never
+deletes one).
+
+**Curators.** A curator's own code keeps only what is particular to its publisher (where
+it puts things, how items are typed, its tables and guide) and calls `canopy_kb.prep`
+for the rest: `pip install 'canopy-kb[prep] @ git+ssh://git@github.com/dimagi-internal/canopy-web.git#subdirectory=packages/canopy_kb'`.
+Eva's GiveWell adapters (`lib/kb_givewell`) are the worked example.
 
 No embeddings are involved. `search` is words over passages and catalog cards, ordered
 by the host's reranker; the agent then opens and greps documents. On 70 GiveWell
