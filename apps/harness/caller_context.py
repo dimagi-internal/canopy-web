@@ -110,15 +110,12 @@ def relationship(turn, agent) -> str:
 
 
 def acting_cap(turn) -> str:
-    """The role a turn's initiator acts as, applied to `turn.initiator_user`: the cap a
-    local turn was opened under, or the `acts_as` of the private runner that claimed it
-    (canopy-web#1705). "" when they act as themselves."""
+    """The role a turn's initiator acts as, applied to `turn.initiator_user`: the
+    `acts_as` the turn was started with (canopy-web#1705). "" when they act as
+    themselves."""
     from apps.workspaces import role_cap
 
-    cap = (turn.origin_ref or {}).get("acts_as") or ""
-    runner = getattr(turn, "claimed_by", None) if turn.claimed_by_id else None
-    if not cap and runner is not None and runner.private and runner.owner_id == turn.initiator_user_id:
-        cap = runner.acts_as
+    cap = role_cap.cap_from((turn.origin_ref or {}).get("acts_as"))
     if cap and turn.initiator_user is not None:
         role_cap.apply(turn.initiator_user, cap)
     return cap
@@ -175,7 +172,7 @@ def relationship_for_user(user, agent) -> str:
     # it through its interface like one — not with an unconfined profile.
     from apps.workspaces import role_cap
 
-    # Acting as an editor or viewer (a private runner's acts_as): judged as a member.
+    # Acting as an editor or viewer (the turn's acts_as): judged as a member.
     capped = bool(role_cap.cap_of(user))
     if not capped and agent.owner_id == user.pk and wsvc.is_member(user, agent.workspace_id):
         return OWNER

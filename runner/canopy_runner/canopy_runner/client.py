@@ -532,6 +532,19 @@ def user_agent() -> str:
     return f"{CLIENT_NAME}/{provenance.version()} host={host}"
 
 
+def acts_as() -> str:
+    """The lower mode this runner put itself in: `CANOPY_ACTS_AS=editor|viewer` in its
+    environment, "" for none. Every call then carries `X-Canopy-Acts-As`, so canopy
+    judges this box — and the turns of its owner's it claims — at that role, until it
+    is restarted without it. Only ever lowers (canopy-web#1705)."""
+    import os
+
+    cap = os.environ.get("CANOPY_ACTS_AS", "").strip().lower()
+    return cap if cap in ("editor", "viewer") else ""
+
+
 def _identify(req: urllib.request.Request) -> None:
     req.add_header("User-Agent", user_agent())
     req.add_header("X-Canopy-Client", CLIENT_NAME)
+    if cap := acts_as():
+        req.add_header("X-Canopy-Acts-As", cap)

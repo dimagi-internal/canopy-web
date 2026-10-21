@@ -8257,12 +8257,11 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Make this runner its owner's private runner, acting as a role
+         * Make this runner its owner's private runner
          * @description A private runner takes no fleet work: nothing routed, no workspace order, no
          *     source rule — only what its owner pins or binds to it, and the local sessions
-         *     opened on it. `acts_as` (`editor` or `viewer`, empty for yourself) lowers the
-         *     role everything from the box is judged as: its turns, its credential reads, the
-         *     local sessions on it. Owner only. Turning `private` off clears `acts_as`.
+         *     opened on it. Owner only. (To run as a lower role, start the TURN with
+         *     `acts_as` — it is a property of one turn, not of a machine.)
          */
         readonly put: operations["set_runner_private"];
         readonly post?: never;
@@ -8686,7 +8685,8 @@ export interface paths {
          * @description Claim the next eligible turn. `paused` is an optional comma-separated list of
          *     agent slugs the caller has locally paused (per-agent pause) — the server skips
          *     their queued turns so nothing is claimed-then-released. Omitted by older runners
-         *     (backward-compatible: no exclusions).
+         *     (backward-compatible: no exclusions). `X-Canopy-Acts-As: editor|viewer` claims in
+         *     that lower mode: a turn the runner's owner started runs as that role.
          */
         readonly post: operations["claim_turn"];
         readonly delete?: never;
@@ -26295,6 +26295,8 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "" | "manual" | "auto";
+            /** Acts As */
+            readonly acts_as?: ("" | "editor" | "viewer") | null;
         };
         /** LocalTurnRenewOut */
         readonly LocalTurnRenewOut: {
@@ -26491,11 +26493,6 @@ export interface components {
              * @default false
              */
             readonly private: boolean;
-            /**
-             * Acts As
-             * @default
-             */
-            readonly acts_as: string;
             /** Private Runner Id */
             readonly private_runner_id?: string | null;
             /**
@@ -27023,11 +27020,6 @@ export interface components {
         readonly RunnerPrivateIn: {
             /** Private */
             readonly private: boolean;
-            /**
-             * Acts As
-             * @default
-             */
-            readonly acts_as: string;
         };
         /** RunnerEngineIn */
         readonly RunnerEngineIn: {
@@ -28086,6 +28078,8 @@ export interface components {
             readonly runner_id?: string | null;
             /** Turn Mode */
             readonly turn_mode?: ("auto" | "manual") | null;
+            /** Acts As */
+            readonly acts_as?: ("" | "editor" | "viewer") | null;
             readonly parent?: components["schemas"]["ParentIn"] | null;
         };
         /** EmdashSessionOut */

@@ -287,10 +287,6 @@ class Runner(models.Model):
     #: puts on it (a pin, a session bound to it) and the local sessions opened on it
     #: (`apps/harness/local.py`). Set by its owner, never reported by the box.
     private = models.BooleanField(default=False)
-    #: On a private runner: the role its owner ACTS AS for everything from this box —
-    #: "" (themselves), "editor" or "viewer" (`apps/workspaces/role_cap.py`). Only
-    #: ever lowers; how an agent's owner tests the non-admin path on their own Mac.
-    acts_as = models.CharField(max_length=10, blank=True, default="")
 
     class Meta:
         indexes = [models.Index(fields=["kind", "status"])]
@@ -2023,7 +2019,7 @@ class PrivateRunner(models.Model):
     retired_at = models.DateTimeField(null=True, blank=True)
     #: The runner this machine also is (canopy-web#1705): one machine, one object with
     #: two powers — local sessions here, and the runner app's turns. Its device key is
-    #: what a local turn proves itself with, and its `acts_as` caps those sessions too.
+    #: what a local turn proves itself with.
     runner = models.OneToOneField("harness.Runner", null=True, blank=True,
                                   on_delete=models.SET_NULL, related_name="private_runner")
 
