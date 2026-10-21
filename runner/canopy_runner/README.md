@@ -51,7 +51,10 @@ canopy-web#1188):
 - **Focus:** that deep link brings Claude.app to the front of *its* macOS session
   once per new session (not for follow-ups). That's invisible on a
   fast-user-switched runner account, and noticeable on the account you're typing
-  in.
+  in. When the app's `start_session` feature is on for the account
+  (`canopy-runner runtime` says so) and a canopy session is already open in the
+  app, a new session starts inside the app with no deep link and takes no focus.
+  The first session, and waking a stopped one, still use the link.
 - **Keep the app running:** Claude.app must stay running (it may be hidden), and
   the runner starts it if it isn't. Quitting it stops that runtime's sessions.
 - **Windows:** the deep link goes to the claude:// protocol handler the app

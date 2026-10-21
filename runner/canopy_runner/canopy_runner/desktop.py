@@ -42,7 +42,10 @@ skips that (Focus round 2, #1188). So `open_session` opens through
 `desktop_quiet_open.js`, which gives focus straight back to the app the person
 was in and re-hides Claude: Claude holds the front ~60ms per NEW session or wake.
 That is a mitigation, not a fix: a keystroke typed in that window can land in
-Claude. Follow-ups into a live session open no URL at all.
+Claude. Follow-ups into a live session open no URL at all. Where the app's
+`start_session` gate is on and a live canopy session can host it, a new session
+opens with no URL either (`start_in_app`, canopy-web#1238); waking a stopped
+session still takes the deep link.
 
 THE `claude-cli` RUNTIME is this backend with the app taken out (headless.py): a new
 thread gets the same worktree, settings, mod and index entry, but the runner runs
@@ -639,12 +642,100 @@ def describe_app_features(features: dict | None) -> str:
     if features is None:
         return "Claude desktop gates: unknown (no readable feature cache on this account)"
     when = time.strftime("%Y-%m-%d %H:%M", time.localtime(features["fetched_at"]))
-    start = {True: "ON - switch new sessions to it (canopy-web#1238)",
+    start = {True: "ON (new sessions open with it when a live session can host the start, #1238)",
              False: "off (new sessions open by deep link)",
              None: "not in cache"}[features["start_session"]]
     idle = features["idle_timeout"]
     idle_txt = "not in cache" if idle is None else ("off" if idle == 0 else f"{idle}s")
     return f"Claude desktop gates (fetched {when}): start_session {start}; idle timeout {idle_txt}"
+
+
+# ── starting a session with no deep link (canopy-web#1238) ──────────────────
+#
+# With `start_session` on, a new session needs no claude:// link: the runner asks
+# the mod in a live session it already holds (the host) to call the app's
+# start_session tool, which opens a sibling session in the folder the runner
+# prepared, in the background. The folder's `seeded` reads "start" until the new
+# session's mod claims it with its own id. No host, the gate off, or any step
+# failing: the deep link, as before.
+
+#: How long the host's mod may take to answer a start request.
+START_REQUEST_SECONDS = 60
+#: How long the started session may take to claim its folder.
+START_CLAIM_SECONDS = 60
+#: How long the started session's opening turn (SEED_PROMPT) may run.
+START_SEED_SECONDS = 120
+START_BACKGROUND = ("Prepared by the canopy runner, which delivers this session's real task "
+                    "through its canopy-desktop mod as soon as this opening turn completes.")
+
+
+def start_host(cfg) -> Path | None:
+    """The channel of a live desktop session whose mod can start sessions, or None."""
+    for entry in reversed(list(_index(cfg).values())):
+        if entry.get("closed_at") or entry.get("runtime", CLAUDE_DESKTOP) != CLAUDE_DESKTOP:
+            continue
+        channel = Path(entry["worktree"]) / CHANNEL
+        try:
+            if channel_alive(channel) and "start" in (channel / "caps").read_text():
+                return channel
+        except OSError:
+            continue
+    return None
+
+
+def _wait_for(check, seconds: float, step: float = 0.5):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        got = check()
+        if got:
+            return got
+        time.sleep(step)
+    return None
+
+
+def start_in_app(cfg, wt: Path, title: str, features: dict | None = None) -> str | None:
+    """Open a new session in `wt` with start_session through a host's mod. The new
+    session's id once it has claimed the folder and run its opening turn, or None
+    to fall back to the deep link (the folder's `seeded` cleared)."""
+    if not (features if features is not None else app_features() or {}).get("start_session"):
+        return None
+    host = start_host(cfg)
+    if host is None:
+        return None
+    channel = wt / CHANNEL
+    (channel / "seeded").write_text("start")
+    n = next_followup_index(host, "start", ".json")
+    (host / f"start-{n}.json").write_text(json.dumps({
+        "cwd": str(wt), "title": title, "prompt": SEED_PROMPT, "background": START_BACKGROUND}))
+
+    def answered():
+        try:
+            done = json.loads((host / f"start-{n}.done").read_text())
+        except (OSError, ValueError):
+            return None
+        return None if done.get("pending") else done
+
+    done = _wait_for(answered, START_REQUEST_SECONDS)
+    if not done or done.get("isError"):
+        logger.warning("desktop start in %s: start_session did not start it (%s)", wt,
+                       (done or {}).get("text", "no answer from the host's mod")[:300])
+        (channel / "seeded").write_text("")
+        return None
+
+    def claimed():
+        sid = (channel / "seeded").read_text().strip()
+        return sid if sid and sid != "start" else None
+
+    sid = _wait_for(claimed, START_CLAIM_SECONDS)
+    if not sid:
+        logger.warning("desktop start in %s: started, but no session claimed the folder", wt)
+        (channel / "seeded").write_text("")
+        return None
+    if not _wait_for(lambda: any(e.get("kind") == "turn.complete" for e in read_events(channel)),
+                     START_SEED_SECONDS):
+        logger.warning("desktop start %s: its opening turn did not complete in time", sid)
+    logger.info("desktop start %s: opened with start_session, no deep link", sid)
+    return sid
 
 
 #: Opens a claude:// URL and hands focus straight back (see the file's header).
@@ -726,9 +817,9 @@ def read_events(channel: Path) -> list[dict]:
     return [e for _, _, e in sorted(evs, key=lambda x: x[:2])]
 
 
-def next_followup_index(channel: Path, prefix: str = "fu") -> int:
+def next_followup_index(channel: Path, prefix: str = "fu", suffix: str = ".txt") -> int:
     n = 1
-    while (channel / f"{prefix}-{n}.txt").exists():
+    while (channel / f"{prefix}-{n}{suffix}").exists():
         n += 1
     return n
 
@@ -1143,14 +1234,16 @@ class TurnRun:
             if summary:
                 prompt = (f"[Continuing prior work on this thread — context from earlier sessions "
                           f"(a fresh session, possibly a different machine):]\n{summary}\n\n{prompt}")
-            sid = seed_session(self.cfg, wt, name)
+            started = start_in_app(self.cfg, wt, name)
+            sid = started or seed_session(self.cfg, wt, name)
             # The turn's record starts AFTER the seed's "Reply with exactly: ready"
             # exchange — shipping it made a turn's transcript the seed and nothing
             # else (found live, #1188).
             seeded = transcript_path(sid)
             offset = seeded.stat().st_size if seeded else 0
             (channel / "task.txt").write_text(prompt)
-            (channel / "seeded").write_text(sid)
+            if not started:
+                (channel / "seeded").write_text(sid)
             which = "task"
             _remember(self.cfg, sid, wt, self.target)
             self.client.start(self.id, sid)
@@ -1161,8 +1254,10 @@ class TurnRun:
                 emdash_task_id=sid, session_id=sid, summary=None,
                 # The task name, not the session uuid canopy-web would show otherwise.
                 title=name)
-            open_session(sid)
-            self.status("created_session", runtime=CLAUDE_DESKTOP, session=sid, worktree=str(wt))
+            if not started:
+                open_session(sid)
+            self.status("created_session", runtime=CLAUDE_DESKTOP, session=sid, worktree=str(wt),
+                        opened="start_session" if started else "deep_link")
         self._follow(sid, channel, which, offset)
 
     def _run_cli(self) -> None:

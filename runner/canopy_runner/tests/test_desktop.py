@@ -177,6 +177,7 @@ def no_app(monkeypatch):
     monkeypatch.setattr(desktop, "seed_session",
                         lambda cfg, wt, name="": SEEDED_NAMES.append(name) or "sid-1")
     monkeypatch.setattr(desktop.caller, "write_caller_file", lambda turn: None)
+    monkeypatch.setattr(desktop, "app_features", lambda: None)
     SEEDED_NAMES.clear()
     return opened
 
@@ -232,6 +233,84 @@ def test_a_chat_turn_runs_to_completion_in_a_new_session(cfg, tmp_path, no_app):
     assert desktop.is_desktop_session(cfg, "sid-1")
     # Titled like emdash names it: the canopy prefix, then a subject from the prompt.
     assert SEEDED_NAMES and SEEDED_NAMES[0].startswith("c-do-it")
+
+
+def _host(cfg, tmp_path) -> Path:
+    """A live desktop session whose mod can start sessions (canopy-web#1238)."""
+    wt = tmp_path / "wt-host"
+    channel = wt / desktop.CHANNEL
+    channel.mkdir(parents=True)
+    (channel / "seeded").write_text("sid-host")
+    (channel / "alive").write_text(str(int(time.time() * 1000)))
+    (channel / "caps").write_text("start")
+    desktop._remember(cfg, "sid-host", wt, "scratch")
+    return channel
+
+
+def _host_mod(host: Path, cfg, sid: str, ok: bool = True):
+    """The host's mod answering start-1.json, and the session it started claiming
+    its folder and running its opening turn."""
+    req = host / "start-1.json"
+    for _ in range(500):
+        if req.exists():
+            break
+        time.sleep(0.02)
+    body = json.loads(req.read_text())
+    (host / "start-1.done").write_text(json.dumps({"isError": not ok, "text": "started" if ok else "denied"}))
+    if not ok:
+        return body
+    channel = Path(body["cwd"]) / desktop.CHANNEL
+    assert (channel / "seeded").read_text() == "start"
+    (channel / "seeded").write_text(sid)
+    t = int(time.time() * 1000)
+    (channel / f"ev-{t}-1-turn.complete.json").write_text(json.dumps({"t": t, "kind": "turn.complete"}))
+    return body
+
+
+def test_a_new_session_opens_with_start_session_and_no_deep_link(cfg, tmp_path, no_app, monkeypatch):
+    """The deep link brings Claude.app to the front; start_session from a live
+    session's mod does not (canopy-web#1238)."""
+    cfg.project_paths = {"scratch": str(_repo(tmp_path))}
+    monkeypatch.setattr(desktop, "app_features", lambda: {"start_session": True})
+    host = _host(cfg, tmp_path)
+    client = FakeClient()
+    run = desktop.TurnRun(cfg, client, "r", _turn(), "th", {"reuse": False}, reuse="")
+    th = threading.Thread(target=run.run)
+    th.start()
+    body = _host_mod(host, cfg, "sid-started")
+    assert body["prompt"] == desktop.SEED_PROMPT and len(body["background"]) >= 80
+    _mod(Path(body["cwd"]) / desktop.CHANNEL, "task", "sid-started", "ok")
+    th.join(10)
+
+    assert no_app == [] and SEEDED_NAMES == []  # no claude:// link, no headless seed
+    assert client.of("start")[0][1] == ("turn-0001-aaaa", "sid-started")
+    created = [e["payload"] for c in client.of("post_events") for e in c[1][1]
+               if e["kind"] == "status" and e["payload"]["status"] == "created_session"]
+    assert created[0]["opened"] == "start_session"
+    assert desktop.is_desktop_session(cfg, "sid-started")
+
+
+def test_a_refused_start_falls_back_to_the_deep_link(cfg, tmp_path, no_app, monkeypatch):
+    cfg.project_paths = {"scratch": str(_repo(tmp_path))}
+    monkeypatch.setattr(desktop, "app_features", lambda: {"start_session": True})
+    host = _host(cfg, tmp_path)
+    client = FakeClient()
+    run = desktop.TurnRun(cfg, client, "r", _turn(), "th", {"reuse": False}, reuse="")
+    th = threading.Thread(target=run.run)
+    th.start()
+    body = _host_mod(host, cfg, "", ok=False)
+    _mod(Path(body["cwd"]) / desktop.CHANNEL, "task", "sid-1", "ok")
+    th.join(10)
+    assert no_app == ["sid-1"]
+    assert (Path(body["cwd"]) / desktop.CHANNEL / "seeded").read_text() == "sid-1"
+
+
+def test_no_host_or_gate_off_means_no_start_request(cfg, tmp_path):
+    wt = tmp_path / "wt"
+    (wt / desktop.CHANNEL).mkdir(parents=True)
+    assert desktop.start_in_app(cfg, wt, "t", features={"start_session": False}) is None
+    assert desktop.start_in_app(cfg, wt, "t", features={"start_session": True}) is None  # no host
+    assert not (wt / desktop.CHANNEL / "seeded").exists()
 
 
 def test_a_chat_turns_attachments_reach_the_desktop_session(cfg, tmp_path, monkeypatch):
