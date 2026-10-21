@@ -1,8 +1,8 @@
 """A knowledge base: build a cited library from a curator's bundle, query it, and
 describe it as MCP tools. Django-free and stdlib-only.
 
-The engine (`kb.py`) is the same as the canopy CLI's `orchestrator/kb.py`; keep the
-two in step until the CLI depends on this package instead of carrying its copy.
+This package is the one engine: canopy-web serves it, and the canopy CLI's
+`canopy kb build` / `canopy kb mcp` import it (the CLI no longer carries a copy).
 """
 from canopy_kb.kb import KB, KBError, build
 

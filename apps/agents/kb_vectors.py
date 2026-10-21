@@ -184,7 +184,7 @@ def _rank(query: str, docs: list[dict]) -> list[int] | None:
     try:
         resp = embeddings._vertex_session().post(
             url, json={"model": settings.KB_RERANK_MODEL, "query": query[:2000], "records": records,
-                       "topN": len(records)}, timeout=(2, 5))
+                       "topN": len(records)}, timeout=(2, 15))  # a research search sends up to ~170
         resp.raise_for_status()
         return [int(r["id"]) for r in resp.json().get("records", [])]
     except Exception:  # noqa: BLE001 — reranking improves a usable order; it never costs one

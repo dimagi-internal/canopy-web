@@ -99,12 +99,25 @@ def test_an_unknown_mode_is_refused(kb):
         kb.search("cholera", mode="vibes")
 
 
-def test_the_search_tool_takes_a_mode_and_the_hosts_vectors(kb):
+def test_the_search_tool_pools_the_hosts_nearest_passages(kb):
     spec = next(t for t in tool_specs(kb) if t["name"] == "search")
-    assert spec["inputSchema"]["properties"]["mode"]["enum"] == ["hybrid", "lexical", "semantic"]
-    hits = run(kb, "search", {"query": "doses made", "mode": "semantic"},
-               semantic=_semantic([("doc:ocv", 0)]))
-    assert hits[0]["id"] == "doc:ocv"
+    assert {"query", "types", "entity", "since", "until", "k"} == set(spec["inputSchema"]["properties"])
+    assert run(kb, "search", {"query": "doses made"}).startswith("No matches")
+    out = run(kb, "search", {"query": "doses made"}, semantic=_semantic([("doc:ocv", 0)]))
+    assert out.startswith("[1] doc:ocv · gdoc") and "Global stockpiles" in out
+
+
+def test_the_search_tool_lets_the_reranker_order_the_whole_pool(kb):
+    seen = []
+
+    def rerank(query, docs):
+        seen.extend(docs)
+        return sorted(range(len(docs)), key=lambda i: "WASH" not in docs[i]["title"])
+
+    out = run(kb, "search", {"query": "cholera"}, semantic=_semantic([("page:lead", 0)]), rerank=rerank)
+    assert out.startswith("[1] blog:wash")
+    assert {d["title"] for d in seen} == {"Oral cholera vaccines", "WASHmobile", "Lead exposure"}
+    assert run(kb, "search", {"query": "cholera"}, rerank=lambda q, d: [9]).startswith("[1] ")
 
 
 def test_score_reports_recall_at_k_and_mrr_by_kind():

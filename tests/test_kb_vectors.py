@@ -126,11 +126,11 @@ def test_on_sqlite_search_is_lexical_in_every_mode(project, calls):
     calls.clear()
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("apps.mcp.projects.readable_project", lambda user, ws, h: project)
-        semantic = _call("connect", "givewell-kb", "search", {"query": "inoculation shortage", "mode": "semantic"})
+        paraphrase = _call("connect", "givewell-kb", "search", {"query": "inoculation shortage"})
         lexical = _call("connect", "givewell-kb", "search", {"query": "cholera"})
 
     assert kb_vectors.semantic_for(project) is None
-    assert semantic == [] and [h["id"] for h in lexical] == ["doc:ocv"]
+    assert paraphrase.startswith("No matches") and lexical.startswith("[1] doc:ocv")
     assert calls == []  # not even the question is embedded
 
 
@@ -225,5 +225,5 @@ def test_the_mcp_search_reranks_when_a_reranker_is_set(project, calls, settings,
     seen = []
     monkeypatch.setattr(kb_vectors, "reranker", lambda: lambda q, docs: seen.append(docs) or list(reversed(range(len(docs)))))
     monkeypatch.setattr("apps.mcp.projects.readable_project", lambda user, ws, h: project)
-    hits = _call("connect", "givewell-kb", "search", {"query": "lead chlorine", "mode": "lexical"})
-    assert seen and [h["id"] for h in hits] == ["blog:wash", "page:lead"]
+    hits = _call("connect", "givewell-kb", "search", {"query": "lead chlorine"})
+    assert seen and hits.startswith("[1] blog:wash") and "[2] page:lead" in hits

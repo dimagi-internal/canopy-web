@@ -74,11 +74,9 @@ def test_hybrid_search_finds_a_paraphrase_through_the_mcp_tool(project, monkeypa
     monkeypatch.setattr("apps.mcp.projects.readable_project", lambda user, ws, h: project)
     question = "jab shortage"  # no word in common with the OCV document
 
-    lexical = _call("connect", "givewell-kb", "search", {"query": question, "mode": "lexical"})
     hybrid = _call("connect", "givewell-kb", "search", {"query": question})
 
-    assert lexical == []
-    assert hybrid[0]["id"] == "doc:ocv" and hybrid[0]["url"] == "https://gw/ocv"
+    assert hybrid.startswith("[1] doc:ocv · gdoc") and "https://gw/ocv" in hybrid
 
 
 def test_a_failed_question_embedding_falls_back_to_lexical(project, monkeypatch):
@@ -87,7 +85,7 @@ def test_a_failed_question_embedding_falls_back_to_lexical(project, monkeypatch)
     kb_vectors.sync(project)
     monkeypatch.setattr("apps.contacts.embeddings._invoke", lambda *a: (_ for _ in ()).throw(TimeoutError()))
     monkeypatch.setattr("apps.mcp.projects.readable_project", lambda user, ws, h: project)
-    assert [h["id"] for h in _call("connect", "givewell-kb", "search", {"query": "cholera"})] == ["doc:ocv"]
+    assert _call("connect", "givewell-kb", "search", {"query": "cholera"}).startswith("[1] doc:ocv")
 
 
 def test_kb_embed_then_kb_eval(project, tmp_path):
