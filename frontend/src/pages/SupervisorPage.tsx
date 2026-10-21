@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { listAgents, type AgentOut, type TaskOut } from '@/api/agents'
+import { listMyAgents, type AgentOut, type TaskOut } from '@/api/agents'
 import {
   getFleetHold,
   listRunners,
@@ -90,7 +90,7 @@ export default function SupervisorPage(): JSX.Element {
     const msg = (r: PromiseRejectedResult) =>
       r.reason instanceof Error ? r.reason.message : 'Failed to load'
 
-    Promise.allSettled([listAgents({ limit: 100 }), listRunners(), loadWaitingOnYou()]).then(
+    Promise.allSettled([listMyAgents({ limit: 100 }), listRunners(), loadWaitingOnYou()]).then(
       ([a, r, f]) => {
         if (cancelled) return
         if (a.status === 'fulfilled') setAgents(a.value.items)

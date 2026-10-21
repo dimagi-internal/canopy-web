@@ -553,11 +553,30 @@ def list_sessions(
     # do something about ends up below a dozen you cannot. Same trap the runner
     # side avoids by reading the question for every session rather than the top
     # K — this is that trap one layer up.
-    out.sort(key=lambda r: (not r["waiting_on_you"], not r["running"],
-                            -(r["last_activity_at"].timestamp())))
+    out.sort(key=_list_order)
     # Clamp AFTER the sort, never as a queryset slice: the queryset is ordered by
     # -created_at, so slicing it could drop the running session this sort exists to
     # float. `state=active` already bounds the set; this is a payload backstop.
+    return out[: clamp_limit(limit)]
+
+
+def _list_order(r):
+    return (not r["waiting_on_you"], not r["running"], -(r["last_activity_at"].timestamp()))
+
+
+#: User-level views (`/api/me/…`), mounted at `/me`.
+me_router = Router(auth=session_auth, tags=["chat"])
+
+
+@me_router.get("/sessions/", response=list[SessionOut], summary="Your sessions, across every workspace you are in")
+def list_my_sessions(request: HttpRequest, state: str = "active", limit: int = 200, reply: bool = False, q: str = ""):
+    """The session list (`GET /api/canopy-sessions/`) as a user-level view:
+    each organisation you are in is read on its own and every row carries its
+    workspace, so a page off any one workspace (Supervisor, the IDE) needs one
+    call. Same order — waiting on you, then running, then newest — and the same
+    `state`, `reply`, `q` and `limit` (≤ 500)."""
+    out = wsvc.each_organisation(request, lambda: list_sessions(request, state=state, limit=limit, reply=reply, q=q))
+    out.sort(key=_list_order)
     return out[: clamp_limit(limit)]
 
 

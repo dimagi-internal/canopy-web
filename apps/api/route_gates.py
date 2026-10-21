@@ -209,10 +209,15 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_fleet_tasks": ("member",),
     "agent_roster": ("member",),  # counts over the same agents list_agents shows; turns through visible_turns_qs
     # --- apps/attention/api.py  (what is waiting on the caller; what they hide is their OWN list)
-    "list_attention": ("member",),  # each source applies its own gate: tasks by the board filter, chats by the session ACL, access requests by members.manage
+    "list_attention": ("self",),  # the caller's own list; each source applies its own gate: tasks by the board filter, chats by the session ACL, access requests by members.manage
     "hide_attention": ("self",),
     "unhide_attention": ("self",),
     "list_fleet_projects": ("member",),
+    # User-level views (`/api/me/…`): the same list once per organisation
+    # (`wsvc.each_organisation`), each run under that list's own gate.
+    "list_my_projects": ("self",),  # the caller's own projects
+    "list_my_tasks": ("member",),  # list_fleet_tasks per organisation
+    "list_my_agents": ("member",),  # list_agents per organisation
     "list_workspace_projects": ("member",),
     "get_workspace_project": ("member",),
     "create_workspace_project": ("agent.work",),  # the steward's write gate
@@ -434,6 +439,7 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/canopy_sessions/api.py  (access.py: tenant, then four legs; write = owner/editor role)
     "create_session": ("member",),  # wsvc.current_workspace; any member may start a chat
     "canopy_sessions_list_sessions": ("session-acl",),  # readable_sessions
+    "list_my_sessions": ("session-acl",),  # the same list per organisation (wsvc.each_organisation)
     "reset_sessions": ("session-acl",),  # readable rows filtered to can_write
     "canopy_sessions_get_session": ("session-acl",),
     "list_messages": ("session-acl",),

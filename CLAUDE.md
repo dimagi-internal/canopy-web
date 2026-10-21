@@ -73,7 +73,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 
 **Root:**
 - `/` — public product site (Astro, `site/`, `config/public_site.py`) for everyone; `/app` — the door into the app (`LOGIN_REDIRECT_URL`); `/about` — public explainer; `/get-started` — public: how to use a canopy agent in your own Claude Code
-- `/home` — what is waiting on you across your workspaces (`/api/attention/`, one list every client reads; Hide takes a thing off your own Home, closing nothing, until something new happens on it); where `/app` lands
+- `/home` — what is waiting on you across your workspaces (`/api/me/attention/`, one list every client reads; Hide takes a thing off your own Home, closing nothing, until something new happens on it); where `/app` lands
 - `/supervisor` — cross-fleet Feed, Waiting on you, Sessions, Agents, Runners (phone PWA + menubar)
 - `/ide` (+ `/:id`) — desktop session IDE: project tree of every session (state, runner, mode, age) beside the open chat
 - `/activity`, `/schedules` — turn log and schedules across your workspaces
@@ -90,6 +90,7 @@ Every route with its behaviour: **`docs/architecture/api-surface.md`**; machine-
 
 - All routes are Django Ninja on the single `NinjaAPI` in `apps/api/api.py`; request/response models live in `apps/<app>/schemas.py`, routes in `apps/<app>/api.py`.
 - The canonical tenant URL is `/api/w/{ws}/…` (`apps/api/tenancy.py::WorkspaceResolveMiddleware` gates membership, strips the prefix, reroutes to the flat mount); a flat `/api/…` list spans the caller's workspaces only within one tenant tree (else 422 `workspace-required`) → `docs/architecture/roles.md` § A read that names no workspace stays inside one organisation.
+- **A page about the person, not one workspace (Home, Supervisor, `/ide`), reads a user-level view `/api/me/<list>/`**: the list run once per organisation (`wsvc.each_organisation`), never a client loop over pins → `docs/architecture/roles.md` § A user-level view.
 - Bare Django views (session/cookie/redirect work, Range streaming) are matched in `config/urls.py` before the Ninja catch-all: `/api/csrf/`, `/api/debug/mint-session/`, `/auth/cli/authorize/`, `/health/`, `/runner-app/` (the runner desktop window's home, `apps/harness/views.py`), and `/w/<ws>/walkthrough/<id>/content` (`apps/walkthroughs/streaming.py`, the only Range-streaming view); OAuth/HCP/Slack/embed endpoints are bare views too (`/oauth/…`, `/api/hcp/oauth/…`, `/api/slack/…`, `/embed/…`).
 
 ## Invariants

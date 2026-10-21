@@ -121,7 +121,10 @@ export function sessionsPath(
   if (opts.reply) params.set("reply", "true");
   if (opts.limit) params.set("limit", String(opts.limit));
   const q = params.toString();
-  return q ? `/api/canopy-sessions/?${q}` : "/api/canopy-sessions/";
+  // A user-level view: every page that lists sessions (Supervisor, the IDE,
+  // the chat home) spans your workspaces, and this one read covers them all —
+  // the server reads each organisation on its own.
+  return q ? `/api/me/sessions/?${q}` : "/api/me/sessions/";
 }
 
 export function listSessions(

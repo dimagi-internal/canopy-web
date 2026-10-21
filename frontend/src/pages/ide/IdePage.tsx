@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { StateDot as SharedStateDot } from '@/components/sessions/StateDot'
 import { ChevronDown, Menu, MoreHorizontal } from 'lucide-react'
 import { WorkbenchRail, WorkbenchShell } from 'canopy-ui'
 import {
@@ -25,7 +26,7 @@ import {
   type ChatSession,
 } from '@/api/chat'
 import { listRunners, type RunnerOut } from '@/api/harness'
-import { listAgents, type AgentOut } from '@/api/agents'
+import { listMyAgents, type AgentOut } from '@/api/agents'
 import { NewChatMenu, type NewChatTarget } from '@/components/chat/NewChatMenu'
 import { repoChoices } from '@/components/chat/runnerEligibility'
 import { wsUrl } from '@/lib/wsUrl'
@@ -164,17 +165,7 @@ const STATE_LABEL: Record<IdeState, string> = { running: 'running', input: 'inpu
 const MODE_LABEL: Record<IdeMode, string> = { manual: 'manual', auto: 'auto', none: 'no turn' }
 
 function StateDot({ state }: { state: IdeState }) {
-  return (
-    <span
-      aria-hidden
-      className={clsx(
-        'inline-block h-2 w-2 shrink-0 rounded-full',
-        state === 'running' && 'animate-pulse bg-success',
-        state === 'input' && 'bg-warning',
-        state === 'idle' && 'bg-muted-foreground/40',
-      )}
-    />
-  )
+  return <SharedStateDot tone={state === 'input' ? 'asking' : state} />
 }
 
 function ModeTag({ mode }: { mode: IdeMode }) {
@@ -285,7 +276,7 @@ export function IdePage() {
   // The agents "New session" offers; repos come from the runners' reports.
   useEffect(() => {
     let live = true
-    listAgents({ limit: 100 })
+    listMyAgents({ limit: 100 })
       .then((page) => { if (live) setAgents(page.items) })
       .catch(() => { /* repos alone still make a usable menu */ })
     return () => {

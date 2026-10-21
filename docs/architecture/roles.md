@@ -123,6 +123,26 @@ fan one read out per workspace to put the organisation back together.
   per organisation when the caller is in its root). The canopy CLI and the web client read once
   per pin instead of once per workspace; a client that sees no flag keeps fanning out.
 
+### A user-level view reads each organisation on its own
+
+A page that is about the PERSON rather than one workspace — Home, Supervisor, the IDE, the chat
+home — reads a **user-level view**: `/api/me/<list>/`. It is the ordinary list run once per
+organisation the caller is in (`wsvc.each_organisation`: one pinned read per `covering_pins` pin,
+each under that list's own read rule and gate) and concatenated; every row carries its workspace
+(attention rows also their `organisation`), and the view re-sorts. No query ever spans two trees,
+and no client fans out, merges or dedupes. Pinned — `/api/w/<ws>/me/<list>/` — it is that one read.
+
+| View | The list it runs per organisation |
+|---|---|
+| `GET /api/me/attention/` | the attention sources (`apps/attention`) |
+| `GET /api/me/sessions/` | `GET /api/canopy-sessions/` |
+| `GET /api/me/tasks/` | `GET /api/tasks/` (`?waiting=me` is your inbox everywhere) |
+| `GET /api/me/agents/` | `GET /api/agents/` |
+| `GET /api/me/projects/` | `GET /api/projects/`, the projects you own |
+
+A new page off any one workspace reads a user-level view, adding one (a thin route over
+`each_organisation`) when the list it needs has none — never a client-side loop over pins.
+
 **What it does not touch:**
 
 - **By-id reads.** Opening one object you belong to mixes nothing, so gates of the form

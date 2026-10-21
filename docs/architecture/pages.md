@@ -397,8 +397,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
 - **`/home`** — what is waiting on you across every workspace you are in
-  (`GET /api/attention/`, read once per organisation and merged): **Sessions**
-  waiting on your next message (the Supervisor feed's rule) and yours running
+  (`GET /api/me/attention/`, one user-level read): **Sessions**
+  waiting on your next message (the Supervisor feed's rule), held behind a
+  paused or offline runner (an open dot, naming the box), and yours running
   now (green, "live"), first and open,
   grouped and one line each like `/ide`'s tree (one group per emdash project —
   a repo or an agent — newest group first, each foldable and remembered per

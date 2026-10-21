@@ -4,7 +4,7 @@ and Home name the same tasks. Actions go to the existing task route,
 `act_on_task`."""
 from __future__ import annotations
 
-from apps.attention.types import AttentionRow
+from apps.attention.types import ASKING, YOUR_MOVE, AttentionRow
 from apps.workspaces.services import scoped_path
 
 from . import services
@@ -26,7 +26,8 @@ def items(request, *, slugs: set[str]) -> list[AttentionRow]:
         out.append(AttentionRow(
             key=f"task:{t.agent.slug}:{t.ext_id}",
             kind="task",
-            reason=_REASON.get(t.ask_kind, "Parked on you") if open_ask else "Parked on you",
+            state=ASKING if open_ask else YOUR_MOVE,
+            reason=_REASON.get(t.ask_kind, "Your move") if open_ask else "Your move",
             title=t.title,
             body=(t.ask_body if open_ask else t.next_action or "")[:400],
             workspace=ws,

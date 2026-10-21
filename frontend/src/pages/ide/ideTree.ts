@@ -76,8 +76,9 @@ export function runnerKey(s: IdeSession): string {
   return s.runner_id || NO_RUNNER
 }
 
-/** The folder a session sits in: the emdash project its worktree lives under. */
-export function folderKey(s: IdeSession): string {
+/** The folder a session sits in: the emdash project its worktree lives under.
+ *  Home groups its sessions by the same key. */
+export function folderKey(s: Pick<IdeSession, 'emdash_project' | 'project' | 'agent_slug'>): string {
   return (s.emdash_project || s.project || s.agent_slug || '').trim()
 }
 

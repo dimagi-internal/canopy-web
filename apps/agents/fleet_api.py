@@ -13,7 +13,8 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.api.pagination import DEFAULT_LIMIT_CAP, clamp_limit
+from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
+from apps.workspaces import services as wsvc
 
 from . import services
 from .api import (
@@ -22,10 +23,12 @@ from .api import (
     _require_workspace_editor,
     _visible_agent_workspace_ids,
     apply_project_patch,
+    list_agents,
     project_detail,
 )
 from .models import Agent, AgentProject, AgentTask
 from .schemas import (
+    AgentOut,
     AgentProjectDetailOut,
     AgentProjectOut,
     AgentProjectPatch,
@@ -67,6 +70,27 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
     return [AgentTaskOut.model_validate(t) for t in qs]
 
 
+@router.get("/me/tasks/", response=list[AgentTaskOut],
+            summary="Tasks across every agent you can see, in every workspace you are in")
+def list_my_tasks(request: HttpRequest, agent: str = "", project: str = "", status: str = "",
+                  waiting: str = "", ask: str = "", limit: int = DEFAULT_LIMIT_CAP) -> list[AgentTaskOut]:
+    """The fleet task list as a user-level view: each organisation is read on
+    its own (`each_organisation`). `waiting=me` is your inbox everywhere. Same
+    order: reviews, then questions, then the rest; oldest first within each."""
+    rows = wsvc.each_organisation(request, lambda: list_fleet_tasks(
+        request, agent=agent, project=project, status=status, waiting=waiting, ask=ask, limit=limit))
+    rows.sort(key=lambda t: ({AgentTask.ASK_REVIEW: 0, AgentTask.ASK_QUESTION: 1}.get(t.ask_kind, 2), t.created_at))
+    return rows[:clamp_limit(limit)]
+
+
+@router.get("/me/agents/", response=Page[AgentOut], summary="Every agent you can see, in every workspace you are in")
+def list_my_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
+    """The agent list as a user-level view: each organisation read on its own,
+    every row carrying its workspace. By name."""
+    rows = wsvc.each_organisation(request, lambda: list_agents(request, limit=limit).items)
+    return paginate(sorted(rows, key=lambda a: a.name.lower()), offset=0, limit=clamp_limit(limit))
+
+
 @router.get("/projects/", response=list[AgentProjectOut],
             summary="Projects across every agent you can see")
 def list_fleet_projects(request: HttpRequest, status: str = "active",
@@ -76,10 +100,27 @@ def list_fleet_projects(request: HttpRequest, status: str = "active",
     qs = AgentProject.objects.filter(agent__workspace_id__in=_listed_agent_workspace_ids(request))
     if scope:
         qs = qs.filter(scope=scope)
-    if status:
-        qs = qs.filter(status=status)
     if repo_slug:
         qs = qs.filter(repo_slug=repo_slug)
+    return _project_rows(qs, status=status)
+
+
+@router.get("/me/projects/", response=list[AgentProjectOut],
+            summary="The projects you own, across every workspace you are in")
+def list_my_projects(request: HttpRequest, status: str = "active") -> list[AgentProjectOut]:
+    """A user-level view: each organisation is read on its own
+    (`each_organisation`) and every row carries its workspace. Active by
+    default; `status=` (empty for all)."""
+    return wsvc.each_organisation(request, lambda: _project_rows(
+        AgentProject.objects.filter(agent__workspace_id__in=_listed_agent_workspace_ids(request),
+                                    owner_user=request.user),
+        status=status,
+    ))
+
+
+def _project_rows(qs, *, status: str) -> list[AgentProjectOut]:
+    if status:
+        qs = qs.filter(status=status)
     # Counted in the same query: the property would cost two queries a project.
     qs = qs.annotate(
         n_tasks=Count("tasks", distinct=True),
