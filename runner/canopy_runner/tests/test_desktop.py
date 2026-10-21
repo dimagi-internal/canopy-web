@@ -114,7 +114,8 @@ def test_a_new_thread_takes_the_current_runtime(cfg, monkeypatch):
 
 def test_worktree_settings_merge_allow_and_enable_the_mod():
     out = desktop.worktree_settings(["Bash"], {"permissions": {"allow": ["Read"]}, "x": 1})
-    assert out["permissions"]["allow"] == ["Bash", "Read"]
+    # start_session by exact name, whatever the allow-list: the mod's starts need it.
+    assert out["permissions"]["allow"] == ["Bash", "Read", desktop.START_RULE]
     assert out["enabledPlugins"][desktop.PLUGIN] is True and out["x"] == 1
 
 
@@ -511,6 +512,15 @@ def test_the_mod_reports_a_card_only_when_one_is_drawn():
     reporting it read an allowed call as "needs input" (found live on jj)."""
     mod = (Path(desktop.MOD_SRC) / "mod" / "hooks" / "register.tsx").read_text()
     assert "on('classic.PermissionRequest'" in mod and "on('tool.check'" not in mod
+
+
+def test_only_the_mods_own_start_gets_through():
+    """The runner allows start_session by name so the mod's start skips auto mode's
+    classifier (which refused it live on jj, "no verdict"); the mod denies the
+    model's own calls so that rule gives agents nothing new."""
+    mod = (Path(desktop.MOD_SRC) / "mod" / "hooks" / "register.tsx").read_text()
+    assert f"const START_TOOL = '{desktop.START_RULE}'" in mod
+    assert "on('tool.call', { tool: START_TOOL }" in mod and "if (dir && !starting) return { deny:" in mod
 
 
 def test_a_new_sessions_turn_transcript_skips_the_seed(cfg, tmp_path, no_app, monkeypatch):

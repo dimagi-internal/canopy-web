@@ -104,6 +104,12 @@ TRANSCRIPT_BATCH_BYTES = 512 * 1024
 
 DEFAULT_ALLOW = ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit", "Bash",
                  "WebFetch", "WebSearch", "TodoWrite", "Task", "Skill", "mcp__*"]
+#: The app's start_session tool, allowed by exact name in every worktree the
+#: runner prepares, whatever `desktop_allow` says: the mod's start (start_in_app)
+#: calls it, and in auto mode a call no rule allows goes to the classifier, which
+#: refuses a call no model request asked for. A wildcard does not cover it. The
+#: mod denies the model's own calls, so this lets only the runner's starts through.
+START_RULE = "mcp__ccd_session__start_session"
 SEED_PROMPT = "This session was prepared by canopy. Reply with exactly: ready"
 
 
@@ -439,7 +445,7 @@ def make_worktree(cfg, repo: Path, base_ref: str, name: str) -> Path:
 def worktree_settings(allow: list[str], existing: dict | None = None) -> dict:
     out = dict(existing or {})
     perms = dict(out.get("permissions") or {})
-    perms["allow"] = sorted(set(perms.get("allow") or []) | set(allow))
+    perms["allow"] = sorted(set(perms.get("allow") or []) | set(allow) | {START_RULE})
     out["permissions"] = perms
     plugins = dict(out.get("enabledPlugins") or {})
     plugins[PLUGIN] = True
