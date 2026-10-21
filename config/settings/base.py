@@ -341,19 +341,23 @@ HCP_VERTEX_LOCATION = env("HCP_VERTEX_LOCATION", default="us-central1")
 HCP_VERTEX_WIF_AUDIENCE = env("HCP_VERTEX_WIF_AUDIENCE", default="")
 HCP_VERTEX_SERVICE_ACCOUNT = env("HCP_VERTEX_SERVICE_ACCOUNT", default="")
 
-# --- Knowledge-base search by meaning (apps/agents/kb_vectors.py) ---
-# The model a workspace project's KB passages are embedded with; same identity,
-# same zero-retention gate as memory. Only a `vertex/` model (asked for 3072-d) fits
-# the halfvec(3072) column; anything else, or no PostgreSQL `vector` extension, means
-# KB search stays lexical. Defaults to memory's model.
-KB_EMBEDDINGS_MODEL = env("KB_EMBEDDINGS_MODEL", default=HCP_EMBEDDINGS_MODEL)
-# A reranker over KB search's top 50: Vertex AI ranking API model (e.g.
-# `semantic-ranker-default@latest`), same identity. Empty = off. Needs the Discovery
+# --- Knowledge-base search reranker (apps/agents/kb_rerank.py) ---
+# Orders KB search's word and card matches: a Vertex AI ranking API model (e.g.
+# `semantic-ranker-default@latest`), memory's identity. Empty = off. Needs the Discovery
 # Engine API enabled in HCP_VERTEX_PROJECT and the service account allowed to rank.
 KB_RERANK_MODEL = env("KB_RERANK_MODEL", default="")
 # Where it runs: a multi-region (`us`, `eu`: its own `<loc>-discoveryengine` host,
 # what Google's BAA asks for with PHI) or `global`.
 KB_RERANK_LOCATION = env("KB_RERANK_LOCATION", default="us")
+
+# --- Knowledge-base vectors (apps/agents/kb_vectors.py): DORMANT ---
+# KB search is agentic and uses no vectors. Off, nothing embeds a passage or a
+# question: search passes no vectors, a publish starts no sync, kb_embed refuses.
+# The settings below matter only when this is turned on.
+KB_VECTORS = env.bool("KB_VECTORS", default=False)
+# The model passages would be embedded with; same identity, same zero-retention gate
+# as memory. Only a `vertex/` model (asked for 3072-d) fits the halfvec(3072) column.
+KB_EMBEDDINGS_MODEL = env("KB_EMBEDDINGS_MODEL", default=HCP_EMBEDDINGS_MODEL)
 # A bulk embed (`manage.py kb_embed`, the sync after a publish): parallel calls,
 # and a ceiling on calls a minute across them (gemini-embedding-001 takes one
 # text per call). A 429 backs everyone off; failures are left for the next run.

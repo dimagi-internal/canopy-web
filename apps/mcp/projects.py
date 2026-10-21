@@ -93,7 +93,7 @@ def _specs(workspace: str, handle: str) -> list[dict]:
 
 
 def _call(workspace: str, handle: str, name: str, arguments: dict):
-    from apps.agents import kb_store, kb_vectors
+    from apps.agents import kb_rerank, kb_store, kb_vectors
     from canopy_kb import KBError
     from canopy_kb.tools import run
 
@@ -102,10 +102,10 @@ def _call(workspace: str, handle: str, name: str, arguments: dict):
         raise ToolError(f"no workspace project {workspace}/{handle} serving tools")
     kb = kb_store.open_kb(project)
     try:
-        # `search` pools the project's nearest passages (pgvector) with its word
-        # matches when it has vectors, and reranks the pool when a reranker is set.
+        # `search` reranks its word and card matches when a reranker is set. Vectors
+        # are dormant: `semantic_for` is None while KB_VECTORS is off (kb_vectors.py).
+        rerank = kb_rerank.reranker() if name == "search" else None
         semantic = kb_vectors.semantic_for(project) if name == "search" else None
-        rerank = kb_vectors.reranker() if name == "search" else None
         return run(kb, name, arguments, semantic, rerank)
     except (KBError, KeyError, ValueError, TypeError) as exc:
         raise ToolError(f"{name}: {exc}") from exc

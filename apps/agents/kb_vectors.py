@@ -1,7 +1,18 @@
-"""The semantic half of a workspace project's knowledge-base `search` — vectors in
-pgvector, kept in step with the published KB file.
+"""DORMANT: knowledge-base vectors in pgvector. Nothing uses them unless KB_VECTORS is on,
+and it is off.
 
-* **What is embedded** is `canopy_kb.hybrid.embedding_text` for each passage of the
+KB search is agentic (`canopy_kb.research`): words over passages and catalog cards,
+ordered by the reranker (`kb_rerank.py`), then the agent opens and greps documents.
+On 70 GiveWell questions that beat one-shot embedding search outright, so vectors were
+switched off rather than deleted: this module, `KbPassage` and `manage.py kb_embed`
+stay so a corpus that turns out to need search by meaning can have it back with one
+setting. While `KB_VECTORS` is off, `available()` is False, so `semantic_for` answers
+None (the MCP `search` passes no vectors), a publish starts no sync, and `kb_embed`
+refuses — no embedding call is made and no passage leaves the server for one.
+
+What it does when on:
+
+* **What is embedded** is `canopy_kb.vectors.embedding_text` for each passage of the
   file (a title/type/date header, then the passage), with
   `settings.KB_EMBEDDINGS_MODEL` (Vertex `gemini-embedding-001` at its full
   3072 dimensions, `RETRIEVAL_DOCUMENT`) through the same adapter, identity and zero-retention
@@ -15,33 +26,11 @@ pgvector, kept in step with the published KB file.
   waits for `manage.py kb_embed`, run on purpose.
 * **Search** (`semantic_for`) embeds the question (`RETRIEVAL_QUERY`) and asks
   the HNSW index for the nearest passages of THIS project, filtered by type and
-  date during the scan (pgvector 0.8 iterative scan). `canopy_kb` fuses them with
-  BM25 by weighted reciprocal rank.
-* **Rerank** (`reranker`, off unless `KB_RERANK_MODEL` is set): the Vertex AI
-  ranking API rescores the fused top 50, reading question and passage together.
-  There is no retention setting to check the way `retention_ok` checks the
-  embedding model: Google publishes no zero-retention statement for ranking and
-  no cacheConfig-like switch. What it does say: the API is "stateless" (ranking
-  page); Agent Search, which it belongs to, is an AI/ML Service, not a Generative
-  AI Service, so the abuse-monitoring prompt logging does not cover it (Service
-  Specific Terms, services summary); "Google will not use Customer Data to train
-  or fine-tune any AI/ML models" (Service Specific Terms §18). Its Data Access
-  audit logs (`RankService.Rank`, DATA_READ) are off unless the project turns
-  them on, and land in our own project. Needs `discoveryengine.googleapis.com`
-  enabled and `discoveryengine.rankingConfigs.rank` on the service account.
-  Calls go to the US multi-region (`us-discoveryengine.googleapis.com`,
-  `locations/us`; `KB_RERANK_LOCATION`): "Agent Search on Gemini Enterprise Agent
-  Platform" is on Google's HIPAA BAA list with the footnote "Use regional APIs and
-  resource locations for PHI", which `global` is not. Same scores and latency as
-  `global` (checked 2026-10-19, 50 passages: ~0.45 s both).
-  Measured on the GiveWell KB's 312 golden questions (hybrid 0.7 top 50):
-  `semantic-ranker-default@latest` MRR 0.508 -> 0.588, R@10 237 -> 259/312, the
-  hand-written 30 not worse; `semantic-ranker-fast@latest` 0.545, worse on
-  paraphrases. About 0.5 s a call (p95 0.6-0.7 s).
-
-Every way this can be missing — SQLite, no `vector` extension, a non-Vertex model,
-no rows yet, the embedding call failing — answers None, and the search is lexical.
-Nothing breaks before the first sync.
+  date during the scan (pgvector 0.8 iterative scan). `canopy_kb` adds them to the
+  pool the reranker orders.
+Every way this can be missing — KB_VECTORS off, SQLite, no `vector` extension, a
+non-Vertex model, no rows yet, the embedding call failing — answers None, and search
+runs without vectors, as it does today.
 """
 from __future__ import annotations
 
@@ -69,7 +58,7 @@ BATCH = 256
 #: and canopy_kb keeps one per item, so ask for more than the items wanted.
 PASSAGES_PER_ITEM = 3
 #: HNSW candidate list per search: pgvector's maximum. Measured on the GiveWell KB
-#: (140k passages, kb_eval): lower values lost neighbours an exact scan finds; with
+#: (140k passages, the retired kb_eval): lower values lost neighbours an exact scan finds; with
 #: the index built m=32, ef_construction=200 (migration 0065) 1000 comes within
 #: 2/312 of the exact scan at ~60 ms a search.
 EF_SEARCH = 1000
@@ -88,9 +77,9 @@ def model() -> str:
 
 
 def available() -> bool:
-    """PostgreSQL with the `vector` extension, and a usable model. The extension
-    check is asked once per process: it does not come and go."""
-    if connection.vendor != "postgresql" or not model():
+    """KB_VECTORS on, PostgreSQL with the `vector` extension, and a usable model. The
+    extension check is asked once per process: it does not come and go."""
+    if not getattr(settings, "KB_VECTORS", False) or connection.vendor != "postgresql" or not model():
         return False
     if not _extension["checked"]:
         try:
@@ -157,44 +146,6 @@ def semantic_for(project) -> Callable | None:
         return search(project, query, types=types, since=since, until=until, limit=limit)
 
     return semantic
-
-
-# --- rerank -----------------------------------------------------------------------
-
-
-def _rank_location() -> str:
-    return (getattr(settings, "KB_RERANK_LOCATION", "") or "us").strip()
-
-
-def _rank_host() -> str:
-    """`global` is the plain host; a multi-region (`us`, `eu`) has its own, which is
-    what Google's BAA asks for with PHI ("use regional APIs and resource locations")."""
-    loc = _rank_location()
-    return "discoveryengine.googleapis.com" if loc == "global" else f"{loc}-discoveryengine.googleapis.com"
-
-
-def _rank(query: str, docs: list[dict]) -> list[int] | None:
-    """Vertex AI ranking API (Discovery Engine `rank`) over the candidates: a model
-    that reads the question and each passage together, which neither the BM25 index
-    nor a passage vector computed before the question existed can do. Indices into
-    `docs`, best first; None on any failure (the fused order stands)."""
-    url = (f"https://{_rank_host()}/v1/projects/"
-           f"{settings.HCP_VERTEX_PROJECT}/locations/{_rank_location()}/rankingConfigs/default_ranking_config:rank")
-    records = [{"id": str(i), "title": d["title"][:500], "content": d["text"]} for i, d in enumerate(docs)]
-    try:
-        resp = embeddings._vertex_session().post(
-            url, json={"model": settings.KB_RERANK_MODEL, "query": query[:2000], "records": records,
-                       "topN": len(records)}, timeout=(2, 15))  # a research search sends up to ~170
-        resp.raise_for_status()
-        return [int(r["id"]) for r in resp.json().get("records", [])]
-    except Exception:  # noqa: BLE001 — reranking improves a usable order; it never costs one
-        logger.warning("kb rerank: %s failed; keeping the fused order", settings.KB_RERANK_MODEL, exc_info=True)
-        return None
-
-
-def reranker() -> Callable | None:
-    """The `rerank` callable `canopy_kb` search takes, when KB_RERANK_MODEL names one."""
-    return _rank if (getattr(settings, "KB_RERANK_MODEL", "") or "").strip() else None
 
 
 # --- sync -------------------------------------------------------------------------

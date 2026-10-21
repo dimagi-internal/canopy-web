@@ -13,11 +13,16 @@ import json
 import re
 import sqlite3
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
 if TYPE_CHECKING:
-    from canopy_kb.hybrid import Rerank, Semantic
     from canopy_kb.kb import KB
+    from canopy_kb.vectors import Semantic
+
+#: `rerank(query, documents)` → indices into `documents`, best first, or None when it
+#: could not answer (the word order then stands). A document is a dict with `title`
+#: and `text`. canopy-web's is the Vertex AI ranking API (`apps/agents/kb_rerank.py`).
+Rerank = Callable[[str, list[dict]], Optional[Sequence[int]]]
 
 #: Passages pooled per search before reranking, and per document within that pool.
 POOL = 90
@@ -116,9 +121,9 @@ def search(kb: "KB", query: str, types=None, entity: str = "", since: str = "", 
            semantic: "Semantic | None" = None, rerank: "Rerank | None" = None) -> str:
     """Documents for a question, best first: each with its card and best passages.
 
-    Candidates are passages matching the words (all of them, then any), documents whose
-    catalog card matches, and the host's nearest passages by meaning when it keeps
-    vectors; a reranker then orders the whole pool by meaning."""
+    Candidates are passages matching the words (all of them, then any) and documents
+    whose catalog card matches; a reranker then orders the whole pool by meaning.
+    `semantic` is the dormant vector hook (`vectors.py`): no host passes one today."""
     if not query.strip():
         return "Empty query."
     k = max(1, min(int(k or 10), 30))

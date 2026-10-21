@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import re
 
-from canopy_kb.hybrid import Rerank, Semantic
 from canopy_kb.kb import KB, KBError
+from canopy_kb.research import Rerank
+from canopy_kb.vectors import Semantic
 
 PROTOCOL = "2025-06-18"
 
@@ -137,7 +138,7 @@ def tool_specs(kb: KB) -> list[dict]:
 
 def run(kb: KB, name: str, args: dict, semantic: Semantic | None = None, rerank: Rerank | None = None):
     """Call one tool by name: the result is text (the research tools) or JSON-serialisable;
-    raises KBError (or KeyError/ValueError/TypeError on bad arguments). `semantic` is the
-    host's nearest-passages lookup (`hybrid.Semantic`); without it `search` matches words
-    only. `rerank` is the host's reranker (`hybrid.Rerank`); without it, no rescoring."""
+    raises KBError (or KeyError/ValueError/TypeError on bad arguments). `rerank` is the
+    host's reranker (`research.Rerank`); without it, `search` keeps the word order.
+    `semantic` is the dormant vector hook (`vectors.Semantic`): no host passes one today."""
     return call_tool(kb, name, args or {}, {t["name"]: t for t in table_tools(kb)}, semantic, rerank)

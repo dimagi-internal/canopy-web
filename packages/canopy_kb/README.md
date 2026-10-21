@@ -16,7 +16,13 @@ organisation or program), `doc` (outline, links, versions), `read` (a section),
 |---|---|
 | `chunking.py` | passages (3,200-char spans with a heading path, 400 overlap) and outlines |
 | `entities.py` | the entity index from catalog cards, merged by key, acronym and alias |
-| `kb.py` | `build` (schema 3) and `KB`: passage search for the vector sync and `kb_eval` |
+| `kb.py` | `build` (schema 3) and `KB`: the reader the research tools run on |
 | `research.py` | the research tools, as text |
-| `hybrid.py` | what a passage's vector is made of, and fusion |
+| `vectors.py` | dormant: what a passage's vector would be made of, for a host that turns vectors on |
 | `tools.py` | MCP tool specs and dispatch |
+
+No embeddings are involved. `search` is words over passages and catalog cards, ordered
+by the host's reranker; the agent then opens and greps documents. On 70 GiveWell
+questions that beat one-shot embedding search (35.5/40 fact questions against 28.5).
+`vectors.py`, `KB.passages()` and `search`'s `semantic` hook stay so a host can turn
+vectors back on without a schema change; canopy-web keeps them off (`KB_VECTORS`).
