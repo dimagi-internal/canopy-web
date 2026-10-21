@@ -421,8 +421,17 @@ def test_desktop_sessions_join_the_session_report(cfg, tmp_path, monkeypatch):
     t2 = t + 5
     (ch / f"ev-{t2}-2-ask.json").write_text(json.dumps({"t": t2, "kind": "ask", "extra": {"tool": "Bash"}}))
     assert desktop.open_sessions(cfg)[0]["agent_status"] == "awaiting-input"
-    (ch / f"ev-{t2 + 1}-3-turn.complete.json").write_text(json.dumps({"t": t2 + 1, "kind": "turn.complete"}))
+    (ch / f"ev-{t2}-3-answered.json").write_text(json.dumps({"t": t2, "kind": "answered", "extra": {"tool": "Bash"}}))
+    assert desktop.open_sessions(cfg)[0]["agent_status"] == "working"  # the card was answered
+    (ch / f"ev-{t2 + 1}-4-turn.complete.json").write_text(json.dumps({"t": t2 + 1, "kind": "turn.complete"}))
     assert desktop.open_sessions(cfg)[0]["agent_status"] == ""
+
+
+def test_the_mod_reports_a_card_only_when_one_is_drawn():
+    """`tool.check`'s ask comes before rules, hooks and the classifier settle it;
+    reporting it read an allowed call as "needs input" (found live on jj)."""
+    mod = (Path(desktop.MOD_SRC) / "mod" / "hooks" / "register.tsx").read_text()
+    assert "on('classic.PermissionRequest'" in mod and "on('tool.check'" not in mod
 
 
 def test_a_new_sessions_turn_transcript_skips_the_seed(cfg, tmp_path, no_app, monkeypatch):

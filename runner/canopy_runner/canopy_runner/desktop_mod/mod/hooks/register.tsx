@@ -14,7 +14,7 @@ import type { Register } from 'claude-code'
 //                   stop-<n>.txt      stop the running turn (stop-<n>.done marks it)
 //   mod -> runner   alive             a timestamp, rewritten every poll: "this session's process is up"
 //                   ev-<t>-<n>-<kind>.json   session.start / submitted / turn.start /
-//                                     turn.complete / ask / submit.error / stopped
+//                                     turn.complete / ask / answered / submit.error / stopped
 //
 // Files, not HTTP: the mod has no credential and should not need one, and a
 // file left by a session that died is still there for the runner to read.
@@ -25,6 +25,9 @@ let seq = 0
 let started = false
 // The model turn running now, from turn.start, so a stop can name it.
 let running = ''
+// Permission cards drawn and not yet answered, by tool. PermissionRequest names
+// no call id, so a call settling clears a card for its own tool only.
+const asking = new Map<string, number>()
 
 async function emit($: any, kind: string, extra: unknown) {
   if (!dir) return
@@ -149,12 +152,32 @@ export const register: Register = (on) => {
     )
   })
 
-  // A permission ask is a session waiting on a human. The app shows its own card;
+  // A permission card is a session waiting on a human. The app shows its own;
   // this tells the runner, so canopy-web can show "needs input" too.
-  on('tool.check', async ($, e, next) => {
+  //
+  // Not from `tool.check`: its `ask` is the verdict before the mode's decider
+  // settles it, and a rule, a hook or the classifier often allows the call with
+  // no card ever drawn (found live on jj: a `python3 -c` the allow-list passed
+  // still read as "needs input"). PermissionRequest is raised only where a card
+  // is about to be shown, and a settings hook that answers it leaves none.
+  on('classic.PermissionRequest', async ($, e, next) => {
     const r = await next(e)
-    // Report only; never let a failed write change the decision.
-    if (r.decision === 'ask') await emit($, 'ask', { tool: e.tool, reason: r.reason ?? '' }).catch(() => {})
+    if (!r.decision) {
+      asking.set(e.tool_name, (asking.get(e.tool_name) ?? 0) + 1)
+      // Report only; never let a failed write change the decision.
+      await emit($, 'ask', { tool: e.tool_name }).catch(() => {})
+    }
+    return r
+  })
+
+  // The card was answered, either way, once the call it held up settles.
+  on('tool.call', async ($, e, next) => {
+    const r = await next(e)
+    const n = asking.get(e.tool) ?? 0
+    if (n > 0) {
+      if (n === 1) asking.delete(e.tool); else asking.set(e.tool, n - 1)
+      await emit($, 'answered', { tool: e.tool }).catch(() => {})
+    }
     return r
   })
 }
