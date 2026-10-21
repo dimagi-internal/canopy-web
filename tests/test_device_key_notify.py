@@ -140,6 +140,7 @@ def test_the_notice_names_the_computer_not_its_kernel(box, django_capture_on_com
 
 @pytest.mark.parametrize("label,kind,said", [
     ("Jonathans-MBP (Darwin)", "secure-enclave", "the Mac named Jonathans-MBP"),
+    ("DIM-SA-A126 (macOS)", "secure-enclave", "the Mac named DIM-SA-A126"),
     ("BOX (Windows)", "tpm", "the Windows PC named BOX"),
     ("cloud-ec2-1 instance role", "aws-iam", "cloud-ec2-1 instance role"),
     ("", "software", "a software key"),

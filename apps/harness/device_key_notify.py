@@ -39,7 +39,7 @@ def approvers(runner) -> list:
 #: `platform.system()` names, as the canopy CLI's default key label carries them
 #: ("DIM-SA-A126 (Darwin)"). "Darwin" read to a Mac owner as a machine they had
 #: never heard of (2026-10-21), so a notice names the kind of computer instead.
-_SYSTEMS = {"Darwin": "Mac", "Windows": "Windows PC", "Linux": "Linux machine"}
+_SYSTEMS = {"Darwin": "Mac", "macOS": "Mac", "Windows": "Windows PC", "Linux": "Linux machine"}
 
 
 def machine(key) -> str:
