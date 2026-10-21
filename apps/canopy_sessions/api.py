@@ -70,6 +70,7 @@ from .schemas import (
     SendOut,
     SessionCreateIn,
     SessionDetailOut,
+    SessionInfoOut,
     SessionMoveIn,
     ParticipantAddIn,
     ParticipantOut,
@@ -946,6 +947,84 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data["my_role"] = access.role_for(request.user, session)
     data["can_move"] = filing.can_move(request.user, session)
     return data
+
+
+#: How many of a session's turns Session info lists. A long-lived chat has a
+#: turn per message; the panel is for "how did this start, and what drove it
+#: lately", and `turn_count` says how many there were in all.
+SESSION_INFO_TURNS = 50
+
+
+def _info_binding(binding) -> dict | None:
+    if binding is None:
+        return None
+    runner = binding.runner if binding.runner_id else None
+    return {
+        "runner_id": runner.id if runner else None,
+        "runner_name": runner.name if runner else None,
+        "runner_kind": runner.kind if runner else None,
+        "host": binding.host,
+        "emdash_project": binding.emdash_project,
+        "session_key": binding.session_key,
+        "thread_key": binding.thread_key,
+        "transcript_id": binding.transcript_id,
+        "task_uid": binding.task_uid,
+        "agent_task_ext_id": binding.agent_task_ext_id,
+        "status": binding.status,
+        "agent_status": binding.agent_status,
+        "summary": binding.summary,
+        "transferred_at": binding.transferred_at,
+        "transferred_from_name": binding.transferred_from.name if binding.transferred_from_id else None,
+        "reported_at": binding.reported_at,
+        "live_seen_at": binding.live_seen_at,
+        "last_interacted_at": binding.last_interacted_at,
+        "updated_at": binding.updated_at,
+    }
+
+
+@router.get("/{session_id}/info", response=SessionInfoOut, summary="Everything stored about a session")
+def get_session_info(request: HttpRequest, session_id: uuid.UUID):
+    """What canopy stores about one session: the session itself (who opened it,
+    what created it and under which parent, what it did), the runner binding
+    that backs it, and the turns that drove it — each with who asked, through
+    which credential and client, in which mode and on which runner. Readable by
+    anyone who can read the session; turn content you may not read is blanked."""
+    from django.db.models import Q
+
+    from apps.harness import turn_access
+    from apps.harness.models import Turn
+
+    session = _session_or_404(request, session_id)
+    binding = getattr(session, "runner_binding", None)
+    # The same two ways a turn drives a session as `staleness.driving_turns`,
+    # for one session rather than under a queryset.
+    driving = Q(chat_session=session)
+    if session.agent_id and binding is not None and binding.session_key:
+        driving |= Q(agent_id=session.agent_id, session_key=binding.session_key)
+    turns_qs = Turn.objects.filter(driving)
+    first_claimed = turns_qs.exclude(turn_mode="").order_by("created_at").first()
+    session._turn_mode = first_claimed.turn_mode if first_claimed else ""
+    session._turn_origin = first_claimed.origin if first_claimed else ""
+    turns = list(
+        turns_qs.select_related(
+            "agent", "chat_session", "claimed_by", "enqueued_by", "pinned_runner",
+            "requested_turn_mode_by", "raised_from_task", "initiator_user", "initiator_contact",
+            "parent_turn__claimed_by",
+        ).order_by("-created_at")[:SESSION_INFO_TURNS]
+    )
+    turn_access.redact(turns, request.user)
+    return {
+        "session": _out(session),
+        "metadata": session.metadata or {},
+        "contact": str(session.contact) if session.contact_id else None,
+        "updated_at": session.updated_at,
+        "binding": _info_binding(binding),
+        "turns": turns,
+        "turn_count": turns_qs.count(),
+        "turns_limit": SESSION_INFO_TURNS,
+        "participant_count": session.participants.count(),
+        "message_count": session.messages.count(),
+    }
 
 
 @router.get(

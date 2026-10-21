@@ -15,6 +15,7 @@ export type IdeAction =
   | { kind: 'open-tab' }
   | { kind: 'copy-link' }
   | { kind: 'rename' }
+  | { kind: 'info' }
   | { kind: 'open-desktop'; href: string }
   | { kind: 'stop' }
   | { kind: 'transfer'; runner: RunnerOut }
@@ -176,6 +177,13 @@ export function SessionContextMenu({
         testId="ide-menu-rename"
       >
         Rename…
+      </Item>
+      <Item
+        onClick={() => onAction({ kind: 'info' })}
+        title="Everything canopy stores about this session: who started it, through what, where it runs, the turns that drove it"
+        testId="ide-menu-info"
+      >
+        Session info…
       </Item>
       {desktop && (
         <Item

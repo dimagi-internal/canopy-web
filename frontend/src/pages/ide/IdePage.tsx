@@ -5,6 +5,9 @@ import { StateDot as SharedStateDot } from '@/components/sessions/StateDot'
 import { ChevronDown, Menu, MoreHorizontal } from 'lucide-react'
 import { WorkbenchRail, WorkbenchShell } from 'canopy-ui'
 import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -35,6 +38,7 @@ import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { TitleInput } from '@/components/chat/TitleInput'
 import { SessionContextMenu, type IdeAction } from './SessionContextMenu'
+import { SessionInfoPanel } from '@/components/chat/SessionInfoPanel'
 import { useCloseReview } from './useCloseReview'
 import {
   DEFAULT_FILTERS,
@@ -356,6 +360,8 @@ export function IdePage() {
   // A session made here opens with its title being named.
   const [justCreated, setJustCreated] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  // The session whose Session info dialog is open (the row menu's "Session info…").
+  const [infoId, setInfoId] = useState<string | null>(null)
   useEffect(() => {
     if (justCreated && id !== justCreated) setJustCreated(null)
   }, [id, justCreated])
@@ -475,6 +481,9 @@ export function IdePage() {
           return
         case 'rename':
           setRenamingId(s.id)
+          return
+        case 'info':
+          setInfoId(s.id)
           return
         case 'open-desktop':
           window.location.href = a.href
@@ -940,6 +949,12 @@ export function IdePage() {
           onDismiss={dismissMenu}
         />
       )}
+      <Dialog open={infoId !== null} onOpenChange={(open: boolean) => !open && setInfoId(null)}>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-2xl bg-card">
+          <DialogTitle className="text-sm font-semibold text-foreground">Session info</DialogTitle>
+          {infoId && <SessionInfoPanel sessionId={infoId} />}
+        </DialogContent>
+      </Dialog>
     </WorkbenchShell>
   )
 }

@@ -243,6 +243,18 @@ export function setSessionTitle(id: string, title: string): Promise<ChatSession>
   });
 }
 
+export type SessionInfo = components["schemas"]["SessionInfoOut"];
+export type SessionInfoTurn = components["schemas"]["TurnOut"];
+
+/**
+ * Everything canopy stores about one session, for the Session info panel: the
+ * session (who opened it, what created it, under which parent, what it did), the
+ * runner binding behind it, and the turns that drove it.
+ */
+export function getSessionInfo(id: string): Promise<SessionInfo> {
+  return request<SessionInfo>(`/api/canopy-sessions/${encodeURIComponent(id)}/info`);
+}
+
 export type SlackDetachResult = components["schemas"]["SlackDetachOut"];
 
 /**
