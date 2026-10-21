@@ -3137,7 +3137,6 @@ def agent_device_keys(request: HttpRequest, slug: str):
     an admin of it)."""
     from apps.harness import device_keys
     from apps.harness.api_device_keys import agents_key_opens, key_out, zk_agents_waiting_on
-    from apps.harness.models import RunnerDeviceKey
     from apps.harness.runners import can_administer_runner
 
     agent = _agent_for_admin(request, slug)
@@ -3146,9 +3145,10 @@ def agent_device_keys(request: HttpRequest, slug: str):
     for k in device_keys.keys_for_agent(agent):
         row = key_out(k, can_manage=can_administer_runner(request.user, k.runner))
         row.can_open = agents_key_opens(k, vault)
-        if row.can_manage and (k.status == RunnerDeviceKey.PENDING or k.ecdh_waiting):
-            # Approving it will also wrap these (one passkey touch, canopy-web#1550).
-            row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=True)
+        if row.can_manage:
+            # Approving it will also wrap these (one passkey touch, canopy-web#1550);
+            # an approved key lists what it still waits on ("Give access").
+            row.zk_pending_agents = zk_agents_waiting_on(request.user, k, assume_active=not k.ecdh_ready)
         out.append(row)
     return out
 

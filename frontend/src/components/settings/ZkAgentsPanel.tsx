@@ -39,6 +39,14 @@ function statusText(r: AgentRow): string {
   return 'Private ✓'
 }
 
+/** Where to let a waiting machine in: its own row under Your machines, marked
+ *  (`?device_key=`), which offers "Give access" — one passkey touch for every
+ *  agent that machine waits on. */
+function machinesHref(pending: ZkStateOut['pending']): string {
+  const ids = [...new Set(pending.filter((p) => p.kind === 'device').map((p) => p.target))]
+  return ids.length === 1 ? `/settings?device_key=${ids[0]}#your-machines` : '#your-machines'
+}
+
 /** Who holds a copy of the agent's key right now, in plain words: "you",
  *  a colleague's email, "MacBook (acedimagi)", "cloud-ec2-2". An agent with no
  *  key of its own yet (kv 0) seals each secret to its owner and approved
@@ -107,7 +115,7 @@ export function ZkAgentsPanel() {
               </p>
               <span className={`shrink-0 text-xs ${ok ? 'text-success' : 'text-warning'}`} data-testid={`zk-agent-status-${r.slug}`}>
                 {pending.some((p) => p.kind === 'device')
-                  ? <a href="#your-machines" className="hover:underline">{statusText(r)}</a>
+                  ? <a href={machinesHref(pending)} className="underline">{statusText(r)}</a>
                   : statusText(r)}
               </span>
             </li>
