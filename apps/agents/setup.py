@@ -65,7 +65,7 @@ def _github(agent: Agent, settings: str) -> dict:
         "Its turns push code and open pull requests as whoever lends it a GitHub token, and it "
         "has no owner yet. A workspace owner can add the token, or give it an owner under "
         "People and roles.",
-        href=f"{settings}#credentials", action="Add a GitHub token")
+        href=f"{settings}#cred-github", action="Add a GitHub token")
 
 
 def _mailbox(agent: Agent, settings: str) -> dict:
