@@ -177,7 +177,8 @@ class Client:
                   code_branch: str | None = None, code_version: str | None = None,
                   code_sha: str | None = None, code_committed_at: int | None = None,
                   projects: list[str] | None = None, profiles: int | None = None,
-                  mailboxes_readable: list[str] | None = None) -> dict:
+                  mailboxes_readable: list[str] | None = None,
+                  health: dict | None = None) -> dict:
         """Report liveness. Code provenance is stamped HERE, not by callers.
 
         `services.heartbeat` assigns these unconditionally, so any heartbeat that
@@ -198,6 +199,9 @@ class Client:
 
         `mailboxes_readable` follows the `projects` contract: None omits it (no
         probe has finished yet), and the server keeps ringing this box.
+
+        So does `health`: a laptop reports one only once it has refreshed (refresh.py),
+        and its `bootstrapped_at` is what discharges the runner page's Refresh.
         """
         from . import provenance
         body = {"active_turn_ids": active_turn_ids, "degraded": degraded, "note": note,
@@ -211,6 +215,8 @@ class Client:
             body["projects"] = projects
         if mailboxes_readable is not None:
             body["mailboxes_readable"] = mailboxes_readable
+        if health is not None:
+            body["health"] = health
         # Sent on EVERY beat, from every call site: the server writes whatever it
         # gets (absent = 0), so one caller that left it out would flap this runner
         # between "may be given a caller's turn" and "may not" beat to beat.
@@ -261,6 +267,18 @@ class Client:
         the real daemon reports — forging liveness for a daemon that may be dead)."""
         _, payload = self._call("GET", "/runners/")
         return payload if isinstance(payload, list) else []
+
+    def deployed_runner_sha(self) -> str:
+        """The runner version the deployment ships, read WITHOUT the token off the
+        public health check — the updater's fallback when canopy refuses the token
+        (update.update_status). "" when the server is unreachable or too old to say."""
+        req = urllib.request.Request(f"{self.base_url}/health/", method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+                doc = json.loads(resp.read() or b"{}")
+        except (OSError, ValueError):
+            return ""
+        return str(doc.get("runner_code_sha") or "").strip() if isinstance(doc, dict) else ""
 
     def resolve_session(self, runner_id: str, agent_slug: str, thread_key: str, *,
                         project: str = "", workspace: str = "", turn_id: str = "") -> dict:

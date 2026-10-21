@@ -13,8 +13,16 @@ from config.static_cache import REVALIDATE
 
 
 def health_check(request):
-    """Simple health check endpoint."""
-    return JsonResponse({"status": "ok"})
+    """Health check — and the laptop runner version this deployment ships.
+
+    `runner_code_sha` is what a developer-install runner's updater compares itself
+    with when canopy refuses its token (runner `update.update_status`): its own row's
+    `expected_code_sha` is behind the token, and without this a box whose sign-in had
+    died could never update to the code that recovers it (canopy-web#1762). A commit
+    sha, nothing more — the same thing every heartbeat reply already carries."""
+    from apps.harness.runner_releases import deployed_sha
+
+    return JsonResponse({"status": "ok", "runner_code_sha": deployed_sha()})
 
 
 # The artifact addresses that no longer exist (canopy-web#1337): the flat

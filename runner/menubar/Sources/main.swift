@@ -180,6 +180,8 @@ struct ServerStatus {
     let remedy: String
     // Where to approve a key on this Mac that waits for a person; "" when none does.
     let keyWaiting: String
+    // Is this Mac its owner's private runner? nil from a daemon or server too old to say.
+    let isPrivate: Bool?
 
     static func load() -> ServerStatus? {
         guard let data = try? Data(contentsOf: serverStatusFile),
@@ -191,7 +193,17 @@ struct ServerStatus {
             httpStatus: obj["status"] as? Int, detail: obj["detail"] as? String ?? "",
             runnerStatus: obj["runner_status"] as? String ?? "", ready: obj["ready"] as? Bool ?? true,
             note: obj["note"] as? String ?? "", remedy: obj["remedy"] as? String ?? "",
-            keyWaiting: obj["key_waiting"] as? String ?? "")
+            keyWaiting: obj["key_waiting"] as? String ?? "", isPrivate: obj["private"] as? Bool)
+    }
+
+    // Whose sign-in a Claude Code session started on this Mac uses (canopy-web#1705).
+    // On a private runner it is recorded as the owner's local turn; on a shared one
+    // each person signs in with their own canopy login, so their own license applies.
+    var localSessions: String? {
+        guard ok, let isPrivate else { return nil }
+        return isPrivate
+            ? "Local sessions here run as your private runner"
+            : "Local sessions here sign in as each person (their own canopy login)"
     }
 
     // Accepted, but canopy says the box cannot take work.
@@ -635,6 +647,11 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindo
             let line = NSMenuItem(title: "  \(server.summary)", action: nil, keyEquivalent: "")
             line.isEnabled = false
             menu.addItem(line)
+            if let local = server.localSessions {
+                let item = NSMenuItem(title: "  \(local)", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            }
             if state == .degraded {
                 for text in [server.note, server.remedy.isEmpty ? "" : "To fix: \(server.remedy)"] where !text.isEmpty {
                     let item = NSMenuItem(title: "  \(text)", action: nil, keyEquivalent: "")
