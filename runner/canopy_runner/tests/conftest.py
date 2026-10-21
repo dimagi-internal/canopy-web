@@ -33,6 +33,16 @@ def _no_real_device_key_enrollment(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_cli_refresh(monkeypatch, request):
+    """main() starts a background check that can `uv tool install --reinstall` the
+    developer's real canopy CLI. Never from a test; the module's own tests opt out."""
+    if request.module.__name__.endswith("test_cli_refresh"):
+        return
+    from canopy_runner import cli_refresh
+    monkeypatch.setattr(cli_refresh, "start", lambda **kw: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_desktop_runtime(monkeypatch, tmp_path):
     """The Claude desktop runtime keeps a session index under ~/.canopy/desktop. On a
     box that has run desktop sessions, a test reading the REAL index sees them: the
