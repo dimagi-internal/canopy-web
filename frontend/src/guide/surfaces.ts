@@ -426,6 +426,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Open the project page', 'Share its address'],
   },
   {
+    path: '/w/:workspace/mcp',
+    title: 'MCP servers',
+    audience: 'Anyone in the workspace',
+    what: 'The MCP servers you can add: every published workspace project serving its own tools (a knowledge base today), here and in the workspaces below this one that you belong to. Each shows what it is, who keeps it, when it was last published and its size, with a workspace label when it lives below. Nothing is added to a session for you: Add it shows the claude mcp add line and the URL to paste as a connector. Agents get the same list from the list_mcp_servers tool.',
+    needsFirst: 'A workspace project that has published a knowledge base (canopy kb push --kb <workspace>/<handle>).',
+    actions: ['Browse the servers you can add', 'Copy the line that adds one to Claude Code', 'Copy its URL for Claude web or desktop', 'Open its project'],
+  },
+  {
     path: '/w/:workspace/agents/new',
     title: 'New agent',
     audience: 'Workspace editors creating an agent',

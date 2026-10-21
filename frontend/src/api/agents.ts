@@ -342,6 +342,15 @@ export async function listWorkspaceProjects(workspace?: string): Promise<Project
   return Array.from(unwrap(res, 'listWorkspaceProjects')) as ProjectOut[]
 }
 
+export type McpServerOut = Schemas['McpServerOut']
+
+/** The MCP servers a person could add: workspace projects serving their own tools, in
+ *  `workspace` and the workspaces below it they belong to. Browsed, never auto-added. */
+export async function listMcpServers(workspace: string): Promise<McpServerOut[]> {
+  const res = await apiV2.GET('/api/mcp-servers/', pin(workspace))
+  return Array.from(unwrap(res, 'listMcpServers')) as McpServerOut[]
+}
+
 /** One workspace project by its address, `<workspace>/<handle>`. */
 export async function getWorkspaceProject(workspace: string, handle: string): Promise<ProjectDetailOut> {
   const res = await apiV2.GET('/api/workspace-projects/{workspace}/{handle}/', {

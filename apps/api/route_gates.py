@@ -219,6 +219,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_my_tasks": ("member",),  # list_fleet_tasks per organisation
     "list_my_agents": ("member",),  # list_agents per organisation
     "list_workspace_projects": ("member",),
+    "list_mcp_servers": ("member",),
     "get_workspace_project": ("member",),
     "create_workspace_project": ("agent.work",),  # the steward's write gate
     "patch_workspace_project": ("agent.work",),  # the steward's (and a new steward's) write gate
