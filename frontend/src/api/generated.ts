@@ -26271,12 +26271,8 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "" | "manual" | "auto";
-            /**
-             * Acts As
-             * @default
-             * @enum {string}
-             */
-            readonly acts_as: "" | "editor" | "viewer";
+            /** Acts As */
+            readonly acts_as?: ("" | "editor" | "viewer") | null;
         };
         /** LocalTurnRenewOut */
         readonly LocalTurnRenewOut: {
@@ -28058,12 +28054,8 @@ export interface components {
             readonly runner_id?: string | null;
             /** Turn Mode */
             readonly turn_mode?: ("auto" | "manual") | null;
-            /**
-             * Acts As
-             * @default
-             * @enum {string}
-             */
-            readonly acts_as: "" | "editor" | "viewer";
+            /** Acts As */
+            readonly acts_as?: ("" | "editor" | "viewer") | null;
             readonly parent?: components["schemas"]["ParentIn"] | null;
         };
         /** EmdashSessionOut */

@@ -672,7 +672,7 @@ class TurnIn(Schema):
     # everything about it — whether it may be started, its mode, its envelope, its
     # credential reads — is judged as an `editor` or a `viewer`. Only lowers, so
     # anyone may ask; it ends with the turn. Omit to act as yourself.
-    acts_as: Literal["", "editor", "viewer"] = ""
+    acts_as: Literal["", "editor", "viewer"] | None = None
     # What this request was made from (see ParentIn). Optional.
     parent: ParentIn | None = None
 
@@ -2131,7 +2131,7 @@ class LocalTurnIn(Schema):
     #: "auto" is honoured only for an agent admin; anything else runs manual.
     turn_mode: Literal["", "manual", "auto"] = ""
     #: Open the session as a LOWER role ("editor" / "viewer"), as `TurnIn.acts_as`.
-    acts_as: Literal["", "editor", "viewer"] = ""
+    acts_as: Literal["", "editor", "viewer"] | None = None
 
 
 class LocalTurnOut(Schema):
