@@ -114,8 +114,7 @@ def test_a_new_thread_takes_the_current_runtime(cfg, monkeypatch):
 
 def test_worktree_settings_merge_allow_and_enable_the_mod():
     out = desktop.worktree_settings(["Bash"], {"permissions": {"allow": ["Read"]}, "x": 1})
-    # start_session by exact name, whatever the allow-list: the mod's starts need it.
-    assert out["permissions"]["allow"] == ["Bash", "Read", desktop.START_RULE]
+    assert out["permissions"]["allow"] == ["Bash", "Read"]
     assert out["enabledPlugins"][desktop.PLUGIN] is True and out["x"] == 1
 
 
@@ -271,6 +270,7 @@ def _host_mod(host: Path, cfg, sid: str, ok: bool = True):
 def test_a_new_session_opens_with_start_session_and_no_deep_link(cfg, tmp_path, no_app, monkeypatch):
     """The deep link brings Claude.app to the front; start_session from a live
     session's mod does not (canopy-web#1238)."""
+    monkeypatch.setenv("CANOPY_DESKTOP_START_SESSION", "1")
     cfg.project_paths = {"scratch": str(_repo(tmp_path))}
     monkeypatch.setattr(desktop, "app_features", lambda: {"start_session": True})
     host = _host(cfg, tmp_path)
@@ -292,6 +292,7 @@ def test_a_new_session_opens_with_start_session_and_no_deep_link(cfg, tmp_path, 
 
 
 def test_a_refused_start_falls_back_to_the_deep_link(cfg, tmp_path, no_app, monkeypatch):
+    monkeypatch.setenv("CANOPY_DESKTOP_START_SESSION", "1")
     cfg.project_paths = {"scratch": str(_repo(tmp_path))}
     monkeypatch.setattr(desktop, "app_features", lambda: {"start_session": True})
     host = _host(cfg, tmp_path)
@@ -306,9 +307,15 @@ def test_a_refused_start_falls_back_to_the_deep_link(cfg, tmp_path, no_app, monk
     assert (Path(body["cwd"]) / desktop.CHANNEL / "seeded").read_text() == "sid-1"
 
 
-def test_no_host_or_gate_off_means_no_start_request(cfg, tmp_path):
+def test_no_host_or_gate_off_means_no_start_request(cfg, tmp_path, monkeypatch):
     wt = tmp_path / "wt"
     (wt / desktop.CHANNEL).mkdir(parents=True)
+    host = _host(cfg, tmp_path)
+    # Off by default: the app refuses automated starts (#1238), so no request is made.
+    assert desktop.start_in_app(cfg, wt, "t", features={"start_session": True}) is None
+    assert not list(host.glob("start-*.json"))
+    monkeypatch.setenv("CANOPY_DESKTOP_START_SESSION", "1")
+    (host / "alive").write_text("0")  # the host's process is gone
     assert desktop.start_in_app(cfg, wt, "t", features={"start_session": False}) is None
     assert desktop.start_in_app(cfg, wt, "t", features={"start_session": True}) is None  # no host
     assert not (wt / desktop.CHANNEL / "seeded").exists()
