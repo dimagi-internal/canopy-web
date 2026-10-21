@@ -56,6 +56,11 @@ _PROBE_HEAD = "canopy-permission-probe/does-not-exist"
 #: selection, 404 on one the person cannot write at all.
 _PROBE_SHA = "0" * 39 + "1"
 _REPO_PATH = re.compile(r"^github\.com/([\w.-]+)/([\w.-]+)$")
+#: Every GitHub token is letters, digits and underscores (`github_pat_…`,
+#: `ghp_…`, `gho_…`). Anything else is a paste that caught more than the token,
+#: and sending it as a header would fail inside `requests` (a curly quote is not
+#: latin-1) instead of with a sentence the person can act on.
+_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9_]+$")
 
 
 class DelegationError(Exception):
@@ -133,7 +138,12 @@ def _parse_expiry(header: str | None) -> dt.datetime | None:
 
 def inspect_github(token: str) -> dict:
     """Who a token acts as, and when it expires. Raises DelegationError when
-    GitHub rejects it outright."""
+    it is not shaped like a token or GitHub rejects it outright."""
+    if not _TOKEN_SHAPE.match(token or ""):
+        raise DelegationError(
+            f"that paste is not just a GitHub token ({len(token or '')} characters, with spaces "
+            "or punctuation) — copy only the token GitHub showed you, which starts with "
+            "github_pat_ and is about 93 characters")
     try:
         resp = requests.get(f"{GITHUB_API}/user", headers=github_headers(token), timeout=HTTP_TIMEOUT)
     except requests.RequestException as exc:

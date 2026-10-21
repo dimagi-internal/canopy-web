@@ -144,6 +144,16 @@ def test_a_token_github_rejects_is_refused(agent, owner, github):
         _lend(agent, owner, github)
 
 
+def test_a_paste_with_more_than_the_token_is_refused_with_a_sentence(agent, owner, github):
+    # A curly quote in the paste used to crash the GitHub request (latin-1 header) as a 500.
+    with pytest.raises(delegations.DelegationError, match="not just a GitHub token"):
+        delegations.set_github(agent, owner, "github_pat_olive\nGitHub’s token page text")
+    r = _client(owner).put("/api/agents/echo/github", {"token": "github_pat_x and some ’ text"},
+                           content_type="application/json")
+    assert r.status_code == 422 and "starts with github_pat_" in r.json()["detail"]
+    assert not AgentDelegation.objects.exists()
+
+
 def test_only_the_owner_or_an_admin_can_lend(agent, github):
     editor = User.objects.create_user("adam", "adam@dimagi.com", "pw")
     wsvc.ensure_member(agent.workspace, editor, WorkspaceMembership.EDITOR)
