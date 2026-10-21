@@ -81,6 +81,20 @@ def _health(cr):
     return {c["name"]: c for c in cr.health_report()["checks"]}
 
 
+def _seen(cr, path: pathlib.Path) -> str:
+    """What a sweep would see at `path`, taken BEFORE it runs (its own `git status`
+    rewrites files under .git). For the failure message: the clone-with-commits case
+    has failed intermittently in CI only (canopy-web#1756's merge queue, main push
+    39628295690) with an empty `kept` and nothing logged, which leaves three silent
+    skips — not a candidate, touched recently, or no unsaved work found."""
+    now = time.time()
+    newest = max(((os.lstat(os.path.join(r, n)).st_mtime, os.path.join(r, n))
+                  for r, ds, fs in os.walk(path) for n in ds + fs), default=(0, ""))
+    return (f"candidate={any(c == path for c, _ in cr._scratch_candidates(now))} "
+            f"touched={cr._touched_since(path, now - cr.SCRATCH_MAX_AGE_SECONDS)} "
+            f"newest={newest[1]} {now - newest[0]:.0f}s ago")
+
+
 # ── /tmp scratch ────────────────────────────────────────────────────────────────
 
 def test_old_scratch_is_removed(box):
@@ -118,9 +132,11 @@ def test_a_clone_with_commits_on_no_remote_is_kept_and_named(box):
     (clone / "fix.sh").write_text("x")
     _commit(clone, "fix(runner/ec2): keep needrestart from restarting the runner mid-turn")
     _age(clone)
+    seen = _seen(cr, clone)
     report = cr.sweep_scratch()
     assert clone.exists()
-    assert [str(clone)] == [k["path"] for k in report["kept"]]
+    assert [str(clone)] == [k["path"] for k in report["kept"]], (
+        f"{seen} unsaved={cr._unsaved_git_work(clone)!r}")
     check = _health(cr)["scratch"]
     assert check["status"] == "warn"
     assert str(clone) in check["detail"] and "needrestart" in check["detail"]
