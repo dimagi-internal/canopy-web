@@ -48,6 +48,14 @@ def _age(path: pathlib.Path, when: float = OLD) -> None:
 @pytest.fixture
 def box(cloud_runner, monkeypatch, tmp_path):
     """A /tmp, a WORK_DIR, an origin repo and an agent clone, all under tmp_path."""
+    # No background gc / maintenance: a commit can start one, detached, and its
+    # write into .git/objects lands after _age() — so the sweep reads the clone as
+    # touched just now and skips it. Seen in CI only (#1770 named it):
+    # "touched=True newest=…/ada-cw-inv7/.git/objects 0s ago".
+    for i, (key, value) in enumerate((("gc.auto", "0"), ("maintenance.auto", "false"))):
+        monkeypatch.setenv(f"GIT_CONFIG_KEY_{i}", key)
+        monkeypatch.setenv(f"GIT_CONFIG_VALUE_{i}", value)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
     scratch = tmp_path / "tmp"
     scratch.mkdir()
     work = tmp_path / "work"
