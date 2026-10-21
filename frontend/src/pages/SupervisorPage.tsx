@@ -27,6 +27,7 @@ import { SignInRequests } from '@/components/supervisor/SignInRequests'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
+import { StuckTurnsAlert } from '@/components/supervisor/StuckTurnsAlert'
 import { AgentKpiCard } from '@/components/supervisor/AgentKpiCard'
 import { WaitingOnYou, loadWaitingOnYou } from '@/components/supervisor/WaitingOnYou'
 import { ChatSessionsPanel } from '@/components/chat/ChatSessionsPanel'
@@ -395,39 +396,10 @@ export default function SupervisorPage(): JSX.Element {
           {/* The fleet hold: a superuser's control, and everyone's banner while on. */}
           <FleetHoldCard hold={fleetHold} onChange={setFleetHold} />
 
-          {/* LOUD alert: a queued turn addressed to an agent/repo NOTHING online
-              declares sits forever with no signal (one sat 12h). */}
-          {stuckShown.length > 0 && (
-            <div
-              role="alert"
-              data-testid="unclaimable-turns-alert"
-              className="rounded-lg border-2 border-warning bg-warning/15 p-3 text-warning"
-            >
-              <p className="text-[13px] font-bold uppercase tracking-wide">
-                {stuckShown.every((t) => t.kind === 'parked')
-                  ? `⚠ ${stuckShown.length} queued turn${stuckShown.length === 1 ? '' : 's'} waiting on a paused runner`
-                  : stuckShown.every((t) => t.kind === 'offline' || t.kind === 'parked')
-                  ? `⚠ ${stuckShown.length} queued turn${stuckShown.length === 1 ? '' : 's'} waiting on an unreachable runner`
-                  : `⚠ ${stuckShown.length} queued turn${stuckShown.length === 1 ? '' : 's'} no runner can claim`}
-              </p>
-              <ul className="mt-1 space-y-1">
-                {stuckShown.slice(0, 5).map((t) => (
-                  <li key={t.turn_id} className="text-[13px] leading-snug">
-                    <span className="rounded bg-warning/20 px-1 font-mono font-semibold">{t.target}</span>{' '}
-                    {t.prompt ? <span className="opacity-90">“{t.prompt}”</span> : null}
-                    <span className="block text-[12px] opacity-90">{t.reason}</span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1.5 text-[12px] leading-snug opacity-90">
-                {stuckShown.every((t) => t.kind === 'parked')
-                  ? 'These run when their runner is resumed (below), or at the resume time it was paused until.'
-                  : stuckShown.every((t) => t.kind === 'offline' || t.kind === 'parked')
-                  ? 'These will run as soon as a runner reconnects — no action needed unless it stays.'
-                  : 'Declare it on a runner (below) or cancel the turn — it will not run otherwise.'}
-              </p>
-            </div>
-          )}
+          <StuckTurnsAlert
+            turns={stuckShown}
+            onCancelled={(ids) => setStuck((prev) => prev.filter((t) => !ids.includes(t.turn_id)))}
+          />
 
           <RunnerAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />
 

@@ -27828,6 +27828,11 @@ export interface components {
              * @default config
              */
             readonly kind: string;
+            /**
+             * Can Cancel
+             * @default false
+             */
+            readonly can_cancel: boolean;
         };
         /**
          * ParentIn
