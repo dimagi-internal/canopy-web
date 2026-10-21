@@ -308,8 +308,9 @@ jobs:
         working-directory: sdk/python
         run: uv run --extra test pytest -q
 
-  # What SQLite cannot test: pgvector (KB search by meaning — the HNSW index, the
-  # filtered nearest-neighbour query, hybrid search through the MCP tool). The
+  # What SQLite cannot test: pgvector (the dormant KB vectors, kept working for a
+  # corpus that turns them on — the HNSW index, the filtered nearest-neighbour
+  # query, vectors joining search through the MCP tool). The
   # suite skips itself on SQLite, so `Backend pytest` alone would wave a broken
   # vector path through. Runs only the PostgreSQL-specific files (the whole suite
   # on Postgres is minutes longer and adds nothing SQLite does not already cover).

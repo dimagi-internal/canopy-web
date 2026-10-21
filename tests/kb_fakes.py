@@ -34,7 +34,8 @@ def vector(text: str) -> list[float]:
 
 
 def install(monkeypatch, settings, calls: list | None = None, fail=lambda text: False):
-    """Point KB embeddings at the fake model, verified to keep nothing."""
+    """Turn the dormant KB vectors on, pointed at the fake model, verified to keep nothing."""
+    settings.KB_VECTORS = True
     settings.KB_EMBEDDINGS_MODEL = MODEL
     monkeypatch.setitem(embeddings._retention, "model", None)
     monkeypatch.setattr(embeddings, "_check_retention", lambda m: (True, "keeps nothing"))

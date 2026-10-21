@@ -1,5 +1,6 @@
-"""A workspace project's KB vectors: the sync that keeps them in step with the
-published file, and the lexical fallback wherever they cannot be searched.
+"""A workspace project's KB vectors — DORMANT (KB_VECTORS off): that off means off, and,
+for a corpus that turns them on, the sync that keeps them in step with the published
+file and the fallback wherever they cannot be searched.
 
 These run on SQLite, where the halfvec column is just a column and there is no
 nearest-neighbour search; the search itself is covered on PostgreSQL by
@@ -11,7 +12,7 @@ from django.contrib.auth.models import User
 from django.core.management import CommandError, call_command
 from django.db import connection
 
-from apps.agents import kb_store, kb_vectors
+from apps.agents import kb_rerank, kb_store, kb_vectors
 from apps.agents.models import Agent, AgentProject, KbPassage
 from apps.workspaces.models import Workspace
 from tests import kb_fakes
@@ -118,8 +119,29 @@ def test_only_a_vertex_model_turns_kb_vectors_on(settings):
     assert kb_vectors.model() == "vertex/gemini-embedding-001"
 
 
+def test_off_by_default_nothing_is_embedded_and_no_sync_starts(project, settings, monkeypatch,
+                                                               django_capture_on_commit_callbacks):
+    from apps.mcp.projects import _call
+
+    got: list = []
+    kb_fakes.install(monkeypatch, settings, got)
+    settings.KB_VECTORS = False
+    monkeypatch.setattr(connection, "vendor", "postgresql")  # even where pgvector could serve them
+    monkeypatch.setattr("apps.mcp.projects.readable_project", lambda user, ws, h: project)
+    started = []
+    monkeypatch.setattr(kb_vectors, "_start", started.append)
+
+    assert not kb_vectors.available() and kb_vectors.semantic_for(project) is None
+    with django_capture_on_commit_callbacks(execute=True):
+        assert kb_vectors.sync_after_publish(project) is False
+    with pytest.raises(CommandError, match="KB_VECTORS"):
+        call_command("kb_embed", "connect/givewell-kb")
+    assert _call("connect", "givewell-kb", "search", {"query": "cholera"}).startswith("[1] doc:ocv")
+    assert started == [] and got == [] and not KbPassage.objects.exists()
+
+
 @sqlite_only
-def test_on_sqlite_search_is_lexical_in_every_mode(project, calls):
+def test_on_sqlite_search_embeds_nothing_even_when_on(project, calls):
     from apps.mcp.projects import _call
 
     kb_vectors.sync(project)
@@ -161,69 +183,12 @@ def test_kb_embed_says_why_it_cannot_run_here(project):
         call_command("kb_embed", "connect/nope")
 
 
-class _RankSession:
-    def __init__(self, records=None, fail=False):
-        self.sent, self.records, self.fail = [], records, fail
-
-    def post(self, url, json, timeout):
-        self.sent.append((url, json))
-        if self.fail:
-            raise TimeoutError("ranking API timed out")
-        records = self.records
-
-        class R:
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"records": records}
-        return R()
-
-
-def test_no_reranker_unless_one_is_configured(settings):
-    settings.KB_RERANK_MODEL = ""
-    assert kb_vectors.reranker() is None
-    settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
-    assert kb_vectors.reranker() is not None
-
-
-def test_the_reranker_sends_each_passage_and_reads_back_the_order(settings, monkeypatch):
-    settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
-    session = _RankSession([{"id": "1", "score": 0.9}, {"id": "0", "score": 0.2}])
-    monkeypatch.setattr("apps.contacts.embeddings._vertex_session", lambda: session)
-
-    order = kb_vectors.reranker()("jab shortage", [{"title": "Lead", "text": "paint"}, {"title": "OCV", "text": "scarce"}])
-
-    assert order == [1, 0]
-    url, body = session.sent[0]
-    assert url.startswith("https://us-discoveryengine.googleapis.com/v1/projects/")
-    assert url.endswith("/locations/us/rankingConfigs/default_ranking_config:rank")
-    assert body["model"] == "semantic-ranker-default@latest" and body["records"][1]["content"] == "scarce"
-
-
-def test_the_reranker_location_picks_its_host(settings, monkeypatch):
-    settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
-    session = _RankSession([])
-    monkeypatch.setattr("apps.contacts.embeddings._vertex_session", lambda: session)
-    for loc, host in (("global", "discoveryengine"), ("eu", "eu-discoveryengine")):
-        settings.KB_RERANK_LOCATION = loc
-        kb_vectors.reranker()("q", [{"title": "a", "text": "b"}])
-        url = session.sent[-1][0]
-        assert url.startswith(f"https://{host}.googleapis.com/") and f"/locations/{loc}/" in url
-
-
-def test_a_failed_rerank_answers_none(settings, monkeypatch):
-    settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
-    monkeypatch.setattr("apps.contacts.embeddings._vertex_session", lambda: _RankSession(fail=True))
-    assert kb_vectors.reranker()("q", [{"title": "a", "text": "b"}]) is None
-
-
 def test_the_mcp_search_reranks_when_a_reranker_is_set(project, calls, settings, monkeypatch):
     from apps.mcp.projects import _call
 
     settings.KB_RERANK_MODEL = "semantic-ranker-default@latest"
     seen = []
-    monkeypatch.setattr(kb_vectors, "reranker", lambda: lambda q, docs: seen.append(docs) or list(reversed(range(len(docs)))))
+    monkeypatch.setattr(kb_rerank, "reranker", lambda: lambda q, docs: seen.append(docs) or list(reversed(range(len(docs)))))
     monkeypatch.setattr("apps.mcp.projects.readable_project", lambda user, ws, h: project)
     hits = _call("connect", "givewell-kb", "search", {"query": "lead chlorine"})
     assert seen and hits.startswith("[1] blog:wash") and "[2] page:lead" in hits

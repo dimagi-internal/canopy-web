@@ -10,9 +10,9 @@ Two artifacts, one direction:
 
   bundle/  (what a curator's adapters write — plain files, diffable)
     manifest.json        name, publisher, license, tables{name: {description, date_column,
-                         amount_column, filter_columns}}, search_boost{type: factor}
-                         (rank the publisher's own analysis above documents it merely hosts),
-                         guide (publisher-specific notes shown by `kb_info`)
+                         amount_column, filter_columns}}, guide (publisher-specific
+                         notes shown by `kb_info`), embed_skip_types (types a vector
+                         host would skip; vectors are dormant, see `vectors.py`)
     items.jsonl          one source item per line: id, type, title, url, date, text (markdown),
                          meta, sha256, fetched_at, and optionally card (the catalog card:
                          summary, kind, orgs, programs, countries, period, superseded, answers)
@@ -30,11 +30,12 @@ answers, and it survives rebuilds because each build carries the old rows forwar
 
 Reading is for an agent doing research, not one-shot retrieval (`research.py`): it
 orients on the catalog (`overview`, `entity`), searches (words over passages and
-cards, reranked by meaning when the host has a reranker, fused with the host's
-nearest passages when it keeps vectors), then opens documents (`doc`, `read`,
-`grep`) and computes over tables (`sql`). Measured on 70 GiveWell questions with
-the same agent: 33-34/40 fact questions right against 27-28 with passage search
-alone, and 20.5 of 30 research questions won head to head.
+cards, ordered by the host's reranker when it has one), then opens documents (`doc`,
+`read`, `grep`) and computes over tables (`sql`). Measured on 70 GiveWell questions
+with the same agent: 35.5/40 fact questions right against 28.5 with one-shot
+passage search over embeddings and words, and 18.5 of 30 research questions won head
+to head. No vectors are involved; `vectors.py` keeps the dormant hooks for a host
+that wants them.
 
 Every answer carries the item's source URL. A KB holds only what the publisher has
 published; relationship notes about the publisher live elsewhere and never merge in.
@@ -46,27 +47,12 @@ import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator
 
 from canopy_kb import entities as _entities
 from canopy_kb.chunking import chunk, outline
-from canopy_kb.hybrid import (CANDIDATES, DENSE_WEIGHT, MODES, RERANK_DEPTH, embedding_text, passage_sha,
-                              rrf)
+from canopy_kb.vectors import embedding_text, passage_sha
 
-if TYPE_CHECKING:
-    from canopy_kb.hybrid import Rerank, Semantic
-
-#: English function words dropped from a search query (not from the index).
-STOPWORDS = frozenset("""a about above after again against all am an and any are as at be because been before
-being below between both but by can could did do does doing down during each few for from further had has
-have having he her here hers herself him himself his how i if in into is it its itself just me more most my
-myself no nor not now of off on once only or other our ours ourselves out over own same she should so some
-such than that the their theirs them themselves then there these they this those through to too under until
-up very was we were what when where which while who whom why will with would you your yours yourself
-yourselves""".split())
-#: A semantic hit has no matched words to show around, so its row shows the
-#: start of the passage instead.
-SNIPPET_CHARS = 300
 #: 3: passages are spans with a heading path and overlap (an item's text is rebuilt from
 #: them, offsets intact); catalog cards, entities, outlines, links and SQL tables for
 #: research. Storing the item text as well as the passages doubled the file; slicing
@@ -334,59 +320,7 @@ class KB:
         from canopy_kb import research
         return research.sql(self, query, limit)
 
-    # -- passage search (one row per item; kb_eval and the vector sync use this) ---------
-    @staticmethod
-    def _fts_query(q: str, mode: str) -> str:
-        phrases = re.findall(r'"([^"]+)"', q)
-        rest = re.sub(r'"[^"]+"', " ", q)
-        terms = [t for t in re.findall(r"[\w$%.-]+", rest) if len(t) > 1 or t.isdigit()]
-        # Words that carry no topic: a question's "what are the …" would otherwise make
-        # the OR fallback match nearly every passage. Kept if the query is nothing else.
-        content = [t for t in terms if t.lower().strip(".-") not in STOPWORDS]
-        terms = content or terms
-        parts = ['"' + p.replace('"', "") + '"' for p in phrases]
-        parts += ['"' + t.strip(".-") + '"' for t in terms if t.strip(".-")]
-        return f" {mode} ".join(parts)
-
-    def search(self, query: str, types: list[str] | None = None, since: str = "",
-               until: str = "", limit: int = 10, mode: str = "hybrid",
-               semantic: "Semantic | None" = None, rerank: "Rerank | None" = None,
-               dense_weight: float = DENSE_WEIGHT) -> list[dict]:
-        """Best passages for a question, one per item.
-
-        `lexical` is BM25 over the FTS index; `semantic` is the host's nearest
-        passages by meaning (`semantic`, see `hybrid.py`); `hybrid` fuses the two
-        by reciprocal rank, the meaning list weighted `dense_weight` and the words
-        list 1 - `dense_weight`. Without a `semantic` callable, or when it has no
-        vectors to ask (returns None), every mode is lexical. A `rerank` callable
-        then rescores the top RERANK_DEPTH against the question; when it cannot,
-        the order stands."""
-        if not query.strip():
-            raise KBError("empty query")
-        if mode not in MODES:
-            raise KBError(f"mode must be one of {', '.join(MODES)}")
-        depth = max(limit, CANDIDATES, RERANK_DEPTH if rerank else 0)
-        ranked = self._ranked(query, types, since, until, depth, mode, semantic, dense_weight)
-        if rerank is not None and len(ranked) > 1:
-            ranked = self._reranked(query, ranked[:RERANK_DEPTH], rerank)
-        return ranked[:limit]
-
-    def _ranked(self, query, types, since, until, depth, mode, semantic, dense_weight) -> list[dict]:
-        if mode == "lexical" or semantic is None:
-            return self._lexical(query, types, since, until, depth)
-        near = semantic(query, types=types or None, since=since, until=until, limit=depth)
-        if near is None:
-            return self._lexical(query, types, since, until, depth)
-        by_meaning = self._passage_rows(near)
-        if mode == "semantic":
-            return by_meaning
-        by_words = self._lexical(query, types, since, until, depth)
-        rows = {r["id"]: r for r in by_meaning}
-        rows.update({r["id"]: r for r in by_words})  # BM25's snippet marks the matched words
-        fused = rrf([[r["id"] for r in by_words], [r["id"] for r in by_meaning]],
-                    weights=[1.0 - dense_weight, dense_weight])
-        return [rows[i] for i in fused]
-
+    # -- passages ------------------------------------------------------------------
     def passage_text(self, item_id: str, ord_: int) -> str:
         r = self.db.execute("SELECT body FROM chunks WHERE item_id = ? AND ord = ?", (item_id, ord_)).fetchone()
         return (r[0] if r else "") or ""
@@ -409,38 +343,10 @@ class KB:
             pos = stop
         return "".join(out)
 
-    def _reranked(self, query: str, rows: list[dict], rerank: "Rerank") -> list[dict]:
-        docs = [{"title": r["title"] or "", "text": self.passage_text(r["id"], r["passage"]) or r["snippet"] or ""}
-                for r in rows]
-        order = list(rerank(query, docs) or [])
-        if not order or len(set(order)) != len(order) or any(not 0 <= i < len(rows) for i in order):
-            return rows  # no answer, or one that does not describe what was sent: the order stands
-        rest = [r for i, r in enumerate(rows) if i not in set(order)]
-        return [rows[i] for i in order] + rest
-
-    def _passage_rows(self, hits: Iterable[tuple[str, int]]) -> list[dict]:
-        """Search rows for (item_id, passage) pairs, best first, one per item. A pair
-        the file no longer has (vectors a sync behind) is skipped."""
-        out: list[dict] = []
-        seen: set[str] = set()
-        for item_id, ord_ in hits:
-            if item_id in seen:
-                continue
-            r = self.db.execute(
-                "SELECT c.item_id, c.ord, c.body, i.type, i.title, i.url, i.date FROM chunks c "
-                "JOIN items i ON i.id = c.item_id WHERE c.item_id = ? AND c.ord = ?", (item_id, ord_)).fetchone()
-            if r is None:
-                continue
-            seen.add(item_id)
-            body = " ".join((r["body"] or "").split())
-            out.append({"id": r["item_id"], "passage": r["ord"], "type": r["type"], "title": r["title"],
-                        "url": r["url"], "date": r["date"],
-                        "snippet": body[:SNIPPET_CHARS] + (" …" if len(body) > SNIPPET_CHARS else "")})
-        return out
-
     def passages(self) -> Iterator[dict]:
-        """Every passage with what its vector is made of (`hybrid.embedding_text`)
-        and keyed by (`hybrid.passage_sha`), in file order. For a host's sync.
+        """Every passage with what its vector would be made of (`vectors.embedding_text`)
+        and keyed by (`vectors.passage_sha`), in file order: a vector host's sync reads
+        this. Dormant — no host keeps vectors today.
 
         The manifest's `embed_skip_types` (e.g. raw data tabs) are left out: they stay
         searchable by words and readable, and are not worth a vector each."""
@@ -456,49 +362,6 @@ class KB:
                 continue
             yield {"item_id": r["item_id"], "ord": r["ord"], "type": r["type"] or "", "title": r["title"] or "",
                    "url": r["url"] or "", "date": r["date"] or "", "text": text, "sha256": passage_sha(text)}
-
-    def _lexical(self, query: str, types: list[str] | None, since: str, until: str,
-                 limit: int) -> list[dict]:
-        """BM25 over the FTS index. AND first; falls back to OR when that is too narrow."""
-        out: list[dict] = []
-        seen: set[tuple] = set()
-        for mode in ("AND", "OR"):
-            fq = self._fts_query(query, mode)
-            if not fq:
-                break
-            sql = ("SELECT c.item_id, c.ord, i.type, i.title, i.url, i.date, "
-                   "snippet(chunks_fts, 3, '«', '»', ' … ', 40) AS snip, bm25(chunks_fts, 5.0, 2.0, 1.0, 1.0) AS score "
-                   "FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid JOIN items i ON i.id = c.item_id "
-                   "WHERE chunks_fts MATCH ?")
-            args: list[Any] = [fq]
-            if types:
-                sql += f" AND i.type IN ({','.join('?' * len(types))})"
-                args += types
-            if since:
-                sql += " AND i.date >= ?"
-                args.append(since)
-            if until:
-                sql += " AND i.date <= ?"
-                args.append(until)
-            boost = self.manifest.get("search_boost") or {}
-            if boost:  # bm25 is negative (lower = better), so a factor > 1 ranks a type higher
-                case = " ".join("WHEN ? THEN ?" for _ in boost)
-                sql = f"SELECT * FROM ({sql}) ORDER BY score * (CASE type {case} ELSE 1.0 END) LIMIT ?"
-                for t, f in boost.items():
-                    args += [t, float(f)]
-            else:
-                sql += " ORDER BY score LIMIT ?"
-            args.append(limit * 4)
-            for r in self.db.execute(sql, args):
-                key = (r["item_id"],)
-                if key in seen:
-                    continue  # one passage per item keeps the list diverse
-                seen.add(key)
-                out.append({"id": r["item_id"], "passage": r["ord"], "type": r["type"], "title": r["title"],
-                            "url": r["url"], "date": r["date"], "snippet": r["snip"]})
-                if len(out) >= limit:
-                    return out
-        return out
 
     # -- items -----------------------------------------------------------------------
     def item_row(self, ref: str) -> sqlite3.Row | None:

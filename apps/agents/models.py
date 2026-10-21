@@ -1234,9 +1234,10 @@ class AgentProject(models.Model):
 
 
 class KbPassage(models.Model):
-    """One passage of a workspace project's published knowledge base, as the
-    semantic half of its `search` needs it: where it is, what its vector was made
-    from (`sha256` of `canopy_kb.hybrid.embedding_text`) and the vector.
+    """One passage of a workspace project's published knowledge base with its vector:
+    where it is, what the vector was made from (`sha256` of
+    `canopy_kb.vectors.embedding_text`) and the vector. DORMANT: nothing writes or
+    reads these while KB_VECTORS is off (`kb_vectors.py`).
 
     The passage text stays in the KB file (`kb_store`); a search maps a nearest
     (item_id, ord) back to its row there. Rows are written only by

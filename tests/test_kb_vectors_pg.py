@@ -1,5 +1,6 @@
-"""The semantic half of KB search on PostgreSQL + pgvector: the HNSW index, the
-filtered nearest-neighbour query, and hybrid search through the project's MCP tool.
+"""The dormant KB vectors on PostgreSQL + pgvector, turned on (kb_fakes.install): the
+HNSW index, the filtered nearest-neighbour query, and vectors joining search through
+the project's MCP tool — kept working for a corpus that turns them on.
 
 Skipped on SQLite (the default test DB); CI's `Backend pytest (PostgreSQL)` job runs
 it against a pgvector/pgvector service (config/settings/pgtest.py)."""
@@ -67,16 +68,16 @@ def test_another_projects_vectors_never_answer(project):
     assert kb_vectors.search(other, "inoculation shortage") is None
 
 
-def test_hybrid_search_finds_a_paraphrase_through_the_mcp_tool(project, monkeypatch):
+def test_vectors_find_a_paraphrase_through_the_mcp_tool(project, monkeypatch):
     from apps.mcp.projects import _call
 
     kb_vectors.sync(project)
     monkeypatch.setattr("apps.mcp.projects.readable_project", lambda user, ws, h: project)
     question = "jab shortage"  # no word in common with the OCV document
 
-    hybrid = _call("connect", "givewell-kb", "search", {"query": question})
+    found = _call("connect", "givewell-kb", "search", {"query": question})
 
-    assert hybrid.startswith("[1] doc:ocv · gdoc") and "https://gw/ocv" in hybrid
+    assert found.startswith("[1] doc:ocv · gdoc") and "https://gw/ocv" in found
 
 
 def test_a_failed_question_embedding_falls_back_to_lexical(project, monkeypatch):
@@ -88,16 +89,7 @@ def test_a_failed_question_embedding_falls_back_to_lexical(project, monkeypatch)
     assert _call("connect", "givewell-kb", "search", {"query": "cholera"}).startswith("[1] doc:ocv")
 
 
-def test_kb_embed_then_kb_eval(project, tmp_path):
-    golden = tmp_path / "golden.json"
-    golden.write_text('[{"q": "jab shortage", "kind": "paraphrase", "rel": ["doc:ocv"]},'
-                      ' {"q": "lead", "kind": "keyword", "rel": ["page:lead"]}]')
+def test_kb_embed_embeds_every_passage(project):
     out = io.StringIO()
     call_command("kb_embed", "connect/givewell-kb", stdout=out)
     assert "vectors in step" in out.getvalue()
-
-    out = io.StringIO()
-    call_command("kb_eval", "connect/givewell-kb", "--golden", str(golden), stdout=out)
-    lines = {tuple(line.split()[:2]): line for line in out.getvalue().splitlines()[2:]}
-    assert "0/1" in lines[("lexical", "paraphrase")]
-    assert lines[("hybrid", "paraphrase")].split()[2] == "1/1"

@@ -1,8 +1,9 @@
-"""Give every passage of a workspace project's published KB a vector.
+"""Give every passage of a workspace project's published KB a vector. DORMANT: refuses
+while KB_VECTORS is off, which it is — KB search uses no vectors (apps/agents/kb_vectors.py).
 
     manage.py kb_embed connect/givewell-kb [--dry-run] [--workers N] [--per-minute N]
 
-A publish syncs on its own in the background, but only up to KB_SYNC_MAX_EMBED
+With KB_VECTORS on, a publish syncs in the background, but only up to KB_SYNC_MAX_EMBED
 passages; a KB's first publish (or a change of KB_EMBEDDINGS_MODEL) is the whole
 file — for the GiveWell KB ~140k Vertex calls, ~$8 — so it is run on purpose with
 this. Only new or changed passages are embedded; rerunning after an interruption
@@ -37,8 +38,8 @@ class Command(BaseCommand):
     def handle(self, *args, project: str, dry_run: bool = False, workers=None, per_minute=None, **opts):
         target = project_from(project)
         if not kb_vectors.available():
-            raise CommandError("KB vectors are off here: needs PostgreSQL with the vector extension "
-                               "and a vertex/ KB_EMBEDDINGS_MODEL")
+            raise CommandError("KB vectors are off here: needs KB_VECTORS on, PostgreSQL with the "
+                               "vector extension and a vertex/ KB_EMBEDDINGS_MODEL")
 
         def report(out):
             self.stdout.write(f"  embedded {out['embedded']}  failed {out['failed']}")
