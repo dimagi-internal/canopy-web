@@ -91,9 +91,12 @@ jobs:
       # Scoped to pyflakes (`--select F`), not the full ruff ruleset — the repo
       # isn't style-clean yet, and this gate is about correctness, not formatting.
       # F403/F405 are ignored: the settings modules use `from base import *` by design.
-      - name: Lint (ruff — pyflakes only)
+      # PLC0415 (an import inside a function) is on for apps/ and config/: a new lazy
+      # import must say why (`# noqa: PLC0415 — <reason>`); the files that had them
+      # are frozen in ruff-lazy-imports.toml (tests/test_lazy_import_baseline.py).
+      - name: Lint (ruff — pyflakes + lazy imports)
         if: matrix.shard == 1
-        run: uv run ruff check . --select F --ignore F403,F405
+        run: uv run ruff check . --select F,PLC0415 --ignore F403,F405
 
       # A model change without its migration is a class of bug this fast-moving repo
       # hits often; catch it before it reaches a deploy. Test settings = SQLite, no

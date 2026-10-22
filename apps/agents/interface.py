@@ -518,7 +518,7 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
     listed for it; otherwise they are refused (`callers_default: none`). With
     NO published interface, only admins and editors get in.
     """
-    from . import access  # cycle: agents.access -> agents.interface
+    from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
     return access.decide_for_turn(turn, agent, requested).stamp
 
@@ -527,7 +527,7 @@ def granted_by(turn, agent) -> str:
     """WHY this turn has the access it has, for the envelope: `owner`, `admin`,
     `system`, `editor`, `session:<role>`, `full:<rule>`, `capability:<name>` or
     `refused`."""
-    from . import access  # cycle: agents.access -> agents.interface
+    from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
     d = access.decide_for_turn(turn, agent)
     if d.access == access.CONFINED:
@@ -551,7 +551,7 @@ def offered_to(user, agent) -> list[str]:
     caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
     if not caps or not getattr(user, "is_authenticated", False):
         return []
-    from . import access  # cycle: agents.access -> agents.interface
+    from . import access  # cycle: agents.access -> agents.interface  # noqa: PLC0415
 
     d = access.decide(agent, user, verified=True)
     if d.role not in (access.OWNER, access.ADMIN, access.MEMBER):

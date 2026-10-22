@@ -164,9 +164,23 @@ include = ["apps*", "config*"]
 target-version = "py311"
 line-length = 120
 extend-exclude = ["**/migrations/*"]
+# The frozen per-file ignores for PLC0415 (lazy imports) — a shrink-only baseline,
+# see tests/test_lazy_import_baseline.py.
+extend = "ruff-lazy-imports.toml"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+# PLC0415: an import inside a function must say why (`# noqa: PLC0415 — <reason>`).
+select = ["E", "F", "I", "N", "W", "UP", "PLC0415"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+# PLC0415 covers the Django app's production source only: not tests, and not the
+# runner, SDK and packages, which lazy-import optional dependencies by design.
+"!{apps,config}/**" = ["PLC0415"]
+"**/tests/**" = ["PLC0415"]
+"**/test_*.py" = ["PLC0415"]
+"**/*_tests.py" = ["PLC0415"]
+"**/tests.py" = ["PLC0415"]
+"**/conftest.py" = ["PLC0415"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.test"

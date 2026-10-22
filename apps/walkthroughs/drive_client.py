@@ -31,7 +31,7 @@ def _drive_retry(method):
 
     @functools.wraps(method)
     def _wrapped(self, *args, **kwargs):
-        from googleapiclient.errors import HttpError  # noqa: PLC0415
+        from googleapiclient.errors import HttpError  # noqa: PLC0415 — Google client loads only when Drive is used
 
         last_exc: Exception | None = None
         for attempt in range(1, _RETRY_ATTEMPTS + 1):
@@ -110,8 +110,8 @@ class GoogleDriveClient(DriveClient):
     """Real implementation wrapping googleapiclient.discovery."""
 
     def __init__(self, sa_info: dict):
-        from google.oauth2 import service_account  # noqa: PLC0415
-        from googleapiclient.discovery import build  # noqa: PLC0415
+        from google.oauth2 import service_account  # noqa: PLC0415 — as above
+        from googleapiclient.discovery import build  # noqa: PLC0415 — as above
 
         creds = service_account.Credentials.from_service_account_info(
             sa_info,
@@ -149,7 +149,7 @@ class GoogleDriveClient(DriveClient):
         return created["id"]
 
     def upload(self, *, parent_id, name, content_type, data) -> str:
-        from googleapiclient.http import MediaIoBaseUpload  # noqa: PLC0415
+        from googleapiclient.http import MediaIoBaseUpload  # noqa: PLC0415 — as above
 
         media = MediaIoBaseUpload(
             io.BytesIO(data), mimetype=content_type, resumable=False

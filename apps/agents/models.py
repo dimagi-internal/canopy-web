@@ -1272,7 +1272,7 @@ class AgentProject(models.Model):
         cached = getattr(self, "_waiting_task_count", None)
         if cached is not None:
             return cached
-        from apps.agents.services import waiting_q  # cycle: agents.services -> agents.models
+        from apps.agents.services import waiting_q  # cycle: agents.services -> agents.models  # noqa: PLC0415
 
         return self.tasks.filter(waiting_q()).count()
 

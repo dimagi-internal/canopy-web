@@ -119,7 +119,7 @@ def make_zero_knowledge(agent) -> int:
     the number of values sealed; a no-op on an agent already zero-knowledge."""
     from django.db import transaction
 
-    from .credentials import zk, zk_seal  # cycle: agents.credentials.zk -> agents.services
+    from .credentials import zk, zk_seal  # cycle: agents.credentials.zk -> agents.services  # noqa: PLC0415
 
     with transaction.atomic():
         agent = zk._locked(agent)
@@ -248,7 +248,7 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
     Non-expiring, like the agent's vault key: nothing watches either for expiry, and a
     lapsed one fails every turn silently."""
 
-    from .agent_login import AgentLoginRefused, create_agent_login  # cycle: agents.agent_login -> agents.services
+    from .agent_login import AgentLoginRefused, create_agent_login  # cycle: agents.agent_login -> agents.services  # noqa: PLC0415
 
     created = False
     user = agent.user
@@ -284,7 +284,7 @@ def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
     with nowhere to go."""
     from django.db import transaction
 
-    from .credentials import pat_rotation, zk_seal  # cycle: agents.credentials.pat_rotation -> agents.services
+    from .credentials import pat_rotation, zk_seal  # cycle: agents.credentials.pat_rotation -> agents.services  # noqa: PLC0415
 
     if agent.credential_source != Agent.CANOPY_WEB:
         raise AgentTokenRefused(
@@ -1085,7 +1085,7 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     then sees the ask closed and gets `ClosedAskError`.
     """
 
-    from . import proposals  # cycle: agents.proposals -> agents.services
+    from . import proposals  # cycle: agents.proposals -> agents.services  # noqa: PLC0415
 
     if action not in _EFFECT:
         raise ValueError(f"action must be one of {'|'.join(_EFFECT)}, got {action!r}")
@@ -1292,7 +1292,7 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
     if agent.zk_enabled:
         from django.db import transaction
 
-        from .credentials import zk, zk_seal  # cycle: agents.credentials.zk -> agents.services
+        from .credentials import zk, zk_seal  # cycle: agents.credentials.zk -> agents.services  # noqa: PLC0415
 
         # Under the agent row lock, like every ZK write: a settle's
         # compare-and-swap (`expect`) must see this write or come after it.
@@ -1553,7 +1553,7 @@ def set_agent_vault(agent, *, vault=None, service_key=None):
         # verdict to "not reported" rather than leave a stale False (or True) on the
         # checklist, and ask the cloud boxes that take its turns to re-run bootstrap,
         # which is what produces a fresh one.
-        from .setup import request_setup  # cycle: agents.setup -> agents.oauth_api -> agents.services
+        from .setup import request_setup  # cycle: agents.setup -> agents.oauth_api -> agents.services  # noqa: PLC0415
 
         AgentBootstrapReport.objects.filter(agent=agent).update(env_ok=None)
         request_setup(agent)
