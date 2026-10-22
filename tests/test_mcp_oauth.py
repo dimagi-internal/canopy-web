@@ -1,4 +1,4 @@
-"""Signing an MCP client in with OAuth (`apps/tokens/mcp_oauth.py`), end to end.
+"""Signing an MCP client in with OAuth (`apps/oauth_server/mcp_oauth.py`), end to end.
 
 Walked the way an MCP client walks it — discovery, registration, the consent
 page, the code exchange, refresh — through the real URLs and middleware, and
@@ -19,7 +19,8 @@ from django.core.cache import cache
 from django.test import Client, override_settings
 
 from apps.mcp.auth import CanopyPATVerifier
-from apps.tokens.models import OAuthGrant, PersonalToken
+from apps.oauth_server.models import OAuthGrant
+from apps.tokens.models import PersonalToken
 
 User = get_user_model()
 pytestmark = pytest.mark.django_db
@@ -156,7 +157,7 @@ def test_registration_refuses_redirects_that_could_leak_a_code(uri):
 
 
 def test_registration_is_rate_limited(settings):
-    from apps.tokens import views_mcp_oauth
+    from apps.oauth_server import views as views_mcp_oauth
 
     for _ in range(views_mcp_oauth.REGISTER_LIMIT):
         assert _register().status_code == 201
@@ -167,7 +168,7 @@ def test_registration_is_rate_limited(settings):
 def test_rewriting_the_first_forwarded_entry_does_not_dodge_the_limit(db):
     """The ALB appends the real address; a client rotating the entry it writes
     itself still lands in one bucket (apps/common/client_ip.py)."""
-    from apps.tokens import views_mcp_oauth
+    from apps.oauth_server import views as views_mcp_oauth
 
     def register(i):
         return Client().post(
@@ -398,3 +399,18 @@ def test_a_missing_verifier_is_an_invalid_request(browser):
     query, _ = _approve(browser, client_id, challenge)
     resp = _exchange(client_id, query["code"][0], "")
     assert resp.status_code == 400 and resp.json()["error"] == "invalid_request"
+
+
+def test_the_sign_in_kept_its_tables_and_routes_when_it_got_its_own_app():
+    """Moved out of apps/tokens with no data moved (state-only migrations), and
+    still published where it was: paths and operationIds are MCP tool names."""
+    from apps.api.api import api
+    from apps.oauth_server.models import OAuthAuthorizationCode, OAuthClient
+
+    assert OAuthGrant._meta.app_label == "oauth_server"
+    assert {m._meta.db_table for m in (OAuthClient, OAuthAuthorizationCode, OAuthGrant)} == {
+        "oauth_clients", "oauth_authorization_codes", "oauth_grants"}
+    assert PersonalToken._meta.get_field("oauth_grant").related_model is OAuthGrant
+    paths = api.get_openapi_schema()["paths"]
+    assert paths["/api/tokens/connected-apps"]["get"]["operationId"] == "tokens_list_connected_apps"
+    assert paths["/api/tokens/connected-apps/{grant_id}"]["delete"]["operationId"] == "tokens_disconnect_app"

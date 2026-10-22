@@ -1,7 +1,7 @@
 """The parts of an OAuth 2.0 authorization server that do not depend on who it serves.
 
 canopy runs two authorization servers: a person's MCP client signing in
-(`apps/tokens/mcp_oauth.py`) and the HCP service for third-party apps
+(`apps/oauth_server/mcp_oauth.py`) and the HCP service for third-party apps
 (`apps/contacts/hcp_oauth.py`). Their grants, consent and tokens differ; the
 protocol rules below do not, so each server asks this module rather than
 writing its own:

@@ -30,7 +30,7 @@ REGISTER_LIMIT = 30
 def issuer(request: HttpRequest) -> str:
     """The issuer: the deployment's public base, or — where none is configured
     (dev, tests) — this request's own origin and script prefix."""
-    from . import client_identity
+    from apps.tokens import client_identity
 
     base = client_identity.public_base()
     if base:
