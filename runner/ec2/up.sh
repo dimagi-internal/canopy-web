@@ -622,7 +622,7 @@ except Exception:
   if [[ -n "$UNITS" ]]; then
     python3 -c 'import json,sys
 for u in (json.load(open(sys.argv[1])).get("units") or []):
-    print(f"    unit {u.get(\"name\")}: runner {u.get(\"runner_id\") or \"(not paired)\"}")' "$TMPC/inv-state.json" || true
+    print("    unit %s: runner %s" % (u.get("name"), u.get("runner_id") or "(not paired)"))' "$TMPC/inv-state.json" || true
   fi
 fi
 

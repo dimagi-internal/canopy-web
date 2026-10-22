@@ -102,6 +102,32 @@ describe('RunnerInvitationApprovePage', () => {
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
   })
 
+  it('after approving it says so, re-reads until the box pairs, then links to the runner', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      getRunnerInvitation.mockResolvedValueOnce(invitation())
+      approveRunnerInvitation.mockResolvedValue(invitation({ status: 'approved' }))
+      getRunnerInvitation.mockResolvedValue(
+        invitation({
+          status: 'consumed',
+          units: [{ name: 'cloud-ec2-fork', workspace: 'connect', kind: 'tree', slug: '', has_ecdh_key: false, runner_id: 'r-9' }],
+        }),
+      )
+      renderPage()
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+      expect((await screen.findByRole('status')).textContent).toContain('Waiting for the box to pair')
+      await vi.advanceTimersByTimeAsync(5000)
+      await waitFor(() =>
+        expect(screen.getByRole('status').textContent).toContain('Paired: cloud-ec2-fork is your runner now.'),
+      )
+      expect(screen.getByRole('link', { name: 'Open it in the supervisor' }).getAttribute('href')).toBe(
+        '/supervisor?tab=runners&runner=r-9',
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('an expired invitation says so and offers no button', async () => {
     getRunnerInvitation.mockResolvedValue(invitation({ status: 'expired' }))
     renderPage()
