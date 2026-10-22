@@ -116,7 +116,11 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
                     detail=f"a box{box} ({_who(user)}) read {agent.slug}'s secrets outside a turn "
                            "(no X-Canopy-Turn-Id)",
                     refs=sorted(handed)))
-        declared = services.declared_credential_names(agent)
+        # A name a workspace vault layered under the agent holds is declared by that
+        # vault, not missing from runtime.yaml (Jonathan, 2026-10-22: the gog OAuth
+        # clients are the same for every dimagi agent and live in the workspace vault).
+        from . import workspace_vaults  # zk imports this module; workspace_vaults imports zk
+        declared = services.declared_credential_names(agent) | workspace_vaults.layered_names(agent)
         undeclared = sorted(((asked or set()) | set(handed)) - declared - _EXTRAS)
         if undeclared:
             raised.append(raise_alert(

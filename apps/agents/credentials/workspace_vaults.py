@@ -103,6 +103,14 @@ def layers_for(agent: Agent) -> list[Vault]:
     return out
 
 
+def layered_names(agent: Agent) -> set[str]:
+    """Every secret name a workspace vault layered under `agent` holds. A turn asking for
+    one of these is asking for a value the WORKSPACE supplies to all its agents (the fleet's
+    gog OAuth clients in dimagi/Shared), so the agent's own runtime.yaml need not repeat it."""
+    vaults = [v.pk for v in layers_for(agent)]
+    return set(VaultSecret.objects.filter(vault_id__in=vaults).values_list("name", flat=True))
+
+
 # ---- who may hold its key --------------------------------------------------------------
 
 def eligible_members(vault: Vault) -> list:
