@@ -387,24 +387,28 @@ def tick(now=None) -> None:
     """
     now = now or timezone.now()
     for path in list(SOURCES):
-        mod = import_module(path)
         try:
-            raises = mod.reconcile(now)
-            apply_reconcile(mod.KIND, raises, now)
+            mod = import_module(path)
+            apply_reconcile(mod.KIND, mod.reconcile(now), now)
         except Exception:  # noqa: BLE001 — one broken source must not stop the others
             logger.exception("alerts tick: source %s failed; its alerts are left as they are", path)
-    _expire_stale(now)
+    for path in list(SOURCES):
+        try:
+            _expire_stale(import_module(path), now)
+        except Exception:  # noqa: BLE001 — expiry of one source must not stop notifications
+            logger.exception("alerts tick: stale expiry for source %s failed", path)
     notify_new_blocking(now)
 
 
-def _expire_stale(now) -> None:
-    for path in list(SOURCES):
-        mod = import_module(path)
-        within = getattr(mod, "CONFIRM_WITHIN", None)
-        if within is None:
-            continue
-        for alert in Alert.objects.filter(kind=mod.KIND, status=Alert.OPEN, last_seen_at__lt=now - within):
+def _expire_stale(mod, now) -> None:
+    within = getattr(mod, "CONFIRM_WITHIN", None)
+    if within is None:
+        return
+    for alert in Alert.objects.filter(kind=mod.KIND, status=Alert.OPEN, last_seen_at__lt=now - within):
+        try:
             resolve(alert, reason=Alert.REASON_STALE)
+        except Exception:  # noqa: BLE001 — one alert must not block the rest
+            logger.exception("alerts tick: could not expire stale alert %s", alert.pk)
 
 
 def notify_new_blocking(now) -> None:
@@ -442,8 +446,11 @@ def notify_new_blocking(now) -> None:
             if not closers:
                 logger.warning("alerts tick: no one holds a closing action on blocking alert %s (%s); not notifying",
                                alert.pk, alert.title)
-            else:
-                notify_users(alert, closers)
+            elif notify_users(alert, closers) == 0:
+                # Closers exist but every delivery failed (sends return, not raise):
+                # leave notified_at null so the next tick retries.
+                logger.warning("alerts tick: every delivery for blocking alert %s failed; will retry", alert.pk)
+                continue
         except Exception:  # noqa: BLE001 — leave notified_at null: retried next tick
             logger.exception("alerts tick: notifying for alert %s failed", alert.pk)
             continue
