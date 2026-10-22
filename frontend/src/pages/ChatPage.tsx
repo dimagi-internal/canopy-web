@@ -67,6 +67,7 @@ import {
   type PendingAnswer,
   sendBlockReason,
   shouldShowLoadFull,
+  withFreshLiveness,
 } from './chatPageLogic'
 
 
@@ -460,32 +461,57 @@ export function ChatPage({
 
   // While the offline banner is up, a bound runner that recovers later in
   // the same page-load would otherwise leave a stale-offline false positive
-  // forever — the fleet list is only fetched once on mount. Poll on a modest
-  // interval for as long as the condition holds, so recovery hides the
-  // banner; stop the instant it flips false (recovered, or session switch).
+  // forever. Poll on a modest interval for as long as the condition holds, so
+  // recovery hides the banner; stop the instant it flips false (recovered, or
+  // session switch).
+  //
+  // Each tick re-reads the SESSION's liveness too, not just the fleet: the
+  // payload's `runner_online` is authoritative in `isBoundRunnerOffline`, so a
+  // `false` read at mount outranks any fleet row that says the box is back.
+  // Refreshing only the fleet is why a laptop that rebooted and reconnected
+  // kept "<runner> is unavailable" up over a Connected, streaming chat until
+  // the page was remounted (Jonathan, 2026-10-22).
+  //
+  // A tick also fires the moment the tab comes back to the foreground or the
+  // network returns — a machine waking from sleep is exactly when the runner
+  // reconnects, and background timers are throttled while it slept.
   useEffect(() => {
     if (!boundOffline) return
     let cancelled = false
     const POLL_MS = 30_000
-    let timer: ReturnType<typeof setTimeout>
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let inFlight = false
     const tick = () => {
-      listRunners()
-        .then((r) => {
+      // One read at a time, so a wake event landing mid-poll cannot start a
+      // second timer chain.
+      if (inFlight) return
+      inFlight = true
+      clearTimeout(timer)
+      Promise.allSettled([
+        listRunners().then((r) => {
           if (!cancelled) setFleetRunners(r)
-        })
-        .catch(() => {
-          /* non-fatal: retry next tick */
-        })
-        .finally(() => {
-          if (!cancelled) timer = setTimeout(tick, POLL_MS)
-        })
+        }),
+        getSession(id).then((m) => {
+          if (!cancelled) setMeta((prev) => withFreshLiveness(prev, m))
+        }),
+      ]).finally(() => {
+        inFlight = false
+        if (!cancelled) timer = setTimeout(tick, POLL_MS)
+      })
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick()
     }
     timer = setTimeout(tick, POLL_MS)
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', tick)
     return () => {
       cancelled = true
       clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', tick)
     }
-  }, [boundOffline])
+  }, [boundOffline, id])
 
   const placementFail = useCallback((err: unknown) => {
     if (err instanceof ChatApiError && err.status === 404) {

@@ -10,6 +10,7 @@ import {
   sendBlockReason,
   shareToSlackCommand,
   shouldShowLoadFull,
+  withFreshLiveness,
 } from "./chatPageLogic";
 import type { ChatSessionDetail } from "@/api/chat";
 
@@ -254,5 +255,37 @@ describe("shareToSlackCommand", () => {
     expect(shareToSlackCommand("#", "broadcast")).toBeNull();
     expect(shareToSlackCommand("dev; rm -rf", "broadcast")).toBeNull();
     expect(shareToSlackCommand("Dev Team", "broadcast")).toBeNull();
+  });
+});
+
+describe("withFreshLiveness", () => {
+  const stale = {
+    title: "kept",
+    runner_name: "Laptop",
+    runner_online: false as boolean | null,
+    runner_status: "offline" as string | null,
+  };
+
+  it("clears a stale offline reading once the runner is back", () => {
+    // The reboot case: meta read offline at mount, the runner reconnected, and
+    // the banner must drop without remounting the page.
+    const next = withFreshLiveness(stale, {
+      runner_name: "Laptop",
+      runner_online: true,
+      runner_status: "online",
+    });
+    expect(next?.runner_online).toBe(true);
+    expect(next?.runner_status).toBe("online");
+    expect(next?.title).toBe("kept");
+  });
+
+  it("returns the same object when nothing changed, so React skips a render", () => {
+    expect(
+      withFreshLiveness(stale, { runner_name: "Laptop", runner_online: false, runner_status: "offline" }),
+    ).toBe(stale);
+  });
+
+  it("leaves a not-yet-loaded meta alone", () => {
+    expect(withFreshLiveness(null, { runner_name: "x", runner_online: true, runner_status: "online" })).toBeNull();
   });
 });
