@@ -405,11 +405,24 @@ class Runner(models.Model):
         return self.live_status == Runner.ONLINE and self.ready
 
     @property
+    def signed_out(self) -> bool:
+        """The box says its Claude login is gone (`canopy_transcript.SIGNED_OUT_NOTE`,
+        set from the CLI's own "Not logged in" record). Unlike other not-ready
+        notes this one means every turn it took would come back as that one line,
+        so it claims nothing (`claim_next_turn`) and a turn waiting on it says why."""
+        from canopy_transcript import SIGNED_OUT_NOTE
+
+        return not self.ready and self.ready_note.startswith(SIGNED_OUT_NOTE)
+
+    @property
     def remedy(self) -> str:
         """What a person does about this box being degraded or not ready, when
         its own note names a known cause; "" otherwise (the note is shown either
         way). Health, Topology, the supervisor and the menu bar all read this."""
         note = f"{self.status_note} {self.ready_note}"
+        if self.signed_out:
+            return ("Claude Code on that machine has no sign-in. Run `claude` there and "
+                    "`/login`; the runner takes turns again once Claude answers.")
         if "CDP unreachable" in note:
             return ('Emdash is running without its debug port. On that machine, open '
                     '"Emdash CDP" (Spotlight), which reopens Emdash with it.')

@@ -137,7 +137,7 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     QUEUED; `cloud` is the runner a button would move it to.
 
     Slack asks for the state rather than deriving it so its words and the chat
-    kit's cannot drift apart: the same eleven states reach a thread, a canopy
+    kit's cannot drift apart: the same thirteen states reach a thread, a canopy
     chat page and an embedded widget, and only the wording is ours.
     """
     from apps.harness import turn_status as ts
@@ -170,6 +170,10 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
                 "is offline, so nothing is working on this yet. It runs when the runner is back.")
         if st.requires:
             line += f" (it needs a {rr.describe(st.requires)} runner)"
+    elif st.state == ts.SIGNED_OUT:
+        line = (f":warning: Queued — Claude is not signed in on {agent}'s runner "
+                f"{_runner_names(st.runners)}, so nothing will run this until someone signs in "
+                "there (`claude /login`).")
     elif st.state == ts.UNROUTED and st.requires:
         need = rr.describe(st.requires)
         line = (f":warning: Queued — this conversation needs a {need} runner, "
@@ -234,7 +238,7 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     # The queued rescue offer, appended after the line it qualifies. Only the
     # two queued states nothing is going to resolve on its own — an ask a live
     # runner is already picking up needs no rescue.
-    if st.state in (ts.WAITING_RUNNER, ts.UNROUTED) and cloud is not None:
+    if st.state in (ts.WAITING_RUNNER, ts.SIGNED_OUT, ts.UNROUTED) and cloud is not None:
         line += f" A runner admin can send it to *{cloud.name}* now."
         button = cloud
 

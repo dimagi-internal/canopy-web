@@ -757,6 +757,13 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
     _step("schedules", _fire_due_schedules, cfg, client, paused=paused)
     if not healthy:
         return "cdp_down"  # nothing claimed -> nothing burned; queued turns stay queued
+    from . import readiness
+
+    if readiness.is_signed_out(cfg) and readiness.compute(cfg)[0] is False:
+        # Claude's login is gone: a claimed turn would only get the CLI's "Not
+        # logged in" back. The server refuses this box too (`Runner.signed_out`),
+        # but only once a heartbeat has carried the mark; this closes the gap.
+        return "signed_out"
     return _claim_and_execute(cfg, client, paused)
 
 

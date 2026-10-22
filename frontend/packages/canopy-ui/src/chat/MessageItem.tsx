@@ -51,6 +51,23 @@ function isCompactionSummary(message: Message): boolean {
   return message.role === "user" && Boolean(record?.compact_summary);
 }
 
+/** The CLI's sentences for a login that is gone — mirrors
+ *  `canopy_transcript.signed_out.AUTH_REQUIRED_MARKERS`. Only for rows stored
+ *  before the runner flagged API errors (`content.api_error`), and only on a
+ *  short row that IS one of them, so an agent writing about `/login` is not
+ *  mistaken for one. */
+const SIGNED_OUT_LINE = /^(not logged in|please run \/login|invalid api key|oauth session expired|auth token expired or invalid|refresh token expired)\b/i;
+
+/** Claude Code's own error notice on the agent's side — a dead login, a cap,
+ *  an API failure — which is not the agent answering. Null for a real reply. */
+export function apiErrorOf(message: Message): { signedOut: boolean } | null {
+  if (message.role !== "assistant") return null;
+  if (message.content?.api_error) return { signedOut: Boolean(message.content.signed_out) };
+  const text = message.plaintext.trim();
+  if (text.length < 120 && SIGNED_OUT_LINE.test(text)) return { signedOut: true };
+  return null;
+}
+
 /** Count visible lines for the "▸ System context (N lines)" header. */
 function countLines(text: string): number {
   if (!text) return 0;
@@ -166,6 +183,9 @@ export function MessageItem({
     );
   }
 
+  const apiError = apiErrorOf(message);
+  if (apiError) return <ApiErrorRow message={message} signedOut={apiError.signedOut} />;
+
   const otherAuthor = otherAuthorOf(message, currentUserId, currentContactId);
   // A teammate's line sits on the agent's side of the column, so it needs its
   // own treatment — in the agent's `bg-muted` it read as the agent talking.
@@ -273,6 +293,28 @@ function SystemSeedRow({
         {renderMarkdown(text)}
       </div>
     </details>
+  );
+}
+
+/** A message that did not run, said as that — not as a bubble of the agent
+ *  answering "Not logged in · Please run /login". The CLI's own words stay
+ *  beside it, because they are the evidence. */
+function ApiErrorRow({ message, signedOut }: { message: Message; signedOut: boolean }) {
+  return (
+    <div
+      data-testid="api-error-row"
+      data-turn-index={message.turn_index}
+      className="my-1 mr-auto flex max-w-[80%] items-start gap-1.5 text-xs text-warning"
+      role="status"
+    >
+      <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+      <span>
+        {signedOut
+          ? "Didn't run: Claude isn't signed in on the runner."
+          : "Error from Claude Code, not a reply:"}
+        <span className="ml-1 text-muted-foreground">“{message.plaintext.trim()}”</span>
+      </span>
+    </div>
   );
 }
 

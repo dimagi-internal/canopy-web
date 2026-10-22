@@ -303,6 +303,10 @@ class SessionOut(Schema):
     # cannot tell a box a human PARKED from one that fell over — and those want
     # opposite things from the reader (unpause it vs go find out what broke).
     runner_status: str | None = None
+    # The bound runner is online but says Claude is not signed in on it
+    # (`Runner.signed_out`): it takes no turns, and `runner_online` alone reads
+    # it as fine.
+    runner_signed_out: bool = False
     session_key: str = ""
     # This session is blocked on a dialog somebody has to answer. A bool here
     # and the dialog itself on the detail read: the list needs to RANK and badge

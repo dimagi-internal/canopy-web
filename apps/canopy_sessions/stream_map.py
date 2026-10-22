@@ -70,9 +70,17 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
         return [{"event": "chat.user_message", "data": data}]
     if kind == "assistant":
         mid = resolve_message_id(seq)
+        done = {"message_id": mid, "plaintext": payload.get("text", "")}
+        # Claude Code's own error notice, not the agent talking
+        # (`canopy_transcript.rows_for_record`) — so a watcher sees "didn't run"
+        # live, not only after a reload.
+        if payload.get("api_error"):
+            done["api_error"] = str(payload["api_error"])
+            if payload.get("signed_out"):
+                done["signed_out"] = True
         return [
             {"event": "chat.stream_start", "data": {"message_id": mid, "turn_index": seq}},
-            {"event": "chat.stream_complete", "data": {"message_id": mid, "plaintext": payload.get("text", "")}},
+            {"event": "chat.stream_complete", "data": done},
         ]
     # "tool_start"/"tool_end" are the cloud runner's names for these; the laptop
     # runner ships the transcript's own block types. Both reach the same frame —

@@ -315,6 +315,13 @@ export function ChatPanel({
         // in tools had a bubble saying it was working and no way to stop it.
         isStreaming={inFlightMessage != null || awaitingReply || agentHasFloor}
         streamingMessageId={inFlightMessage?.id ?? null}
+        // "After the current reply" is false while nothing is running: the ask
+        // ahead is stuck, so a new message waits behind it.
+        waitingPlaceholder={
+          status?.stuck && !status.menu_pending && !status.settled
+            ? "Type a message — it waits in the queue behind the one above"
+            : null
+        }
         onUpdate={onUpdateDraft}
         onSend={onSend}
         onStop={onStop}

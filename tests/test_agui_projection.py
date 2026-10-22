@@ -457,6 +457,11 @@ ROUND_TRIP_FRAMES = [
     {"event": "chat.stream_start", "data": {"message_id": "m1", "turn_index": 4}},
     {"event": "chat.delta", "data": {"message_id": "m1", "text": "hello"}},
     {"event": "chat.stream_complete", "data": {"message_id": "m1", "plaintext": "hello"}},
+    # Claude Code's own error notice: the flag is what keeps it from rendering
+    # as the agent's reply, so it must survive the round trip.
+    {"event": "chat.stream_complete",
+     "data": {"message_id": "m2", "plaintext": "Not logged in · Please run /login",
+              "api_error": "api_error", "signed_out": True}},
     {"event": "chat.user_message",
      "data": {"message_id": "u1", "turn_index": 3, "plaintext": "hi there",
               "author": {"name": "Jon", "user_id": 7}}},

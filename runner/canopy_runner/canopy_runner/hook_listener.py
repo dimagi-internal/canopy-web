@@ -40,6 +40,7 @@ from canopy_transcript import (
     menu_from_hook,
     turn_ended_in_api_error,
 )
+from canopy_transcript.signed_out import answered_at_transcript_end, signed_out_at_transcript_end
 from canopy_transcript.usage_limit import limit_at_transcript_end
 
 # Mirrors `hooks.ANSWERED` — imported lazily there to keep this module free of
@@ -64,7 +65,7 @@ class HookListener:
 
     def __init__(self, *, port: int, nonce: str, resolve_session, forward,
                  read_menu=None, resolve_task=None, menu_store=None,
-                 on_usage_limit=None, on_stop=None):
+                 on_usage_limit=None, on_stop=None, on_signed_out=None, on_answered=None):
         self.port = port
         self.nonce = nonce
         # Injected: called with a `Stop` payload and its (project, task) keys —
@@ -77,6 +78,13 @@ class HookListener:
         # caller pauses it until the reset. Fired once per cap record.
         self._on_usage_limit = on_usage_limit
         self._last_cap_record = ""
+        # Injected, like `on_usage_limit`: called with the CLI's message when a
+        # session here ends on "Not logged in · Please run /login" — the box's one
+        # login is gone, so the box stops claiming — and `on_answered` when one
+        # ends on a real reply, the proof it works again.
+        self._on_signed_out = on_signed_out
+        self._on_answered = on_answered
+        self._last_signed_out_record = ""
         self._resolve_session = resolve_session
         self._forward = forward
         # Injected: cwd -> the (project, emdash task) keys the session report is
@@ -132,6 +140,7 @@ class HookListener:
             # hook kind that forwards nothing.
             self._track_menu(payload)
             self._check_usage_limit(payload)
+            self._check_signed_out(payload)
             self._note_stop(payload)
             activity = activity_for_hook(payload)
             if activity is not None:
@@ -219,6 +228,28 @@ class HookListener:
             self._on_usage_limit(hit[1])
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.warning("usage-limit check failed (non-fatal)", exc_info=True)
+
+    def _check_signed_out(self, payload: dict) -> None:
+        """Did this session's turn just end on the CLI saying it is not signed in —
+        or on a real reply? Same reading as `_check_usage_limit`: the transcript
+        tail, the API-error flag, any session on the box."""
+        if self._on_signed_out is None and self._on_answered is None:
+            return
+        if payload.get("hook_event_name") not in ("Stop", "Notification"):
+            return
+        path = payload.get("transcript_path")
+        if not isinstance(path, str) or not path:
+            return
+        try:
+            hit = signed_out_at_transcript_end(path)
+            if hit is not None:
+                if hit[0] != self._last_signed_out_record and self._on_signed_out is not None:
+                    self._last_signed_out_record = hit[0]
+                    self._on_signed_out(hit[1])
+            elif self._on_answered is not None and answered_at_transcript_end(path):
+                self._on_answered()
+        except Exception:  # noqa: BLE001 — a hook must never see a failure
+            logger.warning("signed-out check failed (non-fatal)", exc_info=True)
 
     def _track_menu(self, payload: dict) -> None:
         """Hold, or drop, the dialog this session is waiting on.

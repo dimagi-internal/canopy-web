@@ -17025,6 +17025,11 @@ export interface components {
             /** Runner Status */
             readonly runner_status?: string | null;
             /**
+             * Runner Signed Out
+             * @default false
+             */
+            readonly runner_signed_out: boolean;
+            /**
              * Session Key
              * @default
              */
@@ -29451,6 +29456,11 @@ export interface components {
             readonly runner_online?: boolean | null;
             /** Runner Status */
             readonly runner_status?: string | null;
+            /**
+             * Runner Signed Out
+             * @default false
+             */
+            readonly runner_signed_out: boolean;
             /**
              * Session Key
              * @default

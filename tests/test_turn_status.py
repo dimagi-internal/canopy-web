@@ -1,6 +1,6 @@
 """The shared turn-status projection — the one answer every channel renders.
 
-Drives all eleven states through `derive`, which is pure, so none of this needs
+Drives all thirteen states through `derive`, which is pure, so none of this needs
 a fleet, a socket or a Slack workspace. The channel-specific renderers are
 tested where they live (`test_slack.py` for the mrkdwn line, the kit's own
 tests for the chat panel); what is pinned here is the STATE, because that is
@@ -78,6 +78,17 @@ def test_queued_with_offline_runners_is_waiting_on_one():
     assert st.runners == ("jj-mbp",)
     # The distinction that matters: a person has to act.
     assert st.stuck
+
+
+def test_queued_on_a_signed_out_runner_says_so_instead_of_picking_up():
+    """2026-10-22: acedimagi-mbp-cdp was online with no Claude login. The chat
+    said "Picking this up on acedimagi-mbp-cdp…" and every message came back as
+    "Not logged in · Please run /login"."""
+    st = ts.derive(_turn(Turn.QUEUED), reach=_reach("signed_out", [_Runner("acedimagi-mbp-cdp")]))
+    assert st.state == ts.SIGNED_OUT
+    assert st.runners == ("acedimagi-mbp-cdp",)
+    # Waiting will not fix it: someone has to sign in.
+    assert st.stuck and st.pending and not st.settled
 
 
 def test_queued_with_no_covering_runner_is_unrouted():
@@ -310,7 +321,8 @@ def test_state_sets_partition_every_state():
     """A new state added to the module must be classified, or a client asking
     'is this still going' silently answers no for it."""
     all_states = {
-        ts.PICKING_UP, ts.QUEUED_BEHIND, ts.WAITING_RUNNER, ts.UNROUTED, ts.WORKING, ts.BLOCKED,
+        ts.PICKING_UP, ts.QUEUED_BEHIND, ts.WAITING_RUNNER, ts.SIGNED_OUT, ts.UNROUTED, ts.WORKING,
+        ts.BLOCKED,
         ts.PAUSED, ts.DONE, ts.CANCELLED, ts.MISSED, ts.FAILED, ts.LOST,
     }
     assert ts.PENDING | ts.TERMINAL == all_states

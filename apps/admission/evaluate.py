@@ -118,7 +118,8 @@ def reach_facts(turn) -> tuple[dict, str]:
     reach = claim.turn_reach(turn)
     if reach.kind == claim.PARKED:
         state = HELD if reach.held_until is not None else AdmissionRule.PAUSED
-    elif reach.kind == claim.OFFLINE:
+    elif reach.kind in (claim.OFFLINE, claim.SIGNED_OUT):
+        # A signed-out box is up but runs nothing — for a rule, that is down.
         state = AdmissionRule.OFFLINE
     else:
         state = reach.kind

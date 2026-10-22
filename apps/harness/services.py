@@ -116,6 +116,7 @@ from .claim import (
     LIVE,  # noqa: F401
     OFFLINE,  # noqa: F401
     PARKED,  # noqa: F401
+    SIGNED_OUT,  # noqa: F401
     queued_turns_covered_by,  # noqa: F401
     Reach,  # noqa: F401
     runner_situation,  # noqa: F401

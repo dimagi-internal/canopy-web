@@ -810,6 +810,7 @@ export function IdePage() {
                           parent ? `${linkKind(s) === 'fork' ? 'forked' : 'started'} from ${label(parent)}` : '',
                           `${STATE_LABEL[st]} · ${MODE_LABEL[sessionMode(s)]}`,
                           s.runner_name ? `runner ${s.runner_name}${s.runner_host ? ` (${s.runner_host})` : ''}` : 'no runner',
+                          s.runner_signed_out ? `Claude isn't signed in on ${s.runner_name}` : '',
                           `workspace ${s.workspace}`,
                           `last activity ${new Date(s.last_activity_at).toLocaleString()}`,
                           s.status === 'archived' ? 'archived' : '',
@@ -839,7 +840,15 @@ export function IdePage() {
                         ) : (
                           <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
                         )}
-                        <span className="max-w-[140px] truncate rounded border border-border px-1 text-[11px] text-muted-foreground">
+                        <span
+                          className={clsx(
+                            'max-w-[140px] truncate rounded border px-1 text-[11px]',
+                            s.runner_signed_out ? 'border-warning/40 text-warning' : 'border-border text-muted-foreground',
+                          )}
+                          title={s.runner_signed_out ? `Claude isn't signed in on ${s.runner_name}: it runs nothing until someone signs in there` : undefined}
+                          data-testid={s.runner_signed_out ? `ide-runner-signed-out-${s.id}` : undefined}
+                        >
+                          {s.runner_signed_out && '⚠ '}
                           {s.runner_name ?? 'web'}
                         </span>
                         <ModeTag mode={sessionMode(s)} />

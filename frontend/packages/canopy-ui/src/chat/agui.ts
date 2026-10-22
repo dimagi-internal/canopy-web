@@ -103,7 +103,12 @@ export function fromAgui(frame: AguiFrame): WsEvent[] {
       return [
         {
           event: "chat.stream_complete",
-          data: { message_id: str(frame.messageId), plaintext: str(m.plaintext) },
+          data: {
+            message_id: str(frame.messageId),
+            plaintext: str(m.plaintext),
+            ...(m.api_error ? { api_error: str(m.api_error) } : {}),
+            ...(m.signed_out ? { signed_out: true } : {}),
+          },
         },
       ];
 

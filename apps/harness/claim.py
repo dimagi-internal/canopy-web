@@ -278,6 +278,9 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
 
 
 LIVE, OFFLINE, PARKED, UNROUTED = "live", "offline", "parked", "config"
+#: Its runners are online, but every one that could take it says its Claude login
+#: is gone (`Runner.signed_out`) — so none will claim it until someone signs in.
+SIGNED_OUT = "signed_out"
 
 
 @dataclass
@@ -289,6 +292,8 @@ class Reach:
     `parked` — every runner that could take it is PAUSED (someone decided, not a
     lapsed heartbeat); `runners` are those. `held_until` says when the first of
     them resumes on its own, or None when none will without a person.
+    `signed_out` — runners are online, but every one that could take it has no
+    Claude sign-in (`Runner.signed_out`); `runners` are those.
     `config` (UNROUTED) — nothing could ever take it until routing changes.
     """
 
@@ -364,9 +369,14 @@ def turn_reach(turn: Turn) -> Reach:
     prime_machine_units(runners)
     defaults, priorities = _assignment_rows_for_turns([turn])
     covering = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities).items() if pks]
-    live = [r for r in covering if r.live_status == Runner.ONLINE]
+    online = [r for r in covering if r.live_status == Runner.ONLINE]
+    live = [r for r in online if not r.signed_out]
     if live:
         return Reach(LIVE, live, behind=blocking_turn(turn))
+    if online:
+        # Up, heartbeating, and unable to run Claude: "Picking this up on X" over
+        # a box that will answer "Not logged in" is the lie this state replaces.
+        return Reach(SIGNED_OUT, online)
 
     def blocked_by_requirements(*, live_only: bool) -> bool:
         # Would a runner take it if the conversation required nothing? Only
@@ -406,6 +416,8 @@ def runner_situation(r: Runner) -> str:
         end = (f", until {_when(r.unpause_at)}" if r.unpause_at
                else ", with no time set to resume")
         return f"{r.name} was paused by {who} on {_when(r.paused_at)}{why}{end}"
+    if r.signed_out and r.live_status == Runner.ONLINE:
+        return f"{r.name} is online but Claude is not signed in on it"
     return f"{r.name} has not been heard from since {_when(r.last_heartbeat_at)}"
 
 
@@ -662,6 +674,13 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # turn stays QUEUED and lands on unpause (only a readiness drill expires:
     # `expire_stale_drills`).
     if runner.live_status != Runner.ONLINE:
+        return None
+    # A box whose Claude login is gone runs nothing: every turn it took would come
+    # back as the CLI's "Not logged in" (2026-10-22, acedimagi-mbp-cdp answered
+    # three messages that way). Not every not-ready note means that — a box with
+    # no Claude desktop CLI still runs turns in emdash — so only this one gates.
+    # Above the pin, like the pause: a pin cannot make a signed-out box work.
+    if runner.signed_out:
         return None
     # The FLEET-WIDE hold (FleetHold): nothing is claimed, ridden or pinned anywhere
     # while it is on, and queued turns wait — visible, with their trigger — for the

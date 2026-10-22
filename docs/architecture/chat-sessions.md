@@ -10,13 +10,15 @@ is `apps/canopy_sessions/access.py` (see `docs/architecture/tenancy.md`).
 ## Turn status: derived once, rendered by every channel
 
 - `apps/harness/turn_status.py::derive` / `resolve` turn a `Turn` plus `turn_reach`
-  into one of twelve states: `picking_up`, `queued_behind`, `waiting_runner`,
-  `unrouted`, `working`, `blocked`, `paused` (pending) and `done`, `cancelled`,
-  `missed`, `failed`, `lost` (terminal).
-- **Queued is four states** (`picking_up` / `queued_behind` / `waiting_runner` /
-  `unrouted`) because the remedy differs — wait (for a runner, or for the turn
-  ahead of it), open the laptop, or fix the agent's routing — and no
-  client can derive those facts itself. A channel may collapse states, but only
+  into one of thirteen states: `picking_up`, `queued_behind`, `waiting_runner`,
+  `signed_out`, `unrouted`, `working`, `blocked`, `paused` (pending) and `done`,
+  `cancelled`, `missed`, `failed`, `lost` (terminal).
+- **Queued is five states** (`picking_up` / `queued_behind` / `waiting_runner` /
+  `signed_out` / `unrouted`) because the remedy differs — wait (for a runner, or
+  for the turn ahead of it), open the laptop, sign Claude in on the box, or fix the
+  agent's routing — and no client can derive those facts itself. `signed_out` is a
+  runner that is online but reports `Runner.signed_out` (see runners.md § Runner
+  readiness); it claims nothing, so "picking this up" would be a lie. A channel may collapse states, but only
   from the full set.
 - **Not a column.** It is a function of rows that change on their own clock
   (`Turn.status`, runner heartbeats); persisting it would go stale exactly when a
@@ -26,6 +28,11 @@ is `apps/canopy_sessions/access.py` (see `docs/architecture/tenancy.md`).
   session socket, drawn by `canopy-ui/chat/turnStatus.ts`
   (`frontend/packages/canopy-ui/src/chat/turnStatus.ts`). The embedded widget gets
   it because it mounts the same `ChatPanel`.
+- **Claude Code's own error notice is not a reply.** An `isApiErrorMessage` record
+  ("Not logged in · Please run /login", a usage cap) becomes an assistant row with
+  `content.api_error` (+ `signed_out`) (`canopy_transcript.rows_for_record`), carried
+  on the live `chat.stream_complete` frame too; the kit draws it as a one-line
+  "Didn't run" row (`MessageItem.tsx::apiErrorOf`), not as the agent talking.
 - **A quiet `working` turn says so.** The status carries `claimed_at` and `last_progress_at` (the claim, or the newest ledger event) for `working`; after `QUIET_AFTER_MS` (5 min) with nothing back — counting messages on screen and a reply still streaming — the chat kit replaces silence with a fact: "cloud-ec2-2 took this 6m ago and nothing has come back from it since." No verdict ("stuck"); it never speaks over a pending dialog. Slack says the same from `TurnStatus.quiet_since` (`apps/harness/turn_status.py`, `QUIET_AFTER_SECONDS`) in Slack date tokens — "*cloud-ec2-2* took this at 15:45 and nothing has come back from it since" — so its sweep edits the line only when something changes, never every minute.
 - **Every channel reacts to the same three events:** enqueue
   (`harness.signals.turn_status_changed` — enqueue appends no `status` event, and

@@ -592,6 +592,49 @@ def pause_for_usage_limit(cfg: Config, client: Client, text: str) -> None:
     logger.warning("usage cap on this box's Claude login — runner paused until %s", when)
 
 
+def report_signed_out(cfg: Config, client: Client, text: str) -> None:
+    """This box's Claude login is gone. Mark it not ready — the server then stops
+    giving it turns and tells whoever is waiting why — and, the first time, raise
+    the `claude_auth_required` alert that mails and pushes the people who run it
+    (`apps/harness/credential_notify.py`). Until now only cloud boxes raised it; a
+    signed-out laptop kept claiming and answering every message with the CLI's
+    one-liner. Never raises."""
+    from . import readiness
+
+    first = readiness.mark_signed_out(cfg)
+    logger.warning("this box's Claude login is gone (%s) — not claiming until it is back",
+                   text.strip()[:120])
+    if not first:
+        return
+    import socket
+
+    try:
+        name = socket.gethostname() or "this runner"
+    except OSError:
+        name = "this runner"
+    try:
+        client.post_alert({
+            "source": "runner.credential",
+            "kind": "claude_auth_required",
+            "level": "error",
+            "summary": (f"Claude is not signed in on {name}. It takes no turns until "
+                        f"someone signs in there (`claude /login`) — this does not "
+                        f"reset on its own."),
+            "key": f"auth-required:{cfg.runner_id}",
+        })
+    except Exception:  # noqa: BLE001 — the alert must never break the hook
+        logger.warning("could not raise the signed-out alert", exc_info=True)
+
+
+def note_signed_in(cfg: Config) -> None:
+    """A session here just got a real reply: the login works, so lift a
+    signed-out mark at once rather than waiting out its TTL."""
+    from . import readiness
+
+    if readiness.clear_signed_out(cfg):
+        logger.info("Claude answered on this box again — signed-out mark cleared")
+
+
 def send_owner_ask(client: Client, payload: dict, keys, *, profile_root=None,
                    background: bool = True) -> None:
     """A caller's session just ended a turn: if its final message carries the
@@ -679,6 +722,8 @@ def start_hook_listener(cfg: Config, client: Client):
         # Beside runner.json and the PAUSED sentinel — per-box state, not config.
         menu_store=MenuStore(Path.home() / ".canopy" / "pending-menus.json"),
         on_usage_limit=lambda text: pause_for_usage_limit(cfg, client, text),
+        on_signed_out=lambda text: report_signed_out(cfg, client, text),
+        on_answered=lambda: note_signed_in(cfg),
         on_stop=lambda payload, keys: send_owner_ask(client, payload, keys),
     )
     listener.bind_sender(

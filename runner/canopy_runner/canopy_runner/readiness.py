@@ -52,6 +52,41 @@ def mark_failed(cfg, note: str) -> None:
         pass  # best-effort; a missing marker just means "presumed ready"
 
 
+def mark_signed_out(cfg) -> bool:
+    """This box's Claude login is gone. Reported as not ready with the note the
+    server keys on (`canopy_transcript.SIGNED_OUT_NOTE`): it claims nothing, and
+    a message waiting on it says why. True when it was not already marked, so the
+    caller raises its alert once, not on every hook."""
+    from canopy_transcript import SIGNED_OUT_NOTE
+
+    already = is_signed_out(cfg)
+    try:
+        p = _marker(cfg)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(SIGNED_OUT_NOTE + " — sign in with `claude /login` there")
+    except OSError:
+        return False
+    return not already
+
+
+def is_signed_out(cfg) -> bool:
+    from canopy_transcript import SIGNED_OUT_NOTE
+
+    try:
+        return _marker(cfg).read_text().startswith(SIGNED_OUT_NOTE)
+    except OSError:
+        return False
+
+
+def clear_signed_out(cfg) -> bool:
+    """Claude answered something on this box, so its login works again. Clears
+    only a signed-out mark — never another failure's. True when it cleared one."""
+    if not is_signed_out(cfg):
+        return False
+    mark_ok(cfg)
+    return True
+
+
 def mark_ok(cfg) -> None:
     """A turn succeeded — clear any prior failure marker."""
     try:

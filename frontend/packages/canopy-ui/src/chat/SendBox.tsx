@@ -53,6 +53,9 @@ interface Props {
   peers?: ReactNode;
   /** When set, sending is disabled and this reason is shown as a hint. */
   disabledReason?: string;
+  /** The placeholder while a turn holds the floor, when the host knows better
+   *  than "sent after the current reply" — nothing is replying yet. */
+  waitingPlaceholder?: string | null;
   /** Files staged for the next send. Omit to hide attaching entirely — the kit
    *  stays usable by hosts that have no upload endpoint. */
   attachments?: PendingAttachment[];
@@ -94,6 +97,7 @@ export function SendBox({
   banner,
   peers,
   disabledReason,
+  waitingPlaceholder,
   attachments,
   onAttach,
   onRemoveAttachment,
@@ -293,7 +297,7 @@ export function SendBox({
     : !draft
       ? "Type a message… (connecting…)"
       : isStreaming
-        ? "Type a message — it will be sent after the current reply"
+        ? waitingPlaceholder || "Type a message — it will be sent after the current reply"
         : attachmentsUploading
           ? "Waiting for attachment to finish uploading…"
           : "Type a message… (Enter to send, Shift+Enter for newline)";

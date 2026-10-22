@@ -113,6 +113,17 @@ describe("turnNotice", () => {
     expect(n?.text).toContain("jj-mbp is offline");
   });
 
+  it("says a signed-out box cannot run it, instead of picking it up", () => {
+    // 2026-10-22: "Picking this up on acedimagi-mbp-cdp…" over a box with no
+    // Claude login, which answered every message "Not logged in".
+    const s = status({ state: "signed_out", stuck: true, claimed_by: null, runners: ["acedimagi-mbp-cdp"] });
+    expect(agentHasFloor({ status: s, awaitingReply: true })).toBe(false);
+    const n = turnNotice(s);
+    expect(n?.tone).toBe("error");
+    expect(n?.text).toContain("Claude isn't signed in on acedimagi-mbp-cdp");
+    expect(n?.text).toContain("claude /login");
+  });
+
   it("says a paused box is paused, and until when it holds the turn", () => {
     const held = turnNotice(status({
       state: "waiting_runner", stuck: true, claimed_by: null, parked: true,
