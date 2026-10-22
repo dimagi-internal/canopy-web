@@ -17,11 +17,12 @@ from collections.abc import Callable
 
 from django.db.models import Count
 
+from apps.canopy_sessions.models import Session
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import interface as iface_mod
-from .models import Agent
+from .models import Agent, AgentProject, AgentTask
 from .setup import DONE, OPTIONAL, setup_steps
 from .tree import agents_in_tree
 from .vault_health import vault_health
@@ -81,7 +82,6 @@ def _counts(agents: list[Agent]) -> dict[int, dict]:
     (`services.waiting_q`) — the definitions the agent's own pages count with."""
     from django.db.models import Q
 
-    from .models import AgentProject, AgentTask
     from .services import waiting_q
 
     rows = (Agent.objects.filter(pk__in=[a.pk for a in agents]).order_by()
@@ -105,8 +105,8 @@ def _sessions(agents: list[Agent], viewer) -> dict[int, dict]:
     the list's rule) — both over ALL its sessions, as counts — and its latest
     sessions, only those the viewer may open (`access.readable_sessions`): showing
     a title is showing the chat, and opening one is never a grant."""
-    from apps.canopy_sessions import access, services as chat, staleness
-    from apps.canopy_sessions.models import Session
+    from apps.canopy_sessions import access, staleness
+    from apps.canopy_sessions import services as chat
 
     ids = [a.pk for a in agents]
     out: dict[int, dict] = {i: {"active": 0, "last_at": None, "recent": []} for i in ids}

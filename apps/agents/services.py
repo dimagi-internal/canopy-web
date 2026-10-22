@@ -8,17 +8,27 @@ import re
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.harness.models import Turn, agent_turns_q
+from apps.canopy_sessions.models import RunnerBinding
+from apps.common.encryption import decrypt_secret, encrypt_secret
+from apps.contacts.models import Person
+from apps.harness.models import Runner, RunnerAssignment, Turn, TurnTranscript, agent_turns_q
+from apps.session_sharing.models import ShareToken
+from apps.tokens.models import PersonalToken
+from apps.workspaces.models import Workspace
 
 from .models import (
+    MAX_TASK_DEPTH,
     Agent,
+    AgentBootstrapReport,
+    AgentCredential,
+    AgentCredentialRead,
     AgentProject,
     AgentSkill,
     AgentSync,
     AgentTask,
     AgentTaskAction,
     AgentTaskHumanWhy,
-    MAX_TASK_DEPTH,
+    ZeroKnowledgeValue,
 )
 
 _VALID_TASK_STATUS = {AgentTask.SUGGESTED, AgentTask.IN_PROGRESS, AgentTask.DONE, AgentTask.DECLINED}
@@ -99,8 +109,6 @@ def make_zero_knowledge(agent) -> int:
     them (no vault key, no approved machine) — nothing changes then. Returns
     the number of values sealed; a no-op on an agent already zero-knowledge."""
     from django.db import transaction
-
-    from apps.agents.models import AgentCredential
 
     from . import zk, zk_seal
 
@@ -233,7 +241,6 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
 
     Non-expiring, like the agent's vault key: nothing watches either for expiry, and a
     lapsed one fails every turn silently."""
-    from apps.tokens.models import PersonalToken
     from apps.workspaces import permissions as perms
 
     from .agent_login import AgentLoginRefused, create_agent_login
@@ -492,7 +499,6 @@ def stamp_share_urls(turns) -> list:
     """Stamp `share_url` on each turn: its transcript's page, under the
     workspace the transcript was shared from. One query for the whole page.
     Run AFTER redaction, so a hidden turn's blanked token yields no link."""
-    from apps.session_sharing.models import ShareToken
     from apps.workspaces import services as wsvc
 
     tokens = {t.share_token for t in turns if t.share_token}
@@ -514,8 +520,6 @@ def list_turns(agent: Agent, limit: int = 100) -> list[Turn]:
     (see `_link_turn_sessions`) and `has_transcript` — because a turn row on its
     own is only the dispatch envelope."""
     from django.db.models import Exists, OuterRef
-
-    from apps.harness.models import TurnTranscript
 
     turns = list(
         agent.turns.select_related("agent")
@@ -548,7 +552,6 @@ def _link_turn_sessions(agent: Agent, turns: list[Turn]) -> None:
     session that existed by the time the turn finished: a later session that
     happens to share the name is a different conversation. Of several that fit,
     the newest wins. One query for the whole page, not one per turn."""
-    from apps.canopy_sessions.models import RunnerBinding
 
     keys = {t.session_key for t in turns if t.session_key and not t.chat_session_id}
     by_key: dict[str, list[tuple[dt.datetime, object]]] = {}
@@ -643,7 +646,6 @@ def may_hold_workspace_project(steward: Agent, workspace_slug: str) -> bool:
     or one below it: an org's agent can curate a division's resource (Eva, of
     dimagi, stewards `connect/givewell-kb`), but not the other way round, nor
     across organisations."""
-    from apps.workspaces.models import Workspace
 
     if workspace_slug == steward.workspace_id:
         return True
@@ -923,7 +925,6 @@ def _resolve_who(agent: Agent, who: dict):
     with. An email canopy does not know is kept as text: the quote still says
     who. A `person_id` that is not known here is refused — it was explicit."""
     from apps.contacts import people
-    from apps.contacts.models import Person
 
     pid = who.get("person_id")
     email = (who.get("email") or "").strip().lower()
@@ -1451,7 +1452,6 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
     held custodial values is still written custodially until it is converted
     (`manage.py list_custodial_vault_agents` lists them).
     """
-    from apps.agents.models import AgentCredential
 
     del minted  # every write is sealed now; kept for callers' clarity
     blank = sorted(k for k, v in values.items() if not (v or "").strip())
@@ -1491,7 +1491,6 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
 
 
 def delete_agent_credential(agent, name: str) -> int:
-    from apps.agents.models import AgentCredential
 
     deleted, _ = AgentCredential.objects.filter(agent=agent, name=name).delete()
     return deleted
@@ -1511,11 +1510,8 @@ def agent_credential_status(agent) -> list[dict]:
     removed from runtime.yaml is a live secret nothing accounts for, and hiding
     it is how it stays that way.
     """
-    from apps.agents.models import AgentCredential
 
     from django.db.models import Count, Max
-
-    from apps.agents.models import AgentCredentialRead
 
     stored = {c.name: c for c in AgentCredential.objects.filter(agent=agent).select_related("updated_by")}
     declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
@@ -1544,7 +1540,6 @@ def agent_credential_status(agent) -> list[dict]:
 
 def credential_reads(agent, name: str, *, limit: int = 100) -> list[dict]:
     """The read history of one credential, newest first."""
-    from apps.agents.models import AgentCredentialRead
 
     qs = (AgentCredentialRead.objects.filter(agent=agent, name=name)
           .select_related("user", "runner").order_by("-created_at")[:limit])
@@ -1572,7 +1567,6 @@ def resolve_agent_credentials(agent, refs: set[str] | None = None) -> dict[str, 
     A set returns only those refs that the agent also DECLARES — a ref the
     caller names but runtime.yaml does not is never handed out, so a scoped
     caller cannot widen its read by guessing names."""
-    from apps.agents.models import AgentCredential
 
     qs = AgentCredential.objects.filter(agent=agent).select_related("agent")
     if refs is not None:
@@ -1585,7 +1579,6 @@ def resolve_agent_credentials(agent, refs: set[str] | None = None) -> dict[str, 
 def record_credential_reads(agent, names, *, user=None, runner=None, via="", turn_id="",
                             license=None) -> None:
     """One `AgentCredentialRead` row per ref handed out (canopy-web#1538)."""
-    from apps.agents.models import AgentCredentialRead
 
     AgentCredentialRead.objects.bulk_create([
         AgentCredentialRead(
@@ -1605,7 +1598,6 @@ def reveal_agent_credential(agent, name: str, *, user) -> str | None:
     resolve (which must not be starved of secrets by an audit hiccup), a human
     reveal that cannot be recorded does not happen.
     """
-    from apps.agents.models import AgentCredential
     from apps.events import services as events
 
     cred = AgentCredential.objects.filter(agent=agent, name=name).select_related("agent").first()
@@ -1613,10 +1605,8 @@ def reveal_agent_credential(agent, name: str, *, user) -> str | None:
         return None
     if cred.is_zk:
         # Nothing to show: canopy-web holds only ciphertext (canopy-web#1550).
-        from apps.agents.models import ZeroKnowledgeValue
 
         raise ZeroKnowledgeValue(f"{name} is a zero-knowledge value; canopy-web cannot reveal it")
-    from apps.agents.models import AgentCredentialRead
 
     who = getattr(user, "email", "") or str(getattr(user, "pk", ""))
     # The credential's own read history (the same log /credentials/resolve
@@ -1650,7 +1640,6 @@ def caller_runs_agent(user, agent) -> bool:
     credential fetch, whose trust boundary is "the caller who can claim turns as
     this runner".
     """
-    from apps.harness.models import Runner, RunnerAssignment
     from apps.workspaces import role_cap
 
     if role_cap.cap_of(user):
@@ -1723,7 +1712,6 @@ def set_agent_vault(agent, *, vault=None, service_key=None):
     Non-clobbering on the KEY specifically: renaming a vault must not silently
     wipe the credential that reads it, which is the shape of every other
     credential write here."""
-    from apps.common.encryption import encrypt_secret
 
     fields = []
     if vault is not None:
@@ -1738,8 +1726,7 @@ def set_agent_vault(agent, *, vault=None, service_key=None):
         # verdict to "not reported" rather than leave a stale False (or True) on the
         # checklist, and ask the cloud boxes that take its turns to re-run bootstrap,
         # which is what produces a fresh one.
-        from .models import AgentBootstrapReport
-        from .setup import request_setup
+        from .setup import request_setup  # cycle: agents.setup -> agents.oauth_api -> agents.services
 
         AgentBootstrapReport.objects.filter(agent=agent).update(env_ok=None)
         request_setup(agent)
@@ -1768,7 +1755,6 @@ def agent_vault_status(agent):
 
 def resolve_agent_vault(agent) -> tuple[str, str]:
     """PLAINTEXT vault config, for a runner. Empty token when none is set."""
-    from apps.common.encryption import decrypt_secret
 
     token = decrypt_secret(agent.op_sa_token_enc) if agent.op_sa_token_enc else ""
     return agent.op_vault, token
@@ -1785,7 +1771,6 @@ def resolve_shared_vault(agent) -> tuple[str, str]:
     whole defect this closes was a derived name — "Canopy-Shared" compiled into
     bootstrap_agents.sh, correct for one tenant and silently wrong for the next.
     """
-    from apps.common.encryption import decrypt_secret
 
     ws = agent.workspace.shared_vault_source() if agent.workspace else None
     if ws is None:
@@ -1802,7 +1787,6 @@ def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
     """Upsert one box's view of this agent. Latest wins — this is current state,
     not a log: the question it answers is "can this agent run RIGHT NOW", and a
     history of that would bury the answer under every prior boot."""
-    from apps.agents.models import AgentBootstrapReport
 
     fields = {
         "client_creds_ok": bool(client_creds_ok),
@@ -1851,8 +1835,6 @@ def bootstrap_reports(agent) -> list:
     with no runner row at all (a laptop that reports before it pairs) still shows,
     and unretiring the runner brings its row back, because nothing is deleted.
     """
-    from apps.agents.models import AgentBootstrapReport
-    from apps.harness.models import Runner
 
     retired = set(
         Runner.objects.filter(status=Runner.RETIRED).values_list("name", flat=True)

@@ -34,6 +34,8 @@ from dataclasses import dataclass
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from apps.contacts.models import Person
+
 from .models import AgentProject, ProjectParticipant
 
 logger = logging.getLogger(__name__)
@@ -186,7 +188,6 @@ def person_by_email(address: str):
     is. Callers still gate on `people.known_in` — an address confirms nothing
     about a workspace that does not deal with them."""
     from apps.contacts import people
-    from apps.contacts.models import Person
 
     address = (address or "").strip()
     if "@" not in address:

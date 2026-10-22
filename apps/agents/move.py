@@ -47,9 +47,18 @@ from typing import Callable
 
 from django.db import IntegrityError, transaction
 
+from apps.admission.models import AdmissionRule
+from apps.canopy_sessions.models import Message, Session
+from apps.capabilities.models import CapabilityGrant, CapabilityLease
+from apps.contacts.models import PersonFact, PersonGrant
+from apps.harness.models import AgentSchedule, RunnerAssignment, Turn
+from apps.issues.models import OriginIssue
+from apps.retention.models import RetentionRule
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
+
+from .models import Agent, AgentAdmin, AgentProject, AgentSkill, AgentTask
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +169,6 @@ def move(agent, dest: Workspace, *, by) -> Plan:
     Returns the plan it carried out. Raises MoveError (409) if a row cannot be
     re-homed — a unique constraint in the destination — and then nothing moved.
     Writes one `events.Event` in BOTH workspaces naming who moved what."""
-    from apps.agents.models import Agent
 
     try:
         with transaction.atomic():
@@ -211,7 +219,6 @@ def _rehome(qs, dest, apply: bool) -> int:
 
 @register
 def _turns(p: Plan, apply: bool) -> None:
-    from apps.harness.models import Turn
 
     turns = Turn.objects.filter(agent=p.agent)
     total = turns.count()
@@ -229,7 +236,6 @@ def _turns(p: Plan, apply: bool) -> None:
 @register
 def _sessions(p: Plan, apply: bool) -> None:
     from apps.canopy_sessions import filing
-    from apps.canopy_sessions.models import Message, Session
 
     sessions = Session.objects.filter(agent=p.agent)
     moved, dropped = filing.rehome_agent_sessions(sessions, p.dest, apply=apply)
@@ -244,7 +250,6 @@ def _sessions(p: Plan, apply: bool) -> None:
 
 @register
 def _capabilities(p: Plan, apply: bool) -> None:
-    from apps.capabilities.models import CapabilityGrant, CapabilityLease
 
     p.moves("capabilities.CapabilityGrant",
             _rehome(CapabilityGrant.objects.filter(agent=p.agent), p.dest, apply), "re-homed")
@@ -254,8 +259,6 @@ def _capabilities(p: Plan, apply: bool) -> None:
 
 @register
 def _policy(p: Plan, apply: bool) -> None:
-    from apps.admission.models import AdmissionRule
-    from apps.retention.models import RetentionRule
 
     p.moves("admission.AdmissionRule",
             _rehome(AdmissionRule.objects.filter(agent=p.agent), p.dest, apply),
@@ -275,7 +278,6 @@ def _policy(p: Plan, apply: bool) -> None:
 
 @register
 def _origin_issues(p: Plan, apply: bool) -> None:
-    from apps.issues.models import OriginIssue
 
     p.moves("issues.OriginIssue",
             _rehome(OriginIssue.objects.filter(agent=p.agent.slug), p.dest, apply), "re-homed")
@@ -284,8 +286,6 @@ def _origin_issues(p: Plan, apply: bool) -> None:
 @register
 def _follows(p: Plan, apply: bool) -> None:
     """Agent-keyed tables with no workspace FK: they move by moving the agent."""
-    from apps.agents.models import AgentProject, AgentSkill, AgentTask
-    from apps.harness.models import AgentSchedule, RunnerAssignment
 
     for model in (AgentTask, AgentProject, AgentSkill, AgentSchedule, RunnerAssignment):
         p.moves(model._meta.label, model.objects.filter(agent=p.agent).count(), "follows the agent")
@@ -293,7 +293,6 @@ def _follows(p: Plan, apply: bool) -> None:
 
 @register
 def _people(p: Plan, apply: bool) -> None:
-    from apps.contacts.models import PersonFact, PersonGrant
 
     p.leaves("contacts.PersonFact",
              PersonFact.objects.filter(asserted_by_agent=p.agent, workspace=p.source).count(),
@@ -312,7 +311,6 @@ def _people(p: Plan, apply: bool) -> None:
 def _identity(p: Plan, apply: bool) -> None:
     """Who holds the agent after the move — `Agent.is_admin` is decided in its
     workspace — and the agent's own canopy login."""
-    from apps.agents.models import AgentAdmin
 
     agent, dest = p.agent, p.dest
     if agent.owner_id and not wsvc.is_member(agent.owner, dest.slug):
@@ -346,7 +344,6 @@ def _runtime(p: Plan, apply: bool) -> None:
     """Runner routing, the shared vault and Slack — re-decided by the new tenant."""
     from apps.agents.services import runner_may_hold_agent
     from apps.harness import routing
-    from apps.harness.models import RunnerAssignment
 
     agent, dest = p.agent, p.dest
     after = copy.copy(agent)

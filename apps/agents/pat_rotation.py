@@ -42,6 +42,10 @@ from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
+from apps.tokens.models import PersonalToken
+
+from .models import Agent, AgentCredential, AgentPatRotation
+
 logger = logging.getLogger(__name__)
 
 #: The name an agent's own canopy login is stored under in canopy-web's vault. A
@@ -68,7 +72,6 @@ def enable_refusal(agent, actor) -> RotationRefused | None:
     """Why `actor` may not opt `agent` in (or rotate it), or None. The same
     standing `mint_agent_canopy_token` asks for, decided at opt-in so a job that
     runs later without anyone present is never the first to find out."""
-    from apps.agents.models import AgentCredential
     from apps.workspaces import permissions as perms
 
     # A zero-knowledge agent rotates too: the new token is sealed to its
@@ -95,7 +98,6 @@ def enable_refusal(agent, actor) -> RotationRefused | None:
 def due_at(agent):
     """When the agent's canopy-pat is next due, or None when rotation is off.
     Counted from the last rotation, else from when the value was last written."""
-    from apps.agents.models import AgentCredential
 
     if not agent.pat_rotation_enabled:
         return None
@@ -109,8 +111,6 @@ def due_at(agent):
 def _current_token(agent):
     """The live PersonalToken the stored canopy-pat IS, if it belongs to the
     agent's own login; else None."""
-    from apps.agents.models import AgentCredential
-    from apps.tokens.models import PersonalToken
 
     cred = AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).select_related("agent").first()
     if cred is None or agent.user_id is None:
@@ -119,7 +119,6 @@ def _current_token(agent):
         # canopy-web cannot read the stored value; the token it minted last is
         # the one to retire (if a person stored another since, that one is
         # superseded anyway).
-        from apps.agents.models import AgentPatRotation
 
         last = (AgentPatRotation.objects.filter(agent=agent, status=AgentPatRotation.ROTATED,
                                                 new_token__isnull=False)
@@ -140,7 +139,6 @@ def _current_token(agent):
 def rotate(agent, *, trigger: str = "scheduler", actor=None):
     """Rotate now. Returns the AgentPatRotation row (status `rotated`), or raises
     RotationRefused after recording a `failed` row."""
-    from apps.agents.models import Agent, AgentPatRotation
 
     now = timezone.now()
     refusal = None
@@ -162,8 +160,6 @@ def rotate(agent, *, trigger: str = "scheduler", actor=None):
 
 def _rotate_locked(agent, *, now, trigger: str, actor):
     """The rotation itself, inside `rotate`'s transaction (agent row locked)."""
-    from apps.agents.models import Agent, AgentPatRotation
-    from apps.tokens.models import PersonalToken
 
     from . import services
 
@@ -189,8 +185,6 @@ def _rotate_locked(agent, *, now, trigger: str, actor):
 
 def revoke_due(now=None) -> int:
     """Revoke every old token whose overlap has ended. Returns how many."""
-    from apps.agents.models import AgentPatRotation
-    from apps.tokens.models import PersonalToken
 
     now = now or timezone.now()
     done = 0
@@ -206,7 +200,6 @@ def revoke_due(now=None) -> int:
 
 
 def due_agents(now=None):
-    from apps.agents.models import Agent
 
     now = now or timezone.now()
     return [a for a in Agent.objects.filter(pat_rotation_enabled=True).select_related("user")
@@ -225,7 +218,6 @@ def tick(now=None) -> dict:
                 out["failed"] += 1
                 # Back off a full period rather than retrying (and recording a
                 # failure) every tick; the failure row says why.
-                from apps.agents.models import Agent
 
                 Agent.objects.filter(pk=agent.pk).update(pat_rotated_at=timezone.now())
             except Exception:  # noqa: BLE001
@@ -249,7 +241,6 @@ def tick_if_due(interval_s: float) -> dict | None:
 
 
 def status(agent, *, history: int = 10) -> dict:
-    from apps.agents.models import AgentPatRotation
 
     rows = AgentPatRotation.objects.filter(agent=agent).order_by("-created_at")[:history]
     return {

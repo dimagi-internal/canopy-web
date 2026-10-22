@@ -45,7 +45,7 @@ from django.db import DatabaseError, close_old_connections, connection, transact
 
 from apps.contacts import embeddings
 
-from .models import KbPassage
+from .models import AgentProject, KbPassage
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,6 @@ def _start(project_pk: int):
 
 
 def _background_sync(project_pk: int):
-    from .models import AgentProject
 
     close_old_connections()
     try:

@@ -26,11 +26,12 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.harness.models import Turn
+from apps.huddles.models import CheckinRun
 
 from . import engagement, proposals, services
 from .gates import agent_for_read, agent_for_work, project_or_404, visible_agent_workspaces
 from .models import Agent, AgentTask
-from apps.harness.models import Turn
 from .schemas import (
     AgentBackingIn,
     ProjectBackingIn,
@@ -229,7 +230,6 @@ def propose_task(request: HttpRequest, slug: str, ref: str, payload: TaskPropose
     Start and Decline are the task's own approve and decline (`POST
     …/tasks/{task}/actions`), by the project's owner, the check-in's lead, or a
     workspace owner or admin. The project's agent itself, or an editor."""
-    from apps.huddles.models import CheckinRun
 
     agent = agent_for_read(request, slug)
     if not agent.is_own_login(request.user):

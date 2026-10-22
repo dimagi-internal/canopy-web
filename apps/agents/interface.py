@@ -110,6 +110,7 @@ from __future__ import annotations
 
 import re
 
+from apps.canopy_sessions.models import SessionParticipant
 from apps.harness import initiator as who
 
 VERSION = 1
@@ -484,7 +485,6 @@ def session_writer(turn, agent) -> str | None:
         return None
     if creator.pk != agent.owner_id and not agent.is_admin(creator):
         return None
-    from apps.canopy_sessions.models import SessionParticipant
 
     role = (SessionParticipant.objects.filter(session=session, user=user)
             .values_list("role", flat=True).first())
@@ -503,7 +503,7 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
     listed for it; otherwise they are refused (`callers_default: none`). With
     NO published interface, only admins and editors get in.
     """
-    from . import access
+    from . import access  # cycle: agents.access -> agents.interface
 
     return access.decide_for_turn(turn, agent, requested).stamp
 
@@ -512,7 +512,7 @@ def granted_by(turn, agent) -> str:
     """WHY this turn has the access it has, for the envelope: `owner`, `admin`,
     `system`, `editor`, `session:<role>`, `full:<rule>`, `capability:<name>` or
     `refused`."""
-    from . import access
+    from . import access  # cycle: agents.access -> agents.interface
 
     d = access.decide_for_turn(turn, agent)
     if d.access == access.CONFINED:
@@ -536,7 +536,7 @@ def offered_to(user, agent) -> list[str]:
     caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
     if not caps or not getattr(user, "is_authenticated", False):
         return []
-    from . import access
+    from . import access  # cycle: agents.access -> agents.interface
 
     d = access.decide(agent, user, verified=True)
     if d.role not in (access.OWNER, access.ADMIN, access.MEMBER):

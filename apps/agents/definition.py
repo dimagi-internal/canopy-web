@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import re
 
+from .models import Agent
+
 #: `git@github.com:org/repo.git` -> `github.com/org/repo`
 _SCP_LIKE = re.compile(r"^[\w.+-]+@([^:]+):(.+)$")
 _SCHEME = re.compile(r"^[a-zA-Z][\w+.-]*://")
@@ -104,7 +106,6 @@ def siblings(agent):
     every other repoless agent, which is what a naive `repo_url=""` filter would
     do.
     """
-    from .models import Agent
 
     key = definition_key(agent.repo_url, agent.repo_ref)
     if not key:

@@ -24,6 +24,8 @@ from __future__ import annotations
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.harness.models import Turn
+
 from .models import AgentLicense
 
 
@@ -32,7 +34,6 @@ class LicenseRefusedError(Exception):
 
 
 def _decision(agent, user):
-    from apps.harness.models import Turn
 
     from . import access
 
@@ -133,8 +134,6 @@ def credential_principal(agent, user, turn_id: str, *, runner=None):
     import uuid
 
     from django.db.models import Q
-
-    from apps.harness.models import Turn
 
     try:
         tid = uuid.UUID(str(turn_id))

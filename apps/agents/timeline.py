@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import datetime as dt
 
+from apps.timeline.types import ActivityEvent, cursor_page, truncate
+
 from .models import AgentSync, AgentTask
 
 
 def recent_events(
     *, limit: int, before: dt.datetime | None, user, workspace_slugs=None
 ) -> list:
-    from apps.timeline.types import ActivityEvent, cursor_page, truncate
 
     events: list[ActivityEvent] = []
 

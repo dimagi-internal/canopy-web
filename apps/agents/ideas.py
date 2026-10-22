@@ -23,6 +23,9 @@ from __future__ import annotations
 import logging
 import re
 
+from apps.contacts.models import Person
+from apps.harness.models import Turn
+
 from .models import AgentProject, AgentTask, ProjectParticipant
 
 logger = logging.getLogger(__name__)
@@ -169,7 +172,6 @@ def notify(task: AgentTask, *, by_user) -> list[str]:
     try:
         from apps.harness import initiator as who
         from apps.harness import services as harness
-        from apps.harness.models import Turn
 
         prompt = (
             f"{who_name} added an idea to {project.ext_id} {project.name} on its team view "
@@ -266,7 +268,6 @@ def contributors(project: AgentProject, ideas: list[dict], *, page_visible) -> l
     Participant rows, plus anyone an idea's words name. `page_visible(row)` says
     whether the reader may see that row's contributor page."""
     from apps.contacts import people
-    from apps.contacts.models import Person
 
     rows = list(ProjectParticipant.objects.filter(project=project)
                 .select_related("person", "person__user").order_by("-created_at", "-pk"))

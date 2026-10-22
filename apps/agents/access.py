@@ -35,6 +35,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from apps.contacts.models import Contact
+
 from . import interface as iface_mod
 from .models import AgentAdmin
 
@@ -178,7 +180,6 @@ def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str
 
 def _classes_for(rel: str, who, verified: bool) -> set[str]:
     """Caller classes with no turn in hand — mirrors `interface.caller_classes`."""
-    from apps.contacts.models import Contact
 
     if rel == MEMBER:
         return iface_mod._expand("member", getattr(who, "email", "") or "", verified)

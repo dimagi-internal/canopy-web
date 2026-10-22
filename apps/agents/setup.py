@@ -18,8 +18,10 @@ rights), so the step carries the one command that does it.
 """
 from __future__ import annotations
 
+from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
+
 from . import delegations
-from .models import Agent, AgentCredential
+from .models import Agent, AgentBootstrapReport, AgentCredential
 from .oauth_api import GOG_TOKEN_REF
 
 DONE, TODO, WAITING, OPTIONAL = "done", "todo", "waiting", "optional"
@@ -225,7 +227,6 @@ def _op_vault(agent: Agent, settings: str) -> dict:
     Creating a vault and minting its key need a PERSON's 1Password rights, which neither
     canopy-web nor a box has, so this step is a terminal command, not a link. One command
     does all of it and is safe to re-run: `canopy agent vault` (canopy repo)."""
-    from .models import AgentBootstrapReport
 
     command = f"canopy agent vault --slug {agent.slug} --workspace {agent.workspace_id}"
     if not agent.op_vault:
@@ -261,8 +262,8 @@ def runner_takers(agent: Agent):
     the claim's own predicates (tenant, `runner_may_hold_agent`) — and the
     inherited order, for why a listed box was dropped. Shared by the checklist and
     by registration, which asks these boxes to set a new agent up."""
-    from apps.harness.models import Runner, RunnerAssignment
     from apps.harness.routing import inherited_orders, runner_tenant_slugs
+
     from .services import runner_may_hold_agent
 
     own = [a.runner for a in RunnerAssignment.objects.filter(agent=agent, source="", enabled=True)
@@ -282,7 +283,6 @@ def request_setup(agent: Agent) -> list[str]:
     Durable (`request_refresh` sets a row the box reads off its heartbeat) and acted
     on at the box's next idle moment. Laptops are not asked: their checkout is a
     person's to make (`repoSetup.ts`)."""
-    from apps.harness.models import Runner
     from apps.harness.runners import request_refresh
 
     asked = []
@@ -294,9 +294,6 @@ def request_setup(agent: Agent) -> list[str]:
 
 
 def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False) -> dict:
-    from apps.harness.models import Runner
-
-    from .models import AgentBootstrapReport
 
     takers, inherited = runner_takers(agent)
     # A cloud box serves an agent only once its bootstrap has cloned it, and every
@@ -375,7 +372,6 @@ def _job(agent: Agent) -> dict:
 
 
 def _first_turn(agent: Agent, base: str) -> dict:
-    from apps.harness.models import Turn, agent_turns_q
 
     # Its turns include those that reach it through a chat (email, Slack), which
     # carry the agent on their session — the same set its Turns page lists.

@@ -27,6 +27,11 @@ from dataclasses import dataclass
 
 from django.db import transaction
 
+from apps.harness.models import RunnerDeviceKey
+from apps.passkeys.models import Passkey, UserVaultKeyset
+
+from .models import Agent, AgentCredential, AgentVaultWrap
+
 ZK_PREFIX = "zk1:"
 NONCE_LEN, TAG_LEN, KEY_LEN, SALT_LEN, POINT_LEN = 12, 16, 32, 16, 65
 #: A wrapped 32-byte key (VK, or a person's private scalar) plus its GCM tag.
@@ -153,7 +158,6 @@ def eligible_device_keys(agent) -> list:
 def eligible_device_keys_qs(agent):
     """`eligible_device_keys` as a queryset, for a caller that only asks whether any exist."""
     from apps.harness import device_keys
-    from apps.harness.models import RunnerDeviceKey
 
     return (device_keys.keys_for_agent(agent)
             .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
@@ -168,8 +172,7 @@ def device_waits(agent, key) -> bool:
     predicate behind "Give access" on the approve flow
     (`api_device_keys.zk_agents_waiting_on`) and the vault health of an agent
     (`vault_health.machines_waiting`)."""
-    from .models import AgentCredential, AgentVaultWrap
-    from .zk_seal import sealed_targets
+    from .zk_seal import sealed_targets  # cycle: agents.zk_seal -> agents.zk
 
     if not agent.zk_enabled or not key.ecdh_jkt:
         return False
@@ -181,7 +184,6 @@ def device_waits(agent, key) -> bool:
 
 def eligible_members(agent) -> list:
     """Every current agent admin with a vault keyset, as UserVaultKeyset rows."""
-    from apps.passkeys.models import UserVaultKeyset
 
     return [k for k in UserVaultKeyset.objects.select_related("user") if agent.is_admin(k.user)]
 
@@ -211,7 +213,6 @@ def _wrap_key(w) -> tuple:
 
 def _parse_wraps(agent, kv: int, wraps: list, *, allow_recovery: bool) -> list:
     """Validate `[{kind, target, wrap}]` and return unsaved AgentVaultWrap rows."""
-    from .models import AgentVaultWrap
 
     devices = {str(k.pk): k for k in eligible_device_keys(agent)}
     members = {str(k.user_id): k for k in eligible_members(agent)}
@@ -269,7 +270,6 @@ def _caller_can_open(rows: list, user) -> bool:
 
 def has_recovery_seal(user_id) -> bool:
     """The person keeps ONE recovery code for their vault key (§4c)."""
-    from apps.passkeys.models import UserVaultKeyset
 
     ks = UserVaultKeyset.objects.filter(user_id=user_id).first()
     return bool(ks) and any(s.get("alg") == "recovery" for s in ks.seals)
@@ -296,7 +296,7 @@ def _check_full_set(agent, rows: list, user) -> None:
 def _parse_values(values: list, *, allow_sealed: bool = False) -> dict[str, str]:
     """`allow_sealed`: a `zks1:` value (sealed to recipients, `zk_seal.py`) is
     accepted too — never by enable/rotate, which must leave every value `zk1`."""
-    from .zk_seal import SEALED_PREFIX, check_sealed_value
+    from .zk_seal import SEALED_PREFIX, check_sealed_value  # cycle: agents.zk_seal -> agents.zk
 
     out: dict[str, str] = {}
     for i, v in enumerate(values):
@@ -315,7 +315,6 @@ def _parse_values(values: list, *, allow_sealed: bool = False) -> dict[str, str]
 def _require_coverage(agent, names) -> None:
     """Every stored credential must be in the body: a value left behind would be
     custodial plaintext (enable) or under a retired vault key (rotate)."""
-    from .models import AgentCredential
 
     missing = sorted(set(AgentCredential.objects.filter(agent=agent).values_list("name", flat=True))
                      - set(names))
@@ -334,7 +333,6 @@ def value_digest(value_zk: str) -> str:
 def _check_expected(agent, values: list) -> None:
     """Compare-and-swap for PUT /values (a settle): every value carrying
     `expect` must still be what the caller read, under the agent row lock."""
-    from .models import AgentCredential
 
     want = {(v.name or "").strip(): v.expect for v in values if getattr(v, "expect", None) is not None}
     if not want:
@@ -348,7 +346,6 @@ def _check_expected(agent, values: list) -> None:
 
 
 def _write_values(agent, values: dict[str, str], kv: int, user) -> None:
-    from .models import AgentCredential
 
     by = user if getattr(user, "is_authenticated", False) else None
     for name, value_zk in values.items():
@@ -359,7 +356,6 @@ def _write_values(agent, values: dict[str, str], kv: int, user) -> None:
 
 
 def _locked(agent):
-    from .models import Agent
 
     return Agent.objects.select_for_update().get(pk=agent.pk)
 
@@ -370,7 +366,6 @@ def _require_enabled(agent) -> None:
 
 
 def _save_wraps(rows: list, user) -> None:
-    from .models import AgentVaultWrap
 
     by = user if getattr(user, "is_authenticated", False) else None
     for w in rows:
@@ -383,7 +378,6 @@ def _save_wraps(rows: list, user) -> None:
 def enable(agent, *, kv: int, wraps: list, values: list, user) -> None:
     """Turn zero-knowledge on, atomically: the wraps, every value as ciphertext
     (each stored value's custodial copy is wiped), then the flag."""
-    from .models import AgentVaultWrap
 
     if kv != 1:
         raise ZkError(422, "zk_kv_mismatch", "enable starts the vault key at kv 1")
@@ -427,7 +421,6 @@ def set_values(agent, *, kv: int, values: list, user) -> list[str]:
 
 def add_wraps(agent, *, kv: int, wraps: list, user) -> int:
     """Grant: add (or replace) device/member wraps at the current kv."""
-    from .models import AgentVaultWrap
 
     with transaction.atomic():
         agent = _locked(agent)
@@ -447,7 +440,6 @@ def add_wraps(agent, *, kv: int, wraps: list, user) -> int:
 def rotate(agent, *, new_kv: int, wraps: list, values: list, user) -> None:
     """A fresh vault key: replace every wrap and every value atomically. Every
     target that holds a wrap now and still qualifies must get one at new_kv."""
-    from .models import AgentVaultWrap
 
     with transaction.atomic():
         agent = _locked(agent)
@@ -480,7 +472,6 @@ def rotate(agent, *, new_kv: int, wraps: list, values: list, user) -> None:
 def forget_device_wraps(device_key) -> int:
     """A device's ECDH key changed: its wraps were to the old key (and bound to
     the old thumbprint), so they are useless — drop them; it shows as pending."""
-    from .models import AgentVaultWrap
 
     deleted, _ = AgentVaultWrap.objects.filter(device_key=device_key).delete()
     return deleted
@@ -488,7 +479,6 @@ def forget_device_wraps(device_key) -> int:
 
 def forget_member_wraps(user) -> int:
     """A person replaced their vault key: wraps to the old one are useless."""
-    from .models import AgentVaultWrap
 
     deleted, _ = AgentVaultWrap.objects.filter(kind="member", user=user).delete()
     return deleted
@@ -510,7 +500,6 @@ def _member_target(ks) -> dict:
 def pending_targets(agent) -> list[dict]:
     """Eligible principals with no wrap at the current kv: who a member should
     grant to next. Before enable, every eligible principal (what enable wraps to)."""
-    from .models import AgentVaultWrap
 
     have = ({_wrap_key(w) for w in AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv)}
             if agent.zk_enabled else set())
@@ -522,7 +511,6 @@ def pending_targets(agent) -> list[dict]:
 def state(agent, *, include_values: bool = False) -> dict:
     """Everything a member's client needs to grant, rotate or recover. Wraps
     are public data; values are ciphertext and only included on request."""
-    from .models import AgentCredential, AgentVaultWrap
 
     devices = {k.pk for k in eligible_device_keys(agent)}
     members = {ks.user_id: ks for ks in eligible_members(agent)}
@@ -572,7 +560,6 @@ def resolve_payload(agent, device_key, wanted: set[str] | None) -> tuple[dict, d
     like a custodial resolve) and that device's wrap at the current kv, or None
     when it has none."""
     from . import services
-    from .models import AgentCredential, AgentVaultWrap
 
     qs = AgentCredential.objects.filter(agent=agent).exclude(value_zk="")
     if wanted is not None:
@@ -608,7 +595,6 @@ def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
     identity: it needs `replace`, and drops every member wrap to the old one
     (those agents then list the person as pending)."""
     from apps.harness import device_keys
-    from apps.passkeys.models import Passkey, UserVaultKeyset
 
     try:
         jwk = device_keys.normalize_public_jwk(public_jwk)

@@ -26,6 +26,9 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
+from apps.canopy_sessions.models import Message
+
+from .models import Agent, AgentCredential, AgentSecretRequest
 from .zk import ZkError
 
 TTL = timedelta(hours=24)
@@ -39,7 +42,6 @@ class RequestError(Exception):
 
 
 def is_agent_login(user) -> bool:
-    from .models import Agent
 
     return bool(getattr(user, "is_authenticated", False)) and Agent.objects.filter(user=user).exists()
 
@@ -76,14 +78,12 @@ def live(req) -> bool:
 
 
 def has_value(agent, name: str) -> bool:
-    from .models import AgentCredential
 
     return AgentCredential.objects.filter(agent=agent, name=name).exists()
 
 
 def create(agent, *, name: str, reason: str, user):
     """Open (or return the open) request for `name` from this chat."""
-    from .models import AgentSecretRequest
 
     if not (agent.is_admin(user) or agent.is_own_login(user)):
         raise RequestError(403, "forbidden", f"only {agent.slug} itself or its admins may ask for its secrets")
@@ -126,7 +126,6 @@ def may_answer(req, user) -> bool:
 def fulfil(req, *, kv: int, value_zk: str, user) -> None:
     """Store a `zks1` value for the request's name, atomically with closing it."""
     from . import zk
-    from .models import AgentSecretRequest
     from .zk_seal import SEALED_PREFIX
 
     if not isinstance(value_zk, str) or not value_zk.startswith(SEALED_PREFIX):
@@ -197,7 +196,6 @@ def _named_id(*sources) -> str | None:
 
 
 def _refs(session, ids) -> dict[str, dict]:
-    from .models import AgentSecretRequest
 
     if not ids or session is None:
         return {}
@@ -207,7 +205,6 @@ def _refs(session, ids) -> dict[str, dict]:
 
 def annotate(session, messages) -> None:
     """Set `.secret_request` on each tool_result row naming a request of this session."""
-    from apps.canopy_sessions.models import Message
 
     named = {}
     for m in messages:

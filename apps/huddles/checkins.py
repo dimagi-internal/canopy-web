@@ -31,11 +31,15 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
-from apps.agents.models import Agent, AgentProject, AgentTask
+from apps.agents.models import Agent, AgentProject, AgentTask, ProjectParticipant
+from apps.events.models import Event
+from apps.harness.models import AgentSchedule, Turn
 from apps.slack import client
 from apps.slack import ingest as ingest_svc
+from apps.slack.models import SlackChannelIngest
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import Workspace
 
 from .models import CheckinRun, ProjectCheckin
 
@@ -70,7 +74,6 @@ class CheckinError(Exception):
 def _event(subject, kind: str, summary: str, *, level: str = "", **payload) -> None:
     """`subject` is a ProjectCheckin or a CheckinRun."""
     from apps.events import services as events_services
-    from apps.events.models import Event
 
     try:
         project = subject.project
@@ -158,7 +161,6 @@ def leader_refusal(leader: Agent, members: list[Agent]) -> str:
 
 
 def _tree(workspace_id: str) -> set[str]:
-    from apps.workspaces.models import Workspace
 
     ws = Workspace.objects.get(slug=workspace_id)
     while ws.parent_id:
@@ -309,7 +311,6 @@ def save(*, project: AgentProject, by, data: dict, checkin: ProjectCheckin | Non
 
 
 def _save_schedule(checkin: ProjectCheckin, *, cron: str, tz: str, by) -> None:
-    from apps.harness.models import AgentSchedule
 
     s = checkin.schedule or AgentSchedule(created_by=by, prompt=BASE_PROMPT)
     s.agent = checkin.project.agent
@@ -327,7 +328,6 @@ def _participants(checkin: ProjectCheckin, members: list[Agent], lead) -> None:
     """The lead is a `manual` participant; every agent other than the project's
     is a `checkin` one (its login's person). Best-effort: never fails a save."""
     from apps.agents import participants
-    from apps.agents.models import ProjectParticipant
     from apps.contacts.services import person_for
 
     p = checkin.project
@@ -468,7 +468,6 @@ def _fail(run: CheckinRun, why: str, *, tell_thread: bool = False) -> CheckinRun
     CheckinRun.objects.filter(pk=run.pk).update(status=CheckinRun.FAILED, note=why[:500],
                                                 finished_at=timezone.now())
     run.refresh_from_db()
-    from apps.events.models import Event
 
     _event(run, "run_failed", f"{run.checkin_name} on {run.project.name} (run {run.pk}) failed: {why}",
            level=Event.WARN, run=run.pk, reason=why[:500])
@@ -566,7 +565,6 @@ def _from_click(installation, run_id: str, channel_id: str, message_ts: str) -> 
 def click(installation, *, run_id: str, slack_user_id: str, channel_id: str, message_ts: str,
           confirm: bool) -> str:
     """Confirm / Skip on an announcement. Returns what to tell the clicker, privately ("" for nothing)."""
-    from apps.events.models import Event
 
     run = _from_click(installation, run_id, channel_id, message_ts)
     if run is None or run.status != CheckinRun.AWAITING_CONFIRM:
@@ -625,7 +623,6 @@ def _start_turn(run: CheckinRun, checkin: ProjectCheckin, *, initiator, manual: 
                 **updates) -> None:
     """Queue the project's agent's turn for `run` and mark it running."""
     from apps.harness import services as hsvc
-    from apps.harness.models import Turn
 
     sched = checkin.schedule
     project = run.project
@@ -653,7 +650,6 @@ def _start_turn(run: CheckinRun, checkin: ProjectCheckin, *, initiator, manual: 
 def deliver_read(run_id: int, ingest_id) -> None:
     """The confirmed read is done (slack.ingest._deliver): keep the material,
     move the read mark, queue the agent's turn, tell the thread."""
-    from apps.slack.models import SlackChannelIngest
 
     run = (CheckinRun.objects.select_related("checkin", "checkin__schedule", "checkin__installation",
                                              "checkin__lead", "project", "project__agent")

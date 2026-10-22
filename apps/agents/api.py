@@ -24,9 +24,11 @@ from apps.api.errors import (
     ProblemError,
 )
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 from apps.harness.schemas import RunnerDeviceKeyOut
 from apps.passkeys import stepup
 from apps.plugins import services as plugin_services
+from apps.slack.models import SlackInstallation
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -40,50 +42,64 @@ from .gates import (
     project_or_404,
     visible_agent_workspaces,
 )
+from .models import (
+    AgentAdmin,
+    AgentCredential,
+    AgentCredentialRead,
+    AgentLicense,
+    AgentSecretRequest,
+    SenderTrust,
+    ZeroKnowledgeValue,
+)
 from .schemas import (
-    AgentLicenseOut,
-    AgentLicenseRevokeIn,
-    ProposedTaskOut,
-    AgentMoveIn,
-    AgentMoveOut,
-    AgentScaffoldIn,
-    AgentScaffoldOut,
-    AgentSetupStepOut,
-    RepoCheckIn,
-    RepoCheckOut,
-    AgentInterfaceIn,
-    AgentInterfaceOut,
+    ActionAppliedIn,
+    ActOut,
     AgentAccessOut,
-    AgentAdminOut,
-    AgentCredentialsIn,
-    AgentGitHubIn,
-    AgentSalesforceIn,
-    AgentSalesforceOut,
-    AgentCanopyUserIn,
-    AgentCanopyTokenIn,
-    AgentCanopyLoginOut,
-    AgentCanopyTokenOut,
-    AgentGitHubOut,
-    AgentCredentialAccessOut,
-    AgentCredentialsResolveOut,
-    AgentCredentialRevealOut,
-    AgentCredentialStatusOut,
-    AgentDetailOut,
-    AgentIn,
-    AgentOut,
-    AgentPluginOut,
-    AgentOwnerIn,
     AgentActorRouteIn,
     AgentActorRouteOut,
     AgentActorRouteRunnerOut,
+    AgentAdminOut,
+    AgentCanopyLoginOut,
+    AgentCanopyTokenIn,
+    AgentCanopyTokenOut,
+    AgentCanopyUserIn,
+    AgentCredentialAccessOut,
+    AgentCredentialAlertOut,
+    AgentCredentialReadOut,
+    AgentCredentialRevealOut,
+    AgentCredentialsIn,
+    AgentCredentialsResolveOut,
+    AgentCredentialStatusOut,
     AgentDefaultOrderOut,
+    AgentDetailOut,
+    AgentGitHubIn,
+    AgentGitHubOut,
+    AgentIn,
+    AgentInterfaceIn,
+    AgentInterfaceOut,
+    AgentLicenseOut,
+    AgentLicenseRevokeIn,
+    AgentMoveIn,
+    AgentMoveOut,
+    AgentOut,
+    AgentOwnerIn,
+    AgentPluginOut,
+    AgentProjectDetailOut,
+    AgentProjectIn,
+    AgentProjectOut,
+    AgentProjectPatch,
     AgentRunnerOut,
     AgentRunnerRowIn,
-    AgentRunnerRuleOut,
     AgentRunnerRuleBodyIn,
+    AgentRunnerRuleOut,
     AgentRunnerRulesIn,
     AgentRunnersIn,
     AgentRuntimeOut,
+    AgentSalesforceIn,
+    AgentSalesforceOut,
+    AgentScaffoldIn,
+    AgentScaffoldOut,
+    AgentSetupStepOut,
     AgentSkillCatalogIn,
     AgentSkillOut,
     AgentSyncIn,
@@ -92,50 +108,45 @@ from .schemas import (
     AgentTaskActionOut,
     AgentTaskDetailOut,
     AgentTaskIn,
-    AgentProjectDetailOut,
-    AgentProjectIn,
-    AgentProjectOut,
-    AgentProjectPatch,
     AgentTaskOut,
     AgentTaskPatch,
     AgentTurnIn,
     AgentTurnOut,
     AgentVaultIn,
     AgentVaultOut,
-    SenderTrustIn,
-    SenderTrustOut,
     BootstrapReportIn,
     BootstrapReportOut,
-    ActOut,
-    ActionAppliedIn,
     CountOut,
-    SkillHistoryOut,
+    CredentialSourceIn,
+    DeviceBindingIn,
+    DeviceProofRequiredOut,
+    PatRotationIn,
+    PatRotationOut,
     ProjectParticipantOut,
+    ProposedTaskOut,
+    RepoCheckIn,
+    RepoCheckOut,
+    RepositoryIn,
+    SecretRequestIn,
+    SecretRequestOut,
+    SecretRequestValueIn,
+    SenderTrustIn,
+    SenderTrustOut,
+    SkillHistoryOut,
     SlackEnabledIn,
     SlackEnabledOut,
     TurnBriefOut,
     TurnModeIn,
-    CredentialSourceIn,
-    RepositoryIn,
-    AgentCredentialReadOut,
-    DeviceBindingIn,
-    DeviceProofRequiredOut,
-    AgentCredentialAlertOut,
-    PatRotationIn,
-    PatRotationOut,
     ZkEnableIn,
+    ZkEndorsementsIn,
+    ZkEndorsementsOut,
+    ZkRecipientsOut,
     ZkRotateIn,
     ZkStateOut,
     ZkValuesIn,
     ZkValuesOut,
     ZkWrapMissingOut,
     ZkWrapsIn,
-    SecretRequestIn,
-    SecretRequestOut,
-    SecretRequestValueIn,
-    ZkEndorsementsIn,
-    ZkEndorsementsOut,
-    ZkRecipientsOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,7 +200,6 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
     """
     from apps.harness import services as hsvc
     from apps.harness.api import _runner_read_q
-    from apps.harness.models import Runner
 
     ids = list(ids)
     already = set(already)
@@ -691,7 +701,6 @@ def transfer_owner(request: HttpRequest, slug: str, payload: AgentOwnerIn) -> Ag
 
 
 def _admin_rows(agent) -> list[dict]:
-    from .models import AgentAdmin
 
     rows = []
     # Workspace owners are admins implicitly (`Agent.is_admin`); they are not
@@ -808,10 +817,6 @@ def agent_access(request: HttpRequest, slug: str):
 def _license_rows(agent) -> list[dict]:
     from django.db.models import Count
 
-    from apps.harness.models import Turn
-
-    from .models import AgentCredentialRead, AgentLicense
-
     lics = list(AgentLicense.objects.filter(agent=agent)
                 .select_related("user", "issued_by", "revoked_by"))
     users = [lic.user_id for lic in lics]
@@ -868,7 +873,6 @@ def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
     from apps.events import audit
 
     from . import licenses
-    from .models import AgentLicense
 
     agent, target = _license_target(request, slug, user_id)
     before = AgentLicense.objects.filter(agent=agent, user=target).values_list("status", flat=True).first()
@@ -886,7 +890,6 @@ def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
     from apps.events import audit
 
     from . import licenses
-    from .models import AgentLicense
 
     agent, target = _license_target(request, slug, user_id)
     before = AgentLicense.objects.filter(agent=agent, user=target).values_list("status", flat=True).first()
@@ -914,8 +917,6 @@ def _admin_change_gate(request: HttpRequest, slug: str):
 def grant_admin(request: HttpRequest, slug: str, user_id: int):
     from django.contrib.auth import get_user_model
 
-    from .models import AgentAdmin
-
     agent = _admin_change_gate(request, slug)
     target = get_user_model().objects.filter(pk=user_id).first()
     # A question about the TARGET, asked through the one authorizer.
@@ -929,7 +930,6 @@ def grant_admin(request: HttpRequest, slug: str, user_id: int):
 @router.delete("/{slug}/admins/{user_id}", response=list[AgentAdminOut],
                summary="Revoke an admin of this agent")
 def revoke_admin(request: HttpRequest, slug: str, user_id: int):
-    from .models import AgentAdmin
 
     agent = _admin_change_gate(request, slug)
     if agent.owner_id == user_id:
@@ -1084,7 +1084,6 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
     # Owner, not editor: editor is what anyone who self-joined already holds,
     # and this opens the agent to everyone in a Slack workspace.
     from apps.slack import commands as slack_commands
-    from apps.slack.models import SlackInstallation
 
     agent = agent_for_admin(request, slug)
     agent.slack_enabled = payload.slack_enabled
@@ -1190,7 +1189,6 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     `runners` (ordered rows, each carrying its own `enabled` — a disabled row
     stays in the list, rank preserved, but never routes) or the legacy
     `runner_ids` (ordered ids, all implicitly enabled)."""
-    from apps.harness.models import RunnerAssignment
 
     agent = agent_for_work(request, slug)
 
@@ -1241,7 +1239,6 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
     from collections import Counter
 
     from apps.harness.actors import actor_of
-    from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 
     agent = agent_for_read(request, slug)
     # Queued depth per (source, actor) — what the UI's "N turns are parked" warning
@@ -1288,7 +1285,6 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
 
 def _current_rules(agent) -> dict:
     """(source, actor) -> {"ids": runner ids in the rule, "turn_mode": its mode}."""
-    from apps.harness.models import RunnerAssignment
 
     out: dict = {}
     for source, actor, runner_id, turn_mode in (
@@ -1322,7 +1318,6 @@ def replace_agent_runner_rules(
     shape stays what the frontend already consumes.
     """
     from apps.harness.actors import normalize_actor
-    from apps.harness.models import RunnerAssignment
 
     agent = agent_for_work(request, slug)
 
@@ -1405,9 +1400,9 @@ def replace_agent_runner_rules(
 # one changed rule at a time; the wholesale PUT above stays for scripts.
 
 def _rule_key_or_422(source: str, actor: str) -> tuple[str, str]:
-    from apps.harness.models import Turn
-    from apps.harness.schemas import RoutableSource
     from typing import get_args
+
+    from apps.harness.schemas import RoutableSource
 
     if source not in get_args(RoutableSource):
         raise HttpError(422, f"not a routable source: {source!r}")
@@ -1428,7 +1423,6 @@ def set_agent_runner_rule(
     preference order. Replaces that ONE rule and touches no other. Runners the
     rule already names are kept as they are; a runner it ADDS must be one you
     administer. `strict`: only these runners may take the work. Returns every rule."""
-    from apps.harness.models import RunnerAssignment
 
     agent = agent_for_work(request, slug)
     source, actor = _rule_key_or_422(source, actor)
@@ -1467,7 +1461,6 @@ def set_agent_runner_rule(
 def delete_agent_runner_rule(request: HttpRequest, slug: str, source: str, actor: str = ""):
     """Remove the rule for `source` (and `actor`, when given). That work goes back
     to the next rule down and the agent's default order. Idempotent."""
-    from apps.harness.models import RunnerAssignment
 
     from apps.harness import routing_audit
 
@@ -1507,7 +1500,6 @@ def _actor_sources() -> list[str]:
     one that doesn't (`apps/harness/actors.py`), so an actor rule on it is dead."""
     from typing import get_args
 
-    from apps.harness.models import Turn
     from apps.harness.schemas import RoutableSource
 
     return [s for s in get_args(RoutableSource) if s != Turn.ORIGIN_CANOPY_SCHEDULER]
@@ -1564,7 +1556,6 @@ def set_agent_actor_route(
     granted you admin) — this decides where work runs, so it is gated on the box,
     not just the agent. Remove a route with DELETE on the same path.
     """
-    from apps.harness.models import RunnerAssignment
 
     agent = agent_for_work(request, slug)
     actor = _actor_or_422(actor)
@@ -1615,7 +1606,6 @@ def delete_agent_actor_route(request: HttpRequest, slug: str, actor: str):
     """Stop routing this person's work specially: their turns go back to the
     agent's source rules and default runner order. Touches no one else's rules.
     Idempotent — removing a person with no route is a 204."""
-    from apps.harness.models import RunnerAssignment
 
     from apps.harness import routing_audit
 
@@ -1832,8 +1822,6 @@ def _turns_touching(agent, ext_ids: list[str]) -> list:
     """
     from django.db import connection
 
-    from apps.harness.models import Turn, agent_turns_q
-
     if not ext_ids:
         return []
     q = Q()
@@ -1884,9 +1872,7 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
                    reverse=True)[:_PROJECT_RECENT_TURNS]
     turns = turn_access.redact(found, request.user)
     # Built from the plain project shape: `project.tasks` is a manager, not a list.
-    from . import participants
-
-    from . import proposals
+    from . import participants, proposals
 
     return AgentProjectDetailOut(
         **AgentProjectOut.model_validate(project).model_dump(),
@@ -2211,8 +2197,6 @@ def _credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
     rtok = getattr(request, "runner_token", None)
     if rtok is not None:
         from apps.harness.device_keys import runner_serves_agent
-
-        from apps.harness.models import Runner
 
         # A person's computer (no runner app) is never a `runner` reader: its token
         # reads only under its owner's license, during their own local turn.
@@ -2565,7 +2549,6 @@ def _caller_runner(request: HttpRequest):
         rid = _uuid.UUID(raw)
     except ValueError:
         return None
-    from apps.harness.models import Runner
 
     return Runner.objects.filter(pk=rid, owner=request.user).first()
 
@@ -2715,7 +2698,6 @@ def _secret_request_problem(exc) -> ProblemError:
 
 
 def _secret_request(request: HttpRequest, slug: str, request_id: uuid.UUID):
-    from .models import AgentSecretRequest
 
     agent = agent_for_read(request, slug)
     req = (AgentSecretRequest.objects.filter(pk=request_id, agent=agent)
@@ -2802,7 +2784,6 @@ def get_agent_zk_recipients(request: HttpRequest, slug: str,
     already trust BEFORE sealing to it (zk-v1 §7): this list is canopy-web's
     claim, the endorsements are not."""
     from . import secret_requests, services, zk_endorse
-    from .models import AgentCredential
 
     agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
@@ -2856,7 +2837,6 @@ def list_sender_trust(request: HttpRequest, slug: str) -> list[SenderTrustOut]:
     """Addresses whose mail is tied to their member account although it is not
     DMARC- or DKIM-aligned — each with why, and when it lapses (expired rules
     are listed with `active: false` until removed)."""
-    from .models import SenderTrust
 
     agent = agent_for_read(request, slug)
     return [_sender_trust_out(r) for r in
@@ -2876,8 +2856,6 @@ def set_sender_trust(request: HttpRequest, slug: str, email: str,
     from django.utils import timezone
 
     from apps.harness.services import address_holder
-
-    from .models import SenderTrust
 
     agent = agent_for_admin(request, slug)
     address = (email or "").strip().lower()
@@ -2900,7 +2878,6 @@ def set_sender_trust(request: HttpRequest, slug: str, email: str,
                summary="End a temporary email trust rule")
 def delete_sender_trust(request: HttpRequest, slug: str, email: str):
     """Their mail goes back to needing DMARC or own-domain DKIM. Idempotent."""
-    from .models import SenderTrust
 
     agent = agent_for_admin(request, slug)
     SenderTrust.objects.filter(agent=agent, email=(email or "").strip().lower()).delete()
@@ -3133,7 +3110,6 @@ def reveal_agent_credential(request: HttpRequest, response: HttpResponse, slug: 
     # (canopy-web#1538). What makes it safe is the conjunction: agent admin (who
     # could already overwrite the value and route a box of their own to read it)
     # AND a person present at the browser (step-up) AND a durable record.
-    from .models import ZeroKnowledgeValue
 
     agent = agent_for_admin(request, slug)
     stepup.require_recent_step_up(request)
