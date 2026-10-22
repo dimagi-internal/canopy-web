@@ -13,7 +13,8 @@ type Mode = 'shared' | 'private'
 const MODE_LABEL: Record<Mode, string> = { shared: 'Shared', private: 'Private' }
 const MODE_HELP: Record<Mode, string> = {
   shared: 'Takes fleet work as routed.',
-  private: 'Only your own pinned work and the Claude Code sessions on this machine.',
+  private:
+    'Private: this runner does only your work (what you pin to it) and runs your own Claude Code sessions\u2019 turns.',
 }
 
 export function RunnerPrivate({

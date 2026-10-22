@@ -41,14 +41,19 @@ export function AgentSetupChecklist({
 
   if (error) return <p className="text-[13px] text-destructive">{error}</p>
   if (!steps) return <p className="text-[13px] text-muted-foreground">Checking what is left…</p>
-  const left = steps.filter((s) => s.status === 'todo' || s.status === 'waiting').length
+  const open = steps.filter((s) => s.status === 'todo' || s.status === 'waiting')
+  // A step needed only to run on its own (a runner) does not hold the agent back:
+  // used in your own Claude Code (`canopy agent use`), it is complete without one.
+  const left = open.filter((s) => !s.only_to_run_on_its_own).length
+  const onItsOwn = open.length - left
   if (hideWhenDone && left === 0) return null
 
   return (
     <div className="rounded-lg border border-border bg-card" data-testid="agent-setup-checklist">
       <p className="border-b border-border px-4 py-2 text-[12px] text-muted-foreground">
         <span className="font-semibold text-foreground">Setup</span> —{' '}
-        {left === 0 ? 'done.' : `${left} of ${steps.length} steps left.`} Ticks update when you come back to this tab.
+        {left === 0 ? 'done.' : `${left} of ${steps.length} steps left.`}
+        {onItsOwn > 0 && ' A runner is needed only to let it run on its own.'} Ticks update when you come back to this tab.
       </p>
       <SetupSteps steps={steps} extra={(step) =>
         step.key === 'vault' && step.status === 'todo' && step.action === 'Add the missing secrets'

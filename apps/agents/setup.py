@@ -33,13 +33,22 @@ def scaffold_skill_names() -> set[str]:
     return {p.split("/")[1] for p in templates() if p.startswith("skills/") and p.endswith("/SKILL.md")}
 
 
-def _step(key, title, status, detail, *, where="web", href="", action="", command="", links=()):
+def _step(key, title, status, detail, *, where="web", href="", action="", command="", links=(),
+          only_to_run_on_its_own=False):
     """`action` names what `href` does ("Add a GitHub token"): several steps link to
     the same Settings section, and a bare "Open" left a newcomer guessing. `links` are
-    further `{href, action}` choices beside the main one."""
+    further `{href, action}` choices beside the main one.
+
+    `only_to_run_on_its_own` marks a step needed only for the agent to run on its own
+    (a runner: schedules, mail, dispatches), not for a person to use it in their own
+    Claude Code (`canopy agent use <slug>`, docs/architecture/runners.md → "Two ways an
+    agent runs"). It is a separate field, not a softer `status`: the status still says
+    what is true of that step, so a reader that counts todo steps (canopy's
+    agent_doctor) reads the same answer it always did; the Settings checklist uses the
+    field to call an agent used only in Claude Code complete."""
     return {"key": key, "title": title, "status": status, "detail": detail,
             "where": where, "href": href, "action": action, "command": command,
-            "links": list(links)}
+            "links": list(links), "only_to_run_on_its_own": only_to_run_on_its_own}
 
 
 #: Pairing a new runner, for the runner step when nothing can take the agent. A laptop
@@ -296,21 +305,30 @@ def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False) -> dict:
     ready = [r for r in takers if r.kind != Runner.CLOUD or r.name in reported]
     unset = [r for r in takers if r not in ready]
     online = [r for r in ready if r.live_status == Runner.ONLINE]
-    title = "Give it a runner"
+    title = "Give it a runner, to run on its own"
+    # Every not-done answer says the other way too: a person can use the agent in
+    # their own Claude Code with no runner at all.
+    yourself = (f" Not needed to use {agent.name} yourself in Claude Code "
+                f"(canopy agent use {agent.slug}).")
+
+    def step(status, detail, **kw):
+        return _step("runner", title, status, detail + ("" if status == DONE else yourself),
+                     only_to_run_on_its_own=True, **kw)
+
     if online:
-        return _step("runner", title, DONE, f"{online[0].name} takes its turns.",
-                     href=f"{settings}#running", action="See routing")
+        return step(DONE, f"{online[0].name} takes its turns.",
+                    href=f"{settings}#running", action="See routing")
     if unset:
         names = ", ".join(r.name for r in unset)
-        return _step("runner", title, WAITING,
-                     f"{names} will take its turns once it has set {agent.name} up. It does that on "
-                     "its own when it next has no turn running, which can take a while if it is "
-                     "busy; this ticks when it reports back.",
-                     href=f"{settings}#running", action="See routing")
+        return step(WAITING,
+                    f"{names} will take its turns once it has set {agent.name} up. It does that on "
+                    "its own when it next has no turn running, which can take a while if it is "
+                    "busy; this ticks when it reports back.",
+                    href=f"{settings}#running", action="See routing")
     if takers:
         names = ", ".join(r.name for r in takers)
-        return _step("runner", title, WAITING, f"{names} would take its turns, but none is online.",
-                     href=f"{settings}#running", action="See routing")
+        return step(WAITING, f"{names} would take its turns, but none is online.",
+                    href=f"{settings}#running", action="See routing")
     why = []
     if inherited and inherited.missing_repo:
         why.append(f"{', '.join(r.name for r in inherited.missing_repo)} does not have its repo "
@@ -322,13 +340,14 @@ def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False) -> dict:
         why.append(f"{', '.join(r.name for r in inherited.directed)} takes only work put on it "
                    "(directed only)")
     detail = ("; ".join(why).capitalize() + "." if why else
-              "A runner is the computer that runs its turns, and none is set to take its work. "
-              "Pick one, or pair a runner of your own first.")
+              "A runner is the computer that runs its turns on its own (schedules, mail, "
+              "dispatches), and none is set to take its work. Pick one, or pair a runner of "
+              "your own first.")
     # Pairing is offered only to someone whose own box could then hold the agent: a
     # runner runs an agent only when its owner is one of the agent's admins
     # (`runner_may_hold_agent`), so anyone else's new box would still take nothing.
-    return _step("runner", title, TODO, detail, href=f"{settings}#running", action="Pick a runner",
-                 links=[PAIR_LAPTOP, PAIR_CLOUD_BOX] if viewer_is_admin else [])
+    return step(TODO, detail, href=f"{settings}#running", action="Pick a runner",
+                links=[PAIR_LAPTOP, PAIR_CLOUD_BOX] if viewer_is_admin else [])
 
 
 #: Where a laptop runner expects an agent's checkout (runner/canopy_runner/README.md;

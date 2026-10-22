@@ -21654,6 +21654,11 @@ export interface components {
              * @default []
              */
             readonly links: readonly components["schemas"]["SetupLinkOut"][];
+            /**
+             * Only To Run On Its Own
+             * @default false
+             */
+            readonly only_to_run_on_its_own: boolean;
         };
         /** SetupLinkOut */
         readonly SetupLinkOut: {
@@ -24654,6 +24659,11 @@ export interface components {
              * @default []
              */
             readonly links: readonly components["schemas"]["HealthStepLinkOut"][];
+            /**
+             * Only To Run On Its Own
+             * @default false
+             */
+            readonly only_to_run_on_its_own: boolean;
         };
         /** HealthTotalsOut */
         readonly HealthTotalsOut: {

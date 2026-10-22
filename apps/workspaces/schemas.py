@@ -492,6 +492,9 @@ class HealthStepOut(StrictModel):
     action: str = ""
     command: str = ""
     links: list[HealthStepLinkOut] = []
+    # Needed only for the agent to run on its own (the runner step) — see
+    # apps/agents/setup.py::_step.
+    only_to_run_on_its_own: bool = False
 
 
 class VaultRefOut(StrictModel):

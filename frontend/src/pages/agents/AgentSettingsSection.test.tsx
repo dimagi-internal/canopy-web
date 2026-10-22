@@ -24,6 +24,7 @@ vi.mock('@/components/agents/AgentMailboxControl', () => ({ AgentMailboxControl:
 vi.mock('@/pages/agents/AgentVaultSection', () => ({ AgentVaultSection: () => null }))
 vi.mock('@/pages/agents/AgentDeviceKeysSection', () => ({ AgentDeviceKeysSection: () => null }))
 vi.mock('@/components/agents/AgentSetupChecklist', () => ({ AgentSetupChecklist: () => null }))
+vi.mock('@/components/agents/AgentHowItRuns', () => ({ AgentHowItRuns: () => <div>how-it-runs</div> }))
 let agentOverride: Record<string, unknown> = {}
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
