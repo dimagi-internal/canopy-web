@@ -19,7 +19,7 @@ import logging
 
 from django.http import HttpRequest
 
-from .models import EmbedAuditLog
+from apps.tokens.models import EmbedAuditLog
 
 log = logging.getLogger(__name__)
 

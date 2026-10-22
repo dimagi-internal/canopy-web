@@ -35,11 +35,11 @@ from ninja.security import HttpBearer
 
 from apps.harness import initiator as who
 
-from apps.tokens import assertions
-from apps.tokens.audit import client_ip, record as audit
+from apps.embedding import assertions
+from apps.embedding.audit import client_ip, record as audit
 from apps.tokens.models import ContactToken, EmbedAuditLog
 from apps.tokens.schemas import WsTicketOut
-from apps.tokens.rate_limit import (
+from apps.embedding.rate_limit import (
     ContactTokenRateLimitError,
     check_contact_token_client,
     check_contact_token_issuer,

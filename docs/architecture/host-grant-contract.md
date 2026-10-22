@@ -6,7 +6,7 @@ now lives with the code that implements both halves of it:
 **[`sdk/python/README.md` → "Host grant contract v1"](../../sdk/python/README.md#host-grant-contract-v1)**
 
 Every value in it is a constant in `canopy_sdk.contract` (package `dimagi-canopy`,
-import name `canopy_sdk`), which both canopy-web (`apps/tokens/`) and a host
+import name `canopy_sdk`), which both canopy-web (`apps/embedding/`, `apps/host_grants/`) and a host
 (`canopy_sdk.host`) import — so there is one definition, and
 `tests/test_sdk_round_trip.py` runs the two halves against each other in
 canopy-web's CI. `tests/test_embedding_doc_is_true.py` pins the README's wire

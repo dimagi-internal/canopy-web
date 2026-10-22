@@ -26,7 +26,7 @@ def connected_site_origin(sender, request, **kwargs) -> bool:
     origin = (request.headers.get("Origin") or "").rstrip("/")
     if not origin:
         return False
-    from .models import AppCredential
+    from apps.tokens.models import AppCredential
 
     for origins in AppCredential.objects.filter(revoked_at__isnull=True).values_list(
             "allowed_frame_origins", flat=True):

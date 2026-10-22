@@ -21,7 +21,11 @@ from apps.api.auth import session_auth
 
 from . import embed_apps
 from .audit import record as audit
-from .models import AppCredential, EmbedAuditLog
+from apps.tokens.models import AppCredential, EmbedAuditLog
+
+#: Published as `tokens_connected_apps_<name>` while this module lived in apps/tokens;
+#: those operationIds are MCP tool names and `generated.ts` keys, so they stay.
+OPERATION_LABEL = "tokens_connected_apps"
 
 connected_apps_router = Router(auth=session_auth, tags=["connected apps"])
 

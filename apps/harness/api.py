@@ -263,9 +263,9 @@ def runner_or_404(
 
 def turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     """`_tenant_turn_or_404`, then `site ∩ user`: a connected site acting for its
-    visitor sees only its own agents' turns (apps/tokens/delegation.py). Same
+    visitor sees only its own agents' turns (apps/embedding/delegation.py). Same
     uniform 404, so a site cannot learn another agent's turn exists."""
-    from apps.tokens import delegation
+    from apps.embedding import delegation
 
     turn = _tenant_turn_or_404(request, turn_id)
     offered = delegation.offered_for(request)
@@ -324,7 +324,7 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     # CLAIMED until its lease ran out — observed when a runner paired by one person
     # claimed a private chat another member created. Not for a connected site
     # acting for a visitor: a site never reports as a runner.
-    from apps.tokens import delegation
+    from apps.embedding import delegation
 
     rtok = getattr(request, "runner_token", None)
     if rtok is not None and rtok.runner.kind == Runner.COMPUTER:
@@ -369,7 +369,7 @@ def reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
 def site_turn_q(request: HttpRequest):
     """The turns an acting site may see, as a Q — or None when no site acts."""
-    from apps.tokens import delegation
+    from apps.embedding import delegation
 
     offered = delegation.offered_for(request)
     if offered is None:

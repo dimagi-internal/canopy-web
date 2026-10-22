@@ -24,7 +24,7 @@ from tests._source import ROOT, iter_app_sources
 APPS = ROOT / "apps"
 
 # ── The tiers (canonical copy lives in ARCHITECTURE.md; keep them in sync) ──────
-FRAMEWORK = {"agents", "agent_runs", "workspaces", "api", "common", "timeline", "tokens", "github_connect", "oauth_server", "mcp_apps_host", "host_grants", "session_sharing", "issues", "mcp", "system", "harness", "push", "realtime", "canopy_sessions", "feedback", "events", "inbound", "contacts",
+FRAMEWORK = {"agents", "agent_runs", "workspaces", "api", "common", "timeline", "tokens", "github_connect", "oauth_server", "mcp_apps_host", "host_grants", "embedding", "session_sharing", "issues", "mcp", "system", "harness", "push", "realtime", "canopy_sessions", "feedback", "events", "inbound", "contacts",
              "slack", "retention", "admission", "huddles", "threads", "plugins", "capabilities", "passkeys", "attention"}
 PRODUCT = {"projects",
            "walkthroughs", "reviews", "shareouts", "runs", "storyboards", "beta_requests", "mail"}

@@ -543,7 +543,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "github_disconnect": ("self",),
     "github_installations": ("self",),
 
-    # --- apps/tokens/connected_apps_api.py  (embed_apps.require: read/test = integrations, change = own)
+    # --- apps/embedding/connected_apps_api.py  (embed_apps.require: read/test = integrations, change = own)
     "tokens_connected_apps_list_connected_apps": ("integrations",),
     "connect_app": ("own",),
     "update_connected_app": ("own",),
@@ -587,7 +587,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "my_turn": ("contact",),
     "my_turn_transcript": ("contact",),
 
-    # --- apps/tokens/embed_api.py
+    # --- apps/embedding/embed_api.py
     "list_embeddable_agents": ("member",),  # delegated token required; app allowlist ∩ caller's workspaces
     "embed_self": ("authenticated",),
     "embed_self_token": ("self",),

@@ -18,7 +18,7 @@ from django.core.cache import cache
 from django.test import Client
 
 from apps.contacts.models import Contact
-from apps.tokens import assertions
+from apps.embedding import assertions
 from apps.tokens.models import DelegatedToken
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.contact_websocket import _world

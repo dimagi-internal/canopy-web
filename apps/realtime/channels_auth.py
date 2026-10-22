@@ -279,14 +279,14 @@ class RealtimeAuthMiddleware:
         # even when a session cookie signed the socket in (`via_widget`, and the
         # site's runner requirements, as the REST middleware does).
         delegated = await _delegated_token(scope, found) if user is not None else None
-        # `site ∩ user` (apps/tokens/delegation.py). When a site's delegated
+        # `site ∩ user` (apps/embedding/delegation.py). When a site's delegated
         # token is the identity, it opens only its own chat's stream; any other
         # socket (presence, supervisor, turns, runner) is as if unauthenticated.
         # The acting site rides on the scope so the chat consumer can hold it to
         # the site's own agents, exactly as REST does.
         delegated_app = None
         if found is not None and found.kind == "delegated":
-            from apps.tokens import delegation
+            from apps.embedding import delegation
 
             delegated_app = found.token.app
             if not delegation.reaches_ws(scope.get("path", "")):

@@ -859,7 +859,7 @@ or another, are a 404 to your token, exactly as to a stranger. Every other
 canopy route answers `403 not_delegable`; the token is never the user's whole
 canopy account. If your integration needs a
 route this does not cover, ask for it by name — it is a list in
-`apps/tokens/delegation.py`, deliberately.
+`apps/embedding/delegation.py`, deliberately.
 
 **The property that matters:** nothing is frozen into the token. Tokens are
 opaque random strings stored as hashes, and memberships are re-read from the

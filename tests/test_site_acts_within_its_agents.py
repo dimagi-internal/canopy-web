@@ -4,7 +4,7 @@ The setup every test here shares is the one that made this matter: a person
 who is an OWNER of two workspaces arrives through a connected site registered
 in one of them, offering one agent. The token the site holds must let them talk
 to that agent — and nothing else they could do if they signed in to canopy
-themselves. See `apps/tokens/delegation.py`.
+themselves. See `apps/embedding/delegation.py`.
 """
 from __future__ import annotations
 

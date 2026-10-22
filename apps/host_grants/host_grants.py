@@ -110,7 +110,7 @@ def check_id_jag(app, id_jag: str, *, subject: str) -> dict:
     registered (its pasted PEMs + published JWKS) is ours, resolved only once
     the header says this is an ID-JAG at all.
     """
-    from apps.tokens import assertions
+    from apps.embedding import assertions
 
     def keys():
         try:

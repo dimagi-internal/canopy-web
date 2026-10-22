@@ -26,7 +26,7 @@ from django.core.cache import cache
 from django.test import Client
 
 from apps.agents.models import Agent
-from apps.tokens import assertions, embed_apps
+from apps.embedding import assertions, embed_apps
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
 

@@ -333,7 +333,7 @@ is trusted (migration `tokens/0031`, matched on both, so a tenant that merely na
   (plus `Origin` = canopy's own on writes). The proof is bound to that cookie and
   that contact. The host page's scripts get none of it: they cannot read an HttpOnly
   cookie, their calls are cross-site and carry no canopy cookie (CORS never allows
-  credentials, `tokens/cors.py`), and they cannot read the frame. canopy served on
+  credentials, `embedding/cors.py`), and they cannot read the frame. canopy served on
   the framing site's own origin (the old address's `/canopy` prefix on labs) is refused,
   because there the host's scripts would BE the frame's origin.
   **Boundary:** a host's own SERVER can forge headers and fetch the shell to get a

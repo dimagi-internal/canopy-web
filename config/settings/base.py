@@ -91,6 +91,7 @@ INSTALLED_APPS = [
     "apps.oauth_server",
     "apps.mcp_apps_host",
     "apps.host_grants",
+    "apps.embedding",
     "apps.reviews",
     "apps.runs",
     "apps.shareouts",
@@ -835,7 +836,7 @@ if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 else:
     # Only the API, and only for a live connected site's declared origins
-    # (apps/tokens/cors.py), with no cookies: a connected site's page calls
+    # (apps/embedding/cors.py), with no cookies: a connected site's page calls
     # canopy with a Bearer token it holds, and that token is all it carries.
     CORS_URLS_REGEX = r"^/api/.*$"
 

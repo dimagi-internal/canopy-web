@@ -31,7 +31,7 @@ from django.utils import timezone
 from apps.workspaces import services as wsvc
 from apps.workspaces import permissions as perms
 
-from .models import AppCredential, AppCredentialAgent, is_valid_frame_origin
+from apps.tokens.models import AppCredential, AppCredentialAgent, is_valid_frame_origin
 
 
 class EmbedAppError(Exception):

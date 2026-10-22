@@ -240,7 +240,7 @@ def list_turns(
 def list_sessions(request: HttpRequest):
     """Open emdash sessions the caller can see — across their workspaces, live runners
     only, newest-first. Drives the phone's Open Sessions list."""
-    from apps.tokens import delegation
+    from apps.embedding import delegation
 
     rows = services.list_visible_sessions(request.user, wsvc.request_workspace_slugs(request))
     offered = delegation.offered_for(request)

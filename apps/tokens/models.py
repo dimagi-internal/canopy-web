@@ -211,7 +211,7 @@ class AppCredential(models.Model):
     normal APIs.
 
     What it can do is vouch for one of its visitors, with a SIGNED ASSERTION
-    verified against `public_keys` (`apps/tokens/assertions.py`), and frame the
+    verified against `public_keys` (`apps/embedding/assertions.py`), and frame the
     embed shell at `allowed_frame_origins`. Canopy decides who that visitor is:
     an existing user who is a member of this workspace, or a contact
     (`contacts.services.resolve_arrival`).
@@ -286,7 +286,7 @@ class AppCredential(models.Model):
     #:
     #: Canopy fetches this, so it is an outbound request to an
     #: operator-supplied URL: https only, never into private address space,
-    #: no redirects, bounded, cached and fail-closed. See `apps/tokens/jwks.py`.
+    #: no redirects, bounded, cached and fail-closed. See `apps/embedding/jwks.py`.
     jwks_url = models.URLField(
         blank=True,
         default="",

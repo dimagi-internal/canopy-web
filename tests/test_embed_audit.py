@@ -151,7 +151,7 @@ def test_deleting_the_app_does_not_erase_its_history():
 def test_an_audit_failure_never_breaks_the_operation(monkeypatch):
     """Deliberate: a logging outage must not become an authentication outage.
     The cost is a silently lost row, recoverable from the application log."""
-    from apps.tokens import audit as audit_mod
+    from apps.embedding import audit as audit_mod
 
     def boom(*_a, **_k):
         raise RuntimeError("table is on fire")

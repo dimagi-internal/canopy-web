@@ -129,8 +129,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     async def _site_may_open(self, session) -> bool:
         """`site ∩ user`: a connected site acting for its visitor opens only its
-        own agents' chats — the same limit REST applies (apps/tokens/delegation.py)."""
-        from apps.tokens import delegation
+        own agents' chats — the same limit REST applies (apps/embedding/delegation.py)."""
+        from apps.embedding import delegation
 
         offered = await database_sync_to_async(delegation.offered_agent_ids)(
             self.scope.get("delegated_app"))

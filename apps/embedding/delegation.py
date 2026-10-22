@@ -90,7 +90,7 @@ def offered_agent_ids(app) -> set | None:
     """
     if app is None:
         return None
-    from .models import AppCredentialAgent
+    from apps.tokens.models import AppCredentialAgent
 
     return set(
         AppCredentialAgent.objects.filter(app=app, agent__workspace_id=app.workspace_id)

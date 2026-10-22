@@ -13,7 +13,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent
-from apps.tokens import embed_apps
+from apps.embedding import embed_apps
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -429,3 +429,16 @@ def test_no_management_command_registers_a_site_or_writes_what_it_may_do():
     offenders = [str(p.relative_to(root)) for p in root.glob("*/management/commands/*.py")
                  if any(m in p.read_text() for m in markers)]
     assert offenders == []
+
+
+def test_the_routes_kept_their_operation_ids_when_embedding_left_tokens():
+    """`list_connected_apps` / `disconnect_app` are shared view names (the MCP
+    sign-in has them too), so the operationIds are module-qualified; moving the
+    module to apps/embedding must not rename these MCP tools."""
+    from apps.api.api import api
+
+    ops = {op["operationId"] for item in api.get_openapi_schema()["paths"].values()
+           for op in item.values()}
+    assert {"tokens_connected_apps_list_connected_apps",
+            "tokens_connected_apps_disconnect_app"} <= ops
+    assert not any(o.startswith("embedding_") for o in ops)

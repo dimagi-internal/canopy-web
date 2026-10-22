@@ -31,7 +31,7 @@ def _ctx(app_name="connect-labs"):
     agent = Agent.objects.create(slug="labs-helper", name="Labs Helper", workspace=ws)
     admin = User.objects.create_user(f"a-{app_name}", f"a-{app_name}@dimagi.com", "pw")
     app = AppCredential.create_credential(name=app_name, created_by=admin, workspace=ws)
-    # A site reaches only the agents it offers (apps/tokens/delegation.py).
+    # A site reaches only the agents it offers (apps/embedding/delegation.py).
     AppCredentialAgent.objects.create(app=app, agent=agent)
     return user, ws, agent, app
 

@@ -166,7 +166,7 @@ failure again.
   `/api/contacts/` is the tenant-admin list and must not match.
 - `visible_session_q` (users) and `contact_session_q` (contacts) in
   `apps/canopy_sessions/access.py` are disjoint predicates.
-- A host vouches for a visitor with a **signed assertion** (`apps/tokens/assertions.py`:
+- A host vouches for a visitor with a **signed assertion** (`apps/embedding/assertions.py`:
   asymmetric algorithms only, `aud` enforced, `exp` ≤ 120s, single-use `jti` failing closed).
   canopy holds only the host's public key. Arrival resolves to an account the person already
   has that is a member of the site's workspace, or to a contact — it never creates a user or a

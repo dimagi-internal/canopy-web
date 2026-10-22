@@ -12,7 +12,7 @@ import pytest
 from django.core.cache import cache
 from django.test import override_settings
 
-from apps.tokens.rate_limit import MintRateLimitError, check_mint_limit
+from apps.embedding.rate_limit import MintRateLimitError, check_mint_limit
 
 
 @pytest.fixture(autouse=True)

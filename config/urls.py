@@ -13,7 +13,7 @@ from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
 from apps.github_connect.views import github_connect_callback, github_connect_start
-from apps.tokens.views_embed import embed_chat, embed_widget_js
+from apps.embedding.views_embed import embed_chat, embed_widget_js
 from apps.contacts import hcp_oauth_views
 from apps.oauth_server import views as views_mcp_oauth
 from apps.host_grants import views_oauth
@@ -79,7 +79,7 @@ urlpatterns = [
     # The embed shell — the ONE framable canopy page. A bare view because it
     # sets per-request response headers (frame-ancestors from the app's
     # registered origins) and is X-Frame-Options-exempt; see
-    # apps/tokens/views_embed.py for why the exemption is safe. Declared before
+    # apps/embedding/views_embed.py for why the exemption is safe. Declared before
     # the SPA catch-all, whose negative lookahead does not exclude `embed/`.
     path("embed/chat", embed_chat, name="embed-chat"),
     # The loader a host names in its <script> tag. Served from the frontend

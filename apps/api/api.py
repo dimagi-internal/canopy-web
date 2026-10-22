@@ -265,9 +265,9 @@ from apps.contacts.api import router as contacts_router
 from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
 from apps.contacts.hcp_clients_api import router as hcp_clients_router  # noqa: E402
 from apps.contacts.people_api import router as people_router  # noqa: E402
-from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
+from apps.embedding.connected_apps_api import connected_apps_router  # noqa: E402
 from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
-from apps.tokens.embed_api import embed_router
+from apps.embedding.embed_api import embed_router
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
 from apps.passkeys.api import router as passkeys_router  # noqa: E402

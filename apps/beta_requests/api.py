@@ -3,7 +3,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.errors import TYPE_CONFLICT, TYPE_RATE_LIMIT, ProblemError
-from apps.tokens.audit import client_ip
+from apps.embedding.audit import client_ip
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as ws_services
 from apps.workspaces.models import Workspace

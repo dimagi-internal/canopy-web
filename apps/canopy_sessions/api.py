@@ -257,8 +257,8 @@ def _visible_slugs(request: HttpRequest, *, listing: bool = False, bulk_write: b
 
 def _site_scoped(request: HttpRequest, qs):
     """`site ∩ user`: when a connected site is acting, only its own agents'
-    sessions exist (apps/tokens/delegation.py). No-op for the person themself."""
-    from apps.tokens import delegation
+    sessions exist (apps/embedding/delegation.py). No-op for the person themself."""
+    from apps.embedding import delegation
 
     offered = delegation.offered_for(request)
     return qs if offered is None else qs.filter(agent_id__in=offered)
@@ -313,7 +313,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
             raise HttpError(404, f"agent '{payload.agent_slug}' not found in this workspace")
     # A site acting for its visitor may open a chat only with an agent it
     # offers — and never an agent-less (project) session, which no site offers.
-    from apps.tokens import delegation
+    from apps.embedding import delegation
 
     offered = delegation.offered_for(request)
     if offered is not None and (agent is None or agent.pk not in offered):
@@ -839,7 +839,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
     from apps.agents.credentials import secret_requests
     from apps.mcp_apps_host import mcp_apps_views
-    from apps.tokens import delegation
+    from apps.embedding import delegation
 
     mcp_apps_views.annotate(session, rows)
     secret_requests.annotate(session, rows)
@@ -957,7 +957,7 @@ def list_messages(
     rows, has_more = transcript_read.messages_before(session, before=before, limit=limit)
     from apps.agents.credentials import secret_requests
     from apps.mcp_apps_host import mcp_apps_views
-    from apps.tokens import delegation
+    from apps.embedding import delegation
 
     mcp_apps_views.annotate(session, rows)
     secret_requests.annotate(session, rows)
@@ -1639,7 +1639,7 @@ def export_session(request: HttpRequest, session_id: uuid.UUID):
     # acting for that user is refused — a widget is not a way to lift a chat out.
     # Built server-side from Message rows (`exports.build_markdown`); the runner's
     # raw transcript is never asked for.
-    from apps.tokens import delegation
+    from apps.embedding import delegation
 
     from . import exports
 
