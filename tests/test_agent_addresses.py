@@ -219,7 +219,7 @@ def test_credentials_resolve_names_the_google_account(w):
 
 
 def test_the_google_mint_hints_the_google_account(w, monkeypatch):
-    from apps.agents import google_oauth
+    from apps.agents.credentials import google_oauth
 
     monkeypatch.setattr(google_oauth, "google_client_credentials", lambda: ("cid", "secret"))
     Agent.objects.filter(pk=w.ada.pk).update(email="ada@dimagi.ai", google_account="ada.g@dimagi-ai.com")

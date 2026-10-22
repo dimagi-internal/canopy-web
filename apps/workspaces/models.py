@@ -424,7 +424,7 @@ class SystemAccount(models.Model):
       lists them; `test_system_accounts.py` pins each one).
     * **It arrives only by a binding.** Mail becomes this account's turn only
       through a `SystemSender` of THIS workspace, on a message aligned on our
-      own receiver's verdict (`harness.services._member_behind_email`). The
+      own receiver's verdict (`harness.channels.email.member_behind_email`). The
       sender address alone proves nothing across tenants:
       `no-reply@sns.amazonaws.com` is every AWS customer's.
 

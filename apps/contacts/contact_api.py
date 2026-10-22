@@ -35,15 +35,19 @@ from ninja.security import HttpBearer
 
 from apps.harness import initiator as who
 
-from . import assertions
-from .audit import client_ip, record as audit
-from .models import ContactToken, EmbedAuditLog
-from .schemas import WsTicketOut
-from .rate_limit import (
+from apps.tokens import assertions
+from apps.tokens.audit import client_ip, record as audit
+from apps.tokens.models import ContactToken, EmbedAuditLog
+from apps.tokens.schemas import WsTicketOut
+from apps.tokens.rate_limit import (
     ContactTokenRateLimitError,
     check_contact_token_client,
     check_contact_token_issuer,
 )
+
+#: Published as `tokens_contact_<name>` before this module moved from apps/tokens;
+#: those operationIds are MCP tool names and `generated.ts` keys, so they stay.
+OPERATION_LABEL = "tokens_contact"
 
 log = logging.getLogger(__name__)
 
@@ -199,12 +203,43 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
               reason="bad_runner_requirements", detail=str(exc)[:200])
         raise HttpError(400, f"bad_runner_requirements: {exc}")
 
+    # The agent the site BOUND this arrival to (a page that chose its agent), from
+    # the VERIFIED assertion. It must be the agent the request names — the one
+    # the site was resolved by and `_tenant_for` checks against its allow-list —
+    # so the token cannot be bound to one agent while the tenant check ran on
+    # another. Refused, never served unbound: unbound widens what the host narrowed.
+    try:
+        bound_slug = contract.parse_agent_claim(claims.get(contract.AGENT_CLAIM))
+    except ValueError as exc:
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="bad_agent", detail=str(exc)[:200])
+        raise HttpError(400, f"bad_agent: {exc}")
+    if bound_slug and bound_slug != (payload.agent_slug or "").strip():
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="agent_mismatch",
+              detail=f"signed={bound_slug!r} named={payload.agent_slug!r}")
+        raise HttpError(400, f"agent_mismatch: the assertion is bound to {bound_slug!r}; "
+                             f"send agent_slug={bound_slug!r}")
+
     try:
         workspace = _tenant_for(app, payload.agent_slug)
     except HttpError:
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
               reason="not_granted", detail=f"agent={payload.agent_slug!r}")
         raise
+    bound_agent = None
+    if bound_slug:
+        from apps.agents.models import Agent
+
+        # `_tenant_for` just proved the site offers it; its own workspace's row
+        # only, as `delegation.offered_agent_ids` reads it.
+        bound_agent = Agent.objects.filter(slug=bound_slug,
+                                           workspace_id=app.workspace_id).first()
+        if bound_agent is None:
+            audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+                  reason="not_granted", detail=f"agent={bound_slug!r}")
+            raise HttpError(403, f"not_granted: {app.name!r} does not offer an agent "
+                                 f"named {bound_slug!r}")
     # Only for an arrival that is going to be served: a refused one says
     # nothing about what the site is asking of the visitors it does serve.
     if list(runner_reqs) != (app.last_runner_requirements or []):
@@ -228,29 +263,34 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
 
     user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
     granted = _redeem_host_grant(request, app, payload.id_jag, claims=claims,
-                                 contact=contact, user=user, runner_requirements=runner_reqs)
+                                 contact=contact, user=user, runner_requirements=runner_reqs,
+                                 agent=bound_agent)
     ttl = HOST_GRANT_REMINT_SECONDS if granted else CONTACT_TOKEN_TTL_SECONDS
     if user is not None:
         # An existing canopy account arrives AS ITSELF: a delegated user token,
         # the same short-lived revocable row canopy's own widget mints. Never a
         # new account — resolve_arrival only finds, it does not create.
-        from .models import DelegatedToken
+        from apps.tokens.models import DelegatedToken
 
         raw, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl,
                                           assurance=DelegatedToken.ASSURANCE_HOST_SIGNED,
-                                          runner_requirements=runner_reqs)
+                                          runner_requirements=runner_reqs,
+                                          bound_agent=bound_agent)
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, subject=user,
               detail=f"contact={contact.identity} arrived as user {user.pk} "
-                     f"(assurance=host_signed) ttl={ttl}s host_grant={granted}")
+                     f"(assurance=host_signed) ttl={ttl}s host_grant={granted}"
+                     f"{f' agent={bound_slug}' if bound_slug else ''}")
         return ContactTokenOut(token=raw, expires_at=token.expires_at.isoformat(),
                                contact_id=contact.pk, display_name=contact.display_name,
                                kind="user", host_grant=granted)
 
     raw, token = ContactToken.issue(app=app, contact=contact, ttl_seconds=ttl,
                                     runner_requirements=runner_reqs,
-                                    verified_email=_trusted_email(app, claims))
+                                    verified_email=_trusted_email(app, claims),
+                                    bound_agent=bound_agent)
     audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app,
-          detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}")
+          detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}"
+                 f"{f' agent={bound_slug}' if bound_slug else ''}")
     return ContactTokenOut(
         token=raw,
         expires_at=token.expires_at.isoformat(),
@@ -274,7 +314,7 @@ def _trusted_email(app, claims: dict) -> str:
 
 
 def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user,
-                       runner_requirements=()) -> bool:
+                       runner_requirements=(), agent=None) -> bool:
     """Redeem the site's ID-JAG, if it sent one. Never fails the arrival.
 
     Only ever called AFTER the arrival assertion verified, so the visitor it
@@ -283,7 +323,7 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
     line with the code — never the token), because "the agent could not reach
     the site as me" otherwise has nowhere to be seen.
     """
-    from . import host_grants
+    from apps.tokens import host_grants
 
     if not (id_jag or "").strip():
         return False
@@ -294,7 +334,7 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
     try:
         grant = host_grants.redeem(app, id_jag.strip(), subject=subject,
                                    contact=contact, user=user,
-                                   runner_requirements=runner_requirements)
+                                   runner_requirements=runner_requirements, agent=agent)
     except host_grants.HostGrantError as exc:
         log.warning("host grant refused for %s: %s", app.name, exc.code)
         host_grants.record_outcome(app, ok=False, subject=subject, code=exc.code,
@@ -308,7 +348,7 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
     host_grants.record_outcome(app, ok=True, subject=subject, scope=grant.scope)
     # MCP Apps: list the site's tools as this visitor in the background, so a
     # result from the agent's own login (path D) finds its View.
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     mcp_apps_views.refresh_index_soon(app, grant)
     return True
@@ -323,7 +363,7 @@ def contact_ws_ticket(request: HttpRequest) -> WsTicketOut:
     works once, within `expires_in` seconds. Fetch a fresh one for every
     connection, reconnects included.
     """
-    from . import ws_ticket
+    from apps.tokens import ws_ticket
 
     return WsTicketOut(ticket=ws_ticket.mint(ws_ticket.bearer(request)),
                        expires_in=ws_ticket.TICKET_TTL_SECONDS)
@@ -342,11 +382,11 @@ def contact_me(request: HttpRequest) -> ContactMeOut:
 
     contact = request.contact
     app = request.delegated_app
-    rows = (
+    rows = _bound(request, (
         Agent.objects.filter(embedding_apps__app=app, workspace_id=contact.workspace_id)
         .order_by("slug")
         .distinct()
-    )
+    ), "pk")
     return ContactMeOut(
         contact_id=contact.pk,
         display_name=contact.display_name,
@@ -418,6 +458,16 @@ def _tenant_for(app, agent_slug: str):
     return app.workspace
 
 
+def _bound(request: HttpRequest, rows, field: str = "agent_id"):
+    """`rows` narrowed to the one agent this contact's token is bound to (a page
+    that chose its agent — `ContactToken.bound_agent`), if it is. Every contact
+    door that names an agent or a conversation passes through this, so a token
+    minted on a data page for `labsdata` can neither start nor continue a
+    conversation with any other agent the site offers."""
+    bound = getattr(request, "bound_agent_id", None)
+    return rows.filter(**{field: bound}) if bound else rows
+
+
 def _session_or_404(request: HttpRequest, session_id):
     """This contact's session, or 404. Never anybody else's.
 
@@ -429,8 +479,8 @@ def _session_or_404(request: HttpRequest, session_id):
     from apps.canopy_sessions.models import Session
 
     session = (
-        Session.objects.select_related("agent")
-        .filter(contact_session_q(request.contact))
+        _bound(request, Session.objects.select_related("agent")
+               .filter(contact_session_q(request.contact)))
         .filter(pk=session_id)
         .first()
     )
@@ -467,11 +517,11 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     contact = request.contact
     app = request.delegated_app
     agent = (
-        Agent.objects.filter(
+        _bound(request, Agent.objects.filter(
             slug=payload.agent_slug,
             embedding_apps__app=app,
             workspace_id=contact.workspace_id,
-        )
+        ), "pk")
         .first()
     )
     if agent is None:
@@ -515,7 +565,8 @@ def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
     # stays closed.
     if state not in ("active", "archived", "all"):
         raise HttpError(422, "state must be one of: active, archived, all")
-    rows = Session.objects.select_related("agent").filter(contact_session_q(request.contact))
+    rows = _bound(request, Session.objects.select_related("agent")
+                  .filter(contact_session_q(request.contact)))
     if state == "active":
         rows = rows.filter(status=Session.ACTIVE)
     elif state == "archived":
@@ -592,7 +643,7 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
     )
     # A contact only ever talks through a widget, which never shows tool calls
     # (except a tool result that carries an app View — `for_widget`).
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     mcp_apps_views.annotate(session, rows)
     rows = session_services.for_widget(rows)
@@ -714,7 +765,7 @@ def _turn_or_404(request: HttpRequest, turn_id: str):
         pk = _uuid.UUID(str(turn_id))
     except ValueError:
         raise HttpError(404, "turn not found") from None
-    mine = Session.objects.filter(contact_session_q(request.contact)).values("pk")
+    mine = _bound(request, Session.objects.filter(contact_session_q(request.contact))).values("pk")
     turn = (Turn.objects.select_related("chat_session", "initiator_user", "initiator_contact",
                                         "claimed_by")
             .filter(pk=pk, chat_session__in=mine).first())
@@ -740,7 +791,7 @@ def my_unclaimable(request: HttpRequest) -> list[dict]:
     from apps.canopy_sessions.models import Session
     from apps.harness import claim
 
-    mine = Session.objects.filter(contact_session_q(request.contact)).values("pk")
+    mine = _bound(request, Session.objects.filter(contact_session_q(request.contact))).values("pk")
     return claim.unclaimable_queued_turns(
         ws_slugs={request.contact.workspace_id}, turn_q=Q(chat_session__in=mine))
 
@@ -772,13 +823,13 @@ from apps.canopy_sessions.app_views_api import (  # noqa: E402
 
 
 def _app_viewer(request):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     return mcp_apps_views.Viewer(contact=request.contact)
 
 
 def _app_run(fn, *args):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     try:
         return fn(*args)
@@ -789,7 +840,7 @@ def _app_run(fn, *args):
 @contact_router.get("/sessions/{session_id}/apps/{tool_call_id}/resource", response=dict,
                     summary="Load an app view, as you")
 def contact_app_view_resource(request: HttpRequest, session_id: str, tool_call_id: str):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     return _app_run(mcp_apps_views.resource, _session_or_404(request, session_id),
                     _app_viewer(request), tool_call_id)
@@ -799,7 +850,7 @@ def contact_app_view_resource(request: HttpRequest, session_id: str, tool_call_i
                      summary="An app view's tools/call, as you")
 def contact_app_view_call(request: HttpRequest, session_id: str, tool_call_id: str,
                           payload: AppCallIn):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     return _app_run(mcp_apps_views.call, _session_or_404(request, session_id),
                     _app_viewer(request), tool_call_id, payload.name, payload.arguments or {})
@@ -809,7 +860,7 @@ def contact_app_view_call(request: HttpRequest, session_id: str, tool_call_id: s
                      summary="An app view's resources/read, as you")
 def contact_app_view_read(request: HttpRequest, session_id: str, tool_call_id: str,
                           payload: AppReadIn):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     return _app_run(mcp_apps_views.read, _session_or_404(request, session_id),
                     _app_viewer(request), tool_call_id, payload.uri)
@@ -819,7 +870,7 @@ def contact_app_view_read(request: HttpRequest, session_id: str, tool_call_id: s
                     summary="An app view's ui/update-model-context")
 def contact_app_view_context(request: HttpRequest, session_id: str, tool_call_id: str,
                              payload: AppContextIn):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     _app_run(mcp_apps_views.update_context, _session_or_404(request, session_id),
              _app_viewer(request), tool_call_id, payload.dict(exclude_none=True))
@@ -832,7 +883,7 @@ def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id
                              payload: AppMessageIn):
     from apps.canopy_sessions import doors
 
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     session = _session_or_404(request, session_id)
     text = payload.text

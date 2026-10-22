@@ -99,7 +99,7 @@ def mailbox_kind(agent) -> str:
     merely a registered one: a workspace can add its domain before the MX cut-over, and
     until it verifies the address is still a Google mailbox that needs its Gmail scopes
     and the account check."""
-    from . import mailbox
+    from .. import mailbox
 
     box = mailbox.describe(agent)
     if box["kind"] == "hosted":
@@ -113,7 +113,7 @@ def scopes_for(agent) -> tuple[str, ...]:
     Docs, Sheets, Slides, Forms and Calendar only — asking it for Gmail too would grant
     access to an inbox nothing reads. Gmail stays when any of its addresses is still a
     Gmail mailbox the runner reads (ada@dimagi-ai.com beside ada@dimagi.ai)."""
-    from . import mailbox
+    from .. import mailbox
 
     if mailbox_kind(agent) == "hosted" and not any(
             a["backend"] == "gmail" for a in mailbox.addresses(agent)):

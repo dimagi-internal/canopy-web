@@ -45,8 +45,8 @@ from ninja.errors import HttpError
 
 from apps.common.token_hash import hash_token
 from .contact_api import contact_auth
-from .models import HcpFrameProof
-from .views_embed import FRAME_COOKIE
+from apps.tokens.models import HcpFrameProof
+from apps.tokens.views_embed import FRAME_COOKIE
 
 contact_hcp_router = Router(auth=contact_auth, tags=["contact"])
 
@@ -191,7 +191,9 @@ def _session(request: HttpRequest, session_id: str):
         sid = uuid.UUID(str(session_id))
     except ValueError:
         raise HttpError(404, "Not found") from None
-    session = (Session.objects.filter(contact_session_q(request.contact), pk=sid)
+    from .contact_api import _bound
+
+    session = (_bound(request, Session.objects.filter(contact_session_q(request.contact), pk=sid))
                .select_related("agent").first())
     if session is None or session.agent is None:
         raise HttpError(404, "Not found")

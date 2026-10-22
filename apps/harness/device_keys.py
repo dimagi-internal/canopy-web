@@ -190,7 +190,7 @@ def private_runner_licensed(runner, agent) -> bool:
     during their own turns (`licenses.credential_principal`)."""
     if not runner.private or runner.owner is None:
         return False
-    from apps.agents import licenses
+    from apps.agents.credentials import licenses
 
     return licenses.active(agent, runner.owner) is not None
 

@@ -32,6 +32,12 @@ class PersonalToken(models.Model):
     looks up an unrevoked match, and stamps `request.user = token.user`.
     """
 
+    #: Every personal access token minted now starts with this, so it is recognisable on
+    #: sight (secret scanners, the transcript scrubber) and `principal.resolve_bearer`
+    #: looks it up in this table alone. Tokens minted before it are 43 bare
+    #: characters and still resolve (`principal.LEGACY_LENGTH`).
+    PREFIX = "cpat_"
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -123,7 +129,7 @@ class PersonalToken(models.Model):
             expires_at = (
                 None if ttl_days == 0 else timezone.now() + timedelta(days=ttl_days)
             )
-        raw = secrets.token_urlsafe(32)
+        raw = cls.PREFIX + secrets.token_urlsafe(32)
         token_hash = hash_token(raw)
         token = cls.objects.create(
             user=user, token_hash=token_hash, label=label, expires_at=expires_at,
@@ -567,6 +573,12 @@ class DelegatedToken(models.Model):
     """Short-lived bearer minted by token exchange: <app> acting as <user>.
     DB-backed (not JWT) so it is revocable and the table is the audit trail."""
 
+    #: Every delegated token minted now starts with this, so it is recognisable on
+    #: sight (secret scanners, the transcript scrubber) and `principal.resolve_bearer`
+    #: looks it up in this table alone. Tokens minted before it are 43 bare
+    #: characters and still resolve (`principal.LEGACY_LENGTH`).
+    PREFIX = "cdt_"
+
     app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="delegated_tokens")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="delegated_tokens")
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
@@ -584,6 +596,12 @@ class DelegatedToken(models.Model):
     #: signed `canopy_runner_requirements` claim). Stamped onto every session
     #: this token starts or sends into. Empty for canopy's own widget.
     runner_requirements = models.JSONField(default=list, blank=True)
+    #: The one agent the SITE bound this arrival to (its signed `canopy_agent`
+    #: claim — a page that chose its agent). Set, the token reaches that agent's
+    #: conversations only (`delegation.offered_for`); null, the site's whole
+    #: allow-list, as before the claim existed.
+    bound_agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True,
+                                    blank=True, related_name="+")
 
     class Meta:
         db_table = "delegated_tokens"
@@ -591,12 +609,12 @@ class DelegatedToken(models.Model):
 
     @classmethod
     def issue(cls, *, app, user, ttl_seconds, assurance: str = "delegated",
-              runner_requirements=()):
+              runner_requirements=(), bound_agent=None):
         from django.utils import timezone
-        raw = secrets.token_urlsafe(32)
+        raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, user=user, assurance=assurance,
-            runner_requirements=list(runner_requirements),
+            runner_requirements=list(runner_requirements), bound_agent=bound_agent,
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )
@@ -842,6 +860,12 @@ class ContactToken(models.Model):
     standing.
     """
 
+    #: Every contact token minted now starts with this, so it is recognisable on
+    #: sight (secret scanners, the transcript scrubber) and `principal.resolve_bearer`
+    #: looks it up in this table alone. Tokens minted before it are 43 bare
+    #: characters and still resolve (`principal.LEGACY_LENGTH`).
+    PREFIX = "ccon_"
+
     app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="contact_tokens")
     contact = models.ForeignKey(
         "contacts.Contact", on_delete=models.CASCADE, related_name="tokens",
@@ -857,18 +881,24 @@ class ContactToken(models.Model):
     #: to the token, not the contact: `Contact.email` only ever fills a blank, so
     #: it cannot say which address was verified most recently, or by whom.
     verified_email = models.CharField(max_length=254, blank=True, default="")
+    #: The agent the site bound this arrival to — the same field, for the same
+    #: reason, as `DelegatedToken.bound_agent`.
+    bound_agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True,
+                                    blank=True, related_name="+")
 
     class Meta:
         db_table = "contact_tokens"
         ordering = ["-created_at"]
 
     @classmethod
-    def issue(cls, *, app, contact, ttl_seconds, runner_requirements=(), verified_email=""):
+    def issue(cls, *, app, contact, ttl_seconds, runner_requirements=(), verified_email="",
+              bound_agent=None):
         from django.utils import timezone
 
-        raw = secrets.token_urlsafe(32)
+        raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, contact=contact, runner_requirements=list(runner_requirements),
+            bound_agent=bound_agent,
             verified_email=verified_email or "",
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
@@ -953,14 +983,27 @@ class HostGrant(models.Model):
     #: enforces these alongside the session's own and stamps them onto it.
     #: Replaced by each redemption: the latest arrival is the host's word.
     runner_requirements = models.JSONField(default=list, blank=True)
+    #: The agent the arrival that minted this grant was BOUND to (`canopy_agent`):
+    #: the page chose it, and granted these scopes with it in mind. Only that
+    #: agent's turns and Views reach the grant. Null = an unbound arrival, usable
+    #: by any agent the site offers — `host_grants.grant_for` prefers the bound one.
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True, blank=True,
+                              related_name="+")
     expires_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "host_grants"
+        # One grant per (site, visitor) for unbound arrivals, and one per agent
+        # for bound ones — so a data page's grant never overwrites the
+        # marketplace's, or the reverse.
         constraints = [
-            models.UniqueConstraint(fields=["app", "subject"], name="one_host_grant_per_visitor"),
+            models.UniqueConstraint(fields=["app", "subject"], condition=models.Q(agent__isnull=True),
+                                    name="one_host_grant_per_visitor"),
+            models.UniqueConstraint(fields=["app", "subject", "agent"],
+                                    condition=models.Q(agent__isnull=False),
+                                    name="one_bound_host_grant_per_visitor_agent"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - never shows the token

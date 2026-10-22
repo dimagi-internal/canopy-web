@@ -1,7 +1,7 @@
 """The browser plumbing behind a rendered MCP Apps View — for canopy USERS.
 
 `/api/canopy-sessions/{id}/apps/{tool_call_id}/…` (spec 2026-10-08 §5). A
-contact's twin lives under `/api/contact/` (`apps/tokens/contact_api.py`). The
+contact's twin lives under `/api/contact/` (`apps/contacts/contact_api.py`). The
 rule is `apps/tokens/mcp_apps_views.py`; these only resolve the session and the
 person.
 
@@ -115,6 +115,10 @@ def app_view_message(request: HttpRequest, session_id: uuid.UUID, tool_call_id: 
     message, turn = doors.send_from(
         "app_view", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id,
+        # A View's clicks arrive with the delegated token the site minted for
+        # its visitor; that token's runner requirements (ZDR) bind this send
+        # exactly as they bind the REST send.
+        runner_requirements=getattr(request, "runner_requirements", ()),
         initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
     )
     return {"turn_id": str(turn.id) if turn else None, "message_id": str(message.id)}

@@ -18,8 +18,9 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 
-from . import google_oauth, services
-from .schemas import GoogleMintStartOut
+from .. import services
+from ..schemas import GoogleMintStartOut
+from . import google_oauth
 
 router = Router(auth=session_auth, tags=["agents"])
 
@@ -34,7 +35,7 @@ def _agent_for_mint(request: HttpRequest, slug: str):
     an admin, the same tier as `PUT /{slug}/credentials`. The mint writes the
     `gog-token` credential, so membership alone let a viewer attach their own
     Google account as the agent's mailbox."""
-    from .gates import agent_for_admin
+    from ..gates import agent_for_admin
 
     return agent_for_admin(request, slug)
 

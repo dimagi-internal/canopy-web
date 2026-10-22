@@ -5,7 +5,8 @@
   ``mint_contact_token`` — the arrival (host grant contract §1).
 * ``PageRegistry`` / ``PageTokens`` — the page → scopes registry, in its two modes:
   a page KEY the browser names (an SPA), or a server-signed page token (a
-  server-rendered page). ``registry.scopes_for(value, user_id)`` either way.
+  server-rendered page). ``registry.page(value, user_id)`` either way — a ``Page``:
+  its scopes, and the agent and runner requirements it chose.
 * ``GrantHandler`` — the token endpoint's jwt-bearer grant (§2).
 * ``ResourceVerifier`` + ``DPoPGate`` — the MCP side (§3).
 * ``ProbeIdentity`` + ``ProbeHandler`` — canopy's live probe: a real ID-JAG for
@@ -20,7 +21,7 @@ from .client_keys import ClientKeyResolver, MetadataError
 from .config import HostConfig, HostNotConfigured, ProbeIdentity
 from .grant import GrantHandler, GrantRefused, GrantResult
 from .metadata import authorization_server_metadata, protected_resource_metadata
-from .pages import PageRegistry, PageTokens
+from .pages import Page, PageRegistry, PageTokens
 from .probe import ProbeDisabled, ProbeHandler, ProbeResult
 from .resource import DelegatedPrincipal, DPoPRefused, ResourceVerifier
 from .signing import MintFailed, arrival_payload, issue_id_jag, mint_contact_token, sign_visitor_assertion
@@ -28,7 +29,7 @@ from .signing import MintFailed, arrival_payload, issue_id_jag, mint_contact_tok
 __all__ = [
     "ClientKeyResolver", "DPoPGate", "DPoPRefused", "DelegatedPrincipal", "GrantHandler",
     "GrantRefused", "GrantResult", "HostConfig", "HostNotConfigured", "MetadataError", "MintFailed",
-    "PageRegistry", "PageTokens", "ProbeDisabled", "ProbeHandler", "ProbeIdentity", "ProbeResult",
+    "Page", "PageRegistry", "PageTokens", "ProbeDisabled", "ProbeHandler", "ProbeIdentity", "ProbeResult",
     "ResourceVerifier", "arrival_payload", "authorization_server_metadata",
     "delegated_principal", "issue_id_jag", "mint_contact_token", "presented_dpop_jkt",
     "protected_resource_metadata", "sign_visitor_assertion",

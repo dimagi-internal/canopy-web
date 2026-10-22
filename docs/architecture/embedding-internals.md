@@ -126,7 +126,7 @@ and the embed does not — not a component. Compare against `ChatPage.tsx`:
 canopy hosts MCP Apps (SEP-1865, `io.modelcontextprotocol/ui`). Spec:
 `docs/superpowers/specs/2026-10-08-mcp-apps-host-design.md`. Code:
 `apps/tokens/mcp_apps.py`, `mcp_apps_views.py`, `views_mcp_apps.py`;
-routes in `apps/canopy_sessions/app_views_api.py` and `apps/tokens/contact_api.py`.
+routes in `apps/canopy_sessions/app_views_api.py` and `apps/contacts/contact_api.py`.
 
 - A Connected site's tool may carry a **View** (`_meta.ui.resourceUri`, a `ui://`
   HTML resource). canopy renders it sandboxed in `ChatPage` **and** the embed

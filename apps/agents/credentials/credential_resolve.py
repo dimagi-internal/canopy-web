@@ -25,7 +25,8 @@ from apps.events import services as events
 from apps.harness import aws_iam_proof, device_keys
 from apps.harness.models import Runner
 
-from . import delegations, licenses, mailbox, services, vault_alerts, zk
+from .. import delegations, mailbox, services
+from . import licenses, vault_alerts, zk
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ def credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
     if agent.is_admin(request.user):
         return "admin", ""
     # A license holder, during their OWN open local turn on this agent (named in
-    # X-Canopy-Turn-Id) — apps/agents/licenses.py, canopy-web#1704. No turn, no secrets.
+    # X-Canopy-Turn-Id) — apps/agents/credentials/licenses.py, canopy-web#1704. No turn, no secrets.
     if license_for_read(request, agent) is not None:
         return "license", ""
     owner = getattr(agent.owner, "email", "") if agent.owner_id else ""

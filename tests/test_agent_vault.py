@@ -21,7 +21,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.agents import vault_import as vi
+from apps.agents.credentials import vault_import as vi
 from apps.common.encryption import encrypt_secret
 from apps.agents.models import Agent
 from apps.passkeys.testing import grant_step_up

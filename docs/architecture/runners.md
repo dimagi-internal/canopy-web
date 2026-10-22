@@ -17,7 +17,7 @@ they cannot disagree).
    agent's plugin, enrols this computer's key so it can read the agent's secrets
    from canopy vault, and records their sessions as **local turns** on the agent's
    page. Who may: the agent's owner and admins, a `full:` rule, workspace editors —
-   whom `access.decide` gives the whole agent (`apps/agents/licenses.py`). The people
+   whom `access.decide` gives the whole agent (`apps/agents/credentials/licenses.py`). The people
    doing it are listed under the agent's Settings → How it runs and → People → Local
    use. A computer without the runner app gets its own key for reading the agent's
    vault (a `computer` runner made when it registers, which is no fleet runner).
@@ -99,7 +99,7 @@ pinned or bound turn would otherwise hand the box the agent's secrets through
 `device_keys.runner_serves_agent`), `unclaimable_queued_turns` reports such a turn
 with the unit's reason, `runner_routes_agent` and `agents_routed_to`
 ask it, `inherited_orders` drops such a runner for that agent, and the routing
-writes (`agents/api.py::_runners_for_routing`) refuse it with 422 and the reason.
+writes (`agents/api_routing.py::_runners_for_routing`) refuse it with 422 and the reason.
 The topology lists a box's units together (`machine`, `unit` on each runner row).
 `prime_machine_units` loads the machine siblings once per claim and per report.
 Tests: `tests/test_runner_units.py`.

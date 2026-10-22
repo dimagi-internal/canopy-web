@@ -19,7 +19,8 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents import pat_rotation, services, zk, zk_seal
+from apps.agents.credentials import pat_rotation, zk, zk_seal
+from apps.agents import services
 from apps.agents.models import (
     Agent,
     AgentAdmin,
@@ -650,7 +651,7 @@ def test_a_new_ecdh_key_waits_for_approval_but_the_key_stays_active(fleet):
     assert row["zk_pending_agents"] == ["eva"]  # approving will also give it access
     assert not AgentVaultWrap.objects.filter(kind="device").exists()
     # Nothing can be wrapped to the unapproved ECDH key.
-    from apps.agents import zk
+    from apps.agents.credentials import zk
 
     assert zk.eligible_device_keys(_agent(fleet)) == []
     res = fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve")

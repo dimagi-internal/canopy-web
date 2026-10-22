@@ -176,7 +176,7 @@ class Agent(models.Model):
     # only (PATCH /device-binding); absent from AgentIn like credential_source.
     require_device_binding = models.BooleanField(default=False)
     # Canopy Vault Phase 1b (canopy-web#1549): rotate the agent's own
-    # `canopy-pat` every `pat_rotation_days` (apps/agents/pat_rotation.py).
+    # `canopy-pat` every `pat_rotation_days` (apps/agents/credentials/pat_rotation.py).
     # Owner/admin opt-in (PATCH /pat-rotation); `pat_rotation_enabled_by` is the
     # person whose standing the background job acts on (the impersonation guard
     # in `mint_agent_canopy_token` is re-checked against them every rotation).
@@ -191,7 +191,7 @@ class Agent(models.Model):
     # AgentCredential holds `zk1:` ciphertext under a per-agent vault key (VK)
     # canopy-web never sees; VK reaches each principal as an AgentVaultWrap.
     # `zk_kv` is the current vault-key version (0 = never enabled). Formats:
-    # docs/vault/zk-v1/zk_v1_reference.py. Owner/admin only (apps/agents/zk.py).
+    # docs/vault/zk-v1/zk_v1_reference.py. Owner/admin only (apps/agents/credentials/zk.py).
     zk_enabled = models.BooleanField(default=False)
     zk_kv = models.PositiveIntegerField(default=0)
 
@@ -1779,7 +1779,7 @@ class SenderTrust(models.Model):
     """A TEMPORARY exception: one address's mail ties to its member account
     without DMARC or a DKIM signature by the From: domain.
 
-    The rule it bends is `harness.services._member_behind_email`: a member's
+    The rule it bends is `harness.channels.email.member_behind_email`: a member's
     email is linked to their account only when THIS message is aligned, because
     an unaligned From: is a header anyone can write. Some members' domains sign
     with a provider's key and publish no DMARC record (dimagi-associate.com,
@@ -1792,7 +1792,7 @@ class SenderTrust(models.Model):
       * one agent, one exact address — never a domain;
       * the message must still carry a passing DKIM signature (tier 2), so mail
         with no authentication at all is never accepted under it;
-      * everything else `_member_behind_email` asks still holds: one canopy user
+      * everything else `member_behind_email` asks still holds: one canopy user
         provably holds the address and is a member of the agent's workspace.
     The turn keeps its real grade (`initiator_assurance`), so the caller
     envelope still says `verified: false`; it records the rule it rode on

@@ -121,9 +121,24 @@ def drill_report_token_ok(drill: RunnerDrill, token: str) -> bool:
     return body == {"d": drill.pk, "s": drill.started_at.isoformat()}
 
 
+#: The `initiator_via` of the system initiator every drill turn carries.
+DRILL_VIA = "drill"
+
+
 def _drill_initiator(runner, started_by=None):
     from . import initiator as who
-    return who.system(via="drill", accountable=started_by or runner.owner)
+    return who.system(via=DRILL_VIA, accountable=started_by or runner.owner)
+
+
+def drill_turns():
+    """Every drill turn. Matched on the initiator, which only canopy sets
+    (`initiator.system`), AND the key prefix — never the prefix alone: keys are
+    unique only per workspace and the poster picks them, so anyone could key a
+    turn `drill:…` and have it expired and cancelled as a stale readiness check."""
+    from . import initiator as who
+
+    return Turn.objects.filter(initiator_kind=who.SYSTEM, initiator_via=DRILL_VIA,
+                               idempotency_key__startswith=DRILL_KEY_PREFIX)
 
 
 def start_drill(runner: Runner, agents: list, *, started_by=None) -> list[RunnerDrill]:
@@ -174,9 +189,10 @@ def start_drill(runner: Runner, agents: list, *, started_by=None) -> list[Runner
 #: answers nothing, and every other queued turn waits for its runner forever.
 DRILL_EXPIRY = dt.timedelta(hours=24)
 
-#: Every drill turn's idempotency key starts with this (`start_drill`). It, not
-#: the RunnerDrill FK, identifies a drill turn: a re-drill points the row at its
-#: new turn, and the old one is then linked to nothing.
+#: Every drill turn's idempotency key starts with this (`start_drill`). With the
+#: system initiator (`drill_turns`), not the RunnerDrill FK, it identifies a drill
+#: turn: a re-drill points the row at its new turn, and the old one is then
+#: linked to nothing.
 DRILL_KEY_PREFIX = "drill:"
 
 
@@ -188,8 +204,8 @@ def _cancel(turn: Turn, note: str) -> None:
 
 def _supersede(runner: Runner, agent) -> None:
     """A re-drill replaces the (runner, agent) check still waiting to run."""
-    for turn in Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner, agent=agent,
-                                    idempotency_key__startswith=f"{DRILL_KEY_PREFIX}{runner.id}:"):
+    for turn in drill_turns().filter(status=Turn.QUEUED, pinned_runner=runner, agent=agent,
+                                     idempotency_key__startswith=f"{DRILL_KEY_PREFIX}{runner.id}:"):
         _cancel(turn, "cancelled: a newer readiness check of this runner replaced it")
 
 
@@ -201,8 +217,7 @@ def expire_stale_drills() -> int:
 
     cutoff = timezone.now() - DRILL_EXPIRY
     count = 0
-    for turn in (Turn.objects.filter(status=Turn.QUEUED, created_at__lt=cutoff,
-                                     idempotency_key__startswith=DRILL_KEY_PREFIX)
+    for turn in (drill_turns().filter(status=Turn.QUEUED, created_at__lt=cutoff)
                  .select_related("pinned_runner")):
         box = turn.pinned_runner
         why = ("its runner was retired" if box is not None and box.status == Runner.RETIRED

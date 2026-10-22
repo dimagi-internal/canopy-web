@@ -19,7 +19,8 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import services
-from .api import apply_project_patch, list_agents, project_detail, require_workspace_editor
+from .api import list_agents
+from .api_board import apply_project_patch, project_detail, require_workspace_editor
 from .gates import agent_for_work, listed_agent_workspaces, visible_agent_workspaces
 from .models import Agent, AgentProject, AgentTask
 from .schemas import (

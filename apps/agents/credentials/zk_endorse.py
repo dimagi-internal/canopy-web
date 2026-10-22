@@ -22,7 +22,7 @@ from django.db import transaction
 
 from apps.passkeys.models import UserVaultKeyset
 
-from .models import AgentVaultEndorsement
+from ..models import AgentVaultEndorsement
 from .zk import ZkError, _shape, b64u_bytes
 
 MAX_ENDORSEMENTS = 64

@@ -14,9 +14,10 @@ STATE_BYTE_BUDGET = 7 * 1024
 MAX_VISIBLE_IDS = 400
 
 
-def page_token(request) -> str:
-    """This page's token for this user, or "" for an unregistered route — and
-    always "" in key mode, where the browser names its page instead."""
+def page_token(request, *, agent: str = "", runner_requirements=()) -> str:
+    """This page's token for this user, or "" for an unregistered route that
+    chose no agent — and always "" in key mode, where the browser names its page
+    instead. ``agent`` / ``runner_requirements`` are signed into it."""
     if conf.page_mode() != conf.SIGNED:
         return ""
     match = getattr(request, "resolver_match", None)
@@ -24,7 +25,8 @@ def page_token(request) -> str:
     user = getattr(request, "user", None)
     if user is None or not user.is_authenticated:
         return ""
-    return conf.page_tokens().issue(view_name, user.pk)
+    return conf.page_tokens().issue(view_name, user.pk, agent=agent,
+                                    runner_requirements=runner_requirements)
 
 
 def _fit_ids(state: dict) -> list[str]:
@@ -69,14 +71,39 @@ def _token_url(page: str) -> str:
     return base
 
 
+#: The ``PANEL`` keys a render may set, and the widget option each becomes.
+PANEL_KEYS = {
+    "mode": "mode", "launcher_label": "launcherLabel", "theme": "theme", "width": "width",
+    "open": "open", "target": "target", "expandable": "expandable",
+    "initial_display": "initialDisplay",
+}
+
+
 def panel_context(request=None, *, resource: str = "", backing_tool: str = "", visible_ids=(),
-                  filters=None, path: str = "") -> dict:
+                  filters=None, path: str = "", agent: str = "", runner_requirements=(),
+                  panel: dict | None = None) -> dict:
     """What ``canopy_host/panel.html`` needs, or a dict that renders nothing.
 
     ``visible_ids`` is the SELECTION the visitor can see — ids, never rows — and
     only what THIS visitor may see: "the agent sees what the user sees" is the
     access story, and keeping it true belongs to the page.
+
+    ``agent`` chooses this page's agent in place of ``AGENT_SLUG``, and
+    ``runner_requirements`` adds to the site's ``RUNNER_REQUIREMENTS`` (e.g.
+    ``agent="labsdata", runner_requirements=["zdr"]`` on a page over real data).
+    Both are signed into the page token, so the mint binds the visitor's token —
+    and the grant this page's scopes buy — to that agent alone. Signed mode
+    only: in key mode the browser names the page, so the choice lives in
+    ``PAGE_AGENTS``.
+
+    ``panel`` overrides ``PANEL`` for this render, key by key.
     """
+    if (agent or runner_requirements) and conf.page_mode() != conf.SIGNED:
+        raise ValueError("panel_context(agent=, runner_requirements=) needs PAGE_MODE 'signed'; "
+                         "in key mode set CANOPY_HOST['PAGE_AGENTS'] for the page instead")
+    unknown = set(panel or {}) - set(PANEL_KEYS)
+    if unknown:
+        raise ValueError(f"panel_context(panel=) has unknown keys: {sorted(unknown)}")
     ready = conf.is_configured()
     state = None
     if resource:
@@ -91,14 +118,16 @@ def panel_context(request=None, *, resource: str = "", backing_tool: str = "", v
         state["visible_ids"] = _fit_ids(state)
     if not ready:
         return {"ready": False, "page_state": state}
-    options = conf.panel_options()
+    options = {**conf.panel_options(), **(panel or {})}
     cfg = conf.raw()
-    token = page_token(request) if request is not None else ""
+    token = (page_token(request, agent=agent, runner_requirements=runner_requirements)
+             if request is not None else "")
     ctx = {
         "ready": True,
         "base_url": str(cfg.get("CANOPY_BASE_URL", "")).rstrip("/"),
         "app_name": cfg.get("APP_NAME", ""),
-        "agent": conf.agent_slug(),
+        # The widget preselects it; the page token is what binds it.
+        "agent": agent or conf.agent_slug(),
         "page_state": state,
         "page_token": token,
         "token_url": _token_url(token),
@@ -108,6 +137,8 @@ def panel_context(request=None, *, resource: str = "", backing_tool: str = "", v
         "mode": options.get("mode", "overlay"),
         "launcher_label": options.get("launcher_label", "Ask an agent"),
         "theme": options.get("theme") or {},
+        "panel": {k: options[k] for k in ("width", "open", "target", "expandable",
+                                          "initial_display") if k in options},
     }
     ctx["options"] = panel_options(ctx)
     return ctx
@@ -125,6 +156,9 @@ def panel_options(ctx: dict) -> dict:
         "mode": ctx.get("mode", "overlay"),
         "launcherLabel": ctx.get("launcher_label", "Ask an agent"),
         "theme": ctx.get("theme") or {},
+        # Only what the host set: an absent key keeps the widget's own default.
+        **{PANEL_KEYS[k]: v for k, v in (ctx.get("panel") or {}).items()
+           if v not in (None, "")},
         # For the page-side `canopyHost.updatePageState`, which trims to the same budget.
         "stateByteBudget": STATE_BYTE_BUDGET,
         "maxVisibleIds": MAX_VISIBLE_IDS,

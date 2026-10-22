@@ -64,6 +64,11 @@ browser.
         };
       }
       if (config.theme && Object.keys(config.theme).length) options.theme = config.theme;
+      // Only what the host set (PANEL, or panel= on this render): an absent one
+      // keeps the widget's default. A widget older than an option ignores it.
+      ["width", "open", "target", "expandable", "initialDisplay"].forEach(function (key) {
+        if (key in config) options[key] = config[key];
+      });
       var widget = window.canopy.init(options);
       if (declared) widget.setPageState(declared);
 

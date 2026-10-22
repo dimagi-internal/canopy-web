@@ -208,7 +208,7 @@ unchanged.
 * **How mail becomes it:** a `SystemSender` binds an address, with an optional
   subject regex, to the account **in its own workspace only**. An email turn's
   sender resolves to the account when all of these hold
-  (`harness.services._member_behind_email`):
+  (`harness.channels.email.member_behind_email`):
   - THIS message is aligned (DMARC, or DKIM signed by the From: domain) on our
     own receiver's verdict;
   - no human account provably holds the address;
@@ -338,7 +338,7 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   `one_executing_turn_per_agent` and `routing.busy_agent_ids`: it is the person's
   session, not the agent's one continuous session, so it neither waits behind the
   agent's runner turns nor delays them, and two people may use the agent at once.
-* A **license** (`AgentLicense`, `apps/agents/licenses.py`) is person × agent: the
+* A **license** (`AgentLicense`, `apps/agents/credentials/licenses.py`) is person × agent: the
   record that someone uses the agent locally. The caller list decides who MAY
   (`decide`, above); the license is who DOES. Requested on the first local turn and
   issued at once when `decide` gives the whole agent (basis `owner`, `admin`,
@@ -463,7 +463,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   with an `allow`, or delete it (a deleted default is not re-seeded).
 * **Refusals as rules.** canopy refuses two
   kinds of turn on its own, before any rule: mail from a contact the workspace
-  **blocked** (`_refused_email_turn`), and a person the agent's interface
+  **blocked** (`channels.email.refused_email_turn`), and a person the agent's interface
   **offers nothing** (`_apply_capability`, access `none`). Those are access
   decisions, so they stand whatever the rules say: no `allow` can cover them,
   and disabling their rule does not let them run. Each is reported through a
@@ -518,7 +518,7 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
 * **`unproven_member`** — `{email, role, this_message_grade, needs, note}` when an
   email turn's sender stayed a `contact` although the address belongs to exactly
   one canopy user who is a member of the agent's workspace (the lookup member
-  linking uses, `harness.services.address_holder`): THIS message graded below
+  linking uses, `harness.channels.email.address_holder`): THIS message graded below
   `needs` (`dmarc` | `dkim_aligned`, `Contact.EMAIL_ALIGNED`), so it could not be
   tied to their account. It tells the agent (and the owner) "your own member,
   whose domain's mail authentication needs fixing", not "a stranger". It grants

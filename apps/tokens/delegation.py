@@ -20,7 +20,9 @@ So the token now reaches the intersection of two things:
   2. *Which agents* (`offered_agent_ids`): only the agents the site's OWN
      registration offers, which are in that registration's one workspace. A
      session, turn or runner belonging to any other agent is 404 — the same
-     answer a stranger gets, so a site cannot even learn it exists.
+     answer a stranger gets, so a site cannot even learn it exists. When the
+     site BOUND the arrival to one agent (a page that chose its agent, the
+     signed `canopy_agent` claim), that one agent and no other (`offered_for`).
 
 Only when the TOKEN is the identity. When canopy's own session cookie already
 signed the request in (canopy embedding its own widget, same-origin), the person
@@ -102,7 +104,17 @@ def acting_app(request):
 
 
 def offered_for(request) -> set | None:
-    return offered_agent_ids(acting_app(request))
+    """The agents this request's site may drive: its allow-list, narrowed to the
+    one agent its token is bound to, if it is. None for no acting site."""
+    return narrowed(offered_agent_ids(acting_app(request)), getattr(request, "bound_agent_id", None))
+
+
+def narrowed(offered: set | None, bound_agent_id) -> set | None:
+    """`offered` cut to the token's bound agent — empty if the site no longer
+    offers it (unbinding by un-listing must not widen to the whole list)."""
+    if offered is None or not bound_agent_id:
+        return offered
+    return offered & {bound_agent_id}
 
 
 def turn_agent_id(turn):

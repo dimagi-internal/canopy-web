@@ -51,7 +51,7 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
-from .models import Agent, AgentAdmin, AgentCredentialAlert
+from ..models import Agent, AgentAdmin, AgentCredentialAlert
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
     try:
         if not _applies(agent):
             return raised
-        from . import services
+        from .. import services
 
         user = request.user
         # A box's own credential refresh (the runner-update timer, bootstrap) runs

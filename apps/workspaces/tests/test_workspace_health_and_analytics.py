@@ -12,9 +12,9 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
+from apps.agents.credentials.vault_health import vault_health
 from apps.agents.models import Agent, AgentCredential
 from apps.agents.setup import setup_steps
-from apps.agents.vault_health import vault_health
 from apps.events import activity, usage
 from apps.events.models import Activity, SessionUsage
 from apps.harness import initiator as _initiator
@@ -514,7 +514,7 @@ def test_health_does_not_ask_about_every_vault_key_in_the_system(tree):
 
 
 def test_has_recipients_matches_recipients_for(tree):
-    from apps.agents import zk_seal
+    from apps.agents.credentials import zk_seal
 
     agent = Agent.objects.create(slug="zk", name="zk", workspace_id="connect", owner=tree["builder"],
                                  credential_source=Agent.CANOPY_WEB, zk_enabled=True, zk_kv=0)

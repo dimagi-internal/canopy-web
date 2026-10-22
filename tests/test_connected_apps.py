@@ -418,13 +418,14 @@ def test_an_injected_second_directive_is_refused_on_update():
     assert AppCredential.objects.get(pk=app_id).allowed_frame_origins == [LABS]
 
 
-def test_no_management_command_writes_what_a_site_may_do():
+def test_no_management_command_registers_a_site_or_writes_what_it_may_do():
     """A command would skip `embed_apps`' validation and the settings audit; the
     routes above (and their MCP tools) are the only door."""
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent / "apps"
-    markers = ("AppCredentialAgent", "allowed_frame_origins =", "set_agents(", "embed_apps.update(")
+    markers = ("AppCredentialAgent", "allowed_frame_origins =", "set_agents(", "embed_apps.update(",
+               "AppCredential.create_credential(", "AppCredential.objects.create(", "embed_apps.register(")
     offenders = [str(p.relative_to(root)) for p in root.glob("*/management/commands/*.py")
                  if any(m in p.read_text() for m in markers)]
     assert offenders == []

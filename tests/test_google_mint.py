@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from apps.agents import google_oauth as g
+from apps.agents.credentials import google_oauth as g
 
 # Exactly what echo's and eva's working tokens carry.
 LIVE_FLEET_SCOPES = [

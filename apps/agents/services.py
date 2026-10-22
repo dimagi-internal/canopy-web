@@ -108,7 +108,7 @@ def make_zero_knowledge(agent) -> int:
     the number of values sealed; a no-op on an agent already zero-knowledge."""
     from django.db import transaction
 
-    from . import zk, zk_seal
+    from .credentials import zk, zk_seal
 
     with transaction.atomic():
         agent = zk._locked(agent)
@@ -277,7 +277,7 @@ def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
     with nowhere to go."""
     from django.db import transaction
 
-    from . import pat_rotation, zk_seal
+    from .credentials import pat_rotation, zk_seal
 
     if agent.credential_source != Agent.CANOPY_WEB:
         raise AgentTokenRefused(
@@ -1290,7 +1290,7 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
     if agent.zk_enabled:
         from django.db import transaction
 
-        from . import zk, zk_seal
+        from .credentials import zk, zk_seal
 
         # Under the agent row lock, like every ZK write: a settle's
         # compare-and-swap (`expect`) must see this write or come after it.
@@ -1568,7 +1568,7 @@ def agent_vault_status(agent):
     difference between "the import found nothing" and "this deployment was never
     told where anything lives" — the same failure with two completely different
     fixes."""
-    from apps.agents import vault_import
+    from apps.agents.credentials import vault_import
     from apps.agents.schemas import AgentVaultOut
 
     declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]

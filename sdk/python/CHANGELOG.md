@@ -2,6 +2,29 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.11.0 — 2026-10-22
+
+A page chooses its own agent and runner requirements; the panel passes more options through.
+
+- **Per-page agent.** `panel_context(request, ..., agent="labsdata", runner_requirements=["zdr"])`
+  (and `{% canopy_panel agent=... runner_requirements=... %}`) signs the page's choice into its page
+  token. The mint signs it into the visitor assertion as the new `canopy_agent` claim
+  (`contract.AGENT_CLAIM`), and canopy binds the token — and the host grant it redeems — to that
+  agent. `AGENT_SLUG` stays the default for every other page, unbound.
+- **Per-page runner requirements** add to `RUNNER_REQUIREMENTS`; a page can raise the floor, never
+  lower it. `sign_visitor_assertion(..., agent=, runner_requirements=)`,
+  `arrival_payload(..., bind_agent=True, runner_requirements=)`.
+- **Key mode:** `CANOPY_HOST["PAGE_AGENTS"] = {key: {"agent": ..., "runner_requirements": [...]}}`;
+  `panel_context(agent=...)` raises there, since a browser-named page cannot be signed.
+- `PageRegistry.page(value, user_id)` / `PageTokens.read(...)` return a `Page` (scopes, agent,
+  runner requirements); `django.conf.page_for(value, user)`. `scopes_for` / `page_scopes` unchanged.
+- **Panel options pass through:** `PANEL` (and a per-render `panel_context(..., panel={...})`, merged
+  key by key) now carries `width`, `open`, `target` (inline mode), `expandable` and
+  `initial_display` to the widget. Unknown `panel=` keys raise.
+
+Needs a canopy-web that understands `canopy_agent` to bind; an older canopy ignores the claim and
+serves the token unbound.
+
 ## 0.10.0 — 2026-10-15
 
 Ships `canopy-runtime` 0.3.0 at this tag: the capability manifest schema gains `kind: pool`.

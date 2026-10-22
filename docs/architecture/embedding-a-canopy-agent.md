@@ -90,10 +90,9 @@ what you get from an address bar.
 `PATCH /api/workspaces/<ws>/connected-apps/<id>` (MCP `update_connected_app`), which take
 the same fields — `origins`, `agents`, `public_keys` or `jwks_url` — with the
 same validation, and record each change in the settings audit
-(`settings-audit.md`). There is no management command for origins or agents: a
-command would skip both. `manage.py create_app_credential --workspace connect
---name connect-labs` still registers a bare site (it grants nothing) for local
-setup.
+(`settings-audit.md`). There is no management command for any of it: a command
+would skip both. For local setup, sign in and use the page, or call the routes
+with a personal access token.
 
 ### Serving more than one canopy workspace
 
@@ -688,6 +687,45 @@ The page filters match what the page itself declared with `setPageState`, never
 anything canopy infers. A conversation whose page declared nothing matches no
 page filter: it was not had on any page canopy knows about, and guessing from
 its title would be inventing where it happened.
+
+---
+
+## 5c. A page that chooses its own agent
+
+A site may offer more than one agent and want a different one on some pages —
+connect-labs keeps ACE on the marketplace and puts `labsdata`, a read-only data
+agent that runs only on ZDR runners, on the pages over real visit data. The
+page chooses; the rest of the site keeps its default.
+
+With the Python SDK (`dimagi-canopy` ≥ 0.11):
+
+```python
+# CANOPY_HOST: AGENT_SLUG="ace", and no site-wide RUNNER_REQUIREMENTS
+ctx = panel_context(request, resource="labs-data://visits",
+                    agent="labsdata", runner_requirements=["zdr"])
+```
+
+What canopy does with it:
+
+- The page's choice is signed into its page token (or, for a single-page app,
+  read from `CANOPY_HOST["PAGE_AGENTS"]`), so a browser cannot keep a data
+  page's scopes and swap in another agent.
+- Your mint signs it into the visitor assertion as `canopy_agent` beside
+  `agent_slug`. canopy refuses the arrival unless the two are the same agent
+  (`agent_mismatch`) and that agent is on your Connected site's allow-list.
+- The token it returns is **bound** to that agent: the widget offers only it,
+  and no conversation with any other agent can be started, listed, opened or
+  sent into with that token — on REST, the chat socket, the contact surface and
+  MCP Apps Views alike. The host grant redeemed on that arrival is usable only
+  by that agent: an ACE turn never spends the grant a data page minted for
+  `labsdata`, however recently it was minted.
+- The page's `runner_requirements` are added to the site's. Every conversation
+  the token starts or sends into carries them, and routing runs it only on a
+  runner that meets them.
+
+A token without `canopy_agent` behaves exactly as before: any agent the site
+offers. Hosts not on the SDK add the claim to their own assertion — see
+`sdk/python/README.md` § Host grant contract v1.
 
 ---
 

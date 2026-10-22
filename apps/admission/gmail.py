@@ -58,7 +58,7 @@ def _json(req: urllib.request.Request, timeout: int = 20) -> dict:
 
 def access_token(agent) -> tuple[str, str]:
     """(access token, mailbox address) for the agent's `gog-token`, or Unavailable."""
-    from apps.agents import google_oauth
+    from apps.agents.credentials import google_oauth
     from apps.agents.models import AgentCredential
 
     row = AgentCredential.objects.filter(agent=agent, name=TOKEN_REF).first()

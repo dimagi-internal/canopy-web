@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.10.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.11.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.10.0/dimagi_canopy-0.10.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.11.0/dimagi_canopy-0.11.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -176,6 +176,48 @@ CANOPY_HOST = {..., "PAGE_MODE": "key",
                "PAGE_PATTERNS": {"opp-workbench": r"/w/[^/]+/opps/[^/]+/?"}}  # optional
 # the SPA: canopy.init({tokenUrl: () => `/canopy/panel-token/?page=${key}`, ...})
 ```
+
+### A page that chooses its own agent (and runner requirements)
+
+One site, several agents: connect-labs offers ACE on the marketplace and
+`labsdata` — under ZDR — on its data pages. `AGENT_SLUG` and `RUNNER_REQUIREMENTS`
+stay the site-wide defaults; a page overrides them for itself:
+
+```python
+# a view (signed mode)
+ctx = panel_context(request, resource="labs-data://visits", agent="labsdata",
+                    runner_requirements=["zdr"], panel={"mode": "docked", "width": 560})
+```
+```django
+{% canopy_panel resource="labs-data://visits" agent="labsdata" runner_requirements=zdr panel=wide %}
+```
+
+- The choice is **signed into the page token** beside the route, so the browser
+  cannot keep the page's scopes and swap its agent. A tampered token is no page
+  at all: default agent, no scopes, no grant.
+- The mint signs it into the visitor assertion as `canopy_agent`, and canopy
+  **binds** the token to it: the widget offers only that agent, no other agent's
+  conversation can be started, listed, opened or sent into with that token, and
+  the host grant it redeems is usable by that agent's turns and Views only.
+- `runner_requirements` **add to** `RUNNER_REQUIREMENTS` — a page raises the floor,
+  never lowers it. To keep ZDR off the rest of the site, take it out of
+  `RUNNER_REQUIREMENTS` and name it on the pages that need it.
+- The agent must be on the Connected site's allow-list in canopy; an arrival
+  bound to any other agent is refused.
+- A page that grants no scopes may still choose its agent; it gets a page token
+  for that alone.
+- **Key mode** cannot sign a browser-named page, so the choice lives in config:
+  `"PAGE_AGENTS": {"opp-data": {"agent": "labsdata", "runner_requirements": ["zdr"]}}`
+  (keys must be in `PAGE_SCOPES`). `panel_context(agent=...)` raises in key mode.
+- `panel=` overrides `PANEL` key by key for one render: `mode`, `launcher_label`,
+  `theme`, `width`, `open`, `target` (a CSS selector, for `mode: "inline"`),
+  `expandable`, `initial_display` (`"normal"` | `"expanded"`). Keys you leave
+  unset keep the widget's defaults.
+
+Without Django: `arrival_payload(config, sub, scopes=..., agent_slug="labsdata",
+bind_agent=True, runner_requirements=["zdr"])`, and `PageTokens.issue(route, uid,
+agent=..., runner_requirements=...)` / `registry.page(value, uid)` (a `Page`:
+`scopes`, `agent`, `runner_requirements`).
 
 `mint_contact_token` returns canopy's whole response — `token`, `expires_at`,
 `kind` (`"user"` or `"contact"`), `host_grant`, … — so a host that routes on
@@ -478,11 +520,12 @@ with the host's key (EdDSA, ES256 or RS256 — asymmetric only; `kid` = the key'
 RFC 7638 thumbprint), `iss` = the host's Connected-site name, `sub` = the host's
 OWN id for its signed-in user (never anything the browser sent), `aud` = canopy's
 base URL, `iat`, `exp` ≤ 120s after `iat`, a single-use `jti`; optional `name`,
-`email`, `email_verified`, and `canopy_runner_requirements`.
+`email`, `email_verified`, `canopy_runner_requirements` and `canopy_agent`.
 
 | claim | meaning |
 |---|---|
-| `canopy_runner_requirements` | optional list of flags (today only `zdr`). Set via `CANOPY_HOST["RUNNER_REQUIREMENTS"]`. canopy runs the visitor's conversations only on runners whose owner declared every listed flag; unknown values are refused. |
+| `canopy_runner_requirements` | optional list of flags (today only `zdr`). `CANOPY_HOST["RUNNER_REQUIREMENTS"]`, plus the page's own. canopy runs the visitor's conversations only on runners whose owner declared every listed flag; unknown values are refused. |
+| `canopy_agent` | optional agent slug: the page BOUND this arrival to one agent. Must equal the body's `agent_slug` (else 400 `agent_mismatch`) and be on the site's allow-list (else 403). canopy holds the minted token and the host grant redeemed with it to that agent. Absent = the site's whole allow-list. |
 
 ### 1. Host issues an ID-JAG at arrival
 In the SAME call, the body gains one optional field: `"id_jag": "<compact JWS>"`.

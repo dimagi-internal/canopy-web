@@ -131,6 +131,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
         offered = await database_sync_to_async(delegation.offered_agent_ids)(
             self.scope.get("delegated_app"))
+        offered = delegation.narrowed(offered, self.scope.get("bound_agent_id"))
         return offered is None or session.agent_id in offered
 
     async def connect(self):
@@ -501,7 +502,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             return None
 
     def _secret_request_for_result(self, block):
-        from apps.agents import secret_requests
+        from apps.agents.credentials import secret_requests
 
         try:
             return secret_requests.for_result_block(self.session, block or {})
@@ -695,7 +696,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # falling back to the binding tail for a local session with no Message rows.
         # REST and this snapshot MUST agree — see tests/test_transcript_parity.py.
         messages, _has_more, _oldest = chat_services.visible_transcript(self.session)
-        from apps.agents import secret_requests
+        from apps.agents.credentials import secret_requests
         from apps.tokens import mcp_apps_views
 
         mcp_apps_views.annotate(self.session, messages)

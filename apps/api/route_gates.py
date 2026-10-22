@@ -126,7 +126,7 @@ VOCABULARY: frozenset[str] = frozenset({
 })
 
 GATES: dict[str, tuple[str, ...]] = {
-    # --- apps/agents/api.py
+    # --- apps/agents/api.py and its api_*.py siblings (routing, skills, board, credentials, readiness)
     "list_agents": ("member",),
     "upsert_agent": ("agent.work", "agent-admin"),  # editor in target ws; a MOVE also needs agent admin
     "move_agent": ("agent-admin", "agent.work"),  # admin of the agent where it is + editor in the destination
@@ -146,7 +146,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "unpublish_interface": ("agent-admin",),
     "list_admins": ("member",),
     "agent_access": ("member",),
-    # licenses to use the agent locally (apps/agents/licenses.py, canopy-web#1704)
+    # licenses to use the agent locally (apps/agents/credentials/licenses.py, canopy-web#1704)
     "list_agent_licenses": ("member",),
     "revoke_agent_license": ("agent-admin",),
     "approve_agent_license": ("agent-admin",),  # + access.decide must give them the whole agent (409)
@@ -163,13 +163,13 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_pat_rotation": ("agent-admin",),
     "set_pat_rotation": ("agent-admin",),  # turning it on also asks mint_agent_canopy_token's guard
     "rotate_pat_now": ("agent-admin",),  # browser: + passkey step-up; token allowed
-    # zero-knowledge vault (apps/agents/zk.py): browser writes need a passkey step-up
+    # zero-knowledge vault (apps/agents/credentials/zk.py): browser writes need a passkey step-up
     "get_agent_zk_state": ("agent-admin",),  # wraps are public; ?values= ciphertext, read-logged
     "enable_agent_zk": ("agent-admin",),  # browser: + step-up; token allowed
     "set_agent_zk_values": ("agent-admin",),  # browser: + step-up; token allowed
     "add_agent_zk_wraps": ("agent-admin",),  # browser: + step-up; token allowed
     "rotate_agent_zk": ("agent-admin",),  # browser: + step-up; token allowed
-    # give an agent a secret (apps/agents/secret_requests.py): no route returns a value
+    # give an agent a secret (apps/agents/credentials/secret_requests.py): no route returns a value
     "request_agent_secret": ("agent-login", "agent-admin"),  # declared names only
     "get_agent_secret_request": ("agent-login", "agent-admin", "session-acl"),  # status, never a value
     "fulfil_agent_secret_request": ("agent-admin", "secret-request"),  # zks1 only; browser: + step-up
@@ -261,7 +261,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "delete_agent_credential": ("agent-admin",),
     "agent_readiness": ("member",),
     "post_bootstrap_report": ("runner-holds-agent",),
-    # --- apps/agents/oauth_api.py
+    # --- apps/agents/credentials/oauth_api.py
     "start_google_mint": ("agent-admin",),
     "google_callback": ("signed-link", "agent-admin"),  # signed state must name the caller
     # --- apps/agents/a2a_api.py
@@ -550,7 +550,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "test_connected_app": ("integrations",),
     "tokens_connected_apps_disconnect_app": ("own",),
 
-    # --- apps/tokens/contact_api.py  (/api/contact/: ContactAuth; contact_session_q)
+    # --- apps/contacts/contact_api.py  (/api/contact/: ContactAuth; contact_session_q)
     "contact_token": ("host",),  # auth=None; site-signed assertion (+ optional ID-JAG)
     "contact_me": ("contact",),
     "contact_app_view_resource": ("contact",),
@@ -559,7 +559,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "contact_app_view_context": ("contact",),
     "contact_app_view_message": ("contact",),
     "contact_ws_ticket": ("contact",),  # a one-time socket ticket standing for the caller's own contact token
-    # --- apps/tokens/contact_hcp_api.py  (/api/contact/hcp/: a contact's own HCP, trusted sites only)
+    # --- apps/contacts/contact_hcp_api.py  (/api/contact/hcp/: a contact's own HCP, trusted sites only)
     # Every route but `proof` also spends a single-use frame proof — the contact's act in
     # canopy's own frame, which the site holding the token cannot produce.
     "contact_hcp_proof": ("contact",),  # canopy's frame cookie + Sec-Fetch-Site same-origin

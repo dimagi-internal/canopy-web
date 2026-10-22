@@ -245,7 +245,7 @@ def test_a_local_turn_opened_as_a_viewer_is_refused(world):
 
 
 def test_a_revoked_license_refuses_the_capped_owner_too(world):
-    from apps.agents import licenses
+    from apps.agents.credentials import licenses
 
     c = _pat(world["jj"])
     licenses.revoke(world["hal"], world["jj"], by=world["jj"])
