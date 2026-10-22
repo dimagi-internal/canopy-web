@@ -271,10 +271,10 @@ def enqueue_turn(
     if origin == Turn.ORIGIN_EMAIL:
         email_channel.log_unproven_member(turn)
     if session is not None:
-        # New work on the session: it was not done, so drop any pending "done" push.
-        from apps.push import services as push_services
+        # New work on the session (apps/push drops any pending "done" push).
+        from .signals import session_turn_enqueued
 
-        push_services.cancel_session_finish_push(session.pk)
+        session_turn_enqueued.send(sender=Turn, turn=turn, session_id=session.pk)
 
     # Tell whoever is watching that this ask now exists and where it stands.
     # Post-commit for the same reason `turn_events_appended` is: a subscriber
@@ -1835,29 +1835,14 @@ def _publish_menu_changes(menu_changes: list[tuple], new_asks: list[tuple]) -> N
 
     from apps.harness.signals import session_menu_changed
 
+    # `new_ask`: the agent just STARTED waiting (apps/push buzzes the phone).
+    asking = {session_id for session_id, _ in new_asks}
     for session_id, menu in menu_changes:
         try:
-            session_menu_changed.send(sender=RunnerBinding, session_id=session_id, menu=menu)
+            session_menu_changed.send(sender=RunnerBinding, session_id=session_id, menu=menu,
+                                      new_ask=session_id in asking)
         except Exception:  # noqa: BLE001 — a consumer must not break the report
             logger.exception("session_menu_changed receiver failed")
-
-    # And to the phone in your pocket, for the agents that just STARTED
-    # waiting. Only the null -> menu edge: a retraction is not news, and the
-    # UI it would correct is already corrected by the frame above.
-    #
-    # This is the half no rendering fix could cover. A menu that renders
-    # perfectly still needs somebody to open the app, and the failure being
-    # fixed here is 52 minutes of nobody knowing there was anything to open.
-    if new_asks:
-        from apps.push import services as push_services
-
-        sessions = Session.objects.select_related(
-            "agent", "runner_binding", "runner_binding__runner"
-        ).in_bulk([sid for sid, _ in new_asks])
-        for session_id, menu in new_asks:
-            session = sessions.get(session_id)
-            if session is not None:
-                push_services.notify_session_question(session, menu)
 
 
 def end_turns_ask(turn: Turn) -> None:

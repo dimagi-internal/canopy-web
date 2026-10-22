@@ -21,12 +21,23 @@ turn_events_appended = Signal()
 # of every client polling. Post-commit, same reasoning as turn_events_appended.
 sessions_reported = Signal()
 
-# Sent with: sender=RunnerBinding, session_id=<uuid>, menu=<dict|None> for each
-# session whose blocked-agent dialog appeared, changed or cleared in a report.
-# Post-commit. The realtime frame and the phone push are sent inline in the
-# report path; this is for consumers outside it (apps/slack posts the question
-# into the thread the conversation started in).
+# Sent with: sender=RunnerBinding, session_id=<uuid>, menu=<dict|None>,
+# new_ask=<bool> for each session whose blocked-agent dialog appeared, changed or
+# cleared in a report. Post-commit. `new_ask` is True only on a NEW question (not
+# the same one re-stamped by the next report). The realtime frame is sent inline
+# in the report path; this is for consumers outside it (apps/slack posts the
+# question into the thread the conversation started in; apps/push buzzes the
+# phone on a new ask).
 session_menu_changed = Signal()
+
+# Sent with: sender=Turn, turn=<Turn>, session_id=<uuid> the moment a chat turn
+# is enqueued — inline, inside the enqueue. New work on a session (apps/push
+# drops any pending "your chat is done" push).
+session_turn_enqueued = Signal()
+
+# Sent with: sender=Turn, turn=<Turn> when a chat turn closes (`closing.close_turn`
+# with its chat hooks). apps/push arms "your chat is done".
+session_turn_finished = Signal()
 
 # Sent with: sender=Session, session_ids=<list[uuid]> for sessions that just became
 # ARCHIVED because they were CLOSED — archived in emdash, closed from canopy, or

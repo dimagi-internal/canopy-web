@@ -52,3 +52,52 @@ def _connect_transfer_requests():
 
 
 _connect_transfer_requests()
+
+
+# --- chat sessions: the harness signals (apps/harness/signals.py) -------------
+# Push listens; the harness never imports push.
+
+def _connect_session_signals():
+    from apps.harness.signals import (
+        session_menu_changed,
+        session_turn_enqueued,
+        session_turn_finished,
+    )
+
+    @receiver(session_menu_changed, dispatch_uid="push_session_question")
+    def _new_ask(sender, session_id, menu, new_ask=False, **kwargs):
+        """To the phone in your pocket, for an agent that just STARTED waiting.
+        Only a new ask: a retraction is not news, and a re-stamp of the same
+        dialog is not a new question (it buzzed a phone every ten seconds,
+        2026-09-22). A menu that renders perfectly still needs somebody to open
+        the app."""
+        if not new_ask or not menu:
+            return
+        from apps.canopy_sessions.models import Session
+
+        from .services import notify_session_question
+
+        session = (Session.objects.select_related("agent", "runner_binding",
+                                                  "runner_binding__runner")
+                   .filter(pk=session_id).first())
+        if session is not None:
+            notify_session_question(session, menu)
+
+    @receiver(session_turn_enqueued, dispatch_uid="push_cancel_finish")
+    def _new_work(sender, session_id, **kwargs):
+        """New work on the session: it was not done, so drop any pending "done" push."""
+        from .services import cancel_session_finish_push
+
+        cancel_session_finish_push(session_id)
+
+    @receiver(session_turn_finished, dispatch_uid="push_arm_finish")
+    def _finished(sender, turn, **kwargs):
+        """"Your chat is done" — arms the quiet-timer (or pushes now, if the chat
+        asked for every completion); DONE/FAILED only, so a stop or a lost turn
+        arms nothing."""
+        from .services import on_session_turn_finished
+
+        on_session_turn_finished(turn)
+
+
+_connect_session_signals()
