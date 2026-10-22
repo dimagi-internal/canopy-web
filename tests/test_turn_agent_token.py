@@ -237,3 +237,112 @@ def test_revoking_is_scoped_to_the_turn(agent, runner, operator):
     _, kept = _issued(_second_agent(agent, operator, runner), runner)
     turn_agent_tokens.revoke_for_turn(turn.pk)
     assert PersonalToken.lookup(raw) is None and PersonalToken.lookup(kept) is not None
+
+
+# ---- session-scoped: a laptop turn's session outlives the turn ------------------------
+
+def _laptop_session(agent, operator, *, key="ace-fix-mailbox"):
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    r = _runner(operator, agent, name="jj-mbp-cdp")
+    r.kind = Runner.EMDASH
+    r.save(update_fields=["kind"])
+    s = Session.objects.create(agent=agent, workspace=agent.workspace, title="fix the mailbox")
+    RunnerBinding.objects.create(session=s, runner=r, session_key=key)
+    # emdash: the turn is DONE as soon as its session exists; the person drives it on.
+    turn = _turn(agent, runner=r, status=Turn.DONE, session_key=key)
+    return r, s, turn
+
+
+def test_a_finished_laptop_turn_whose_session_is_live_gets_a_session_scoped_login(agent, operator):
+    r, s, turn = _laptop_session(agent, operator)
+    resp = _ask(r, turn, _runner_token(r))
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert body["session_id"] == str(s.pk) and body["turn_id"] == str(turn.pk)
+    tok = PersonalToken.lookup(body["token"])
+    assert tok.user == agent.user
+    grant = TurnAgentToken.objects.get(token=tok)
+    assert grant.session == s and grant.turn == turn   # who started the work it acts in
+    read = AgentCredentialRead.objects.get(agent=agent, name="turn-agent-token")
+    assert read.via == "session"
+    # Still held after the sweep: the session is live on this runner.
+    assert turn_agent_tokens.revoke_stale() == 0
+    assert _me(body["token"]).status_code == 200
+
+
+def test_it_dies_when_the_session_leaves_the_runner_or_is_archived(agent, operator):
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    r, s, turn = _laptop_session(agent, operator)
+    tok = _ask(r, turn, _runner_token(r)).json()["token"]
+    RunnerBinding.objects.filter(session=s).update(runner=None)
+    assert turn_agent_tokens.revoke_stale() == 1
+    assert _me(tok).status_code == 401
+    RunnerBinding.objects.filter(session=s).update(runner=r)
+    tok2 = _ask(r, turn, _runner_token(r)).json()["token"]
+    Session.objects.filter(pk=s.pk).update(status=Session.ARCHIVED)
+    assert turn_agent_tokens.revoke_stale() == 1
+    assert _me(tok2).status_code == 401
+
+
+def test_a_session_reused_for_another_conversation_is_not_this_turns(agent, operator):
+    from apps.canopy_sessions.models import RunnerBinding
+
+    r, s, turn = _laptop_session(agent, operator)
+    RunnerBinding.objects.filter(session=s).update(session_key="a-different-task")
+    assert _ask(r, turn, _runner_token(r)).status_code == 404
+
+
+def test_a_finished_cloud_turn_gets_nothing_even_with_a_binding(agent, runner, operator):
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    s = Session.objects.create(agent=agent, workspace=agent.workspace, title="t")
+    RunnerBinding.objects.create(session=s, runner=runner, session_key="k")
+    turn = _turn(agent, runner=runner, status=Turn.DONE, session_key="k")
+    assert _ask(runner, turn, _runner_token(runner)).status_code == 404
+
+
+def test_a_chat_turn_finds_its_own_session(agent, operator):
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    r, _, _ = _laptop_session(agent, operator, key="other")
+    s = Session.objects.create(agent=agent, workspace=agent.workspace, title="chat")
+    RunnerBinding.objects.create(session=s, runner=r, session_key="chat-task")
+    turn = Turn.objects.create(chat_session=s, origin=Turn.ORIGIN_EMAIL, prompt="x",
+                               idempotency_key=uuid.uuid4().hex, status=Turn.DONE, claimed_by=r,
+                               session_key="chat-task")
+    body = _ask(r, turn, _runner_token(r)).json()
+    assert body["session_id"] == str(s.pk)
+
+
+def test_finishing_a_turn_leaves_its_session_scoped_login_alone(agent, operator):
+    r, s, turn = _laptop_session(agent, operator)
+    tok = _ask(r, turn, _runner_token(r)).json()["token"]
+    turn_agent_tokens.revoke_for_turn(turn.pk)
+    assert _me(tok).status_code == 200
+
+
+def test_a_session_scoped_login_still_refuses_a_confined_or_local_turn(agent, operator):
+    r, s, turn = _laptop_session(agent, operator)
+    Turn.objects.filter(pk=turn.pk).update(capability="ask")
+    turn.refresh_from_db()
+    assert _ask(r, turn, _runner_token(r)).status_code == 409
+
+
+def test_scope_session_asks_for_the_session_login_even_while_the_turn_runs(agent, operator):
+    r, s, turn = _laptop_session(agent, operator)
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING)
+    resp = Client().post(f"/api/harness/runners/{r.pk}/turns/{turn.pk}/agent-token?scope=session",
+                         HTTP_AUTHORIZATION=f"Bearer {_runner_token(r)}")
+    assert resp.status_code == 200 and resp.json()["session_id"] == str(s.pk)
+    # Finishing the turn does not end it: it follows the session.
+    turn_agent_tokens.revoke_for_turn(turn.pk)
+    assert _me(resp.json()["token"]).status_code == 200
+
+
+def test_scope_session_without_a_live_session_is_404(agent, runner):
+    turn = _turn(agent, runner=runner)
+    resp = Client().post(f"/api/harness/runners/{runner.pk}/turns/{turn.pk}/agent-token?scope=session",
+                         HTTP_AUTHORIZATION=f"Bearer {_runner_token(runner)}")
+    assert resp.status_code == 404

@@ -7607,7 +7607,12 @@ export interface paths {
         /**
          * A login as the turn's agent, for one turn this runner holds
          * @description A canopy login as the turn's agent, for ONE turn this runner is executing:
-         *     expires within 12 hours and is revoked when the turn stops executing here.
+         *     expires within 12 hours and is revoked when the turn stops executing here. On a
+         *     laptop runner, where a turn finishes as soon as its session exists, a finished
+         *     turn whose session is still active and bound here gets a SESSION-scoped login
+         *     instead (`session_id` set), revoked when that session leaves this runner.
+         *     `?scope=session` asks for that session-scoped login only (404 when the turn's
+         *     session is not live here), for a client that outlives the turn.
          *     Only with this runner's own runner token — a personal or OAuth token is
          *     refused, its owner's included. 404 unless this runner holds the turn and may
          *     hold its agent; 409 with the reason for a local turn, a caller's (confined)
@@ -26799,6 +26804,11 @@ export interface components {
             readonly expires_at: string;
             /** Agent Slug */
             readonly agent_slug: string;
+            /**
+             * Session Id
+             * @default
+             */
+            readonly session_id: string;
             /** Turn Id */
             readonly turn_id: string;
         };
@@ -43017,7 +43027,9 @@ export interface operations {
     };
     readonly turn_agent_token: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly scope?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly runner_id: string;
