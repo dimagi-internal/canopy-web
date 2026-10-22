@@ -21,7 +21,7 @@ from pathlib import Path
 import canopy_transcript as transcript_core
 from canopy_transcript.usage_limit import reset_at
 
-from . import cdp_control, hook_install, menu
+from . import cdp_control, hook_install, menu, startup_watch
 from .menu_store import MenuStore
 from .client import Client
 from .config import Config
@@ -195,7 +195,16 @@ def note_answer_outcome(session_key: str, outcome: str, screen=None) -> None:
     names are effectively unique within one box's open set; the alternative is
     threading the project through the control frame for a note that is only ever
     read beside the menu it is attached to.
+
+    The startup-stall marker lives outside the listener (`startup_watch`), so the
+    same authoritative outcomes retire it there too — otherwise the next report
+    re-derives it and Cancel looks dead.
     """
+    if outcome in (ANSWERED, NO_DIALOG):
+        try:
+            startup_watch.forget_task(session_key)
+        except Exception:  # noqa: BLE001 — never cost the wake listener its socket
+            logger.debug("could not drop the startup watch for %s", session_key, exc_info=True)
     listener = _hook_listener
     if listener is None or not session_key:
         return
