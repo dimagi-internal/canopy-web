@@ -1,0 +1,317 @@
+"""The unified alert core: the types sources speak, the source registry, and the
+framework's half of an alert's lifecycle (raise / reconcile / dismiss / act).
+
+A SOURCE is a module in the app that owns the subject (`apps/<app>/alerts.py`),
+registered in `SOURCES` by dotted path — like `sources.REGISTRY` — so this
+framework app never imports a product app. A source module exposes:
+
+- `KIND: str` — the `Alert.kind` it owns.
+- `SEVERITY: str` — one of `Alert.BLOCKING | ACTION | SETUP`.
+- `CONFIRM_WITHIN: timedelta | None` — how long an open alert may go
+  unconfirmed before the framework resolves it as stale (Task 3's tick).
+- `CLOSING_ACTION_IDS: tuple[str, ...]` — non-empty: every kind offers someone
+  a way to close it (a registry test holds this).
+- `reconcile(now) -> list[Raise]` — the complete set of currently-true conditions.
+- `actions(alert, user) -> list[Action]` — what THIS viewer may do. A viewer
+  with no actions does not see the alert. A source opts into the shared dismiss
+  by including `DISMISS`.
+- `perform(alert, user, action_id) -> None` — runs a handler action.
+
+The framework owns the rest: the row's status, the `AlertEvent` audit trail
+(one row per change, written in the same transaction as the change, and
+mirrored into `apps/events` as a coalescing `source="alert"` row), dismiss,
+notification fan-out, and checking that an action is still offered before it
+runs.
+"""
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass
+from importlib import import_module
+
+from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.utils import timezone
+from django.utils.html import escape
+
+from apps.events import services as events
+from apps.events.models import Event
+from apps.push.services import send_to_user
+from apps.workspaces.links import base_url
+from apps.workspaces.notifications import _button, _send, _who
+
+from .models import Alert, AlertEvent
+
+#: Dotted paths of source modules. Empty until the first source lands.
+SOURCES: list[str] = []
+
+
+@dataclass(frozen=True)
+class Raise:
+    """One currently-true condition, as a source reports it.
+
+    `workspace` is the subject's workspace slug (`Workspace`'s primary key).
+    An empty `fingerprint` means "a digest of title + body": a change in what
+    the alert says is a change in the facts.
+    """
+
+    subject_key: str
+    workspace: str
+    title: str
+    url: str
+    scopes: tuple[str, ...]
+    body: str = ""
+    fingerprint: str = ""
+
+    def digest(self) -> str:
+        if self.fingerprint:
+            return self.fingerprint
+        return hashlib.sha256(f"{self.title}\n{self.body}".encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class Action:
+    """One thing a viewer may do about an alert.
+
+    Exactly one shape: `href` set → a link (the fix is done on that page; never
+    acted on here); `notify` set → email + push those user ids, alert stays
+    open; neither → a server handler, the source's `perform`.
+    """
+
+    id: str
+    label: str
+    closes: bool
+    href: str = ""
+    notify: tuple[int, ...] = ()
+
+
+#: The shared dismiss. A source offers it by including it in `actions()`; the
+#: framework handles it (it is never passed to `source.perform`).
+DISMISS = Action("dismiss", "Dismiss", closes=True)
+
+
+class ActionNotOffered(Exception):  # noqa: N818 — the name the alert API and sources share
+    """The action is not (or no longer) offered to this user on this alert, or
+    it is a link action, which is followed in the browser, not run here."""
+
+
+def source_for(kind: str):
+    """The registered source module whose `KIND` is `kind`."""
+    for path in SOURCES:
+        mod = import_module(path)
+        if mod.KIND == kind:
+            return mod
+    raise LookupError(f"no alert source registered for kind {kind!r}")
+
+
+# --- the audit trail --------------------------------------------------------
+
+
+def _log(alert: Alert, kind: str, *, at=None, actor=None, action_id: str = "", payload: dict | None = None):
+    """Write one `AlertEvent` and its `apps/events` mirror. Callers hold the
+    transaction that also carries the change being logged."""
+    AlertEvent.objects.create(alert=alert, at=at or timezone.now(), kind=kind, actor=actor,
+                              action_id=action_id, payload=payload or {})
+    events.record([{
+        "source": "alert",
+        "key": f"{alert.pk}",
+        "kind": f"alert.{kind}",
+        "summary": alert.title,
+        "level": Event.WARN if alert.severity == Alert.BLOCKING else Event.INFO,
+    }], workspace=alert.workspace)
+
+
+def _locked(alert: Alert) -> Alert:
+    """Re-read `alert` under a row lock (inside the caller's transaction)."""
+    return Alert.objects.select_for_update().get(pk=alert.pk)
+
+
+def _sync(target: Alert, source: Alert) -> None:
+    """Copy `source`'s fields onto the caller's instance, so it sees the change."""
+    for f in Alert._meta.concrete_fields:
+        setattr(target, f.attname, getattr(source, f.attname))
+
+
+# --- reconcile --------------------------------------------------------------
+
+
+def apply_reconcile(kind: str, raises: list[Raise], now) -> None:
+    """Make the open alerts of `kind` match `raises`, the source's complete set.
+
+    Per raise: new → `raised`; open with a changed fingerprint → updated +
+    `changed`; dismissed with a changed fingerprint → `reopened` (and eligible
+    to notify again); resolved → `reopened` (the condition came back);
+    unchanged → `last_seen_at` only, no event. Then every OPEN alert of `kind`
+    the set no longer names resolves (`reason=source`). A dismissed alert whose
+    condition cleared is left dismissed, so it stays in the dismissed fold.
+    """
+    severity = source_for(kind).SEVERITY
+    seen: set[str] = set()
+    for r in raises:
+        seen.add(r.subject_key)
+        _upsert(kind, severity, r, now)
+    for alert in Alert.objects.filter(kind=kind, status=Alert.OPEN).exclude(subject_key__in=seen):
+        resolve(alert, reason=Alert.REASON_SOURCE)
+
+
+def _upsert(kind: str, severity: str, r: Raise, now) -> None:
+    fingerprint = r.digest()
+    fields = dict(workspace_id=r.workspace, scopes=list(r.scopes), severity=severity, title=r.title,
+                  body=r.body, url=r.url, fingerprint=fingerprint)
+    with transaction.atomic():
+        alert = Alert.objects.select_for_update().filter(kind=kind, subject_key=r.subject_key).first()
+        if alert is None:
+            alert = Alert.objects.create(kind=kind, subject_key=r.subject_key, first_seen_at=now,
+                                         last_seen_at=now, **fields)
+            _log(alert, AlertEvent.RAISED, at=now)
+            return
+
+        changed = alert.fingerprint != fingerprint
+        event = None
+        if alert.status == Alert.RESOLVED or (alert.status == Alert.DISMISSED and changed):
+            event = AlertEvent.REOPENED
+            alert.status = Alert.OPEN
+            alert.resolved_reason = ""
+            alert.closed_by = None
+            alert.closed_at = None
+            alert.notified_at = None
+        elif alert.status == Alert.OPEN and changed:
+            event = AlertEvent.CHANGED
+
+        for name, value in fields.items():
+            setattr(alert, name, value)
+        alert.last_seen_at = now
+        if event:
+            alert.occurrences += 1
+        alert.save()
+        if event:
+            _log(alert, event, at=now, payload={"fingerprint": fingerprint})
+
+
+# --- state changes ----------------------------------------------------------
+
+
+def resolve(alert: Alert, *, reason: str, by=None) -> None:
+    """Close `alert` as fixed. `reason`: `Alert.REASON_SOURCE | ACTION | STALE`.
+    A no-op on an alert that is already resolved."""
+    with transaction.atomic():
+        row = _locked(alert)
+        if row.status != Alert.RESOLVED:
+            row.status = Alert.RESOLVED
+            row.resolved_reason = reason
+            row.closed_by = by
+            row.closed_at = timezone.now()
+            row.save(update_fields=["status", "resolved_reason", "closed_by", "closed_at"])
+            _log(row, AlertEvent.RESOLVED, at=row.closed_at, actor=by, payload={"reason": reason})
+    _sync(alert, row)
+
+
+def dismiss(alert: Alert, user) -> None:
+    """The shared dismiss: off everyone's list until its fingerprint changes.
+    A no-op on an alert that is not open."""
+    with transaction.atomic():
+        row = _locked(alert)
+        if row.status == Alert.OPEN:
+            row.status = Alert.DISMISSED
+            row.closed_by = user
+            row.closed_at = timezone.now()
+            row.save(update_fields=["status", "closed_by", "closed_at"])
+            _log(row, AlertEvent.DISMISSED, at=row.closed_at, actor=user)
+    _sync(alert, row)
+
+
+def undismiss(alert: Alert, user) -> None:
+    """Put a dismissed alert back to open. A no-op on any other status. Who may
+    do it is the caller's check (the API: anyone currently offered dismiss)."""
+    with transaction.atomic():
+        row = _locked(alert)
+        if row.status == Alert.DISMISSED:
+            row.status = Alert.OPEN
+            row.closed_by = None
+            row.closed_at = None
+            row.save(update_fields=["status", "closed_by", "closed_at"])
+            _log(row, AlertEvent.UNDISMISSED, actor=user)
+    _sync(alert, row)
+
+
+# --- actions ----------------------------------------------------------------
+
+
+def visible_actions(alert: Alert, user) -> list[Action]:
+    """What `user` may do on `alert` — the source's per-viewer list. A closed
+    (resolved or dismissed) alert offers nothing; undismiss is its own path."""
+    if alert.status != Alert.OPEN:
+        return []
+    return list(source_for(alert.kind).actions(alert, user))
+
+
+def act(alert: Alert, user, action_id: str) -> Alert:
+    """Run `action_id` for `user`, if it is still offered to them. Returns the
+    alert as it now stands.
+
+    Logs `acted`, then: `dismiss` → the shared dismiss; a notify action →
+    email + push its people (the alert stays open); a handler → the source's
+    `perform`, then, if the action closes, resolve (`reason=action`). A handler
+    that raises leaves nothing behind — perform and its log share one
+    transaction. Link actions are never run here (`ActionNotOffered`).
+    """
+    with transaction.atomic():
+        row = _locked(alert)
+        action = next((a for a in visible_actions(row, user) if a.id == action_id), None)
+        if action is None:
+            raise ActionNotOffered(f"{action_id!r} is not offered on alert {row.pk}")
+        if action.href:
+            raise ActionNotOffered(f"{action_id!r} is a link; follow {action.href}")
+        _log(row, AlertEvent.ACTED, actor=user, action_id=action_id)
+        if action.id == DISMISS.id:
+            dismiss(row, user)
+        elif not action.notify:
+            source_for(row.kind).perform(row, user, action_id)
+            if action.closes:
+                resolve(row, reason=Alert.REASON_ACTION, by=user)
+    if action.notify:
+        # Outside the transaction: mail and push are slow and must not hold the
+        # row lock. `notify_users` logs its own `notified` row.
+        notify_users(row, list(get_user_model().objects.filter(pk__in=action.notify)), by=user)
+    row.refresh_from_db()
+    _sync(alert, row)
+    return alert
+
+
+# --- notification -----------------------------------------------------------
+
+
+def _absolute(url: str) -> str:
+    return url if url.startswith(("http://", "https://")) else f"{base_url()}{url}"
+
+
+def notify_users(alert: Alert, users, *, by=None) -> int:
+    """Email + Web Push `alert` to each of `users`; log ONE `notified` row naming
+    the people it reached. Returns how many it reached (an email handed to the
+    mail backend, or at least one push accepted). Never raises on a send."""
+    link = _absolute(alert.url) if alert.url else base_url()
+    subject = f"Canopy: {alert.title}"
+    paras = [f"{_who(by)} asked you to look at this."] if by is not None else []
+    paras += [alert.title] + ([alert.body] if alert.body else []) + [f"Open it: {link}"]
+    text = "\n\n".join(paras) + "\n"
+    html = ((f"<p>{escape(_who(by))} asked you to look at this.</p>" if by is not None else "")
+            + f"<p><strong>{escape(alert.title)}</strong></p>"
+            + (f"<p>{escape(alert.body)}</p>" if alert.body else "")
+            + _button(link, "Open in Canopy"))
+
+    reached: list[int] = []
+    seen: set[int] = set()
+    for user in users:
+        if user.pk in seen:
+            continue
+        seen.add(user.pk)
+        emailed = bool(user.email) and _send(subject, text, html, user.email) == "sent"
+        pushed = send_to_user(user, alert.title, alert.body or "Needs you in Canopy", alert.url or "/")
+        if emailed or pushed:
+            reached.append(user.pk)
+
+    if reached:
+        with transaction.atomic():
+            _log(alert, AlertEvent.NOTIFIED, actor=by,
+                 payload={"to": reached, "by": by.pk if by is not None else None})
+    return len(reached)
