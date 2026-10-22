@@ -725,6 +725,8 @@ def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
     result = share.share_session(request.user, channel=payload.channel, summary=payload.summary,
                                  mode=payload.mode, session=session, workspace=payload.workspace,
                                  own_turn=own)
+    if result.status == share.SENSITIVE:
+        raise HttpError(403, result.message)
     if not result.ok:
         raise HttpError(422 if result.status == share.BAD_REQUEST else 409, result.message)
     return {"status": result.status, "message": result.message, "mode": payload.mode,
@@ -825,6 +827,8 @@ def start_new_slack_thread(request: HttpRequest, payload: SlackNewThreadIn):
     if not (payload.summary or "").strip():
         raise HttpError(422, "a summary is required: it is what the new thread opens with")
     result = share.start_new_thread(request.user, session, payload.summary)
+    if result.status == share.SENSITIVE:
+        raise HttpError(403, result.message)
     if result.status in (share.NOT_BOUND_THREAD, share.IS_DM):
         raise HttpError(409, result.message)
     if not result.ok:
@@ -1806,6 +1810,10 @@ def export_session(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
     if session.created_by_id is None or session.created_by_id != request.user.pk:
         raise HttpError(403, "only the person who started this session can export it")
+    from apps.harness import sensitivity
+
+    if sensitivity.is_sensitive(session):
+        raise HttpError(403, sensitivity.REFUSAL)
     markdown, count = exports.build_markdown(session)
     if not count:
         raise HttpError(409, "this session has no conversation to export yet")

@@ -1068,6 +1068,11 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
         next_index = None
         prepared: list[tuple[int, str, str, dict, dict | None, str | None]] = []
         claimed: set[int] = set()
+        from apps.harness import sensitivity
+
+        # A sensitive conversation keeps which call and whether it failed, never
+        # the result (spec 2026-10-22-phi-agents-on-zdr-runners §4).
+        withhold = sensitivity.is_sensitive(locked)
         vouched = _vouched_markers(locked, rows)
         pool = _MatchPool(locked) if attribute else None
         for row in rows:
@@ -1140,6 +1145,8 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
+            if withhold and role == Message.TOOL_RESULT:
+                text, content = "", sensitivity.strip_result(content)
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
             prepared.append((index, role, text, content, author, turn_hex))

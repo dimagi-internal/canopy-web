@@ -464,3 +464,43 @@ def test_slack_gets_the_result_text_and_a_link_for_a_view_and_nothing_for_other_
     assert line.endswith(f"/w/connect/chat/{w['session'].pk}")
     other = SimpleNamespace(kind="tool_result", payload={"tool_use_id": "toolu_none", "content": "x"})
     assert _message_for(other, turn) == ""
+
+
+# --- a sensitive conversation (spec 2026-10-22-phi-agents-on-zdr-runners §4) ------------------
+
+
+def _sensitive(w):
+    w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["zdr"]}
+    w["session"].save(update_fields=["metadata"])
+
+
+def test_in_a_sensitive_conversation_the_view_gets_no_result_and_fetches_as_the_viewer(w, labs):
+    _sensitive(w)
+    r = through(labs, lambda: client_for(w["editor"]).get(base(w) + "/resource"))
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["tool_result"] is None
+    # The input is what the View re-fetches from, as the viewer.
+    assert body["tool_input"] == {"run_id": 5, "action": "coach", "arguments": {"worker": 9}}
+    assert body["can_act"] is True and ("resources/read", TOKENS["editor"]) in labs.calls
+
+
+def test_in_a_sensitive_conversation_a_receipt_keeps_no_excerpt(w, labs):
+    _sensitive(w)
+    c = client_for(w["editor"])
+    through(labs, lambda: post(c, base(w) + "/call", {
+        "name": "workflow_run_action",
+        "arguments": {"run_id": 5, "action": "coach", "confirm": f"confirm-{TOKENS['editor']}"}}))
+    w["session"].refresh_from_db()
+    [receipt] = mcp_apps_views.receipts_for(w["session"], CALL_ID)
+    assert receipt["tool"] == "workflow_run_action" and receipt["result"] == ""
+
+
+def test_in_a_sensitive_conversation_view_context_is_not_kept(w):
+    _sensitive(w)
+    r = client_for(w["editor"]).put(base(w) + "/context",
+                                    data=json.dumps({"structuredContent": {"rows": ["amina"]}}),
+                                    content_type="application/json")
+    assert r.status_code == 200
+    w["session"].refresh_from_db()
+    assert mcp_apps_views.envelope_block(w["session"]) is None

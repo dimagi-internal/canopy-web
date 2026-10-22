@@ -14,6 +14,10 @@ the short version:
   Once the whole session is idle past the cutoff it also loses its title and
   live-state caches and is archived;
 - a shared transcript is deleted.
+
+A SENSITIVE conversation (it requires ZDR runners — `apps.harness.sensitivity`)
+is purged after `CANOPY_SENSITIVE_KEEP_DAYS` (30) whatever the rules and
+`CANOPY_RETENTION_ENFORCE` say; a shorter rule still wins (`_sweep_sensitive`).
 """
 from __future__ import annotations
 
@@ -81,14 +85,18 @@ def _cutoff(rule: RetentionRule | None, now: dt.datetime) -> dt.datetime | None:
 # ---------------------------------------------------------------- entry points
 
 def sweep(*, apply: bool, now: dt.datetime | None = None, trigger: str = "command",
-          limits: dict[str, int | None] | None = None) -> RetentionSweep:
-    """One pass over every kind. Returns the recorded `RetentionSweep`."""
+          limits: dict[str, int | None] | None = None,
+          sensitive_only: bool = False) -> RetentionSweep:
+    """One pass over every kind (or, `sensitive_only`, over sensitive
+    conversations alone). Returns the recorded `RetentionSweep`."""
     now = now or timezone.now()
     limits = {**BATCH_LIMITS, **(limits or {})}
     record = RetentionSweep.objects.create(applied=apply, trigger=trigger)
     tally = Tally()
     try:
-        _run(tally, apply=apply, now=now, limits=limits)
+        _sweep_sensitive(tally, apply=apply, now=now, limit=limits["chats"])
+        if not sensitive_only:
+            _run(tally, apply=apply, now=now, limits=limits)
     except Exception as exc:  # noqa: BLE001 - recorded, then re-raised
         record.error = f"{type(exc).__name__}: {exc}"[:2000]
         raise
@@ -125,15 +133,20 @@ def _run(tally: Tally, *, apply: bool, now, limits, workspace: str | None = None
 
 
 def maybe_sweep(now: dt.datetime | None = None) -> RetentionSweep | None:
-    """The heartbeat's door. Off unless `CANOPY_RETENTION_ENFORCE`; at most one
-    run per `SWEEP_INTERVAL` across the fleet (the cache is Redis in labs).
-    Never raises: a purge must not cost a runner its heartbeat."""
-    if not getattr(settings, "CANOPY_RETENTION_ENFORCE", False):
-        return None
+    """The heartbeat's door. At most one run per `SWEEP_INTERVAL` across the
+    fleet (the cache is Redis in labs). With `CANOPY_RETENTION_ENFORCE` off it
+    still purges SENSITIVE conversations past `CANOPY_SENSITIVE_KEEP_DAYS` — that
+    rule is not the workspace's to switch off. Never raises: a purge must not
+    cost a runner its heartbeat."""
+    enforce = bool(getattr(settings, "CANOPY_RETENTION_ENFORCE", False))
     if not cache.add(_LOCK_KEY, "1", timeout=int(SWEEP_INTERVAL.total_seconds())):
         return None
     try:
-        return sweep(apply=True, now=now, trigger="heartbeat")
+        record = sweep(apply=True, now=now, trigger="heartbeat", sensitive_only=not enforce)
+        if not enforce and not (record.counts or {}).get("totals"):
+            record.delete()  # nothing sensitive was due: not a sweep anyone ran
+            return None
+        return record
     except Exception:  # noqa: BLE001
         logger.exception("retention: sweep failed")
         return None
@@ -229,6 +242,45 @@ def _sweep_chats(policy, tally, *, now, horizon, apply, limit, workspace=None) -
             touched += 1
             if limit is not None and touched >= limit:
                 return
+
+
+def sensitive_rule() -> RetentionRule:
+    """The forced rule a sensitive conversation is held to — never a row, so no
+    admin can edit or delete it. Tallied as rule #0."""
+    return RetentionRule(pk=0, kind=RetentionRule.CHAT,
+                         keep_days=int(getattr(settings, "CANOPY_SENSITIVE_KEEP_DAYS", 30)))
+
+
+def _sweep_sensitive(tally, *, now, apply, limit) -> None:
+    """Sensitive conversations past the forced period, and the session-less
+    turns started from them (spec 2026-10-22-phi-agents-on-zdr-runners §4).
+    Runs whatever `CANOPY_RETENTION_ENFORCE` says. A workspace rule that is
+    SHORTER still applies through `_sweep_chats` when enforcement is on."""
+    from apps.canopy_sessions.models import Session
+    from apps.harness import sensitivity
+    from apps.harness.models import Turn
+
+    rule = sensitive_rule()
+    cutoff = _cutoff(rule, now)
+    # `has_key` narrows in SQL on every backend; the predicate decides.
+    rows = (Session.objects.filter(pk__in=_chat_candidates(cutoff),
+                                   metadata__has_key=sensitivity.rr.METADATA_KEY)
+            .order_by("created_at"))
+    touched = 0
+    for session in rows.iterator():
+        if not sensitivity.is_sensitive(session):
+            continue
+        if _purge_chat(session.pk, rule, cutoff, tally, now=now, apply=apply):
+            touched += 1
+            if limit is not None and touched >= limit:
+                break
+    turns = (_expired_turns(Turn.objects.filter(
+        chat_session__isnull=True, parent_session__metadata__has_key=sensitivity.rr.METADATA_KEY))
+        .filter(aged_at__lt=cutoff).select_related("parent_session"))
+    picked = [t.pk for t in turns if sensitivity.is_sensitive(t)]
+    tally.add(rule, "turns_scrubbed", len(picked))
+    if apply and picked:
+        _scrub_turns(picked, now)
 
 
 def _chat_candidates(horizon) -> set:

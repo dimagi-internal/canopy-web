@@ -29,6 +29,7 @@ from django.db.models import Q
 
 from apps.canopy_sessions.access import readable_sessions
 from apps.canopy_sessions.models import Session
+from apps.harness import sensitivity
 from apps.workspaces import services as wsvc
 
 from . import client, location, relay, services
@@ -52,6 +53,10 @@ NOT_INSTALLED, NOT_LINKED, NO_SESSION, AGENT_NOT_ON_SLACK, NOT_IN_CHANNEL, \
     AMBIGUOUS_WORKSPACE, POST_FAILED, BAD_REQUEST = (
         "not_installed", "not_linked", "no_session", "agent_not_on_slack",
         "not_in_channel", "ambiguous_workspace", "post_failed", "bad_request")
+
+#: The conversation holds a host's sensitive data and never goes to Slack
+#: (`apps.harness.sensitivity`; spec 2026-10-22-phi-agents-on-zdr-runners §4).
+SENSITIVE = "sensitive"
 
 #: Slack's answers that mean "the bot cannot post there", as opposed to a fault.
 _CANNOT_POST_THERE = frozenset({"not_in_channel", "channel_not_found", "is_archived"})
@@ -301,6 +306,8 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
         session = None
         if mode == BROADCAST:
             return ShareResult(NO_SESSION, "You can't share a session you can't open.")
+    if session is not None and sensitivity.is_sensitive(session):
+        return ShareResult(SENSITIVE, sensitivity.REFUSAL)
     channel = (channel or "").strip()
     if mode not in MODES:
         return ShareResult(BAD_REQUEST, f"Mode must be one of {', '.join(MODES)}.")
@@ -613,6 +620,8 @@ def start_new_thread(user, session: Session, summary: str) -> ShareResult:
     Permission is the caller's (the route: write access, or the agent's own live
     turn); this does only the work.
     """
+    if sensitivity.is_sensitive(session):
+        return ShareResult(SENSITIVE, sensitivity.REFUSAL, session=session)
     if not (summary or "").strip():
         return ShareResult(BAD_REQUEST, "A summary is required: it is what the new thread opens with.",
                            session=session)

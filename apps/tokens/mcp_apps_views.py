@@ -41,6 +41,8 @@ from asgiref.sync import async_to_sync
 from django.db import transaction
 from django.utils import timezone
 
+from apps.harness import sensitivity
+
 from . import host_gateway, mcp_apps
 
 log = logging.getLogger(__name__)
@@ -400,7 +402,10 @@ def resource(session, viewer: Viewer, tool_call_id: str) -> dict:
         "read_only_reason": ("" if can_write else "You can read this conversation but not act in it.")
         or reason,
         "sign_in_url": (row.app.frame_origins() or [""])[0] if (reason and can_write) else "",
-        "tool_input": tool_input(row), "tool_result": tool_result(row),
+        # A sensitive conversation stores no result (spec 2026-10-22-phi-agents-on-
+        # zdr-runners §4): the View fetches its data as the viewer, from the input.
+        "tool_input": tool_input(row),
+        "tool_result": None if sensitivity.is_sensitive(session) else tool_result(row),
         "receipts": receipts_for(session, tool_call_id),
     }
 
@@ -517,7 +522,8 @@ def _receipt(session, viewer: Viewer, ref: dict, tool: str, result: dict) -> Non
     cannot forge or suppress it, whatever it then tells the model."""
     row = {"tool_call_id": ref["tool_call_id"], "site": ref["site"], "tool": tool,
            "by": viewer.ref(), "at": timezone.now().isoformat(),
-           "is_error": bool(result.get("isError")), "result": _excerpt(result)}
+           "is_error": bool(result.get("isError")),
+           "result": "" if sensitivity.is_sensitive(session) else _excerpt(result)}
 
     def add(block):
         block["receipts"] = ([*(block.get("receipts") or []), row])[-MAX_RECEIPTS:]
@@ -543,6 +549,11 @@ def update_context(session, viewer: Viewer, tool_call_id: str, params: dict) -> 
             raise ViewRefusal("too_large", f"model context is limited to {MAX_CONTEXT_BYTES} bytes", 422)
     except ViewRefusal as exc:
         _refuse(session, viewer, ref, "context", "", exc)
+    if sensitivity.is_sensitive(session):
+        # A View's state is the host's data; a sensitive conversation does not keep
+        # it (§4). Accepted and dropped, so the View carries on.
+        _audit(session, viewer, ref, what="context", ok=True, extra="withheld=1")
+        return
     entry = {**packet, "site": ref["site"], "tool": ref["tool"], "by": viewer.ref(),
              "at": timezone.now().isoformat()}
 
