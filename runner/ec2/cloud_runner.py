@@ -8786,6 +8786,48 @@ def _start_turn(runner_id: str, turn: dict) -> bool:
     return True
 
 
+# ── the vault keeper ────────────────────────────────────────────────────────
+# A box that holds an agent's vault key passes it on to whoever canopy-web says is
+# waiting and this box trusts (`canopy vault zk keep`; canopy-web spec
+# 2026-10-22-vault-access-follows-canopy-access-design.md §1), so a new vault member
+# or an approved machine gets the key without anyone being asked. Background,
+# fail-open, at most every KEEP_INTERVAL_SECONDS; `VAULT_KEEP=0` turns it off.
+
+KEEP_INTERVAL_SECONDS = 120
+_KEEP_STATE = {"at": 0.0, "thread": None, "last": ""}
+
+
+def _keep_vaults() -> None:
+    try:
+        out = subprocess.run([_canopy_cli(), "vault", "zk", "keep"], capture_output=True, text=True,
+                             timeout=KEEP_INTERVAL_SECONDS)
+    except Exception as exc:  # noqa: BLE001 — a keeper hiccup never touches the loop
+        _log(f"vault keeper: could not run ({exc})")
+        return
+    text = ((out.stdout or "") + (out.stderr or "")).strip()
+    # Say it once: the same "waiting" every two minutes is noise, a grant is news.
+    if text and (text != _KEEP_STATE["last"] or "granted:" in text):
+        _log("vault keeper: " + text.replace("\n", " | ")[:1500])
+    _KEEP_STATE["last"] = text
+
+
+def maybe_keep_vaults(*, now: float | None = None) -> bool:
+    """Start a keeper pass if one is due and none is running. True when started."""
+    if os.environ.get("VAULT_KEEP", "1") == "0":
+        return False
+    now = time.time() if now is None else now
+    running = _KEEP_STATE["thread"]
+    if running is not None and running.is_alive():
+        return False
+    if _KEEP_STATE["at"] and now - _KEEP_STATE["at"] < KEEP_INTERVAL_SECONDS:
+        return False
+    _KEEP_STATE["at"] = now
+    t = threading.Thread(target=_keep_vaults, name="vault-keeper", daemon=True)
+    _KEEP_STATE["thread"] = t
+    t.start()
+    return True
+
+
 def run_over_rest(runner_id: str) -> None:
     _log(f"polling {BASE_URL} every {POLL_SECONDS}s (REST fallback), "
          f"up to {MAX_CONCURRENT_TURNS} concurrent turns")
@@ -8798,6 +8840,7 @@ def run_over_rest(runner_id: str) -> None:
         honour_stops(beat)
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
         maybe_sweep_disk()
+        maybe_keep_vaults()
         # Attached viewers are served on this path too — a runner that fell back
         # to REST must not also silently stop being watchable.
         _sync_session_views(runner_id)
@@ -9020,6 +9063,7 @@ def run_over_ws(runner_id: str) -> bool:
             # restart; see maybe_self_refresh.
             maybe_self_refresh(bool((ack or {}).get("refresh_pending")))
             maybe_sweep_disk()
+            maybe_keep_vaults()
 
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)
