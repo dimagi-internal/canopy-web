@@ -27,6 +27,14 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 # for one that WAS coming; these checks used to wait a full second each, ~25s of
 # the backend suite spent sleeping.
 QUIET = 0.25
+# How long to wait for a frame that IS coming. `connect()` returns at the
+# consumer's `accept()`; the session.state snapshot and presence.joined are built
+# AFTER it, through several `database_sync_to_async` hops that all queue on the
+# process's one thread-sensitive sync thread. Nothing bounds that to a second on
+# a loaded CI box, so a 1s receive (channels' default) timed out there now and
+# then and ejected PRs from the merge queue. The receive returns the moment the
+# frame lands, so a wide ceiling costs nothing; only QUIET checks must be short.
+ARRIVES = 10
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -54,7 +62,7 @@ async def _connect(session, user):
 
 async def _recv_match(comm, pred, tries=14):
     for _ in range(tries):
-        frame = await comm.receive_json_from(timeout=2)
+        frame = await comm.receive_json_from(timeout=ARRIVES)
         if pred(frame):
             return frame
     raise AssertionError("expected frame not received")
@@ -506,7 +514,7 @@ async def test_heartbeat_renews_attach_count(monkeypatch):
     comm = await _connect(session, owner)
     connected, _ = await comm.connect()
     assert connected is True
-    await comm.receive_json_from()  # drain the session.state snapshot
+    await _recv_match(comm, lambda f: f.get("event") == "session.state")
     await comm.send_json_to({"action": "presence.heartbeat", "data": {}})
     # Give the consumer a tick to process, then assert renew fired for this session.
     import asyncio
@@ -579,8 +587,10 @@ async def test_stop_with_nothing_to_cancel_does_not_broadcast():
     owner, _teammate, session = await database_sync_to_async(_seed)()
     a = await _connect(session, owner)
     assert (await a.connect())[0]
-    await a.receive_json_from()  # drain the session.state snapshot
-    await a.receive_json_from()  # drain connect's own presence.joined broadcast
+    # Drain connect's frames up to its LAST one, its own presence.joined broadcast
+    # (after the session.state snapshot), so receive_nothing below sees only what
+    # chat.stop sends.
+    await _recv_match(a, lambda f: f.get("event") == "presence.joined")
 
     await a.send_json_to({"action": "chat.stop", "data": {"message_id": "m1"}})
     assert await a.receive_nothing(timeout=QUIET)
@@ -844,8 +854,8 @@ async def test_presence_joined_names_the_person_who_joined():
     a = await _connect(session, owner)
     connected, _ = await a.connect()
     assert connected
-    await a.receive_json_from(timeout=2)   # own session.state
-    await a.receive_json_from(timeout=2)   # own presence.joined
+    await a.receive_json_from(timeout=ARRIVES)   # own session.state
+    await a.receive_json_from(timeout=ARRIVES)   # own presence.joined
 
     # A reader with NO participant row: a runner-discovered session, which the
     # whole tenant may read. Connecting must not create one (that was the
