@@ -40,7 +40,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, creation, declarations, mailbox, services
+from . import access, creation, mailbox, phi, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, zk
@@ -75,7 +75,6 @@ from .schemas import (
     AgentOut,
     AgentOwnerIn,
     AgentPluginOut,
-    AgentRepoHeadOut,
     AgentRuntimeOut,
     AgentScaffoldIn,
     AgentScaffoldOut,
@@ -573,18 +572,7 @@ def _interface_out(agent) -> dict:
             "published_at": agent.interface_published_at,
             "published_by_email": by.email if by is not None else None,
             # Computed AFTER any save, cached and time-boxed: it never blocks one.
-            "warnings": domain_warnings(iface, agent.workspace_id) if iface else [],
-            "declarations": [_declaration_out(agent, d)
-                             for d in agent.declarations.filter(withdrawn_at__isnull=True)
-                             .select_related("declared_by").order_by("capability")]}
-
-
-def _declaration_out(agent, d) -> dict:
-    last_sha, last_at = declarations.last_run_sha(agent, d.capability)
-    return {"capability": d.capability, "data": d.data, "sha": d.sha,
-            "declared_by_email": d.declared_by.email if d.declared_by else None,
-            "declared_at": d.declared_at, "commit_url": declarations.commit_url(agent, d.sha),
-            "last_run_sha": last_sha, "last_run_at": last_at}
+            "warnings": domain_warnings(iface, agent.workspace_id) if iface else []}
 
 
 @router.get("/{slug}/interface", response=AgentInterfaceOut,
@@ -620,34 +608,17 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
     except InterfaceError as exc:
         raise HttpError(422, str(exc)) from exc
     # A `data: phi` capability is a PERSON vouching that it handles a host's PHI
-    # safely, at one commit: a browser behind a fresh passkey, never a token
-    # (spec 2026-10-22-phi-agents-on-zdr-runners §5).
-    phi = declarations.phi_capabilities(parsed)
-    if phi:
+    # safely: a browser behind a fresh passkey, never a token (spec
+    # 2026-10-22-phi-agents-on-zdr-runners §5). Turning it off needs neither.
+    if phi.phi_capabilities(parsed):
         stepup.require_recent_step_up(request)
-        if not declarations.valid_sha(payload.declare_sha):
-            raise HttpError(422, f"{', '.join(phi)} {'says' if len(phi) == 1 else 'say'} "
-                                 "`data: phi`: send `declare_sha`, the agent repo commit "
-                                 "(40 hex) the declaration covers")
-    had_phi = bool(declarations.phi_capabilities(agent.interface))
     agent.interface = parsed
     agent.interface_source = source
     agent.interface_published_at = timezone.now()
     agent.interface_published_by = request.user
     agent.save(update_fields=["interface", "interface_source", "interface_published_at",
                               "interface_published_by", "updated_at"])
-    if phi or had_phi:
-        declarations.record(agent, sha=payload.declare_sha if phi else None, by=request.user)
     return _interface_out(agent)
-
-
-# Agent-admin, like the save it prefills: it reads the repo with the agent's
-# GitHub identity.
-@router.get("/{slug}/interface/repo-head", response=AgentRepoHeadOut,
-            summary="The agent repo's current commit — the one a PHI-safe declaration is offered")
-@gate("agent-admin")
-def interface_repo_head(request: HttpRequest, slug: str):
-    return declarations.repo_head(agent_for_admin(request, slug))
 
 
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,
@@ -661,7 +632,6 @@ def unpublish_interface(request: HttpRequest, slug: str):
     agent.interface_published_by = None
     agent.save(update_fields=["interface", "interface_source", "interface_published_at",
                               "interface_published_by", "updated_at"])
-    declarations.record(agent, sha=None, by=request.user)
     return _interface_out(agent)
 
 

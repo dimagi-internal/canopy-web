@@ -625,34 +625,6 @@ class AgentInterfaceIn(StrictModel):
     # or `interface`, an already-parsed mapping. See apps/agents/interface.py.
     source: str | None = None
     interface: dict | None = None
-    # Required when a capability says `data: phi`: the agent repo commit (40 hex)
-    # the PHI-safe declaration covers — the one runners will check out.
-    declare_sha: str | None = None
-
-
-class AgentDeclarationOut(StrictModel):
-    capability: str
-    data: str
-    sha: str
-    declared_by_email: str | None = None
-    declared_at: dt.datetime
-    # The declared commit on GitHub; "" when the repo is not a github.com one.
-    commit_url: str = ""
-    # The commit the latest turn claimed in this capability was stamped to run
-    # (`Turn.agent_sha`), and when; None when none has run. A stamp other than
-    # `sha` is a turn the gateway refused hosts to.
-    last_run_sha: str | None = None
-    last_run_at: dt.datetime | None = None
-
-
-class AgentRepoHeadOut(StrictModel):
-    # `repo` (owner/name) at `ref`, read with the agent's GitHub identity.
-    repo: str
-    ref: str
-    # "" when canopy cannot tell — `detail` says why.
-    sha: str
-    commit_url: str
-    detail: str
 
 
 class AgentInterfaceOut(StrictModel):
@@ -666,8 +638,6 @@ class AgentInterfaceOut(StrictModel):
     # mail can never prove its sender (no DMARC, no aligned DKIM). Advisory: the
     # interface is saved regardless.
     warnings: list[str] = []
-    # The PHI-safe declarations in force, one per `data: phi` capability.
-    declarations: list[AgentDeclarationOut] = []
 
 
 class AgentCanopyUserIn(StrictModel):

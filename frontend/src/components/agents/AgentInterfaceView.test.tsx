@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setStepUpHandler } from '@/auth/stepUp'
 
@@ -16,13 +16,13 @@ vi.hoisted(() => {
 })
 
 const getAgentInterface = vi.fn()
-const getAgentRepoHead = vi.fn()
+const getAgentInterfaceHistory = vi.fn()
 const saveAgentInterface = vi.fn()
 const unpublishAgentInterface = vi.fn()
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
   getAgentInterface: (...a: unknown[]) => getAgentInterface(...a),
-  getAgentRepoHead: (...a: unknown[]) => getAgentRepoHead(...a),
+  getAgentInterfaceHistory: (...a: unknown[]) => getAgentInterfaceHistory(...a),
   saveAgentInterface: (...a: unknown[]) => saveAgentInterface(...a),
   unpublishAgentInterface: (...a: unknown[]) => unpublishAgentInterface(...a),
 }))
@@ -42,8 +42,6 @@ const PUBLISHED = {
   published_at: '2026-09-21T12:00:00Z', published_by_email: 'op@dimagi.com',
 }
 
-const SHA = 'a'.repeat(40)
-const HEAD = 'b'.repeat(40)
 const PHI_SOURCE = `capabilities:
   data:
     callers: [contact]
@@ -51,19 +49,18 @@ const PHI_SOURCE = `capabilities:
     data: phi   # vouched
     tools: [Read]
 `
-const DECLARATION = {
-  capability: 'data', data: 'phi', sha: SHA, declared_by_email: 'jj@dimagi.com',
-  declared_at: '2026-10-22T09:00:00Z', commit_url: `https://github.com/dimagi-internal/labsdata/commit/${SHA}`,
-  last_run_sha: SHA, last_run_at: '2026-10-22T10:00:00Z',
-}
-const DECLARED = {
+const PHI_ON = {
   interface: { capabilities: { data: { callers: ['contact'], sites: ['connect-labs'], data: 'phi', tools: ['Read'] } } },
   source: PHI_SOURCE, published_at: '2026-10-22T09:00:00Z', published_by_email: 'jj@dimagi.com',
-  declarations: [DECLARATION],
 }
-const headAt = (sha: string) => ({
-  repo: 'dimagi-internal/labsdata', ref: 'main', sha, detail: '',
-  commit_url: sha ? `https://github.com/dimagi-internal/labsdata/commit/${sha}` : '',
+const change = (id: number, operation: string, body: unknown, via = 'ui') => ({
+  id, created_at: '2026-10-22T09:00:00Z', workspace: 'labs', actor_email: 'jj@dimagi.com', via,
+  credential: {}, client: '', mcp_tool: '', request_id: '', operation, method: 'PUT',
+  path: '/api/agents/labsdata/interface', target: 'labsdata', summary: '', request: { path: {}, body }, changes: [],
+})
+
+beforeEach(() => {
+  getAgentInterfaceHistory.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -141,10 +138,9 @@ describe('declaresPhi', () => {
   })
 })
 
-describe('AgentInterfaceView — the PHI-safe declaration', () => {
-  it('asks for the commit when the YAML says data: phi, offers the repo head, and steps up to save it', async () => {
-    getAgentInterface.mockResolvedValue({ interface: {}, source: '', published_at: null, published_by_email: null, declarations: [] })
-    getAgentRepoHead.mockResolvedValue(headAt(HEAD))
+describe('AgentInterfaceView — the PHI-safe setting', () => {
+  it('says what turning it on vouches for, and steps up to save it', async () => {
+    getAgentInterface.mockResolvedValue({ interface: {}, source: '', published_at: null, published_by_email: null })
     // The real client: the first PUT is refused for a passkey, the API client
     // prompts, and the retry carries the same body.
     saveAgentInterface.mockImplementation(realApi.saveAgentInterface)
@@ -154,93 +150,62 @@ describe('AgentInterfaceView — the PHI-safe declaration', () => {
       return bodies.length === 1
         ? new Response(JSON.stringify({ error: 'step_up_required', has_passkey: true, status: 403, detail: 'Confirm it’s you' }),
           { status: 403, headers: { 'Content-Type': 'application/problem+json' } })
-        : new Response(JSON.stringify({ ...DECLARED, declarations: [{ ...DECLARATION, sha: HEAD, last_run_sha: null, last_run_at: null }] }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } })
+        : new Response(JSON.stringify(PHI_ON), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }))
     const prompt = vi.fn().mockResolvedValue(undefined)
     setStepUpHandler(prompt)
 
     render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Set up' }))
-    expect(screen.queryByTestId('phi-declare')).toBeNull()
+    expect(screen.queryByTestId('phi-on')).toBeNull()
     fireEvent.change(screen.getByLabelText('Interface (YAML)'), { target: { value: PHI_SOURCE } })
-    expect((await screen.findByTestId('phi-declare')).textContent).toMatch(/you vouch that, at this commit/)
-    const sha = screen.getByLabelText('Commit the declaration covers') as HTMLInputElement
-    await waitFor(() => expect(sha.value).toBe(HEAD))
-    expect(screen.getByTestId('phi-declare-head').textContent).toContain('Current head of dimagi-internal/labsdata@main')
-    expect(getAgentRepoHead).toHaveBeenCalledWith('labsdata')
+    expect((await screen.findByTestId('phi-on')).textContent).toMatch(/you vouch that it reads a host's data only/)
+    expect(screen.queryByLabelText(/Commit/)).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save and declare' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save and turn on PHI-safe' }))
     await waitFor(() => expect(prompt).toHaveBeenCalledWith({ hasPasskey: true, detail: 'Confirm it’s you' }))
-    const row = await screen.findByTestId('interface-declaration')
-    expect(row.textContent).toContain(HEAD.slice(0, 12))
-    expect(bodies).toEqual([{ source: PHI_SOURCE, declare_sha: HEAD }, { source: PHI_SOURCE, declare_sha: HEAD }])
+    expect((await screen.findByTestId('phi-safe')).textContent).toBe('PHI-safe')
+    expect(bodies).toEqual([{ source: PHI_SOURCE }, { source: PHI_SOURCE }])
   })
 
-  it('takes a typed commit when canopy cannot read the head, and refuses one that is not 40 hex', async () => {
-    getAgentInterface.mockResolvedValue({ interface: {}, source: '', published_at: null, published_by_email: null, declarations: [] })
-    getAgentRepoHead.mockResolvedValue({ ...headAt(''), detail: 'the agent has no GitHub identity to read its repository with' })
-    saveAgentInterface.mockResolvedValue(DECLARED)
-    render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Set up' }))
-    fireEvent.change(screen.getByLabelText('Interface (YAML)'), { target: { value: PHI_SOURCE } })
-    expect((await screen.findByTestId('phi-declare-head')).textContent).toMatch(/could not read .*no GitHub identity.*paste the commit/)
-    const save = screen.getByRole('button', { name: 'Save and declare' }) as HTMLButtonElement
-    expect(save.disabled).toBe(true)
-    fireEvent.change(screen.getByLabelText('Commit the declaration covers'), { target: { value: 'main' } })
-    expect(screen.getByRole('alert').textContent).toMatch(/40-character commit SHA/)
-    expect(save.disabled).toBe(true)
-    fireEvent.change(screen.getByLabelText('Commit the declaration covers'), { target: { value: SHA } })
-    expect(save.disabled).toBe(false)
-    fireEvent.click(save)
-    await waitFor(() => expect(saveAgentInterface).toHaveBeenCalledWith('labsdata', PHI_SOURCE, SHA))
-  })
-
-  it('shows each declaration in force: capability, data, linked commit, who and when', async () => {
-    getAgentInterface.mockResolvedValue(DECLARED)
+  it('marks each PHI-safe capability in the table', async () => {
+    getAgentInterface.mockResolvedValue({
+      ...PHI_ON,
+      interface: { capabilities: { ...PHI_ON.interface.capabilities, ask: { callers: ['member'], tools: ['Read'] } } },
+    })
     render(<AgentInterfaceView agentSlug="labsdata" />)
-    const row = await screen.findByTestId('interface-declaration')
-    expect(row.textContent).toContain('data: phi')
-    expect(row.textContent).toContain('jj@dimagi.com')
-    const link = screen.getByRole('link', { name: SHA.slice(0, 12) }) as HTMLAnchorElement
-    expect(link.href).toBe(DECLARATION.commit_url)
-    expect(screen.queryByTestId('declaration-mismatch')).toBeNull()
-    // A member who is not an admin is never shown the repo head (it is read as the agent).
-    expect(getAgentRepoHead).not.toHaveBeenCalled()
+    const rows = await screen.findAllByTestId('interface-capability')
+    const byName = Object.fromEntries(rows.map((r) => [r.querySelector('.font-mono')?.textContent, r.textContent]))
+    expect(byName.data).toContain('PHI-safe')
+    expect(byName.ask).not.toContain('PHI-safe')
   })
 
-  it('warns when the last turn ran a commit the declaration does not cover', async () => {
-    getAgentInterface.mockResolvedValue({ ...DECLARED, declarations: [{ ...DECLARATION, last_run_sha: HEAD }] })
-    render(<AgentInterfaceView agentSlug="labsdata" />)
-    const warn = await screen.findByTestId('declaration-mismatch')
-    expect(warn.textContent).toContain(`ran ${HEAD.slice(0, 12)}, not the declared ${SHA.slice(0, 12)}`)
-    expect(warn.textContent).toMatch(/hosts\s+withheld their PHI/)
-  })
-
-  it('tells an admin the repo has moved on, and re-declares at its head in one click', async () => {
-    getAgentInterface.mockResolvedValue(DECLARED)
-    getAgentRepoHead.mockResolvedValue(headAt(HEAD))
+  it('turns it off by taking data: phi out and saving — the same save, said plainly', async () => {
+    getAgentInterface.mockResolvedValue(PHI_ON)
+    saveAgentInterface.mockResolvedValue({ ...PHI_ON, interface: { capabilities: { data: { callers: ['contact'], sites: ['connect-labs'], tools: ['Read'] } } } })
     render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
-    const behind = await screen.findByTestId('declaration-behind')
-    expect(behind.textContent).toMatch(/keep running the declared commit/)
-    fireEvent.click(screen.getByRole('button', { name: `Declare ${HEAD.slice(0, 12)}` }))
-    expect((screen.getByLabelText('Commit the declaration covers') as HTMLInputElement).value).toBe(HEAD)
-    expect((screen.getByLabelText('Interface (YAML)') as HTMLTextAreaElement).value).toBe(PHI_SOURCE)
-  })
-
-  it('withdraws by taking data: phi out and saving — the same save, said plainly', async () => {
-    getAgentInterface.mockResolvedValue(DECLARED)
-    getAgentRepoHead.mockResolvedValue(headAt(SHA))
-    saveAgentInterface.mockResolvedValue({ ...DECLARED, declarations: [] })
-    render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Withdraw PHI declaration' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off PHI-safe' }))
     const box = screen.getByLabelText('Interface (YAML)') as HTMLTextAreaElement
     expect(declaresPhi(box.value)).toBe(false)
     expect(box.value).toContain('sites: [connect-labs]')
-    expect(screen.getByTestId('phi-withdraw').textContent).toMatch(/withdraws the PHI-safe declaration of data/)
-    expect(screen.queryByTestId('phi-declare')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Save and withdraw' }))
+    expect(screen.getByTestId('phi-off').textContent).toMatch(/turns PHI-safe off for data/)
+    fireEvent.click(screen.getByRole('button', { name: 'Save and turn off PHI-safe' }))
     await waitFor(() => expect(saveAgentInterface).toHaveBeenCalledWith('labsdata', box.value))
-    await waitFor(() => expect(screen.queryByTestId('interface-declarations')).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('phi-safe')).toBeNull())
+  })
+
+  it('shows the audited history: who, through what, and whether PHI-safe was on after', async () => {
+    getAgentInterface.mockResolvedValue(PHI_ON)
+    getAgentInterfaceHistory.mockResolvedValue([
+      change(3, 'unpublish_interface', {}),
+      change(2, 'publish_interface', { source: PHI_SOURCE }),
+      change(1, 'publish_interface', { source: 'capabilities:\n  ask:\n    callers: [member]\n' }, 'mcp'),
+    ])
+    render(<AgentInterfaceView agentSlug="labsdata" />)
+    const rows = await screen.findAllByTestId('interface-change')
+    expect(rows.map((r) => r.lastElementChild?.textContent)).toEqual(['off', 'on', 'off'])
+    expect(rows[0].textContent).toContain('Unpublished')
+    expect(rows[2].textContent).toContain('mcp')
+    expect(getAgentInterfaceHistory).toHaveBeenCalledWith('labsdata')
   })
 })

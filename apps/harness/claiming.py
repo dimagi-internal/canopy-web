@@ -25,7 +25,6 @@ def issue_credentials(turn):
         from apps.canopy_sessions import chat_keys
 
         turn.chat_key = chat_keys.mint(turn.chat_session)
-    _stamp_declared_sha(turn)
     if turn.capability:
         # A confined turn's credential for canopy's own MCP (models.CallerToken).
         # Deliberately nothing else: a visitor's host credential (host grant
@@ -48,25 +47,6 @@ def issue_credentials(turn):
         if is_caller_scoped(turn):
             turn.mcp_token = mint(turn, scoped=True)
     return turn
-
-
-def _stamp_declared_sha(turn) -> None:
-    """A turn in a capability its author declared PHI-safe runs the declared
-    commit, not main (spec 2026-10-22-phi-agents-on-zdr-runners §5): stamp the
-    current declaration's SHA on the turn, which the runner checks out. A
-    declaration withdrawn since enqueue stamps nothing, and the gateway then
-    refuses the host to the turn."""
-    agent = turn.acting_agent if turn.capability else None
-    if agent is None:
-        return
-    from apps.agents import declarations
-
-    decl = declarations.current(agent, turn.capability) if declarations.is_phi(
-        agent, turn.capability) else None
-    sha = decl.sha if decl is not None else ""
-    if sha != turn.agent_sha:
-        turn.agent_sha = sha
-        type(turn).objects.filter(pk=turn.pk).update(agent_sha=sha)
 
 
 def claim_payload(turn) -> dict:

@@ -1002,7 +1002,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     # A reported key sent back UNCHANGED is an echo, not a declaration: the page's
     # Slack & chat toggle round-trips the capabilities it read. Only a value that
     # differs from what the box reported is a hand edit to refuse.
-    reported = ("projects", "profiles", "envelope", "midturn", "pins", "unprepared", "data_mode",
+    reported = ("projects", "profiles", "envelope", "midturn", "unprepared", "data_mode",
                 "data_mode_hash")
     payload.capabilities = {k: v for k, v in payload.capabilities.items()
                             if not (k in reported and runner.capabilities.get(k) == v)}
@@ -1014,7 +1014,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "routable, open it as a project in emdash on that runner (or set "
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
-    for key in ("profiles", "envelope", "midturn", "pins", "unprepared", "data_mode", "data_mode_hash"):
+    for key in ("profiles", "envelope", "midturn", "unprepared", "data_mode", "data_mode_hash"):
         if key in payload.capabilities:
             # Reported, like `projects` — and here it is a SECURITY property: a hand
             # edit claiming a runner can confine a caller's session would route

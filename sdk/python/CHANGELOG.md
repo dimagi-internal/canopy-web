@@ -2,6 +2,20 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.13.0 — 2026-10-22
+
+`Canopy-Execution` no longer pins a commit: PHI-safe is an interface setting
+(`data: phi`) and the agent runs its current code.
+
+- `Execution.phi_clearance` drops the commit check (`sha_mismatch` is gone). The
+  `declaration` claim is `{data, capability, declared_by, declared_at}` — who last
+  published the interface holding the setting, and when.
+- `Execution.agent_sha` stays, always `""` from a current canopy, so a host that logs
+  it keeps working; it is no longer stated.
+
+A host on 0.12 refuses every call with `sha_mismatch` once canopy stops stating a
+commit: upgrade before relying on real data.
+
 ## 0.12.0 — 2026-10-22
 
 `Canopy-Execution`: canopy vouches for each call an agent's turn makes to a host, and the

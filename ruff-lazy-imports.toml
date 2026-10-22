@@ -151,7 +151,7 @@
 "apps/harness/caller_tokens.py" = ["PLC0415"]  # 3
 "apps/harness/channels/email.py" = ["PLC0415"]  # 4
 "apps/harness/claim.py" = ["PLC0415"]  # 11
-"apps/harness/claiming.py" = ["PLC0415"]  # 5
+"apps/harness/claiming.py" = ["PLC0415"]  # 4
 "apps/harness/closing.py" = ["PLC0415"]  # 8
 "apps/harness/credential_notify.py" = ["PLC0415"]  # 3
 "apps/harness/device_key_notify.py" = ["PLC0415"]  # 7
@@ -172,7 +172,7 @@
 "apps/harness/schedule_turns.py" = ["PLC0415"]  # 10
 "apps/harness/schemas.py" = ["PLC0415"]  # 7
 "apps/harness/sensitivity.py" = ["PLC0415"]  # 3
-"apps/harness/services.py" = ["PLC0415"]  # 19
+"apps/harness/services.py" = ["PLC0415"]  # 18
 "apps/harness/session_sync.py" = ["PLC0415"]  # 23
 "apps/harness/sign_in_requests.py" = ["PLC0415"]  # 1
 "apps/harness/signals.py" = ["PLC0415"]  # 2

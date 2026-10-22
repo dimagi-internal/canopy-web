@@ -3,8 +3,8 @@ the call in front of it, then decide whether to release real data.
 
 canopy's gateway adds ``Canopy-Execution: <JWT>`` to every request it makes to a
 host's MCP server on an agent's turn (spec 2026-10-22-phi-agents-on-zdr-runners
-§6). It says which agent is calling, at which commit, under which PHI-safe
-declaration, on which runner (its flags in force, and who declared them), and in
+§6). It says which agent is calling, in which capability and whether its
+interface marks it PHI-safe (`data: phi`, and who set that), on which runner (its flags in force, and who declared them), and in
 which conversation with which requirements. ``Canopy-Actor`` only NAMES the agent
 and must never be trusted; this is signed by canopy's published client key.
 
@@ -71,8 +71,9 @@ class Execution:
     """What canopy stated about this call, verified."""
 
     agent: str
-    agent_sha: str
-    #: ``{data, sha, capability, declared_by, declared_at}``, or None: no declaration.
+    #: ``{data, capability, declared_by, declared_at}`` — the capability's
+    #: ``data: phi`` setting and who last published the interface holding it — or
+    #: None: the capability is not PHI-safe.
     declaration: dict | None
     #: ``{id, name, flags: [{flag, declared_by, declared_at}]}`` — flags IN FORCE.
     runner: dict
@@ -82,6 +83,9 @@ class Execution:
     turn: str
     session: str
     claims: dict = field(repr=False, default_factory=dict)
+    #: No longer stated: canopy runs the agent's current code, no pinned commit.
+    #: Kept, always "" from a current canopy, so a host that logs it still reads.
+    agent_sha: str = ""
 
     @property
     def runner_flags(self) -> frozenset[str]:
@@ -92,8 +96,8 @@ class Execution:
         """None when this call may be given real (PHI) data; else the refusal code.
 
         The conjunction of the spec's rule plus the host's own allowlist: the agent
-        is one the host accepts the claim from; its author declared the capability
-        PHI-safe at exactly the commit that is executing; the runner carries every
+        is one the host accepts the claim from; its interface marks the capability
+        PHI-safe (``data: phi``); the runner carries every
         required flag, declared by a person and in force; and the conversation has
         required them (from its first turn — canopy never drops a requirement).
         """
@@ -103,8 +107,6 @@ class Execution:
         decl = self.declaration
         if not isinstance(decl, Mapping) or decl.get("data") != PHI:
             return "undeclared"
-        if not self.agent_sha or not constant_time_equal(str(decl.get("sha") or ""), self.agent_sha):
-            return "sha_mismatch"
         if not need <= self.runner_flags:
             return "runner_flags"
         if ZDR in need and self.runner_posture.get("data_mode") != ZDR:

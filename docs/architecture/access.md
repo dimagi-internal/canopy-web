@@ -154,21 +154,20 @@ Asked in this order; the first row that matches decides.
 | 7 | anyone else | `none` | — | — | — |
 
 * **Over the table: the PHI rule** (`access._phi_rule`, spec
-  `2026-10-22-phi-agents-on-zdr-runners` §5). A capability its author declared
-  PHI-safe (`data: phi`, `apps/agents/declarations.py`) — the one a turn names, or the
+  `2026-10-22-phi-agents-on-zdr-runners` §5). A capability its interface marks
+  PHI-safe (`data: phi`, `apps/agents/phi.py`) — the one a turn names, or the
   one its conversation's site or page selects — is **confined for everyone**: whoever
   the table gave FULL (owner, admin, `system`, a `full:` rule, an editor, a session
   writer) runs that capability's profile instead, keeping their role, mode and pin
   rights (`basis: phi:<capability>`). Any turn in a conversation that requires ZDR
   runners must end in its phi door; anything else — full, another capability, or a
-  caller the door does not list — is refused. The declaration itself is a person's,
-  from a browser behind a passkey, naming the agent commit it covers
-  (`publish_interface` + `declare_sha`, `AgentDeclaration`); a phi capability that
-  holds a shell, writes, or any tool but the gateway's site tools, `current_page`,
-  `who_is_asking` and read-only local tools is a 422. The turn is stamped with the
-  declared commit (`Turn.agent_sha`, at enqueue and at claim); only a runner reporting
-  `pins` claims it, and it runs exactly that commit. A ZDR-mode runner refuses any
-  unconfined envelope (`zdr_unconfined`).
+  caller the door does not list — is refused. The setting is an interface setting,
+  saved by a person from a browser behind a passkey (`publish_interface`) and audited
+  like any setting change (`docs/architecture/settings-audit.md`; the agent's Settings
+  → Interface shows its history); a phi capability that holds a shell, writes, or any
+  tool but the gateway's site tools, `current_page`, `who_is_asking` and read-only
+  local tools is a 422. The turn runs the agent's current code; no commit is pinned.
+  A ZDR-mode runner refuses any unconfined envelope (`zdr_unconfined`).
 * Row 3 before row 4 keeps an owner's chosen domain-wide setup intact:
   Eva's members get her whole through `full: [member]`, in her routing's mode.
 * Row 4 (the **editor tier**): an editor may EDIT the agent (its definition and

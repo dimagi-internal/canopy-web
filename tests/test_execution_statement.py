@@ -14,7 +14,6 @@ from canopy_sdk.stores import MemoryJtiStore
 from django.utils import timezone
 from fastmcp.exceptions import ToolError
 
-from apps.agents import declarations
 from apps.agents.interface import parse
 from apps.harness.models import Runner, RunnerFlag, Turn
 from apps.host_grants import client_identity, host_gateway
@@ -25,7 +24,6 @@ from tests.fixtures.site_gateway import grant as _grant
 from tests.fixtures.site_gateway import visitor as _visitor
 
 pytestmark = pytest.mark.django_db
-SHA = "d" * 40
 
 
 @pytest.fixture()
@@ -40,13 +38,13 @@ def w():
     return sg.world()
 
 
-def _phi(w, *, sha=SHA, zdr=True):
-    """`connect` declared PHI-safe at `sha`; the turn on a ZDR box at `sha`."""
+def _phi(w, *, zdr=True):
+    """`connect` set PHI-safe; the turn on a ZDR box."""
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "phi"}
     w["agent"].interface = parse({"capabilities": caps})
-    w["agent"].save(update_fields=["interface"])
-    declarations.record(w["agent"], sha=SHA, by=w["owner"])
+    w["agent"].interface_published_by = w["owner"]
+    w["agent"].save(update_fields=["interface", "interface_published_by"])
     box = Runner.objects.create(name="cloud-zdr-1", workspace=w["ws"], kind=Runner.CLOUD,
                                 status=Runner.ONLINE, owner=w["owner"],
                                 last_heartbeat_at=timezone.now(),
@@ -55,7 +53,7 @@ def _phi(w, *, sha=SHA, zdr=True):
     if zdr:
         w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["zdr"]}
         w["session"].save(update_fields=["metadata"])
-    Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=box, agent_sha=sha)
+    Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=box)
     return box
 
 
@@ -88,8 +86,9 @@ def test_every_request_carries_a_statement_the_host_verifies(w, host):
     seen = [h for h in host.seen if "canopy-execution" in h]
     assert seen and len(seen) == len(host.seen)  # every request of the MCP session
     ex = _verify(seen[-1])
-    assert (ex.agent, ex.agent_sha, ex.turn) == ("ace", SHA, str(w["turn"].pk))
-    assert ex.declaration["sha"] == SHA and ex.declaration["declared_by"] == "op@dimagi.com"
+    assert (ex.agent, ex.agent_sha, ex.turn) == ("ace", "", str(w["turn"].pk))
+    assert ex.declaration["data"] == "phi" and ex.declaration["declared_by"] == "op@dimagi.com"
+    assert "sha" not in ex.declaration and "agent_sha" not in ex.claims
     assert ex.runner["id"] == str(box.pk) and ex.runner_flags == {"zdr"}
     assert ex.runner["flags"][0]["declared_by"] == "op@dimagi.com"
     assert ex.runner_posture == {"data_mode": "zdr", "config_hash": "abc123"}
@@ -141,19 +140,11 @@ def test_a_host_that_trusts_another_canopy_refuses_it(w, host):
     assert exc.value.code == "bad_issuer"
 
 
-def test_a_zdr_conversation_on_an_undeclared_commit_never_reaches_the_host(w, host):
-    _phi(w, sha="e" * 40)  # the box runs a commit nobody declared
-    with pytest.raises(ToolError, match="declared PHI-safe"):
-        _calls(w, host)
-    assert host.calls == [] and host.seen == []
-
-
-def test_a_withdrawn_declaration_closes_the_door(w, host):
+def test_turning_phi_off_closes_the_door(w, host):
     _phi(w)
     w["agent"].interface = parse(IFACE)
     w["agent"].save(update_fields=["interface"])
-    declarations.record(w["agent"], sha=None, by=w["owner"])
-    with pytest.raises(ToolError, match="declared PHI-safe"):
+    with pytest.raises(ToolError, match="marked PHI-safe"):
         _calls(w, host)
     assert host.seen == []
 
@@ -173,7 +164,6 @@ def test_phi_clearance_refuses_each_missing_fact(w, host):
     ex = _verify(host.seen[-1])
     ok = {"agents": {"ace"}}
     assert ex.phi_clearance(agents={"echo"}) == "agent_not_allowed"
-    assert dataclasses.replace(ex, agent_sha="f" * 40).phi_clearance(**ok) == "sha_mismatch"
     assert dataclasses.replace(ex, runner={**ex.runner, "flags": []}).phi_clearance(**ok) == "runner_flags"
     assert dataclasses.replace(ex, runner_posture={"data_mode": ""}).phi_clearance(**ok) == "runner_posture"
     assert dataclasses.replace(ex, requirements=()).phi_clearance(**ok) == "requirements"

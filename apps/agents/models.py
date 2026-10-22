@@ -335,39 +335,6 @@ class AgentAdmin(models.Model):
         return f"{self.user_id} admin of {self.agent_id}"
 
 
-class AgentDeclaration(models.Model):
-    """A PERSON'S word that one capability of an agent may serve a host's PHI, at
-    one commit of the agent's repo (spec 2026-10-22-phi-agents-on-zdr-runners §5).
-
-    One row per declaration, never edited: re-declaring (a new SHA, a changed
-    profile) withdraws the current row and writes a new one, so the history is
-    the table (and the `agent.phi_declared` / `agent.phi_withdrawn` events).
-    Made only by publishing an interface whose capability says `data: phi`, from
-    a browser behind a passkey (`apps/agents/declarations.py`). The current one
-    is the latest unwithdrawn row for (agent, capability): it is what the runner
-    checks out (`Turn.agent_sha`) and what canopy vouches for to the host.
-    """
-
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="declarations")
-    capability = models.CharField(max_length=48)
-    data = models.CharField(max_length=16, default="phi")
-    # The agent repo commit the declaration covers. 40 hex.
-    sha = models.CharField(max_length=40)
-    # The capability's profile as declared (`interface.profile`), so a later
-    # reader can see what the person vouched for.
-    profile = models.JSONField(default=dict, blank=True)
-    declared_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
-                                    null=True, blank=True, related_name="+")
-    declared_at = models.DateTimeField(auto_now_add=True)
-    withdrawn_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        indexes = [models.Index(fields=["agent", "capability", "withdrawn_at"])]
-
-    def __str__(self) -> str:
-        return f"{self.agent_id}:{self.capability} data={self.data} @{self.sha[:12]}"
-
-
 class AgentLicense(models.Model):
     """A person's license to use an agent LOCALLY — "Aathithya uses ACE locally, since …".
 

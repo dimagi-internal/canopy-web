@@ -185,17 +185,17 @@ def _phi_door(agent, iface: dict, capability: str | None, turn) -> str | None:
     its conversation's site or page selects. Callers are NOT checked here."""
     from fnmatch import fnmatchcase
 
-    from . import declarations
+    from . import phi
 
     caps = iface.get("capabilities") or {}
     if capability:
-        return capability if (caps.get(capability) or {}).get("data") == declarations.PHI else None
+        return capability if (caps.get(capability) or {}).get("data") == phi.PHI else None
     if turn is None:
         return None
     site = iface_mod._conversation_site(turn)
     resource = iface_mod._declared_resource(turn)
     for name, cap in caps.items():
-        if cap.get("data") != declarations.PHI:
+        if cap.get("data") != phi.PHI:
             continue
         if site and site in (cap.get("sites") or []):
             return name
