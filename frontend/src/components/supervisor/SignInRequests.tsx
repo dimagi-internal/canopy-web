@@ -1,5 +1,6 @@
-import { useEffect, useState, type JSX } from 'react'
+import { useState, type JSX } from 'react'
 import { listMySignInRequests, type OpenSignInRequest } from '@/api/harness'
+import { usePolled } from '@/hooks/usePolled'
 
 // Sign-ins a box is waiting on you to approve (AWS SSO's device code), at the
 // top of the feed. The push notification carries the same link, but the push
@@ -18,27 +19,20 @@ export function SignInRequests(): JSX.Element | null {
   const [rows, setRows] = useState<OpenSignInRequest[]>([])
   const [now, setNow] = useState(() => Date.now())
 
-  useEffect(() => {
-    let cancelled = false
-    const load = () =>
+  // A failed poll is non-fatal: the push is the primary channel. Coming back
+  // from the AWS tab (visible again) is when an approval has just happened, and
+  // usePolled refetches then.
+  usePolled(
+    (signal) =>
       listMySignInRequests()
         .then((r) => {
-          if (cancelled) return
+          if (signal.aborted) return
           setRows(r)
           setNow(Date.now())
         })
-        .catch(() => { /* non-fatal: the push is the primary channel */ })
-    load()
-    const id = window.setInterval(load, POLL_MS)
-    // Coming back from the AWS tab is when an approval has just happened.
-    const onVisible = () => { if (document.visibilityState === 'visible') load() }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      cancelled = true
-      window.clearInterval(id)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [])
+        .catch(() => {}),
+    { ms: POLL_MS },
+  )
 
   const open = rows.filter((r) => minutesLeft(r.expires_at, now) > 0)
   if (open.length === 0) return null

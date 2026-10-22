@@ -5,6 +5,7 @@ import { actOnTask, type ProjectOut } from '@/api/agents'
 import { hide, loadAttention, unhide, type Attention, type AttentionRow, type AttentionState } from '@/api/attention'
 import { apiV2 } from '@/api/client.v2'
 import { useAuth } from '@/auth/AuthProvider'
+import { usePolled } from '@/hooks/usePolled'
 import { relativeAge } from '@/lib/relativeAge'
 import { StateDot, type DotTone } from '@/components/sessions/StateDot'
 import { folderKey, shortAge } from '@/pages/ide/ideTree'
@@ -57,11 +58,7 @@ export function HomePage(): JSX.Element {
     }
   }, [workspaces])
 
-  useEffect(() => {
-    void refresh()
-    const t = window.setInterval(() => void refresh(), 30_000)
-    return () => window.clearInterval(t)
-  }, [refresh])
+  usePolled(refresh, { ms: 30_000, deps: [refresh] })
 
   const names = useMemo(() => new Map(workspaces.map((w) => [w.slug, w.display_name])), [workspaces])
   const multi = workspaces.length > 1

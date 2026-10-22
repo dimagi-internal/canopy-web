@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type JSX, type KeyboardEvent } from 'react'
+import { useCallback, useMemo, useState, type JSX, type KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Button, Textarea } from 'canopy-ui/ui'
 import { closeSession, listSessions, sendMessage, type ChatSession } from '@/api/chat'
 import type { AgentOut } from '@/api/agents'
 import { Markdown } from '@/components/Markdown'
+import { usePolled } from '@/hooks/usePolled'
 import { relativeAge } from '@/lib/relativeAge'
 import { CLOSE_POLL_MS, closeFailure, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { CloseFailedNote } from '@/components/chat/CloseFailedNote'
@@ -73,7 +74,7 @@ export function SessionFeed({
   }, [])
 
   const reload = useCallback(() => {
-    listSessions('active', { reply: true })
+    return listSessions('active', { reply: true })
       .then((rows) => {
         setSessions(rows)
         setError(null)
@@ -93,24 +94,11 @@ export function SessionFeed({
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load'))
   }, [])
 
-  useEffect(() => {
-    reload()
-    const id = window.setInterval(reload, POLL_MS)
-    const onFocus = () => reload()
-    window.addEventListener('focus', onFocus)
-    return () => {
-      window.clearInterval(id)
-      window.removeEventListener('focus', onFocus)
-    }
-  }, [reload])
+  usePolled(reload, { ms: POLL_MS, deps: [reload], refreshOnFocus: true })
 
   // Watch relayed closes through quickly rather than leaving them to the 20s poll.
   const awaitingClose = Object.keys(closing).length > 0
-  useEffect(() => {
-    if (!awaitingClose) return
-    const id = window.setInterval(reload, CLOSE_POLL_MS)
-    return () => window.clearInterval(id)
-  }, [awaitingClose, reload])
+  usePolled(reload, { ms: CLOSE_POLL_MS, deps: [reload], enabled: awaitingClose, immediate: false })
 
   const markClosing = useCallback((s: ChatSession) => {
     setStuck((prev) => {

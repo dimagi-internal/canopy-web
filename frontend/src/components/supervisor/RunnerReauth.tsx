@@ -7,6 +7,7 @@ import {
   type LoginSlot,
   type RunnerMint,
 } from '@/api/harness'
+import { usePolled } from '@/hooks/usePolled'
 
 // Sign a cloud runner back in to Claude, from a browser.
 //
@@ -102,9 +103,8 @@ export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = fa
     startedWaiting.current = Date.now()
   }, [waitingOnRunner, status])
 
-  useEffect(() => {
-    if (!waitingOnRunner) return
-    const t = window.setInterval(() => {
+  usePolled(
+    () => {
       // waitedOut is a thing we SAY, never a reason to stop looking. It used to
       // `return` before the refresh, so after 90s the page stopped polling for
       // good — and a mint that failed four minutes in was never fetched. The
@@ -113,10 +113,10 @@ export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = fa
       if (Date.now() - (startedWaiting.current ?? 0) > WAIT_LIMIT_MS) {
         setWaitedOut(true)
       }
-      void refresh()
-    }, POLL_MS)
-    return () => window.clearInterval(t)
-  }, [waitingOnRunner, refresh])
+      return refresh()
+    },
+    { ms: POLL_MS, deps: [refresh], enabled: waitingOnRunner, immediate: false },
+  )
 
   useEffect(() => {
     // Once, on the transition — not on every tick of `completing`, which had the

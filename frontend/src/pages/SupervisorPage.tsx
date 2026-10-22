@@ -25,6 +25,7 @@ import { runnerAlerts } from '@/components/supervisor/runnerAlertRules'
 import { SessionFeed } from '@/components/supervisor/SessionFeed'
 import { SignInRequests } from '@/components/supervisor/SignInRequests'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
+import { usePolled } from '@/hooks/usePolled'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
 import { StuckTurnsAlert } from '@/components/supervisor/StuckTurnsAlert'
@@ -109,31 +110,16 @@ export default function SupervisorPage(): JSX.Element {
 
   // Queued turns nothing online can claim — polled with the runners, since
   // declaring a repo on a runner is what clears them.
-  const [stuck, setStuck] = useState<UnclaimableTurn[]>([])
-  useEffect(() => {
-    let cancelled = false
-    const load = () =>
-      listUnclaimableTurns()
-        .then((t) => { if (!cancelled) setStuck(t) })
-        .catch(() => { /* non-fatal: the banner is a warning, not a gate */ })
-    load()
-    const id = window.setInterval(load, 30_000)
-    return () => { cancelled = true; window.clearInterval(id) }
-  }, [])
+  // A failed poll keeps the last list: the banner is a warning, not a gate.
+  const stuckPoll = usePolled(() => listUnclaimableTurns(), { ms: 30_000 })
+  const stuck: UnclaimableTurn[] = stuckPoll.data ?? []
+  const setStuck = stuckPoll.setData
 
   // The fleet hold — polled with the stuck list, since releasing it is what
   // unblocks the queue. Read by everyone; only a superuser gets the control.
-  const [fleetHold, setFleetHold] = useState<FleetHoldOut | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    const load = () =>
-      getFleetHold()
-        .then((h) => { if (!cancelled) setFleetHold(h) })
-        .catch(() => { /* non-fatal: the claim gate is server-side */ })
-    load()
-    const id = window.setInterval(load, 30_000)
-    return () => { cancelled = true; window.clearInterval(id) }
-  }, [])
+  // A failed poll keeps the last value: the claim gate is server-side.
+  const { data: fleetHoldData, setData: setFleetHold } = usePolled(() => getFleetHold(), { ms: 30_000 })
+  const fleetHold: FleetHoldOut | null = fleetHoldData ?? null
 
   // The wrong-branch banner's one-click resolve for a dead runner. Confirmed,
   // because retiring is permanent for the row (re-pairing mints a fresh one).
@@ -163,15 +149,8 @@ export default function SupervisorPage(): JSX.Element {
 
   // Re-poll runners so the code-provenance alerts (below) appear/clear without a
   // reload — code_branch/code_sha ride the REST runner, not the live socket overlay.
-  useEffect(() => {
-    let cancelled = false
-    const id = window.setInterval(() => {
-      listRunners()
-        .then((r) => { if (!cancelled) setRunners(r) })
-        .catch(() => { /* keep last-good; the mount fetch owns first-error surfacing */ })
-    }, 30_000)
-    return () => { cancelled = true; window.clearInterval(id) }
-  }, [])
+  // A failed re-poll keeps last-good; the mount fetch owns first-error surfacing.
+  usePolled(() => listRunners().then(setRunners).catch(() => {}), { ms: 30_000, immediate: false })
 
   // Live overlay: snapshot + runner/waiting deltas over WS. Falls back silently
   // to the mount fetch above until the socket delivers a snapshot.
@@ -399,7 +378,7 @@ export default function SupervisorPage(): JSX.Element {
 
           <StuckTurnsAlert
             turns={stuckShown}
-            onCancelled={(ids) => setStuck((prev) => prev.filter((t) => !ids.includes(t.turn_id)))}
+            onCancelled={(ids) => setStuck((prev) => (prev ?? []).filter((t) => !ids.includes(t.turn_id)))}
           />
 
           <RunnerAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />

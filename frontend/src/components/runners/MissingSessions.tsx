@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from 'react'
+import { useState, type JSX } from 'react'
 
 import {
   checkMissingSessions,
@@ -7,6 +7,7 @@ import {
   type MissingSessionsOut,
 } from '@/api/harness'
 import { relativeAge } from '@/lib/relativeAge'
+import { usePolled } from '@/hooks/usePolled'
 
 const compact = (n: number) => Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(n)
 
@@ -21,16 +22,13 @@ export function MissingSessions({ runnerId }: { runnerId: string }): JSX.Element
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    let off = false
-    const load = () => listMissingSessions(runnerId)
-      .then((d) => { if (!off) setData(d) })
-      .catch((e: unknown) => { if (!off) setError(e instanceof Error ? e.message : String(e)) })
-    void load()
-    // While a rescan is pending, look again until the box has reported.
-    const t = window.setInterval(() => { if (data?.usage_scan_requested_at) void load() }, 15_000)
-    return () => { off = true; window.clearInterval(t) }
-  }, [runnerId, data?.usage_scan_requested_at])
+  // While a rescan is pending, look again until the box has reported.
+  usePolled(
+    (signal) => listMissingSessions(runnerId)
+      .then((d) => { if (!signal.aborted) setData(d) })
+      .catch((e: unknown) => { if (!signal.aborted) setError(e instanceof Error ? e.message : String(e)) }),
+    { ms: data?.usage_scan_requested_at ? 15_000 : null, deps: [runnerId] },
+  )
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true); setError(''); setNote('')

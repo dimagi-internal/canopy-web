@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import type { SupervisorFrame, SupervisorRunnerLive } from '@/api/types.ws'
 import { wsUrl } from '@/lib/wsUrl'
+
+import { useReconnectingSocket } from './useReconnectingSocket'
 
 export interface SupervisorState {
   runners: Record<string, SupervisorRunnerLive>
@@ -40,8 +42,6 @@ export function applyFrame(state: SupervisorState, frame: SupervisorFrame): Supe
   }
 }
 
-const BACKOFFS_MS = [1000, 2000, 5000, 10000]
-
 export interface LiveSupervisor {
   runners: SupervisorRunnerLive[]
   waiting: Record<string, number>
@@ -53,47 +53,12 @@ export interface LiveSupervisor {
 // with backoff reconnect. SupervisorPage layers this over its mount fetch.
 export function useLiveSupervisor(): LiveSupervisor {
   const [state, setState] = useState<SupervisorState>(EMPTY_SUPERVISOR_STATE)
-  const [connected, setConnected] = useState(false)
   const [hasSnapshot, setHasSnapshot] = useState(false)
-  const attemptRef = useRef(0)
-
-  useEffect(() => {
-    let ws: WebSocket | null = null
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-    let closed = false
-
-    const connect = () => {
-      if (closed) return
-      ws = new WebSocket(wsUrl('ws/supervisor/'))
-      ws.onopen = () => {
-        attemptRef.current = 0
-        setConnected(true)
-      }
-      ws.onmessage = (msg) => {
-        try {
-          const frame = JSON.parse(msg.data) as SupervisorFrame
-          if (frame.type === 'supervisor.snapshot') setHasSnapshot(true)
-          setState((prev) => applyFrame(prev, frame))
-        } catch {
-          /* ignore malformed frame */
-        }
-      }
-      ws.onclose = () => {
-        setConnected(false)
-        if (closed) return
-        const delay = BACKOFFS_MS[Math.min(attemptRef.current, BACKOFFS_MS.length - 1)]
-        attemptRef.current += 1
-        reconnectTimer = setTimeout(connect, delay)
-      }
-    }
-
-    connect()
-    return () => {
-      closed = true
-      if (reconnectTimer) clearTimeout(reconnectTimer)
-      if (ws) ws.close()
-    }
-  }, [])
+  const { connected } = useReconnectingSocket(wsUrl('ws/supervisor/'), (raw) => {
+    const frame = raw as SupervisorFrame
+    if (frame.type === 'supervisor.snapshot') setHasSnapshot(true)
+    setState((prev) => applyFrame(prev, frame))
+  })
 
   return {
     runners: Object.values(state.runners),

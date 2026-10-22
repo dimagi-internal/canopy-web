@@ -32,6 +32,8 @@ import { listRunners, type RunnerOut } from '@/api/harness'
 import { listMyAgents, type AgentOut } from '@/api/agents'
 import { NewChatMenu, type NewChatTarget } from '@/components/chat/NewChatMenu'
 import { repoChoices } from '@/components/chat/runnerEligibility'
+import { usePolled } from '@/hooks/usePolled'
+import { useReconnectingSocket } from '@/hooks/useReconnectingSocket'
 import { wsUrl } from '@/lib/wsUrl'
 import { ChatPage } from '@/pages/ChatPage'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
@@ -128,37 +130,7 @@ function savePrefs(p: Prefs) {
 /** Refetch whenever a runner reports (ws/supervisor/ frames), so a session
  *  changing state shows within seconds; the poll is the fallback. */
 function useDoorbell(ring: () => void): boolean {
-  const ringRef = useRef(ring)
-  ringRef.current = ring
-  const [connected, setConnected] = useState(false)
-  useEffect(() => {
-    let ws: WebSocket | null = null
-    let timer: ReturnType<typeof setTimeout> | null = null
-    let closed = false
-    let attempt = 0
-    const connect = () => {
-      if (closed) return
-      ws = new WebSocket(wsUrl('ws/supervisor/'))
-      ws.onopen = () => {
-        attempt = 0
-        setConnected(true)
-      }
-      ws.onmessage = () => ringRef.current()
-      ws.onclose = () => {
-        setConnected(false)
-        if (closed) return
-        const backoff = [1000, 2000, 5000, 10000][Math.min(attempt++, 3)]
-        timer = setTimeout(connect, backoff)
-      }
-    }
-    connect()
-    return () => {
-      closed = true
-      if (timer) clearTimeout(timer)
-      ws?.close()
-    }
-  }, [])
-  return connected
+  return useReconnectingSocket(wsUrl('ws/supervisor/'), ring, { onBadFrame: ring }).connected
 }
 
 type RunnerChip = { key: string; name: string; status: string | null; host: string; count: number }
@@ -266,16 +238,7 @@ export function IdePage() {
     })
   }, [state])
 
-  useEffect(() => {
-    void refresh()
-    const poll = window.setInterval(() => void refresh(), POLL_MS)
-    const onFocus = () => void refresh()
-    window.addEventListener('focus', onFocus)
-    return () => {
-      window.clearInterval(poll)
-      window.removeEventListener('focus', onFocus)
-    }
-  }, [refresh])
+  usePolled(refresh, { ms: POLL_MS, deps: [refresh], refreshOnFocus: true })
 
   // The agents "New session" offers; repos come from the runners' reports.
   useEffect(() => {
