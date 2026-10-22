@@ -28,6 +28,8 @@ from html import escape
 from django.core.cache import cache
 from django.utils import timezone
 
+from .models import Agent, AgentVaultWrap, ZkGrantNotice
+
 logger = logging.getLogger(__name__)
 
 GRACE = dt.timedelta(minutes=2)
@@ -48,7 +50,6 @@ def sweep(now=None) -> int:
     """Record, notify and clear pending-grant notices. Returns how many were
     notified this pass."""
     from . import zk
-    from .models import Agent, ZkGrantNotice
 
     now = now or timezone.now()
     told = 0
@@ -84,7 +85,6 @@ def _label(t: dict) -> str:
 
 def holders(agent) -> list:
     """Everyone who can grant: a member wrap at the current kv, still active."""
-    from .models import AgentVaultWrap
 
     return [w.user for w in AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="member")
             .select_related("user") if w.user_id and w.user.is_active]

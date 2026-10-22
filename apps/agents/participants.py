@@ -24,7 +24,9 @@ import logging
 
 from django.db import IntegrityError, transaction
 
-from .models import AgentProject, ProjectParticipant
+from apps.contacts.models import PersonFact
+
+from .models import AgentProject, AgentTask, ProjectParticipant
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +108,6 @@ def backfill() -> dict:
     turn. Idempotent; returns counts. The `backfill_project_participants`
     command runs it (the data migration does the fact half on historical
     models)."""
-    from apps.contacts.models import PersonFact
-
-    from .models import AgentTask
 
     before = ProjectParticipant.objects.count()
     facts = 0

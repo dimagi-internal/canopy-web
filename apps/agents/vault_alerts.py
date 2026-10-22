@@ -51,6 +51,8 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
+from .models import Agent, AgentAdmin, AgentCredentialAlert
+
 logger = logging.getLogger(__name__)
 
 DEBOUNCE = dt.timedelta(hours=1)
@@ -189,7 +191,6 @@ def raise_alert(agent, kind: str, *, detail: str, refs=(), user=None, runner=Non
                 turn_id: str = ""):
     """Record (and, unless one of this kind is open this hour, notify) an alert.
     Returns the new row, or None when it only counted against an open one."""
-    from .models import Agent, AgentCredentialAlert
 
     now = timezone.now()
     with transaction.atomic():
@@ -221,7 +222,6 @@ def recipients(agent) -> list:
     """The agent's owner; with none, its explicit admins (still members)."""
     if agent.owner_id and agent.owner.is_active:
         return [agent.owner]
-    from .models import AgentAdmin
 
     return [g.user for g in AgentAdmin.objects.filter(agent=agent).select_related("user")
             if g.user.is_active and agent.is_admin(g.user)]
@@ -329,7 +329,6 @@ def _record_event(agent, alert) -> None:
 
 
 def alerts_for(agent, *, limit: int = 50) -> list[dict]:
-    from .models import AgentCredentialAlert
 
     qs = (AgentCredentialAlert.objects.filter(agent=agent)
           .select_related("user", "runner").order_by("-created_at")[:limit])

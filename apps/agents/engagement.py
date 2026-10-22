@@ -18,7 +18,9 @@ import logging
 from django.db import DatabaseError, transaction
 from django.utils import timezone
 
-from .models import EngagementEvent
+from apps.huddles.models import ProjectCheckin
+
+from .models import Agent, AgentProject, AgentTask, EngagementEvent, ProjectBacking
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +87,6 @@ def _median(values: list[float]) -> float | None:
 def resolve_checkin(workspaces, checkin: str) -> list[str]:
     """The stored keys `checkin=` names: a check-in's id as is, or — by name, any
     check-in so called in `workspaces` (ignoring case)."""
-    from apps.huddles.models import ProjectCheckin
 
     checkin = (checkin or "").strip()
     if not checkin or checkin.isdigit():
@@ -126,8 +127,6 @@ def summary(workspaces, *, days: int = 14, checkin: str = "", agent: str = "",
     `checkin` (an id, or a name) keeps one check-in's events (and what was
     proposed from it); `agent` keeps events by or about that agent's projects."""
     from django.db.models import Count, Q
-
-    from .models import Agent, AgentProject, AgentTask, ProjectBacking
 
     now = now or timezone.now()
     since = now - dt.timedelta(days=max(1, min(days, 365)))

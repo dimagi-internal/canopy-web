@@ -27,10 +27,12 @@ import re
 
 from django.db.models import Exists, OuterRef, Q
 
-from apps.agents.models import AgentTask
+from apps.agents.models import AgentProject, AgentTask
 from apps.harness import services as hsvc
 from apps.harness import turn_access
 from apps.harness.models import Turn, TurnTranscript
+
+from .models import CheckinRun
 
 _FENCE = re.compile(r"```huddle[ \t]*\r?\n(.*?)\r?\n[ \t]*```", re.S)
 #: A ```json or unlabelled fence — accepted when its object carries a "huddle" key.
@@ -162,7 +164,6 @@ def summaries(anchor_rows, visible_qs, workspaces) -> list[dict]:
         top[h] = max(top.get(h, 0), _int(ref.get("round")))
     counts: dict[str, int] = {}
     if ids:
-        from apps.agents.models import AgentProject
 
         # A huddle's outcomes: its proposed projects, and (filed before those
         # existed) its loose tasks.
@@ -283,7 +284,6 @@ def projects_of(huddle_id: str, workspaces, *, user) -> list[dict]:
     agent in any of `workspaces`, each as `proposals.card` renders it (the same
     card the project page shows)."""
     from apps.agents import proposals
-    from apps.agents.models import AgentProject
 
     rows = (AgentProject.objects.select_related("agent", "owner_user")
             .filter(agent__workspace_id__in=list(workspaces))
@@ -312,7 +312,6 @@ def checkin_ref(anchor, workspaces) -> dict | None:
     tree). `group_run` / `run` are the names an engine from before check-ins
     still writes; the run kept its id."""
     from .checkins import project_path
-    from .models import CheckinRun
 
     ref = _ref(anchor)
     run_id = _int(ref.get("checkin_run") or ref.get("run") or ref.get("group_run"))

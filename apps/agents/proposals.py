@@ -33,7 +33,9 @@ import datetime as dt
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Agent, AgentProject, AgentTask, AgentTaskAction, ProjectBacking
+from apps.huddles.models import ProjectCheckin
+
+from .models import Agent, AgentProject, AgentTask, AgentTaskAction, ProjectBacking, ProjectParticipant
 
 #: A proposed project nobody starts or declines within this is archived as "not taken up".
 EXPIRES_AFTER = dt.timedelta(days=14)
@@ -368,7 +370,6 @@ def back(project: AgentProject | None, *, stance: str, line: str = "", person=No
     rewriting clears `stale`. A person who backs becomes a participant (of the
     task's project, for a task)."""
     from . import participants
-    from .models import ProjectParticipant
 
     if (person is None) == (agent is None):
         raise ProposalError("a backing is a person's or an agent's, never both")
@@ -509,7 +510,6 @@ def task_runs(task: AgentTask) -> list[int]:
 def _checkin_leads(task: AgentTask) -> set[int]:
     """The lead of the check-in a proposed task came from — or, when it names none
     (or that check-in is gone), the leads of every check-in on its project."""
-    from apps.huddles.models import ProjectCheckin
 
     if task.project_id is None:
         return set()

@@ -14,7 +14,9 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
+from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import Workspace
 
 from . import services
 from .api import apply_project_patch, list_agents, project_detail, require_workspace_editor
@@ -141,7 +143,6 @@ def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
     from django.utils import timezone
 
     from apps.harness.api import visible_turns_qs
-    from apps.harness.models import Turn
     from apps.workspaces.services import scoped_path
 
     from .health import _counts
@@ -215,7 +216,6 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
     can call: the readers a project's server admits (its workspace's members and
     its steward's) are exactly the ones a list spanning those workspaces reaches."""
     from apps.tokens.views_mcp_oauth import issuer
-    from apps.workspaces.models import Workspace
 
     listed = listed_agent_workspaces(request)
     projects = [p for p in services.workspace_projects(listed, steward_workspaces=listed)

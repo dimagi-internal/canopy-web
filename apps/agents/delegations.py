@@ -36,7 +36,7 @@ from django.utils import timezone
 from apps.common.encryption import decrypt_secret, encrypt_secret
 
 from .definition import definition_key
-from .models import Agent, AgentDelegation, RepoIdentity
+from .models import Agent, AgentCredential, AgentDelegation, RepoIdentity
 
 GITHUB_API = "https://api.github.com"
 HTTP_TIMEOUT = 15
@@ -463,7 +463,6 @@ SALESFORCE_CREDENTIAL = "salesforce"
 
 def lender_salesforce_creds(lender: Agent) -> dict:
     """The lender's own chrome-sales credential, parsed. DelegationError if absent."""
-    from .models import AgentCredential
 
     row = AgentCredential.objects.filter(agent=lender, name=SALESFORCE_CREDENTIAL).first()
     if row is None:
@@ -535,7 +534,6 @@ def set_salesforce(agent: Agent, user, lender_slug: str) -> AgentDelegation:
     The caller must own BOTH agents: the borrower (only its owner's delegations
     are ever used) and the lender (you can only lend what is yours). Refused, not
     stored, when the lender holds no credential or Salesforce rejects it."""
-    from .models import Agent as AgentModel
 
     if agent.owner_id != getattr(user, "pk", None):
         raise DelegationError(f"only {agent.slug}'s owner can lend it a Salesforce identity")
@@ -543,7 +541,7 @@ def set_salesforce(agent: Agent, user, lender_slug: str) -> AgentDelegation:
     # tenant, the agents borrowing her identity in another). The gate is
     # ownership, which is per person, not per tenant — and `delegation_for` /
     # `_in_force_salesforce` re-check it at every use. Slugs are globally unique.
-    lender = AgentModel.objects.filter(slug=(lender_slug or "").strip()).first()
+    lender = Agent.objects.filter(slug=(lender_slug or "").strip()).first()
     if lender is None or lender.owner_id != user.pk:
         # One message for both: a stranger must not learn which slugs exist.
         raise DelegationError(f"you own no agent '{lender_slug}' to lend")

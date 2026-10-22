@@ -20,6 +20,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 from django.db import transaction
 
+from apps.passkeys.models import UserVaultKeyset
+
+from .models import AgentVaultEndorsement
 from .zk import ZkError, _shape, b64u_bytes
 
 MAX_ENDORSEMENTS = 64
@@ -67,9 +70,6 @@ def recipients(agent) -> list[dict]:
 def endorsements(agent) -> list[dict]:
     """Every endorsement of a CURRENT recipient's CURRENT key, with the
     endorser's public key so a client can verify it without a second read."""
-    from apps.passkeys.models import UserVaultKeyset
-
-    from .models import AgentVaultEndorsement
 
     live = {(r["kind"], r["target"], r["key_jkt"]) for r in recipients(agent)}
     rows = [e for e in AgentVaultEndorsement.objects.filter(agent=agent).select_related("endorser")
@@ -86,9 +86,6 @@ def add(agent, *, user, items: list) -> int:
     """Store the caller's endorsements. Each must be signed by the caller's OWN
     vault key, name a current recipient by its current key, and verify."""
     from apps.harness import device_keys
-    from apps.passkeys.models import UserVaultKeyset
-
-    from .models import AgentVaultEndorsement
 
     if len(items) > MAX_ENDORSEMENTS:
         raise _shape(f"at most {MAX_ENDORSEMENTS} endorsements")

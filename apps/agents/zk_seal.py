@@ -26,6 +26,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+from apps.passkeys.models import UserVaultKeyset
+
 from .zk import NONCE_LEN, TAG_LEN, ZkError, _keys, _shape, b64u_bytes
 
 SEALED_PREFIX = "zks1:"
@@ -97,7 +99,6 @@ def has_recipients(agent) -> bool:
     (and so by the workspace health page, for every agent in a tree), so it never loads
     every vault keyset in the system: one exists() for the devices, then one for the
     keysets of the agent's admins (`Agent.admin_user_ids`)."""
-    from apps.passkeys.models import UserVaultKeyset
 
     from . import zk
 
