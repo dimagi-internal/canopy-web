@@ -125,12 +125,29 @@ def publish(project, key: str, sha256: str):
 
 # ---- originals ----
 
-def _stored_originals(project) -> set[str]:
-    prefix = _originals_prefix(project)
-    have: set[str] = set()
-    for page in _client().get_paginator("list_objects_v2").paginate(Bucket=_bucket(), Prefix=prefix):
-        have.update(o["Key"][len(prefix):] for o in page.get("Contents") or [])
-    return have
+#: HEADs in flight while checking a batch of originals (1000 per request at most).
+ORIGINALS_HEAD_WORKERS = 32
+
+
+def _stored_originals(project, shas: set[str]) -> set[str]:
+    """Which of `shas` the project's store already holds, by a HEAD each. Never a
+    listing: the task role may read and write objects but not list the bucket, and
+    without list S3 answers a missing object 403 rather than 404, so any error counts
+    as not stored (the cost is one re-upload, never a missing file)."""
+    import concurrent.futures as cf
+
+    bucket, prefix, s3 = _bucket(), _originals_prefix(project), _client()
+
+    def stored(sha: str) -> bool:
+        try:
+            s3.head_object(Bucket=bucket, Key=prefix + sha)
+            return True
+        except Exception:  # noqa: BLE001 - 403/404 alike: upload it
+            return False
+
+    with cf.ThreadPoolExecutor(ORIGINALS_HEAD_WORKERS) as ex:
+        found = dict(zip(shas, ex.map(stored, shas)))
+    return {sha for sha, ok in found.items() if ok}
 
 
 def originals_upload(project, files: list[dict]) -> dict:
@@ -146,7 +163,7 @@ def originals_upload(project, files: list[dict]) -> dict:
         if not 0 <= int(f.get("bytes") or 0) <= ORIGINAL_MAX_BYTES:
             raise KbPublishError(f"{f['sha256']}: originals are at most {ORIGINAL_MAX_BYTES} bytes")
     bucket, prefix, s3 = _bucket(), _originals_prefix(project), _client()
-    have = _stored_originals(project)
+    have = _stored_originals(project, {f["sha256"] for f in files})
     uploads, asked = [], set()
     for f in files:
         sha = f["sha256"]
