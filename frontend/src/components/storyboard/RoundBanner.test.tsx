@@ -29,7 +29,8 @@ describe('conflictsOf', () => {
 
 const board = (round: Storyboard['round'], extra: Partial<Storyboard> = {}): Storyboard => ({
   slug: 'supply', title: 'Connect Supply', lede: '', capability: 'suggest', layout: 'review',
-  is_member: true, acts: [], decisions: [], round, previous_round: null, ...extra,
+  is_member: true, can_manage: false, acts: [], decisions: [], round, previous_round: null,
+  ...extra,
 })
 
 describe('RoundBanner', () => {

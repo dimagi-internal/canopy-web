@@ -7,9 +7,8 @@
  * a viewer's page (/w/<ws>/storyboard/…, /w/<ws>/narrative/…) is a scoped viewer
  * path, so a 401 there never bounces to login.
  *
- * `Storyboard` / `StoryboardAct` / `StoryboardEntry` stay hand-written: the
- * generated `StoryboardOut.acts` resolves to an unrelated `ActOut` (a schema
- * name collision with the task-act route), so it does not describe the board.
+ * Acts, entries and cuts are the generated schemas. `Storyboard` narrows the
+ * generated board's free-string `capability` / `layout` and its decision rows.
  */
 
 import { apiV2, shareQuery } from './client.v2'
@@ -27,44 +26,9 @@ export type FeedbackKind = 'comment' | 'suggestion'
 export type Divergence = Schemas['Divergence']
 
 /** One recorded cut of an entry, with what a reviewer needs to judge it. */
-export interface EntryCut {
-  cut_id: string
-  /** What a note on this cut anchors to: `cut:<cut_id>`. */
-  anchor_id: string
-  title: string
-  /** False for a cut declared by the publisher that has no video yet. */
-  recorded: boolean
-  video_url: string | null
-  video_viewer_url: string | null
-  poster_url: string | null
-  duration_sec: number | null
-  word_count: number
-  scenes: { id: string; title: string; text: string }[]
-  /** What is on screen and where the cursor goes. */
-  screen_notes: string
-  /** Why this cut matters to the board's audience. */
-  audience_note: string
-  /** Where the on-screen data comes from. */
-  provenance: string
-  /** The live product screens the cut films, for the reviewer to open. */
-  app_links?: { label: string; url: string }[]
-  optional: boolean
-}
+export type EntryCut = Schemas['EntryCutOut']
 
-export interface StoryboardEntry {
-  narrative_slug: string
-  title: string
-  lede: string
-  version: number | null
-  video_url: string | null
-  video_viewer_url: string | null
-  published: boolean
-  /** A recorded narrative's cuts, in running order. Empty for an explainer. */
-  cuts?: EntryCut[]
-  assumptions?: string[]
-  divergences?: Divergence[]
-  open_questions?: string[]
-}
+export type StoryboardEntry = Schemas['EntryOut']
 
 /** Framing for the whole set — every field optional. */
 export interface StoryboardBrief {
@@ -81,13 +45,7 @@ export interface StoryboardBrief {
   open_questions?: string[]
 }
 
-export interface StoryboardAct {
-  /** What an act-level note anchors to (`act:<id>`). */
-  anchor_id: string
-  title: string
-  prose: string
-  entries: StoryboardEntry[]
-}
+export type StoryboardAct = Schemas['StoryboardActOut']
 
 /** One default the set is built on — ace-web's decision row (spec B). */
 export interface Decision {
@@ -140,27 +98,18 @@ export type DecisionEdit = {
   author_name?: string
 }
 
-export interface Storyboard {
-  slug: string
-  title: string
-  lede: string
+export type Storyboard = Omit<
+  Schemas['StoryboardOut'],
+  'brief' | 'capability' | 'layout' | 'decisions'
+> & {
   /** Who it is for, the point to land, the data disclosure, the short version,
    *  and the caveats. Absent on boards created before it existed. */
   brief?: StoryboardBrief
   capability: Capability
   /** `reel` = the finished product: videos, one line each, nothing else. */
   layout: Layout
-  /** True for the people who SENT the link — the only ones shown the notes. */
-  is_member: boolean
-  /** True for editors, who open and close feedback rounds. */
-  can_manage?: boolean
-  acts: StoryboardAct[]
   /** The set's decision log. Absent on an older response. */
   decisions?: Decision[]
-  /** The feedback round open now, with everyone's notes. */
-  round?: RoundPayload | null
-  /** The latest finished round, so people can see what happened to their notes. */
-  previous_round?: RoundPayload | null
 }
 
 export type Note = Omit<Schemas['NoteOut'], 'kind'> & { kind: FeedbackKind }

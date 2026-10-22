@@ -40,7 +40,6 @@ from .schemas import (
     ArcDetailOut,
     ArcListItemOut,
     ArcPatchIn,
-    SessionDetailOut,
     SessionListItemOut,
     SessionMessageOut,
     SessionPatchIn,
@@ -48,6 +47,7 @@ from .schemas import (
     SessionUploadOut,
     SessionVisibility,
     SharedSectionOut,
+    SharedSessionDetailOut,
     SharedViewOut,
 )
 
@@ -516,12 +516,12 @@ def rotate_arc_token(request: HttpRequest, slug: str) -> SessionRotateTokenOut:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{slug}", response=SessionDetailOut, summary="Get one session (owner)")
-def get_session(request: HttpRequest, slug: str) -> SessionDetailOut:
+@router.get("/{slug}", response=SharedSessionDetailOut, summary="Get one session (owner)")
+def get_session(request: HttpRequest, slug: str) -> SharedSessionDetailOut:
     session = _get_owned_or_403(request, slug)
     payload = _list_payload(session, is_owner=True)
     payload["messages"] = _message_payloads(session)
-    return SessionDetailOut.model_validate(payload)
+    return SharedSessionDetailOut.model_validate(payload)
 
 
 # ---------------------------------------------------------------------------

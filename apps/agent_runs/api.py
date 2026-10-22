@@ -67,7 +67,7 @@ class VerdictIn(StrictModel):
     rationale: str = ""
 
 
-class ForkIn(StrictModel):
+class RunForkIn(StrictModel):
     """Fork a run at a step boundary."""
 
     at_step: str = Field(min_length=1, max_length=120)
@@ -172,7 +172,7 @@ def record_verdict(request: HttpRequest, slug: str, run_id: str, step_key: str,
 
 
 @router.post("/{slug}/runs/{run_id}/fork", response={201: RunSummary}, summary="Fork a run",)
-def fork_run(request: HttpRequest, slug: str, run_id: str, payload: ForkIn) -> Status:
+def fork_run(request: HttpRequest, slug: str, run_id: str, payload: RunForkIn) -> Status:
     agent, store = _store_for(request, slug, write=True)
     try:
         summary = store.fork(

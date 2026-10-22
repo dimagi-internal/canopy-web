@@ -40,6 +40,7 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
     capability: 'read',
     layout: 'review',
     is_member: false,
+    can_manage: false,
     acts: [
       {
         anchor_id: 'act:supply-base',
@@ -54,6 +55,7 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
             video_url: '/walkthrough/abc/content',
             video_viewer_url: '/walkthrough/abc',
             published: true,
+            cuts: [], assumptions: [], divergences: [], open_questions: [],
           },
         ],
       },
@@ -134,6 +136,7 @@ describe('StoryboardPage', () => {
                 video_url: null,
                 video_viewer_url: null,
                 published: false,
+                cuts: [], assumptions: [], divergences: [], open_questions: [],
               },
             ],
           },

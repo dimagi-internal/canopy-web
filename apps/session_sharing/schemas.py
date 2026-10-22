@@ -35,7 +35,7 @@ class SessionMessageOut(StrictModel):
     plaintext: str = ""
 
 
-class SessionDetailOut(SessionListItemOut):
+class SharedSessionDetailOut(SessionListItemOut):
     messages: list[SessionMessageOut] = []
 
 
