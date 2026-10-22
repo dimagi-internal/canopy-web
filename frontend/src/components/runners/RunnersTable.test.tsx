@@ -42,3 +42,31 @@ describe('RunnersTable units', () => {
     expect(screen.getAllByTestId('runner-machine')).toHaveLength(2)
   })
 })
+
+describe('RunnersTable checks and detail', () => {
+  const box = row('cloud-ec2-2', {
+    can_administer: true,
+    agents: [{ slug: 'jarvis', name: 'Jarvis', workspace: 'dimagi' }],
+    problems: [
+      { name: 'claude.probe.subscription-1', status: 'fail', detail: 'not signed in' },
+      { name: 'github.jarvis', status: 'fail', detail: 'no token lent' },
+      { name: 'github.ace', status: 'warn', detail: 'token expires soon' },
+    ],
+  })
+
+  it('counts the checks in the row instead of listing every name', () => {
+    render(<MemoryRouter><RunnersTable workspace="dimagi" runners={[box]} /></MemoryRouter>)
+    expect(screen.getByTestId('runner-checks').textContent).toBe('2 failing · 1 warning')
+  })
+
+  it('leads the detail with the way to change the runner, and links each check to its fix', () => {
+    render(<MemoryRouter><RunnersTable workspace="dimagi" runners={[box]} open="cloud-ec2-2" /></MemoryRouter>)
+    const manage = screen.getByTestId('runner-manage')
+    expect(manage.textContent).toContain('Manage runner')
+    expect(manage.getAttribute('href')).toBe('/supervisor?tab=runners&runner=cloud-ec2-2')
+    const fixes = screen.getAllByText('Fix →').map((a) => a.getAttribute('href'))
+    // The sign-in is fixed on the runner, the agent's token on the agent; an
+    // agent outside this tree (ace) has nowhere to link.
+    expect(fixes).toEqual(['/supervisor?tab=runners&runner=cloud-ec2-2', '/w/dimagi/agents/jarvis/settings#credentials'])
+  })
+})

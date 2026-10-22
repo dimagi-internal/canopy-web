@@ -1,18 +1,21 @@
 import { Fragment, useState, type JSX } from 'react'
 import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronRight } from 'lucide-react'
 
 import type { TopologyRunnerOut } from '@/api/workspaces'
 import { relativeAge } from '@/lib/relativeAge'
 import { statusTone } from '@/pages/runnerTopology'
+import { fixHref } from '@/components/supervisor/RunnerHealth'
 import { MissingSessions } from './MissingSessions'
 import { scopedPath } from '../../lib/scopedLinks'
 
 // THE RUNNER TABLE — one table for Health and Topology → Runners, over the
 // topology's own runner rows (`harness.topology.build`). Facts and states only:
 // what each box reports, never a verdict. Every row opens its detail: each
-// column spelled out, with where to change it.
+// column spelled out, with where to change it. The detail is read-only; the
+// runner itself is changed in one place, the supervisor's runner page, which
+// the detail leads with.
 
 type Props = {
   runners: readonly TopologyRunnerOut[]
@@ -85,17 +88,16 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
                 <td className="whitespace-nowrap text-foreground-secondary">
                   {r.code_current === true ? 'current' : r.code_current === false ? <span className="text-warning">update pending</span> : 'unknown'}
                 </td>
-                <td className="text-foreground-secondary">
-                  {r.problems.length === 0 ? 'all ok' : r.problems.map((p) => (
-                    <span key={p.name} className={clsx('mr-2', p.status === 'fail' ? 'text-destructive' : 'text-warning')}>{p.name}</span>
-                  ))}
+                <td className="whitespace-nowrap text-foreground-secondary" data-testid="runner-checks"
+                    title={r.problems.map((p) => p.name).join(', ') || undefined}>
+                  <CheckCounts problems={r.problems} />
                 </td>
                 <td className="text-right tabular-nums">{r.agent_count}</td>
                 <td className="whitespace-nowrap">
                   <span className={clsx('tabular-nums', r.missing_sessions ? 'text-primary' : 'text-foreground-secondary')}>{r.missing_sessions}</span>
                   {!r.usage_reported_at && <span className="text-muted-foreground"> · no report</span>}
                 </td>
-                <td className="text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}</td>
+                <td className="whitespace-nowrap text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}</td>
               </tr>
               {open === r.id && (
                 <tr><td colSpan={8} className="bg-muted/30 p-3"><RunnerDetail runner={r} workspace={workspace} /></td></tr>
@@ -108,6 +110,21 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
   )
 }
 
+/** A row's checks as counts — the names, one per line with their fix, are the
+ *  detail's; a dozen names in a cell made the row wrap and the table overflow. */
+function CheckCounts({ problems }: { problems: TopologyRunnerOut['problems'] }): JSX.Element {
+  const fail = problems.filter((p) => p.status === 'fail').length
+  const warn = problems.length - fail
+  if (problems.length === 0) return <>all ok</>
+  return (
+    <>
+      {fail > 0 && <span className="text-destructive">{fail} failing</span>}
+      {fail > 0 && warn > 0 && ' · '}
+      {warn > 0 && <span className="text-warning">{warn} warning{warn === 1 ? '' : 's'}</span>}
+    </>
+  )
+}
+
 /** One runner, each column spelled out: its status in its own words and the fix
  *  for a known cause, the code it runs against what the server expects, every
  *  check that is not ok with its detail, the agents it serves, and its usage
@@ -115,65 +132,86 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
 function RunnerDetail({ runner: r, workspace }: { runner: TopologyRunnerOut; workspace: string }): JSX.Element {
   const now = new Date()
   const short = (sha: string) => sha ? sha.slice(0, 8) : 'unknown'
+  const manage = `/supervisor?tab=runners&runner=${r.id}`
+  // A `github.<agent>` check is fixed on that agent; every other check (its
+  // Claude sign-in, a refresh) on the runner itself.
+  const agentWs = (slug: string) => r.agents.find((a) => a.slug === slug)?.workspace
+  const fixFor = (name: string) => fixHref(name, agentWs) ?? (/^github\./.test(name) ? null : manage)
   return (
-    <div className="grid gap-3 text-[12px] lg:grid-cols-2" data-testid="runner-detail">
-      <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5 rounded-lg border border-border bg-card p-3">
-        <dt className="text-muted-foreground">Status</dt>
-        <dd>
-          <span className="text-foreground">{r.status}{r.paused ? ' · paused' : ''}{r.ready ? '' : ' · not ready'}</span>
-          {(r.status_note || r.ready_note) && (
-            <span className="block text-foreground-secondary" data-testid="runner-note">
-              It says: {[...new Set([r.status_note, r.ready_note].filter(Boolean))].join(' · ')}
-            </span>
-          )}
-          {r.remedy && <span className="mt-1 block text-foreground" data-testid="runner-remedy">To fix: {r.remedy}</span>}
-          {r.status === 'stale' && <span className="block text-muted-foreground">No heartbeat lately: the machine is asleep, offline, or its runner stopped.</span>}
-        </dd>
-        <dt className="text-muted-foreground">Code</dt>
-        <dd className="text-foreground-secondary">
-          runs <span className="font-mono">{short(r.code_sha)}</span>, server expects <span className="font-mono">{short(r.expected_code_sha)}</span>
-          {r.code_current === false && <span className="block text-muted-foreground">It updates itself when it next checks in.</span>}
-        </dd>
-        <dt className="text-muted-foreground">Its own checks</dt>
-        <dd>
-          {r.problems.length === 0 ? <span className="text-foreground-secondary">all ok</span> : (
-            <ul className="space-y-1">
-              {r.problems.map((p) => (
-                <li key={p.name}>
-                  <span className={clsx('font-mono', p.status === 'fail' ? 'text-destructive' : 'text-warning')}>{p.name}</span>
-                  {p.detail && <span className="block text-foreground-secondary">{p.detail}</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </dd>
-        <dt className="text-muted-foreground">Agents</dt>
-        <dd className="text-foreground-secondary">
-          {r.agents.length === 0 ? 'none in this tree' : r.agents.map((a, i) => (
-            <span key={a.slug}>{i > 0 && ', '}
-              <Link to={scopedPath(a.workspace, `/agents/${a.slug}/settings#running`)} className="text-primary hover:underline">{a.name}</Link>
-            </span>
-          ))}
-        </dd>
-        <dt className="text-muted-foreground">Last heartbeat</dt>
-        <dd className="text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}{r.host && <> · {r.host}</>}</dd>
-        <dt className="text-muted-foreground">Usage report</dt>
-        <dd className="text-foreground-secondary">
-          {r.usage_reported_at ? `last sent ${relativeAge(r.usage_reported_at, now, { seconds: false })}` : 'not sent yet — it sends one on current code'}
-        </dd>
-        <dt className="text-muted-foreground">Lives in</dt>
-        <dd className="text-foreground-secondary">{r.workspace ?? '—'}{!r.in_tree && ' (outside this tree)'}</dd>
-        <dt className="text-muted-foreground">More</dt>
-        <dd className="space-x-3">
-          <Link to={`/supervisor?tab=runners&runner=${r.id}`} className="text-primary hover:underline">Open in supervisor</Link>
-          <Link to={scopedPath(workspace, '/settings/topology/runners')} className="text-primary hover:underline">Routing</Link>
-        </dd>
-      </dl>
-      <div className="rounded-lg border border-border bg-card p-3">
-        <p className="mb-1 font-semibold text-foreground">Missing sessions · {r.missing_sessions}</p>
-        {r.can_administer
-          ? <MissingSessions runnerId={r.id} />
-          : <p className="text-muted-foreground">Sessions on this box in repos canopy knows, that canopy has no record of. Only the runner's admins see the list{r.owner_email ? ` (${r.owner_email})` : ''}.</p>}
+    <div className="space-y-3 text-[12px]" data-testid="runner-detail">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-card p-3">
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-foreground">{r.name}</p>
+          <p className="text-muted-foreground">
+            A read-only summary. {r.can_administer
+              ? 'Sign it in, pause it, set its flags, workspaces and admins on its runner page.'
+              : `Its runner page shows everything; changing it is for its owner${r.owner_email ? ` (${r.owner_email})` : ''} and admins.`}
+          </p>
+        </div>
+        <Link to={scopedPath(workspace, '/settings/topology/runners')} className="text-primary hover:underline">Routing</Link>
+        <Link to={manage} data-testid="runner-manage"
+              className="inline-flex min-h-8 items-center gap-1 rounded-md bg-primary px-3 font-medium text-primary-foreground hover:bg-primary/90">
+          {r.can_administer ? 'Manage runner' : 'Open runner'} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </Link>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5 rounded-lg border border-border bg-card p-3">
+          <dt className="text-muted-foreground">Status</dt>
+          <dd>
+            <span className="text-foreground">{r.status}{r.paused ? ' · paused' : ''}{r.ready ? '' : ' · not ready'}</span>
+            {(r.status_note || r.ready_note) && (
+              <span className="block text-foreground-secondary" data-testid="runner-note">
+                It says: {[...new Set([r.status_note, r.ready_note].filter(Boolean))].join(' · ')}
+              </span>
+            )}
+            {r.remedy && <span className="mt-1 block text-foreground" data-testid="runner-remedy">To fix: {r.remedy}</span>}
+            {r.status === 'stale' && <span className="block text-muted-foreground">No heartbeat lately: the machine is asleep, offline, or its runner stopped.</span>}
+          </dd>
+          <dt className="text-muted-foreground">Code</dt>
+          <dd className="text-foreground-secondary">
+            runs <span className="font-mono">{short(r.code_sha)}</span>, server expects <span className="font-mono">{short(r.expected_code_sha)}</span>
+            {r.code_current === false && <span className="block text-muted-foreground">It updates itself when it next checks in.</span>}
+          </dd>
+          <dt className="text-muted-foreground">Its own checks</dt>
+          <dd>
+            {r.problems.length === 0 ? <span className="text-foreground-secondary">all ok</span> : (
+              <ul className="space-y-1">
+                {r.problems.map((p) => {
+                  const fix = fixFor(p.name)
+                  return (
+                    <li key={p.name}>
+                      <span className={clsx('font-mono', p.status === 'fail' ? 'text-destructive' : 'text-warning')}>{p.name}</span>
+                      {fix && <Link to={fix} className="ml-2 text-primary hover:underline">Fix →</Link>}
+                      {p.detail && <span className="block text-foreground-secondary">{p.detail}</span>}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </dd>
+          <dt className="text-muted-foreground">Agents</dt>
+          <dd className="text-foreground-secondary">
+            {r.agents.length === 0 ? 'none in this tree' : r.agents.map((a, i) => (
+              <span key={a.slug}>{i > 0 && ', '}
+                <Link to={scopedPath(a.workspace, `/agents/${a.slug}/settings#running`)} className="text-primary hover:underline">{a.name}</Link>
+              </span>
+            ))}
+          </dd>
+          <dt className="text-muted-foreground">Last heartbeat</dt>
+          <dd className="text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}{r.host && <> · {r.host}</>}</dd>
+          <dt className="text-muted-foreground">Usage report</dt>
+          <dd className="text-foreground-secondary">
+            {r.usage_reported_at ? `last sent ${relativeAge(r.usage_reported_at, now, { seconds: false })}` : 'not sent yet — it sends one on current code'}
+          </dd>
+          <dt className="text-muted-foreground">Lives in</dt>
+          <dd className="text-foreground-secondary">{r.workspace ?? '—'}{!r.in_tree && ' (outside this tree)'}</dd>
+        </dl>
+        <div className="rounded-lg border border-border bg-card p-3">
+          <p className="mb-1 font-semibold text-foreground">Missing sessions · {r.missing_sessions}</p>
+          {r.can_administer
+            ? <MissingSessions runnerId={r.id} />
+            : <p className="text-muted-foreground">Sessions on this box in repos canopy knows, that canopy has no record of. Only the runner's admins see the list{r.owner_email ? ` (${r.owner_email})` : ''}.</p>}
+        </div>
       </div>
     </div>
   )
