@@ -1197,3 +1197,54 @@ def test_a_box_with_no_copy_is_no_keeper(fleet):
     res = fleet.client.post(_keeper_url(fleet, "/eva/wraps"), data={"kv": 1, "wraps": [
         member_wrap(fleet, user=user, pub=priv.public_key())]}, content_type="application/json")
     assert res.status_code == 403 and res.json()["error"] == "zk_not_a_holder"
+
+# ---- key copies follow vault membership (spec 2026-10-22-vault-access-follows-canopy-access-design.md) --
+
+def _leave_the_vault(fleet):
+    """Make the fleet's owner (the box's person) NOT a member: someone else manages
+    the vault by name, and the vault stops following the agent's access list."""
+    from apps.agents.credentials import vault_members
+
+    other = get_user_model().objects.create_user(username="mgr", email="mgr@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.VIEWER)
+    vault = vault_members.vault_for_agent(fleet.agent)
+    vault_members.add_member(vault, other, role="manage", by=fleet.user)
+    vault_members.set_agent_link(vault, fleet.agent, linked=False)
+    return vault
+
+
+def test_a_box_whose_person_left_the_vault_reads_nothing(fleet):
+    assert _enable(fleet).status_code == 200
+    assert _resolve(fleet).status_code == 200
+    _leave_the_vault(fleet)
+    res = _resolve(fleet)
+    assert res.status_code == 403 and res.json()["error"] == "not_a_vault_member"
+
+
+def test_reconcile_drops_the_key_copies_of_whoever_left(fleet):
+    from apps.agents.credentials import vault_members
+
+    assert _enable(fleet).status_code == 200
+    assert vault_members.reconcile(fleet.agent).total == 0
+    assert AgentVaultWrap.objects.filter(agent=fleet.agent, kind="device").count() == 1
+    _leave_the_vault(fleet)
+    r = vault_members.reconcile(fleet.agent)
+    assert (r.member_wraps, r.device_wraps) == (1, 1)
+    assert set(AgentVaultWrap.objects.filter(agent=fleet.agent).values_list("kind", flat=True)) == {"recovery"}
+
+
+def test_removing_a_direct_member_drops_their_copies_at_once(fleet):
+    from apps.agents.credentials import vault_members
+
+    assert _enable(fleet).status_code == 200
+    other = get_user_model().objects.create_user(username="o2", email="o2@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.VIEWER)
+    o_priv, _ = _make_keyset(other, _add_passkey(other, "o2-cred").credential_id)
+    vault = vault_members.vault_for_agent(fleet.agent)
+    vault_members.add_member(vault, other, role="use", by=fleet.user)
+    res = fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=other, pub=o_priv.public_key())]}, content_type="application/json")
+    assert res.status_code == 200, res.content
+    res = fleet.client.delete(f"/api/agents/eva/vault/members/{other.pk}")
+    assert res.status_code == 200
+    assert not AgentVaultWrap.objects.filter(agent=fleet.agent, kind="member", user=other).exists()

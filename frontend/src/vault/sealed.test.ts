@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   getKeyset: vi.fn(), putKeyset: vi.fn(), getZkState: vi.fn(), enableZk: vi.fn(), addZkWraps: vi.fn(),
-  putZkValues: vi.fn(), rotateZk: vi.fn(),
+  putZkValues: vi.fn(), rotateZk: vi.fn(), addZkEndorsements: vi.fn(),
 }))
 vi.mock('@/api/vault', () => api)
 const { revealAgentCredential } = vi.hoisted(() => ({ revealAgentCredential: vi.fn() }))
@@ -162,6 +162,28 @@ describe('approve = wrap', () => {
     const vk = await zk.unwrapEcdhEs(dw.wrap, device.privateKey, device.publicJwk, zk.deviceInfo(AGENT_ID, 1, device.jkt))
     expect(await zk.decryptValue(vk, AGENT_ID, 'kindora', 1, body.values[0].value_zk)).toBe('kin')
     expect(revealAgentCredential).not.toHaveBeenCalled()
+  })
+
+  it('an approver who holds no copy of the vault key still vouches for the machine, for a keeper', async () => {
+    const me = await principal(), device = await principal()
+    const prfOut = zk.randomBytes(32)
+    const seal = await zk.sealUserKey(me.scalar, USER, 'cred-1', prfOut)
+    api.getKeyset.mockResolvedValue({ user_id: USER, exists: true, public_jwk: me.publicJwk, prf_input: 'cHJm',
+                                      seals: [seal], passkeys: [] })
+    prf.assertWithPrf.mockResolvedValue({ cred: 'cred-1', prf: prfOut })
+    approveRunnerDeviceKey.mockResolvedValue({ id: 'dk1', status: 'active', zk_pending_agents: ['eva'],
+                                               ecdh_jkt: device.jkt, ecdh_public_jwk: device.publicJwk })
+    // kv 1 and no wrap of mine: I cannot open the vault key, so the grant fails.
+    api.getZkState.mockResolvedValue(baseState({
+      pending: [{ kind: 'device', target: 'dk1', public_jwk: device.publicJwk, ecdh_jkt: device.jkt }] }))
+    api.addZkEndorsements.mockResolvedValue({ stored: 1 })
+    const out = await ops.approveAndGrant('dk1', ['eva'], vi.fn())
+    expect(out).toMatchObject({ granted: [], failed: ['eva'] })
+    expect(api.addZkWraps).not.toHaveBeenCalled()
+    const [slug, items] = api.addZkEndorsements.mock.calls[0]
+    expect(slug).toBe('eva')
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ kind: 'device', target: device.jkt, key_jkt: device.jkt })
   })
 
   it('a key no zero-knowledge agent waits on is just approved', async () => {
