@@ -163,7 +163,7 @@ def test_a_closed_name_never_retires_a_still_open_namesake():
     """emdash task names are not unique. The closing signal this feature finally
     produces must not retire a DIFFERENT, still-open task that happens to share a
     name — `now_keys` wins over `archived` (apps/harness/services.py)."""
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
 
     user, ws = _ctx()
     runner = _runner(user, ws)
@@ -176,10 +176,10 @@ def test_a_closed_name_never_retires_a_still_open_namesake():
             self.last_interacted_at = None
             self.recent_messages = []
 
-    harness_services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
     # The runner deleted one "ddd" and re-reports another still open under the
     # same name in the SAME wholesale call.
-    harness_services.replace_reported_sessions(
+    session_sync.replace_reported_sessions(
         runner, ws, [_Reported("ddd")], archived=["ddd"]
     )
     assert Session.objects.get(runner_binding__session_key="ddd").status == Session.ACTIVE

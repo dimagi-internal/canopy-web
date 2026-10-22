@@ -184,7 +184,7 @@ def test_a_stop_event_fans_out_live_and_is_never_persisted():
     """Same contract as `activity:` — it is state, not transcript. Persisting it
     would put "stop failed" into the durable history as if it were something the
     agent said."""
-    from apps.harness.api import LIVE_ONLY_PREFIXES
+    from apps.harness.session_sync import LIVE_ONLY_PREFIXES
 
     assert "stop:".startswith(LIVE_ONLY_PREFIXES) or "stop:" in LIVE_ONLY_PREFIXES
     assert "stop:failed".startswith(LIVE_ONLY_PREFIXES)

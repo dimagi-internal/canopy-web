@@ -9,23 +9,21 @@ from __future__ import annotations
 import logging
 import uuid
 
-from django.db import transaction
 from django.db.models import Q
 from django.http import HttpRequest
 from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
-from apps.canopy_sessions.models import Message, RunnerBinding, Session
+from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import services
+from . import session_sync
 
 # The one harness router and the helpers every harness route shares; api.py
 # imports this module after defining them.
 from .api import (  # noqa: E402
-    LIVE_ONLY_PREFIXES,
     router,
     runner_or_404,
 )
@@ -93,12 +91,12 @@ def resolve_session(request: HttpRequest, runner_id: uuid.UUID, payload: Resolve
     runner = runner_or_404(request, runner_id)
     if payload.project:
         ws = _project_workspace_or_404(request, payload.workspace)
-        return services.resolve_session(
+        return session_sync.resolve_session(
             None, payload.thread_key, runner, project=payload.project, workspace=ws,
             turn_id=payload.turn_id,
         )
     agent = agent_for_read(request, payload.agent_slug)
-    return services.resolve_session(agent, payload.thread_key, runner, turn_id=payload.turn_id)
+    return session_sync.resolve_session(agent, payload.thread_key, runner, turn_id=payload.turn_id)
 
 
 @router.post("/runners/{runner_id}/record-session", response=ResolveSessionOut)
@@ -134,15 +132,15 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
     if payload.project:
         ws = _project_workspace_or_404(request, payload.workspace)
         try:
-            services.record_session(
+            session_sync.record_session(
                 None, payload.thread_key, runner=runner, project=payload.project, workspace=ws,
                 session_key=payload.session_key, session_id=payload.session_id,
                 agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
                 title=payload.title, turn=turn,
             )
-        except services.ThreadSessionNotFound:
+        except session_sync.ThreadSessionNotFound:
             raise HttpError(404, "session not found")
-        return services.resolve_session(
+        return session_sync.resolve_session(
             None, payload.thread_key, runner, project=payload.project, workspace=ws
         )
     agent = agent_for_read(request, payload.agent_slug)
@@ -151,21 +149,21 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
         # The server names the session from the turn when it knows it: the email's
         # subject, the schedule's name — never the raw command a cloud turn's
         # prompt often is ("/ace:turn --thread …", 2026-10-03).
-        title = services.turn_session_title(turn, payload.title)
+        title = session_sync.turn_session_title(turn, payload.title)
     try:
-        services.record_session(
+        session_sync.record_session(
             agent, payload.thread_key, runner=runner,
             session_key=payload.session_key, session_id=payload.session_id,
             agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
             title=title, turn=turn,
         )
-    except services.ThreadSessionNotFound:
+    except session_sync.ThreadSessionNotFound:
         # A session id that is not this agent's, or sits in a tenant the runner's
         # owner is not in: refused as if it did not exist, and nothing rebound.
         raise HttpError(404, "session not found")
     if payload.turn_id and payload.session_key:
-        services.stamp_turn_session(payload.turn_id, runner, payload.session_key)
-    return services.resolve_session(agent, payload.thread_key, runner)
+        session_sync.stamp_turn_session(payload.turn_id, runner, payload.session_key)
+    return session_sync.resolve_session(agent, payload.thread_key, runner)
 
 
 @router.post("/runners/{runner_id}/sessions", response=SessionReportOut)
@@ -180,7 +178,7 @@ def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportS
     if ws is None:
         raise HttpError(404, "runner has no workspace")
     skipped: list = []
-    count = services.replace_reported_sessions(
+    count = session_sync.replace_reported_sessions(
         runner, ws, payload.sessions, payload.archived, complete=payload.complete,
         skipped=skipped,
     )
@@ -286,10 +284,6 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     chat.turn_event frames the chat path uses (turn-less -> the consumer derives
     seq:<n> message ids). User events are persisted but never live-pushed — the
     sender's client already echoed them optimistically."""
-    from apps.canopy_sessions import services as chat_services
-    from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
-    from apps.realtime import groups
-
     runner = runner_or_404(request, runner_id)
     binding = (
         RunnerBinding.objects.select_related("session")
@@ -297,125 +291,8 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     )
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
-    # transcript ordinal (e.index) -> the author persist_transcript_rows found
-    # for it, if any — carried into the live frame below so a watcher sees who
-    # sent an unmarked line without waiting for a reload (stream_map's
-    # kind=="user" branch reads this when its own marker-parse finds none).
-    authors_by_index: dict[int, dict] = {}
-    if chat_services.transcript_sourced(binding.session):
-        # BEFORE any write: if these ordinals index a different transcript than the
-        # rows already held, the two would interleave (or the new one be silently
-        # swallowed). If a closed session's NAME was reused, these rows are a new
-        # conversation's and go to a new session, leaving the old one whole;
-        # otherwise the new transcript opens a new epoch above the held rows.
-        if chat_transcript_ingest.fork_if_name_reused(binding.session, payload.transcript_id):
-            binding = RunnerBinding.objects.select_related("session").get(pk=binding.pk)
-        chat_transcript_ingest.ensure_transcript_identity(binding.session, payload.transcript_id)
-        # Not "was this session discovered in emdash?" — where a conversation
-        # started says nothing about where its record belongs. A phone-created chat
-        # is driven by the same runner, in the same emdash session, writing the same
-        # transcript, so it persists the same way (see services.transcript_sourced).
-        #
-        # Ordinal-less events (an old runner) stay live-view-only: persisting
-        # assistant rows without the user side would blank the tail fallback's
-        # human half the moment any row exists.
-        # The payload IS the row's content (structured fields + "text"), stored
-        # verbatim — a tool_use's {id,name,input} and a tool_result's
-        # {tool_use_id,is_error} are what the client pairs and renders on, so
-        # flattening to text here would strip exactly the half that makes a tool
-        # call legible.
-        created = chat_transcript_ingest.persist_transcript_rows(binding.session, [
-            {"index": e.index, "role": e.kind,
-             "text": (e.payload or {}).get("text", ""), "content": e.payload or {},
-             "cwd": e.cwd, "git_branch": e.git_branch}
-            for e in payload.events if e.index >= 0
-        ])
-        from apps.canopy_sessions.authorship import parse as parse_marker
-
-        # A user row's text is the prompt AS DELIVERED — marker line included —
-        # and the receivers compare it with the bare Turn.prompt (Slack's
-        # "carrying on elsewhere" check), so they get the words without it.
-        streamed = [(e.index, e.kind,
-                     parse_marker(text)[1] if e.kind == "user" else text)
-                    for e in payload.events
-                    if e.index >= 0 and e.kind in ("user", "assistant")
-                    for text in [str((e.payload or {}).get("text") or "")]
-                    if text]
-        if created and streamed:
-            from apps.harness.signals import transcript_rows_streamed
-
-            session = binding.session
-            transaction.on_commit(lambda: transcript_rows_streamed.send(
-                sender=type(session), session=session, rows=streamed))
-        user_indices = [
-            e.index + binding.index_offset
-            for e in payload.events if e.index >= 0 and e.kind == "user"
-        ]
-        if user_indices:
-            authors_by_index = {
-                turn_index - binding.index_offset: author
-                for turn_index, author in Message.objects.filter(
-                    session=binding.session, turn_index__in=user_indices,
-                ).values_list("turn_index", "author")
-                if author
-            }
-    if not binding.stream_desired:
-        # Persisted above, but nobody is watching, so there is nothing to push.
-        # The runner now tails EVERY session it backs so the durable record stops
-        # depending on someone having the chat open (see list_streams); this is the
-        # gate that keeps that from also broadcasting every session in the fleet to
-        # session groups no client has joined.
-        return {"count": 0}
-    sgroup = groups.session_group(binding.session_id)
-    n = 0
-    from apps.canopy_sessions.transcript_noise import is_system_noise
-
-    from . import sensitivity
-
-    # The live frame carries what the row stores (spec 2026-10-22-phi-agents-on-
-    # zdr-runners §4): a watcher and a reload see the same withheld result.
-    withhold = sensitivity.is_sensitive(binding.session)
-
-    for e in payload.events:
-        # The noise filter has to run HERE too, not just in
-        # persist_transcript_rows. Now that user events fan out live, a filter
-        # applied only on the durable path would drop a harness marker from
-        # history while still pushing it to every watching client — so it would
-        # appear live, then vanish on reload. Same rule, both paths.
-        if e.kind.startswith(LIVE_ONLY_PREFIXES):
-            # Fans out, never persists — index -1 already excludes it from the
-            # durable write, and it has no transcript row to be.
-            groups.publish(sgroup, {
-                "type": "chat.turn_event",
-                "event": {"kind": e.kind, "seq": e.seq, "payload": e.payload},
-                "turn_id": None,
-            })
-            n += 1
-            continue
-        if e.kind == "user" and is_system_noise((e.payload or {}).get("text", "")):
-            n += 1
-            continue
-        # User events ARE fanned out. They used to be withheld on the grounds
-        # that "the sender's client already echoed them optimistically" — true
-        # for text typed in the web, false for text typed directly into emdash,
-        # which no web client ever saw. The result was that typing in emdash and
-        # watching on the phone silently dropped your own words until a reload
-        # (observed 2026-07-27). The client upserts on turn_index, so a message
-        # that does arrive twice collapses instead of doubling.
-        event_payload = e.payload
-        if withhold and e.kind in sensitivity.RESULT_KINDS:
-            event_payload = {**sensitivity.strip_result(e.payload), "text": ""}
-        if e.kind == "user":
-            author = authors_by_index.get(e.index)
-            if author:
-                event_payload = {**(e.payload or {}), "author": author}
-        groups.publish(sgroup, {
-            "type": "chat.turn_event",
-            "event": {"kind": e.kind, "seq": e.seq, "payload": event_payload},
-            "turn_id": None,
-        })
-        n += 1
-    return {"count": n}
+    return {"count": session_sync.ingest_session_stream(
+        binding, transcript_id=payload.transcript_id, events=payload.events)}
 
 
 @router.get("/runners/{runner_id}/backfills", response=BackfillSyncOut)
@@ -548,7 +425,7 @@ def post_session_menu(request: HttpRequest, runner_id: uuid.UUID, payload: Sessi
     its session report; answers come back through `/menu-answers`. `ok: false`
     when this runner does not hold the session."""
     runner = runner_or_404(request, runner_id)
-    return {"ok": services.report_session_menu(runner, payload.session_id, payload.menu)}
+    return {"ok": session_sync.report_session_menu(runner, payload.session_id, payload.menu)}
 
 
 @router.post("/runners/{runner_id}/admission-notices", response=AdmissionNoticeClaimOut)

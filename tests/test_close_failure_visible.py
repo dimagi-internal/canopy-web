@@ -18,7 +18,7 @@ from django.utils import timezone
 from apps.canopy_sessions import control as chat_control
 from apps.canopy_sessions.models import RunnerBinding
 from apps.harness.models import Runner
-from apps.harness.services import replace_reported_sessions
+from apps.harness.session_sync import replace_reported_sessions
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db

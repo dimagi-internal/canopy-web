@@ -1852,7 +1852,7 @@ class MissingSessionOut(Schema):
     output_tokens: int
     cache_read_tokens: int
     cache_creation_tokens: int
-    # Where sending it up would file it (`harness.services.session_home`).
+    # Where sending it up would file it (`harness.session_sync.session_home`).
     files_in: str
     agent: str = ""
 

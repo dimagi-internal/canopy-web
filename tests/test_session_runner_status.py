@@ -17,7 +17,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.canopy_sessions.models import Session
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -59,7 +59,7 @@ def _rows(user):
 
 def test_a_live_runner_reports_online():
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
 
     (row,) = _rows(user)
     assert row["runner_online"] is True
@@ -70,7 +70,7 @@ def test_a_paused_runner_is_named_as_paused_not_merely_offline():
     """The distinction the Sessions tab renders: 'runner paused' (undo it here)
     vs 'runner offline' (go find out what happened)."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
 
     runner.paused = True
     runner.save(update_fields=["paused"])
@@ -100,7 +100,7 @@ def test_runner_status_never_contradicts_runner_online():
     """Both derive from live_status, so no combination of stored state can make
     one say reachable while the other says parked."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
 
     for paused, status in ((False, Runner.ONLINE), (True, Runner.ONLINE), (False, Runner.DEGRADED)):
         runner.paused, runner.status = paused, status

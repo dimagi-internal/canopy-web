@@ -136,7 +136,7 @@ def test_rule_validation(world):
 
 
 def test_vocabularies_match_their_definitions():
-    from apps.harness.services import EMAIL_THREAD_KEY
+    from apps.harness.session_sync import EMAIL_THREAD_KEY
     from apps.slack.services import SLACK_THREAD_KEY
     from apps.slack.share import DETACHED_KEY
 

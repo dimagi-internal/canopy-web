@@ -100,7 +100,7 @@ an emdash task name alone is not an identity.
 - **Same worktree.** Files are shared, not forked. The app channel (`.canopy-desktop`) belongs to the session named in `seeded`, so a fork never takes the source's channel (`desktop.channel_held_for`), and closing one keeps a worktree another open session still uses.
 - On a cloud runner every turn of a fork runs in its SOURCE's directory: `resolve_session` returns `worktree_of` (the root of a chain of forks) and `_turn_cwd` keys on it. The stream finds a fork's transcript by its session uuid, since it is not in the fork's own directory.
 - Cloud runners and the laptop `claude-cli` runtime only (`placement.fork_runner_supported`): emdash and the Claude app own their sessions. The menu is offered only there (`MessageContextMenu.canFork`); elsewhere a right-click is the browser's own.
-- The fork opens at once. In /ide every session sits in its own place; a session another was started from (`parent_session_id`: a fork, a Slack branch, a dispatched turn's session) also shows each child as a grey link row underneath, foldable per parent, that opens the real session (`ideTree.childLinks`). Links come from the viewer's own session list, so a child they cannot read is never linked. A runner-made session for a dispatched turn takes the turn's parent and the parent chat's people (`harness.services._thread_session`).
+- The fork opens at once. In /ide every session sits in its own place; a session another was started from (`parent_session_id`: a fork, a Slack branch, a dispatched turn's session) also shows each child as a grey link row underneath, foldable per parent, that opens the real session (`ideTree.childLinks`). Links come from the viewer's own session list, so a child they cannot read is never linked. A runner-made session for a dispatched turn takes the turn's parent and the parent chat's people (`harness.session_sync._thread_session`).
 
 ## Several people in one chat: drafts and authorship
 
@@ -198,7 +198,7 @@ an emdash task name alone is not an identity.
 - `RunnerBinding.runner` is **identity** — which box the session lives on; a report
   never nulls it. `RunnerBinding.live_seen_at` is **liveness**, read against
   `staleness.SESSION_LIVE_WINDOW` (3 min). `reported_at` is stamped only by the
-  report loop (`harness.services.replace_reported_sessions`), so "a runner is
+  report loop (`harness.session_sync.replace_reported_sessions`), so "a runner is
   reporting an emdash task for this" is observable.
 - The laptop runner re-reports its whole open-task set every ~10s (`session_report_seconds`) and skips
   the report entirely if it cannot read emdash, so absence is an observation and a

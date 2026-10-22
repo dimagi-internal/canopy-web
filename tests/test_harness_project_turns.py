@@ -149,7 +149,7 @@ def test_record_then_resolve_a_project_session_reuses_it():
     thread per target, so message 2 must resolve to REUSE rather than fork a new
     Claude session. Nothing new is built for this — a stable thread_key lands on
     the existing reuse path."""
-    from apps.harness import services
+    from apps.harness import session_sync
     from apps.harness.models import Runner
 
     ws = _ws()
@@ -157,11 +157,11 @@ def test_record_then_resolve_a_project_session_reuses_it():
         name="jj-mbp", kind=Runner.EMDASH, host="jj-mac",
         capabilities={"projects": ["canopy-web"]},
     )
-    services.record_session(
+    session_sync.record_session(
         None, "phone:jj:canopy-web", runner=runner, project="canopy-web", workspace=ws,
         session_key="task-1", session_id="sess-1",
     )
-    plan = services.resolve_session(
+    plan = session_sync.resolve_session(
         None, "phone:jj:canopy-web", runner, project="canopy-web", workspace=ws
     )
 
@@ -173,16 +173,16 @@ def test_record_then_resolve_a_project_session_reuses_it():
 def test_resolving_a_project_thread_in_the_wrong_workspace_finds_nothing():
     """The tenant gate. Even holding the exact thread_key, a runner scoped to a
     DIFFERENT workspace resolves new_thread — never the victim's summary/task."""
-    from apps.harness import services
+    from apps.harness import session_sync
     from apps.harness.models import Runner
 
     owner_ws, other_ws = _ws("canopy"), _ws("dimagi")
     r = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac")
-    services.record_session(
+    session_sync.record_session(
         None, "phone:jj:canopy-web", runner=r, project="canopy-web", workspace=owner_ws,
         session_key="secret-task", summary="secret context",
     )
-    plan = services.resolve_session(
+    plan = session_sync.resolve_session(
         None, "phone:jj:canopy-web", r, project="canopy-web", workspace=other_ws
     )
 
@@ -195,14 +195,14 @@ def test_recording_the_same_project_thread_twice_updates_one_link():
     """get_or_create must find the existing row, not trip the unique constraint
     or spawn a second link (which would mean a second session)."""
     from apps.canopy_sessions.models import RunnerBinding
-    from apps.harness import services
+    from apps.harness import session_sync
     from apps.harness.models import Runner
 
     ws = _ws()
     r = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac")
-    services.record_session(None, "phone:jj:canopy-web", runner=r, project="canopy-web",
+    session_sync.record_session(None, "phone:jj:canopy-web", runner=r, project="canopy-web",
                             workspace=ws, session_key="task-1")
-    services.record_session(None, "phone:jj:canopy-web", runner=r, project="canopy-web",
+    session_sync.record_session(None, "phone:jj:canopy-web", runner=r, project="canopy-web",
                             workspace=ws, session_key="task-2")
 
     assert RunnerBinding.objects.filter(session__project="canopy-web").count() == 1
@@ -210,11 +210,11 @@ def test_recording_the_same_project_thread_twice_updates_one_link():
 
 
 def test_a_session_link_target_must_be_exactly_one_thing():
-    from apps.harness import services
+    from apps.harness import session_sync
     from apps.harness.models import Runner
 
     r = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH)
     with pytest.raises(ValueError):
-        services.resolve_session(_agent(), "t", r, project="canopy-web")
+        session_sync.resolve_session(_agent(), "t", r, project="canopy-web")
     with pytest.raises(ValueError):
-        services.resolve_session(None, "t", r)
+        session_sync.resolve_session(None, "t", r)

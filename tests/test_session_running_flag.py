@@ -21,7 +21,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -66,7 +66,7 @@ def _row(user):
 def test_a_working_session_that_has_been_quiet_for_minutes_is_still_running():
     """The reported bug. A long tool call is silence, not completion."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("pov-grad", agent_status="working")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("pov-grad", agent_status="working")])
 
     assert _row(user)["running"] is True
 
@@ -75,7 +75,7 @@ def test_a_session_the_engine_calls_idle_is_not_running_however_recently_it_wrot
     """The same misreading in the other direction: a turn that stopped five seconds
     ago is finished, and the badge should say so now rather than in two minutes."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(
+    session_sync.replace_reported_sessions(
         runner, ws, [_Reported("hh", agent_status="awaiting-input", age=dt.timedelta(seconds=5))]
     )
 
@@ -87,17 +87,17 @@ def test_a_runner_that_cannot_answer_still_gets_the_recency_heuristic():
     emdash, or a drifted schema. Those keep exactly the behaviour they had."""
     user, ws, runner = _ctx()
 
-    services.replace_reported_sessions(runner, ws, [_Reported("kmc", age=dt.timedelta(seconds=5))])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("kmc", age=dt.timedelta(seconds=5))])
     assert _row(user)["running"] is True
 
-    services.replace_reported_sessions(runner, ws, [_Reported("kmc")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("kmc")])
     assert _row(user)["running"] is False
 
 
 def test_an_offline_runners_last_answer_is_not_believed():
     """It describes a box that is no longer there — the session is parked, not live."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("labs", agent_status="working")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("labs", agent_status="working")])
 
     # Liveness is observed, not claimed: a lapsed heartbeat is how a box that died
     # mid-turn actually presents (it never gets to tell us it stopped).
@@ -111,8 +111,8 @@ def test_the_flag_clears_when_the_turn_ends():
     """Every report is a fresh observation, so "working" has to be retirable by the
     next one — a stuck badge is the failure this whole path is meant to remove."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd", agent_status="working")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd", agent_status="working")])
     assert _row(user)["running"] is True
 
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd", agent_status="awaiting-input")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd", agent_status="awaiting-input")])
     assert _row(user)["running"] is False

@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -36,8 +36,8 @@ def _ctx():
 
 def test_an_archived_task_archives_its_session():
     _user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
-    services.replace_reported_sessions(runner, ws, [_Reported("live")], archived=["ddd"])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("live")], archived=["ddd"])
 
     by_key = {b.session_key: b.session for b in RunnerBinding.objects.select_related("session")}
     assert by_key["ddd"].status == Session.ARCHIVED
@@ -48,11 +48,11 @@ def test_reopening_a_task_unarchives_it():
     """The WRITTEN half must be cleared explicitly — unlike the derived staleness
     half, it does not heal itself."""
     _user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
-    services.replace_reported_sessions(runner, ws, [], archived=["ddd"])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [], archived=["ddd"])
     assert Session.objects.get().status == Session.ARCHIVED
 
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
     assert Session.objects.get().status == Session.ACTIVE
 
 
@@ -64,9 +64,9 @@ def test_a_runner_cannot_archive_another_runners_session():
         name="jj-mini", workspace=ws, location=Runner.LOCAL, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), owner=user,
     )
-    services.replace_reported_sessions(runner_a, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner_a, ws, [_Reported("ddd")])
     binding_a = RunnerBinding.objects.get(runner=runner_a, session_key="ddd")
-    services.replace_reported_sessions(runner_b, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner_b, ws, [_Reported("ddd")])
     binding_b = RunnerBinding.objects.get(runner=runner_b, session_key="ddd")
     assert Session.objects.count() == 2
     assert binding_a.pk != binding_b.pk
@@ -74,7 +74,7 @@ def test_a_runner_cannot_archive_another_runners_session():
     # Capture the two rows BEFORE the archive: the clear step nulls runner_id on
     # anything not re-reported, so keying the assertion on runner_id would test the
     # clear, not the cross-runner scoping this test is about.
-    services.replace_reported_sessions(runner_b, ws, [], archived=["ddd"])
+    session_sync.replace_reported_sessions(runner_b, ws, [], archived=["ddd"])
     binding_a.refresh_from_db()
     assert Session.objects.get(pk=binding_a.session_id).status == Session.ACTIVE  # A untouched
     assert Session.objects.get(pk=binding_b.session_id).status == Session.ARCHIVED
@@ -83,8 +83,8 @@ def test_a_runner_cannot_archive_another_runners_session():
 
 def test_an_unknown_archived_name_is_ignored():
     _user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")], archived=["never-existed", ""])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")], archived=["never-existed", ""])
     assert Session.objects.get().status == Session.ACTIVE
 
 
@@ -99,7 +99,7 @@ def test_the_route_applies_the_archive_signal():
         "sessions": [{"emdash_task": "live", "project": "canopy-web"}],
         "archived": ["ddd"],
     }
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
     resp = c.post(
         f"/api/harness/runners/{runner.id}/sessions",
         data=body,
@@ -119,9 +119,9 @@ def test_an_archived_session_drops_out_of_the_live_list():
     enforces that by filtering on session status, not on the binding's runner FK
     (which is now durable identity and stays set)."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
-    assert {r.emdash_task for r in services.list_visible_sessions(user)} == {"ddd", "live"}
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
+    assert {r.emdash_task for r in session_sync.list_visible_sessions(user)} == {"ddd", "live"}
 
-    services.replace_reported_sessions(runner, ws, [_Reported("live")], archived=["ddd"])
-    assert {r.emdash_task for r in services.list_visible_sessions(user)} == {"live"}
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("live")], archived=["ddd"])
+    assert {r.emdash_task for r in session_sync.list_visible_sessions(user)} == {"live"}
     assert RunnerBinding.objects.get(session_key="ddd").runner_id == runner.id

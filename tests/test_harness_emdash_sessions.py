@@ -135,7 +135,7 @@ def _reported(task, **kw):
 def test_list_is_tenant_scoped_and_hides_offline_runners():
     from datetime import timedelta
     from django.test import Client
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
 
     jj = _user("jj")
     ws = _ws("dimagi", jj)
@@ -173,7 +173,7 @@ def test_list_no_longer_auto_joins_a_domain_matching_user_with_no_membership_row
     `test_list_auto_joins_a_domain_matching_user_with_no_membership_row` used
     to assert (that merely sharing the domain silently granted the list)."""
     from django.test import Client
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
 
     owner = _user("owner")
     ws = _ws("dimagi", owner)
@@ -197,7 +197,7 @@ def test_list_no_longer_auto_joins_a_domain_matching_user_with_no_membership_row
 def test_list_is_newest_first_by_last_interacted_at():
     from datetime import timedelta
     from django.test import Client
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
 
     jj = _user("jj")
     ws = _ws("dimagi", jj)
@@ -272,7 +272,7 @@ def test_a_failing_retitle_never_breaks_the_session_report(monkeypatch):
     from django.test import Client
 
     from apps.canopy_sessions.models import RunnerBinding, Session
-    from apps.harness import services as hsvc
+    from apps.harness import session_sync as hsvc
 
     jj = _user("jj-safe")
     ws = _ws("dimagi-safe", jj)
@@ -327,7 +327,7 @@ def test_a_menu_is_cleared_when_its_session_stops_being_reported():
     it prunes its own copy, but it has no way to say anything about a session it
     can no longer see. Absence from the wholesale report is the observation.
     """
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
 
     jj = _user("jj")
     ws = _ws("dimagi", jj)
@@ -356,7 +356,7 @@ def test_a_menu_is_cleared_when_its_session_stops_being_reported():
 def test_clearing_a_stale_menu_does_not_touch_another_runners_sessions():
     """The report is wholesale PER RUNNER. Scoping the clear any wider would let
     one box's report retire dialogs on every other box."""
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
 
     jj = _user("jj")
     ws = _ws("dimagi", jj)
@@ -387,7 +387,7 @@ def test_an_agent_session_tells_the_runner_which_emdash_project_it_lives_under()
     from django.test import Client as DjangoClient
 
     from apps.canopy_sessions.models import RunnerBinding
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
 
     jj = _user("jj")
     ws = _ws("dimagi", jj)
@@ -444,7 +444,7 @@ def test_an_answer_survives_the_control_channel_being_down():
 
     from apps.canopy_sessions import control as chat_control
     from apps.canopy_sessions.models import RunnerBinding
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
 
     jj = _user("jj")
     ws = _ws("dimagi", jj)
@@ -481,7 +481,7 @@ def test_a_stale_result_never_retires_a_newer_answer():
 
     from apps.canopy_sessions import control as chat_control
     from apps.canopy_sessions.models import RunnerBinding
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
 
     jj = _user("jj")
     ws = _ws("dimagi", jj)
@@ -520,7 +520,7 @@ def test_a_close_survives_the_control_channel_being_down():
 
     from apps.canopy_sessions import control as chat_control
     from apps.canopy_sessions.models import RunnerBinding
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
 
     jj = _user("jj")
     ws = _ws("dimagi", jj)

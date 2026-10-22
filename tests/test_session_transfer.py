@@ -20,7 +20,7 @@ from django.test import Client
 from apps.canopy_sessions import placement as session_placement
 from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
-from apps.harness import services as harness_services
+from apps.harness import session_sync
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from canopy_transcript import BLOCK_STRIDE
@@ -282,7 +282,7 @@ def test_the_targets_first_report_does_not_reset_the_epoch():
     offset = RunnerBinding.objects.get(session=s).index_offset
     assert offset > 0
 
-    harness_services.record_session(
+    session_sync.record_session(
         None, str(s.id), runner=laptop, project="canopy-web", workspace=ws,
         session_key="c-fresh-local-task",
     )

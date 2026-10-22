@@ -16,7 +16,7 @@ import pytest
 
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import Runner, Turn
-from apps.harness.services import replace_reported_sessions
+from apps.harness.session_sync import replace_reported_sessions
 from apps.slack import share
 from tests.fixtures.slack import mention
 

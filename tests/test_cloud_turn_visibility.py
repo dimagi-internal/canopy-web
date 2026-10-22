@@ -25,6 +25,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions.models import Message, RunnerBinding
 from apps.canopy_sessions.staleness import SESSION_LIVE_WINDOW
 from apps.harness import services
+from apps.harness import session_sync
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -60,7 +61,7 @@ def _client(user):
 def _recorded(agent, runner, key, *, started_ago, said=None, said_ago=None):
     """A turn's session as a runner records it (`ace:<turn id>`), started
     `started_ago`; optionally the agent's last word, `said_ago`."""
-    binding = services.record_session(
+    binding = session_sync.record_session(
         agent, f"ace:{key}", runner=runner, session_key=key, title=f"turn {key}",
     )
     RunnerBinding.objects.filter(pk=binding.pk).update(live_seen_at=timezone.now() - started_ago)

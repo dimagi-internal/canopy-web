@@ -132,7 +132,7 @@ def test_web_session_send_still_keys_on_the_session_id():
 
 def test_report_fills_empty_identity_but_never_overwrites():
     from types import SimpleNamespace
-    from apps.harness.services import replace_reported_sessions
+    from apps.harness.session_sync import replace_reported_sessions
     _u, ws, runner, _c = _ctx()
     legacy = _discovered(ws, runner, key="legacy", thread_key="", host="")   # pre-fold row
     owned = _discovered(ws, runner, key="owned", thread_key="phone:jj:echo")
@@ -164,7 +164,7 @@ def test_display_name_prefers_the_emdash_task_over_a_hash_title():
 
 
 def test_record_session_retitles_a_hash_named_session():
-    from apps.harness.services import record_session
+    from apps.harness.session_sync import record_session
     _u, ws, runner, _c = _ctx()
     # _binding_for_thread matches a PROJECT thread on session.project + workspace
     s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER,
@@ -178,7 +178,7 @@ def test_record_session_retitles_a_hash_named_session():
 
 
 def test_record_session_never_clobbers_a_human_chat_title():
-    from apps.harness.services import record_session
+    from apps.harness.session_sync import record_session
     user, ws, runner, _c = _ctx()
     s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_WEB,
                                project="echo", title="labs chat smoke")

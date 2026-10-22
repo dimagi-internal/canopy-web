@@ -90,7 +90,7 @@ def close_turn(
         close_riders(turn, now=now)
 
     if chat_hooks and turn.chat_session_id:
-        from .services import end_turns_ask, logger
+        from .session_sync import end_turns_ask, logger
 
         # "Your chat is done" (apps/push arms its quiet-timer). Never allowed to
         # fail the close.

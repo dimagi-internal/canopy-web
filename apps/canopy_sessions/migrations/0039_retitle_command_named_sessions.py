@@ -16,7 +16,7 @@ from django.db import migrations
 
 
 def retitle(apps, schema_editor):
-    from apps.harness.services import readable_title
+    from apps.harness.session_sync import readable_title
 
     Session = apps.get_model("canopy_sessions", "Session")
     Turn = apps.get_model("harness", "Turn")

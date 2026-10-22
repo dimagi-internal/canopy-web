@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 
-from apps.harness.services import replace_reported_sessions
+from apps.harness.session_sync import replace_reported_sessions
 from apps.harness.models import Runner
 from apps.canopy_sessions.models import Session, RunnerBinding
 from apps.workspaces.models import Workspace
@@ -140,7 +140,7 @@ def test_recovery_does_not_fuse_two_runners_with_blank_host():
 def test_list_visible_sessions_maps_to_wire_shape():
     from django.utils import timezone
 
-    from apps.harness.services import list_visible_sessions
+    from apps.harness.session_sync import list_visible_sessions
     from apps.workspaces.services import ensure_member
     from apps.workspaces.models import WorkspaceMembership
 

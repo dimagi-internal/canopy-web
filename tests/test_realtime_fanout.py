@@ -14,7 +14,7 @@ from channels.layers import get_channel_layer
 from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness import ledger
 from apps.harness.models import Runner, Turn
 from apps.push.models import AgentWaitingSnapshot
@@ -116,7 +116,7 @@ def test_sessions_fanout_to_runner_owner():
     layer = get_channel_layer()
     async_to_sync(layer.group_add)(groups.supervisor_user_group(user.id), "sup-chan")
 
-    services.replace_reported_sessions(
+    session_sync.replace_reported_sessions(
         runner, ws,
         [ReportedSessionIn(emdash_task="echo-1", project="echo", status="in_progress",
                            recent_messages=[{"role": "user", "text": "hi"}])],

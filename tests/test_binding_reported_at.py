@@ -6,7 +6,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -36,7 +36,7 @@ def _ctx():
 
 def test_the_report_loop_stamps_reported_at():
     _user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
     binding = RunnerBinding.objects.get(session_key="ddd")
     assert binding.reported_at is not None
 
@@ -53,7 +53,7 @@ def test_record_session_stamps_live_seen_at_but_not_reported_at():
     binding = RunnerBinding.objects.create(
         session=session, runner=runner, host=runner.host, session_key="", thread_key=str(session.id)
     )
-    services.record_session(
+    session_sync.record_session(
         agent=None, thread_key=str(session.id), runner=runner, project="canopy-web",
         workspace=ws, session_key="0d6f2c1e-1111-2222-3333-444455556666",
     )

@@ -33,7 +33,7 @@ def test_the_list_names_every_key_its_owner_writes():
     """Spelled as strings to avoid framework import cycles — so pinned here."""
     from apps.canopy_sessions.api import EMBED_APP_KEY
     from apps.harness.runner_requirements import METADATA_KEY as RUNNER_REQUIREMENTS_KEY
-    from apps.harness.services import EMAIL_THREAD_KEY
+    from apps.harness.session_sync import EMAIL_THREAD_KEY
     from apps.slack.services import SLACK_THREAD_KEY
 
     owned = services.SERVER_OWNED_METADATA

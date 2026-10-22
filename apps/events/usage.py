@@ -143,10 +143,10 @@ def send_up(runner, claude_sessions: list[str]) -> list[str]:
     """File each missing session as a canopy session and ask its box for the
     transcript (the ordinary backfill, keyed `claude:<id>`); its usage is matched
     to it at once. Filed where the report sweep files that box's sessions
-    (`harness.services.session_home`). Returns the canopy session ids."""
+    (`harness.session_sync.session_home`). Returns the canopy session ids."""
     from apps.canopy_sessions import transcript_read as session_transcript_read
     from apps.canopy_sessions.models import RunnerBinding, Session
-    from apps.harness.services import session_home
+    from apps.harness.session_sync import session_home
 
     out = []
     pending = {r["claude_session"]: r for r in missing(runner) if r["claude_session"] in set(claude_sessions)}

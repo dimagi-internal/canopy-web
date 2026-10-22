@@ -1227,7 +1227,7 @@ def send_up_missing_sessions(request: HttpRequest, runner_id: uuid.UUID, payload
 def _missing_sessions(runner) -> MissingSessionsOut:
     from apps.events import usage
 
-    from .services import session_home
+    from .session_sync import session_home
 
     rows = []
     for r in usage.missing(runner):
