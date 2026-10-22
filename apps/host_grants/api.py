@@ -4,6 +4,7 @@ Connected sites page reads what the site asks back, and who meets it)."""
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from canopy_sdk import offer as wire
 from django.http import HttpRequest, HttpResponse
@@ -123,8 +124,6 @@ class SiteNeedsOut(Schema):
 def _iso(ts: float | None) -> str | None:
     if ts is None:
         return None
-    from datetime import datetime, timezone
-
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 

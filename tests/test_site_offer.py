@@ -24,7 +24,7 @@ from django.utils import timezone
 from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag
-from apps.host_grants import client_identity, site_needs, site_offer
+from apps.host_grants import client_identity, site_needs
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
