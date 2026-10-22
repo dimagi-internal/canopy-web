@@ -161,7 +161,7 @@ def test_members_through_every_signed_in_door(w, door, role, iface):
 @pytest.mark.parametrize("iface", list(IFACES))
 @pytest.mark.parametrize("role", list(EXPECT))
 def test_members_by_verified_email(w, role, iface):
-    """A member proven by THIS message's DMARC is that member (`_member_behind_email`)."""
+    """A member proven by THIS message's DMARC is that member (`member_behind_email`)."""
     _publish(w["agent"], IFACES[iface])
     _check(_via_email(w, w[role].email, f"{role}-{iface}"), EXPECT[role][iface])
 

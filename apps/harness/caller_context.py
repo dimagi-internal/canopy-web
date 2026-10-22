@@ -50,7 +50,7 @@ VERSION = 3
 
 #: User assurances that establish the person, not just a claim about them.
 #: `dmarc` is a member resolved from a DMARC-aligned email (harness
-#: `_member_behind_email`), which is only ever done on THIS message's grade.
+#: `member_behind_email`), which is only ever done on THIS message's grade.
 #: `slack_email` is a full member of our own Slack matched by the profile email
 #: that Slack's owning organisation provisioned (`slack.services.auto_link`
 #: refuses guests and other teams' members).
@@ -231,7 +231,7 @@ def _unproven_member(turn, agent) -> dict | None:
     Only for an email turn whose initiator stayed a CONTACT (not blocked) because
     this message's grade is not in `Contact.EMAIL_ALIGNED`, where the address is
     held by exactly one canopy user who is a member of the agent's workspace —
-    the same lookup `_member_behind_email` links with (`address_holder`). Reads
+    the same lookup `member_behind_email` links with (`address_holder`). Reads
     the turn's own grade, never the contact's best: the question is about THIS
     message. Informs, does not enforce.
     """
@@ -243,7 +243,7 @@ def _unproven_member(turn, agent) -> dict | None:
     grade = turn.initiator_assurance or Contact.AUTH_NONE
     if grade in Contact.EMAIL_ALIGNED:
         return None
-    from .services import address_holder
+    from .channels.email import address_holder
 
     user, role = address_holder(contact.email, agent.workspace_id)
     if user is None or role is None:
@@ -272,7 +272,7 @@ def sender_trust(turn) -> dict | None:
     """The temporary `SenderTrust` this email turn's member rode on, or None.
 
     Non-null only for an email turn resolved to a member although THIS message
-    is not aligned — which `_member_behind_email` allows for nothing but a
+    is not aligned — which `member_behind_email` allows for nothing but a
     trust rule. Reads the rule as it is now (it may have expired or been
     removed since; `active` says which), so an owner can see the exception that
     let the person in."""
