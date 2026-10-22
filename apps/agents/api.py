@@ -75,6 +75,7 @@ from .schemas import (
     AgentOut,
     AgentOwnerIn,
     AgentPluginOut,
+    AgentRepoHeadOut,
     AgentRuntimeOut,
     AgentScaffoldIn,
     AgentScaffoldOut,
@@ -573,12 +574,17 @@ def _interface_out(agent) -> dict:
             "published_by_email": by.email if by is not None else None,
             # Computed AFTER any save, cached and time-boxed: it never blocks one.
             "warnings": domain_warnings(iface, agent.workspace_id) if iface else [],
-            "declarations": [
-                {"capability": d.capability, "data": d.data, "sha": d.sha,
-                 "declared_by_email": d.declared_by.email if d.declared_by else None,
-                 "declared_at": d.declared_at}
-                for d in agent.declarations.filter(withdrawn_at__isnull=True)
-                .select_related("declared_by").order_by("capability")]}
+            "declarations": [_declaration_out(agent, d)
+                             for d in agent.declarations.filter(withdrawn_at__isnull=True)
+                             .select_related("declared_by").order_by("capability")]}
+
+
+def _declaration_out(agent, d) -> dict:
+    last_sha, last_at = declarations.last_run_sha(agent, d.capability)
+    return {"capability": d.capability, "data": d.data, "sha": d.sha,
+            "declared_by_email": d.declared_by.email if d.declared_by else None,
+            "declared_at": d.declared_at, "commit_url": declarations.commit_url(agent, d.sha),
+            "last_run_sha": last_sha, "last_run_at": last_at}
 
 
 @router.get("/{slug}/interface", response=AgentInterfaceOut,
@@ -633,6 +639,15 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
     if phi or had_phi:
         declarations.record(agent, sha=payload.declare_sha if phi else None, by=request.user)
     return _interface_out(agent)
+
+
+# Agent-admin, like the save it prefills: it reads the repo with the agent's
+# GitHub identity.
+@router.get("/{slug}/interface/repo-head", response=AgentRepoHeadOut,
+            summary="The agent repo's current commit — the one a PHI-safe declaration is offered")
+@gate("agent-admin")
+def interface_repo_head(request: HttpRequest, slug: str):
+    return declarations.repo_head(agent_for_admin(request, slug))
 
 
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,

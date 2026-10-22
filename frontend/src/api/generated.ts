@@ -3405,6 +3405,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/interface/repo-head": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The agent repo's current commit — the one a PHI-safe declaration is offered */
+        readonly get: operations["interface_repo_head"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/admins": {
         readonly parameters: {
             readonly query?: never;
@@ -18513,6 +18530,15 @@ export interface components {
              * Format: date-time
              */
             readonly declared_at: string;
+            /**
+             * Commit Url
+             * @default
+             */
+            readonly commit_url: string;
+            /** Last Run Sha */
+            readonly last_run_sha?: string | null;
+            /** Last Run At */
+            readonly last_run_at?: string | null;
         };
         /** AgentInterfaceOut */
         readonly AgentInterfaceOut: {
@@ -18550,6 +18576,19 @@ export interface components {
             } | null;
             /** Declare Sha */
             readonly declare_sha?: string | null;
+        };
+        /** AgentRepoHeadOut */
+        readonly AgentRepoHeadOut: {
+            /** Repo */
+            readonly repo: string;
+            /** Ref */
+            readonly ref: string;
+            /** Sha */
+            readonly sha: string;
+            /** Commit Url */
+            readonly commit_url: string;
+            /** Detail */
+            readonly detail: string;
         };
         /** AgentAdminOut */
         readonly AgentAdminOut: {
@@ -36867,6 +36906,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentInterfaceOut"];
+                };
+            };
+        };
+    };
+    readonly interface_repo_head: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentRepoHeadOut"];
                 };
             };
         };

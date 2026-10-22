@@ -296,3 +296,62 @@ def test_pins_is_reported_never_set_by_hand(w):
     r = c.patch(f"/api/harness/runners/{rid}", {"capabilities": {"pins": 1}},
                 content_type="application/json")
     assert r.status_code == 422
+
+
+# --- what the interface page shows an author ------------------------------------------
+
+
+def test_a_declaration_links_its_commit_and_says_what_ran_last(w):
+    w["agent"].repo_url = "https://github.com/dimagi-internal/labsdata"
+    w["agent"].save(update_fields=["repo_url"])
+    _declare(w["agent"], w["owner"])
+    c = _client(w["owner"])
+    [d] = c.get("/api/agents/labsdata/interface").json()["declarations"]
+    assert d["commit_url"] == f"https://github.com/dimagi-internal/labsdata/commit/{SHA}"
+    assert (d["last_run_sha"], d["last_run_at"]) == (None, None)
+    rid = _runner(c, profiles=3, envelope=2, pins=1)
+    RunnerAssignment.objects.create(agent=w["agent"], runner_id=rid, rank=0)
+    _enqueue(w, w["owner"])
+    assert c.post(f"/api/harness/runners/{rid}/claim").status_code == 200
+    declarations.record(w["agent"], sha=SHA2, by=w["owner"])  # re-declared after it ran
+    [d] = c.get("/api/agents/labsdata/interface").json()["declarations"]
+    assert (d["sha"], d["last_run_sha"]) == (SHA2, SHA) and d["last_run_at"]
+
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self.ok, self._body = status, 200 <= status < 300, body
+
+    def json(self):
+        return self._body
+
+
+def test_the_repo_head_is_read_with_the_agents_github_identity(w, monkeypatch):
+    from apps.agents.models import AgentDelegation
+    from apps.common.encryption import encrypt_secret
+
+    agent = w["agent"]
+    agent.repo_url, agent.repo_ref = "https://github.com/dimagi-internal/labsdata", "main"
+    agent.save(update_fields=["repo_url", "repo_ref"])
+    url = "/api/agents/labsdata/interface/repo-head"
+    assert _client(w["owner"]).get(url).json()["detail"] == (
+        "the agent has no GitHub identity to read its repository with")
+    AgentDelegation.objects.create(user=w["owner"], agent=agent, service=AgentDelegation.GITHUB,
+                                   secret_enc=encrypt_secret("github_pat_x"))
+    seen = {}
+
+    def get(u, headers, timeout):
+        seen.update(url=u, auth=headers["Authorization"])
+        return _Resp(200, {"sha": SHA2})
+
+    monkeypatch.setattr(declarations.requests, "get", get)
+    body = _client(w["owner"]).get(url).json()
+    assert (body["sha"], body["ref"], body["detail"]) == (SHA2, "main", "")
+    assert body["commit_url"].endswith(f"/commit/{SHA2}")
+    assert seen == {"url": "https://api.github.com/repos/dimagi-internal/labsdata/commits/main",
+                    "auth": "Bearer github_pat_x"}
+    monkeypatch.setattr(declarations.requests, "get", lambda *a, **k: _Resp(404, {}))
+    body = _client(w["owner"]).get(url).json()
+    assert body["sha"] == "" and "404" in body["detail"]
+    # The agent's admins only: it reads the repo as the agent.
+    assert _client(w["editor"]).get(url).status_code == 403

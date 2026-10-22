@@ -27,12 +27,17 @@ from __future__ import annotations
 
 import re
 
+import requests
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
+from apps.common.encryption import decrypt_secret
 from apps.events import services as events
+from apps.harness.models import Turn
 
 from . import interface as iface_mod
+from .credentials import delegations
 from .models import AgentDeclaration
 
 PHI = "phi"
@@ -96,6 +101,55 @@ def covers(agent, capability: str, sha: str) -> bool:
     """Whether the current declaration of `capability` covers commit `sha`."""
     decl = current(agent, capability)
     return decl is not None and bool(sha) and decl.sha == sha
+
+
+def commit_url(agent, sha: str) -> str:
+    """The commit on GitHub, for a person to read what they vouch for; "" when
+    the agent's repo is not a github.com one."""
+    repo = delegations.agent_repo(agent)
+    return f"https://github.com/{repo}/commit/{sha}" if repo and sha else ""
+
+
+def last_run_sha(agent, capability: str):
+    """(sha, claimed_at) of the latest turn claimed in `capability`, or (None, None).
+
+    The commit a phi turn ran is the one stamped at claim (`Turn.agent_sha`), and
+    the gateway gives a host's data only to a turn whose stamp the current
+    declaration covers — so a stamp that differs is a turn hosts were refused to.
+    """
+    turn = (Turn.objects.filter(Q(agent=agent) | Q(chat_session__agent=agent),
+                                capability=capability, claimed_at__isnull=False)
+            .only("agent_sha", "claimed_at").order_by("-claimed_at").first())
+    return (turn.agent_sha, turn.claimed_at) if turn is not None else (None, None)
+
+
+def repo_head(agent) -> dict:
+    """The head of the agent repo's `repo_ref`, as GitHub reports it to the
+    agent's own GitHub identity (`delegations.delegation_for`) — the commit an
+    author is offered to declare. `sha` is "" with a `detail` saying why when
+    canopy cannot tell; the person then types the commit."""
+    repo, ref = delegations.agent_repo(agent), (agent.repo_ref or "").strip() or "main"
+    out = {"repo": repo, "ref": ref, "sha": "", "commit_url": "", "detail": ""}
+    if not repo:
+        out["detail"] = "the agent has no github.com repository set"
+        return out
+    row = delegations.delegation_for(agent)
+    if row is None:
+        out["detail"] = "the agent has no GitHub identity to read its repository with"
+        return out
+    try:
+        resp = requests.get(f"{delegations.GITHUB_API}/repos/{repo}/commits/{ref}",
+                            headers=delegations.github_headers(decrypt_secret(row.secret_enc)),
+                            timeout=delegations.HTTP_TIMEOUT)
+    except requests.RequestException:
+        out["detail"] = "GitHub did not answer"
+        return out
+    sha = (resp.json() or {}).get("sha", "") if resp.ok else ""
+    if not valid_sha(sha):
+        out["detail"] = f"GitHub would not say what {repo}@{ref} is ({resp.status_code})"
+        return out
+    out.update(sha=sha, commit_url=commit_url(agent, sha))
+    return out
 
 
 def as_claim(decl) -> dict | None:
