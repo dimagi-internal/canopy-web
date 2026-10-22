@@ -2,7 +2,7 @@
 
 Spec 2026-10-08 §3-6 (owner decisions in its last section). The browser routes
 that serve a rendered View (`canopy_sessions/app_views_api.py` for canopy users,
-`tokens/contact_api.py` for contacts) are thin; this module is the whole rule.
+`contacts/contact_api.py` for contacts) are thin; this module is the whole rule.
 
 **Which rows (§3).** A `tool_result` gets a View when (a) the session was held on
 a Connected site (`metadata.embed_app`) and (b) that site's UI tool index has a

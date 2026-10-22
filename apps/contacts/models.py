@@ -218,7 +218,7 @@ class Contact(models.Model):
     # There is deliberately NO tier-3 grade for an embedded site. A host signs a
     # statement about its visitor, and canopy verifies the HOST's signature —
     # never the person behind it, which is what tier 3 means. The mint says the
-    # same where it grades (`tokens/contact_api.py`: "it proves the SITE said
+    # same where it grades (`contacts/contact_api.py`: "it proves the SITE said
     # this, not that the human is who the site thinks").
     #
     # `app_signed_origin` ("Signed assertion from a framed origin") used to sit

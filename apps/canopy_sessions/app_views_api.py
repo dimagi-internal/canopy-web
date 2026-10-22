@@ -1,7 +1,7 @@
 """The browser plumbing behind a rendered MCP Apps View — for canopy USERS.
 
 `/api/canopy-sessions/{id}/apps/{tool_call_id}/…` (spec 2026-10-08 §5). A
-contact's twin lives under `/api/contact/` (`apps/tokens/contact_api.py`). The
+contact's twin lives under `/api/contact/` (`apps/contacts/contact_api.py`). The
 rule is `apps/tokens/mcp_apps_views.py`; these only resolve the session and the
 person.
 

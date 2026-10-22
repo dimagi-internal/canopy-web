@@ -29,7 +29,7 @@ from __future__ import annotations
 import pytest
 
 from apps.common.middleware import PUBLIC_PATH_PREFIXES
-from apps.tokens.contact_api import contact_token_router
+from apps.contacts.contact_api import contact_token_router
 
 
 #: The one route here that is deliberately open — the signed assertion IS the
@@ -173,3 +173,16 @@ def test_a_contact_principal_never_becomes_a_user():
     contact_return = principal_src[principal_src.index("return Principal(CONTACT"):]
     contact_return = contact_return[: contact_return.index("\n    if DELEGATED")]
     assert "user=" not in contact_return
+
+
+def test_the_contact_surfaces_operation_ids_survived_its_move_to_contacts():
+    """The routes moved from apps/tokens to apps/contacts; their operationIds are
+    MCP tool names and `generated.ts` keys, so they keep the published label."""
+    from apps.api.api import api
+
+    ids = {op["operationId"] for item in api.get_openapi_schema()["paths"].values()
+           for op in item.values()}
+    for name in ("list_sessions", "get_session", "send", "declare_page_actions",
+                 "resolve_page_action", "declare_page_state"):
+        assert f"tokens_contact_{name}" in ids, name
+        assert f"contacts_contact_{name}" not in ids, name

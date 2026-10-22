@@ -483,7 +483,7 @@ def test_the_sdk_readme_states_the_real_contract_values():
 
 def test_the_documented_arrival_field_is_the_one_the_endpoint_reads(doc):
     """§8a tells a host to send `id_jag` beside `assertion`."""
-    from apps.tokens.contact_api import ContactTokenIn, ContactTokenOut
+    from apps.contacts.contact_api import ContactTokenIn, ContactTokenOut
 
     assert "`id_jag`" in doc
     assert "id_jag" in ContactTokenIn.model_fields

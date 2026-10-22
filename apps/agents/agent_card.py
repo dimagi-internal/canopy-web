@@ -84,7 +84,7 @@ CONTACT = "canopyContactToken"
 # binding. A client that only speaks the standard bindings will see no binding
 # it can use, which is the honest answer today.
 # A contact holding a contact token opens a conversation at
-# `POST /api/contact/sessions` and sends into it (apps/tokens/contact_api.py).
+# `POST /api/contact/sessions` and sends into it (apps/contacts/contact_api.py).
 CONTACT_BINDING = "urn:dimagi:canopy:binding:contact-sessions:v1"
 # Mail to the agent's own mailbox is a turn like any other (apps/inbound).
 EMAIL_BINDING = "urn:dimagi:canopy:binding:email:v1"
