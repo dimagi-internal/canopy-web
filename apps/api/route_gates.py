@@ -66,6 +66,9 @@ Vocabulary (closed — add to it deliberately, never in passing):
   ``AgentAdmin``).
 * ``agent-owner`` — the agent's owner or a workspace owner (transfer, admin
   grants).
+* ``vault-manage`` — ``credentials.vault_members.role_of`` is ``manage``: a
+  person who manages that vault, directly or through a link (an agent vault's
+  link makes the agent's owner and admins its managers).
 * ``agent-login`` — the agent's OWN canopy login (``Agent.user``), i.e. the
   agent calling with its own PAT, whatever its workspace role.
 * ``session-acl`` — ``apps/canopy_sessions/access.py`` (read/write/share per chat).
@@ -139,7 +142,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
     "members.manage", "integrations", "runners.route", "retention.manage",
     "admission.manage", "projects.decide", "own",
-    "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
+    "agent-admin", "agent-owner", "vault-manage", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent", "license",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
     "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "paired-key", "page-viewer",

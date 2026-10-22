@@ -64,7 +64,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from .agent_login import follow_agent
-from .models import Agent, AgentAdmin, AgentProject, AgentSkill, AgentTask
+from .models import Agent, AgentAdmin, AgentProject, AgentSkill, AgentTask, Vault, VaultLink, VaultMember
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +284,23 @@ def _origin_issues(p: Plan, apply: bool) -> None:
 
     p.moves("issues.OriginIssue",
             _rehome(OriginIssue.objects.filter(agent=p.agent.slug), p.dest, apply), "re-homed")
+
+
+@register
+def _vault(p: Plan, apply: bool) -> None:
+    """The agent's own vault lives in its workspace and goes with it; its links
+    follow the vault. A person added by name who is not in the destination keeps
+    the row but can no longer reach the vault there (`vault_members.add_member`
+    asks for workspace membership only when adding)."""
+
+    p.moves("agents.Vault", _rehome(Vault.objects.filter(agent=p.agent), p.dest, apply),
+            "re-homed (the agent's own vault)")
+    p.moves("agents.VaultLink", VaultLink.objects.filter(vault__agent=p.agent).count(), "follows its vault")
+    direct = VaultMember.objects.filter(vault__agent=p.agent).select_related("user")
+    outside = [m.user.email for m in direct if wsvc.membership(m.user, p.dest) is None]
+    if outside:
+        p.breaks("vault_members", f"{len(outside)} person(s) added to {p.agent.slug}'s vault by name are not "
+                                  f"members of '{p.dest.slug}' and cannot reach it there: {', '.join(outside)}")
 
 
 @register

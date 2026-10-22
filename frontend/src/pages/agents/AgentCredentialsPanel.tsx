@@ -20,6 +20,7 @@ import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
 import { AgentPatRotationSection } from '@/pages/agents/AgentPatRotationSection'
 import { AgentCredentialAlertsSection } from '@/pages/agents/AgentCredentialAlertsSection'
 import { CredentialReadHistory } from '@/pages/agents/CredentialReadHistory'
+import { AgentVaultMembersSection } from '@/pages/agents/AgentVaultMembersSection'
 import { AgentZkSection } from '@/pages/agents/AgentZkSection'
 import type { ZkStateOut } from '@/api/vault'
 import { revealZkValue, setZkValue, unlockVaultKey } from '@/vault/operations'
@@ -473,6 +474,7 @@ export function AgentCredentialsPanel({
         requireDeviceBinding={agent.require_device_binding}
         canEdit={canEdit}
       />
+      <AgentVaultMembersSection slug={agent.slug} />
       <AgentZkSection
         slug={agent.slug}
         storedNames={rows.filter((r) => r.set).map((r) => r.name)}

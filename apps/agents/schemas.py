@@ -1890,6 +1890,43 @@ class ZkTargetOut(StrictModel):
     email: str = ""
 
 
+class VaultMemberOut(StrictModel):
+    user_id: int
+    email: str
+    #: "manage" | "use" — the highest any source gives them.
+    role: str
+    #: Why they are a member: "direct", "agent:<slug>", "workspace_owners:<slug>", …
+    sources: list[str]
+    #: They have a vault key of their own, so a copy of this vault's key can reach them.
+    has_vault_key: bool
+
+
+class VaultAgentLinkOut(StrictModel):
+    linked: bool
+    #: The role the link gives everyone with full access who is not an owner or admin.
+    role: str
+
+
+class VaultMembersOut(StrictModel):
+    vault_id: str
+    kind: str
+    name: str
+    agent_link: VaultAgentLinkOut
+    members: list[VaultMemberOut]
+    #: The caller's own role, or null when they are not a member.
+    you: str | None
+
+
+class VaultMemberIn(StrictModel):
+    email: str
+    role: str = "use"
+
+
+class VaultAgentLinkIn(StrictModel):
+    linked: bool
+    role: str = "use"
+
+
 class ZkStateOut(StrictModel):
     agent: str
     #: The Agent primary key as a string — bound into every AAD and HKDF info.

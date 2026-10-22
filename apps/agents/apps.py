@@ -9,12 +9,26 @@ class AgentsConfig(AppConfig):
         # Vault-key holders are told an approved device or new admin waits for a
         # zero-knowledge agent's key; the canopy-pat rotation and stale-proposal
         # expiry run on the same off-request clock.
+        from django.db.models.signals import post_save  # noqa: PLC0415 — ready(): kept beside the connect it serves
+
         from apps.common import ticks
 
         from .credentials import pat_rotation
+        from .models import Agent  # noqa: PLC0415 — ready(): models load only after the app registry
+
+        # Every agent has its own vault from the moment it exists, linked to the
+        # agent (credentials.vault_members) — made here so no read path writes.
+        post_save.connect(_make_vault, sender=Agent, dispatch_uid="agents.make_vault")
 
         ticks.register("agents.zk_notify", _zk_notify, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
+
+
+def _make_vault(sender, instance, created, raw=False, **kwargs) -> None:
+    if created and not raw:
+        from .credentials import vault_members  # noqa: PLC0415 — a signal handler: imported once the app is ready
+
+        vault_members.vault_for_agent(instance)
 
 
 def _zk_notify() -> None:
