@@ -17,7 +17,7 @@ they cannot disagree).
    agent's plugin, enrols this computer's key so it can read the agent's secrets
    from canopy vault, and records their sessions as **local turns** on the agent's
    page. Who may: the agent's owner and admins, a `full:` rule, workspace editors —
-   whom `access.decide` gives the whole agent (`apps/agents/licenses.py`). The people
+   whom `access.decide` gives the whole agent (`apps/agents/credentials/licenses.py`). The people
    doing it are listed under the agent's Settings → How it runs and → People → Local
    use. A computer without the runner app gets its own key for reading the agent's
    vault (a `computer` runner made when it registers, which is no fleet runner).

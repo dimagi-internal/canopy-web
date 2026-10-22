@@ -700,7 +700,7 @@ def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
     license is never re-issued automatically."""
     from apps.events import audit
 
-    from . import licenses
+    from .credentials import licenses
 
     agent, target = _license_target(request, slug, user_id)
     before = AgentLicense.objects.filter(agent=agent, user=target).values_list("status", flat=True).first()
@@ -717,7 +717,7 @@ def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
     make them an editor or add a `full:` rule first."""
     from apps.events import audit
 
-    from . import licenses
+    from .credentials import licenses
 
     agent, target = _license_target(request, slug, user_id)
     before = AgentLicense.objects.filter(agent=agent, user=target).values_list("status", flat=True).first()
@@ -877,7 +877,7 @@ def set_credential_source(request: HttpRequest, slug: str,
         # 2026-10-17): moving here seals every stored value to the agent's
         # readers and wipes the custodial copies, or refuses when nobody could
         # read them yet.
-        from . import zk
+        from .credentials import zk
 
         try:
             services.make_zero_knowledge(agent)

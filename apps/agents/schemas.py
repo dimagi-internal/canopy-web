@@ -1771,7 +1771,7 @@ class ZkWrapMissingOut(StrictModel):
     device_key: str
 
 
-# ---- zero-knowledge vault (canopy-web#1550; apps/agents/zk.py) ----------------
+# ---- zero-knowledge vault (canopy-web#1550; apps/agents/credentials/zk.py) ----------------
 
 ZkWrapKind = Literal["device", "member", "recovery"]
 

@@ -32,7 +32,7 @@ def _tick(interval_s: float) -> None:
 
     from . import pat_rotation
 
-    from . import proposals
+    from .. import proposals
 
     close_old_connections()
     try:

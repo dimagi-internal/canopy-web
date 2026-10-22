@@ -30,7 +30,7 @@ from django.db import transaction
 from apps.harness.models import RunnerDeviceKey
 from apps.passkeys.models import Passkey, UserVaultKeyset
 
-from .models import Agent, AgentCredential, AgentVaultWrap
+from ..models import Agent, AgentCredential, AgentVaultWrap
 
 ZK_PREFIX = "zk1:"
 NONCE_LEN, TAG_LEN, KEY_LEN, SALT_LEN, POINT_LEN = 12, 16, 32, 16, 65
@@ -559,7 +559,7 @@ def resolve_payload(agent, device_key, wanted: set[str] | None) -> tuple[dict, d
     under the vault key, or `zks1` sealed to recipients — scoped by `?refs=`
     like a custodial resolve) and that device's wrap at the current kv, or None
     when it has none."""
-    from . import services
+    from .. import services
 
     qs = AgentCredential.objects.filter(agent=agent).exclude(value_zk="")
     if wanted is not None:

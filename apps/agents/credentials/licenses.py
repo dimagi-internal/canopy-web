@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from apps.harness.models import Turn
 
-from .models import AgentLicense
+from ..models import AgentLicense
 
 
 class LicenseRefusedError(Exception):
@@ -35,7 +35,7 @@ class LicenseRefusedError(Exception):
 
 def _decision(agent, user):
 
-    from . import access
+    from .. import access
 
     return access.decide(agent, user, verified=True, origin=Turn.ORIGIN_LOCAL)
 
@@ -52,7 +52,7 @@ def _row(agent, user) -> AgentLicense:
 def request(agent, user) -> AgentLicense:
     """The person's ACTIVE license for `agent`, issuing it when the caller list allows.
     Raises LicenseRefusedError otherwise (the row is left REQUESTED or REVOKED)."""
-    from . import access
+    from .. import access
 
     lic = _row(agent, user)
     if lic.status == AgentLicense.REVOKED:
@@ -79,7 +79,7 @@ def request(agent, user) -> AgentLicense:
 def active(agent, user) -> AgentLicense | None:
     """The person's license if it is ACTIVE and the caller list still gives them the
     whole agent — re-asked every time, so a demotion takes effect at once."""
-    from . import access
+    from .. import access
 
     lic = AgentLicense.objects.filter(agent=agent, user=user, status=AgentLicense.ACTIVE).first()
     if lic is None or _decision(agent, user).access != access.FULL:
@@ -108,7 +108,7 @@ def revoke(agent, user, *, by, note: str = "") -> AgentLicense:
 def approve(agent, user, *, by) -> AgentLicense:
     """An admin issues (or reinstates) `user`'s license. Re-asks the caller list:
     refuses (LicenseRefusedError) when it does not give them the whole agent."""
-    from . import access
+    from .. import access
 
     decision = _decision(agent, user)
     if decision.access != access.FULL:

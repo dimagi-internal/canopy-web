@@ -23,8 +23,8 @@ and the key a runner reads it with.
 """
 from __future__ import annotations
 
+from ..models import Agent, AgentCredential
 from . import vault_import
-from .models import Agent, AgentCredential
 
 STORED, LITERAL, LOCAL, ONEPASSWORD, MISSING = "stored", "literal", "local", "1password", "missing"
 

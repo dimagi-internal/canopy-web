@@ -194,7 +194,7 @@ def set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
     none, changes nothing; a revoked key stays revoked."""
     if jwk is None or jkt == key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED:
         return
-    from apps.agents import zk
+    from apps.agents.credentials import zk
 
     with transaction.atomic():
         key.ecdh_public_jwk, key.ecdh_jkt = jwk, jkt
@@ -311,7 +311,7 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
     nobody has to "finish setting up" an agent by hand."""
     if not key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED or not (assume_active or key.ecdh_ready):
         return []
-    from apps.agents import zk
+    from apps.agents.credentials import zk
 
     return sorted(
         agent.slug for agent in Agent.objects.filter(zk_enabled=True).select_related("workspace", "owner")
@@ -333,7 +333,7 @@ def agents_key_opens(key: RunnerDeviceKey, agents: list) -> list[DeviceKeyAgentO
     waiting on it (`zk.device_waits`) — "can open Hal, Eva" on Settings."""
     if not key.ecdh_ready:
         return []
-    from apps.agents import zk
+    from apps.agents.credentials import zk
 
     return [DeviceKeyAgentOut(slug=a.slug, name=a.name or a.slug) for a in agents
             if device_keys.runner_serves_agent(key.runner, a) and not zk.device_waits(a, key)]

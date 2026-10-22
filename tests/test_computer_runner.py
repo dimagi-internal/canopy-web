@@ -19,7 +19,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents import licenses, zk
+from apps.agents.credentials import licenses, zk
 from apps.agents.models import Agent
 from apps.harness import device_keys, runner_auth
 from apps.harness import claim as harness_claim, runners

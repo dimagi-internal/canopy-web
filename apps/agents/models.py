@@ -176,7 +176,7 @@ class Agent(models.Model):
     # only (PATCH /device-binding); absent from AgentIn like credential_source.
     require_device_binding = models.BooleanField(default=False)
     # Canopy Vault Phase 1b (canopy-web#1549): rotate the agent's own
-    # `canopy-pat` every `pat_rotation_days` (apps/agents/pat_rotation.py).
+    # `canopy-pat` every `pat_rotation_days` (apps/agents/credentials/pat_rotation.py).
     # Owner/admin opt-in (PATCH /pat-rotation); `pat_rotation_enabled_by` is the
     # person whose standing the background job acts on (the impersonation guard
     # in `mint_agent_canopy_token` is re-checked against them every rotation).
@@ -191,7 +191,7 @@ class Agent(models.Model):
     # AgentCredential holds `zk1:` ciphertext under a per-agent vault key (VK)
     # canopy-web never sees; VK reaches each principal as an AgentVaultWrap.
     # `zk_kv` is the current vault-key version (0 = never enabled). Formats:
-    # docs/vault/zk-v1/zk_v1_reference.py. Owner/admin only (apps/agents/zk.py).
+    # docs/vault/zk-v1/zk_v1_reference.py. Owner/admin only (apps/agents/credentials/zk.py).
     zk_enabled = models.BooleanField(default=False)
     zk_kv = models.PositiveIntegerField(default=0)
 

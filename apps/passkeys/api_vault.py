@@ -62,7 +62,7 @@ def put_vault_keyset(request: HttpRequest, payload: VaultKeysetIn) -> VaultKeyse
     must name one of the caller's passkeys. A different `public_jwk` from the
     stored one is 409 `zk_keyset_exists` unless `replace` is true, which also
     drops every agent's member wrap to the old key."""
-    from apps.agents import zk
+    from apps.agents.credentials import zk
 
     stepup.require_recent_step_up(request)
     try:

@@ -49,7 +49,7 @@ def maybe_sweep(now=None) -> None:
 def sweep(now=None) -> int:
     """Record, notify and clear pending-grant notices. Returns how many were
     notified this pass."""
-    from . import zk
+    from .credentials import zk
 
     now = now or timezone.now()
     told = 0

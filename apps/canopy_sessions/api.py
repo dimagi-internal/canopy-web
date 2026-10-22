@@ -997,7 +997,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
         session = _session_by_key_or_404(request, session_id)
     data = _out(session)
     rows, has_more, oldest = services.visible_transcript(session, full=full)
-    from apps.agents import secret_requests
+    from apps.agents.credentials import secret_requests
     from apps.tokens import delegation, mcp_apps_views
 
     mcp_apps_views.annotate(session, rows)
@@ -1114,7 +1114,7 @@ def list_messages(
     session = _session_or_404(request, session_id)
     limit = clamp_limit(limit)
     rows, has_more = services.messages_before(session, before=before, limit=limit)
-    from apps.agents import secret_requests
+    from apps.agents.credentials import secret_requests
     from apps.tokens import delegation, mcp_apps_views
 
     mcp_apps_views.annotate(session, rows)

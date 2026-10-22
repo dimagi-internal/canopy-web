@@ -28,7 +28,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions.models import Message
 
-from .models import Agent, AgentCredential, AgentSecretRequest
+from ..models import Agent, AgentCredential, AgentSecretRequest
 from .zk import ZkError
 
 TTL = timedelta(hours=24)
@@ -47,7 +47,7 @@ def is_agent_login(user) -> bool:
 
 
 def _declared(agent, name: str) -> str:
-    from . import services
+    from .. import services
 
     name = (name or "").strip()
     declared = services.declared_credential_names(agent)

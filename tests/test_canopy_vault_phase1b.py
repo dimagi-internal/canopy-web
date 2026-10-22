@@ -24,7 +24,7 @@ from django.core import mail
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents import pat_rotation
+from apps.agents.credentials import pat_rotation
 from apps.agents.models import (
     Agent,
     AgentCredential,
@@ -405,7 +405,7 @@ def test_alerts_are_listed_for_admins_only(fleet):
 
 
 def test_an_alert_failure_never_denies_a_runner(fleet, monkeypatch):
-    from apps.agents import vault_alerts
+    from apps.agents.credentials import vault_alerts
 
     def boom(*a, **k):
         raise RuntimeError("db down")

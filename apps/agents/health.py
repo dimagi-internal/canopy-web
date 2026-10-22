@@ -22,10 +22,10 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import interface as iface_mod
+from .credentials.vault_health import vault_health
 from .models import Agent, AgentProject, AgentTask
 from .setup import DONE, OPTIONAL, setup_steps
 from .tree import agents_in_tree
-from .vault_health import vault_health
 
 
 def _shared_vault(ws: Workspace) -> dict:
