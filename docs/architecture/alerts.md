@@ -65,6 +65,11 @@ Per-source notes:
   cause — not the turn ids, so a turn cancelled or another stuck for the same
   reason leaves a dismissed alert dismissed). `agent_cant_run`: the computed
   reason. `runner_credential`: the slot and its probe detail.
+- **`runner_credential` actions** are the only two that fix a broken
+  credential: **Replace token** (a link to the runner's credentials; "Sign in
+  again" for a login) and **Remove token**, offered only when removing is
+  allowed — never the runner's last token or API key. No dismiss. Title:
+  `The "hal" token on cloud-ec2-2 no longer works`.
 - **`turn_failure` tenancy.** The alert lives in the investigation's
   workspace (the debugger's), not the failing agent's — a deliberate deviation
   from the spec's "subject's workspace": `auto_debug.can_handle`, the gate on

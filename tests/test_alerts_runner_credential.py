@@ -85,13 +85,14 @@ def _alert():
 def test_signed_out_probe_raises_with_label(fleet):
     runner = fleet["runner"]
     (r,) = src.reconcile(timezone.now())
-    assert r.title == 'The "hal" token on cloud-ec2-2 is signed out'
+    assert r.title == 'The "hal" token on cloud-ec2-2 no longer works'
     assert "subscription-1" not in r.title
     assert r.subject_key == f"runner:{runner.pk}:cred:subscription-1"
     assert r.workspace == "dimagi"
     assert r.url == f"/supervisor?tab=runners&runner={runner.pk}"
     assert r.scopes == (f"runner:{runner.pk}", "workspace:dimagi", "agent:eva")
-    assert r.body == SIGNED_OUT
+    # "hal" is cloud-ec2-2's only token: it can be replaced, not removed.
+    assert r.body == "Claude rejects it. It is this runner's only token, so it can't be removed. Replace it with a new token."
 
 
 def test_the_live_cli_wording_also_counts(fleet):
@@ -185,7 +186,7 @@ def test_a_box_login_is_titled_a_login(fleet):
                                account="ace@dimagi-ai.com", position=5)
     _set_checks(runner, _check("box-login:ab12cd34"))
     (r,) = src.reconcile(timezone.now())
-    assert r.title == 'The "ace@dimagi-ai.com" login on cloud-ec2-2 is signed out'
+    assert r.title == 'The "ace@dimagi-ai.com" login on cloud-ec2-2 no longer works'
 
 
 def test_an_unnamed_first_token_is_the_primary_token(fleet):
@@ -197,14 +198,69 @@ def test_an_unnamed_first_token_is_the_primary_token(fleet):
 # --- actions ------------------------------------------------------------------
 
 
-def test_admin_gets_set_token_and_dismiss(fleet):
+def test_the_only_token_can_be_replaced_not_removed(fleet):
+    """Removing a runner's last token is refused (LAST_FALLBACK_REFUSAL), so the
+    alert never offers a button that would fail."""
     alerts.tick(timezone.now())
     a = _alert()
     for who in ("jj", "admin"):
         acts = src.actions(a, fleet[who])
-        assert [x.id for x in acts] == ["set_token", "dismiss"]
-        assert acts[0].label == 'Set a new "hal" token'
+        assert [(x.id, x.label) for x in acts] == [("replace", "Replace token")]
         assert acts[0].closes and acts[0].href == f"/supervisor?tab=runners&runner={fleet['runner'].pk}"
+
+
+def test_a_token_with_a_backup_can_be_replaced_or_removed(fleet):
+    runner = fleet["runner"]
+    add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="sk-ant-oat-2", name="spare")
+    (r,) = src.reconcile(timezone.now())
+    assert r.body == "Claude rejects it. Replace it with a new token, or remove it."
+    alerts.tick(timezone.now())
+    acts = src.actions(_alert(), fleet["jj"])
+    assert [(x.id, x.label, x.closes) for x in acts] == [
+        ("replace", "Replace token", True), ("remove", "Remove token", True)]
+
+
+def test_remove_drops_the_token_and_closes_the_alert(fleet):
+    runner = fleet["runner"]
+    add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="sk-ant-oat-2", name="spare")
+    alerts.tick(timezone.now())
+    alerts.act(_alert(), fleet["jj"], "remove")
+    assert list(RunnerLogin.objects.filter(runner=runner, kind=RunnerLogin.TOKEN)
+                .values_list("name", flat=True)) == ["spare"]
+    a = _alert()
+    assert a.status == Alert.RESOLVED and a.resolved_reason == Alert.REASON_ACTION
+    # "spare" has moved up into subscription-1. The box's failing check for
+    # that slot was about "hal": it is dropped, so it can't reopen the alert
+    # against "spare" before the box probes again.
+    runner.refresh_from_db()
+    assert runner.health["checks"] == []
+    alerts.tick(timezone.now() + dt.timedelta(minutes=1))
+    assert _alert().status == Alert.RESOLVED
+
+
+def test_remove_refused_when_it_became_the_last_token(fleet):
+    runner = fleet["runner"]
+    spare = add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="sk-ant-oat-2", name="spare")
+    alerts.tick(timezone.now())
+    a = _alert()
+    RunnerLogin.objects.filter(pk=spare.pk).delete()
+    with pytest.raises(alerts.ActionNotOffered):
+        alerts.act(a, fleet["jj"], "remove")
+    with pytest.raises(ValueError):
+        src.perform(a, fleet["jj"], "remove")
+    assert RunnerLogin.objects.filter(runner=runner, kind=RunnerLogin.TOKEN).count() == 1
+
+
+def test_a_lapsed_login_offers_sign_in_again(fleet):
+    runner = fleet["runner"]
+    RunnerLogin.objects.create(runner=runner, key="ab12cd34", kind=RunnerLogin.LOGIN,
+                               account="ace@dimagi-ai.com", position=5)
+    _set_checks(runner, _check("box-login:ab12cd34"))
+    (r,) = src.reconcile(timezone.now())
+    assert r.body == "Its sign-in has lapsed. Sign it in again, or remove it."
+    alerts.tick(timezone.now())
+    acts = src.actions(_alert(), fleet["jj"])
+    assert [(x.id, x.label) for x in acts] == [("replace", "Sign in again"), ("remove", "Remove login")]
 
 
 def test_agent_owner_gets_notify_only(fleet):
@@ -228,7 +284,7 @@ def test_ask_owner_notifies_the_runner_owner(fleet):
 def test_blocking_notice_goes_to_the_closers_only(fleet):
     alerts.tick(timezone.now())
     assert sorted(m.to[0] for m in mail.outbox) == ["ad@dimagi.com", "jj@dimagi.com"]
-    assert 'The "hal" token on cloud-ec2-2 is signed out' in mail.outbox[0].subject
+    assert 'The "hal" token on cloud-ec2-2 no longer works' in mail.outbox[0].subject
 
 
 # --- the old mail -------------------------------------------------------------
