@@ -36,7 +36,6 @@ The shape, in the spec's terms:
 """
 from __future__ import annotations
 
-import base64
 import datetime as dt
 import hashlib
 import hmac
@@ -51,6 +50,9 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
+
+from apps.common import oauth_core
+from apps.common.oauth_core import OAuthError
 
 from . import hcp
 from .models import (HcpAuthorizationCode, HcpClient, HcpRevocationDelivery, HcpToken, Person,
@@ -81,17 +83,6 @@ PERSONAL = hcp.PERSONAL_SOURCE
 WEBHOOK_BACKOFF = [dt.timedelta(minutes=m) for m in (1, 5, 15, 30, 60)]
 WEBHOOK_MAX_ATTEMPTS = len(WEBHOOK_BACKOFF) + 1
 WEBHOOK_TIMEOUT_S = 5
-
-
-class OAuthError(Exception):
-    """An RFC 6749 error: `code` is the wire value."""
-
-    def __init__(self, code: str, description: str, status: int = 400):
-        super().__init__(description)
-        self.code, self.description, self.status = code, description, status
-
-    def body(self) -> dict:
-        return {"error": self.code, "error_description": self.description}
 
 
 class BadClientOrRedirect(Exception):
@@ -208,12 +199,9 @@ def parse_authorize(params) -> AuthorizeRequest:
     if params.get("response_type") != "code":
         raise AuthorizeError(req, "unsupported_response_type", "only response_type=code")
     challenge = (params.get("code_challenge") or "").strip()
-    if not challenge:
-        raise AuthorizeError(req, "invalid_request", "PKCE is required: send code_challenge")
-    if (params.get("code_challenge_method") or "") != "S256":
-        raise AuthorizeError(req, "invalid_request", "PKCE code_challenge_method must be S256")
-    if len(challenge) != 43:
-        raise AuthorizeError(req, "invalid_request", "code_challenge is a base64url SHA-256 (43 chars)")
+    pkce_problem = oauth_core.check_challenge(challenge, params.get("code_challenge_method") or "")
+    if pkce_problem:
+        raise AuthorizeError(req, "invalid_request", pkce_problem)
     try:
         scopes = parse_scope(params.get("scope") or "")
     except OAuthError as e:
@@ -306,10 +294,6 @@ def _hash(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _s256(verifier: str) -> str:
-    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
-
-
 def _client_for(params) -> HcpClient:
     client = HcpClient.objects.filter(client_id=(params.get("client_id") or "").strip()).first()
     if client is None or not client.is_active:
@@ -355,23 +339,11 @@ def _mint(client: HcpClient, grant: PersonGrant) -> dict:
             "hcp_grant_id": hcp.entry_urn(grant.grant_id), "hcp_grant_type": grant.grant_type}
 
 
-class _Compromised(Exception):
-    """A code or refresh token presented a second time: someone else may hold it.
-    Raised out of the exchange's transaction so the revocation it calls for is not
-    rolled back with the refused exchange."""
-
-    def __init__(self, grant: PersonGrant, error: OAuthError, reason: str):
-        super().__init__(reason)
-        self.grant, self.error, self.reason = grant, error, reason
-
-
 def exchange(params) -> dict:
-    """POST /oauth/token: authorization_code (with PKCE) or refresh_token."""
+    """POST /oauth/token: authorization_code (with PKCE) or refresh_token. A code
+    or refresh token presented a second time revokes its grant (`oauth_core`)."""
     try:
         return _exchange(params)
-    except _Compromised as c:
-        revoke(c.grant, actor=SYSTEM_ACTOR, reason=c.reason)
-        raise c.error from None
     except _Lapsed as lapsed:
         hcp._expire_if_due(lapsed.grant)
         raise OAuthError("invalid_grant", "the grant has expired") from None
@@ -380,47 +352,47 @@ def exchange(params) -> dict:
 SYSTEM_ACTOR = hcp.SYSTEM
 
 
-@transaction.atomic
+def _revoke_replayed(reason: str):
+    return lambda row: revoke(row.grant, actor=SYSTEM_ACTOR, reason=reason)
+
+
 def _exchange(params) -> dict:
     grant_type = params.get("grant_type") or ""
     client = _client_for(params)
     if grant_type == "authorization_code":
-        raw = (params.get("code") or "").strip()
-        code = (HcpAuthorizationCode.objects.select_for_update().select_related("grant__person")
-                .filter(code_hash=_hash(raw)).first()) if raw else None
-        if code is None or code.client_id != client.pk:
-            raise OAuthError("invalid_grant", "unknown authorization code")
-        if code.used_at is not None:
-            # A code presented twice: someone else may hold it. Kill what it bought.
-            raise _Compromised(code.grant, OAuthError("invalid_grant", "authorization code already used"),
-                               "authorization code replayed")
-        if code.expires_at <= timezone.now():
-            raise OAuthError("invalid_grant", "authorization code expired")
-        if (params.get("redirect_uri") or "") != code.redirect_uri:
-            raise OAuthError("invalid_grant", "redirect_uri does not match the authorization request")
-        verifier = params.get("code_verifier") or ""
-        if not verifier:
-            raise OAuthError("invalid_request", "PKCE code_verifier is required")
-        if not hmac.compare_digest(_s256(verifier), code.code_challenge):
-            raise OAuthError("invalid_grant", "PKCE code_verifier does not match")
-        HcpAuthorizationCode.objects.filter(pk=code.pk).update(used_at=timezone.now())
-        return _mint(client, _live_grant(code.grant))
+        def use_code(code: HcpAuthorizationCode) -> dict:
+            oauth_core.check_redirect_uri((params.get("redirect_uri") or "").strip(), code.redirect_uri)
+            oauth_core.verify_pkce(params.get("code_verifier") or "", code.code_challenge)
+            HcpAuthorizationCode.objects.filter(pk=code.pk).update(used_at=timezone.now())
+            return _mint(client, _live_grant(code.grant))
+
+        return oauth_core.redeem_once(
+            (params.get("code") or "").strip(), client_pk=client.pk, what="authorization code",
+            find=lambda raw: HcpAuthorizationCode.objects.select_related("grant__person")
+            .filter(code_hash=_hash(raw)).first(),
+            is_spent=lambda code: code.used_at is not None,
+            expires_at=lambda code: code.expires_at, use=use_code,
+            revoke=_revoke_replayed("authorization code replayed"))
     if grant_type == "refresh_token":
-        raw = (params.get("refresh_token") or "").strip()
-        tok = (HcpToken.objects.select_for_update().select_related("grant__person")
-               .filter(token_hash=_hash(raw), kind=HcpToken.REFRESH).first()) if raw else None
-        if tok is None or tok.client_id != client.pk or tok.revoked_at is not None:
-            raise OAuthError("invalid_grant", "unknown refresh token")
-        if tok.used_at is not None:
-            raise _Compromised(tok.grant, OAuthError(
-                "invalid_grant", "refresh token already used; the grant is revoked"),
-                "a rotated refresh token was presented again")
-        grant = _live_grant(tok.grant)       # 4.1.4: never honoured past the grant's expiry
-        if tok.expires_at <= timezone.now():
-            raise OAuthError("invalid_grant", "refresh token expired")
-        HcpToken.objects.filter(pk=tok.pk).update(used_at=timezone.now())
-        return _mint(client, grant)
+        def use_refresh(tok: HcpToken) -> dict:
+            grant = _live_grant(tok.grant)   # 4.1.4: never honoured past the grant's expiry
+            HcpToken.objects.filter(pk=tok.pk).update(used_at=timezone.now())
+            return _mint(client, grant)
+
+        return oauth_core.redeem_once(
+            (params.get("refresh_token") or "").strip(), client_pk=client.pk, what="refresh token",
+            find=lambda raw: HcpToken.objects.select_related("grant__person")
+            .filter(token_hash=_hash(raw), kind=HcpToken.REFRESH, revoked_at__isnull=True).first(),
+            is_spent=lambda tok: tok.used_at is not None,
+            # The grant's own expiry is checked first, in `use` (4.1.4).
+            expires_at=lambda tok: None if _grant_lapsed(tok.grant) else tok.expires_at,
+            use=use_refresh,
+            revoke=_revoke_replayed("a rotated refresh token was presented again"))
     raise OAuthError("unsupported_grant_type", "authorization_code or refresh_token")
+
+
+def _grant_lapsed(grant: PersonGrant) -> bool:
+    return grant.expires_at is not None and grant.expires_at <= timezone.now()
 
 
 def client_revoke(params) -> None:

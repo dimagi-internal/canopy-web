@@ -14,6 +14,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from apps.common import oauth_core
 from apps.common.script_prefix import self_full_path
 from apps.common.views_debug import is_machine
 
@@ -139,19 +140,13 @@ def _host(uri: str) -> str:
     return parts.netloc or f"{parts.scheme}:"
 
 
-def _no_store(resp: JsonResponse) -> JsonResponse:
-    resp["Cache-Control"] = "no-store"
-    resp["Pragma"] = "no-cache"
-    return resp
-
-
 @csrf_exempt
 @require_http_methods(["POST"])
 def token(request: HttpRequest) -> HttpResponse:
     try:
-        return _no_store(JsonResponse(hcp_oauth.exchange(request.POST)))
-    except hcp_oauth.OAuthError as e:
-        return _no_store(JsonResponse(e.body(), status=e.status))
+        return oauth_core.no_store(JsonResponse(hcp_oauth.exchange(request.POST)))
+    except oauth_core.OAuthError as e:
+        return oauth_core.error_response(e)
 
 
 @csrf_exempt
@@ -159,8 +154,8 @@ def token(request: HttpRequest) -> HttpResponse:
 def revoke(request: HttpRequest) -> HttpResponse:
     try:
         hcp_oauth.client_revoke(request.POST)
-    except hcp_oauth.OAuthError as e:
-        return JsonResponse(e.body(), status=e.status)
+    except oauth_core.OAuthError as e:
+        return oauth_core.error_response(e)
     return HttpResponse(status=200)
 
 
