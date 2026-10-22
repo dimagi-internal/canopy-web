@@ -15,6 +15,7 @@ from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import ledger
 from apps.harness.models import Runner, Turn
 from apps.push.models import AgentWaitingSnapshot
 from apps.realtime import groups
@@ -37,7 +38,7 @@ def test_turn_event_fanout():
     layer = get_channel_layer()
     async_to_sync(layer.group_add)(groups.turn_group(turn.id), "turn-chan")
 
-    services.append_events(turn, [{"kind": "assistant", "payload": {"text": "hi"}}])
+    ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "hi"}}])
 
     msg = async_to_sync(layer.receive)("turn-chan")
     assert msg["type"] == "turn.event"

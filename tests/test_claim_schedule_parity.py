@@ -31,6 +31,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import routing, claim
 from apps.harness.api import _runner_schedule_qs
 from apps.harness.models import AgentSchedule, Runner, RunnerAssignment, Turn
 from apps.workspaces import services as wsvc
@@ -89,7 +90,7 @@ def _claimable_agent_slugs(runner) -> set[str]:
     """
     seen: set[str] = set()
     while True:
-        turn = services.claim_next_turn(runner)
+        turn = claim.claim_next_turn(runner)
         if turn is None:
             return seen
         seen.add(turn.agent.slug)
@@ -206,10 +207,10 @@ def test_the_two_predicates_are_the_same_object(fleet):
     helper, rather than leaving the behavioural tests to explain a subtler
     symptom later."""
     runner = fleet["runner"]
-    slugs = services.runner_tenant_slugs(runner)
+    slugs = routing.runner_tenant_slugs(runner)
     assert slugs == {"mine", "also-mine"}
 
-    shared = services.agent_tenant_q(slugs)
+    shared = routing.agent_tenant_q(slugs)
     schedule_sql = str(_runner_schedule_qs(runner).query)
     # No NULL-means-allow leg survives on either side.
     assert "isnull" not in str(shared)

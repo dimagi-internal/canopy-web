@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.canopy_sessions.models import Session
-from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
@@ -64,7 +64,7 @@ def test_session_capable_runner_claims_a_session_turn():
     runner = _session_runner(jj)
     turn = _session_turn(_session(ws, jj), "s1", prompt="hi")
 
-    claimed = services.claim_next_turn(runner)
+    claimed = claim.claim_next_turn(runner)
 
     assert claimed is not None and claimed.pk == turn.pk
 
@@ -75,7 +75,7 @@ def test_plain_runner_never_claims_a_session_turn():
     runner = _runner(jj)  # no sessions capability
     _session_turn(_session(ws, jj), "s1")
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
 
 def test_session_turn_is_tenant_gated():
@@ -85,7 +85,7 @@ def test_session_turn_is_tenant_gated():
     runner = _session_runner(jj)
     _session_turn(_session(ws_other, other_owner), "s1")
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
 
 def test_busy_session_is_not_reclaimed():
@@ -96,7 +96,7 @@ def test_busy_session_is_not_reclaimed():
     _session_turn(session, "s1", status=Turn.RUNNING)  # already executing
     _session_turn(session, "s2", status=Turn.QUEUED)   # same session, queued
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
 
 def test_distinct_sessions_claim_in_parallel():
@@ -106,8 +106,8 @@ def test_distinct_sessions_claim_in_parallel():
     t1 = _session_turn(_session(ws, jj), "s1")
     t2 = _session_turn(_session(ws, jj), "s2")
 
-    c1 = services.claim_next_turn(runner)
-    c2 = services.claim_next_turn(runner)
+    c1 = claim.claim_next_turn(runner)
+    c2 = claim.claim_next_turn(runner)
     assert c1 is not None and c2 is not None
     assert {c1.pk, c2.pk} == {t1.pk, t2.pk}
 
@@ -123,5 +123,5 @@ def test_busy_session_exclude_does_not_strand_project_turns():
         project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API, idempotency_key="p1"
     )
 
-    claimed = services.claim_next_turn(runner)
+    claimed = claim.claim_next_turn(runner)
     assert claimed is not None and claimed.pk == pturn.pk

@@ -11,9 +11,16 @@ from __future__ import annotations
 from django.db import transaction
 from django.utils import timezone
 
+from apps.workspaces.models import MAX_DEPTH
+
 from .models import (
     Runner,
+    RunnerAdmin,
+    RunnerCredential,
+    RunnerEnrollment,
     RunnerFlag,
+    RunnerLogin,
+    RunnerMint,
 )
 
 
@@ -34,8 +41,6 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
                           claude_token_secondary_label=None, updated_by=None):
     """Upsert a runner's credential bundle. None fields are left unchanged."""
     from apps.common.encryption import encrypt_secret
-
-    from .models import RunnerCredential
 
     # An all-None call is a READ dressed as a write (the shape the CLI used before
     # there was a status endpoint). Don't create a row and don't touch
@@ -76,8 +81,6 @@ def would_remove_last_backup_token(runner, *, claude_token=None,
     with no backup token stops entirely — so the page may replace a backup
     token but not take the last one away. A write that clears nothing is fine.
     """
-    from .models import RunnerCredential
-
     if "" not in (claude_token, claude_token_secondary):
         return False
     # Queried, not `runner.credential`: that accessor caches on the instance,
@@ -143,8 +146,6 @@ def swap_runner_logins(runner, *, updated_by=None):
     ciphertext is enough: both columns are encrypted with the same key, so no
     secret is decrypted to do this.
     """
-    from .models import RunnerCredential
-
     with transaction.atomic():
         cred = RunnerCredential.objects.select_for_update().filter(runner=runner).first()
         if cred is None:
@@ -177,8 +178,6 @@ def add_runner_login(runner, *, by=None):
     to it, instead of a login that silently never appeared.
     """
     import secrets
-
-    from .models import RunnerLogin
 
     with transaction.atomic():
         Runner.objects.select_for_update().filter(pk=runner.pk).first()
@@ -225,8 +224,6 @@ def report_runner_logins(runner, reports: list[dict], *, adopt_default: bool = F
     list has never held — one signed in before there was a list, or by hand on
     the box. It goes FIRST, where that login always was.
     """
-    from .models import RunnerLogin
-
     now = timezone.now()
     with transaction.atomic():
         Runner.objects.select_for_update().filter(pk=runner.pk).first()
@@ -265,8 +262,6 @@ def can_administer_runner(user, runner) -> bool:
     (too narrow — that IS the single point of failure) or every auto-joined
     member (far too wide for credentials).
     """
-    from .models import RunnerAdmin
-
     if not getattr(user, "is_authenticated", False):
         return False
     # A runner with NO owner is administered by nobody — it used to be
@@ -298,8 +293,6 @@ def may_trust_device_keys(user, runner) -> bool:
 def grant_runner_admin(runner, user, *, granted_by=None):
     """Idempotent: re-granting returns the existing row rather than a second one
     that a later revoke would only half-remove."""
-    from .models import RunnerAdmin
-
     admin, _ = RunnerAdmin.objects.get_or_create(
         runner=runner, user=user, defaults={"granted_by": granted_by})
     return admin
@@ -309,15 +302,11 @@ def revoke_runner_admin(runner, user) -> bool:
     """True when a grant was actually removed. The owner is not stored as a
     grant, so this can never revoke them — losing the last administrator of a box
     is not a state this should be able to produce."""
-    from .models import RunnerAdmin
-
     deleted, _ = RunnerAdmin.objects.filter(runner=runner, user=user).delete()
     return bool(deleted)
 
 
 def list_runner_admins(runner):
-    from .models import RunnerAdmin
-
     return list(
         RunnerAdmin.objects.filter(runner=runner)
         .select_related("user", "granted_by")
@@ -376,8 +365,6 @@ def enroll_runner(runner, workspace_slug: str, *, by=None):
     """
     from apps.workspaces import permissions as perms
 
-    from .models import Runner, RunnerEnrollment
-
     if runner.kind == Runner.COMPUTER:
         # A computer in plain Claude Code (no runner app) serves no workspace's work.
         raise EnrollmentRefused(f"{runner.name} is a computer without the runner app; it serves no workspace")
@@ -412,8 +399,6 @@ def _other_tree(runner, workspace_slug: str) -> str:
     so (`RunnerOut.roots`)."""
     from apps.workspaces import services as wsvc
 
-    from .models import Runner, RunnerEnrollment
-
     if runner.kind != Runner.CLOUD:
         return ""
     existing = set(RunnerEnrollment.objects.filter(runner=runner)
@@ -439,16 +424,12 @@ def enrolled_roots(runner) -> list[str]:
 def unenroll_runner(runner, workspace_slug: str) -> bool:
     """True when an enrollment was actually removed. The box stops serving that
     workspace at its next claim; a turn it already holds runs to completion."""
-    from .models import RunnerEnrollment
-
     deleted, _ = RunnerEnrollment.objects.filter(
         runner=runner, workspace_id=workspace_slug).delete()
     return bool(deleted)
 
 
 def list_runner_enrollments(runner):
-    from .models import RunnerEnrollment
-
     return list(
         RunnerEnrollment.objects.filter(runner=runner)
         .select_related("workspace", "enrolled_by")
@@ -471,8 +452,6 @@ def backfill_runner_enrollments(runner_model, enrollment_model, membership_model
     Takes the model classes so the migration passes its HISTORICAL models and a
     test passes the live ones (the `seed_assignments_from_capabilities` pattern).
     """
-    from apps.workspaces.models import MAX_DEPTH
-
     owner_role, editor_roles = "owner", {"owner", "admin", "editor"}
     parents = dict(workspace_model.objects.values_list("slug", "parent_id"))
     children: dict[str, set[str]] = {}
@@ -533,8 +512,6 @@ def _expire_if_stale(mint):
     """
     from django.utils import timezone
 
-    from .models import RunnerMint
-
     if mint is None or mint.status in RunnerMint.FINISHED:
         return mint
     if (timezone.now() - mint.updated_at).total_seconds() <= MINT_TTL_SECONDS:
@@ -555,8 +532,6 @@ def start_runner_mint(runner, *, requested_by=None, slot="box", login_key=""):
     attempt, and "try again" is the only sensible response to a stuck sign-in.
     The old row is marked failed rather than deleted so the history stays honest.
     """
-    from .models import RunnerMint
-
     RunnerMint.objects.filter(runner=runner).exclude(
         status__in=RunnerMint.FINISHED
     ).update(status=RunnerMint.FAILED, detail="superseded by a newer request")
@@ -570,8 +545,6 @@ def current_runner_mint(runner):
     Only ever the newest: an older unfinished row cannot exist (start supersedes
     them), and a finished one is history.
     """
-    from .models import RunnerMint
-
     return _expire_if_stale(
         RunnerMint.objects.filter(runner=runner).order_by("-created_at").first())
 
@@ -584,8 +557,6 @@ def claim_runner_mint(runner):
     is with the human, and handing that back on every poll tick would have the
     runner restart the CLI under a URL somebody is already signing in to.
     """
-    from .models import RunnerMint
-
     mint = current_runner_mint(runner)
     if mint is None or mint.status not in (RunnerMint.REQUESTED, RunnerMint.COMPLETING):
         return None
@@ -594,8 +565,6 @@ def claim_runner_mint(runner):
 
 def record_mint_url(mint, url: str):
     """The runner has the CLI running and a URL for the human."""
-    from .models import RunnerMint
-
     mint.authorize_url = url
     mint.status = RunnerMint.AWAITING_CODE
     mint.save(update_fields=["authorize_url", "status", "updated_at"])
@@ -604,8 +573,6 @@ def record_mint_url(mint, url: str):
 
 def submit_mint_code(mint, code: str):
     """A human pasted the authorization code back."""
-    from .models import RunnerMint
-
     mint.code = code.strip()
     mint.status = RunnerMint.COMPLETING
     mint.save(update_fields=["code", "status", "updated_at"])
@@ -639,8 +606,6 @@ def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bo
     scoped to inference only; the profile endpoint answers 403), and re-signing
     an expired login is the common case, which is the same account.
     """
-    from .models import RunnerMint
-
     if mint.slot == RunnerMint.BOX:
         # A full login the runner keeps on the box: nothing to store here, and a
         # token arriving anyway is ignored rather than written into a bundle
@@ -672,8 +637,6 @@ def _record_signed_in(runner, login_key: str, account: str) -> None:
     read back. A mint with no login (an older runner, or one started before
     there was a list) signed in the box's default login — which joins the list
     first, where it always sat in the cascade."""
-    from .models import RunnerLogin
-
     key = login_key or RunnerLogin.DEFAULT
     if not runner.logins.filter(key=key).exists():
         if key != RunnerLogin.DEFAULT:

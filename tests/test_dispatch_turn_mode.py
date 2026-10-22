@@ -18,7 +18,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.harness import caller_context, services
+from apps.harness import caller_context
+from apps.harness import claim
 from apps.harness import turn_mode as modes
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.tokens.models import AppCredential, DelegatedToken, PersonalToken
@@ -144,7 +145,7 @@ def test_omitting_turn_mode_changes_nothing(fleet):
 
 def test_requested_auto_wins_over_the_agents_manual_switch(fleet):
     _post(_pat(fleet["ada"]), turn_mode="auto")
-    claimed = services.claim_next_turn(fleet["other"])
+    claimed = claim.claim_next_turn(fleet["other"])
     assert claimed.turn_mode == "auto"
     assert claimed.turn_mode_basis == f"dispatch by {ADA} (admin)"
 
@@ -154,7 +155,7 @@ def test_requested_manual_wins_over_an_actor_auto_rule(fleet):
     RunnerAssignment.objects.create(agent=hal, runner=fleet["other"], rank=0,
                                     source=Turn.ORIGIN_API, actor=ADA, turn_mode="auto")
     _post(_pat(fleet["ada"]), turn_mode="manual")
-    claimed = services.claim_next_turn(fleet["other"])
+    claimed = claim.claim_next_turn(fleet["other"])
     assert (claimed.turn_mode, claimed.turn_mode_basis) == (
         "manual", f"dispatch by {ADA} (admin)")
 
@@ -166,16 +167,16 @@ def test_requested_auto_wins_over_an_actor_manual_rule(fleet):
     RunnerAssignment.objects.create(agent=hal, runner=fleet["other"], rank=0,
                                     source=Turn.ORIGIN_API, actor=ADA, turn_mode="manual")
     _post(_pat(fleet["ada"]), turn_mode="auto")
-    assert services.claim_next_turn(fleet["other"]).turn_mode == "auto"
+    assert claim.claim_next_turn(fleet["other"]).turn_mode == "auto"
 
 
 def test_the_request_survives_a_lost_lease_and_reclaim(fleet):
     _post(_pat(fleet["ada"]), turn_mode="auto")
-    first = services.claim_next_turn(fleet["other"])
+    first = claim.claim_next_turn(fleet["other"])
     # Lease lost: back to the queue with the old stamp; the claim decides afresh.
     Turn.objects.filter(pk=first.pk).update(status=Turn.QUEUED, claimed_by=None,
                                             turn_mode="", turn_mode_basis="")
-    again = services.claim_next_turn(fleet["other"])
+    again = claim.claim_next_turn(fleet["other"])
     assert again.pk == first.pk
     assert (again.turn_mode, again.turn_mode_basis) == ("auto", f"dispatch by {ADA} (admin)")
     assert modes.for_turn(again, fresh=True).mode == "auto"
@@ -184,7 +185,7 @@ def test_the_request_survives_a_lost_lease_and_reclaim(fleet):
 def test_a_revoked_admin_s_queued_auto_runs_manual_and_says_why(fleet):
     _post(_pat(fleet["ada"]), turn_mode="auto")
     AgentAdmin.objects.filter(user=fleet["ada"]).delete()
-    claimed = services.claim_next_turn(fleet["other"])
+    claimed = claim.claim_next_turn(fleet["other"])
     assert claimed.turn_mode == "manual"
     assert "auto withheld" in claimed.turn_mode_basis
 
@@ -195,7 +196,7 @@ def test_the_envelope_carries_the_dispatch_basis(fleet):
     # Before a claim the envelope resolves live; after, it reads the stamp.
     assert caller_context.build(turn)["turn_mode"] == {
         "mode": "auto", "basis": f"dispatch by {ADA} (admin)"}
-    claimed = services.claim_next_turn(fleet["other"])
+    claimed = claim.claim_next_turn(fleet["other"])
     assert caller_context.build(claimed)["turn_mode"] == {
         "mode": "auto", "basis": f"dispatch by {ADA} (admin)"}
 
@@ -210,8 +211,8 @@ def test_a_pin_and_a_mode_together(fleet):
     assert (body["pinned_runner_id"], body["pinned_runner_name"]) == (str(box.id), box.name)
     assert body["requested_turn_mode"] == "manual"
     # Only the pinned box may claim it, and it carries the requested mode.
-    assert services.claim_next_turn(fleet["other"]) is None
-    claimed = services.claim_next_turn(box)
+    assert claim.claim_next_turn(fleet["other"]) is None
+    claimed = claim.claim_next_turn(box)
     assert (claimed.turn_mode, claimed.turn_mode_basis) == (
         "manual", f"dispatch by {ADA} (admin)")
     listed = _session(fleet["jj"]).get("/api/harness/turns/?agent=hal").json()

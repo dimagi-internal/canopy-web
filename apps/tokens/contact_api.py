@@ -738,10 +738,10 @@ def my_unclaimable(request: HttpRequest) -> list[dict]:
 
     from apps.canopy_sessions.access import contact_session_q
     from apps.canopy_sessions.models import Session
-    from apps.harness import services as harness_services
+    from apps.harness import claim
 
     mine = Session.objects.filter(contact_session_q(request.contact)).values("pk")
-    return harness_services.unclaimable_queued_turns(
+    return claim.unclaimable_queued_turns(
         ws_slugs={request.contact.workspace_id}, turn_q=Q(chat_session__in=mine))
 
 
@@ -754,9 +754,9 @@ def my_turn(request: HttpRequest, turn_id: str):
 def my_turn_transcript(request: HttpRequest, turn_id: str):
     from django.http import StreamingHttpResponse
 
-    from apps.harness import services as harness_services
+    from apps.harness import ledger
 
-    return StreamingHttpResponse(harness_services.iter_transcript(_turn_or_404(request, turn_id)),
+    return StreamingHttpResponse(ledger.iter_transcript(_turn_or_404(request, turn_id)),
                                  content_type="application/x-ndjson")
 
 

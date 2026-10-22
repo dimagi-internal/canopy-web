@@ -15,6 +15,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions import filing
 from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
 from apps.harness import services
+from apps.harness import runners
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership as M
 
@@ -92,7 +93,7 @@ def test_unset_default_keeps_todays_behaviour(runner):
 
 
 def test_a_new_session_is_filed_in_the_runner_owners_default(runner, jj, family):
-    services.enroll_runner(runner, "marshellis")  # a laptop serving both trees
+    runners.enroll_runner(runner, "marshellis")  # a laptop serving both trees
     filing.set_default(jj, "marshellis")
     _report(runner, "t1")
     assert _session("t1").workspace_id == "marshellis"
@@ -160,7 +161,7 @@ def test_an_agent_project_still_follows_the_agent(runner, jj, family):
     """The default is the PERSON's; an agent's project is the agent's tenant."""
     connect = _ws("connect", jj, parent=runner.workspace)
     Agent.objects.create(slug="hal", name="Hal", workspace=connect)
-    services.enroll_runner(runner, "marshellis")
+    runners.enroll_runner(runner, "marshellis")
     filing.set_default(jj, "marshellis")
     _report(runner, "t1", project="hal")
     s = _session("t1")
@@ -184,7 +185,7 @@ def test_a_default_where_the_owner_was_demoted_to_viewer_is_ignored(runner, jj, 
 
 
 def test_existing_sessions_are_not_refiled_when_the_default_changes(runner, jj, family):
-    services.enroll_runner(runner, "marshellis")
+    runners.enroll_runner(runner, "marshellis")
     _report(runner, "t1")
     filing.set_default(jj, "marshellis")
     _report(runner, "t1", "t2")

@@ -15,6 +15,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from apps.harness import runner_protocol
 from apps.harness import services as harness_services
+from apps.harness import claim, ledger
 from apps.harness.models import Runner, Turn
 from apps.workspaces.services import user_workspace_slugs
 
@@ -339,7 +340,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         runner = Runner.objects.filter(pk=self._runner_pk).first()
         if runner is None:
             return None
-        turn = harness_services.claim_next_turn(runner, exclude_slugs=paused or None, acts_as=acts_as)
+        turn = claim.claim_next_turn(runner, exclude_slugs=paused or None, acts_as=acts_as)
         if turn is None:
             return None
         # THE claim payload — the one the REST route returns, credentials and
@@ -396,7 +397,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         turn = self._turn_owned_sync(turn_id)
         if turn is None:
             return 0
-        return harness_services.append_events(turn, events)
+        return ledger.append_events(turn, events)
 
     @database_sync_to_async
     def _finish(self, frame):

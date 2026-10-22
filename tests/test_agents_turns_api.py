@@ -177,11 +177,11 @@ def test_a_chat_turn_links_to_its_own_session(authed_client, workspace):
 
 
 def test_a_cloud_turn_has_no_session_but_has_its_transcript(authed_client, workspace):
-    from apps.harness import services as harness_services
+    from apps.harness import ledger
 
     agent = _echo(workspace)
     turn = _turn(agent, "t1", status="done", session_id="cloud-609d0a02")
-    harness_services.append_transcript(turn, ['{"type": "result"}'])
+    ledger.append_transcript(turn, ['{"type": "result"}'])
     item = _items(authed_client)[str(turn.id)]
     assert item["chat_session_id"] is None
     assert item["has_transcript"] is True

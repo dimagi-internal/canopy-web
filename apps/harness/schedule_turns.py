@@ -23,6 +23,9 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.agents.models import AgentTask
+from apps.huddles.models import ProjectCheckin
+
 from .models import (
     AgentSchedule,
     Turn,
@@ -62,7 +65,7 @@ def supersede_open_turns(schedule, *, reason: str) -> int:
     return count
 
 
-def _schedule_initiator(schedule, *, manual: bool = False):
+def schedule_initiator(schedule, *, manual: bool = False):
     from . import initiator as who
     via = f"schedule:{schedule.id}" + (":manual" if manual else "")
     return who.system(via=via, accountable=schedule.created_by)
@@ -70,8 +73,6 @@ def _schedule_initiator(schedule, *, manual: bool = False):
 
 def checkin_of(schedule):
     """The project check-in (apps/huddles) this schedule runs, or None."""
-    from apps.huddles.models import ProjectCheckin
-
     return ProjectCheckin.objects.filter(schedule_id=schedule.pk).first() if schedule.pk else None
 
 
@@ -142,7 +143,7 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
             routing=schedule.routing,
             # canopy fired it; the schedule's creator is the person accountable
             # for it (spec D3), recorded so a later phase can bound the turn.
-            initiator=_schedule_initiator(schedule),
+            initiator=schedule_initiator(schedule),
         )
         if created and (schedule.last_slot is None or slot > schedule.last_slot):
             schedule.last_slot = slot
@@ -190,7 +191,7 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
             origin_ref={"schedule_id": schedule.id, "manual": True,
                         "schedule_name": schedule.name},
             routing=schedule.routing,
-            initiator=_schedule_initiator(schedule, manual=True),
+            initiator=schedule_initiator(schedule, manual=True),
             # The schedule's creator is who it is FOR; this is who pressed the
             # button, which is the reason it ran now.
             provenance_extra={"clicked_by": getattr(clicked_by, "email", "") or ""},
@@ -379,7 +380,6 @@ def resolve_schedule_nags(schedule_id: int) -> int:
     """Decline every open nag for a schedule — a later occurrence finished, so the
     owed attention is discharged. Called from finish_turn on a DONE occurrence."""
     from apps.agents import services as agent_services
-    from apps.agents.models import AgentTask
 
     count = 0
     open_nags = (

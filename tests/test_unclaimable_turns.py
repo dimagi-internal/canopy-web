@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -52,7 +53,7 @@ def _project_turn(ws, project, key="k1", *, aged=True):
 def _age(turn):
     """Push a turn past UNCLAIMABLE_GRACE — a just-enqueued turn is NOT stuck."""
     Turn.objects.filter(pk=turn.pk).update(
-        created_at=timezone.now() - services.UNCLAIMABLE_GRACE - dt.timedelta(seconds=5)
+        created_at=timezone.now() - claim.UNCLAIMABLE_GRACE - dt.timedelta(seconds=5)
     )
 
 
@@ -60,7 +61,7 @@ def test_flags_a_project_turn_no_runner_declares():
     """The exact 12-hour stall."""
     user, ws = _ctx(agents=["ace"], projects=["canopy-web"])
     _project_turn(ws, "ace")
-    rows = services.unclaimable_queued_turns(user)
+    rows = claim.unclaimable_queued_turns(user)
     assert len(rows) == 1
     assert rows[0]["target"] == "project ace"
     assert "declares the repo 'ace'" in rows[0]["reason"]
@@ -70,14 +71,14 @@ def test_flags_a_project_turn_no_runner_declares():
 def test_silent_when_the_runner_declares_the_repo():
     user, ws = _ctx(agents=["ace"], projects=["canopy-web", "ace"])
     _project_turn(ws, "ace")
-    assert services.unclaimable_queued_turns(user) == []
+    assert claim.unclaimable_queued_turns(user) == []
 
 
 def test_flags_an_agent_turn_no_runner_declares():
     user, ws = _ctx(agents=["ace"], projects=["canopy-web"])
     other = Agent.objects.create(slug="ghost", name="Ghost", workspace=ws)
     _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=other, origin=Turn.ORIGIN_API, idempotency_key="k2", prompt="hi")[0])
-    rows = services.unclaimable_queued_turns(user)
+    rows = claim.unclaimable_queued_turns(user)
     assert [r["target"] for r in rows] == ["agent ghost"]
 
 
@@ -85,7 +86,7 @@ def test_an_offline_runner_does_not_count_as_coverage():
     """A declared-but-dead runner must not mask the stall."""
     user, ws = _ctx(agents=["ace"], projects=["ace"], online=False)
     _project_turn(ws, "ace")
-    rows = services.unclaimable_queued_turns(user)
+    rows = claim.unclaimable_queued_turns(user)
     assert [r["target"] for r in rows] == ["project ace"]
 
 
@@ -94,7 +95,7 @@ def test_a_degraded_runner_does_count():
     user, ws = _ctx(agents=["ace"], projects=["ace"])
     Runner.objects.update(status=Runner.DEGRADED)
     _project_turn(ws, "ace")
-    assert services.unclaimable_queued_turns(user) == []
+    assert claim.unclaimable_queued_turns(user) == []
 
 
 def test_session_turns_need_a_session_capable_runner():
@@ -103,10 +104,10 @@ def test_session_turns_need_a_session_capable_runner():
     s = Session.objects.create(workspace=ws, created_by=user, title="chat")
     _age(services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="k3",
                                prompt="hi", enqueued_by=user)[0])
-    assert [r["target"] for r in services.unclaimable_queued_turns(user)] == ["session"]
+    assert [r["target"] for r in claim.unclaimable_queued_turns(user)] == ["session"]
 
     Runner.objects.update(capabilities={"agents": [], "projects": [], "sessions": True})
-    assert services.unclaimable_queued_turns(user) == []
+    assert claim.unclaimable_queued_turns(user) == []
 
 
 def test_endpoint_returns_the_rows(client):
@@ -127,7 +128,7 @@ def test_a_just_enqueued_turn_is_not_stuck():
     """
     user, ws = _ctx(agents=["ace"], projects=["canopy-web"])
     _project_turn(ws, "ace", aged=False)
-    assert services.unclaimable_queued_turns(user) == []
+    assert claim.unclaimable_queued_turns(user) == []
 
 
 def test_a_stale_heartbeat_reports_OFFLINE_not_misconfiguration():
@@ -136,7 +137,7 @@ def test_a_stale_heartbeat_reports_OFFLINE_not_misconfiguration():
     user, ws = _ctx(agents=["ace"], projects=["ace"])          # runner DOES declare it
     Runner.objects.update(last_heartbeat_at=timezone.now() - dt.timedelta(minutes=10))
     _project_turn(ws, "ace")
-    rows = services.unclaimable_queued_turns(user)
+    rows = claim.unclaimable_queued_turns(user)
     assert len(rows) == 1
     assert rows[0]["kind"] == "offline"
     assert "none are reachable" in rows[0]["reason"]
@@ -145,7 +146,7 @@ def test_a_stale_heartbeat_reports_OFFLINE_not_misconfiguration():
 def test_a_genuinely_undeclared_target_still_reports_CONFIG():
     user, ws = _ctx(agents=["ace"], projects=["canopy-web"])
     _project_turn(ws, "ace")
-    rows = services.unclaimable_queued_turns(user)
+    rows = claim.unclaimable_queued_turns(user)
     assert rows[0]["kind"] == "config"
     assert rows[0]["reason"] == "no runner declares the repo 'ace'"
 
@@ -165,7 +166,7 @@ def test_capabilities_without_assignment_reports_CONFIG():
     user, ws = _ctx(agents=["ace"], projects=["canopy-web"])
     ace = _Agent.objects.create(slug="ace", name="Ace", workspace=ws)
     _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka1", prompt="hi")[0])
-    rows = services.unclaimable_queued_turns(user)
+    rows = claim.unclaimable_queued_turns(user)
     assert [r["kind"] for r in rows] == ["config"]
     assert "routes the agent 'ace'" in rows[0]["reason"]
 
@@ -178,7 +179,7 @@ def test_assignment_with_offline_runner_reports_OFFLINE():
     ace = _Agent.objects.create(slug="ace", name="Ace", workspace=ws)
     RunnerAssignment.objects.create(agent=ace, runner=Runner.objects.get(), rank=0)
     _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka2", prompt="hi")[0])
-    rows = services.unclaimable_queued_turns(user)
+    rows = claim.unclaimable_queued_turns(user)
     assert [r["kind"] for r in rows] == ["offline"]
 
 
@@ -212,7 +213,7 @@ def test_teammates_runner_counts_even_if_caller_paired_none():
     RunnerAssignment.objects.create(agent=ace, runner=runner, rank=0)
     _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=ace, origin=Turn.ORIGIN_API, idempotency_key="kteam", prompt="hi")[0])
 
-    rows = services.unclaimable_queued_turns(user2)
+    rows = claim.unclaimable_queued_turns(user2)
     assert [r["kind"] for r in rows] == ["offline"]
 
 
@@ -228,5 +229,5 @@ def test_genuinely_no_runner_in_the_tenant_still_reports_CONFIG():
     ghost = _Agent.objects.create(slug="ghost2", name="Ghost2", workspace=ws)
     _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=ghost, origin=Turn.ORIGIN_API, idempotency_key="ksolo", prompt="hi")[0])
 
-    rows = services.unclaimable_queued_turns(user)
+    rows = claim.unclaimable_queued_turns(user)
     assert [r["kind"] for r in rows] == ["config"]

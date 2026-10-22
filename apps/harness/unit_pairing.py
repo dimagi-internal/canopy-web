@@ -1,5 +1,5 @@
-"""A box of isolation units pairs every unit at once (spec
-`docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md` §2).
+"""A box of isolation units pairs every unit at once
+(`docs/architecture/runners.md § Isolation units`).
 
 One cloud box can run several isolation units: a workspace tree, or a single
 agent, each its own Unix user and its own runner. The box's instance role belongs
@@ -80,7 +80,7 @@ def _rekey(key: RunnerDeviceKey, name: str, jwk: dict, jkt: str,
     is kept). The same ECDH key keeps its approval; a different one waits for a
     person and its old wraps go, exactly as a re-registered device key's do. The
     same key again (a restart before the box wrote its state) changes nothing."""
-    from .api_device_keys import _set_ecdh_and_store
+    from .api_device_keys import set_ecdh_and_store
 
     if key.jkt != jkt:
         key.kind, key.public_jwk, key.jkt, key.role_arn = RunnerDeviceKey.SOFTWARE, jwk, jkt, ""
@@ -89,7 +89,7 @@ def _rekey(key: RunnerDeviceKey, name: str, jwk: dict, jkt: str,
         # Tokens bought with the old key were the old instance's: they end with it.
         RunnerAccessToken.objects.filter(device_key=key).delete()
     if ecdh_jwk is not None:
-        _set_ecdh_and_store(key, ecdh_jwk, ecdh_jkt, store)
+        set_ecdh_and_store(key, ecdh_jwk, ecdh_jkt, store)
 
 
 def _announce_rekey(runner: Runner, adopted: bool) -> None:

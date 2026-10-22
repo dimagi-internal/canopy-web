@@ -28,7 +28,7 @@ import re
 from django.db.models import Exists, OuterRef, Q
 
 from apps.agents.models import AgentProject, AgentTask
-from apps.harness import services as hsvc
+from apps.harness import ledger
 from apps.harness import turn_access
 from apps.harness.models import Turn, TurnTranscript
 
@@ -183,7 +183,7 @@ def summaries(anchor_rows, visible_qs, workspaces) -> list[dict]:
 
 def _transcript_text(turn) -> str:
     try:
-        msgs, _ = hsvc.transcript_messages(turn)
+        msgs, _ = ledger.transcript_messages(turn)
     except Exception:  # a broken or aged-out blob must not 500 the page
         return ""
     return "\n".join(m.get("plaintext") or "" for m in msgs if m.get("role") == "assistant")

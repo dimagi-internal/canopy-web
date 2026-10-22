@@ -17,7 +17,7 @@ import logging
 from django.utils import timezone
 
 from apps.events import services as events
-from apps.harness import services as harness
+from apps.harness import routing
 from apps.harness.models import Runner, Turn
 from apps.inbound.models import InboundMailbox
 from apps.realtime.groups import publish, runner_group
@@ -71,7 +71,7 @@ def online_runners_for(mailbox: InboundMailbox) -> list[Runner]:
     cascade grace). Cheap redundancy beats a clever guess. Disabled rows are
     already filtered by `load_assignment_rows`.
     """
-    defaults, priorities = harness.load_assignment_rows([mailbox.agent_id])
+    defaults, priorities = routing.load_assignment_rows([mailbox.agent_id])
     # actor="" DELIBERATELY: a Gmail push carries a mailbox, not a sender — the
     # sender is only known after the `gog gmail thread get` the runner does AFTER
     # this ring. So the doorbell composes at the SOURCE rung and rings that
@@ -81,7 +81,7 @@ def online_runners_for(mailbox: InboundMailbox) -> list[Runner]:
     # thread may not be the box that ANSWERS it — the enqueue lands, the discoverer
     # is refused at claim time, and the rule's runner takes it on its own 5s claim
     # poll. A ring we get wrong costs latency, never correctness (spec 2026-09-05).
-    rows = harness.assignment_rows_for(
+    rows = routing.assignment_rows_for(
         mailbox.agent_id, Turn.ORIGIN_EMAIL, "", defaults, priorities
     )
     # `is_available`, not `live_status == ONLINE`: it is the cascade's own
@@ -133,8 +133,8 @@ def readers_for(mailbox: InboundMailbox) -> list[dict]:
     """
     from apps.workspaces.models import WorkspaceMembership
 
-    defaults, priorities = harness.load_assignment_rows([mailbox.agent_id])
-    routed = harness.assignment_rows_for(
+    defaults, priorities = routing.load_assignment_rows([mailbox.agent_id])
+    routed = routing.assignment_rows_for(
         mailbox.agent_id, Turn.ORIGIN_EMAIL, "", defaults, priorities
     )
     runners: dict = {}

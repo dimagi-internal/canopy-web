@@ -16,6 +16,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import schedule_turns
 from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
@@ -101,7 +102,7 @@ def test_a_preclaimed_schedule_slot_still_fires(two_tenants):
     slot = dt.datetime(2026, 10, 23, 9, tzinfo=dt.UTC)
     key = f"sched:{sched.id}:{slot.isoformat()}"
     assert _post(_as(two_tenants["editor_b"]), "idem-bravo", key).status_code == 201
-    turn, created = services.fire_schedule(sched, slot)
+    turn, created = schedule_turns.fire_schedule(sched, slot)
     assert created is True
     assert turn.agent == two_tenants["agent_a"]
     assert turn.prompt == "/alpha:report"

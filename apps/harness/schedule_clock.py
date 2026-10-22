@@ -37,6 +37,8 @@ from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 
+from .models import AgentSchedule
+
 logger = logging.getLogger(__name__)
 
 TICK_CACHE_KEY = "harness:schedule-clock:tick"
@@ -51,7 +53,6 @@ def tick(*, now: dt.datetime | None = None) -> dict:
     {"fired": [{schedule_id, agent, slot, turn_id, created}], "failed": [ids]}."""
     from canopy_cron import due_slot
 
-    from .models import AgentSchedule
     from .schedule_turns import OneOffSlotMismatch, fire_after_of, fire_schedule
 
     now = now or timezone.now()

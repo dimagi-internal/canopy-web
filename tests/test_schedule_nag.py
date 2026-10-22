@@ -13,6 +13,7 @@ import pytest
 from apps.agents.models import Agent
 from apps.agents import services as agent_services
 from apps.harness import services as hsvc
+from apps.harness import schedule_turns
 from apps.agents.models import AgentTask, AgentTaskAction
 from apps.harness.models import AgentSchedule, Turn
 
@@ -60,15 +61,15 @@ def test_never_fired_schedule_does_not_nag(agent, schedule):
 def test_firing_alone_does_not_nag(agent, schedule):
     """A freshly fired (queued) slot owes nothing yet — the nag is about HOLDING
     the agent past grace, not about a slot merely existing."""
-    hsvc.fire_schedule(schedule, SLOT)
+    schedule_turns.fire_schedule(schedule, SLOT)
     assert _open_nags(agent) == []
 
 
 def test_grace_released_occurrence_raises_a_review_nag(agent, schedule):
-    turn, _ = hsvc.fire_schedule(schedule, SLOT)
+    turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
     _claimed_long_ago(turn, minutes=200)  # past the 120m grace
 
-    released = hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
+    released = schedule_turns.release_stale_occurrence_turns(schedule, now=SLOT)
 
     assert released == 1
     nags = _open_nags(agent)
@@ -81,13 +82,13 @@ def test_grace_released_occurrence_raises_a_review_nag(agent, schedule):
 
 
 def test_a_finished_later_occurrence_clears_the_nag(agent, schedule):
-    turn, _ = hsvc.fire_schedule(schedule, SLOT)
+    turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
     _claimed_long_ago(turn, minutes=200)
-    hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
+    schedule_turns.release_stale_occurrence_turns(schedule, now=SLOT)
     nag = _open_nags(agent)[0]
 
     # A later occurrence completes -> the owed attention is discharged.
-    later, _ = hsvc.fire_schedule(schedule, SLOT + dt.timedelta(days=31))
+    later, _ = schedule_turns.fire_schedule(schedule, SLOT + dt.timedelta(days=31))
     Turn.objects.filter(pk=later.pk).update(status=Turn.RUNNING)
     later.refresh_from_db()
     hsvc.finish_turn(later, status=Turn.DONE)
@@ -102,9 +103,9 @@ def test_a_finished_later_occurrence_clears_the_nag(agent, schedule):
 
 
 def test_approving_the_nag_re_runs_the_schedule(agent, schedule):
-    turn, _ = hsvc.fire_schedule(schedule, SLOT)
+    turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
     _claimed_long_ago(turn, minutes=200)
-    hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
+    schedule_turns.release_stale_occurrence_turns(schedule, now=SLOT)
     nag = _open_nags(agent)[0]
 
     task, row, turns = agent_services.act(
@@ -123,9 +124,9 @@ def test_resolving_skips_a_nag_a_person_already_closed(agent, schedule):
     must leave their decision alone and count nothing."""
     from apps.harness.schedule_turns import resolve_schedule_nags
 
-    turn, _ = hsvc.fire_schedule(schedule, SLOT)
+    turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
     _claimed_long_ago(turn, minutes=200)
-    hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
+    schedule_turns.release_stale_occurrence_turns(schedule, now=SLOT)
     nag = _open_nags(agent)[0]
     agent_services.act(nag, action="approve", by="jj@dimagi.com", actor_workspace_ids=set())
 
@@ -141,9 +142,9 @@ def test_resolving_survives_a_nag_closed_mid_sweep(agent, schedule, monkeypatch)
     inside finish_turn for an unrelated turn and must swallow it, not fail."""
     from apps.harness.schedule_turns import resolve_schedule_nags
 
-    turn, _ = hsvc.fire_schedule(schedule, SLOT)
+    turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
     _claimed_long_ago(turn, minutes=200)
-    hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
+    schedule_turns.release_stale_occurrence_turns(schedule, now=SLOT)
     nag = _open_nags(agent)[0]
 
     real_act = agent_services.act
@@ -162,9 +163,9 @@ def test_resolving_survives_a_nag_closed_mid_sweep(agent, schedule, monkeypatch)
 def test_a_schedule_that_opts_out_of_the_inbox_channel_does_not_nag(agent, schedule):
     schedule.notify = ["carrier_pigeon"]  # no "inbox" channel
     schedule.save()
-    turn, _ = hsvc.fire_schedule(schedule, SLOT)
+    turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
     _claimed_long_ago(turn, minutes=200)
 
-    hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
+    schedule_turns.release_stale_occurrence_turns(schedule, now=SLOT)
 
     assert _open_nags(agent) == []

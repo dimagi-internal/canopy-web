@@ -908,7 +908,7 @@ def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) ->
     from django.db import transaction
 
     from apps.harness.models import Runner, WorkspaceRunnerOrder
-    from apps.harness.services import runner_tenant_slugs
+    from apps.harness.routing import runner_tenant_slugs
 
     m = _require(request.user, slug, perms.RUNNERS_ROUTE)
     ids = [row.runner_id for row in payload.runners]

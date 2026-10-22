@@ -7675,7 +7675,7 @@ export interface paths {
          * List the fleet I can see
          * @description The supervisor's runner status, and the fleet read every preflight makes.
          *
-         *     Scoped by TENANT (`_runner_read_q`), not by who owns what: a member who
+         *     Scoped by TENANT (`runner_read_q`), not by who owns what: a member who
          *     paired nothing used to list nothing, which reads identically to "this
          *     workspace has no runners" and is the wrong answer to draw a conclusion from.
          *     Each row carries `can_manage` for the ownership half. Retired runners are

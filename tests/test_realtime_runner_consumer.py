@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import routing, runners
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.realtime.consumers import RunnerConsumer
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -623,7 +624,7 @@ async def test_ws_heartbeat_records_health_and_acks_refresh():
     fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
     assert fresh.health["checks"][0]["name"] == "transcripts"
 
-    await database_sync_to_async(services.request_refresh)(fresh)
+    await database_sync_to_async(runners.request_refresh)(fresh)
     await comm.send_json_to({"action": "heartbeat", "active_turn_ids": []})
     assert (await comm.receive_json_from(timeout=2))["refresh_pending"] is True
     # A beat WITHOUT health leaves the last report alone.
@@ -679,8 +680,8 @@ async def test_a_confined_turn_claimed_over_ws_carries_its_confinement():
 
     @database_sync_to_async
     def _enqueue_confined():
-        runner.capabilities = {**runner.capabilities, "profiles": services.PROFILES_VERSION,
-                               "envelope": services.ENVELOPE_VERSION}
+        runner.capabilities = {**runner.capabilities, "profiles": routing.PROFILES_VERSION,
+                               "envelope": routing.ENVELOPE_VERSION}
         runner.save(update_fields=["capabilities"])
         return Turn.objects.create(agent=agent, origin=Turn.ORIGIN_EMAIL, prompt="p",
                                    idempotency_key="confined-1", capability="ask")

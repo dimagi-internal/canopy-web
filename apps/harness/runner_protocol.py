@@ -15,7 +15,7 @@ from __future__ import annotations
 from django.db.models import Q
 from pydantic import ValidationError
 
-from . import services
+from . import routing, services
 from .models import Runner, Turn
 from .schemas import HeartbeatIn, TurnFinishIn
 
@@ -119,7 +119,7 @@ def finish(turn: Turn, payload: TurnFinishIn) -> Turn:
     # "your sessionless failure was put back on the queue" (services.finish_turn's
     # requeue — a SUCCESSFUL finish that legitimately lands on QUEUED). Only the
     # executing case can produce the second, so that is what tells them apart.
-    was_executing = turn.status in services.EXECUTING
+    was_executing = turn.status in routing.EXECUTING
     result = services.finish_turn(turn, status=payload.status, result_note=payload.result_note)
     if result.status not in Turn.TERMINAL and not was_executing:
         raise ProtocolError(409, "Turn not finishable", detail=f"status={result.status}")

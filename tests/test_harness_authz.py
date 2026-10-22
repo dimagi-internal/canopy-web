@@ -292,12 +292,13 @@ def test_runner_with_null_owner_claims_nothing_tenanted(owner_client, agent, wor
         owner=None, workspace=workspace,
     )
     from apps.harness import services as hsvc
+    from apps.harness import claim
 
     hsvc.heartbeat(orphan, active_turn_ids=[])  # ONLINE, or this proves nothing
     assert Runner.objects.get(pk=orphan.id).status == Runner.ONLINE
 
     turn_id = _enqueue(owner_client).json()["id"]
-    assert hsvc.claim_next_turn(orphan) is None
+    assert claim.claim_next_turn(orphan) is None
     victim = Turn.objects.get(pk=turn_id)
     assert victim.status == Turn.QUEUED
     assert victim.claimed_by is None

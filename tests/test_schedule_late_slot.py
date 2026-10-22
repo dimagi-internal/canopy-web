@@ -6,14 +6,14 @@ import datetime as dt
 import pytest
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import schedule_turns
 from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
 
 SLOT = dt.datetime(2026, 9, 23, 14, tzinfo=dt.UTC)
-WINDOW = dt.timedelta(minutes=services.LATE_SLOT_WINDOW_MINUTES)
+WINDOW = dt.timedelta(minutes=schedule_turns.LATE_SLOT_WINDOW_MINUTES)
 
 
 @pytest.fixture()
@@ -27,9 +27,9 @@ def schedule():
 
 def test_a_slot_past_the_window_is_skipped_as_missed(schedule):
     """The 2026-09-23 case: laptop reopened hours after the slot."""
-    turn, _ = services.fire_schedule(schedule, SLOT)
+    turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
 
-    assert services.skip_late_scheduled_turns(now=SLOT + dt.timedelta(hours=5)) == 1
+    assert schedule_turns.skip_late_scheduled_turns(now=SLOT + dt.timedelta(hours=5)) == 1
 
     turn.refresh_from_db()
     assert turn.status == Turn.MISSED
@@ -37,9 +37,9 @@ def test_a_slot_past_the_window_is_skipped_as_missed(schedule):
 
 
 def test_a_slot_inside_the_window_still_runs(schedule):
-    turn, _ = services.fire_schedule(schedule, SLOT)
+    turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
 
-    assert services.skip_late_scheduled_turns(now=SLOT + WINDOW - dt.timedelta(minutes=1)) == 0
+    assert schedule_turns.skip_late_scheduled_turns(now=SLOT + WINDOW - dt.timedelta(minutes=1)) == 0
 
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
@@ -48,18 +48,18 @@ def test_a_slot_inside_the_window_still_runs(schedule):
 def test_always_run_schedules_are_never_skipped(schedule):
     schedule.always_run = True
     schedule.save()
-    turn, _ = services.fire_schedule(schedule, SLOT)
+    turn, _ = schedule_turns.fire_schedule(schedule, SLOT)
 
-    assert services.skip_late_scheduled_turns(now=SLOT + dt.timedelta(days=2)) == 0
+    assert schedule_turns.skip_late_scheduled_turns(now=SLOT + dt.timedelta(days=2)) == 0
 
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
 
 
 def test_a_manual_run_now_is_never_skipped(schedule):
-    turn = services.run_schedule_now(schedule)
+    turn = schedule_turns.run_schedule_now(schedule)
 
-    assert services.skip_late_scheduled_turns(
+    assert schedule_turns.skip_late_scheduled_turns(
         now=turn.created_at + dt.timedelta(days=2)) == 0
 
     turn.refresh_from_db()
@@ -67,10 +67,10 @@ def test_a_manual_run_now_is_never_skipped(schedule):
 
 
 def test_skipping_advances_nothing_the_next_slot_still_fires(schedule):
-    services.fire_schedule(schedule, SLOT)
-    services.skip_late_scheduled_turns(now=SLOT + dt.timedelta(hours=5))
+    schedule_turns.fire_schedule(schedule, SLOT)
+    schedule_turns.skip_late_scheduled_turns(now=SLOT + dt.timedelta(hours=5))
 
-    nxt, created = services.fire_schedule(schedule, SLOT + dt.timedelta(days=1))
+    nxt, created = schedule_turns.fire_schedule(schedule, SLOT + dt.timedelta(days=1))
 
     assert created is True and nxt.status == Turn.QUEUED
     schedule.refresh_from_db()

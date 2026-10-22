@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import claim, routing
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -94,9 +95,9 @@ def test_pinned_turn_invisible_to_other_runners():
         agent=a, origin=Turn.ORIGIN_API, idempotency_key="p1", pinned_runner=r1,
     )
 
-    assert services.claim_next_turn(r2) is None  # pinned elsewhere -> invisible
+    assert claim.claim_next_turn(r2) is None  # pinned elsewhere -> invisible
 
-    claimed = services.claim_next_turn(r1)
+    claimed = claim.claim_next_turn(r1)
     assert claimed is not None and claimed.pk == turn.pk
     assert claimed.status == Turn.CLAIMED
 
@@ -117,7 +118,7 @@ def test_pin_bypasses_assignments_but_not_tenancy():
         agent=a, origin=Turn.ORIGIN_API, idempotency_key="p2", pinned_runner=r_stranger,
     )
 
-    assert services.claim_next_turn(r_stranger) is None  # tenant gate holds even when pinned
+    assert claim.claim_next_turn(r_stranger) is None  # tenant gate holds even when pinned
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
     assert turn.claimed_by is None
@@ -132,8 +133,8 @@ def test_rank0_available_blocks_rank1():
     a = _agent("echo")
     _assign(a, r0, 0); _assign(a, r1, 1)
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c1")
-    assert services.claim_next_turn(r1) is None      # r0 is available → r1 waits
-    assert services.claim_next_turn(r0) is not None  # r0 claims
+    assert claim.claim_next_turn(r1) is None      # r0 is available → r1 waits
+    assert claim.claim_next_turn(r0) is not None  # r0 claims
 
 
 def test_rank1_takes_over_when_rank0_offline():
@@ -143,7 +144,7 @@ def test_rank1_takes_over_when_rank0_offline():
     a = _agent("echo")
     _assign(a, r0, 0); _assign(a, r1, 1)
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c2")
-    assert services.claim_next_turn(r1) is not None
+    assert claim.claim_next_turn(r1) is not None
 
 
 def test_not_ready_counts_as_unavailable():
@@ -153,7 +154,7 @@ def test_not_ready_counts_as_unavailable():
     a = _agent("echo")
     _assign(a, r0, 0); _assign(a, r1, 1)
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c3")
-    assert services.claim_next_turn(r1) is not None
+    assert claim.claim_next_turn(r1) is not None
 
 
 def test_grace_opens_next_rank_even_when_rank0_available(monkeypatch):
@@ -163,9 +164,9 @@ def test_grace_opens_next_rank_even_when_rank0_available(monkeypatch):
     _assign(a, r0, 0); _assign(a, r1, 1)
     turn, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c4")
     Turn.objects.filter(pk=turn.pk).update(
-        created_at=timezone.now() - timezone.timedelta(seconds=services.CASCADE_GRACE_SECONDS + 1)
+        created_at=timezone.now() - timezone.timedelta(seconds=routing.CASCADE_GRACE_SECONDS + 1)
     )
-    assert services.claim_next_turn(r1) is not None  # r0 online-but-stuck can't wedge the queue
+    assert claim.claim_next_turn(r1) is not None  # r0 online-but-stuck can't wedge the queue
 
 
 def test_unassigned_runner_never_claims_even_with_capabilities():
@@ -173,7 +174,7 @@ def test_unassigned_runner_never_claims_even_with_capabilities():
     r = _online_runner("r", u, capabilities={"agents": ["echo"]})
     a = _agent("echo")  # no assignments at all → unroutable
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c5")
-    assert services.claim_next_turn(r) is None
+    assert claim.claim_next_turn(r) is None
 
 
 # --- enabled toggle (operator follow-up: disable, don't remove) -------------
@@ -188,8 +189,8 @@ def test_disabled_rank0_does_not_block_enabled_rank1():
     _assign(a, r0, 0, enabled=False)
     _assign(a, r1, 1)
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c6")
-    assert services.claim_next_turn(r0) is None      # disabled → never claims
-    claimed = services.claim_next_turn(r1)
+    assert claim.claim_next_turn(r0) is None      # disabled → never claims
+    claimed = claim.claim_next_turn(r1)
     assert claimed is not None and claimed.status == Turn.CLAIMED
 
 
@@ -199,7 +200,7 @@ def test_disabled_runner_itself_never_claims():
     a = _agent("echo")
     _assign(a, r0, 0, enabled=False)
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=Turn.ORIGIN_API, idempotency_key="c7")
-    assert services.claim_next_turn(r0) is None
+    assert claim.claim_next_turn(r0) is None
 
 
 # --- session-binding stickiness (Task 5) ------------------------------------
@@ -223,8 +224,8 @@ def test_bound_session_claims_only_on_binding_holder():
     s = _session(workspace=ws, project="canopy-web")
     _bind(s, holder)
     services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="s1")
-    assert services.claim_next_turn(other) is None
-    assert services.claim_next_turn(holder) is not None
+    assert claim.claim_next_turn(other) is None
+    assert claim.claim_next_turn(holder) is not None
 
 
 def test_bound_session_with_offline_holder_waits_for_placement():
@@ -236,7 +237,7 @@ def test_bound_session_with_offline_holder_waits_for_placement():
     s = _session(workspace=ws, project="canopy-web")
     _bind(s, holder)
     services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="s2")
-    assert services.claim_next_turn(other) is None  # nobody claims until user places
+    assert claim.claim_next_turn(other) is None  # nobody claims until user places
 
 
 def test_unbound_agent_session_follows_assignment_order():
@@ -248,4 +249,4 @@ def test_unbound_agent_session_follows_assignment_order():
     _assign(a, r0, 0); _assign(a, r1, 1)
     s = _session(agent=a, workspace=ws)
     services.enqueue_turn(initiator=_BY_CANOPY, session=s, origin=Turn.ORIGIN_API, idempotency_key="s3")
-    assert services.claim_next_turn(r1) is not None  # r0 offline → r1 (rank 1) takes it
+    assert claim.claim_next_turn(r1) is not None  # r0 offline → r1 (rank 1) takes it

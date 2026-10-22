@@ -12,7 +12,7 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 
-from apps.harness import services
+from apps.harness import runners
 from apps.harness.models import Runner
 
 pytestmark = pytest.mark.django_db
@@ -99,5 +99,5 @@ def test_refresh_needs_the_administer_tier(owner_and_runner, django_user_model):
 def test_refresh_pending_is_false_with_no_request(owner_and_runner):
     _, r, _ = owner_and_runner
     assert r.refresh_pending() is False
-    services.request_refresh(r)
+    runners.request_refresh(r)
     assert r.refresh_pending() is True

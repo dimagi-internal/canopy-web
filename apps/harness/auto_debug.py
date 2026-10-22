@@ -59,6 +59,8 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from apps.agents.models import Agent
+
 from .models import FailureInvestigation, RunnerDrill, Turn
 
 logger = logging.getLogger(__name__)
@@ -146,8 +148,6 @@ def _note_for(turn: Turn) -> str:
 
 def debugger_agent():
     """The agent debug turns go to, or None (then nothing happens)."""
-    from apps.agents.models import Agent
-
     slug = getattr(settings, "CANOPY_AUTO_DEBUG_AGENT", "") or ""
     if not slug:
         return None
@@ -303,8 +303,6 @@ def cap_blocks(now: dt.datetime) -> str:
 
 
 def _trigger(inv: FailureInvestigation, turn: Turn, debugger, now) -> None:
-    from apps.agents.models import Agent
-
     from . import initiator as who
     from .services import enqueue_turn
 

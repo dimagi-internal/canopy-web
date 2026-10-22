@@ -28,6 +28,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from apps.agents.models import Agent
+
 # --- kind: WHAT asked --------------------------------------------------------
 USER = "user"          # a canopy account
 CONTACT = "contact"    # someone canopy knows who is not a member (apps/contacts)
@@ -162,8 +164,6 @@ def channel(request, default: str) -> str:
 def _agent_login_of(user) -> str | None:
     """The slug of the agent whose own login `user` is — `Agent.user`, or, for an
     agent whose login predates that link, the user holding its mailbox address."""
-    from apps.agents.models import Agent
-
     agent = Agent.objects.filter(user_id=user.pk).only("slug").first()
     if agent is None and user.email:
         agent = Agent.objects.filter(email__iexact=user.email).only("slug").first()

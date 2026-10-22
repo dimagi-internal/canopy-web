@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin, AgentProject, EngagementEvent, ProjectParticipant
 from apps.events.models import Event
-from apps.harness import services as hsvc
+from apps.harness import schedule_turns
 from apps.harness.models import AgentSchedule, Turn
 from apps.huddles import checkins
 from apps.huddles.models import CheckinRun, ProjectCheckin
@@ -73,7 +73,7 @@ def _fire(checkin, slot=None, since=EPOCH):
     """Announce a run. `since` stands in for where it reads from (the fake channel
     is from 2023, a real first run reads one cadence back); None keeps the real one."""
     slot = slot or timezone.now().replace(microsecond=0)
-    turn, created = hsvc.fire_schedule(checkin.schedule, slot)
+    turn, created = schedule_turns.fire_schedule(checkin.schedule, slot)
     assert turn is None
     run = CheckinRun.objects.get(checkin=checkin, slot=slot)
     if since is not None:
@@ -223,7 +223,7 @@ def test_the_schedule_announces_and_queues_no_turn(checkin, slack, channel):
     (ev,) = EngagementEvent.objects.filter(kind="run_announced")
     assert ev.checkin == str(checkin.pk) and ev.meta["run"] == run.pk and ev.surface == "slack"
     # The same slot fired twice is one run, one post.
-    hsvc.fire_schedule(checkin.schedule, run.slot)
+    schedule_turns.fire_schedule(checkin.schedule, run.slot)
     assert CheckinRun.objects.count() == 1 and len(_announced(slack)) == 1
 
 

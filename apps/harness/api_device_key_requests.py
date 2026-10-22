@@ -34,6 +34,7 @@ from ninja import Router
 
 from apps.common.token_hash import hash_token
 from apps.api.errors import TYPE_AUTH, ProblemError
+from apps.tokens.models import PersonalToken
 
 from . import device_keys
 from .models import Runner, RunnerDeviceKey
@@ -59,8 +60,6 @@ def _refuse(why: str) -> ProblemError:
 
 
 def _owner_token_ok(raw: str, runner: Runner) -> bool:
-    from apps.tokens.models import PersonalToken
-
     if not raw or runner.owner_id is None:
         return False
     since = timezone.now() - timedelta(days=STALE_TOKEN_DAYS)
@@ -74,9 +73,9 @@ def _owner_token_ok(raw: str, runner: Runner) -> bool:
 def _holds_key(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[dict, str, str]:
     """`(public_jwk, role_arn, jkt)` of the key the box proved it holds."""
     if payload.kind == RunnerDeviceKey.AWS_IAM:
-        from .api_device_keys import _verified_role
+        from .api_device_keys import verified_role
 
-        role_arn, jkt = _verified_role(request, payload)
+        role_arn, jkt = verified_role(request, payload)
         return {}, role_arn, jkt
     try:
         jwk = device_keys.normalize_public_jwk(payload.public_jwk)
@@ -95,22 +94,22 @@ def request_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyRequ
     """Prove a token of the runner's owner (revoked within 30 days is fine) and the
     key being registered; get a PENDING key and its `approve_url`. The owner is
     emailed and pushed the link."""
-    from .api_device_keys import _created, _ecdh, _set_ecdh
+    from .api_device_keys import checked_ecdh, created_out, set_ecdh
 
     runner = (Runner.objects.exclude(status=Runner.RETIRED).select_related("owner")
               .filter(pk=payload.runner).first())
     if runner is None or not _owner_token_ok(payload.owner_token, runner):
         raise _refuse("no such runner, or the token is not its owner's")
     jwk, role_arn, jkt = _holds_key(request, payload)
-    ecdh_jwk, ecdh_jkt = _ecdh(payload)
+    ecdh_jwk, ecdh_jkt = checked_ecdh(payload)
 
     existing = RunnerDeviceKey.objects.filter(jkt=jkt).first()
     if existing is not None:
         if existing.runner_id != runner.pk:
             raise _refuse("the key belongs to another runner")
         if existing.status == RunnerDeviceKey.PENDING:
-            _set_ecdh(existing, ecdh_jwk, ecdh_jkt)
-        return 200, _created(existing)
+            set_ecdh(existing, ecdh_jwk, ecdh_jkt)
+        return 200, created_out(existing)
     if RunnerDeviceKey.objects.filter(runner=runner, status=RunnerDeviceKey.PENDING).count() >= MAX_PENDING:
         raise ProblemError(429, "Too many pending keys",
                            detail=f"{runner.name} already has {MAX_PENDING} keys waiting for approval")
@@ -122,4 +121,4 @@ def request_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyRequ
     from . import device_key_notify
 
     device_key_notify.notify_pending_on_commit(key)  # owner + runner admins get the approve link
-    return 201, _created(key)
+    return 201, created_out(key)

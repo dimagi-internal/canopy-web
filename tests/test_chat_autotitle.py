@@ -15,7 +15,7 @@ from django.contrib.auth.models import User
 from apps.agents.models import Agent
 from apps.canopy_sessions import autotitle
 from apps.canopy_sessions.models import Message, Session
-from apps.harness import services as harness_services
+from apps.harness import ledger
 from apps.harness.models import Turn
 from apps.realtime import groups
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -88,7 +88,7 @@ def test_assistant_turn_event_triggers_autotitle_and_publishes(ctx):
     layer = get_channel_layer()
     async_to_sync(layer.group_add)(groups.session_group(session.id), "autotitle-chan")
 
-    harness_services.append_events(turn, [{"kind": "assistant", "payload": {"text": "hi!"}}])
+    ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "hi!"}}])
 
     # realtime's own receiver also fans this same signal out as a chat.turn_event
     # frame on the same group, so pull frames until the title one shows up.
@@ -113,7 +113,7 @@ def test_non_assistant_turn_event_does_not_autotitle(ctx):
     turn = Turn.objects.create(
         chat_session=session, origin=Turn.ORIGIN_API, idempotency_key="autotitle-2",
     )
-    harness_services.append_events(turn, [{"kind": "tool_start", "payload": {}}])
+    ledger.append_events(turn, [{"kind": "tool_start", "payload": {}}])
     session.refresh_from_db()
     assert session.title == ""
 

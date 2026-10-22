@@ -88,9 +88,8 @@ turn_status_changed = Signal()
 from django.db.models.signals import post_delete, post_save  # noqa: E402
 from django.dispatch import receiver  # noqa: E402
 
-from apps.canopy_sessions.invalidation import mark_dirty  # noqa: E402
-
 from apps.agents.models import AgentTask  # noqa: E402
+from apps.canopy_sessions.invalidation import mark_dirty  # noqa: E402
 
 #: The resource URI the task collection belongs to.
 #:

@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, "runner/canopy_runner")
 from django.contrib.auth.models import User
-from apps.harness import services as hs
+from apps.harness import ledger
 from apps.harness.models import Turn
 from apps.agents.models import Agent
 from apps.workspaces.models import Workspace
@@ -38,10 +38,10 @@ def test_round_trip_is_byte_identical():
     # Cap above the largest single line but below the total, so this splits
     # into real batches instead of tripping the oversized-line path.
     for batch in cb.chunk_raw_lines(lines, max_bytes=3100):
-        hs.append_transcript(t, batch, batch_id=f"{t.id}:{n}")
+        ledger.append_transcript(t, batch, batch_id=f"{t.id}:{n}")
         n += 1
     assert n > 1, "the fixture must actually exercise multi-batch"
-    assert hs.read_transcript(t).decode() == "\n".join(lines)
+    assert ledger.read_transcript(t).decode() == "\n".join(lines)
 
 
 def test_a_lost_ack_retry_does_not_double_append():
@@ -49,6 +49,6 @@ def test_a_lost_ack_retry_does_not_double_append():
     ws = Workspace.objects.create(slug="w2", display_name="W2", created_by=u)
     ag = Agent.objects.create(slug="ada", name="Ada", workspace=ws)
     t = Turn.objects.create(agent=ag, prompt="x", idempotency_key="k2")
-    hs.append_transcript(t, ['{"a":1}'], batch_id=f"{t.id}:0")
-    hs.append_transcript(t, ['{"a":1}'], batch_id=f"{t.id}:0")   # the retry
-    assert hs.read_transcript(t).decode() == '{"a":1}'
+    ledger.append_transcript(t, ['{"a":1}'], batch_id=f"{t.id}:0")
+    ledger.append_transcript(t, ['{"a":1}'], batch_id=f"{t.id}:0")   # the retry
+    assert ledger.read_transcript(t).decode() == '{"a":1}'

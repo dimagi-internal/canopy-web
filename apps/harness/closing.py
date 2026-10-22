@@ -102,9 +102,9 @@ def close_turn(
     if status == Turn.DONE:
         sid = (turn.origin_ref or {}).get("schedule_id")
         if sid:
-            from . import services  # its re-export is the seam tests patch
+            from . import schedule_turns  # its re-export is the seam tests patch
 
-            services.resolve_schedule_nags(sid)
+            schedule_turns.resolve_schedule_nags(sid)
 
     # A drill is identified by its RunnerDrill FK, not its origin (drills are
     # ordinary `api` turns that name a runner); the filter no-ops otherwise.

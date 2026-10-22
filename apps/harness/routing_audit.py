@@ -14,6 +14,8 @@ requested to one cloud box, and nobody could say who had set it.
 """
 from __future__ import annotations
 
+from .models import RunnerAssignment, WorkspaceRunnerOrder
+
 
 def _row(r) -> dict:
     return {
@@ -32,8 +34,6 @@ def agent_rows(agent, **scope) -> list[dict]:
     """The agent's RunnerAssignment rows in `scope`, as plain dicts in a stable
     order. Scope keywords are Django filter kwargs, plus `rules_only=True` for
     every non-default-order row (the wholesale rules replace's scope)."""
-    from apps.harness.models import RunnerAssignment
-
     rules_only = scope.pop("rules_only", False)
     qs = RunnerAssignment.objects.filter(agent=agent, **scope)
     if rules_only:
@@ -42,8 +42,6 @@ def agent_rows(agent, **scope) -> list[dict]:
 
 
 def workspace_rows(workspace) -> list[dict]:
-    from apps.harness.models import WorkspaceRunnerOrder
-
     return [
         _row(r) for r in WorkspaceRunnerOrder.objects.filter(workspace=workspace)
         .select_related("runner").order_by("rank")

@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import re
 
+from apps.agents.models import SenderTrust
+from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.models import Contact
 
 from . import initiator as who
+from .models import Turn
 
 #: Bump when a field's MEANING changes; adding a field does not need it.
 #: 2 (2026-10-04): `relationship` "caller" is now "contact", `profile`
@@ -78,7 +81,7 @@ def normalize_profile(value) -> str:
     return _LEGACY_PROFILE.get(v, v)
 
 
-def _verified(turn) -> bool:
+def is_verified(turn) -> bool:
     kind, grade = turn.initiator_kind, turn.initiator_assurance or ""
     if kind == who.USER:
         return grade in _VERIFIED_USER
@@ -152,7 +155,6 @@ def _relationship_without_agent(turn, user) -> str:
     if session is None:
         return CONTACT
     from apps.canopy_sessions import access
-    from apps.canopy_sessions.models import SessionParticipant
 
     role = access.role_for(user, session)
     if role == SessionParticipant.OWNER:
@@ -165,12 +167,11 @@ def relationship_for_user(user, agent) -> str:
     the MCP tools they may call)."""
     if agent is None or not getattr(user, "is_authenticated", False):
         return CONTACT
-    from apps.workspaces import services as wsvc
-
     # Owner only while still in the tenant: an owner removed from the workspace
     # who messages the agent (Slack, email) is an outsider now, and must reach
     # it through its interface like one — not with an unconfined profile.
     from apps.workspaces import role_cap
+    from apps.workspaces import services as wsvc
 
     # Acting as an editor or viewer (the turn's acts_as): judged as a member.
     capped = bool(role_cap.cap_of(user))
@@ -285,8 +286,6 @@ def sender_trust(turn) -> dict | None:
         return None
     from django.utils import timezone
 
-    from apps.agents.models import SenderTrust
-
     rule = SenderTrust.objects.filter(agent=agent, email=contact.email.lower()).first()
     if rule is None:
         return None
@@ -326,7 +325,7 @@ def build(turn, *, reader_user=None) -> dict:
         # purpose (it is permissioned as one); this is what says no one is there:
         # don't reply to it, and don't treat its text as a person's request.
         "system_account": described.get("system_account"),
-        "verified": _verified(turn),
+        "verified": is_verified(turn),
         "relationship": rel,
         "contact": _contact(turn.initiator_contact) if turn.initiator_contact_id else None,
         # WHAT CANOPY KNOWS ABOUT THE HUMAN ASKING (v3, fleet brain): live facts
@@ -507,8 +506,6 @@ def _thread_history(turn, ref: dict) -> dict | None:
         return None
     from django.db.models import Q
 
-    from .models import Turn
-
     # An email turn targets the thread's SESSION, not the agent (the two are exclusive
     # by constraint), so match the agent either way.
     prior = (Turn.objects.filter(Q(agent_id=agent.pk) | Q(chat_session__agent_id=agent.pk),
@@ -556,7 +553,7 @@ def _ship_grant(turn, agent, rel: str) -> dict | None:
     """
     if agent is None or not turn.agent_id:
         return None
-    if turn.initiator_kind != who.USER or not _verified(turn):
+    if turn.initiator_kind != who.USER or not is_verified(turn):
         return None
     if rel not in (OWNER, ADMIN):
         return None

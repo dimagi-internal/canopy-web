@@ -341,7 +341,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_runner_flags": ("runner-admin",),
     "set_runner_engine": ("runner-admin",),
     "set_runner_private": ("runner",),  # owner only (not RunnerAdmins)
-    "list_runners": ("member",),  # _runner_read_q: the tenant's fleet
+    "list_runners": ("member",),  # runner_read_q: the tenant's fleet
     "update_runner_capabilities": ("runner",),
     "retire_runner": ("runner",),
     "unretire_runner": ("runner",),

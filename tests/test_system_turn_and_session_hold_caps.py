@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import Session
-from apps.harness import services
+from apps.harness import claim, schedule_turns
 from apps.harness import turn_mode as modes
 from apps.harness.models import AgentSchedule, Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -69,13 +69,13 @@ def _schedule(agent, created_by, name="Fleet review cycle", **extra):
 
 def _claim_mode(world, turn):
     RunnerAssignment.objects.get_or_create(agent=world["ada"], runner=world["jj_box"], rank=0)
-    claimed = services.claim_next_turn(world["jj_box"])
+    claimed = claim.claim_next_turn(world["jj_box"])
     assert claimed is not None and claimed.pk == turn.pk
     return claimed
 
 
 def test_an_editors_schedule_runs_manual_and_says_why(world):
-    turn, _ = services.fire_schedule(_schedule(world["ada"], world["ed"]), _slot())
+    turn, _ = schedule_turns.fire_schedule(_schedule(world["ada"], world["ed"]), _slot())
     claimed = _claim_mode(world, turn)
     assert claimed.turn_mode == modes.MANUAL
     assert "ed@dimagi.com" in claimed.turn_mode_basis
@@ -84,11 +84,11 @@ def test_an_editors_schedule_runs_manual_and_says_why(world):
 
 def test_an_editors_run_now_and_one_off_are_capped_too(world):
     sched = _schedule(world["ada"], world["ed"])
-    now_turn = services.run_schedule_now(sched, clicked_by=world["jj"])
+    now_turn = schedule_turns.run_schedule_now(sched, clicked_by=world["jj"])
     assert modes.for_turn(now_turn, fresh=True).mode == modes.MANUAL
     slot = _slot()
     one_off = _schedule(world["ada"], world["ed"], name="once", run_once_at=slot)
-    turn, _ = services.fire_schedule(one_off, slot)
+    turn, _ = schedule_turns.fire_schedule(one_off, slot)
     assert modes.for_turn(turn, fresh=True).mode == modes.MANUAL
 
 
@@ -97,14 +97,14 @@ def test_an_admins_the_agents_own_or_an_unattributed_schedule_keeps_auto(world, 
     """Owner, explicit admin, the agent's own login (Ada's live schedule), or no
     recorded creator (Ada's "Fleet review cycle", created_by=null) — unchanged."""
     creator = world[who] if who else None
-    turn, _ = services.fire_schedule(_schedule(world["ada"], creator), _slot())
+    turn, _ = schedule_turns.fire_schedule(_schedule(world["ada"], creator), _slot())
     claimed = _claim_mode(world, turn)
     assert claimed.turn_mode == modes.AUTO
     assert claimed.turn_mode_basis == "agent"
 
 
 def test_promoting_the_creator_lifts_the_cap_at_the_next_claim(world):
-    turn, _ = services.fire_schedule(_schedule(world["ada"], world["ed"]), _slot())
+    turn, _ = schedule_turns.fire_schedule(_schedule(world["ada"], world["ed"]), _slot())
     assert modes.for_turn(turn, fresh=True).mode == modes.MANUAL
     AgentAdmin.objects.create(agent=world["ada"], user=world["ed"], granted_by=world["jj"])
     assert modes.for_turn(turn, fresh=True).mode == modes.AUTO
@@ -122,16 +122,16 @@ def _chat_turn(world, key="c1"):
 def test_a_box_that_cannot_hold_the_agent_cannot_take_its_chat(world):
     RunnerAssignment.objects.create(agent=world["ada"], runner=world["ed_box"], rank=0)
     turn = _chat_turn(world)
-    assert services.claim_next_turn(world["ed_box"]) is None
+    assert claim.claim_next_turn(world["ed_box"]) is None
     # Not even pinned: the hold gate sits above the pin, as for an agent turn.
     Turn.objects.filter(pk=turn.pk).update(pinned_runner=world["ed_box"])
-    assert services.claim_next_turn(world["ed_box"]) is None
+    assert claim.claim_next_turn(world["ed_box"]) is None
 
 
 def test_a_box_whose_owner_holds_the_agent_still_takes_its_chat(world):
     RunnerAssignment.objects.create(agent=world["ada"], runner=world["jj_box"], rank=0)
     turn = _chat_turn(world)
-    claimed = services.claim_next_turn(world["jj_box"])
+    claimed = claim.claim_next_turn(world["jj_box"])
     assert claimed is not None and claimed.pk == turn.pk
 
 
@@ -139,9 +139,9 @@ def test_the_stuck_warning_names_the_hold_and_agrees_with_claiming(world):
     RunnerAssignment.objects.create(agent=world["ada"], runner=world["ed_box"], rank=0)
     turn = _chat_turn(world)
     Turn.objects.filter(pk=turn.pk).update(
-        created_at=timezone.now() - services.UNCLAIMABLE_GRACE - dt.timedelta(seconds=30))
-    assert services.claim_next_turn(world["ed_box"]) is None
-    [stuck] = services.unclaimable_queued_turns(world["jj"])
+        created_at=timezone.now() - claim.UNCLAIMABLE_GRACE - dt.timedelta(seconds=30))
+    assert claim.claim_next_turn(world["ed_box"]) is None
+    [stuck] = claim.unclaimable_queued_turns(world["jj"])
     assert stuck["kind"] == "config"
     assert "admin" in stuck["reason"] and "'ada'" in stuck["reason"]
-    assert services.turn_reach(turn).kind == "config"
+    assert claim.turn_reach(turn).kind == "config"

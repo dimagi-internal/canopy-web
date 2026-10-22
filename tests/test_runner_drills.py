@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import drills as harness_drills, claim
 from apps.harness.models import Runner, RunnerAssignment, RunnerDrill, Turn
 from apps.workspaces.testing import a_workspace
 
@@ -57,7 +58,7 @@ def test_start_drill_fans_out_pinned_pending_turns(django_user_model):
     a1, a2 = (Agent.objects.create(slug=s, name=s, workspace=a_workspace()) for s in ("echo", "ada"))
     for i, a in enumerate((a1, a2)):
         RunnerAssignment.objects.create(agent=a, runner=r, rank=i)
-    drills = services.start_drill(r, [a1, a2])
+    drills = harness_drills.start_drill(r, [a1, a2])
     assert {d.outcome for d in drills} == {RunnerDrill.OUTCOME_PENDING}
     turns = Turn.objects.filter(origin=Turn.ORIGIN_API)
     assert turns.count() == 2
@@ -70,7 +71,7 @@ def test_report_drill_resolves_outcome(django_user_model):
     r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, owner=u)
     a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     d = RunnerDrill.objects.create(runner=r, agent=a)
-    services.report_drill(d, outcome="pass", summary="all checks green")
+    harness_drills.report_drill(d, outcome="pass", summary="all checks green")
     d.refresh_from_db()
     assert d.outcome == RunnerDrill.OUTCOME_PASS and d.finished_at is not None
 
@@ -81,7 +82,7 @@ def test_failed_drill_turn_marks_drill_fail(django_user_model):
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
-    [d] = services.start_drill(r, [a])
+    [d] = harness_drills.start_drill(r, [a])
     turn = Turn.objects.get(origin=Turn.ORIGIN_API)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, claimed_by=r)
     turn.refresh_from_db()
@@ -101,13 +102,13 @@ def test_lost_drill_turn_marks_drill_fail(django_user_model):
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="echo5", name="Echo5", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
-    [d] = services.start_drill(r, [a])
+    [d] = harness_drills.start_drill(r, [a])
     turn = Turn.objects.get(origin=Turn.ORIGIN_API)
     Turn.objects.filter(pk=turn.pk).update(
         status=Turn.CLAIMED, claimed_by=r,
         lease_expires_at=timezone.now() - timezone.timedelta(minutes=5),
     )
-    swept = services.sweep_expired_leases()
+    swept = claim.sweep_expired_leases()
     assert swept == 1
     turn.refresh_from_db()
     assert turn.status == Turn.LOST
@@ -123,9 +124,9 @@ def test_redrill_resets_to_pending(django_user_model):
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
-    [d] = services.start_drill(r, [a])
-    services.report_drill(d, outcome="pass", summary="ok")
-    [d2] = services.start_drill(r, [a])
+    [d] = harness_drills.start_drill(r, [a])
+    harness_drills.report_drill(d, outcome="pass", summary="ok")
+    [d2] = harness_drills.start_drill(r, [a])
     assert d2.pk == d.pk and d2.outcome == RunnerDrill.OUTCOME_PENDING
 
 
@@ -142,7 +143,7 @@ def _drilled(django_user_model, *, agent_user=None):
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="hal", name="Hal", workspace=a_workspace(), user=agent_user)
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
-    [d] = services.start_drill(r, [a])
+    [d] = harness_drills.start_drill(r, [a])
     return owner, r, a, d
 
 
@@ -204,7 +205,7 @@ def test_done_drill_turn_without_a_report_fails_the_drill(django_user_model):
 
 def test_done_drill_turn_keeps_a_report_it_already_got(django_user_model):
     owner, r, _, d = _drilled(django_user_model)
-    services.report_drill(d, outcome="pass", summary="all green")
+    harness_drills.report_drill(d, outcome="pass", summary="all green")
     _finish(r, Turn.DONE)
     d.refresh_from_db()
     assert d.outcome == RunnerDrill.OUTCOME_PASS and d.summary == "all green"
@@ -231,7 +232,7 @@ def test_the_signed_report_link_lets_any_login_report_that_run_and_only_that_run
     r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={}, owner=owner,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="echo7", name="Echo", workspace=a_workspace())
-    [drill] = services.start_drill(r, [a])
+    [drill] = harness_drills.start_drill(r, [a])
     link = re.search(r'-X POST "([^"]+)"', drill.turn.prompt).group(1)
     path, query = link.split("/api/harness/", 1)[1].split("?", 1)
 
@@ -249,6 +250,6 @@ def test_the_signed_report_link_lets_any_login_report_that_run_and_only_that_run
     assert ok.json()["outcome"] == "pass"
 
     # A NEW run of the same (runner, agent) reuses the row; the old link must not answer it.
-    services.start_drill(r, [a])
+    harness_drills.start_drill(r, [a])
     stale = c.post(f"/api/harness/{path}?{query}", body, content_type="application/json")
     assert stale.status_code == 404

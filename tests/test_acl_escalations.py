@@ -23,6 +23,7 @@ from django.utils import timezone
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import initiator as who
 from apps.harness import services as hsvc
+from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
@@ -121,7 +122,7 @@ def test_an_untrusted_box_never_claims_an_agent_turn(esc):
     turn, _ = hsvc.enqueue_turn(agent=esc["agent"], origin=Turn.ORIGIN_API, idempotency_key="esc-pin",
                                 prompt="hi", pinned_runner=box,
                                 initiator=who.for_user(esc["owner"], via="api", assurance=who.SESSION))
-    assert hsvc.claim_next_turn(box) is None
+    assert claim.claim_next_turn(box) is None
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
 
@@ -185,7 +186,7 @@ def _claimed_turn(esc):
     hsvc.enqueue_turn(agent=esc["agent"], origin=Turn.ORIGIN_API, prompt="work",
                       idempotency_key=uuid.uuid4().hex,
                       initiator=who.for_user(esc["owner"], via="api", assurance=who.SESSION))
-    turn = hsvc.claim_next_turn(box)
+    turn = claim.claim_next_turn(box)
     assert turn is not None
     return turn
 

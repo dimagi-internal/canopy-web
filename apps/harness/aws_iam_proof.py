@@ -43,6 +43,7 @@ from xml.etree import ElementTree
 from django.core.cache import cache
 
 from . import device_keys
+from .models import RunnerDeviceKey
 
 PROOF_HEADER = "HTTP_X_CANOPY_AWS_PROOF"
 #: The one STS endpoint a proof is ever sent to. Pinned: a client-chosen URL
@@ -231,8 +232,6 @@ def verify(raw: str, request, *, now: float | None = None) -> str:
 
 def known_key(role_arn: str):
     """The ACTIVE aws-iam device key for this role, whichever agents it serves."""
-    from .models import RunnerDeviceKey
-
     return (RunnerDeviceKey.objects.select_related("runner")
             .filter(jkt=role_jkt(role_arn), kind=RunnerDeviceKey.AWS_IAM,
                     status=RunnerDeviceKey.ACTIVE).first())
@@ -241,8 +240,6 @@ def known_key(role_arn: str):
 def active_key_for_agent(agent, role_arn: str):
     """The ACTIVE aws-iam device key for this role, if its runner serves `agent`."""
     from django.utils import timezone
-
-    from .models import RunnerDeviceKey
 
     key = known_key(role_arn)
     if key is None or not device_keys.runner_serves_agent(key.runner, agent):

@@ -23,7 +23,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import claim, routing, services
+from apps.harness import claim, routing
 from apps.harness.models import Runner, RunnerAdmin, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
@@ -70,7 +70,7 @@ def _order(ws, *runners):
 
 
 def _claimed(runner):
-    t = services.claim_next_turn(runner)
+    t = claim.claim_next_turn(runner)
     return t.pk if t else None
 
 
@@ -138,7 +138,7 @@ def test_contact_chat_with_no_order_waits_and_says_why(team):
     box = _box(alice, "alice-box")
     turn = _chat(ws, alice, enqueued=False, age_seconds=600)
     assert _claimed(box) is None
-    rows = {r["turn_id"]: r for r in services.unclaimable_queued_turns(alice)}
+    rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(alice)}
     row = rows[str(turn.pk)]
     assert row["kind"] == "config"
     assert "no runner order in canopy" in row["reason"]
@@ -150,7 +150,7 @@ def test_teammates_chat_names_the_person_and_the_repo(team):
     alice, bob, ws = team
     _box(alice, "alice-box")
     turn = _chat(ws, bob, age_seconds=600)
-    row = {r["turn_id"]: r for r in services.unclaimable_queued_turns(bob)}[str(turn.pk)]
+    row = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(bob)}[str(turn.pk)]
     assert row["reason"] == ("no runner order in canopy, and bob@dimagi.com administers "
                              "no box with canopy-web")
 

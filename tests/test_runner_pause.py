@@ -29,6 +29,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -175,13 +176,13 @@ def test_retired_outranks_paused():
 def test_a_paused_runner_claims_nothing():
     _u, ws, _c, runner = _ctx()
     _queued_project_turn(ws)
-    assert services.claim_next_turn(runner) is not None, "sanity: claimable when live"
+    assert claim.claim_next_turn(runner) is not None, "sanity: claimable when live"
 
     turn2 = _queued_project_turn(ws)
     runner.paused = True
     runner.save(update_fields=["paused"])
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
     turn2.refresh_from_db()
     assert turn2.status == Turn.QUEUED, "the turn waits, it is not consumed or failed"
 
@@ -195,7 +196,7 @@ def test_a_pause_outranks_a_pin():
     runner.paused = True
     runner.save(update_fields=["paused"])
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED, "it lands on unpause, it is not lost"
 
@@ -205,12 +206,12 @@ def test_unpausing_makes_the_backlog_claimable_again():
     _queued_project_turn(ws)
     runner.paused = True
     runner.save(update_fields=["paused"])
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
     c.post(f"/api/harness/runners/{runner.id}/unpause")
 
     runner.refresh_from_db()
-    assert services.claim_next_turn(runner) is not None
+    assert claim.claim_next_turn(runner) is not None
 
 
 def test_another_runner_still_claims_while_this_one_is_paused():
@@ -225,8 +226,8 @@ def test_another_runner_still_claims_while_this_one_is_paused():
     runner.paused = True
     runner.save(update_fields=["paused"])
 
-    assert services.claim_next_turn(runner) is None
-    assert services.claim_next_turn(other) is not None
+    assert claim.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(other) is not None
 
 
 # --- one writer per state --------------------------------------------------------

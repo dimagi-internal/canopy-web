@@ -18,6 +18,7 @@ from apps.agents import services as agent_services
 from apps.agents.models import Agent
 from apps.harness import initiator as _initiator
 from apps.harness import services
+from apps.harness import claim, routing
 from apps.harness.models import Runner, RunnerAssignment, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
@@ -70,8 +71,8 @@ def test_an_agent_in_a_division_follows_the_parents_order(tree):
     _order(dimagi, jj_box, hal_box)
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=connect)
     turn = _enqueue(hal)
-    assert services.claim_next_turn(hal_box) is None  # rank 1 waits for rank 0
-    assert services.claim_next_turn(jj_box).pk == turn.pk
+    assert claim.claim_next_turn(hal_box) is None  # rank 1 waits for rank 0
+    assert claim.claim_next_turn(jj_box).pk == turn.pk
 
 
 def test_it_falls_through_the_inherited_order_like_its_own(tree):
@@ -80,7 +81,7 @@ def test_it_falls_through_the_inherited_order_like_its_own(tree):
     Runner.objects.filter(pk=jj_box.pk).update(paused=True)
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=connect)
     turn = _enqueue(hal)
-    assert services.claim_next_turn(cloud).pk == turn.pk
+    assert claim.claim_next_turn(cloud).pk == turn.pk
 
 
 def test_the_nearest_workspace_with_an_order_wins(tree):
@@ -89,8 +90,8 @@ def test_the_nearest_workspace_with_an_order_wins(tree):
     _order(connect, hal_box)
     ada = Agent.objects.create(slug="ada", name="Ada", workspace=connect)
     turn = _enqueue(ada)
-    assert services.claim_next_turn(jj_box) is None
-    assert services.claim_next_turn(hal_box).pk == turn.pk
+    assert claim.claim_next_turn(jj_box) is None
+    assert claim.claim_next_turn(hal_box).pk == turn.pk
 
 
 def test_an_agent_with_its_own_order_does_not_follow(tree):
@@ -99,7 +100,7 @@ def test_an_agent_with_its_own_order_does_not_follow(tree):
     ada = Agent.objects.create(slug="ada", name="Ada", workspace=connect)
     RunnerAssignment.objects.create(agent=ada, runner=hal_box, rank=0)
     _enqueue(ada, age_seconds=3600)
-    assert services.claim_next_turn(jj_box) is None
+    assert claim.claim_next_turn(jj_box) is None
 
 
 def test_an_order_switched_entirely_off_is_still_its_own(tree):
@@ -110,7 +111,7 @@ def test_an_order_switched_entirely_off_is_still_its_own(tree):
     ada = Agent.objects.create(slug="ada", name="Ada", workspace=connect)
     RunnerAssignment.objects.create(agent=ada, runner=hal_box, rank=0, enabled=False)
     _enqueue(ada, age_seconds=3600)
-    assert services.claim_next_turn(jj_box) is None
+    assert claim.claim_next_turn(jj_box) is None
 
 
 def test_source_rules_still_come_first(tree):
@@ -120,8 +121,8 @@ def test_source_rules_still_come_first(tree):
     RunnerAssignment.objects.create(agent=hal, runner=cloud, rank=0, source=Turn.ORIGIN_API,
                                     strict=True)
     turn = _enqueue(hal, age_seconds=3600)
-    assert services.claim_next_turn(jj_box) is None
-    assert services.claim_next_turn(cloud).pk == turn.pk
+    assert claim.claim_next_turn(jj_box) is None
+    assert claim.claim_next_turn(cloud).pk == turn.pk
 
 
 def test_a_laptop_without_the_agents_repo_is_skipped_not_waited_on(tree):
@@ -131,10 +132,10 @@ def test_a_laptop_without_the_agents_repo_is_skipped_not_waited_on(tree):
     _order(dimagi, jj_box, cloud)
     muse = Agent.objects.create(slug="muse", name="Muse", workspace=connect)
     turn = _enqueue(muse)
-    inh = services.inherited_orders([muse.pk])[muse.pk]
+    inh = routing.inherited_orders([muse.pk])[muse.pk]
     assert inh.missing_repo == [jj_box] and inh.runners == [cloud]
-    assert services.claim_next_turn(jj_box) is None
-    assert services.claim_next_turn(cloud).pk == turn.pk
+    assert claim.claim_next_turn(jj_box) is None
+    assert claim.claim_next_turn(cloud).pk == turn.pk
 
 
 def test_a_box_whose_owner_cannot_hold_the_agent_is_dropped(tree):
@@ -146,10 +147,10 @@ def test_a_box_whose_owner_cannot_hold_the_agent_is_dropped(tree):
     _order(dimagi, ed_box, jj_box)
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=connect, owner=jj)
     turn = _enqueue(hal)
-    inh = services.inherited_orders([hal.pk])[hal.pk]
+    inh = routing.inherited_orders([hal.pk])[hal.pk]
     assert inh.cannot_hold == [ed_box] and inh.runners == [jj_box]
-    assert services.claim_next_turn(ed_box) is None
-    assert services.claim_next_turn(jj_box).pk == turn.pk
+    assert claim.claim_next_turn(ed_box) is None
+    assert claim.claim_next_turn(jj_box).pk == turn.pk
 
 
 def test_a_box_in_the_inherited_order_may_fetch_the_agents_secrets(tree):

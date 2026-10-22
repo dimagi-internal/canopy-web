@@ -22,6 +22,7 @@ from django.utils import timezone
 
 from apps.harness import provenance
 from apps.harness import services as harness_services
+from apps.harness import routing
 from apps.harness.models import Turn
 
 from . import activity as session_activity
@@ -1912,7 +1913,7 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
     if session.status != Session.ACTIVE:
         raise ValueError("cannot transfer an archived session")
     if Turn.objects.filter(
-        chat_session=session, status__in=list(harness_services.EXECUTING)
+        chat_session=session, status__in=list(routing.EXECUTING)
     ).exists():
         raise RuntimeError("a turn is still executing — stop the session first")
 
@@ -2482,7 +2483,7 @@ def unqueue_send(session: Session, turn_id, user, *, by: str = "") -> bool:
     write on status=QUEUED, so a claim landing in between wins and this
     returns False.
     """
-    from apps.harness import services as harness_services  # framework->framework; lazy
+    from apps.harness import services as harness_services
 
     try:
         uuid.UUID(str(turn_id))
@@ -2838,7 +2839,7 @@ def cancel_session_turns(session: Session, *, by: str = "") -> bool:
     runner and the session's own target too, because a laptop's key is an emdash
     task name and those are unique per project only.
     """
-    from apps.harness import services as harness_services  # framework->framework; lazy
+    from apps.harness import services as harness_services
     from apps.harness.models import Turn
 
     owned = Q(chat_session=session)

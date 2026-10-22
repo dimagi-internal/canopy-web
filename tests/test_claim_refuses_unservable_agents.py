@@ -19,7 +19,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness import routing, services
+from apps.harness import routing
+from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -79,7 +80,7 @@ def test_the_incident_shape_claims_today_without_a_report(fleet):
     Dimagi's order lists it — with Shayoni's laptop offline it takes the turn."""
     WorkspaceRunnerOrder.objects.create(workspace=fleet["dimagi"], runner=fleet["cloud"], rank=0)
     t = _turn(fleet["fizzy"])
-    assert services.claim_next_turn(fleet["cloud"]).pk == t.pk
+    assert claim.claim_next_turn(fleet["cloud"]).pk == t.pk
 
 
 def test_a_cloud_box_that_could_not_set_the_agent_up_does_not_claim_it(fleet):
@@ -88,13 +89,13 @@ def test_a_cloud_box_that_could_not_set_the_agent_up_does_not_claim_it(fleet):
     _beat(cloud, agents_unprepared=["fizzy"])
     assert cloud.capabilities["unprepared"] == ["fizzy"]
     t = _turn(fizzy)
-    assert services.claim_next_turn(cloud) is None
+    assert claim.claim_next_turn(cloud) is None
     assert Turn.objects.get(pk=t.pk).status == Turn.QUEUED
     # The box still RUNS fizzy (its roster keeps it, so the next bootstrap retries).
     assert routing.runner_routes_agent(cloud, fizzy)
     # Set up again: the next beat says so, and the claim takes it.
     _beat(cloud, agents_unprepared=[])
-    assert services.claim_next_turn(cloud).pk == t.pk
+    assert claim.claim_next_turn(cloud).pk == t.pk
 
 
 def test_an_absent_report_leaves_the_stored_one_alone(fleet):
@@ -110,10 +111,10 @@ def test_a_laptop_without_the_agents_emdash_project_does_not_claim_it(fleet):
     Runner.objects.filter(pk=laptop.pk).update(capabilities={"projects": ["other"]})
     laptop.refresh_from_db()
     t = _turn(fizzy, origin=Turn.ORIGIN_API)
-    assert services.claim_next_turn(laptop) is None
+    assert claim.claim_next_turn(laptop) is None
     Runner.objects.filter(pk=laptop.pk).update(capabilities={"projects": ["fizzy"]})
     laptop.refresh_from_db()
-    assert services.claim_next_turn(laptop).pk == t.pk
+    assert claim.claim_next_turn(laptop).pk == t.pk
 
 
 def test_a_laptop_that_never_reported_projects_is_unknown_not_empty(fleet):
@@ -122,7 +123,7 @@ def test_a_laptop_that_never_reported_projects_is_unknown_not_empty(fleet):
     Runner.objects.filter(pk=laptop.pk).update(capabilities={})
     laptop.refresh_from_db()
     t = _turn(fizzy, origin=Turn.ORIGIN_API)
-    assert services.claim_next_turn(laptop).pk == t.pk
+    assert claim.claim_next_turn(laptop).pk == t.pk
 
 
 def test_an_unservable_box_does_not_block_a_lower_rank(fleet):
@@ -133,7 +134,7 @@ def test_an_unservable_box_does_not_block_a_lower_rank(fleet):
     RunnerAssignment.objects.create(agent=fizzy, runner=laptop, rank=1)
     _beat(cloud, agents_unprepared=["fizzy"])
     t = _turn(fizzy, origin=Turn.ORIGIN_API, age=0)
-    assert services.claim_next_turn(laptop).pk == t.pk
+    assert claim.claim_next_turn(laptop).pk == t.pk
 
 
 def test_a_strict_rule_whose_box_cannot_run_it_waits_rather_than_falls_through(fleet):
@@ -143,8 +144,8 @@ def test_a_strict_rule_whose_box_cannot_run_it_waits_rather_than_falls_through(f
                                     source=Turn.ORIGIN_EMAIL, strict=True)
     _beat(cloud, agents_unprepared=["fizzy"])
     _turn(fizzy)
-    assert services.claim_next_turn(laptop) is None
-    assert services.claim_next_turn(cloud) is None
+    assert claim.claim_next_turn(laptop) is None
+    assert claim.claim_next_turn(cloud) is None
 
 
 def test_a_pin_is_a_placement_and_still_lands(fleet):
@@ -154,7 +155,7 @@ def test_a_pin_is_a_placement_and_still_lands(fleet):
     _beat(cloud, agents_unprepared=["fizzy"])
     t = _turn(fizzy, origin=Turn.ORIGIN_API)
     Turn.objects.filter(pk=t.pk).update(pinned_runner=cloud)
-    assert services.claim_next_turn(cloud).pk == t.pk
+    assert claim.claim_next_turn(cloud).pk == t.pk
 
 
 def test_a_turn_only_unservable_boxes_would_take_is_reported_with_what_they_said(fleet):
@@ -163,7 +164,7 @@ def test_a_turn_only_unservable_boxes_would_take_is_reported_with_what_they_said
     _offline(laptop)
     _beat(cloud, agents_unprepared=["fizzy"])
     t = _turn(fizzy)
-    rows = {r["turn_id"]: r for r in services.unclaimable_queued_turns(fleet["jj"])}
+    rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(fleet["jj"])}
     row = rows[str(t.pk)]
     assert row["kind"] == "config"
     assert "cloud-ec2-2 could not set 'fizzy' up" in row["reason"]
@@ -180,9 +181,9 @@ def test_a_chat_with_the_agent_is_held_to_the_same_report(fleet):
     sess = Session.objects.create(agent=fizzy, workspace_id="strategy", created_by=fleet["jj"])
     t = Turn.objects.create(chat_session=sess, origin=Turn.ORIGIN_API, idempotency_key="c",
                             routing=Turn.ANY, prompt="hi")
-    assert services.claim_next_turn(cloud) is None
+    assert claim.claim_next_turn(cloud) is None
     _beat(cloud, agents_unprepared=[])
-    assert services.claim_next_turn(cloud).pk == t.pk
+    assert claim.claim_next_turn(cloud).pk == t.pk
 
 
 def test_unprepared_is_reported_never_set_by_hand(fleet):

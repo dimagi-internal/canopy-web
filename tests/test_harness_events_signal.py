@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import ledger
 from apps.harness.models import Turn
 from apps.harness.signals import turn_events_appended
 from apps.workspaces.testing import a_workspace
@@ -28,7 +28,7 @@ def test_append_events_fires_signal_after_commit():
         lambda **kw: received.append(kw), weak=False, dispatch_uid="test-recv"
     )
     try:
-        services.append_events(turn, [{"kind": "assistant", "payload": {"text": "hi"}}])
+        ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "hi"}}])
     finally:
         turn_events_appended.disconnect(dispatch_uid="test-recv")
 
@@ -45,7 +45,7 @@ def test_append_events_batch_fires_once_with_all_rows():
         lambda **kw: received.append(kw), weak=False, dispatch_uid="test-recv"
     )
     try:
-        services.append_events(
+        ledger.append_events(
             turn,
             [
                 {"kind": "tool_start", "payload": {}},

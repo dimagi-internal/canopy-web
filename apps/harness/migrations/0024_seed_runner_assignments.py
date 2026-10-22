@@ -8,7 +8,7 @@ def seed(apps, schema_editor):
     # in the migration graph the table only has the columns of its day. That made
     # `migrate` from zero fail the moment a new Runner field was added — see the
     # docstring on seed_assignments_from_capabilities.
-    from apps.harness.services import seed_assignments_from_capabilities
+    from apps.harness.routing import seed_assignments_from_capabilities
 
     seed_assignments_from_capabilities(
         agent_model=apps.get_model("agents", "Agent"),

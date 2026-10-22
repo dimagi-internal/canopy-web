@@ -355,7 +355,7 @@ def _classes(value, where: str) -> list[str]:
 def caller_classes(turn, relationship: str) -> set[str]:
     """The classes this turn's asker falls in: the base, the base at their
     address's domain, and the `:verified` form of each when THIS message is."""
-    from apps.harness.caller_context import _verified
+    from apps.harness.caller_context import is_verified
 
     kind = turn.initiator_kind
     if kind == who.CONTACT:
@@ -368,7 +368,7 @@ def caller_classes(turn, relationship: str) -> set[str]:
         # Anyone else — including a canopy user with no business in this
         # workspace — is no more than someone unidentified.
         base, address = "unknown", ""
-    return _expand(base, address, _verified(turn))
+    return _expand(base, address, is_verified(turn))
 
 
 def _expand(base: str, address: str, verified: bool) -> set[str]:

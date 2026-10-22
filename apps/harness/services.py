@@ -6,7 +6,8 @@ cancel — and the runner's session reports. Leases are renewed by runner
 heartbeats and swept lazily on claim. All functions are synchronous and
 transaction-safe.
 
-The rest is split by responsibility, and re-exported below: routing (`routing`),
+The rest is split by responsibility into its own modules — import each name from
+the module that owns it: routing (`routing`),
 the claim and its explanations (`claim`), the event ledger and transcripts
 (`ledger`), scheduled turns (`schedule_turns`), runner administration
 (`runners`) and readiness drills (`drills`).
@@ -24,156 +25,17 @@ from django.db import IntegrityError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from apps.agents.models import Agent, SenderTrust
 from apps.api.errors import TYPE_CONFLICT, ProblemError
+from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.canopy_sessions.staleness import stale_cutoff
+from apps.contacts.models import Contact
 from apps.workspaces import services as wsvc
 
-# HEARTBEAT_ONLINE_WINDOW lives on models.py (Runner.live_status uses it too;
-# models.py cannot import services.py, which already imports models.py) and is
-# re-exported here so existing importers of services.HEARTBEAT_ONLINE_WINDOW keep
-# working. Intentional re-export — noqa keeps the F401 gate from deleting it.
-from .models import (
-    HEARTBEAT_ONLINE_WINDOW,  # noqa: F401
-    Runner,
-    RunnerDrill,
-    Turn,
-)
-
-# The harness was one ~4,000-line module; these are the pieces it was split
-# into (2026-10-06). Every name each one defines is re-exported here, public and
-# private alike, so `services.X` and `from apps.harness.services import X` keep
-# resolving exactly as before. Patching `services.X` reaches only the code that
-# still LIVES here — to patch what a moved function calls, patch its own module.
-from .routing import (
-    _ancestor_chains,  # noqa: F401
-    _assignment_allows,  # noqa: F401
-    _assignment_allows_for_agent,  # noqa: F401
-    _dialog_up,  # noqa: F401
-    _is_repo_turn,  # noqa: F401
-    _kind_allows,  # noqa: F401
-    _repo_order_allows,  # noqa: F401
-    agent_tenant_q,  # noqa: F401
-    agents_following_runner,  # noqa: F401
-    agents_routed_to,  # noqa: F401
-    agents_with_own_order,  # noqa: F401
-    assignment_rows_for,  # noqa: F401
-    blocking_turn,  # noqa: F401
-    busy_agent_ids,  # noqa: F401
-    busy_session_ids,  # noqa: F401
-    CASCADE_GRACE_SECONDS,  # noqa: F401
-    default_order_source,  # noqa: F401
-    delivers_midturn,  # noqa: F401
-    ENVELOPE_VERSION,  # noqa: F401
-    EXECUTING,  # noqa: F401
-    inherited_orders,  # noqa: F401
-    InheritedOrder,  # noqa: F401
-    load_assignment_rows,  # noqa: F401
-    load_workspace_orders,  # noqa: F401
-    may_ride,  # noqa: F401
-    MIDTURN_FAILED,  # noqa: F401
-    profile_q,  # noqa: F401
-    PROFILES_VERSION,  # noqa: F401
-    repo_order_for,  # noqa: F401
-    ridable_sessions,  # noqa: F401
-    runner_target_q,  # noqa: F401
-    covered_slugs,  # noqa: F401
-    enrolled_slugs,  # noqa: F401
-    runner_tenant_slugs,  # noqa: F401
-    seed_assignments_from_capabilities,  # noqa: F401
-)
-from .ledger import (
-    append_events,  # noqa: F401
-    append_transcript,  # noqa: F401
-    iter_transcript,  # noqa: F401
-    iter_transcript_lines,  # noqa: F401
-    read_transcript,  # noqa: F401
-    transcript_messages,  # noqa: F401
-    TRANSCRIPT_TURN_MAX_BYTES,  # noqa: F401
-    TRANSCRIPT_VIEW_MAX_MESSAGES,  # noqa: F401
-)
-from .schedule_turns import (
-    _occurrences,  # noqa: F401
-    _raise_schedule_nag,  # noqa: F401
-    _schedule_initiator,  # noqa: F401
-    fire_schedule,  # noqa: F401
-    LATE_SLOT_WINDOW_MINUTES,  # noqa: F401
-    latest_occurrence_turn,  # noqa: F401
-    OneOffSlotMismatch,  # noqa: F401
-    release_stale_occurrence_turns,  # noqa: F401
-    release_stale_occurrence_turns_all,  # noqa: F401
-    resolve_schedule_nags,  # noqa: F401
-    run_schedule_now,  # noqa: F401
-    skip_late_scheduled_turns,  # noqa: F401
-    supersede_open_turns,  # noqa: F401
-)
-from .claim import (
-    _assignment_rows_for_turns,  # noqa: F401
-    _coverage,  # noqa: F401
-    _readable_session_turn_q,  # noqa: F401
-    _refined_allows,  # noqa: F401
-    _routing_basis,  # noqa: F401
-    claim_next_turn,  # noqa: F401
-    DEFAULT_LEASE_SECONDS,  # noqa: F401
-    LIVE,  # noqa: F401
-    OFFLINE,  # noqa: F401
-    PARKED,  # noqa: F401
-    SIGNED_OUT,  # noqa: F401
-    queued_turns_covered_by,  # noqa: F401
-    Reach,  # noqa: F401
-    runner_situation,  # noqa: F401
-    sweep_expired_leases,  # noqa: F401
-    turn_reach,  # noqa: F401
-    UNCLAIMABLE_GRACE,  # noqa: F401
-    unclaimable_queued_turns,  # noqa: F401
-    UNROUTED,  # noqa: F401
-)
-from .runners import (
-    _expire_if_stale,  # noqa: F401
-    backfill_runner_enrollments,  # noqa: F401
-    can_administer_runner,  # noqa: F401
-    enroll_runner,  # noqa: F401
-    set_runner_machine,  # noqa: F401
-    backfill_machine_ids,  # noqa: F401
-    enrolled_roots,  # noqa: F401
-    EnrollmentRefused,  # noqa: F401
-    list_runner_enrollments,  # noqa: F401
-    unenroll_runner,  # noqa: F401
-    claim_runner_mint,  # noqa: F401
-    current_runner_mint,  # noqa: F401
-    finish_runner_mint,  # noqa: F401
-    get_runner_credential,  # noqa: F401
-    grant_runner_admin,  # noqa: F401
-    list_runner_admins,  # noqa: F401
-    MINT_TTL_SECONDS,  # noqa: F401
-    record_mint_url,  # noqa: F401
-    request_refresh,  # noqa: F401
-    revoke_runner_admin,  # noqa: F401
-    runner_credential_status,  # noqa: F401
-    set_runner_credential,  # noqa: F401
-    set_runner_flags,  # noqa: F401
-    start_runner_mint,  # noqa: F401
-    submit_mint_code,  # noqa: F401
-    LAST_BACKUP_TOKEN_REFUSAL,  # noqa: F401
-    would_remove_last_backup_token,  # noqa: F401
-    swap_runner_logins,  # noqa: F401
-    take_mint_code,  # noqa: F401
-    add_runner_login,  # noqa: F401
-    LoginOrderRefused,  # noqa: F401
-    order_runner_logins,  # noqa: F401
-    remove_runner_login,  # noqa: F401
-    report_runner_logins,  # noqa: F401
-)
-from .drills import (
-    _drill_github_check,  # noqa: F401
-    _drill_initiator,  # noqa: F401
-    _DRILL_REPORT_MAX_AGE,  # noqa: F401
-    _DRILL_REPORT_SALT,  # noqa: F401
-    DRILL_PROMPT,  # noqa: F401
-    drill_report_token,  # noqa: F401
-    drill_report_token_ok,  # noqa: F401
-    report_drill,  # noqa: F401
-    start_drill,  # noqa: F401
-)
+from .claim import DEFAULT_LEASE_SECONDS
+from .ledger import append_events
+from .models import Runner, RunnerDrill, Turn, TurnEvent
+from .routing import EXECUTING, MIDTURN_FAILED, runner_tenant_slugs
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +135,6 @@ def _member_behind_email(agent, contact, subject: str = ""):
     the address rather than a workspace's decision about some of its mail.
     """
     from apps.contacts import services as contacts
-    from apps.contacts.models import Contact
 
     if contact is None or not contact.email:
         return None
@@ -313,9 +174,6 @@ def trusted_unaligned_sender(agent, contact):
     or None. Needs an unexpired rule for this agent and exact address AND a
     passing DKIM signature on the message (tier 2): the rule excuses whose key
     signed, never the absence of a signature. See `agents.models.SenderTrust`."""
-    from apps.agents.models import SenderTrust
-    from apps.contacts.models import Contact
-
     grade = contact.last_auth_result or Contact.AUTH_NONE
     if Contact.AUTH_RANK.get(grade, 0) < Contact.AUTH_RANK[Contact.TIER_SIGNED]:
         return None
@@ -611,8 +469,9 @@ def enqueue_turn(
         # production path that still lands here.
         from . import initiator as who
         initiator = who.unknown(via=origin)
-    from . import provenance
     from apps.threads import guard as thread_guard
+
+    from . import provenance
 
     try:
         with transaction.atomic():
@@ -801,7 +660,6 @@ def cancel_requested_turn_ids(runner: Runner, active_turn_ids) -> list[str]:
     ids = _valid_turn_ids(active_turn_ids)
     if not ids:
         return []
-    from .models import TurnEvent
 
     executing = Turn.objects.filter(
         pk__in=ids, claimed_by=runner,
@@ -814,8 +672,6 @@ def cancel_requested_turn_ids(runner: Runner, active_turn_ids) -> list[str]:
 
 def _cancel_overdue_ids(active_turn_ids, now) -> list[uuid.UUID]:
     """Reported turns whose FIRST stop request is older than CANCEL_GRACE_SECONDS."""
-    from .models import TurnEvent
-
     ids = _valid_turn_ids(active_turn_ids)
     if not ids:
         return []
@@ -1336,8 +1192,6 @@ def _binding_for_thread(agent, project, workspace, thread_key):
     session.agent and ignores workspace (derived via the agent); a project thread
     matches on session.project AND session.workspace (its identity, so a guessed
     thread_key from another tenant lands on its own row, never the victim's)."""
-    from apps.canopy_sessions.models import RunnerBinding
-
     if bool(agent) == bool(project):
         raise ValueError("a session reuse lookup targets an agent XOR a project")
     qs = RunnerBinding.objects.select_related("session", "runner").filter(thread_key=thread_key)
@@ -1386,8 +1240,6 @@ def _thread_session(agent, project, workspace, thread_key, *, runner, turn=None)
     The Session's workspace is the one the caller pinned, else the agent's own
     home (Agent.workspace is NOT NULL). A thread with neither has no tenant, and
     guessing one would file it in a workspace nobody chose — so it fails loudly."""
-    from apps.canopy_sessions.models import Session
-
     try:
         existing = Session.objects.filter(pk=uuid.UUID(str(thread_key))).first()
     except (ValueError, TypeError):
@@ -1461,8 +1313,6 @@ def email_thread_session(agent, thread_id: str, subject: str = ""):
     filters on — a session without it exists and is invisible, which is the
     least useful possible outcome.
     """
-    from apps.canopy_sessions.models import Session
-
     if agent is None:
         raise ValueError("an email thread session belongs to an agent")
     key = f"{EMAIL_THREAD_PREFIX}{thread_id}"
@@ -1655,8 +1505,6 @@ def record_session(
     hint at THIS runner/host. Only overwrites agent_task_ext_id/summary when passed,
     preserving accumulated context. The API caller has already gated the runner's
     owner against `workspace` — this stores, it does not authorize."""
-    from apps.canopy_sessions.models import RunnerBinding
-
     with transaction.atomic():
         binding = _binding_for_thread(agent, project, workspace, thread_key)
         if binding is None:
@@ -1750,7 +1598,6 @@ def _title_is_derived(session, thread_key: str) -> bool:
     user message, collapses whitespace and truncates to TITLE_MAX.
     """
     from apps.canopy_sessions.autotitle import TITLE_MAX
-    from apps.canopy_sessions.models import Message
 
     title = (session.title or "").strip()
     if not title or title == thread_key:
@@ -1824,8 +1671,6 @@ def _agent_for_project(project: str, runner):
     its own as a plain project, where its members would read another tree's
     agent's transcript. `Agent.slug` is globally unique, so one row answers.
     """
-    from apps.agents.models import Agent
-
     if not project:
         return None
     agent = Agent.objects.select_related("workspace").filter(slug=project).first()
@@ -1856,7 +1701,6 @@ def session_home(runner, project: str, fallback=None):
 
 
 def fire_sessions_closed(session_ids: list) -> None:
-    from apps.canopy_sessions.models import Session
     from apps.harness.signals import sessions_closed
 
     try:
@@ -1906,8 +1750,6 @@ def replace_reported_sessions(
     binding's thread_key silently reassigned to `emdash:<task>` underneath it
     (that would orphan the agent thread's reuse lookup and fork a duplicate
     session on its next turn)."""
-    from apps.canopy_sessions.models import RunnerBinding, Session
-
     # Record that this runner PARTICIPATES in the wholesale report — the observer
     # session staleness is derived against (see Runner.sessions_reported_at and
     # canopy_sessions.staleness.unseen_q). Stamped BEFORE the early-outs and
@@ -2284,8 +2126,6 @@ def replace_reported_sessions(
 def _publish_menu_changes(menu_changes: list[tuple], new_asks: list[tuple]) -> None:
     """Tell everyone a session's dialog changed. Called after commit by both
     producers: the laptop's wholesale report and a cloud box's `report_session_menu`."""
-    from apps.canopy_sessions.models import RunnerBinding
-
     # The dialog, to anyone already looking at that chat. Its own frame
     # rather than an overloaded `session.activity`: activity is "is the
     # agent producing", which the hook path owns and answers within a
@@ -2313,7 +2153,6 @@ def _publish_menu_changes(menu_changes: list[tuple], new_asks: list[tuple]) -> N
     # perfectly still needs somebody to open the app, and the failure being
     # fixed here is 52 minutes of nobody knowing there was anything to open.
     if new_asks:
-        from apps.canopy_sessions.models import Session
         from apps.push import services as push_services
 
         sessions = Session.objects.select_related(
@@ -2334,8 +2173,6 @@ def end_turns_ask(turn: Turn) -> None:
     report to retract it. A laptop's menu (any other `source`) is what its
     terminal shows, which outlives a turn — only its report clears that.
     """
-    from apps.canopy_sessions.models import RunnerBinding
-
     if not turn.claimed_by_id:
         return
     binding = (RunnerBinding.objects.select_related("runner")
@@ -2353,8 +2190,6 @@ def report_session_menu(runner: Runner, session_id, menu: dict | None) -> bool:
     same frames, same once-per-ask push. False when this runner does not hold
     the session: one box never writes a dialog onto another's.
     """
-    from apps.canopy_sessions.models import RunnerBinding
-
     binding = RunnerBinding.objects.filter(session_id=session_id, runner=runner).first()
     if binding is None:
         return False
@@ -2409,7 +2244,6 @@ def list_visible_sessions(user, ws_slugs: set[str] | None = None) -> list[Sessio
     it is every membership.
     """
     from apps.canopy_sessions import access as session_access
-    from apps.canopy_sessions.models import RunnerBinding, Session
 
     if ws_slugs is None:
         ws_slugs = wsvc.user_workspace_slugs(user)

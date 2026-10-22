@@ -93,7 +93,7 @@ def actor_of(turn: Turn) -> str:
     route for them could never match, and the turn silently took the default box
     (measured 2026-10-02: 4 Slack + 2 ace-web ACE turns in 72h with no actor).
     Safe for the one decision that trusts the actor: an actor rule's `auto` mode
-    is separately gated on `caller_context._verified` (turn_mode.py)."""
+    is separately gated on `caller_context.is_verified` (turn_mode.py)."""
     email = turn.enqueued_by.email if turn.enqueued_by_id else ""
     if not email and turn.initiator_contact_id:
         email = turn.initiator_contact.email or ""

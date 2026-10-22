@@ -18,10 +18,13 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import actors
 from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
 
+from .closing import close_turn
+from .drills import expire_stale_drills
 from .ledger import append_events
 from .models import (
     FleetHold,
@@ -32,18 +35,17 @@ from .models import (
 )
 from .routing import (
     MIDTURN_FAILED,
-    _assignment_allows,
-    _assignment_allows_for_agent,
-    _is_repo_turn,
-    _kind_allows,
-    _repo_order_allows,
     agent_tenant_q,
+    assignment_allows,
+    assignment_allows_for_agent,
     assignment_rows_for,
     blocking_turn,
     busy_agent_ids,
     busy_session_ids,
     cannot_serve,
     is_project_session_turn,
+    is_repo_turn,
+    kind_allows,
     load_assignment_rows,
     load_workspace_orders,
     prime_machine_units,
@@ -51,6 +53,7 @@ from .routing import (
     project_session_allows,
     project_session_covers,
     project_session_waits_why,
+    repo_order_allows,
     repo_order_for,
     ridable_sessions,
     routed_slug,
@@ -58,10 +61,8 @@ from .routing import (
     runner_tenant_slugs,
     turn_unit_refusal,
 )
-from .closing import close_turn
-from .drills import expire_stale_drills
-from .turn_agent_tokens import revoke_stale
 from .schedule_turns import release_stale_occurrence_turns_all, skip_late_scheduled_turns
+from .turn_agent_tokens import revoke_stale
 
 DEFAULT_LEASE_SECONDS = 900
 
@@ -176,7 +177,7 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     if directed:
         return False  # a directed-only box takes pins and its bindings, nothing routed
     if not routed_agent:
-        if _is_repo_turn(t):
+        if is_repo_turn(t):
             # A repo turn follows its workspace's runner order when it has one:
             # membership only, as for an agent's list (the cascade is about WHEN,
             # not WHETHER — a lower rank still covers the turn).
@@ -294,7 +295,7 @@ def _orders_for(turns) -> dict:
     """The workspace runner orders these turns can follow: a repo turn's own
     workspace, an unbound project chat's session workspace. One query."""
     return load_workspace_orders(
-        {t.workspace_id for t in turns if _is_repo_turn(t)}
+        {t.workspace_id for t in turns if is_repo_turn(t)}
         | {t.chat_session.workspace_id for t in turns if is_project_session_turn(t)}
     )
 
@@ -412,7 +413,6 @@ def _readable_session_turn_q(user) -> Q:
     if user is None:
         return Q()
     from apps.canopy_sessions import access as session_access
-    from apps.canopy_sessions.models import Session
 
     readable = Session.objects.filter(session_access.visible_session_q(user)).values("pk")
     return Q(chat_session__isnull=True) | Q(chat_session__in=readable)
@@ -683,7 +683,6 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     )
     if runner.directed_only():
         # Takes only what is put on it: a pin, or a session bound to it.
-        from apps.canopy_sessions.models import RunnerBinding
 
         if not has_pins and not RunnerBinding.objects.filter(runner=runner).exists():
             return None
@@ -763,7 +762,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         .exclude(agent_id__in=busy_agents)
         .exclude(chat_session_id__in=busy_sessions)
         .filter(tenant_q)
-        # _assignment_allows reads turn.agent_id; the session leg's stickiness
+        # assignment_allows reads turn.agent_id; the session leg's stickiness
         # check reads chat_session.agent_id + chat_session.runner_binding.
         .select_related("agent", "chat_session", "chat_session__runner_binding",
                         "chat_session__agent", "enqueued_by")
@@ -817,12 +816,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             continue
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:
-            if not _kind_allows(runner, turn.routing):
+            if not kind_allows(runner, turn.routing):
                 continue
             if turn.agent_id:
-                if not _assignment_allows(runner, turn, defaults, priorities, now):
+                if not assignment_allows(runner, turn, defaults, priorities, now):
                     continue
-            if _is_repo_turn(turn) and not _repo_order_allows(runner, turn, orders, now):
+            if is_repo_turn(turn) and not repo_order_allows(runner, turn, orders, now):
                 continue
             # An unbound project chat: a box with its repo, that the workspace's
             # order shares or the chatting person administers (spec 2026-10-19).
@@ -834,7 +833,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                 binding = getattr(sess, "runner_binding", None)
                 bound_to_me = binding is not None and binding.runner_id == runner.id
                 if not bound_to_me and sess.agent_id:
-                    if not _assignment_allows_for_agent(
+                    if not assignment_allows_for_agent(
                         runner, sess.agent_id, turn, defaults, priorities, now
                     ):
                         continue

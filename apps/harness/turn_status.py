@@ -248,8 +248,8 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
     dead holder (which outranks anything the turn itself claims, because the
     turn cannot know), then what the turn says.
     """
+    from . import claim
     from . import runner_requirements as rr
-    from . import services as harness
 
     session = turn.chat_session if turn.chat_session_id else None
     agent_slug = session.agent.slug if session is not None and session.agent_id else None
@@ -262,7 +262,7 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
     behind = None
     ahead = getattr(reach, "behind", None)
     if turn.status == Turn.QUEUED:
-        if ahead is not None and reach.kind == harness.LIVE:
+        if ahead is not None and reach.kind == claim.LIVE:
             # A live runner WILL take it — once the turn ahead ends. Named by
             # the runner holding that turn, which is where it will run.
             state = QUEUED_BEHIND
@@ -271,13 +271,13 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
             pinned = bool(turn.pinned_runner_id)
             same_session = turn.chat_session_id and ahead.chat_session_id == turn.chat_session_id
             behind = "session" if same_session else "agent"
-        elif turn.pinned_runner_id and reach is not None and reach.kind == harness.LIVE:
+        elif turn.pinned_runner_id and reach is not None and reach.kind == claim.LIVE:
             state, runners, pinned = PICKING_UP, (turn.pinned_runner.name,), True
-        elif reach is not None and reach.kind == harness.LIVE:
+        elif reach is not None and reach.kind == claim.LIVE:
             state, runners = PICKING_UP, tuple(r.name for r in reach.runners)
-        elif reach is not None and reach.kind in (harness.OFFLINE, harness.PARKED):
+        elif reach is not None and reach.kind in (claim.OFFLINE, claim.PARKED):
             state, runners = WAITING_RUNNER, tuple(r.name for r in reach.runners)
-        elif reach is not None and reach.kind == harness.SIGNED_OUT:
+        elif reach is not None and reach.kind == claim.SIGNED_OUT:
             state, runners = SIGNED_OUT, tuple(r.name for r in reach.runners)
         else:
             state, runners = UNROUTED, ()
@@ -317,7 +317,7 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
                   if turn.status == Turn.QUEUED
                   and getattr(reach, "blocked_by_requirements", False) else ()),
         behind=behind,
-        parked=state == WAITING_RUNNER and getattr(reach, "kind", None) == harness.PARKED,
+        parked=state == WAITING_RUNNER and getattr(reach, "kind", None) == claim.PARKED,
         held_until=getattr(reach, "held_until", None) if state == WAITING_RUNNER else None,
         claimed_at=claimed_at if state == WORKING else None,
         last_progress_at=(max(t for t in (claimed_at, progress_at) if t is not None)
@@ -354,19 +354,19 @@ def reach_and_cloud(turn: Turn):
     """
     from apps.canopy_sessions import services as session_services
 
-    from . import services as harness
+    from . import claim
 
     if turn.status != Turn.QUEUED:
         if turn.chat_session_id and (runner_gone(turn) or movable_lost(turn)):
             return None, session_services.available_cloud_runner(turn.chat_session,
                                                                   user=turn.enqueued_by)
         return None, None
-    reach = harness.turn_reach(turn)
+    reach = claim.turn_reach(turn)
     # The offer is checked against the turn's SENDER, not whoever is looking: a
     # status is derived once and broadcast to every viewer (no viewer here). The
     # click re-checks the clicker (`services.may_place`).
     cloud = None
-    if reach.kind != harness.LIVE and turn.chat_session_id:
+    if reach.kind != claim.LIVE and turn.chat_session_id:
         cloud = session_services.available_cloud_runner(turn.chat_session, user=turn.enqueued_by)
     return reach, cloud
 

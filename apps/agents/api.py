@@ -200,8 +200,8 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
     A box the caller neither administers nor can otherwise see answers "unknown",
     never "forbidden": a guessed UUID must not learn that a runner exists.
     """
-    from apps.harness import services as hsvc
-    from apps.harness.api import _runner_read_q
+    from apps.harness import runners as harness_runners
+    from apps.harness.api import runner_read_q
 
     ids = list(ids)
     already = set(already)
@@ -216,10 +216,10 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
     candidates = list(live.filter(id__in=added).filter(
         Q(workspace_id__in=home) | Q(workspace_id__isnull=True, owner=request.user)))
     seen = set(Runner.objects.filter(id__in=[r.id for r in candidates])
-               .filter(_runner_read_q(request)).values_list("id", flat=True))
+               .filter(runner_read_q(request)).values_list("id", flat=True))
     refused = []
     for r in candidates:
-        if hsvc.can_administer_runner(request.user, r):
+        if harness_runners.can_administer_runner(request.user, r):
             by_id[r.id] = r
         elif r.id in seen:
             refused.append(r.name)
@@ -1151,7 +1151,7 @@ def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrde
     its workspace, or of the nearest workspace above it that has one, which the
     agent follows live. Saving an empty list to `PUT /runners` makes an agent
     follow its workspace again; its source rules are unaffected either way."""
-    from apps.harness.services import agents_with_own_order, default_order_source, inherited_orders
+    from apps.harness.routing import agents_with_own_order, default_order_source, inherited_orders
 
     agent = agent_for_read(request, slug)
     if agent.pk in agents_with_own_order([agent.pk]):

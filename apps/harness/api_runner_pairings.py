@@ -41,16 +41,25 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_AUTH, ProblemError
 from apps.events import activity
 from apps.passkeys import stepup
+from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces import links as wslinks
+from apps.workspaces.models import Workspace
 
 from . import device_keys
 from .api_device_keys import ECDH_STORES
 from .models import PAIRING_APPROVAL_GRACE, Runner, RunnerDeviceKey, RunnerPairing
-from .schemas import (RunnerPairedOut, RunnerPairingApprovedOut, RunnerPairingApproveIn,
-                      RunnerPairingClaimIn, RunnerPairingCreatedOut, RunnerPairingDeclinedOut,
-                      RunnerPairingIn, RunnerPairingOut, RunnerPairingWorkspaceOut)
+from .schemas import (
+    RunnerPairedOut,
+    RunnerPairingApprovedOut,
+    RunnerPairingApproveIn,
+    RunnerPairingClaimIn,
+    RunnerPairingCreatedOut,
+    RunnerPairingDeclinedOut,
+    RunnerPairingIn,
+    RunnerPairingOut,
+    RunnerPairingWorkspaceOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -265,8 +274,6 @@ def _pairing_or_404(user_code: str) -> RunnerPairing:
 
 
 def _workspaces_for(user) -> list[RunnerPairingWorkspaceOut]:
-    from apps.workspaces.models import Workspace
-
     slugs = [s for s in wsvc.user_workspace_slugs(user) if perms.can(user, s, perms.AGENT_WORK)]
     return [RunnerPairingWorkspaceOut(slug=w.slug, name=w.display_name or w.slug)
             for w in Workspace.objects.filter(slug__in=slugs).order_by("slug")]

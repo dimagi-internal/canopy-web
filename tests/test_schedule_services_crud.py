@@ -9,7 +9,7 @@ from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
 from apps.harness import schedule_services as ss
-from apps.harness import services
+from apps.harness import schedule_turns
 from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -111,7 +111,7 @@ def test_delete_supersedes_open_turns_then_removes(owner, agent):
     """The wedge regression: an executing occurrence must be retired BEFORE the
     row is deleted, or it holds one_executing_turn_per_agent forever."""
     s = ss.create_schedule(owner, "eva", _fields())
-    turn, _ = services.fire_schedule(s, dt.datetime(2026, 7, 17, 13, tzinfo=dt.UTC))
+    turn, _ = schedule_turns.fire_schedule(s, dt.datetime(2026, 7, 17, 13, tzinfo=dt.UTC))
     Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING)
 
     ss.delete_schedule(owner, "eva", s.id)

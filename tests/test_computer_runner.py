@@ -21,7 +21,8 @@ from django.utils import timezone
 
 from apps.agents import licenses, zk
 from apps.agents.models import Agent
-from apps.harness import device_keys, runner_auth, services
+from apps.harness import device_keys, runner_auth
+from apps.harness import claim as harness_claim, runners
 from apps.harness.models import (
     PrivateRunner,
     Runner,
@@ -229,14 +230,14 @@ def test_a_computer_never_claims(world):
     box.refresh_from_db()
     Turn.objects.create(agent=world["hal"], status=Turn.QUEUED, idempotency_key="q-1",
                         enqueued_by=world["jj"], pinned_runner=box)
-    assert services.claim_next_turn(box) is None
+    assert harness_claim.claim_next_turn(box) is None
     # Nor is it reachable as a runner, even by its owner's own token.
     assert _pat(world["jj"]).post(f"/api/harness/runners/{box.pk}/claim").status_code == 404
     assert _pat(world["jj"]).post(f"/api/harness/runners/{box.pk}/workspaces",
                                   data={"workspace": "dimagi"},
                                   content_type="application/json").status_code == 404
-    with pytest.raises(services.EnrollmentRefused):
-        services.enroll_runner(box, "dimagi", by=world["jj"])
+    with pytest.raises(runners.EnrollmentRefused):
+        runners.enroll_runner(box, "dimagi", by=world["jj"])
 
 
 # --- no fleet list shows it ---------------------------------------------------------

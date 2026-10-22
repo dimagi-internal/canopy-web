@@ -23,7 +23,7 @@ from apps.agents.models import Agent
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import services
+from . import schedule_turns
 from .models import AgentSchedule
 from .schedule_turns import fire_after_of
 
@@ -197,7 +197,7 @@ def serialize_schedule(schedule: AgentSchedule) -> dict:
     tools return it directly. fire_after (`schedule_turns.fire_after_of`) is the
     anchor a runner passes to due_slot — the same one the server's own clock
     (`schedule_clock`) uses, so both pick the same slot."""
-    latest = services.latest_occurrence_turn(schedule)
+    latest = schedule_turns.latest_occurrence_turn(schedule)
     now = timezone.now()
     fire_after = fire_after_of(schedule)
     if schedule.run_once_at:
@@ -281,7 +281,7 @@ def delete_schedule(
     schedule = _resolve_schedule(
         user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
     )
-    services.supersede_open_turns(schedule, reason="schedule deleted")
+    schedule_turns.supersede_open_turns(schedule, reason="schedule deleted")
     schedule.delete()
 
 
@@ -291,7 +291,7 @@ def run_schedule_now(
     schedule = _resolve_schedule(
         user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
     )
-    services.run_schedule_now(schedule, clicked_by=user)
+    schedule_turns.run_schedule_now(schedule, clicked_by=user)
     return schedule
 
 

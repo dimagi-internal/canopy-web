@@ -25,6 +25,7 @@ from django.utils import timezone
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.canopy_sessions.staleness import SESSION_LIVE_WINDOW
 from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -218,8 +219,8 @@ def test_stickiness_survives_the_liveness_change():
         last_heartbeat_at=timezone.now(), owner=user, ready=True,
         capabilities={"sessions": True},
     )
-    assert services.claim_next_turn(other) is None, "no silent failover, even when stale"
-    assert services.claim_next_turn(holder) is not None, "the holder still owns it"
+    assert claim.claim_next_turn(other) is None, "no silent failover, even when stale"
+    assert claim.claim_next_turn(holder) is not None, "the holder still owns it"
 
 
 def test_a_wholesale_report_marks_the_runner_as_an_observer():

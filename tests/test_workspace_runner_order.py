@@ -16,7 +16,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 from django.utils import timezone
 
-from apps.harness import services
+from apps.harness import claim, routing
 from apps.harness.models import Runner, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
@@ -68,7 +68,7 @@ def test_without_an_order_any_declaring_runner_claims(fleet):
     """Opt-in: a workspace with no order routes exactly as before."""
     _jj, ws, _first, _second, hal = fleet
     turn = _turn(ws)
-    assert services.claim_next_turn(hal).pk == turn.pk
+    assert claim.claim_next_turn(hal).pk == turn.pk
 
 
 def test_an_unlisted_runner_never_claims(fleet):
@@ -76,15 +76,15 @@ def test_an_unlisted_runner_never_claims(fleet):
     _jj, ws, first, second, hal = fleet
     _order(ws, first, second)
     _turn(ws, age_seconds=3600)  # past the grace too — unlisted is unlisted
-    assert services.claim_next_turn(hal) is None
+    assert claim.claim_next_turn(hal) is None
 
 
 def test_rank_one_waits_while_rank_zero_is_available(fleet):
     _jj, ws, first, second, _hal = fleet
     _order(ws, first, second)
     turn = _turn(ws)
-    assert services.claim_next_turn(second) is None
-    assert services.claim_next_turn(first).pk == turn.pk
+    assert claim.claim_next_turn(second) is None
+    assert claim.claim_next_turn(first).pk == turn.pk
 
 
 def test_rank_one_claims_when_rank_zero_is_offline(fleet):
@@ -93,15 +93,15 @@ def test_rank_one_claims_when_rank_zero_is_offline(fleet):
     Runner.objects.filter(pk=first.pk).update(
         last_heartbeat_at=timezone.now() - dt.timedelta(hours=1))
     turn = _turn(ws)
-    assert services.claim_next_turn(second).pk == turn.pk
+    assert claim.claim_next_turn(second).pk == turn.pk
 
 
 def test_rank_one_claims_after_the_grace(fleet):
     """An online-but-wedged rank 0 must not park the queue — the agent cascade's grace."""
     _jj, ws, first, second, _hal = fleet
     _order(ws, first, second)
-    turn = _turn(ws, age_seconds=services.CASCADE_GRACE_SECONDS + 5)
-    assert services.claim_next_turn(second).pk == turn.pk
+    turn = _turn(ws, age_seconds=routing.CASCADE_GRACE_SECONDS + 5)
+    assert claim.claim_next_turn(second).pk == turn.pk
 
 
 def test_a_better_rank_that_does_not_declare_the_repo_does_not_block(fleet):
@@ -109,22 +109,22 @@ def test_a_better_rank_that_does_not_declare_the_repo_does_not_block(fleet):
     elsewhere = _runner(jj, "cloud", projects=("connect-labs",))
     _order(ws, elsewhere, second)
     turn = _turn(ws)
-    assert services.claim_next_turn(second).pk == turn.pk
+    assert claim.claim_next_turn(second).pk == turn.pk
 
 
 def test_a_disabled_row_neither_claims_nor_blocks(fleet):
     _jj, ws, first, second, _hal = fleet
     _order(ws, first, second, disabled=(first,))
-    assert services.claim_next_turn(first) is None
+    assert claim.claim_next_turn(first) is None
     turn = _turn(ws)
-    assert services.claim_next_turn(second).pk == turn.pk
+    assert claim.claim_next_turn(second).pk == turn.pk
 
 
 def test_all_rows_disabled_means_no_order(fleet):
     _jj, ws, first, _second, hal = fleet
     _order(ws, first, disabled=(first,))
     turn = _turn(ws)
-    assert services.claim_next_turn(hal).pk == turn.pk
+    assert claim.claim_next_turn(hal).pk == turn.pk
 
 
 def test_an_order_does_not_touch_agent_turns(fleet):
@@ -140,7 +140,7 @@ def test_an_order_does_not_touch_agent_turns(fleet):
     hal.capabilities = {**hal.capabilities, "projects": [*hal.project_names(), "hal"]}
     hal.save(update_fields=["capabilities"])
     turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="a1")
-    assert services.claim_next_turn(hal).pk == turn.pk
+    assert claim.claim_next_turn(hal).pk == turn.pk
 
 
 def test_coverage_agrees_an_unlisted_runner_is_not_coverage(fleet):
@@ -152,8 +152,8 @@ def test_coverage_agrees_an_unlisted_runner_is_not_coverage(fleet):
     Runner.objects.filter(pk=first.pk).update(
         last_heartbeat_at=timezone.now() - dt.timedelta(hours=1))
     turn = _turn(ws)
-    reach = services.turn_reach(turn)
-    assert reach.kind == services.OFFLINE
+    reach = claim.turn_reach(turn)
+    assert reach.kind == claim.OFFLINE
     assert [r.name for r in reach.runners] == ["jj-mbp"]
 
 

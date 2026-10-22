@@ -12,7 +12,8 @@ import pytest
 from django.core.cache import cache
 
 from apps.agents.models import Agent
-from apps.harness import schedule_clock, services
+from apps.harness import schedule_clock
+from apps.harness import schedule_turns
 from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces.testing import a_workspace
 
@@ -63,7 +64,7 @@ def test_a_runner_firing_the_same_slot_collapses_onto_the_server_turn(agent):
     s = _schedule(agent)
     schedule_clock.tick(now=NOW)
 
-    turn, created = services.fire_schedule(s, SLOT)  # what the runner's POST /fire calls
+    turn, created = schedule_turns.fire_schedule(s, SLOT)  # what the runner's POST /fire calls
 
     assert created is False
     assert _turns(s).count() == 1
@@ -73,7 +74,7 @@ def test_a_runner_firing_the_same_slot_collapses_onto_the_server_turn(agent):
 
 def test_a_server_tick_after_a_runner_fired_the_slot_adds_nothing(agent):
     s = _schedule(agent)
-    services.fire_schedule(s, SLOT)
+    schedule_turns.fire_schedule(s, SLOT)
 
     result = schedule_clock.tick(now=NOW)
 

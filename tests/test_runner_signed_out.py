@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
-from apps.harness import services
+from apps.harness import claim
 from apps.harness import turn_status as ts
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -61,10 +61,10 @@ def test_signed_out_is_only_the_signed_out_note(fleet):
 def test_a_signed_out_runner_claims_nothing(fleet):
     mac = fleet["mac"]
     _sign_out(mac)
-    assert services.claim_next_turn(mac) is None
+    assert claim.claim_next_turn(mac) is None
     Runner.objects.filter(pk=mac.pk).update(ready=True, ready_note="")
     mac.refresh_from_db()
-    claimed = services.claim_next_turn(mac)
+    claimed = claim.claim_next_turn(mac)
     assert claimed is not None and claimed.pk == fleet["turn"].pk
 
 
@@ -72,14 +72,14 @@ def test_a_signed_out_pin_does_not_punch_through(fleet):
     mac, turn = fleet["mac"], fleet["turn"]
     Turn.objects.filter(pk=turn.pk).update(pinned_runner=mac)
     _sign_out(mac)
-    assert services.claim_next_turn(mac) is None
+    assert claim.claim_next_turn(mac) is None
 
 
 def test_the_waiting_turn_says_signed_out_not_picking_up(fleet):
     mac, turn = fleet["mac"], fleet["turn"]
     assert ts.resolve(turn).state == ts.PICKING_UP
     _sign_out(mac)
-    assert services.turn_reach(turn).kind == services.SIGNED_OUT
+    assert claim.turn_reach(turn).kind == claim.SIGNED_OUT
     st = ts.resolve(turn)
     assert st.state == ts.SIGNED_OUT
     assert st.runners == ("acedimagi-mbp-cdp",)
@@ -91,5 +91,5 @@ def test_the_slack_line_names_the_sign_in(fleet):
 
     _sign_out(fleet["mac"])
     turn = Turn.objects.select_related("chat_session", "chat_session__agent").get(pk=fleet["turn"].pk)
-    text, _blocks = status.render(turn, reach=services.turn_reach(turn))
+    text, _blocks = status.render(turn, reach=claim.turn_reach(turn))
     assert "not signed in" in text and "acedimagi-mbp-cdp" in text

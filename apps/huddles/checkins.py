@@ -366,7 +366,7 @@ def _release_channel(agent: Agent, channel_id: str, *, by, keep: ProjectCheckin 
 
 def delete(checkin: ProjectCheckin, *, by) -> None:
     """Delete a check-in. Its runs stay on the project's timeline."""
-    from apps.harness import services as hsvc
+    from apps.harness import schedule_turns
 
     with transaction.atomic():
         _release_channel(checkin.project.agent, checkin.channel_id, by=by, keep=checkin,
@@ -377,7 +377,7 @@ def delete(checkin: ProjectCheckin, *, by) -> None:
             _settle(run, f":wastebasket: The *{checkin.name}* check-in was deleted. Nothing was read.",
                     checkin=checkin)
         if checkin.schedule is not None:
-            hsvc.supersede_open_turns(checkin.schedule, reason="check-in deleted")
+            schedule_turns.supersede_open_turns(checkin.schedule, reason="check-in deleted")
             checkin.schedule.delete()
         _event(checkin, "deleted", f"{_who(by)} deleted {label(checkin)}", user=by.pk)
         checkin.delete()
@@ -521,11 +521,11 @@ def announce(schedule, slot: dt.datetime, *, manual: bool = False) -> tuple[Chec
     if why:
         return _fail(run, why), True
     if not checkin.has_channel:
-        from apps.harness.schedule_turns import _schedule_initiator
+        from apps.harness.schedule_turns import schedule_initiator
 
         # Nobody confirms a check-in that reads nothing: the schedule fired it,
         # and whoever made the schedule is accountable for it — as any schedule.
-        _start_turn(run, checkin, initiator=_schedule_initiator(schedule, manual=manual), manual=manual)
+        _start_turn(run, checkin, initiator=schedule_initiator(schedule, manual=manual), manual=manual)
         _event(run, "run_started", f"{label(checkin)}: no channel, so nothing to read; {agent.slug}'s turn "
                f"queued (run {run.pk})", run=run.pk, manual=manual)
         return run, True
@@ -623,6 +623,7 @@ def _start_turn(run: CheckinRun, checkin: ProjectCheckin, *, initiator, manual: 
                 **updates) -> None:
     """Queue the project's agent's turn for `run` and mark it running."""
     from apps.harness import services as hsvc
+    from apps.harness import schedule_turns
 
     sched = checkin.schedule
     project = run.project
@@ -634,7 +635,7 @@ def _start_turn(run: CheckinRun, checkin: ProjectCheckin, *, initiator, manual: 
         origin_ref.update(schedule_id=sched.id, schedule_name=sched.name)
     with transaction.atomic():
         if sched is not None:
-            hsvc.supersede_open_turns(sched, reason=f"superseded by check-in run {run.pk}")
+            schedule_turns.supersede_open_turns(sched, reason=f"superseded by check-in run {run.pk}")
         turn, _ = hsvc.enqueue_turn(
             agent=project.agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key=f"checkin-run:{run.pk}",
             prompt=_turn_prompt(checkin, run), origin_ref=origin_ref,

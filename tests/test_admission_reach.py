@@ -23,6 +23,7 @@ from apps.admission.models import AdmissionNotice, AdmissionRule
 from apps.agents.models import Agent
 from apps.harness import initiator as _initiator
 from apps.harness import services, turn_status
+from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.harness.routing import ENVELOPE_VERSION, PROFILES_VERSION
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -162,7 +163,7 @@ def test_the_stuck_turn_warning_says_parked_and_names_who(fleet):
     _pause(fleet, until=(timezone.now() + dt.timedelta(hours=2)).isoformat())
     turn = _ask(fleet["hal"])
     Turn.objects.filter(pk=turn.pk).update(created_at=timezone.now() - dt.timedelta(minutes=10))
-    [row] = services.unclaimable_queued_turns(fleet["jj"])
+    [row] = claim.unclaimable_queued_turns(fleet["jj"])
     assert row["kind"] == "parked" and "paused by Jonathan Jackson" in row["reason"]
 
 

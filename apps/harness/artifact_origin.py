@@ -29,15 +29,16 @@ from __future__ import annotations
 import logging
 import re
 
+from apps.agent_runs.models import AgentRun
+from apps.agents.models import Agent, AgentProject
+
 log = logging.getLogger(__name__)
 
 _EXPLICIT_PROJECT = re.compile(r"^(?:(?P<agent>[A-Za-z0-9_.-]{1,100})[/:])?(?P<ext>[A-Za-z0-9_.-]{1,64})$")
 
 
 
-def _explicit_project(ref: str, *, user, turn):
-    from apps.agents.models import Agent, AgentProject
-
+def explicit_project(ref: str, *, user, turn):
     ref = (ref or "").strip()
     if not ref:
         return None
@@ -68,7 +69,6 @@ def resolve(request, *, session: str = "", turn: str = "", agent_project: str = 
     Values are model instances or None. Never raises."""
     out = {"source_session": None, "source_turn": None, "agent_project": None}
     try:
-        from apps.agent_runs.models import AgentRun
         from apps.workspaces import services as wsvc
 
         from . import provenance
@@ -86,7 +86,7 @@ def resolve(request, *, session: str = "", turn: str = "", agent_project: str = 
             out["source_session"] = parent_session
 
         the_turn = out["source_turn"]
-        project = _explicit_project(agent_project, user=user, turn=the_turn)
+        project = explicit_project(agent_project, user=user, turn=the_turn)
         if project is None and run_id:
             run = AgentRun.objects.select_related("project__agent").filter(
                 ext_id=run_id, project__isnull=False

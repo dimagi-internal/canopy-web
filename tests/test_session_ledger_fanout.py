@@ -21,7 +21,7 @@ from django.contrib.auth.models import User
 
 from apps.canopy_sessions.models import Session
 from apps.canopy_sessions.services import TRANSCRIPT_SOURCED
-from apps.harness import services
+from apps.harness import ledger
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -77,7 +77,7 @@ def test_transcript_sourced_session_does_not_get_the_ledgers_copy_of_chat_rows(m
     turn = _turn(session)
     published = _capture(monkeypatch)
 
-    services.append_events(turn, ROWS_AND_LIFECYCLE)
+    ledger.append_events(turn, ROWS_AND_LIFECYCLE)
 
     kinds = [f["event"]["kind"] for f in _session_frames(published, session)]
     assert kinds == ["status", "error"]
@@ -95,7 +95,7 @@ def test_web_created_session_marked_transcript_sourced_is_filtered_too(monkeypat
     turn = _turn(session)
     published = _capture(monkeypatch)
 
-    services.append_events(turn, ROWS_AND_LIFECYCLE)
+    ledger.append_events(turn, ROWS_AND_LIFECYCLE)
 
     kinds = [f["event"]["kind"] for f in _session_frames(published, session)]
     assert kinds == ["status", "error"]
@@ -109,7 +109,7 @@ def test_ledger_sourced_session_still_gets_every_event(monkeypatch):
     turn = _turn(session)
     published = _capture(monkeypatch)
 
-    services.append_events(turn, ROWS_AND_LIFECYCLE)
+    ledger.append_events(turn, ROWS_AND_LIFECYCLE)
 
     kinds = [f["event"]["kind"] for f in _session_frames(published, session)]
     assert kinds == [e["kind"] for e in ROWS_AND_LIFECYCLE]
@@ -123,7 +123,7 @@ def test_the_turn_group_keeps_every_event_either_way(monkeypatch):
     turn = _turn(session)
     published = _capture(monkeypatch)
 
-    services.append_events(turn, ROWS_AND_LIFECYCLE)
+    ledger.append_events(turn, ROWS_AND_LIFECYCLE)
 
     turn_kinds = [
         m["event"]["kind"] for g, m in published

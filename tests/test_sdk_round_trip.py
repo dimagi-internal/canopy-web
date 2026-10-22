@@ -283,7 +283,8 @@ def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host,
     from django.utils import timezone
 
     from apps.harness.models import Runner, RunnerAssignment, RunnerFlag
-    from apps.harness.services import PROFILES_VERSION, claim_next_turn
+    from apps.harness.routing import PROFILES_VERSION
+    from apps.harness.claim import claim_next_turn
 
     settings.CHAT_STUB_EXECUTOR = False   # leave the turn queued for a real runner
     host.config = dataclasses.replace(host.config, runner_requirements=("zdr",))

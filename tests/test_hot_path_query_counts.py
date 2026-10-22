@@ -17,6 +17,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
 from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -124,9 +125,9 @@ def test_an_idle_claim_poll_is_cheap_however_big_the_tree():
         WorkspaceRunnerOrder.objects.create(workspace=root, runner=box, rank=0)
         for i, k in enumerate(kids * 2):
             Agent.objects.create(slug=f"ag{tag}{i}", name="A", workspace=k)
-        services.claim_next_turn(box)
+        claim.claim_next_turn(box)
         with CaptureQueriesContext(connection) as q:
-            assert services.claim_next_turn(box) is None
+            assert claim.claim_next_turn(box) is None
         return len(q)
 
     small, big = poll(1, "s"), poll(8, "b")

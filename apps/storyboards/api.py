@@ -356,7 +356,7 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
     board = _editable_or_404(request, slug)
     project = None
     if (payload.agent_project or "").strip():
-        project = artifact_origin._explicit_project(payload.agent_project, user=request.user, turn=None)
+        project = artifact_origin.explicit_project(payload.agent_project, user=request.user, turn=None)
         # One message for "unknown" and "another workspace's": a caller must not be able
         # to probe which project ids exist in other tenants.
         if project is None or project.agent.workspace_id != board.workspace_id:
