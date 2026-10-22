@@ -5,6 +5,7 @@ All v2 routers register against this. Routers live in
 """
 from __future__ import annotations
 
+import inspect
 import logging
 
 from django.http import Http404, HttpRequest, HttpResponse
@@ -63,8 +64,6 @@ class CanopyNinjaAPI(NinjaAPI):
         cached = getattr(self, "_explicit_ids_cache", None)
         if cached is not None:
             return cached
-        import inspect
-
         explicit = {
             inspect.unwrap(op.view_func): op.operation_id
             for bound in self._get_bound_routers()
