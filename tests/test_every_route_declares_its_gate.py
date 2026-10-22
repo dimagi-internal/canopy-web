@@ -107,20 +107,6 @@ def test_every_write_says_whether_it_is_a_setting(operations, gates):
     assert not bad, f"kinds outside WRITE_KINDS: {bad}"
 
 
-def test_declarations_match_the_retired_tables(gates):
-    """MIGRATION ONLY: the decorators carry exactly what route_gates' tables held."""
-    import pathlib
-
-    snap = json.loads((pathlib.Path(__file__).parent / "fixtures" / "route_gates_snapshot.json").read_text())
-    derived = {
-        "gates": {op: list(g.labels) for op, g in sorted(gates.items())},
-        "viewer_may_mutate": {op: g.viewer_write for op, g in sorted(gates.items()) if g.viewer_write},
-        "settings": sorted(op for op, g in gates.items() if g.setting),
-        "not_settings": {op: g.kind for op, g in sorted(gates.items()) if g.kind},
-    }
-    assert derived == snap
-
-
 def _mcp_tools() -> dict:
     from asgiref.sync import async_to_sync
 

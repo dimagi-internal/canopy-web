@@ -7,24 +7,26 @@ writes its own audit record.
 
 ## What counts as a setting
 
-`apps/api/route_gates.py::SETTINGS` lists every route that changes how something is
-configured. That covers who may do what (members, roles, admins, invites, access and
-admission rules), where work runs (runner routing, workspace order, pairing, pausing,
+A route that changes how something is configured says so at the route:
+`@gate(..., setting=True)` (`apps/api/route_gates.py`). That covers who may do what
+(members, roles, admins, invites, access and admission rules), where work runs (runner routing, workspace order, pairing, pausing,
 retiring), credentials and integrations (vaults, tokens, GitHub, Salesforce, Slack,
 mailboxes, connected apps), what an agent or workspace is set to do (turn mode,
 schedules, sender trust, retention), sharing and visibility, and a person's own
 settings (tokens, preferences, memory grants).
 
-Every other write route is in `NOT_SETTINGS` with its kind from `WRITE_KINDS`: content,
-conversation, turn, runner-protocol, action, person-data, telemetry, request, or
-ephemeral-credential. `tests/test_every_route_declares_its_gate.py` fails a write route
-that is in neither list, or in both. When unsure, classify it as a setting.
+Every other write route names its kind instead, `@gate(..., kind="...")`, from
+`WRITE_KINDS`: content, conversation, turn, runner-protocol, action, person-data,
+telemetry, request, or ephemeral-credential. `tests/test_every_route_declares_its_gate.py`
+fails a write route that is neither, and a read that is either (`@gate` refuses both at
+once). When unsure, classify it as a setting.
 
 ## How it works
 
 - `audited` is registered once on the API (`api.add_decorator` in `apps/api/api.py`),
-  so it wraps every route. For a route not in SETTINGS it does nothing.
-- For a SETTINGS route it runs the view inside `transaction.atomic()` and writes the row
+  so it wraps every route. It reads the view's `@gate`; for a route not declared
+  `setting=True` it does nothing.
+- For a setting route it runs the view inside `transaction.atomic()` and writes the row
   inside the same transaction. If the row cannot be written, the change rolls back.
 - The web UI, the `canopy` CLI, scripts and MCP tools all reach a setting through the
   same routes. An MCP tool is the route, called in-process (`docs/architecture/mcp-surface.md`).

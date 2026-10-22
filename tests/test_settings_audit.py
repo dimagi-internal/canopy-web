@@ -1,6 +1,6 @@
 """The settings audit — one plumbing for every settings change (`apps/events/audit.py`).
 
-Pins the contract every SETTINGS route gets without writing a line of its own:
+Pins the contract every `setting=True` route gets without writing a line of its own:
 a row per change naming who and through what (web UI, CLI, other token, MCP),
 the request with secrets withheld, the change and its row committing together,
 nothing for a refused write or a write that is not a setting, and a person's own

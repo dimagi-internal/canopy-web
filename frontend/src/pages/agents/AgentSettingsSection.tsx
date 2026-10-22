@@ -42,7 +42,7 @@ export function AgentSettingsSection() {
   const { agent } = useOutletContext<AgentOutletContext>()
   const isAdmin = agent.is_admin ?? false
   const admins = `${agent.name}'s admins`
-  // Routing writes are gated on agent.work (route_gates.py): workspace editors.
+  // Routing writes are gated on agent.work (their @gate): workspace editors.
   const canRoute = roleAllows(useWorkspaceRole(agent.workspace), 'agent.work')
 
   // `#credentials` is a link people hold: the Google mailbox mint returns to it,

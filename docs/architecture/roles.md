@@ -27,11 +27,13 @@ capability (`CONTENT_WRITE`, `AGENT_WORK`, `LOGS_READ`, `MEMBERS_MANAGE`, `INTEG
 second place silently changes meaning the next time a role is inserted. The frontend mirrors the table in
 `frontend/src/lib/workspaceRoles.ts`, and a vitest reads `permissions.py` to keep the two equal.
 
-**Every route declares its gate.** `apps/api/route_gates.py` lists, for every operation in the
-OpenAPI schema, the gate it enforces, and `tests/test_every_route_declares_its_gate.py` fails
-on a route that has none — so a new route is a decision about who may call it, made when it is
-written, not discovered by an audit. A write a VIEWER may make must also be listed with its
-reason (`VIEWER_MAY_MUTATE`).
+**Every route declares its gate, at the route.** `@gate(...)` (`apps/api/route_gates.py`, which
+holds the closed vocabulary) sits directly above every view's `def` and names the gate it
+enforces, e.g. `@gate("agent.work", setting=True)`; `tests/test_every_route_declares_its_gate.py`
+fails on an operation in the OpenAPI schema whose view has none — so a new route is a decision
+about who may call it, made when it is written, not discovered by an audit. A write a VIEWER may
+make must also give its reason (`viewer_write="..."`). Hand-written MCP tools, which are not
+routes, declare theirs in `route_gates.HAND_TOOL_GATES`.
 
 An admin manages members only **strictly below themselves** (`permissions.may_manage_member`):
 they invite, re-role and remove viewers and editors, see invite links only for those roles,

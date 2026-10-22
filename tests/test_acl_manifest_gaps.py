@@ -1,7 +1,7 @@
 """Gaps the route-gate manifest surfaced the day it was written (2026-10-02).
 
 Classifying every route by the gate it actually enforces
-(`apps/api/route_gates.py`) is what found these; each was a write a viewer
+(`@gate`, `apps/api/route_gates.py`) is what found these; each was a write a viewer
 could make, or a NULL-means-allow leg.
 """
 from __future__ import annotations
