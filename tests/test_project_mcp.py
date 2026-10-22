@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import gzip
 import hashlib
-import io
 import json
 
 import httpx2
@@ -22,66 +21,21 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 
 from apps.agents import kb_store
-from apps.agents.models import Agent, AgentProject
+from apps.agents.models import AgentProject
 from apps.mcp.projects import ProjectMcpDispatch, project_mcp
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from canopy_kb import build
+from tests.fixtures import kb as kb_fixtures
 
 pytestmark = pytest.mark.django_db
 
+# the bucket and project fixtures (a fixture is found by its name in the module)
+s3, world = kb_fixtures.s3, kb_fixtures.world
+FakeS3 = kb_fixtures.FakeS3
+
 J = "application/json"
 BASE = "https://canopy.test"
-
-
-class FakeS3:
-    """The calls kb_store makes, over a dict."""
-
-    def __init__(self):
-        self.objects: dict[str, bytes] = {}
-        self.signed: list[tuple[str, dict]] = []
-
-    def generate_presigned_url(self, op, Params, ExpiresIn):
-        self.signed.append((op, Params))
-        return f"https://s3.test/{Params['Key']}?signed"
-
-    def get_paginator(self, op):
-        # The task role may not list the bucket (no s3:ListBucket in its policy): a
-        # listing is a 500 in production, so it is an error here.
-        raise AssertionError(f"canopy-web may not list the bucket ({op})")
-
-    def head_object(self, Bucket, Key):
-        if Key not in self.objects:
-            raise KeyError(Key)
-        return {"ContentLength": len(self.objects[Key])}
-
-    def get_object(self, Bucket, Key):
-        return {"Body": io.BytesIO(self.objects[Key])}
-
-    def delete_object(self, Bucket, Key):
-        self.objects.pop(Key, None)
-
-
-@pytest.fixture()
-def s3(monkeypatch, tmp_path):
-    fake = FakeS3()
-    monkeypatch.setattr(kb_store, "_client", lambda: fake)
-    with override_settings(CANOPY_KB_BUCKET="kb-bucket", CANOPY_KB_CACHE=str(tmp_path / "cache")):
-        yield fake
-
-
-@pytest.fixture()
-def world():
-    owner = User.objects.create_user("jj", "jj@dimagi.com", "pw")
-    dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
-    connect = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner, parent=dimagi)
-    WorkspaceMembership.objects.create(user=owner, workspace=dimagi, role=WorkspaceMembership.OWNER)
-    eva = Agent.objects.create(slug="eva", name="Eva", workspace=dimagi, owner=owner)
-    project = AgentProject.objects.create(agent=eva, ext_id="P12", name="GiveWell Knowledge Base",
-                                          scope="workspace", owner_workspace=connect, handle="givewell-kb")
-    client = Client()
-    client.force_login(owner)
-    return {"owner": owner, "connect": connect, "eva": eva, "project": project, "client": client}
 
 
 ORIGINAL = {"sha256": "c" * 64, "filename": "Diarrheal disease.txt", "content_type": "text/plain", "bytes": 52,
@@ -127,15 +81,17 @@ def test_publishing_makes_the_project_serve_its_own_mcp(world, s3, tmp_path):
     assert r.json()["kb_published_at"]
 
 
-def test_a_republish_replaces_the_old_object(world, s3, tmp_path):
+def test_a_republish_serves_the_new_file_and_keeps_the_old_one_as_a_version(world, s3, tmp_path):
     _publish(world, s3, tmp_path)
     first = AgentProject.objects.get(handle="givewell-kb").kb_key
     (tmp_path / "bundle").rename(tmp_path / "old-bundle")
     (tmp_path / "kb.sqlite").unlink()
     _publish(world, s3, tmp_path)
 
-    assert first not in s3.objects
-    assert list(s3.objects) == [AgentProject.objects.get(handle="givewell-kb").kb_key]
+    project = AgentProject.objects.get(handle="givewell-kb")
+    assert project.kb_key != first and first in s3.objects
+    assert [(v.number, v.kind, v.kb_key) for v in project.kb_versions.order_by("number")] == [
+        (1, "full", first), (2, "full", project.kb_key)]
 
 
 def test_publish_refuses_a_key_that_is_not_this_projects_upload(world, s3):

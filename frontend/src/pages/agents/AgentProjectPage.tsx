@@ -11,7 +11,7 @@ import { CheckinsPanel, CheckinTimeline } from '@/pages/agents/ProjectCheckins'
 import { ProjectOverview } from '@/pages/agents/ProjectOverview'
 import { ProjectStatusOptions, StatusChip } from '@/pages/agents/projectParts'
 import { Section } from '@/pages/agents/sectionLayout'
-import { ProjectMcpInstall, WorkspaceProjectLine } from '@/pages/projects/WorkspaceProjects'
+import { ProjectKbLink, ProjectMcpInstall, WorkspaceProjectLine } from '@/pages/projects/WorkspaceProjects'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { scopedPath } from '../../lib/scopedLinks'
@@ -165,6 +165,7 @@ export function AgentProjectPage(): JSX.Element {
         )}
       </div>
       <WorkspaceProjectLine project={detail} />
+      <ProjectKbLink project={detail} />
       <ProjectMcpInstall project={detail} />
       {statusError && <p className="mt-2 text-[12px] text-destructive">{statusError}</p>}
     </>

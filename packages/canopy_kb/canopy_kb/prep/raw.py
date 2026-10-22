@@ -84,13 +84,27 @@ class Raw:
         return self._local.c
 
     def get(self, url: str, refetch: bool = False, ua: str | None = None) -> dict:
-        """Cached GET with retries; returns the index row (bytes via `body`)."""
-        if not refetch and self.index.get(url, {}).get("status") in self.KEEP:
-            return self.index[url]
+        """Cached GET with retries; returns the index row (bytes via `body`).
+
+        A refetch is conditional: a kept response's ETag and Last-Modified go back as
+        If-None-Match / If-Modified-Since, and a 304 keeps the row (and its bytes, so
+        nothing downstream re-extracts, re-OCRs or re-cards), noting `checked_at`."""
+        old = self.index.get(url, {})
+        if not refetch and old.get("status") in self.KEEP:
+            return old
+        cond = {}
+        if old.get("status") == 200 and old.get("file") and (self.dir / old["file"]).exists():
+            if old.get("etag"):
+                cond["If-None-Match"] = old["etag"]
+            if old.get("last_modified"):
+                cond["If-Modified-Since"] = old["last_modified"]
         row: dict = {"url": url}
         for attempt in range(5):
             try:
-                r = self._client().get(url, headers={"User-Agent": ua} if ua else None)
+                r = self._client().get(url, headers={**({"User-Agent": ua} if ua else {}), **cond} or None)
+                if r.status_code == 304 and cond:
+                    row = {**old, "checked_at": now()}
+                    break
                 if r.status_code in (429, 500, 502, 503, 504):
                     row = {"url": url, "status": r.status_code}
                     time.sleep(2 ** attempt * 3)
@@ -100,6 +114,12 @@ class Raw:
                 row = {"url": url, "final_url": str(r.url), "status": r.status_code,
                        "ctype": r.headers.get("content-type", ""), "cd": r.headers.get("content-disposition", ""),
                        "file": f, "bytes": len(r.content), "sha256": sha(r.content), "fetched_at": now()}
+                for h, k in (("etag", "etag"), ("last-modified", "last_modified")):
+                    if r.headers.get(h):
+                        row[k] = r.headers[h]
+                if old.get("sha256") == row["sha256"] and old.get("fetched_at"):
+                    row["fetched_at"] = old["fetched_at"]  # same bytes: nothing changed, keep the record stable
+                    row["checked_at"] = now()
                 break
             except Exception as e:  # noqa: BLE001 — a network error is retried, then recorded
                 row = {"url": url, "status": -1, "error": str(e)[:200]}

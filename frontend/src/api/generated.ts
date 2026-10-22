@@ -6306,9 +6306,285 @@ export interface paths {
         /**
          * Publish an uploaded knowledge base: the project then serves it as its MCP server
          * @description The project answers its tools at `mcp_path` from this upload from now on
-         *     (every serving instance re-fetches it by its sha256); the previous one is deleted.
+         *     (every serving instance re-fetches it by its sha256), as a new FULL version of its
+         *     log (`…/kb/versions`). With the `state` it was built from, the next publish can send
+         *     only what changed (`…/kb/plan`). Earlier versions' files are kept for rollback
+         *     (the newest few).
          */
         readonly post: operations["publish_kb"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/plan": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * What publishing a knowledge-base state would change, and what to upload for it
+         * @description Step one of a delta publish. Send the state (`canopy_kb.records.state`: each
+         *     record's and part's sha256). `unchanged` means stop: nothing to send, no version.
+         *     `full_required` means publish the whole file once (`…/kb/upload`, `…/kb/publish`
+         *     with this state). Else upload `upload_docs`' records and `upload_parts`' parts
+         *     (`…/kb/blobs`), then `POST …/kb/versions` with `base`.
+         */
+        readonly post: operations["kb_plan"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/blobs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Presigned uploads for the document records and parts a delta needs
+         * @description Each record is gzipped canonical JSON, stored under the sha256 of that JSON
+         *     (`canopy_kb.records`); the PUT carries the gzip's sha256, which storage checks.
+         *     `have` were stored already (the same content is never sent twice).
+         */
+        readonly post: operations["kb_upload_blobs"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/versions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A knowledge base's version log, newest first */
+        readonly get: operations["kb_list_versions"];
+        readonly put?: never;
+        /**
+         * Commit a delta publish: a new version the index job applies
+         * @description 409 when the log moved since the plan (plan again); 422 when a record is missing
+         *     or a Drive document is not approved for indexing. The version is `pending` until
+         *     the index job has built it and the project serves it (`GET …/kb/versions`); the
+         *     published version is untouched until then, and if the build fails.
+         */
+        readonly post: operations["kb_commit"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/file": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A short-lived download of the knowledge base file a project serves now
+         * @description For a curator's local copy or an offline reader (`canopy kb pull`); readers
+         *     normally call the project's MCP tools and download nothing.
+         */
+        readonly get: operations["kb_file"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/versions/{number}/rollback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Serve an earlier version of a knowledge base again
+         * @description A new version of the log pointing at version `number`'s file (kept for the newest
+         *     versions only: `can_roll_back` says which). The next delta builds on it.
+         */
+        readonly post: operations["kb_rollback"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set a knowledge base's options (the Drive replica)
+         * @description `drive_replica`: after each version, canopy-web writes its kb.sqlite.gz into the
+         *     project's Drive folder (shared with canopy-web's service account). Off by default:
+         *     readers query the MCP and need no copy.
+         */
+        readonly put: operations["kb_settings"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/sources": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Where a knowledge base's documents come from */
+        readonly get: operations["kb_list_sources"];
+        readonly put?: never;
+        /**
+         * Add or update a knowledge-base source, by name
+         * @description `web` (a curator's crawler) or `drive_folders` (`config.folders`: Drive folder ids).
+         *     Nothing in a Drive source is read until its owner approves it on the review page.
+         */
+        readonly post: operations["kb_put_source"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/sources/{source_id}/inventory": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Record a Drive source's metadata listing (names and types only, never contents)
+         * @description Every file and folder under the source's folders, including those folders, as
+         *     Drive's metadata shows them. New files get the owner's decision rules; ones gone
+         *     from Drive are marked so and leave the index at the next version.
+         */
+        readonly post: operations["kb_inventory"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/sources/{source_id}/files": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A Drive source's files (readable=true: the approved ones the steward may read) */
+        readonly get: operations["kb_source_files"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/sources/{source_id}/files/{file_id}/hold": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Hold an approved spreadsheet whose column headers look like personal data
+         * @description It is not indexed until the owner releases it on the review page. An empty list
+         *     clears a hold the steward set by mistake (never one the owner released).
+         */
+        readonly post: operations["kb_hold"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/review": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A knowledge base's sources and its owner's review of each Drive file */
+        readonly get: operations["kb_review"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/review/approvals": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Switch a Drive source's files and folders on or off (the project's owner)
+         * @description A folder's decision reaches everything under it (an excluded file stays excluded
+         *     when its folder is approved). `auto_approve` on a folder admits files that appear in
+         *     it later; without it they wait in the "new since approval" queue. `release_hold`
+         *     lets a spreadsheet the header check held be indexed.
+         */
+        readonly post: operations["kb_approve"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/readers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Name who may query a knowledge base with a Drive source (the project's owner) */
+        readonly post: operations["kb_readers"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -19925,6 +20201,13 @@ export interface components {
             readonly mcp_path: string;
             /** Kb Published At */
             readonly kb_published_at?: string | null;
+            /** Kb Version Number */
+            readonly kb_version_number?: number | null;
+            /**
+             * Kb Drive Replica
+             * @default false
+             */
+            readonly kb_drive_replica: boolean;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -20098,6 +20381,13 @@ export interface components {
             readonly mcp_path: string;
             /** Kb Published At */
             readonly kb_published_at?: string | null;
+            /** Kb Version Number */
+            readonly kb_version_number?: number | null;
+            /**
+             * Kb Drive Replica
+             * @default false
+             */
+            readonly kb_drive_replica: boolean;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -24315,6 +24605,421 @@ export interface components {
             readonly key: string;
             /** Sha256 */
             readonly sha256: string;
+            readonly state?: components["schemas"]["KbStateIn"] | null;
+        };
+        /**
+         * KbStateIn
+         * @description What a publish IS (`canopy_kb.records.state`): each document record's and corpus
+         *     part's sha256 — `docs` by item id, `parts` by name (manifest, aliases, table:<name>).
+         */
+        readonly KbStateIn: {
+            /** Docs */
+            readonly docs: {
+                readonly [key: string]: string;
+            };
+            /** Parts */
+            readonly parts: {
+                readonly [key: string]: string;
+            };
+        };
+        /**
+         * KbPlanOut
+         * @description What publishing a state would change. `unchanged`: send nothing, no version is
+         *     made. `full_required`: publish the whole file once (`…/kb/upload`). Otherwise
+         *     upload the records of `upload_docs` and the parts named in `upload_parts`
+         *     (`…/kb/blobs`), then commit with `base`.
+         */
+        readonly KbPlanOut: {
+            /** Base */
+            readonly base?: number | null;
+            /** Full Required */
+            readonly full_required: boolean;
+            /** Unchanged */
+            readonly unchanged: boolean;
+            /** Added */
+            readonly added: number;
+            /** Changed */
+            readonly changed: number;
+            /** Removed */
+            readonly removed: number;
+            /** Upload Docs */
+            readonly upload_docs: readonly string[];
+            /** Upload Parts */
+            readonly upload_parts: readonly string[];
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+        };
+        /** KbPlanIn */
+        readonly KbPlanIn: {
+            readonly state: components["schemas"]["KbStateIn"];
+        };
+        /** KbBlobIn */
+        readonly KbBlobIn: {
+            /** Sha256 */
+            readonly sha256: string;
+            /** Gz Sha256 */
+            readonly gz_sha256: string;
+            /** Bytes */
+            readonly bytes: number;
+        };
+        /** KbBlobsIn */
+        readonly KbBlobsIn: {
+            /** Blobs */
+            readonly blobs: readonly components["schemas"]["KbBlobIn"][];
+        };
+        /** KbCommitOut */
+        readonly KbCommitOut: {
+            /** Created */
+            readonly created: boolean;
+            readonly version?: components["schemas"]["KbVersionOut"] | null;
+        };
+        /** KbVersionOut */
+        readonly KbVersionOut: {
+            /** Number */
+            readonly number: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "full" | "delta" | "rollback";
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "building" | "ready" | "failed";
+            /** Base */
+            readonly base?: number | null;
+            /** Rollback Of */
+            readonly rollback_of?: number | null;
+            /** Added */
+            readonly added: number;
+            /** Changed */
+            readonly changed: number;
+            /** Removed */
+            readonly removed: number;
+            /** Uploaded Bytes */
+            readonly uploaded_bytes: number;
+            /** Kb Bytes */
+            readonly kb_bytes?: number | null;
+            /** Summary */
+            readonly summary?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+            /**
+             * Published By
+             * @default
+             */
+            readonly published_by: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * Replica
+             * @default
+             */
+            readonly replica: string;
+            /**
+             * Current
+             * @default false
+             */
+            readonly current: boolean;
+            /**
+             * Can Roll Back
+             * @default false
+             */
+            readonly can_roll_back: boolean;
+        };
+        /** KbCommitIn */
+        readonly KbCommitIn: {
+            readonly state: components["schemas"]["KbStateIn"];
+            /** Base */
+            readonly base?: number | null;
+            /**
+             * Uploaded Bytes
+             * @default 0
+             */
+            readonly uploaded_bytes: number;
+        };
+        /**
+         * KbFileOut
+         * @description The kb.sqlite.gz a project serves now: a 15-minute download link.
+         */
+        readonly KbFileOut: {
+            /** Url */
+            readonly url: string;
+            /** Sha256 */
+            readonly sha256: string;
+            /** Bytes */
+            readonly bytes: number;
+            /** Version */
+            readonly version?: number | null;
+            /** Published At */
+            readonly published_at?: string | null;
+        };
+        /** KbSettingsIn */
+        readonly KbSettingsIn: {
+            /** Drive Replica */
+            readonly drive_replica: boolean;
+        };
+        /** KbSourceOut */
+        readonly KbSourceOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Name */
+            readonly name: string;
+            /** Config */
+            readonly config: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Page Token
+             * @default
+             */
+            readonly page_token: string;
+            /** Inventoried At */
+            readonly inventoried_at?: string | null;
+        };
+        /** KbSourceIn */
+        readonly KbSourceIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "web" | "drive_folders";
+            /** Name */
+            readonly name: string;
+            /** Config */
+            readonly config?: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * KbDriveListingIn
+         * @description One file or folder as Drive's metadata shows it. Never its contents.
+         */
+        readonly KbDriveListingIn: {
+            /** Id */
+            readonly id: string;
+            /**
+             * Parent
+             * @default
+             */
+            readonly parent: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /**
+             * Mime Type
+             * @default
+             */
+            readonly mime_type: string;
+            /** Size */
+            readonly size?: number | null;
+            /**
+             * Owner
+             * @default
+             */
+            readonly owner: string;
+            /**
+             * Modified Time
+             * @default
+             */
+            readonly modified_time: string;
+            /**
+             * Md5
+             * @default
+             */
+            readonly md5: string;
+            /**
+             * Version
+             * @default
+             */
+            readonly version: string;
+            /**
+             * Web Url
+             * @default
+             */
+            readonly web_url: string;
+            /** Readers */
+            readonly readers?: readonly string[];
+        };
+        /** KbInventoryIn */
+        readonly KbInventoryIn: {
+            /** Files */
+            readonly files: readonly components["schemas"]["KbDriveListingIn"][];
+            /**
+             * Page Token
+             * @default
+             */
+            readonly page_token: string;
+        };
+        /** KbDriveFileOut */
+        readonly KbDriveFileOut: {
+            /** File Id */
+            readonly file_id: string;
+            /** Parent Id */
+            readonly parent_id: string;
+            /** Name */
+            readonly name: string;
+            /** Path */
+            readonly path: string;
+            /** Mime Type */
+            readonly mime_type: string;
+            /** Is Folder */
+            readonly is_folder: boolean;
+            /** Size */
+            readonly size?: number | null;
+            /** Owner */
+            readonly owner: string;
+            /** Modified Time */
+            readonly modified_time: string;
+            /** Md5 */
+            readonly md5: string;
+            /** Drive Version */
+            readonly drive_version: string;
+            /** Web Url */
+            readonly web_url: string;
+            /** Readers */
+            readonly readers: readonly string[];
+            /** Skip Reason */
+            readonly skip_reason: string;
+            /** Flags */
+            readonly flags: readonly string[];
+            /**
+             * Decision
+             * @enum {string}
+             */
+            readonly decision: "pending" | "approved" | "excluded";
+            /**
+             * Decided By
+             * @default
+             */
+            readonly decided_by: string;
+            /** Decided At */
+            readonly decided_at?: string | null;
+            /** Auto Approve */
+            readonly auto_approve: boolean;
+            /** Held Headers */
+            readonly held_headers: readonly string[];
+            /** Hold Released */
+            readonly hold_released: boolean;
+            /** Present */
+            readonly present: boolean;
+            /**
+             * First Seen At
+             * Format: date-time
+             */
+            readonly first_seen_at: string;
+            /**
+             * Queued
+             * @default false
+             */
+            readonly queued: boolean;
+            /**
+             * Indexable
+             * @default false
+             */
+            readonly indexable: boolean;
+        };
+        /** KbHoldIn */
+        readonly KbHoldIn: {
+            /** Headers */
+            readonly headers: readonly string[];
+        };
+        /**
+         * KbReviewOut
+         * @description A KB's sources and, for a Drive source, its owner's review list.
+         */
+        readonly KbReviewOut: {
+            /** Address */
+            readonly address: string;
+            /** Name */
+            readonly name: string;
+            /** Owner Email */
+            readonly owner_email?: string | null;
+            /** Steward Slug */
+            readonly steward_slug: string;
+            /** May Decide */
+            readonly may_decide: boolean;
+            /** Sources */
+            readonly sources: readonly components["schemas"]["KbReviewSourceOut"][];
+            /** Readers */
+            readonly readers: readonly string[];
+            /** Drive Replica */
+            readonly drive_replica: boolean;
+            /** Version */
+            readonly version?: number | null;
+        };
+        /** KbReviewSourceOut */
+        readonly KbReviewSourceOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Name */
+            readonly name: string;
+            /** Config */
+            readonly config: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Page Token
+             * @default
+             */
+            readonly page_token: string;
+            /** Inventoried At */
+            readonly inventoried_at?: string | null;
+            /** Files */
+            readonly files?: readonly components["schemas"]["KbDriveFileOut"][];
+        };
+        /** KbApprovalsOut */
+        readonly KbApprovalsOut: {
+            /** Changed */
+            readonly changed: number;
+        };
+        /** KbApprovalIn */
+        readonly KbApprovalIn: {
+            /** File Id */
+            readonly file_id: string;
+            /** Decision */
+            readonly decision?: ("pending" | "approved" | "excluded") | null;
+            /** Auto Approve */
+            readonly auto_approve?: boolean | null;
+            /**
+             * Release Hold
+             * @default false
+             */
+            readonly release_hold: boolean;
+        };
+        /** KbApprovalsIn */
+        readonly KbApprovalsIn: {
+            /** Source */
+            readonly source: number;
+            /** Files */
+            readonly files: readonly components["schemas"]["KbApprovalIn"][];
+        };
+        /** KbReadersIn */
+        readonly KbReadersIn: {
+            /** Add */
+            readonly add?: readonly string[];
+            /** Remove */
+            readonly remove?: readonly string[];
         };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
@@ -41349,6 +42054,398 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly kb_plan: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbPlanIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbPlanOut"];
+                };
+            };
+        };
+    };
+    readonly kb_upload_blobs: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbBlobsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbOriginalsOut"];
+                };
+            };
+        };
+    };
+    readonly kb_list_versions: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["KbVersionOut"][];
+                };
+            };
+        };
+    };
+    readonly kb_commit: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbCommitIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbCommitOut"];
+                };
+            };
+        };
+    };
+    readonly kb_file: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbFileOut"];
+                };
+            };
+        };
+    };
+    readonly kb_rollback: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbVersionOut"];
+                };
+            };
+        };
+    };
+    readonly kb_settings: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbSettingsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly kb_list_sources: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["KbSourceOut"][];
+                };
+            };
+        };
+    };
+    readonly kb_put_source: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbSourceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbSourceOut"];
+                };
+            };
+        };
+    };
+    readonly kb_inventory: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly source_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbInventoryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly kb_source_files: {
+        readonly parameters: {
+            readonly query?: {
+                readonly readable?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly source_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["KbDriveFileOut"][];
+                };
+            };
+        };
+    };
+    readonly kb_hold: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly source_id: number;
+                readonly file_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbHoldIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbDriveFileOut"];
+                };
+            };
+        };
+    };
+    readonly kb_review: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbReviewOut"];
+                };
+            };
+        };
+    };
+    readonly kb_approve: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbApprovalsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbApprovalsOut"];
+                };
+            };
+        };
+    };
+    readonly kb_readers: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbReadersIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbReviewOut"];
                 };
             };
         };

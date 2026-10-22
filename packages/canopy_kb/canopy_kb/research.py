@@ -383,8 +383,14 @@ def original(kb: "KB", ref: str, version: int = 0, link: "OriginalLink | None" =
            f"{'current' if not o['superseded_at'] else 'superseded ' + o['superseded_at'][:10]} original "
            f"(version {version}): {o['filename']} · {o['content_type']} · {_size(o['bytes'])} · fetched "
            f"{(o['fetched_at'] or '')[:10]} from {o['source_url']} · sha256 {o['sha256']}"]
-    url = link(o["sha256"], o["filename"], o["content_type"]) if link else None
-    if url:
+    drive = (json.loads(it["meta"] or "{}").get("drive") or {}) if it["meta"] else {}
+    url = link(o["sha256"], o["filename"], o["content_type"]) if link and not drive else None
+    if drive:
+        # A Drive source's files are not copied: the reader opens the file in Drive, with
+        # the access the folder's owner gave them. The revision is the one indexed.
+        out.append(f"Google Drive file (revision {drive.get('revision') or '?'} indexed; Drive shows the latest, "
+                   f"to people the folder is shared with): {o['source_url']}")
+    elif url:
         out.append(f"download (valid {LINK_MINUTES} minutes): {url}")
     else:
         out.append(f"This server does not hand out files; the publisher's copy (may have changed): {o['source_url']}")

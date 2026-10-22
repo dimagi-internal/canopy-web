@@ -1282,6 +1282,17 @@ class AgentProject(models.Model):
     kb_sha256 = models.CharField(max_length=64, blank=True, default="")
     kb_bytes = models.BigIntegerField(null=True, blank=True)
     kb_published_at = models.DateTimeField(null=True, blank=True)
+    #: The head of its version log (`KbVersion`): the version `kb_key` serves. Null for
+    #: a KB published before versions existed.
+    kb_version = models.ForeignKey("agents.KbVersion", null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+    #: Off by default. On: after each version, canopy-web writes its kb.sqlite.gz into
+    #: the project's Drive folder (`kb_index`); no reader needs it — readers call the MCP.
+    kb_drive_replica = models.BooleanField(default=False)
+    kb_drive_replica_file_id = models.CharField(max_length=128, blank=True, default="")
+    #: Who may query a KB with a Drive source, beside its owner and its steward
+    #: (`kb_drive.may_read`). A KB of public sources ignores it.
+    kb_readers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="readable_kbs")
     #: Stable id the agent addresses it by, unique per agent — the same shape as
     #: `AgentTask.ext_id` ("P1", "P2"), so the CLI can name a project without
     #: guessing at database ids.
@@ -1395,6 +1406,10 @@ class AgentProject(models.Model):
         which for a division's project stewarded from the parent is not the
         project's (`connect/givewell-kb` → `/w/dimagi/agents/eva/projects/P12`)."""
         return f"/w/{self.agent.workspace_id}/agents/{self.agent.slug}/projects/{self.ext_id}"
+
+    @property
+    def kb_version_number(self) -> int | None:
+        return self.kb_version.number if self.kb_version_id else None
 
     @property
     def mcp_path(self) -> str:
@@ -2081,3 +2096,164 @@ class EngagementEvent(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.workspace_id}:{self.kind}@{self.surface}"
+
+
+class KbVersion(models.Model):
+    """One published state of a workspace project's knowledge base: the version log.
+
+    A publish is a STATE — every document record's and corpus part's sha256
+    (`canopy_kb.records`) — kept as a content-addressed blob (`state_sha`). A DELTA
+    names its base version and uploads only the records it lacks; the index job
+    (`kb_index`) applies them to the base's kb.sqlite and points the project at the
+    result. A FULL publish is a whole kb.sqlite (the first build, or a fallback). A
+    ROLLBACK points the project back at an earlier version's file. `KbChange` rows
+    are what each version added, changed and removed: `whats_new` reads them.
+    """
+
+    FULL, DELTA, ROLLBACK = "full", "delta", "rollback"
+    KIND_CHOICES = [(FULL, "Full file"), (DELTA, "Delta"), (ROLLBACK, "Rollback")]
+    PENDING, BUILDING, READY, FAILED = "pending", "building", "ready", "failed"
+    STATUS_CHOICES = [(PENDING, "Pending"), (BUILDING, "Building"), (READY, "Ready"), (FAILED, "Failed")]
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="kb_versions")
+    number = models.PositiveIntegerField()
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+    #: The version this one was made from (a delta's base, a rollback's previous head).
+    base = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    #: A rollback's target.
+    rollback_of = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    #: The state blob's sha256 (`kb_store.blob_key`); blank for a full publish that sent none.
+    state_sha = models.CharField(max_length=64, blank=True, default="")
+    #: Its kb.sqlite.gz. Cleared when pruned (`kb_versions.KEEP_FILES`): an older
+    #: version stays in the log but can no longer be rolled back to.
+    kb_key = models.CharField(max_length=300, blank=True, default="")
+    kb_sha256 = models.CharField(max_length=64, blank=True, default="")
+    kb_bytes = models.BigIntegerField(null=True, blank=True)
+    added = models.PositiveIntegerField(default=0)
+    changed = models.PositiveIntegerField(default=0)
+    removed = models.PositiveIntegerField(default=0)
+    #: What the publisher sent for this version (records and parts), in bytes.
+    uploaded_bytes = models.BigIntegerField(default=0)
+    #: The built file's summary (`canopy_kb` summary: items, passages, …).
+    summary = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True, default="")
+    attempts = models.PositiveSmallIntegerField(default=0)
+    #: Who published it: the agent whose login sent it, else blank.
+    published_by = models.CharField(max_length=100, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    #: The Drive replica's outcome when the project keeps one ("" when it does not).
+    replica = models.CharField(max_length=300, blank=True, default="")
+
+    class Meta:
+        db_table = "agents_kb_version"
+        ordering = ["project", "-number"]
+        constraints = [models.UniqueConstraint(fields=["project", "number"], name="kb_version_number_unique")]
+        indexes = [models.Index(fields=["status", "created_at"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project_id} v{self.number} {self.kind} {self.status}"
+
+
+class KbChange(models.Model):
+    """One document a version added, changed or removed — the log `whats_new` reads."""
+
+    NEW, CHANGED, REMOVED = "new", "changed", "removed"
+    version = models.ForeignKey(KbVersion, on_delete=models.CASCADE, related_name="changes")
+    item_id = models.CharField(max_length=300)
+    change = models.CharField(max_length=8, choices=[(NEW, NEW), (CHANGED, CHANGED), (REMOVED, REMOVED)])
+    type = models.CharField(max_length=60, blank=True, default="")
+    title = models.TextField(blank=True, default="")
+    url = models.TextField(blank=True, default="")
+    date = models.CharField(max_length=40, blank=True, default="")
+
+    class Meta:
+        db_table = "agents_kb_change"
+        indexes = [models.Index(fields=["version", "change"])]
+
+
+class KbSource(models.Model):
+    """Where a knowledge base's documents come from. Every document records its source
+    (`meta.source` on its record); what happens after the source is shared by all.
+
+    * `web` — a curator's crawler (GiveWell's, in eva). `config` notes what it reads.
+    * `drive_folders` — Google Drive folders (`config.folders`: ids). Nothing in them is
+      read until the project's owner approves it (`KbDriveFile`, `kb_drive`).
+    """
+
+    WEB, DRIVE = "web", "drive_folders"
+    KIND_CHOICES = [(WEB, "Web crawl"), (DRIVE, "Google Drive folders")]
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="kb_sources")
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES)
+    name = models.CharField(max_length=100)
+    config = models.JSONField(default=dict, blank=True)
+    #: A Drive source's changes feed position (`changes.list` page token), kept by the steward.
+    page_token = models.CharField(max_length=200, blank=True, default="")
+    inventoried_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "agents_kb_source"
+        ordering = ["project", "id"]
+        constraints = [models.UniqueConstraint(fields=["project", "name"], name="kb_source_name_unique")]
+
+
+class KbDriveFile(models.Model):
+    """One file or folder of a Drive source, as its METADATA showed it — the owner's
+    review list. The inventory never opens a file; its contents are read only once
+    `decision` is approved (`kb_drive.readable`), and indexed only when it is not held.
+
+    A decision persists across refreshes (an excluded file stays excluded). A file
+    that appears later under an approved folder is approved by that folder's
+    `auto_approve` rule, else it waits as pending: the "new since approval" queue.
+    """
+
+    PENDING, APPROVED, EXCLUDED = "pending", "approved", "excluded"
+    DECISION_CHOICES = [(PENDING, "Pending"), (APPROVED, "Approved"), (EXCLUDED, "Excluded")]
+
+    source = models.ForeignKey(KbSource, on_delete=models.CASCADE, related_name="drive_files")
+    file_id = models.CharField(max_length=128)
+    parent_id = models.CharField(max_length=128, blank=True, default="")
+    name = models.CharField(max_length=500)
+    #: Its folders' names from the source's root down ("Kangaroo care / Protocols").
+    path = models.TextField(blank=True, default="")
+    mime_type = models.CharField(max_length=200, blank=True, default="")
+    is_folder = models.BooleanField(default=False)
+    size = models.BigIntegerField(null=True, blank=True)
+    owner = models.CharField(max_length=254, blank=True, default="")
+    modified_time = models.CharField(max_length=40, blank=True, default="")
+    #: What says it changed: an upload's md5Checksum, a Google Doc's version.
+    md5 = models.CharField(max_length=64, blank=True, default="")
+    drive_version = models.CharField(max_length=40, blank=True, default="")
+    web_url = models.URLField(max_length=500, blank=True, default="")
+    #: Who can open it ("user:a@x", "domain:x", "anyone"), and why it is skipped if it is.
+    readers = models.JSONField(default=list, blank=True)
+    skip_reason = models.CharField(max_length=200, blank=True, default="")
+    #: Why its metadata suggests a second look (`canopy_kb.sensitive.name_flags`).
+    flags = models.JSONField(default=list, blank=True)
+    decision = models.CharField(max_length=10, choices=DECISION_CHOICES, default=PENDING)
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    #: A folder's rule for files that appear in it after approval.
+    auto_approve = models.BooleanField(default=False)
+    #: After approval, before indexing: column headers that look like personal data
+    #: (`canopy_kb.sensitive.header_flags`). Held until the owner releases it.
+    held_headers = models.JSONField(default=list, blank=True)
+    hold_released = models.BooleanField(default=False)
+    #: Still in the folder at the last inventory (trashed, deleted or moved out: False).
+    present = models.BooleanField(default=True)
+    first_seen_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "agents_kb_drive_file"
+        ordering = ["source", "path", "name"]
+        constraints = [models.UniqueConstraint(fields=["source", "file_id"], name="kb_drive_file_unique")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.source_id}:{self.name} {self.decision}"

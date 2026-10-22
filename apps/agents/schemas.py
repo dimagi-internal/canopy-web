@@ -930,10 +930,224 @@ class KbUploadOut(StrictModel):
     expires_in: int
 
 
+class KbStateIn(StrictModel):
+    """What a publish IS (`canopy_kb.records.state`): each document record's and corpus
+    part's sha256 — `docs` by item id, `parts` by name (manifest, aliases, table:<name>)."""
+
+    docs: dict[str, str]
+    parts: dict[str, str]
+
+
 class KbPublishIn(StrictModel):
     key: str = Field(min_length=1, max_length=300)
     #: sha256 of the uploaded file — what serving instances cache by and verify.
     sha256: str = Field(min_length=64, max_length=64)
+    #: The state the file was built from, so the next publish can send only a delta.
+    state: KbStateIn | None = None
+
+
+class KbPlanIn(StrictModel):
+    state: KbStateIn
+
+
+class KbPlanOut(StrictModel):
+    """What publishing a state would change. `unchanged`: send nothing, no version is
+    made. `full_required`: publish the whole file once (`…/kb/upload`). Otherwise
+    upload the records of `upload_docs` and the parts named in `upload_parts`
+    (`…/kb/blobs`), then commit with `base`."""
+
+    base: int | None = None
+    full_required: bool
+    unchanged: bool
+    added: int
+    changed: int
+    removed: int
+    upload_docs: list[str]
+    upload_parts: list[str]
+    reason: str = ""
+
+
+class KbBlobIn(StrictModel):
+    #: sha256 of the record's canonical JSON — its address.
+    sha256: str = Field(min_length=64, max_length=64)
+    #: sha256 and size of the gzip uploaded (S3 checks it).
+    gz_sha256: str = Field(min_length=64, max_length=64)
+    bytes: int = Field(gt=0)
+
+
+class KbBlobsIn(StrictModel):
+    blobs: list[KbBlobIn] = Field(max_length=1000)
+
+
+class KbCommitIn(StrictModel):
+    state: KbStateIn
+    #: The version the plan was made against (null before the first).
+    base: int | None = None
+    #: What the steward uploaded for it, in bytes (recorded on the version).
+    uploaded_bytes: int = Field(default=0, ge=0)
+
+
+class KbVersionOut(StrictModel):
+    number: int
+    kind: Literal["full", "delta", "rollback"]
+    status: Literal["pending", "building", "ready", "failed"]
+    base: int | None = None
+    rollback_of: int | None = None
+    added: int
+    changed: int
+    removed: int
+    uploaded_bytes: int
+    kb_bytes: int | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+    error: str = ""
+    published_by: str = ""
+    created_at: datetime
+    finished_at: datetime | None = None
+    #: The Drive replica's outcome, when the project keeps one.
+    replica: str = ""
+    #: The version the project serves now.
+    current: bool = False
+    #: Its file is kept, so the project can be pointed back at it.
+    can_roll_back: bool = False
+
+
+class KbCommitOut(StrictModel):
+    #: False: the state equals the published one — nothing was sent, no version made.
+    created: bool
+    version: KbVersionOut | None = None
+
+
+class KbFileOut(StrictModel):
+    """The kb.sqlite.gz a project serves now: a 15-minute download link."""
+
+    url: str
+    sha256: str
+    bytes: int
+    version: int | None = None
+    published_at: datetime | None = None
+
+
+class KbSettingsIn(StrictModel):
+    #: Write each new version's kb.sqlite.gz into the project's Drive folder.
+    drive_replica: bool
+
+
+class KbSourceIn(StrictModel):
+    kind: Literal["web", "drive_folders"]
+    name: str = Field(min_length=1, max_length=100)
+    #: web: what the crawler reads (notes); drive_folders: {"folders": [folder ids]}.
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class KbSourceOut(StrictModel):
+    id: int
+    kind: str
+    name: str
+    config: dict[str, Any]
+    page_token: str = ""
+    inventoried_at: datetime | None = None
+
+
+class KbDriveListingIn(StrictModel):
+    """One file or folder as Drive's metadata shows it. Never its contents."""
+
+    id: str = Field(min_length=1, max_length=128)
+    parent: str = Field(default="", max_length=128)
+    name: str = Field(default="", max_length=500)
+    mime_type: str = Field(default="", max_length=200)
+    size: int | None = None
+    owner: str = Field(default="", max_length=254)
+    modified_time: str = Field(default="", max_length=40)
+    md5: str = Field(default="", max_length=64)
+    version: str = Field(default="", max_length=40)
+    web_url: str = Field(default="", max_length=500)
+    #: Who can open it: "user:<email>", "domain:<domain>", "anyone".
+    readers: list[str] = Field(default_factory=list, max_length=500)
+
+
+class KbInventoryIn(StrictModel):
+    files: list[KbDriveListingIn] = Field(max_length=50000)
+    #: The changes feed position after this listing.
+    page_token: str = Field(default="", max_length=200)
+
+
+class KbDriveFileOut(StrictModel):
+    file_id: str
+    parent_id: str
+    name: str
+    path: str
+    mime_type: str
+    is_folder: bool
+    size: int | None = None
+    owner: str
+    modified_time: str
+    md5: str
+    drive_version: str
+    web_url: str
+    readers: list[str]
+    skip_reason: str
+    flags: list[str]
+    decision: Literal["pending", "approved", "excluded"]
+    decided_by: str = ""
+    decided_at: datetime | None = None
+    auto_approve: bool
+    held_headers: list[str]
+    hold_released: bool
+    present: bool
+    first_seen_at: datetime
+    #: Pending, and appeared under an approved folder: the "new since approval" queue.
+    queued: bool = False
+    #: Its contents go into the index (approved, not skipped, not held).
+    indexable: bool = False
+
+
+class KbReviewSourceOut(KbSourceOut):
+    files: list[KbDriveFileOut] = Field(default_factory=list)
+
+
+class KbReviewOut(StrictModel):
+    """A KB's sources and, for a Drive source, its owner's review list."""
+
+    address: str
+    name: str
+    owner_email: str | None = None
+    #: The agent that keeps it current (and may always query it).
+    steward_slug: str
+    #: The caller is the project's owner: only they switch files on and off.
+    may_decide: bool
+    sources: list[KbReviewSourceOut]
+    #: Who may query it beside its owner and steward (a KB with a Drive source).
+    readers: list[str]
+    drive_replica: bool
+    version: int | None = None
+
+
+class KbApprovalIn(StrictModel):
+    file_id: str = Field(min_length=1, max_length=128)
+    decision: Literal["pending", "approved", "excluded"] | None = None
+    #: A folder's rule for files that appear in it later.
+    auto_approve: bool | None = None
+    #: Index a spreadsheet the header check held.
+    release_hold: bool = False
+
+
+class KbApprovalsIn(StrictModel):
+    source: int
+    files: list[KbApprovalIn] = Field(max_length=5000)
+
+
+class KbApprovalsOut(StrictModel):
+    #: Files and folders whose switch or rule this call changed (a folder's reach included).
+    changed: int
+
+
+class KbHoldIn(StrictModel):
+    headers: list[str] = Field(max_length=100)
+
+
+class KbReadersIn(StrictModel):
+    add: list[str] = Field(default_factory=list, max_length=100)
+    remove: list[str] = Field(default_factory=list, max_length=100)
 
 
 class KbOriginalIn(StrictModel):
@@ -1026,6 +1240,10 @@ class AgentProjectOut(StrictModel):
     mcp_kind: str = ""
     mcp_path: str = ""
     kb_published_at: datetime | None = None
+    #: Its knowledge base's current version (`…/kb/versions`), and whether each new
+    #: version is also written into its Drive folder (off by default).
+    kb_version_number: int | None = None
+    kb_drive_replica: bool = False
     ext_id: str
     name: str
     outcome: str
