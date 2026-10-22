@@ -46,3 +46,46 @@ class HideIn(Schema):
 
 class HideOut(Schema):
     count: int
+
+
+class AlertActionOut(Schema):
+    id: str
+    label: str
+    closes: bool
+    # Set → a link: the fix is done on that page, never acted on here.
+    href: str = ""
+
+
+class AlertOut(Schema):
+    id: int
+    kind: str
+    severity: Literal["blocking", "action", "setup"]
+    title: str
+    body: str = ""
+    url: str = ""
+    workspace: str
+    # The top of `workspace`'s tree, like an attention row's.
+    organisation: str
+    scopes: list[str]
+    status: Literal["open", "resolved", "dismissed"]
+    first_seen_at: dt.datetime
+    last_seen_at: dt.datetime
+    occurrences: int
+    closed_by_email: str = ""
+    closed_at: dt.datetime | None = None
+    # What THIS viewer may do now; empty for a closed alert.
+    actions: list[AlertActionOut]
+    # Display line of the latest `notified` event ("Ann asked Bob at 14:02"); "" if none.
+    last_notify: str = ""
+
+
+class AlertEventOut(Schema):
+    at: dt.datetime
+    kind: str
+    actor_email: str = ""
+    action_id: str = ""
+    payload: dict
+
+
+class AlertActIn(Schema):
+    action: str
