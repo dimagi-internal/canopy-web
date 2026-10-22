@@ -42,7 +42,7 @@ function groupLabel(kind: CapabilityKind, family: string): string {
 }
 
 /** Resolve a workflow step against the live catalog: exact (kind,name) → name → null. */
-function resolveStep(items: CapabilityItem[], step: WorkflowStep): CapabilityItem | null {
+function resolveStep(items: readonly CapabilityItem[], step: WorkflowStep): CapabilityItem | null {
   return (
     items.find((i) => i.kind === step.kind && i.name === step.name) ||
     items.find((i) => i.name === step.name) ||
@@ -55,7 +55,7 @@ function WorkflowsView({
   selected,
   onSelect,
 }: {
-  items: CapabilityItem[]
+  items: readonly CapabilityItem[]
   selected: CapabilityItem | null
   onSelect: (i: CapabilityItem) => void
 }) {

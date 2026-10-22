@@ -1,23 +1,30 @@
 /**
- * API client for the /api/reviews/ surface.
- *
- * The reviews endpoints are not yet in the generated OpenAPI types, so we use
- * raw fetch with the same CSRF + credential conventions as client.v2.ts.
+ * API client for the /api/reviews/ surface, on `apiV2`.
  *
  * Auth strategy mirrors the backend contract:
  *   - Authenticated session users: no extra params required.
  *   - Link-token holders (?t=<share_token>): pass token as query param so the
- *     backend's _token_ok() check succeeds for unauthenticated callers.
+ *     backend's _token_ok() check succeeds for unauthenticated callers. Their
+ *     page (/w/<ws>/review/<id>) is a scoped viewer path, so apiV2 neither
+ *     rewrites it onto /api/w/<ws>/ nor bounces a 401 to login.
+ *
+ * The row types alias the generated schemas; `request_json` / `response_json`
+ * / `suggestions` are free-form JSON there, so their shapes are written out
+ * here (mirroring what the orchestrator posts).
  */
 
-import { getCsrfToken } from './base'
+import { apiV2, shareQuery } from './client.v2'
+import type { components } from './generated'
+import { ensureOk, unwrap } from './problem'
+
+type Schemas = components['schemas']
 
 // ---------------------------------------------------------------------------
 // Types (mirrors apps/reviews/schemas.py)
 // ---------------------------------------------------------------------------
 
-export type ReviewStatus = 'pending' | 'resolved'
-export type ReviewVisibility = 'private' | 'link'
+export type ReviewStatus = Schemas['ReviewRequestOut']['status']
+export type ReviewVisibility = Schemas['ReviewRequestOut']['visibility']
 
 export interface ReviewDecision {
   id: string
@@ -271,110 +278,36 @@ export interface ReviewSuggestion {
 }
 
 /** A video pinned to the review's narrative version (canopy-web#1288). For a
- *  recorded narrative there is one per cut, named by the recipe's cut id. */
-export interface ReviewPinnedVideo {
-  /** The recipe's cuts[].id; "" for a plain (explainer) video. */
-  cut_id: string
-  title: string
-  /** Narration item ids this cut plays, in order. */
-  scene_ids: string[]
-  walkthrough_id: string
-  /** Playable for THIS reader; null when the video is private and the reader
-   *  is not a member of its workspace. */
-  video_url: string | null
-  /** The video's own page, under the same rule as video_url. */
-  video_viewer_url?: string | null
-  duration_sec?: number | null
-  /** The live product screens the cut films, for the reviewer to open. */
-  app_links?: { label: string; url: string }[]
-}
+ *  recorded narrative there is one per cut, named by the recipe's cut id;
+ *  `video_url` is null when the video is private and the reader is not a member
+ *  of its workspace. */
+export type ReviewPinnedVideo = Schemas['ReviewPinnedVideoOut']
 
-export interface ReviewDetail {
-  id: string
-  run_id: string
-  /** Narrative slug this review belongs to (for highlighting in the DDD shell).
-   *  null for a run-child gate, which belongs to no narrative — it gets no DDD chrome. */
-  narrative_slug: string | null
-  gate: string
-  status: ReviewStatus
-  visibility: ReviewVisibility
+export type ReviewDetail = Omit<
+  Schemas['ReviewRequestOut'],
+  'request_json' | 'response_json' | 'suggestions'
+> & {
   request_json: ReviewRequestJson
-  response_json: ReviewSubmitPayload | null
+  response_json?: ReviewSubmitPayload | null
   /** External-reviewer suggestions — empty for anonymous readers; populated for the owner. */
   suggestions: ReviewSuggestion[]
-  share_token: string | null
-  is_owner: boolean
-  /** The workspace it lives in — its page is /w/<workspace>/review/<id>. */
-  workspace?: string | null
-  /** Whether THIS caller may resolve the gate (an editor of the review's workspace).
-   *  Everyone else gets the suggest-only editor. */
-  can_decide?: boolean
-  /** The narrative's human name — never the run id or a clipped first sentence. */
-  title?: string | null
-  created_at: string
-  resolved_at: string | null
-  /** The version's own video (explainer, or a recorded narrative's hero cut). */
-  version_video?: ReviewPinnedVideo | null
-  /** A recorded narrative's videos, one per cut, in narration order. */
-  cut_videos?: ReviewPinnedVideo[]
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// "" at root, "/canopy" as a labs tenant — these raw fetches (not openapi-fetch)
-// must carry the deployment path prefix themselves.
-const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '')
-
-function reviewUrl(id: string, token?: string | null, ws?: string | null): string {
-  const q = new URLSearchParams()
-  if (token) q.set('t', token)
-  // The workspace the page's URL names — a review from another one 404s there.
-  if (ws) q.set('ws', ws)
-  const qs = q.toString()
-  return `${API_BASE}/api/reviews/${id}/${qs ? `?${qs}` : ''}`
-}
-
-function submitUrl(id: string, token?: string | null): string {
-  const t = token ? `?t=${encodeURIComponent(token)}` : ''
-  return `${API_BASE}/api/reviews/${id}/submit/${t}`
-}
-
-function suggestUrl(id: string, token?: string | null): string {
-  const t = token ? `?t=${encodeURIComponent(token)}` : ''
-  return `${API_BASE}/api/reviews/${id}/suggest/${t}`
-}
-
-async function parseResponse<T>(resp: Response): Promise<T> {
-  if (!resp.ok) {
-    let msg = `Request failed: ${resp.status}`
-    try {
-      const body = await resp.json()
-      if (body?.detail) msg = body.detail
-      else if (body?.title) msg = body.title
-    } catch {
-      // ignore parse failure
-    }
-    throw new Error(msg)
-  }
-  return resp.json() as Promise<T>
 }
 
 // ---------------------------------------------------------------------------
 // API calls
 // ---------------------------------------------------------------------------
 
-/** Fetch a review by id. Pass token for link-visibility access. */
+/** Fetch a review by id. Pass token for link-visibility access. `ws` is the
+ *  workspace the page's URL names — a review from another one 404s there. */
 export async function getReview(
   id: string,
   token?: string | null,
   ws?: string | null,
 ): Promise<ReviewDetail> {
-  const resp = await fetch(reviewUrl(id, token, ws), {
-    credentials: 'same-origin',
+  const res = await apiV2.GET('/api/reviews/{rid}/', {
+    params: { path: { rid: id }, query: shareQuery(token, { ws }) },
   })
-  return parseResponse<ReviewDetail>(resp)
+  return unwrap(res, 'getReview') as unknown as ReviewDetail
 }
 
 /**
@@ -387,14 +320,11 @@ export async function getReviewDestination(
   token?: string | null,
   ws?: string | null,
 ): Promise<{ url: string | null }> {
-  const q = new URLSearchParams()
-  if (token) q.set('t', token)
-  if (ws) q.set('ws', ws)
-  const qs = q.toString()
-  const resp = await fetch(`${API_BASE}/api/reviews/${id}/destination${qs ? `?${qs}` : ''}`, {
-    credentials: 'same-origin',
+  const res = await apiV2.GET('/api/reviews/{rid}/destination', {
+    params: { path: { rid: id }, query: shareQuery(token, { ws }) },
   })
-  return parseResponse<{ url: string | null }>(resp)
+  const out = unwrap(res, 'getReviewDestination')
+  return { url: out.url ?? null }
 }
 
 /** Submit decisions + narration edits for a review. */
@@ -403,17 +333,11 @@ export async function submitReview(
   payload: ReviewSubmitPayload,
   token?: string | null,
 ): Promise<ReviewDetail> {
-  const csrf = getCsrfToken()
-  const resp = await fetch(submitUrl(id, token), {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(csrf ? { 'X-CSRFToken': csrf } : {}),
-    },
-    body: JSON.stringify({ response_json: payload }),
+  const res = await apiV2.POST('/api/reviews/{rid}/submit/', {
+    params: { path: { rid: id }, query: shareQuery(token) },
+    body: { response_json: payload as unknown as Record<string, unknown> },
   })
-  return parseResponse<ReviewDetail>(resp)
+  return unwrap(res, 'submitReview') as unknown as ReviewDetail
 }
 
 /**
@@ -430,14 +354,15 @@ export async function suggestReview(
   /** A guest's address, so they're cc'd on the notification (ignored when signed in). */
   email?: string | null,
 ): Promise<{ ok: boolean; suggestion_count: number }> {
-  const csrf = getCsrfToken()
-  const resp = await fetch(suggestUrl(id, token), {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRFToken': csrf } : {}) },
-    body: JSON.stringify({ response_json: payload, name: name ?? null, email: email ?? null }),
+  const res = await apiV2.POST('/api/reviews/{rid}/suggest/', {
+    params: { path: { rid: id }, query: shareQuery(token) },
+    body: {
+      response_json: payload as unknown as Record<string, unknown>,
+      name: name ?? null,
+      email: email ?? null,
+    },
   })
-  return parseResponse<{ ok: boolean; suggestion_count: number }>(resp)
+  return unwrap(res, 'suggestReview')
 }
 
 /**
@@ -450,40 +375,19 @@ export async function submitFindingsReview(
   payload: ProductFindingsResponseJson,
   token?: string | null,
 ): Promise<ReviewDetail> {
-  const csrf = getCsrfToken()
-  const resp = await fetch(submitUrl(id, token), {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(csrf ? { 'X-CSRFToken': csrf } : {}),
-    },
-    body: JSON.stringify({ response_json: payload }),
+  const res = await apiV2.POST('/api/reviews/{rid}/submit/', {
+    params: { path: { rid: id }, query: shareQuery(token) },
+    body: { response_json: payload as unknown as Record<string, unknown> },
   })
-  return parseResponse<ReviewDetail>(resp)
+  return unwrap(res, 'submitFindingsReview') as unknown as ReviewDetail
 }
 
 // ---------------------------------------------------------------------------
 // Dashboard: list + delete
 // ---------------------------------------------------------------------------
 
-/** One row in the DDD-plans dashboard (mirrors apps/reviews/schemas.ReviewListItemOut). */
-export interface ReviewListItem {
-  id: string
-  run_id: string
-  gate: string
-  status: ReviewStatus
-  visibility: ReviewVisibility
-  /** null for a run-child gate (see ReviewDetail.narrative_slug). */
-  narrative_slug: string | null
-  title: string | null
-  scene_count: number
-  created_at: string
-  resolved_at: string | null
-  last_activity_at: string
-  share_token: string | null
-  is_owner: boolean
-}
+/** One row in the DDD-plans dashboard. */
+export type ReviewListItem = Schemas['ReviewListItemOut']
 
 export type ReviewListOrder =
   | '-last_activity'
@@ -500,32 +404,20 @@ export interface ListReviewsParams {
 
 /** List all DDD review requests (plans). Authenticated team users only. */
 export async function listReviews(params: ListReviewsParams = {}): Promise<ReviewListItem[]> {
-  const qs = new URLSearchParams()
-  if (params.q) qs.set('q', params.q)
-  if (params.status) qs.set('status', params.status)
-  if (params.order) qs.set('order', params.order)
-  const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  const resp = await fetch(`${API_BASE}/api/reviews/${suffix}`, { credentials: 'same-origin' })
-  return parseResponse<ReviewListItem[]>(resp)
+  const res = await apiV2.GET('/api/reviews/', {
+    params: {
+      query: {
+        ...(params.q ? { q: params.q } : {}),
+        ...(params.status ? { status: params.status } : {}),
+        ...(params.order ? { order: params.order } : {}),
+      },
+    },
+  })
+  return unwrap(res, 'listReviews') as unknown as ReviewListItem[]
 }
 
 /** Delete a review request (dashboard cleanup). */
 export async function deleteReview(id: string): Promise<void> {
-  const csrf = getCsrfToken()
-  const resp = await fetch(`${API_BASE}/api/reviews/${id}/`, {
-    method: 'DELETE',
-    credentials: 'same-origin',
-    headers: { ...(csrf ? { 'X-CSRFToken': csrf } : {}) },
-  })
-  if (!resp.ok) {
-    let msg = `Delete failed: ${resp.status}`
-    try {
-      const body = await resp.json()
-      if (body?.detail) msg = body.detail
-      else if (body?.title) msg = body.title
-    } catch {
-      // ignore
-    }
-    throw new Error(msg)
-  }
+  const res = await apiV2.DELETE('/api/reviews/{rid}/', { params: { path: { rid: id } } })
+  ensureOk(res, 'Delete failed')
 }

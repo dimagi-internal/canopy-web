@@ -4,7 +4,7 @@
 // dragging in ./agents.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
-import { problemMessage } from './problem'
+import { ApiError, unwrap } from './problem'
 
 type Schemas = components['schemas']
 export type VaultKeysetOut = Schemas['VaultKeysetOut']
@@ -13,21 +13,12 @@ export type ZkWrapOut = Schemas['ZkWrapOut']
 export type ZkTargetOut = Schemas['ZkTargetOut']
 export type ZkWrapIn = Schemas['ZkWrapIn']
 
-/** A refused call, with the server's machine-readable `error` code. */
-export class VaultApiError extends Error {
-  code: string
-  constructor(message: string, code: string) {
-    super(message)
-    this.code = code
-  }
-}
+/** A refused call; `.code` is the server's machine-readable `error` member.
+ *  The shared `ApiError` (./problem) under its old name. */
+export { ApiError as VaultApiError }
 
-function need<T>(res: { data?: unknown; error?: unknown }, fallback: string): T {
-  if (res.error !== undefined || res.data === undefined) {
-    const code = (res.error as { error?: unknown } | undefined)?.error
-    throw new VaultApiError(problemMessage(res.error, fallback), typeof code === 'string' ? code : '')
-  }
-  return res.data as T
+function need<T>(res: { data?: unknown; error?: unknown; response?: Response }, fallback: string): T {
+  return unwrap(res, fallback) as T
 }
 
 /** The caller's keyset. A 404 (`no_vault_keyset`) is "not set up yet": its

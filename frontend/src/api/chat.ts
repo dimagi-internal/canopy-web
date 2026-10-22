@@ -1,9 +1,10 @@
 /**
  * Client for the live chat surface (/api/canopy-sessions).
  *
- * Plain fetch (mirrors src/api/sessions.ts) rather than the generated
- * openapi-fetch client — the live transcript's steady-state arrives over the
- * WebSocket (apps/canopy_sessions consumer), not REST. REST covers session
+ * Plain fetch rather than the generated openapi-fetch client (not yet ported:
+ * the session-secrets and MCP Apps View routes are not in the schema) — the
+ * live transcript's steady-state arrives over the WebSocket
+ * (apps/canopy_sessions consumer), not REST. REST covers session
  * meta/create/list, scroll-back paging (`listMessages`), the viewer liveness
  * pair (`attachSession`/`detachSession`), and the runner backfill request
  * (`requestBackfill`). CSRF is attached for mutating calls; response shapes
@@ -12,6 +13,7 @@
 
 import type { components } from "./generated";
 import { apiUrl, getCsrfToken } from "./base";
+import { ApiError } from "./problem";
 import type { AppHost, AppViewResource, CallToolResult } from "canopy-ui/chat";
 
 export type ChatSession = components["schemas"]["SessionOut"];
@@ -22,15 +24,13 @@ export type BackfillState = components["schemas"]["BackfillStateOut"];
 export type SendResult = components["schemas"]["SendOut"];
 export type TurnPlacementResult = components["schemas"]["TurnOutMinimal"];
 
-export class ChatApiError extends Error {
-  code: string;
-  status: number;
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
+/** The shared `ApiError` (./problem) under its old name; callers branch on
+ *  `.status` and `.code` (the problem type's tail, e.g. "not-found"). */
+export { ApiError as ChatApiError };
+
+// Still raw fetch (not apiV2): several routes here (the session's secrets, the
+// MCP Apps View plumbing) are not in the generated schema. Errors go through the
+// shared ApiError all the same.
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
@@ -47,16 +47,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (resp.status === 204) return undefined as T;
   const body = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    // RFC 7807 problem+json: derive a stable code from the type URI tail.
-    const type = typeof body.type === "string" ? body.type : "";
-    const code = type.split("/").pop() || "error";
-    throw new ChatApiError(
-      resp.status,
-      code,
-      body.detail || body.title || "Request failed",
-    );
-  }
+  if (!resp.ok) throw ApiError.from(resp.status, body, `Request failed (${resp.status})`);
   return body as T;
 }
 
@@ -381,14 +372,8 @@ export async function uploadAttachment(sessionId: string, file: File): Promise<A
   if (!res.ok) {
     // The server's 422s are the useful ones (wrong type, too large) — surface
     // the detail rather than a bare status, since the user can act on it.
-    let detail = `upload failed (${res.status})`;
-    try {
-      const problem = await res.json();
-      if (problem?.detail) detail = problem.detail;
-    } catch {
-      /* non-JSON error body; keep the status text */
-    }
-    throw new Error(detail);
+    const problem = await res.json().catch(() => undefined);
+    throw ApiError.from(res.status, problem, `upload failed (${res.status})`);
   }
   return res.json();
 }
@@ -400,7 +385,9 @@ export async function deleteAttachment(attachmentId: string): Promise<void> {
     credentials: "include",
     headers: { "X-CSRFToken": getCsrfToken() },
   });
-  if (!res.ok && res.status !== 404) throw new Error(`delete failed (${res.status})`);
+  if (!res.ok && res.status !== 404) {
+    throw ApiError.from(res.status, await res.json().catch(() => undefined), `delete failed (${res.status})`);
+  }
 }
 
 /** Where to render an attachment from. No signed URL to expire or leak — the

@@ -6,16 +6,15 @@
 // rather than `res.error`, whose static type openapi-fetch infers as
 // always-undefined for routes that declare no error model.
 import { apiV2 } from './client.v2'
-import { problemMessage } from './problem'
-import { WorkspaceApiError } from './workspaces'
+import { ensureOk } from './problem'
 import type { components } from './generated'
 
 export type ConnectedApp = components['schemas']['ConnectedAppOut']
 
+// A refusal is the shared `ApiError` (./problem): `.status` tells 404 (not a
+// member) from 403 (a member who is not an owner).
 async function unwrap<T>(res: { response: Response; data?: unknown; error?: unknown }, what: string): Promise<T> {
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, what))
-  }
+  ensureOk(res, what)
   return res.data as T
 }
 

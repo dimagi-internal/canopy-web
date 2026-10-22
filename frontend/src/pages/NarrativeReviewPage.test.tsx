@@ -5,13 +5,15 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ThemeProvider } from '@/theme/ThemeProvider'
 import NarrativeReviewPage from './NarrativeReviewPage'
 import * as api from '@/api/storyboards'
+import { ApiError } from '@/api/problem'
 
 vi.mock('@/api/storyboards', async () => {
   const actual = await vi.importActual<typeof api>('@/api/storyboards')
-  return { ...actual, leaveFeedback: vi.fn() }
+  return { ...actual, leaveFeedback: vi.fn(), getBoardNarrative: vi.fn() }
 })
 
 const leaveFeedback = api.leaveFeedback as unknown as ReturnType<typeof vi.fn>
+const getBoardNarrative = api.getBoardNarrative as unknown as ReturnType<typeof vi.fn>
 
 /**
  * The narrative reads CLEAN by default; the comparison with the previous
@@ -58,10 +60,7 @@ describe('NarrativeReviewPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     leaveFeedback.mockResolvedValue({ created: 1 })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => payload() }),
-    )
+    getBoardNarrative.mockResolvedValue(payload())
   })
   afterEach(() => {
     cleanup()
@@ -96,14 +95,7 @@ describe('NarrativeReviewPage', () => {
   })
 
   it('offers no toggle when there is no previous version to compare with', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => payload({ previous_version: null, previous_narration: [] }),
-      }),
-    )
+    getBoardNarrative.mockResolvedValue(payload({ previous_version: null, previous_narration: [] }))
     renderPage()
     await screen.findByText('New one.')
     expect(screen.queryByRole('button', { name: /Show changes/ })).toBeNull()
@@ -120,18 +112,10 @@ describe('NarrativeReviewPage', () => {
   })
 
   it('says so plainly when nothing moved', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () =>
-          payload({
+    getBoardNarrative.mockResolvedValue(payload({
             narration: [{ id: 'a', title: 'One', text: 'Same.' }],
             previous_narration: [{ id: 'a', title: 'One', text: 'Same.' }],
-          }),
-      }),
-    )
+          }))
     renderPage()
     await showChanges()
     expect(await screen.findByText(/Nothing has changed since v16/)).toBeTruthy()
@@ -151,13 +135,7 @@ describe('NarrativeReviewPage', () => {
    */
   describe('a cut scene', () => {
     const withACut = () =>
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({
-          ok: true,
-          status: 200,
-          json: async () =>
-            payload({
+      getBoardNarrative.mockResolvedValue(payload({
               previous_narration: [
                 { id: 'a', title: 'One', text: 'Kept.' },
                 { id: 'gone', title: 'Dropped', text: 'This beat was removed.' },
@@ -167,9 +145,7 @@ describe('NarrativeReviewPage', () => {
                 { id: 'a', title: 'One', text: 'Kept.' },
                 { id: 'b', title: 'Two', text: 'Also kept.' },
               ],
-            }),
-        }),
-      )
+            }))
 
     it('is not on the page at all until you ask what changed', async () => {
       withACut()
@@ -222,7 +198,7 @@ describe('NarrativeReviewPage', () => {
   })
 
   it('shows a plain message rather than an error dump on 404', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }))
+    getBoardNarrative.mockRejectedValue(new ApiError(404, 'Not found'))
     renderPage()
     expect(await screen.findByText(/isn’t available/)).toBeTruthy()
   })

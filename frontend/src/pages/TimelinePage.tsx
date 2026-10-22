@@ -175,9 +175,9 @@ export function TimelinePage() {
     setError(null)
     try {
       const data = await listTimeline({ subsystem: subsystem || undefined, limit: PAGE_SIZE })
-      setEvents(data.events)
-      setSubsystems(data.subsystems)
-      setNextBefore(data.next_before)
+      setEvents([...data.events])
+      setSubsystems([...data.subsystems])
+      setNextBefore(data.next_before ?? null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load activity')
     } finally {
@@ -200,7 +200,7 @@ export function TimelinePage() {
         before: nextBefore,
       })
       setEvents((prev) => [...prev, ...data.events])
-      setNextBefore(data.next_before)
+      setNextBefore(data.next_before ?? null)
     } catch (e) {
       setMoreError(e instanceof Error ? e.message : 'Failed to load more')
     } finally {

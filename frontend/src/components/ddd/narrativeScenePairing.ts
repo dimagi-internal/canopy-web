@@ -31,8 +31,8 @@ function norm(s: string): string {
 
 
 /** How many scene ids appear on both sides. 0 means the ids are incomparable. */
-function sharedIdCount(before: DddNarration[], after: DddNarration[]): number {
-  const ids = (list: DddNarration[]) =>
+function sharedIdCount(before: readonly DddNarration[], after: readonly DddNarration[]): number {
+  const ids = (list: readonly DddNarration[]) =>
     new Set(list.map((n) => (n.id != null ? String(n.id).trim() : '')).filter(Boolean))
   const a = ids(before)
   if (a.size === 0) return 0
@@ -44,7 +44,7 @@ function sharedIdCount(before: DddNarration[], after: DddNarration[]): number {
 }
 
 /** Index-for-index pairing, for histories whose ids cannot be compared. */
-function pairByPosition(before: DddNarration[], after: DddNarration[]): NarrativeScenePair[] {
+function pairByPosition(before: readonly DddNarration[], after: readonly DddNarration[]): NarrativeScenePair[] {
   const pairs: NarrativeScenePair[] = []
   const len = Math.max(before.length, after.length)
   for (let i = 0; i < len; i += 1) {
@@ -77,8 +77,8 @@ function pairByPosition(before: DddNarration[], after: DddNarration[]): Narrativ
  * matched by `id` where present (reorder-safe), else by position.
  */
 export function pairNarrationScenes(
-  before: DddNarration[],
-  after: DddNarration[],
+  before: readonly DddNarration[],
+  after: readonly DddNarration[],
 ): NarrativeScenePair[] {
   // Legacy histories pair POSITIONALLY, because their ids were derived from
   // scene titles — so a version where the author reworded every title shares no

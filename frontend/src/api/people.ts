@@ -1,13 +1,14 @@
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
+import { ApiError, ensureOk, unwrap } from './problem'
 
 export type PersonMe = components['schemas']['PersonMeOut']
 export type PersonFactDetail = components['schemas']['PersonFactDetailOut']
 
 /** Everything canopy holds about the signed-in user (fleet brain, canopy#804). */
 export async function getMyPerson(): Promise<PersonMe> {
-  const { data, error } = await apiV2.GET('/api/people/me/')
-  if (error) throw new Error('Failed to load what agents know about you')
+  const res = await apiV2.GET('/api/people/me/')
+  const data = unwrap(res, 'Failed to load what agents know about you')
   return data as PersonMe
 }
 
@@ -22,18 +23,18 @@ export type SessionMemory = components['schemas']['SessionMemoryOut']
 export async function setMyAgentMemory(
   change: Partial<Record<MemoryFeature, { available?: boolean; default?: boolean }>>,
 ): Promise<AgentMemory> {
-  const { data, error } = await apiV2.PUT('/api/people/me/agent-memory/', { body: change })
-  if (error) throw new Error('Failed to change agent memory')
+  const res = await apiV2.PUT('/api/people/me/agent-memory/', { body: change })
+  const data = unwrap(res, 'Failed to change agent memory')
   return data as AgentMemory
 }
 
 /** Agent memory as it applies in one of your sessions. Throws on 404 (not your
  *  session) — callers treat that as "show nothing". */
 export async function getSessionMemory(sessionId: string): Promise<SessionMemory> {
-  const { data, error } = await apiV2.GET('/api/people/me/sessions/{session_id}/agent-memory/', {
+  const res = await apiV2.GET('/api/people/me/sessions/{session_id}/agent-memory/', {
     params: { path: { session_id: sessionId } },
   })
-  if (error) throw new Error('Failed to load agent memory for this session')
+  const data = unwrap(res, 'Failed to load agent memory for this session')
   return data as SessionMemory
 }
 
@@ -42,11 +43,11 @@ export async function setSessionMemory(
   sessionId: string,
   change: Partial<Record<MemoryFeature, 'on' | 'off' | 'inherit'>>,
 ): Promise<SessionMemory> {
-  const { data, error } = await apiV2.PUT('/api/people/me/sessions/{session_id}/agent-memory/', {
+  const res = await apiV2.PUT('/api/people/me/sessions/{session_id}/agent-memory/', {
     params: { path: { session_id: sessionId } },
     body: change,
   })
-  if (error) throw new Error('Failed to change agent memory for this session')
+  const data = unwrap(res, 'Failed to change agent memory for this session')
   return data as SessionMemory
 }
 
@@ -63,19 +64,19 @@ export async function grantSessionAgent(
   duration: GrantDuration,
   surface: 'chat' | 'widget' = 'chat',
 ): Promise<SessionMemory> {
-  const { data, error } = await apiV2.POST('/api/people/me/sessions/{session_id}/agent-grants/', {
+  const res = await apiV2.POST('/api/people/me/sessions/{session_id}/agent-grants/', {
     params: { path: { session_id: sessionId } },
     body: { features, duration, surface },
   })
-  if (error) throw new Error('Failed to grant this agent')
+  const data = unwrap(res, 'Failed to grant this agent')
   return data as SessionMemory
 }
 
 export async function retractFact(personId: number, factId: number): Promise<void> {
-  const { error } = await apiV2.POST('/api/people/{person_id}/facts/{fact_id}/retract/', {
+  const res = await apiV2.POST('/api/people/{person_id}/facts/{fact_id}/retract/', {
     params: { path: { person_id: personId, fact_id: factId } },
   })
-  if (error) throw new Error('Failed to retract that fact')
+  ensureOk(res, 'Failed to retract that fact')
 }
 
 // --- HCP v1 (apps/contacts/hcp_api.py): the person's grants and audit log ------
@@ -124,16 +125,16 @@ export interface HcpAuditEvent {
 }
 
 export async function listMyGrants(status = 'all'): Promise<HcpGrant[]> {
-  const { data, error } = await apiV2.GET('/api/hcp/v1/grants', { params: { query: { status } } })
-  if (error) throw new Error('Failed to load who can read what about you')
+  const res = await apiV2.GET('/api/hcp/v1/grants', { params: { query: { status } } })
+  const data = unwrap(res, 'Failed to load who can read what about you')
   return ((data as unknown as { grants: HcpGrant[] }).grants ?? []) as HcpGrant[]
 }
 
 export async function revokeMyGrant(grantId: string): Promise<void> {
-  const { error } = await apiV2.DELETE('/api/hcp/v1/grants/{grant_id}', {
+  const res = await apiV2.DELETE('/api/hcp/v1/grants/{grant_id}', {
     params: { path: { grant_id: grantId } },
   })
-  if (error) throw new Error('Failed to revoke that access')
+  ensureOk(res, 'Failed to revoke that access')
 }
 
 export type MemoryCollections = components['schemas']['MemoryCollectionsOut']
@@ -154,29 +155,29 @@ export class NeedsConfirm extends Error {
   }
 }
 
-function confirmOrThrow(error: unknown, fallback: string): never {
+function confirmOrThrow(status: number, error: unknown, fallback: string): never {
   const extras = (error as { extras?: { confirm_widening?: string[]; agents?: string[]; adds?: string } })
     ?.extras
   if (extras?.confirm_widening) {
     throw new NeedsConfirm(extras.confirm_widening, extras.agents ?? [], extras.adds ?? '')
   }
-  throw new Error((error as { detail?: string })?.detail || fallback)
+  throw ApiError.from(status, error, fallback)
 }
 
 /** Your memory collections — named sets of contexts (all of an organisation, one
  *  workspace, entries in no workspace) you can point an agent at — and the
  *  contexts. Resolved when read: "all of" an organisation takes in new workspaces. */
 export async function listMyCollections(): Promise<MemoryCollections> {
-  const { data, error } = await apiV2.GET('/api/people/me/memory-collections/')
-  if (error) throw new Error('Failed to load your collections')
+  const res = await apiV2.GET('/api/people/me/memory-collections/')
+  const data = unwrap(res, 'Failed to load your collections')
   return data as MemoryCollections
 }
 
 export async function createMyCollection(name: string, sources: string[]): Promise<MemoryCollection> {
-  const { data, error } = await apiV2.POST('/api/people/me/memory-collections/', {
+  const { data, error, response } = await apiV2.POST('/api/people/me/memory-collections/', {
     body: { name, sources },
   })
-  if (error) confirmOrThrow(error, 'Failed to make that collection')
+  if (!response.ok) confirmOrThrow(response.status, error, 'Failed to make that collection')
   return data as MemoryCollection
 }
 
@@ -187,19 +188,19 @@ export async function updateMyCollection(
   change: { name?: string; sources?: string[] },
   confirmWidening?: string[],
 ): Promise<MemoryCollection> {
-  const { data, error } = await apiV2.PUT('/api/people/me/memory-collections/{collection_id}/', {
+  const { data, error, response } = await apiV2.PUT('/api/people/me/memory-collections/{collection_id}/', {
     params: { path: { collection_id: id } },
     body: { ...change, ...(confirmWidening ? { confirm_widening: confirmWidening } : {}) },
   })
-  if (error) confirmOrThrow(error, 'Failed to change that collection')
+  if (!response.ok) confirmOrThrow(response.status, error, 'Failed to change that collection')
   return data as MemoryCollection
 }
 
 export async function deleteMyCollection(id: number): Promise<void> {
-  const { error } = await apiV2.DELETE('/api/people/me/memory-collections/{collection_id}/', {
+  const { error, response } = await apiV2.DELETE('/api/people/me/memory-collections/{collection_id}/', {
     params: { path: { collection_id: id } },
   })
-  if (error) confirmOrThrow(error, 'Failed to remove that collection')
+  if (!response.ok) confirmOrThrow(response.status, error, 'Failed to remove that collection')
 }
 
 /** Which collection an agent you allowed uses (`null` = its default, its own
@@ -209,21 +210,21 @@ export async function setMyGrantCollection(
   collectionId: number | null,
   confirmWidening?: string[],
 ): Promise<MemoryCollections> {
-  const { data, error } = await apiV2.PUT('/api/people/me/grants/{grant_id}/collection/', {
+  const { data, error, response } = await apiV2.PUT('/api/people/me/grants/{grant_id}/collection/', {
     params: { path: { grant_id: grantId } },
     body: { collection_id: collectionId, ...(confirmWidening ? { confirm_widening: confirmWidening } : {}) },
   })
-  if (error) confirmOrThrow(error, 'Failed to change what that agent reaches')
+  if (!response.ok) confirmOrThrow(response.status, error, 'Failed to change what that agent reaches')
   return data as MemoryCollections
 }
 
 export async function listMyAudit(
   cursor?: string,
 ): Promise<{ events: HcpAuditEvent[]; nextCursor: string | null }> {
-  const { data, error } = await apiV2.GET('/api/hcp/v1/audit', {
+  const res = await apiV2.GET('/api/hcp/v1/audit', {
     params: { query: { limit: 50, ...(cursor ? { cursor } : {}) } },
   })
-  if (error) throw new Error('Failed to load your audit log')
+  const data = unwrap(res, 'Failed to load your audit log')
   return data as unknown as { events: HcpAuditEvent[]; nextCursor: string | null }
 }
 
@@ -242,7 +243,7 @@ export const MY_CATEGORIES = [
  *  covers that workspace read it. `workspace` null saves it in no workspace —
  *  only for someone who belongs to none. */
 export async function addMyEntry(category: string, preference: string, workspace: string | null = null): Promise<void> {
-  const { error } = await apiV2.POST('/api/hcp/v1/preferences/add', {
+  const res = await apiV2.POST('/api/hcp/v1/preferences/add', {
     params: { query: workspace ? { workspace } : {} },
     body: {
       category,
@@ -251,26 +252,26 @@ export async function addMyEntry(category: string, preference: string, workspace
       sourceContext: 'user-input',
     },
   })
-  if (error) throw new Error('Failed to save that')
+  ensureOk(res, 'Failed to save that')
 }
 
 /** Correct an entry: a new version, same id (HCP 3.2.3). Correcting an agent's
  *  inference makes it yours (2.6.3). */
 export async function correctMyEntry(entryId: string, text: string): Promise<void> {
-  const { error } = await apiV2.PUT('/api/hcp/v1/preferences/{entry_id}', {
+  const res = await apiV2.PUT('/api/hcp/v1/preferences/{entry_id}', {
     params: { path: { entry_id: entryId } },
     body: { updatedPreference: text, reason: 'corrected by the person on /people/me' },
   })
-  if (error) throw new Error('Failed to save the correction')
+  ensureOk(res, 'Failed to save the correction')
 }
 
 /** Everything canopy holds about you, as one JSON-LD file (HCP 3.3.5), with every
  *  version and your audit log. */
 export async function exportMine(): Promise<Blob> {
-  const { data, error } = await apiV2.GET('/api/hcp/v1/export', {
+  const res = await apiV2.GET('/api/hcp/v1/export', {
     params: { query: { include: 'audit,versions' } },
   })
-  if (error) throw new Error('Failed to export')
+  const data = unwrap(res, 'Failed to export')
   return new Blob([JSON.stringify(data, null, 2)], { type: 'application/ld+json' })
 }
 
@@ -295,21 +296,20 @@ export interface HcpClientRow {
 export type HcpClientInput = components['schemas']['HcpClientIn']
 export type HcpClientPatch = components['schemas']['HcpClientPatch']
 
-function registryError(error: unknown, what: string): Error {
-  const e = error as { status?: number; detail?: string; title?: string } | undefined
-  if (e?.status === 403) return new Error('Only canopy administrators manage HCP clients.')
-  return new Error(`${what}${e?.detail ? `: ${e.detail}` : ''}`)
+function registryError(status: number, error: unknown, what: string): ApiError {
+  if (status === 403) return new ApiError(403, 'Only canopy administrators manage HCP clients.', error)
+  return ApiError.from(status, error, what)
 }
 
 export async function listHcpClients(): Promise<HcpClientRow[]> {
-  const { data, error } = await apiV2.GET('/api/hcp-admin/clients')
-  if (error) throw registryError(error, 'Failed to load clients')
+  const { data, error, response } = await apiV2.GET('/api/hcp-admin/clients')
+  if (!response.ok) throw registryError(response.status, error, 'Failed to load clients')
   return data as unknown as HcpClientRow[]
 }
 
 export async function registerHcpClient(body: HcpClientInput): Promise<HcpClientRow> {
-  const { data, error } = await apiV2.POST('/api/hcp-admin/clients', { body })
-  if (error) throw registryError(error, 'Failed to register the client')
+  const { data, error, response } = await apiV2.POST('/api/hcp-admin/clients', { body })
+  if (!response.ok) throw registryError(response.status, error, 'Failed to register the client')
   return data as unknown as HcpClientRow
 }
 
@@ -317,11 +317,11 @@ export async function updateHcpClient(
   clientId: string,
   body: HcpClientPatch,
 ): Promise<HcpClientRow> {
-  const { data, error } = await apiV2.PATCH('/api/hcp-admin/clients/{client_id}', {
+  const { data, error, response } = await apiV2.PATCH('/api/hcp-admin/clients/{client_id}', {
     params: { path: { client_id: clientId } },
     body,
   })
-  if (error) throw registryError(error, 'Failed to update the client')
+  if (!response.ok) throw registryError(response.status, error, 'Failed to update the client')
   return data as unknown as HcpClientRow
 }
 
@@ -332,10 +332,10 @@ export type SearchPreviewEntry = SearchPreview['entries'][number]
  *  with the reason each would or would not come back. `floor` previews another
  *  cutoff; agents keep the live one. Changes nothing. */
 export async function previewMySearch(query: string, floor?: number): Promise<SearchPreview> {
-  const { data, error } = await apiV2.POST('/api/people/me/memory-search-preview/', {
+  const res = await apiV2.POST('/api/people/me/memory-search-preview/', {
     body: { query, floor: floor ?? null, limit: 8 },
   })
-  if (error) throw new Error((error as { detail?: string }).detail || 'Search preview failed')
+  const data = unwrap(res, 'Search preview failed')
   return data as SearchPreview
 }
 
@@ -345,10 +345,10 @@ export type SearchHistory = components['schemas']['SearchHistoryOut']
 /** Every search agents ran over your memory, newest first, as it ran: the
  *  question, every entry scored, and the settings then. `before` pages back. */
 export async function listMySearches(before?: string): Promise<SearchHistory> {
-  const { data, error } = await apiV2.GET('/api/people/me/memory-searches/', {
+  const res = await apiV2.GET('/api/people/me/memory-searches/', {
     params: { query: { before: before ?? null, limit: 30 } },
   })
-  if (error) throw new Error('Failed to load how agents searched your memory')
+  const data = unwrap(res, 'Failed to load how agents searched your memory')
   return data as SearchHistory
 }
 
@@ -356,22 +356,22 @@ export type MemoryViewers = components['schemas']['MemoryViewersOut']
 
 /** The agents you let see this page, read-only, and the ones you could let in. */
 export async function listMyViewers(): Promise<MemoryViewers> {
-  const { data, error } = await apiV2.GET('/api/people/me/viewers/')
-  if (error) throw new Error('Failed to load which agents can see this page')
+  const res = await apiV2.GET('/api/people/me/viewers/')
+  const data = unwrap(res, 'Failed to load which agents can see this page')
   return data as MemoryViewers
 }
 
 export async function addMyViewer(agent: string): Promise<MemoryViewers> {
-  const { data, error } = await apiV2.POST('/api/people/me/viewers/', { body: { agent } })
-  if (error) throw new Error('Failed to let that agent see this page')
+  const res = await apiV2.POST('/api/people/me/viewers/', { body: { agent } })
+  const data = unwrap(res, 'Failed to let that agent see this page')
   return data as MemoryViewers
 }
 
 export async function removeMyViewer(agent: string): Promise<MemoryViewers> {
-  const { data, error } = await apiV2.DELETE('/api/people/me/viewers/{agent_slug}/', {
+  const res = await apiV2.DELETE('/api/people/me/viewers/{agent_slug}/', {
     params: { path: { agent_slug: agent } },
   })
-  if (error) throw new Error('Failed to stop that agent seeing this page')
+  const data = unwrap(res, 'Failed to stop that agent seeing this page')
   return data as MemoryViewers
 }
 
@@ -382,10 +382,10 @@ export type MemoryPage = components['schemas']['MemoryPageOut']
 /** A person's memory page for an agent whose own login they let see it.
  *  Read-only; each look is in their audit. 404 for anyone else. */
 export async function getPersonPage(personId: number): Promise<MemoryPage> {
-  const { data, error } = await apiV2.GET('/api/people/{person_id}/page/', {
+  const res = await apiV2.GET('/api/people/{person_id}/page/', {
     params: { path: { person_id: personId } },
   })
-  if (error) throw new Error('This page isn’t shared with you')
+  const data = unwrap(res, 'This page isn’t shared with you')
   return data as MemoryPage
 }
 
@@ -393,17 +393,17 @@ export async function listPersonPageAudit(
   personId: number,
   cursor?: string,
 ): Promise<{ events: HcpAuditEvent[]; nextCursor: string | null }> {
-  const { data, error } = await apiV2.GET('/api/people/{person_id}/page/audit/', {
+  const res = await apiV2.GET('/api/people/{person_id}/page/audit/', {
     params: { path: { person_id: personId }, query: cursor ? { cursor } : {} },
   })
-  if (error) throw new Error('Failed to load what happened')
+  const data = unwrap(res, 'Failed to load what happened')
   return data as unknown as { events: HcpAuditEvent[]; nextCursor: string | null }
 }
 
 export async function listPersonPageSearches(personId: number, before?: string): Promise<SearchHistory> {
-  const { data, error } = await apiV2.GET('/api/people/{person_id}/page/searches/', {
+  const res = await apiV2.GET('/api/people/{person_id}/page/searches/', {
     params: { path: { person_id: personId }, query: { before: before ?? null, limit: 30 } },
   })
-  if (error) throw new Error('Failed to load how agents searched it')
+  const data = unwrap(res, 'Failed to load how agents searched it')
   return data as SearchHistory
 }

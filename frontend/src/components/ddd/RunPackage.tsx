@@ -40,7 +40,7 @@ function presentSections(): RunSection[] {
 
 /** Human label for an artifact role, so Outputs reads in product terms rather
  *  than raw role/kind codes. */
-function roleLabel(role: string | null, kind: string): string {
+function roleLabel(role: string | null | undefined, kind: string): string {
   switch (role) {
     case 'hero_video':
       return 'Video'
@@ -63,7 +63,7 @@ function displayUrl(url: string): string {
   return q === -1 ? url : url.slice(0, q)
 }
 
-function fmtDate(iso: string | null): string {
+function fmtDate(iso: string | null | undefined): string {
   if (!iso) return ''
   try {
     return new Date(iso).toLocaleString(undefined, {
@@ -206,7 +206,7 @@ function NarrativeBlock({ narrative }: { narrative: DddRunNarrative }) {
  *  entities, and any related docs/companions — each as a clean, visitable URL.
  *  Sourced from the run's links (reference = systems we touched; narrative /
  *  companion = related material). */
-function ExternalSystemsBlock({ links }: { links: DddLink[] }) {
+function ExternalSystemsBlock({ links }: { links: readonly DddLink[] }) {
   const systems = links.filter((l) => l.kind === 'reference')
   const related = links.filter((l) => l.kind === 'narrative' || l.kind === 'companion')
   const row = (l: DddLink) => (

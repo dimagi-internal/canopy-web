@@ -43,8 +43,8 @@ export function NarrativeDiff({
   afterLabel,
   defaultOpen = false,
 }: {
-  before: DddNarration[]
-  after: DddNarration[]
+  before: readonly DddNarration[]
+  after: readonly DddNarration[]
   beforeLabel: string
   afterLabel: string
   defaultOpen?: boolean

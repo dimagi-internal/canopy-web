@@ -48,15 +48,15 @@ function formatDuration(
 
 /** "Jun 18, 2026 · 2h 31m · 41 turns" — a session's properties. */
 function propsLine(
-  start: string | null,
-  end: string | null,
+  start: string | null | undefined,
+  end: string | null | undefined,
   turns: number,
-  activeSeconds: number | null,
+  activeSeconds: number | null | undefined,
 ): string {
   const parts: string[] = [];
-  const when = formatWhen(start, end);
+  const when = formatWhen(start ?? null, end ?? null);
   if (when) parts.push(when);
-  const dur = formatDuration(start, end, activeSeconds);
+  const dur = formatDuration(start ?? null, end ?? null, activeSeconds ?? null);
   if (dur) parts.push(dur);
   parts.push(`${turns} turn${turns === 1 ? "" : "s"}`);
   return parts.join(" · ");

@@ -1,5 +1,5 @@
 import { apiV2 } from "./client.v2";
-import { problemMessage } from "./problem";
+import { unwrap } from "./problem";
 import type { components } from "./generated";
 
 /** A bounded, moderated conversation between named agents (apps/threads). */
@@ -12,20 +12,20 @@ export type ThreadMessage = components["schemas"]["ThreadMessageOut"];
 export async function listThreads(
   opts: { parentKey?: string; parentValue?: string; agent?: string; status?: string } = {},
 ): Promise<AgentThread[]> {
-  const { data, error } = await apiV2.GET("/api/threads/", {
+  const res = await apiV2.GET("/api/threads/", {
     params: {
       query: { parent_key: opts.parentKey, parent_value: opts.parentValue, agent: opts.agent, status: opts.status },
     },
   });
-  if (error) throw new Error(problemMessage(error, "Failed to load conversations"));
+  const data = unwrap(res, "Failed to load conversations");
   return Array.from(data) as unknown as AgentThread[];
 }
 
 export async function getThread(id: string): Promise<AgentThread> {
-  const { data, error } = await apiV2.GET("/api/threads/{thread_id}", {
+  const res = await apiV2.GET("/api/threads/{thread_id}", {
     params: { path: { thread_id: id } },
   });
-  if (error) throw new Error(problemMessage(error, "Failed to load the conversation"));
+  const data = unwrap(res, "Failed to load the conversation");
   return data as unknown as AgentThread;
 }
 

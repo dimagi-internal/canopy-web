@@ -71,7 +71,7 @@ export function NewAgentPage(): JSX.Element {
       setCheck(await checkScaffoldRepo(workspace, effectiveSlug, repo, token.trim()))
     } catch (e) {
       setCheck(null)
-      setCheckError(e instanceof CreationError ? e : new CreationError(String(e)))
+      setCheckError(e instanceof CreationError ? e : new CreationError(0, String(e)))
     } finally {
       setChecking(false)
     }
@@ -134,7 +134,7 @@ export function NewAgentPage(): JSX.Element {
         await setAgentGitHub(agent.slug, agent.token)
       } catch (e) {
         const why = e instanceof Error ? e.message : String(e)
-        setCreateError(new CreationError(
+        setCreateError(new CreationError(0,
           `${agent.name} was created, but saving the token as its GitHub identity failed: ${why} ` +
             'Retry it from the GitHub step of its setup checklist.',
         ))
@@ -143,7 +143,7 @@ export function NewAgentPage(): JSX.Element {
       }
       navigate(setup)
     } catch (e) {
-      setCreateError(e instanceof CreationError ? e : new CreationError(String(e)))
+      setCreateError(e instanceof CreationError ? e : new CreationError(0, String(e)))
     } finally {
       setCreating('')
     }

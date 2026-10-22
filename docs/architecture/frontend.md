@@ -6,6 +6,12 @@ How the React SPA (`frontend/`) is styled and how it is served so a deploy is ne
 
 App UI is **dense and readable: tables, not cards.**
 
+## API clients and errors
+
+- Every `src/api/*` module calls the server through `apiV2` (`src/api/client.v2.ts`), so it gets the `/api/w/{ws}` rewrite, the 401 login bounce and the passkey step-up retry. Response types alias `components['schemas'][...]` from `generated.ts`; only free-form JSON fields (a review's `request_json`, a narrative's `narration`) are written out by hand. `chat.ts` still uses raw `fetch` because some of its routes (session secrets, MCP Apps View plumbing) are not in the schema.
+- A failed call throws the one `ApiError` (`src/api/problem.ts`). It carries `status`, `code` (a top-level `error` member, or else the tail of the problem `type`), `title`, `detail`, `extras` and the raw `body`, and its `message` is the server's `detail` when there is one. Use `unwrap(res, what)` for a call that returns data and `ensureOk(res, what)` for a 204. Branch on `e instanceof ApiError && e.status === …`. The old names (`AgentApiError`, `WorkspaceApiError`, `ChatApiError`, …) are re-exports of the same class.
+- Token-gated public viewers (`/w/<ws>/review|storyboard|narrative|ddd-release|share|walkthrough/…`) are scoped viewer paths. `apiV2` does not rewrite them and does not bounce their 401s to login, and `shareQuery(token, {ws})` passes the undeclared `?t=` token.
+
 ## Shared kit: `canopy-ui`
 
 - The two-pane shell (left rail + scrolling main) used by the DDD and Agent workspaces, plus the design-system primitives, live in `frontend/packages/canopy-ui`, imported as `canopy-ui` with subpath exports `/ui`, `/lib`, `/chat`, `/presence`, `/shell`, `/tokens` (see its `package.json` `exports`). Surfaces consume it instead of re-implementing chrome.
