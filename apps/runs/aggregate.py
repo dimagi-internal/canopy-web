@@ -14,6 +14,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from apps.agent_runs.models import AgentRun
 from apps.runs.ddd import (
     RUN_CHILD_GATES,
     is_run_child_gate,
@@ -245,8 +246,6 @@ def _run_record(run_id: str, workspace_slugs: set[str] | None) -> dict | None:
     A run's artifacts are tenanted by THEIR workspace; its record by its owning
     agent's. The record shows only to members of the agent's workspace.
     """
-    from apps.agent_runs.models import AgentRun  # noqa: PLC0415
-
     qs = AgentRun.objects.select_related("agent", "project").filter(ext_id=run_id)
     if workspace_slugs is not None:
         qs = qs.filter(agent__workspace_id__in=workspace_slugs)

@@ -300,7 +300,7 @@ def team(project: AgentProject, user) -> dict:
     stands, the ideas, the people. Nothing of the agent's own process — no
     task cards, rationale, notes or review logs."""
 
-    from .contributors import may_see_summary, reader_of  # cycle: agents.contributors -> agents.ideas
+    from .contributors import may_see_summary, reader_of  # cycle: agents.contributors -> agents.ideas  # noqa: PLC0415
 
     reader = reader_of(user)
     ideas = of_project(project)

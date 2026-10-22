@@ -174,7 +174,7 @@ def device_waits(agent, key) -> bool:
     predicate behind "Give access" on the approve flow
     (`api_device_keys.zk_agents_waiting_on`) and the vault health of an agent
     (`vault_health.machines_waiting`)."""
-    from .zk_seal import sealed_targets  # cycle: agents.zk_seal -> agents.zk
+    from .zk_seal import sealed_targets  # cycle: agents.zk_seal -> agents.zk  # noqa: PLC0415
 
     if not agent.zk_enabled or not key.ecdh_jkt:
         return False
@@ -298,7 +298,7 @@ def _check_full_set(agent, rows: list, user) -> None:
 def _parse_values(values: list, *, allow_sealed: bool = False) -> dict[str, str]:
     """`allow_sealed`: a `zks1:` value (sealed to recipients, `zk_seal.py`) is
     accepted too — never by enable/rotate, which must leave every value `zk1`."""
-    from .zk_seal import SEALED_PREFIX, check_sealed_value  # cycle: agents.zk_seal -> agents.zk
+    from .zk_seal import SEALED_PREFIX, check_sealed_value  # cycle: agents.zk_seal -> agents.zk  # noqa: PLC0415
 
     out: dict[str, str] = {}
     for i, v in enumerate(values):
