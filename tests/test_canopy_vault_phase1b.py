@@ -31,6 +31,9 @@ from apps.agents.models import (
     AgentCredentialAlert,
     AgentCredentialRead,
     AgentPatRotation,
+    Vault,
+    VaultAttachment,
+    VaultSecret,
 )
 from apps.harness import aws_iam_proof
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
@@ -371,6 +374,17 @@ def test_an_unscoped_read_of_a_stored_orphan_alerts(fleet):
                                    value_enc=AgentCredential.seal(fleet["agent"], "old-secret", "x"))
     _resolve(fleet)
     assert _alerts("undeclared-ref")[0].refs == ["old-secret"]
+
+
+def test_a_name_a_workspace_vault_supplies_is_not_undeclared(fleet):
+    """The fleet's gog OAuth clients live in the workspace vault, not in each
+    agent's runtime.yaml; asking for one is not an undeclared read."""
+    v = Vault.objects.create(workspace=fleet["ws"], kind=Vault.WORKSPACE, name="Shared", kv=1)
+    VaultAttachment.objects.create(vault=v, workspace=fleet["ws"])
+    VaultSecret.objects.create(vault=v, name="gog-oauth-client-web", value_zk="zk1:x", kv=1)
+    _resolve(fleet, path=RESOLVE + "?refs=CANOPY_WEB_PAT,gog-oauth-client-web,aws-root-key")
+    [alert] = _alerts("undeclared-ref")
+    assert alert.refs == ["aws-root-key"]
 
 
 def test_naming_a_resolve_extra_is_not_undeclared(fleet):
