@@ -1,7 +1,9 @@
-import { useEffect } from 'react'
-import { useLocation, useOutletContext, useSearchParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Navigate, NavLink, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom'
+import { clsx } from 'clsx'
 import { CheckCircle2 } from 'lucide-react'
 
+import { getAgentSetup } from '@/api/agentCreation'
 import { AgentAccessRoster } from '@/components/agents/AgentAccessRoster'
 import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
 import { AgentHowItRuns } from '@/components/agents/AgentHowItRuns'
@@ -13,50 +15,80 @@ import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import { AgentMailboxControl } from '@/components/agents/AgentMailboxControl'
 import { AgentGoogleAccountControl } from '@/components/agents/AgentGoogleAccountControl'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
-import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
+import { AgentAccountsPanel } from '@/pages/agents/AgentAccountsPanel'
+import { AgentSecretsPanel } from '@/pages/agents/AgentSecretsPanel'
+import { AgentSecurityPanel } from '@/pages/agents/AgentSecurityPanel'
 import { AgentSetupChecklist } from '@/components/agents/AgentSetupChecklist'
 import { DeleteAgentControl } from '@/components/agents/DeleteAgentControl'
 import { Section, Setting } from '@/pages/agents/sectionLayout'
+import {
+  isSettingsTab,
+  SETTINGS_TABS,
+  tabForAnchor,
+  tabForStepHref,
+  type SettingsTab,
+} from '@/pages/agents/settingsTabs'
 import { AgentCanopyUserControl } from '@/components/agents/AgentCanopyUserControl'
 import { CountStat } from '@/components/agents/cards'
 import { WorkbenchSubHeader } from 'canopy-ui'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
-// EVERYTHING THAT CONFIGURES AN AGENT, on one page of its own.
+// EVERYTHING THAT CONFIGURES AN AGENT, behind tabs (`settings/<tab>`).
 //
-// These nine controls were sections of Overview — a page whose other half is a
-// read-only dashboard — so "change something about this agent" meant scrolling
-// past About, a prompt box and a task summary, and the page had no name that
-// said configuration. Credentials had already been folded in for the opposite
-// reason (as its own rail entry it was "settings one click away from settings"),
-// which fixed the split and left everything in a place nobody would look.
+// It was one long page; changing one key meant scrolling past every other
+// setting, and Credentials alone had nine sub-panels. Each tab has its own
+// address; old `settings#anchor` links forward to the tab holding the anchor
+// (settingsTabs.ts), and the page scrolls to it there.
 //
-// Grouped by the QUESTION each answers, not by which API serves it:
-//   People and roles  — owner, and everyone's role here (admins granted inline)
-//   Who can reach it  — callers, Slack
-//   How it runs       — the two ways (in your own Claude Code / on its own, on a
-//                       runner), then routing: which runner, and which mode
-//   Credentials       — the keys, and the vault they are read from
+//   Overview           — what is left to set up, what it is, where it runs, delete
+//   Roles              — owner, its canopy user, roles, who runs it locally
+//   Channels           — callers, Slack, email, Google account
+//   External accounts  — GitHub, Salesforce, its Google mailbox
+//   Security           — its secrets (the vault), then who and what can open them
 export function AgentSettingsSection() {
   const { agent } = useOutletContext<AgentOutletContext>()
+  const { tab } = useParams()
+  const { hash, search, key } = useLocation()
+  const navigate = useNavigate()
   const isAdmin = agent.is_admin ?? false
   const admins = `${agent.name}'s admins`
   // Routing writes are gated on agent.work (their @gate): workspace editors.
   const canRoute = roleAllows(useWorkspaceRole(agent.workspace), 'agent.work')
-
-  // `#credentials` is a link people hold: the Google mailbox mint returns to it,
-  // and it was the old Credentials page's address twice over. The router does
-  // not scroll to a hash by itself.
-  //
-  // Keyed on the navigation (`key`), not just the hash: the setup checklist's
-  // "Give it its canopy login" links to `#canopy-login`, and clicking it when the
-  // address already ends in that hash changes nothing else. And the target may
-  // not exist yet: the credentials sections render after their own data loads,
-  // so wait for it (up to ~5s) instead of giving up on the first look.
-  const { hash, key } = useLocation()
   // Set by the New agent page on its way here, so the person sees it worked.
   const created = useSearchParams()[0].get('created')
+
+  // A tab with a setup step left gets a dot, so "what is left" is visible from
+  // whichever tab you are on. The server decides what is left; this only maps
+  // each step's link to the tab it opens.
+  const [needs, setNeeds] = useState<Set<SettingsTab>>(new Set())
+  useEffect(() => {
+    let cancelled = false
+    getAgentSetup(agent.slug)
+      .then((steps) => {
+        if (cancelled) return
+        const open = steps.filter((s) => (s.status === 'todo' || s.status === 'waiting') && !s.only_to_run_on_its_own)
+        setNeeds(new Set(open.map((s) => tabForStepHref(s.href)).filter((t): t is SettingsTab => t !== null)))
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [agent.slug])
+
+  const current: SettingsTab | null = isSettingsTab(tab) ? tab : null
+  const wanted = hash ? tabForAnchor(hash, search) : null
+
+  // An anchor that lives on another tab (an in-page `#routing` link, a held
+  // `#credentials` address) moves to that tab, keeping the anchor.
+  useEffect(() => {
+    if (current && wanted && wanted !== current) navigate(`../${wanted}${search}${hash}`, { replace: true, relative: 'path' })
+  }, [current, wanted, search, hash, navigate])
+
+  // The router does not scroll to a hash by itself. Keyed on the navigation
+  // (`key`), not just the hash: clicking a link to the anchor already in the
+  // address changes nothing else. And the target may render after its own data
+  // loads, so wait for it (up to ~5s) instead of giving up on the first look.
   useEffect(() => {
     if (!hash) return
     const id = decodeURIComponent(hash.slice(1))
@@ -73,183 +105,216 @@ export function AgentSettingsSection() {
     return () => window.clearInterval(timer)
   }, [hash, key])
 
+  // `settings` itself, or a tab this page does not have: open the tab the
+  // anchor belongs to, else Overview.
+  if (!current) {
+    const to = wanted ?? 'overview'
+    return <Navigate to={`${tab ? '..' : '.'}/${to}${search}${hash}`} relative="path" replace />
+  }
+
   return (
-    <div className="max-w-4xl px-6 py-8">
+    <div className="max-w-5xl px-6 py-8">
       <WorkbenchSubHeader title="Settings" />
 
-      <nav aria-label="On this page" className="-mt-2 mb-8 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
-        {SECTIONS.map((sec) => (
-          <a key={sec.id} href={`#${sec.id}`} className="text-muted-foreground transition-colors hover:text-primary">
-            {sec.title}
-          </a>
+      <nav aria-label="Agent settings" className="-mt-2 mb-6 flex gap-1 overflow-x-auto border-b border-border">
+        {SETTINGS_TABS.map((t) => (
+          <NavLink
+            key={t.tab}
+            to={`../${t.tab}`}
+            relative="path"
+            className={({ isActive }) =>
+              clsx(
+                'shrink-0 border-b-2 px-3 py-2 text-[13px] transition-colors',
+                isActive
+                  ? 'border-primary font-medium text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground-secondary',
+              )
+            }
+          >
+            {t.label}
+            {needs.has(t.tab) && (
+              <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-warning align-middle" aria-label="needs setting up" />
+            )}
+          </NavLink>
         ))}
       </nav>
 
-      {/* What is left before it can work — computed server-side from the same
-          checks a turn meets. Gone once every required step is done. */}
-      <div id="setup" className="mb-10 scroll-mt-6">
-        {created && (
-          <p className="mb-3 flex items-center gap-1.5 text-[13px] text-success" data-testid="agent-created">
-            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            {agent.name} is created. Its code is in {created}; finish the steps below.
-          </p>
-        )}
-        <AgentSetupChecklist slug={agent.slug} hideWhenDone={!created} />
-      </div>
+      {current === 'overview' && (
+        <>
+          {/* What is left before it can work — computed server-side from the
+              same checks a turn meets. Gone once every required step is done. */}
+          <div id="setup" className="mb-10 scroll-mt-6">
+            {created && (
+              <p className="mb-3 flex items-center gap-1.5 text-[13px] text-success" data-testid="agent-created">
+                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                {agent.name} is created. Its code is in {created}; finish the steps below.
+              </p>
+            )}
+            <AgentSetupChecklist slug={agent.slug} hideWhenDone={!created} />
+          </div>
 
-      {/* Persona + counts opened Overview. Overview is gone (Work is the
-          landing page now) and this is where "what IS this agent" belongs. */}
-      <Section id="about" title="About">
-        {agent.persona && <p className="text-[14px] text-foreground leading-relaxed">{agent.persona}</p>}
-        {agent.description && (
-          <p className="text-[13px] text-muted-foreground leading-relaxed mt-2">{agent.description}</p>
-        )}
-        <div className="mt-4 flex flex-wrap gap-6">
-          <CountStat value={agent.task_count} label="Tasks" />
-          <CountStat value={agent.sync_count} label="Syncs" />
-          <CountStat value={agent.skill_count} label="Skills" />
-        </div>
-      </Section>
+          <Section id="about" title="About">
+            {agent.persona && <p className="text-[14px] text-foreground leading-relaxed">{agent.persona}</p>}
+            {agent.description && (
+              <p className="text-[13px] text-muted-foreground leading-relaxed mt-2">{agent.description}</p>
+            )}
+            <div className="mt-4 flex flex-wrap gap-6">
+              <CountStat value={agent.task_count} label="Tasks" />
+              <CountStat value={agent.sync_count} label="Syncs" />
+              <CountStat value={agent.skill_count} label="Skills" />
+            </div>
+          </Section>
+
+          <Section id="running" title="Where it runs">
+            <div className="rounded-lg border border-border bg-card">
+              {/* The two ways an agent runs, side by side — a summary that links to
+                  the settings below (docs/architecture/runners.md). */}
+              <AgentHowItRuns slug={agent.slug} name={agent.name} isAdmin={isAdmin} />
+              {/* Turn mode and runners are one table whose last row is the agent's
+                  own defaults: a routing rule can set both. */}
+              <div id="routing" className="scroll-mt-6 border-t border-border">
+                <Setting
+                  title="Routing"
+                  who="workspace editors and above"
+                  canEdit={canRoute}
+                  description="Which runner takes each kind of work, and whether it may act without approval."
+                >
+                  <AgentRouting agentSlug={agent.slug} agentName={agent.name} initialTurnMode={agent.turn_mode} />
+                </Setting>
+              </div>
+              <div id="repository" className="scroll-mt-6 border-t border-border">
+                <Setting title="Repository" who={admins} canEdit={isAdmin}
+                         description="The GitHub repository its runners clone and run, and the branch.">
+                  <AgentRepositoryControl slug={agent.slug} initialUrl={agent.definition?.repo_url ?? ''}
+                                          initialRef={agent.definition?.repo_ref ?? ''} canEdit={isAdmin} />
+                </Setting>
+              </div>
+            </div>
+          </Section>
+
+          {/* Same gate as the route (delete_agent: agent.work), so only people who can. */}
+          {canRoute && (
+            <Section id="delete" title="Delete">
+              <DeleteAgentControl slug={agent.slug} name={agent.name} workspace={agent.workspace ?? ''} />
+            </Section>
+          )}
+        </>
+      )}
 
       {/* One line per setting (#1314): a section blurb, a "who can change
           this" label, a description and a footnote were four layers saying
           much the same thing. */}
-      <Section id="operators" title="People and roles">
-        <div className="divide-y divide-border rounded-lg border border-border bg-card">
-          <Setting
-            title="Owner"
-            who={`workspace owners and ${agent.name}'s owner`}
-            canEdit={agent.can_transfer_owner ?? false}
-            description={`Runs ${agent.name}. GitHub features use their GitHub connection.`}
-          >
-            <AgentOwnerControl
-              agentSlug={agent.slug}
-              workspace={agent.workspace ?? ''}
-              initialOwner={agent.owner ?? null}
-              canTransfer={agent.can_transfer_owner ?? false}
-            />
-          </Setting>
-          <Setting
-            title="Canopy user"
-            who={admins}
-            canEdit={isAdmin}
-            description={`The canopy account ${agent.name} signs in as.`}
-          >
-            <AgentCanopyUserControl
-              agentSlug={agent.slug}
-              workspace={agent.workspace ?? ''}
-              initialUser={agent.canopy_user ?? null}
-              canEdit={isAdmin}
-            />
-          </Setting>
-          <Setting
-            title="People"
-            who={`workspace owners and ${agent.name}'s owner`}
-            canEdit={agent.can_manage_admins ?? false}
-            description={`What each workspace role gets on ${agent.name}, and who is set here.`}
-          >
-            <AgentAccessRoster
-              agentSlug={agent.slug}
-              agentName={agent.name}
-              workspace={agent.workspace ?? undefined}
-              canManage={agent.can_manage_admins ?? false}
-            />
-          </Setting>
-          <Setting
-            title="Local use"
-            who={admins}
-            canEdit={isAdmin}
-            description={`Who runs ${agent.name} in their own Claude Code, on which computers, and when they last did.`}
-          >
-            <AgentLicenses agentSlug={agent.slug} canEdit={isAdmin} />
-          </Setting>
-        </div>
-      </Section>
-
-      <Section id="reach" title="Who can reach it">
-        <div className="divide-y divide-border rounded-lg border border-border bg-card">
-          <Setting
-            title="Callers"
-            who={admins}
-            canEdit={isAdmin}
-            description={`Who outside the workspace may use ${agent.name}, and for what.`}
-          >
-            <AgentInterfaceView agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
-          </Setting>
-          <Setting
-            title="Slack"
-            who={admins}
-            canEdit={isAdmin}
-            description={`Whether people can talk to ${agent.name} from the connected Slack.`}
-          >
-            <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
-          </Setting>
-          <Setting
-            title="Email"
-            who={admins}
-            canEdit={isAdmin}
-            description={`The address ${agent.name} sends and reads mail as — a Google mailbox, or a canopy-hosted one (e.g. @dimagi.ai) with nothing to sign in.`}
-          >
-            <AgentMailboxControl slug={agent.slug} workspace={agent.workspace ?? ''} canEdit={isAdmin} />
-          </Setting>
-          <Setting
-            title="Google account"
-            who={admins}
-            canEdit={isAdmin}
-            description={`The Google login ${agent.name} uses for Drive, Docs and gog, when it is not the mailbox.`}
-          >
-            <AgentGoogleAccountControl agent={agent} canEdit={isAdmin} />
-          </Setting>
-        </div>
-      </Section>
-
-      <Section id="running" title="How it runs">
-        <div className="rounded-lg border border-border bg-card">
-          {/* The two ways an agent runs, side by side — a summary that links to
-              the settings below (docs/architecture/runners.md). */}
-          <AgentHowItRuns slug={agent.slug} name={agent.name} isAdmin={isAdmin} />
-          {/* Turn mode and runners were two settings; a routing rule can now set
-              both ("Beth's email → cloud, auto"), so they are one table whose
-              last row is the agent's own defaults (spec 2026-09-23). */}
-          <div id="routing" className="scroll-mt-6 border-t border-border">
+      {current === 'roles' && (
+        <Section id="operators" title="Roles">
+          <div className="divide-y divide-border rounded-lg border border-border bg-card">
             <Setting
-              title="Routing"
-              who="workspace editors and above"
-              canEdit={canRoute}
-              description="Which runner takes each kind of work, and whether it may act without approval."
+              title="Owner"
+              who={`workspace owners and ${agent.name}'s owner`}
+              canEdit={agent.can_transfer_owner ?? false}
+              description={`Runs ${agent.name}. GitHub features use their GitHub connection.`}
             >
-              <AgentRouting agentSlug={agent.slug} agentName={agent.name} initialTurnMode={agent.turn_mode} />
+              <AgentOwnerControl
+                agentSlug={agent.slug}
+                workspace={agent.workspace ?? ''}
+                initialOwner={agent.owner ?? null}
+                canTransfer={agent.can_transfer_owner ?? false}
+              />
+            </Setting>
+            <Setting
+              title="Canopy user"
+              who={admins}
+              canEdit={isAdmin}
+              description={`The canopy account ${agent.name} signs in as.`}
+            >
+              <AgentCanopyUserControl
+                agentSlug={agent.slug}
+                workspace={agent.workspace ?? ''}
+                initialUser={agent.canopy_user ?? null}
+                canEdit={isAdmin}
+              />
+            </Setting>
+            <Setting
+              title="People"
+              who={`workspace owners and ${agent.name}'s owner`}
+              canEdit={agent.can_manage_admins ?? false}
+              description={`What each workspace role gets on ${agent.name}, and who is set here.`}
+            >
+              <AgentAccessRoster
+                agentSlug={agent.slug}
+                agentName={agent.name}
+                workspace={agent.workspace ?? undefined}
+                canManage={agent.can_manage_admins ?? false}
+              />
+            </Setting>
+            <Setting
+              title="Local use"
+              who={admins}
+              canEdit={isAdmin}
+              description={`Who runs ${agent.name} in their own Claude Code, on which computers, and when they last did.`}
+            >
+              <AgentLicenses agentSlug={agent.slug} canEdit={isAdmin} />
             </Setting>
           </div>
-          {/* The checklist's "Give it a repository" lands here (#repository). */}
-          <div id="repository" className="scroll-mt-6 border-t border-border">
-            <Setting title="Repository" who={admins} canEdit={isAdmin}
-                     description="The GitHub repository its runners clone and run, and the branch.">
-              <AgentRepositoryControl slug={agent.slug} initialUrl={agent.definition?.repo_url ?? ''}
-                                      initialRef={agent.definition?.repo_ref ?? ''} canEdit={isAdmin} />
-            </Setting>
-          </div>
-        </div>
-      </Section>
-
-      <Section id="credentials" title="Credentials">
-        <AgentCredentialsPanel agent={agent} canEdit={isAdmin} />
-      </Section>
-
-      {/* Same gate as the route (delete_agent: agent.work), so only people who can. */}
-      {canRoute && (
-        <Section id="delete" title="Delete">
-          <DeleteAgentControl slug={agent.slug} name={agent.name} workspace={agent.workspace ?? ''} />
         </Section>
+      )}
+
+      {current === 'channels' && (
+        <Section id="reach" title="Channels">
+          <div className="divide-y divide-border rounded-lg border border-border bg-card">
+            <Setting
+              title="Callers"
+              who={admins}
+              canEdit={isAdmin}
+              description={`Who outside the workspace may use ${agent.name}, and for what.`}
+            >
+              <AgentInterfaceView agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
+            </Setting>
+            <Setting
+              title="Slack"
+              who={admins}
+              canEdit={isAdmin}
+              description={`Whether people can talk to ${agent.name} from the connected Slack.`}
+            >
+              <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
+            </Setting>
+            <Setting
+              title="Email"
+              who={admins}
+              canEdit={isAdmin}
+              description={`The address ${agent.name} sends and reads mail as — a Google mailbox, or a canopy-hosted one (e.g. @dimagi.ai) with nothing to sign in.`}
+            >
+              <AgentMailboxControl slug={agent.slug} workspace={agent.workspace ?? ''} canEdit={isAdmin} />
+            </Setting>
+            <Setting
+              title="Google account"
+              who={admins}
+              canEdit={isAdmin}
+              description={`The Google login ${agent.name} uses for Drive, Docs and gog, when it is not the mailbox.`}
+            >
+              <AgentGoogleAccountControl agent={agent} canEdit={isAdmin} />
+            </Setting>
+          </div>
+        </Section>
+      )}
+
+      {current === 'accounts' && (
+        <Section id="accounts" title="External accounts">
+          <AgentAccountsPanel agent={agent} />
+        </Section>
+      )}
+
+      {/* Its secrets first — changing a key is what people come here for —
+          then who and what can open them. */}
+      {current === 'security' && (
+        <>
+          <Section id="secrets" title="Secrets">
+            <AgentSecretsPanel agent={agent} canEdit={isAdmin} />
+          </Section>
+          <Section id="access-to-secrets" title="Who can open them">
+            <AgentSecurityPanel agent={agent} canEdit={isAdmin} />
+          </Section>
+        </>
       )}
     </div>
   )
 }
-
-const SECTIONS: { id: string; title: string }[] = [
-  { id: 'about', title: 'About' },
-  { id: 'operators', title: 'People and roles' },
-  { id: 'reach', title: 'Who can reach it' },
-  { id: 'running', title: 'How it runs' },
-  { id: 'credentials', title: 'Credentials' },
-]

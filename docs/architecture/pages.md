@@ -86,7 +86,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/agents/new`** — create an agent (`NewAgentPage`). Name, slug, mandate,
   optional mailbox; then the GitHub owner + repo name and a fine-grained token,
   with links to GitHub's new-repo and new-token forms filled in (the token steps
-  are `GitHubTokenSteps`, shared with Credentials → GitHub). Checked live
+  are `GitHubTokenSteps`, shared with Settings → External accounts → GitHub). Checked live
   (`POST /api/agents/scaffold/check`) and on tab focus. A repo with an earlier
   attempt at this agent (or just GitHub's README) is completed, not refused: only
   missing template files are added. Another agent's repo offers its slug ("Use 'x'"). **Create** pushes the
@@ -137,18 +137,28 @@ Every browser-facing address canopy-web serves. The SPA route table is
     Revoke (`PUT /api/capabilities/grants`, `DELETE /api/capabilities/grants/{id}`);
     a grant may only lower the manifest's limits and the server's refusal is
     shown verbatim. Everyone else reads it with a line saying an admin grants.
-  - **Settings** — everything that configures the agent, grouped by question:
-    people and roles (owner + one roster of every member's role on the agent,
-    why, and what they can reach — `GET /api/agents/{slug}/access`; admins
-    granted/revoked on the row); who can reach it (callers + Slack); how it
-    runs (turn mode + runners and source rules — see
-    [`runners.md`](runners.md)); Credentials (secrets, the agent's own
-    1Password vault + service account, GitHub delegation; for its admins,
-    device keys, canopy-pat rotation, read alerts, per-credential read
-    history, and Zero-knowledge — turn on / grant pending / rotate / recover
-    with code / turn off, every encryption in the browser, the one-time
-    recovery-code dialog, the stated trust caveat; on a ZK agent Save and
-    Reveal encrypt/decrypt locally). The Google mint (`Connect the mailbox`)
+  - **Settings** (`settings/<tab>`) — everything that configures the agent,
+    one tab per question (`pages/agents/settingsTabs.ts`); bare `settings`
+    and every old `settings#<anchor>` link forward to the tab holding the
+    anchor, and a tab with an open setup step carries a dot. **Overview**
+    (setup checklist, persona, where it runs — turn mode + runners and source
+    rules, see [`runners.md`](runners.md), and the repository — delete);
+    **Roles** (owner + one roster of every member's role on the agent, why,
+    and what they can reach — `GET /api/agents/{slug}/access`; admins
+    granted/revoked on the row); **Channels** (callers, Slack, email, Google
+    account); **External accounts** (GitHub delegation, Salesforce, the
+    Google mailbox); **Security** — first its secrets: where they live, its
+    canopy login, and every secret in `VaultEditor`
+    (`components/vault/VaultEditor.tsx`, a table you Change / Add / Reveal /
+    Delete in place (a value can be a file from disk, e.g. a service-account
+    JSON), owner-agnostic so other vault pages can reuse it; on a
+    ZK agent Save and Reveal encrypt/decrypt locally; the 1Password vault +
+    service-account form shows only for an agent still on 1Password); then,
+    for its admins, who can open them: the vault's members
+    (`docs/architecture/vault.md`), Zero-knowledge — turn on / grant
+    pending / rotate / recover with code / turn off, every encryption in the
+    browser, the one-time recovery-code dialog, the stated trust caveat —
+    device keys, canopy-pat rotation, read alerts). The Google mint (`Connect the mailbox`)
     asks for Gmail only when the agent's address is a Google mailbox; for a
     canopy-hosted address it asks for Drive, Docs, Sheets, Slides, Forms and
     Calendar. The consent must come from the agent's `google_account`, else
@@ -192,7 +202,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   - **secrets** — the workspace's SHARED 1Password vault (what every agent here
     reads, e.g. the Google OAuth clients), and the one screen that states the
     credential model whole: an agent's own vault is on the agent (Settings →
-    Credentials), a box's Claude login is on the runner (`/supervisor` →
+    Security), a box's Claude login is on the runner (`/supervisor` →
     Runners), GitHub is the owner's identity lent per agent.
   - **retention** — content-retention rules.
   - **admission-rules** — turns the workspace refuses before they run.

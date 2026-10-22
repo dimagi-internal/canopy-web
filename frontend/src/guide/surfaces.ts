@@ -592,12 +592,12 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Grant a capability (admins)', 'Lower its max concurrency or lease length (admins)', 'Revoke a grant, releasing its live leases (admins)', 'See live leases'],
   },
   {
-    path: '/w/:workspace/agents/:slug/settings',
+    path: '/w/:workspace/agents/:slug/settings/:tab',
     group: 'Agent workspace',
     title: 'Agent settings',
     audience: "The agent's owner and admins (some controls are workspace-owner only)",
-    what: "Everything that configures this agent, grouped by the question it answers: who operates it (owner, admins), who can reach it (callers, Slack), how it runs (turn mode, runners and their source rules, and the GitHub repository and branch its runners clone — set in place, the setup checklist's repository step links straight to it), and its credentials — the secrets it needs plus the 1Password vault and service account they are read from. The workspace's SHARED vault is elsewhere, under the workspace's own Settings → Secrets.",
-    actions: ['Transfer the owner', 'Grant or revoke an admin', 'Publish what callers may ask for', 'Change turn mode', 'Turn Slack access on or off', 'Order the runners that execute its turns', "Set or rotate a secret", "Point the agent at its 1Password vault"],
+    what: "Everything that configures this agent, one tab per question: Overview (what is left to set up, what it is, where it runs — routing and the repository its runners clone — and delete it), Roles (owner, admins, who runs it in their own Claude Code), Channels (callers, Slack, email, Google account), External accounts (GitHub, Salesforce, its Google mailbox) and Security (its secrets in one table you change in place, where they live, its canopy login, then who and what can open them and read alerts). A tab with a setup step left carries a dot. The workspace's SHARED vault is elsewhere, under the workspace's own Settings → Secrets.",
+    actions: ['Transfer the owner', 'Grant or revoke an admin', 'Publish what callers may ask for', 'Change turn mode', 'Turn Slack access on or off', 'Order the runners that execute its turns', 'Change, add, reveal or delete a secret', 'Connect its Google mailbox'],
   },
   {
     path: '/w/:workspace/ddd',

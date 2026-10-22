@@ -34,6 +34,9 @@ export interface VaultEntry {
 /** How long a revealed value stays on screen. */
 export const REVEAL_MS = 60_000
 
+// A credential file is a few KB; anything far larger is the wrong file.
+const MAX_UPLOAD_BYTES = 64 * 1024
+
 // Env-var style, plus the hyphen `gog-token` carries.
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/
 
@@ -130,6 +133,41 @@ export function VaultEditor({
     }
     save(name)()
   }
+
+  // A key file (a service-account JSON, a PEM) is read straight from disk into
+  // the save, never into component state; only a trailing newline is dropped.
+  const upload = (name: string, file: File | undefined) => {
+    if (!file || busy) return
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(`${file.name} is larger than ${MAX_UPLOAD_BYTES / 1024} KB — not a credential file?`)
+      return
+    }
+    void run('Could not save', async () => {
+      await onSave(name, (await file.text()).replace(/\r?\n$/, ''))
+      close()
+    })
+  }
+
+  const uploadButton = (name: string) => (
+    <label
+      title="Store the contents of a file from your computer (e.g. a service-account JSON key)"
+      className={`inline-flex h-7 cursor-pointer items-center rounded-md border border-border px-2.5 text-[0.8rem] font-medium text-foreground hover:bg-muted ${busy ? 'pointer-events-none opacity-50' : ''}`}
+    >
+      Upload file
+      <input
+        type="file"
+        className="sr-only"
+        disabled={busy}
+        aria-label={`Upload a file as the value of ${name}`}
+        data-testid={`upload-${name}`}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          e.target.value = ''
+          upload(name, file)
+        }}
+      />
+    </label>
+  )
 
   const reveal = (name: string) => {
     if (!onReveal) return
@@ -243,6 +281,7 @@ export function VaultEditor({
                     <Button size="sm" onClick={() => save(e.name)()} disabled={busy || !draft.trim()} data-testid={`vault-save-${e.name}`}>
                       {busy ? 'Saving…' : 'Save'}
                     </Button>
+                    {uploadButton(e.name)}
                     <Button size="sm" variant="ghost" onClick={close} disabled={busy}>Cancel</Button>
                   </div>
                 </TableCell>

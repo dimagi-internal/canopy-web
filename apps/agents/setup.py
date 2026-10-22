@@ -122,7 +122,7 @@ def _mailbox(agent: Agent, settings: str) -> dict:
     proved = next((r.runner_name for r in reports if r.turn_ready), "")
     failing = next((r for r in reports if not r.mailbox_ok and r.turn_ready is not True), None)
     has = AgentCredential.objects.filter(agent=agent, name=GOG_TOKEN_REF).exists()
-    action = {"href": f"{settings}#credentials", "action": "Connect the mailbox"}
+    action = {"href": f"{settings}#cred-mailbox", "action": "Connect the mailbox"}
     if proved:
         return _step("mailbox", "Connect its mailbox", DONE,
                      f"Signed in as {agent.email}; {proved} reads it for turns.", **action)

@@ -65,6 +65,7 @@ export const NOT_PAGES: Record<string, string> = {
   '/w/:workspace/agents/:slug': "the agent console's frame; its sections are the pages, and it opens on Projects",
   '/w/:workspace/agents/:slug/needs-you': 'redirect: → Tasks, filtered to Waiting on you',
   '/w/:workspace/agents/:slug/credentials': "redirect: → the agent's Settings",
+  '/w/:workspace/agents/:slug/settings': "redirect: → its Overview tab, or the tab an old #anchor names",
   // Two nouns, Projects and Tasks: Work is Tasks, Inbox and Items are Tasks
   // filtered to Waiting on you, and Overview and Work products are Projects.
   '/w/:workspace/agents/:slug/work': 'redirect: → Tasks',

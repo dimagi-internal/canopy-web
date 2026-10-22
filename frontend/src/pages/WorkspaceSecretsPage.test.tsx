@@ -128,7 +128,7 @@ describe('WorkspaceSecretsPage', () => {
     show()
     await waitFor(() => expect(screen.getByTestId('agent-vault-link-hal')).toBeTruthy())
     expect(screen.getByTestId('agent-vault-link-hal').getAttribute('href'))
-      .toBe('/w/connect/agents/hal/overview#credentials')
+      .toBe('/w/connect/agents/hal/settings/security')
     expect(screen.queryByTestId('agent-vault-link-eva')).toBeNull()
   })
 

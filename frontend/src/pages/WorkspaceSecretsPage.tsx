@@ -196,7 +196,7 @@ export function WorkspaceSecretsPage(): JSX.Element {
             {withVault.map((a) => (
               <li key={a.slug}>
                 <Link
-                  to={scopedPath(slug, `/agents/${a.slug}/overview#credentials`)}
+                  to={scopedPath(slug, `/agents/${a.slug}/settings/security`)}
                   className="inline-block rounded-md border border-border px-2 py-1 text-[12px] text-primary hover:bg-muted"
                   data-testid={`agent-vault-link-${a.slug}`}
                 >
