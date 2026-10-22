@@ -224,7 +224,7 @@ def test_every_action_is_deliberately_tiered():
     interaction — which fails OPEN for an action nobody classified. This asserts
     the two tiers partition the model's choices.
     """
-    from apps.agents.api import _EDITOR_ACTIONS
+    from apps.agents.api_board import _EDITOR_ACTIONS
     from apps.agents.models import AgentTaskAction
 
     all_actions = {a for a, _ in AgentTaskAction.ACTION_CHOICES}

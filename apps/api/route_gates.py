@@ -126,7 +126,7 @@ VOCABULARY: frozenset[str] = frozenset({
 })
 
 GATES: dict[str, tuple[str, ...]] = {
-    # --- apps/agents/api.py
+    # --- apps/agents/api.py and its api_*.py siblings (routing, skills, board, credentials, readiness)
     "list_agents": ("member",),
     "upsert_agent": ("agent.work", "agent-admin"),  # editor in target ws; a MOVE also needs agent admin
     "move_agent": ("agent-admin", "agent.work"),  # admin of the agent where it is + editor in the destination

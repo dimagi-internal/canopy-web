@@ -99,7 +99,7 @@ pinned or bound turn would otherwise hand the box the agent's secrets through
 `device_keys.runner_serves_agent`), `unclaimable_queued_turns` reports such a turn
 with the unit's reason, `runner_routes_agent` and `agents_routed_to`
 ask it, `inherited_orders` drops such a runner for that agent, and the routing
-writes (`agents/api.py::_runners_for_routing`) refuse it with 422 and the reason.
+writes (`agents/api_routing.py::_runners_for_routing`) refuse it with 422 and the reason.
 The topology lists a box's units together (`machine`, `unit` on each runner row).
 `prime_machine_units` loads the machine siblings once per claim and per report.
 Tests: `tests/test_runner_units.py`.
