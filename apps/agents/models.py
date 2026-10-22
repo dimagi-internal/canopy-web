@@ -1779,7 +1779,7 @@ class SenderTrust(models.Model):
     """A TEMPORARY exception: one address's mail ties to its member account
     without DMARC or a DKIM signature by the From: domain.
 
-    The rule it bends is `harness.services._member_behind_email`: a member's
+    The rule it bends is `harness.channels.email.member_behind_email`: a member's
     email is linked to their account only when THIS message is aligned, because
     an unaligned From: is a header anyone can write. Some members' domains sign
     with a provider's key and publish no DMARC record (dimagi-associate.com,
@@ -1792,7 +1792,7 @@ class SenderTrust(models.Model):
       * one agent, one exact address — never a domain;
       * the message must still carry a passing DKIM signature (tier 2), so mail
         with no authentication at all is never accepted under it;
-      * everything else `_member_behind_email` asks still holds: one canopy user
+      * everything else `member_behind_email` asks still holds: one canopy user
         provably holds the address and is a member of the agent's workspace.
     The turn keeps its real grade (`initiator_assurance`), so the caller
     envelope still says `verified: false`; it records the rule it rode on

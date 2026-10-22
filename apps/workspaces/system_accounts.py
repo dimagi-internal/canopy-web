@@ -25,7 +25,7 @@ for a system user, and `tests/test_system_accounts.py` pins every one:
 
 **How it arrives.** Only by a `SystemSender` binding in its own workspace, on a
 message aligned on our own receiver's verdict — see `account_for_inbound` and
-`harness.services._member_behind_email`.
+`harness.channels.email.member_behind_email`.
 
 **Its role is capped at editor.** A system administers nothing: it may not be
 made an admin or an owner, here or through the generic member-role route

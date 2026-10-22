@@ -509,7 +509,7 @@ def set_sender_trust(request: HttpRequest, slug: str, email: str,
     Re-PUT to extend or reword; DELETE to end it early."""
     from django.utils import timezone
 
-    from apps.harness.services import address_holder
+    from apps.harness.channels.email import address_holder
 
     agent = agent_for_admin(request, slug)
     address = (email or "").strip().lower()
