@@ -16,7 +16,8 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from django.core.cache import cache
 from django.test import Client, override_settings
 
-from apps.tokens import client_identity, jwks
+from apps.host_grants import client_identity
+from apps.tokens import jwks
 
 pytestmark = pytest.mark.django_db
 

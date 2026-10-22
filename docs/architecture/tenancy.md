@@ -173,9 +173,9 @@ failure again.
   membership. **Don't add a shared-secret-plus-email door**; a signature is the only way a
   site speaks for somebody.
 - The other direction — canopy calling the site's tools as the visitor — is the host grant
-  chain: the host issues an ID-JAG at arrival, canopy redeems it (`apps/tokens/host_grants.py`,
+  chain: the host issues an ID-JAG at arrival, canopy redeems it (`apps/host_grants/host_grants.py`,
   stored DPoP-bound in `HostGrant`) and attaches it server-side in `site_tools`/`site_call`
-  (`apps/tokens/host_gateway.py`). No runner holds it; an expired grant is a refusal, never a
+  (`apps/host_grants/host_gateway.py`). No runner holds it; an expired grant is a refusal, never a
   fallback to the agent's credential. canopy's client identity is the CIMD at
   `/oauth/client.json` + `/oauth/jwks.json` (keys `CANOPY_OAUTH_CLIENT_KEY` /
   `CANOPY_OAUTH_DPOP_KEY`). Contract: [`sdk/python/README.md` § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1).

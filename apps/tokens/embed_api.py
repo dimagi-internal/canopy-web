@@ -209,10 +209,10 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
         raise HttpError(429, str(exc))
 
     raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=TOKEN_TTL_SECONDS)
-    # canopy as a HOST of its own MCP (apps/tokens/self_host.py): the page's
+    # canopy as a HOST of its own MCP (apps/host_grants/self_host.py): the page's
     # scopes come from the server-side registry, never from the browser — the
     # browser only names which registered page it is on. Never fails the mint.
-    from . import self_host
+    from apps.host_grants import self_host
 
     granted = self_host.grant_for_visitor(app, request.user, page)
     audit(event=EmbedAuditLog.MINT, request=request, app=app, subject=request.user,

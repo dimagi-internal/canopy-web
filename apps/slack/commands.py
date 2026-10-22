@@ -64,7 +64,7 @@ def _former_urls(path: str) -> set[str]:
     """
     from django.conf import settings
 
-    from apps.tokens.client_identity import public_base
+    from apps.host_grants.client_identity import public_base
 
     bases = {public_base(), *(getattr(settings, "CANOPY_FORMER_BASE_URLS", None) or [])}
     from .services import public_url

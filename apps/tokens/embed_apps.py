@@ -260,7 +260,7 @@ def _clean_host_url(url, *, what: str) -> str:
     outbound rules apply as at call time: https, and never private address
     space. Checked here too so the owner who typed it sees why.
     """
-    from . import outbound
+    from apps.host_grants import outbound
 
     value = (url if isinstance(url, str) else "").strip()
     if not value:

@@ -345,12 +345,12 @@ class AppCredential(models.Model):
     #: no grants, and an agent's calls into it cannot run as the visitor.
     #:
     #: Fetched by canopy, so the same rules as `jwks_url`: https only, never
-    #: into private address space (`apps/tokens/outbound.py`).
+    #: into private address space (`apps/host_grants/outbound.py`).
     host_issuer = models.URLField(blank=True, default="", max_length=500)
     #: The site's MCP server as its RFC 9728 `resource` — the ONE URL a grant is
     #: audience-bound to, and the only URL canopy's gateway will call with it.
     host_mcp_resource = models.URLField(blank=True, default="", max_length=500)
-    #: canopy's LIVE PROBE of this site's grant chain (`apps/tokens/live_probe.py`):
+    #: canopy's LIVE PROBE of this site's grant chain (`apps/host_grants/live_probe.py`):
     #: a real ID-JAG for the site's dedicated probe principal, redeemed and used
     #: through the same code a visitor's turn takes. `last_probe_ok` is None
     #: until a probe has run to a verdict — including while the site offers no

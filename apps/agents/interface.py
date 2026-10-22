@@ -68,7 +68,7 @@ capability, and its confined profile gains canopy's gateway tools (`site_tools`,
 `site_call`) automatically. Through them the agent calls the host's tools AS THE
 VISITOR, with a grant the host issued for the page they are on — so what one
 turn may call is what the HOST grants: its scopes for that page and its ACL for
-that person (`apps/tokens/host_gateway.py`). canopy holds no list of the host's
+that person (`apps/host_grants/host_gateway.py`). canopy holds no list of the host's
 tools. `ceiling:` is an optional narrowing on the owner's word (keep an agent off
 part of a site); absent, canopy adds none. It can never widen what the host
 granted. The page's `backing_tool` tells the agent where to read the rows on

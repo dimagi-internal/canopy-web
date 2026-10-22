@@ -25,7 +25,7 @@ import jwt
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_context, get_http_headers
 
-from apps.tokens import client_identity
+from apps.host_grants import client_identity
 
 VIEW_URI = "ui://labs/workflow-action-preview"
 VIEW_HTML = ("<!doctype html><html><head><title>preview</title></head>"

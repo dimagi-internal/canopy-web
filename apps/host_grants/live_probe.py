@@ -112,7 +112,8 @@ def run(app) -> ProbeReport:
     """Walk the whole chain for this site. Never raises; never records."""
     from canopy_sdk import conformance
 
-    from . import client_identity, connection_test, host_gateway, host_grants, outbound
+    from apps.tokens import connection_test
+    from . import client_identity, host_gateway, host_grants, outbound
 
     report = ProbeReport()
     if not app.issues_host_grants():
@@ -246,7 +247,7 @@ def probe_and_record(app, *, trigger: str = "sweep") -> ProbeReport | None:
 
 def record(app, report: ProbeReport, *, trigger: str = "sweep") -> None:
     """Write the verdict on the site; Event + notify owners on a transition."""
-    from .models import AppCredential
+    from apps.tokens.models import AppCredential
 
     previous = app.last_probe_ok
     failing = report.failing

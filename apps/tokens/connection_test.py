@@ -35,7 +35,7 @@ from dataclasses import dataclass
 
 from canopy_sdk import conformance, fetch
 
-from . import client_identity, outbound, self_host
+from apps.host_grants import client_identity, outbound, self_host
 
 #: Plain-language names for the SDK's check ids. An unknown id (a newer SDK)
 #: falls back to the id itself rather than disappearing.

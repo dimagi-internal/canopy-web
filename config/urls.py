@@ -16,9 +16,9 @@ from apps.github_connect.views import github_connect_callback, github_connect_st
 from apps.tokens.views_embed import embed_chat, embed_widget_js
 from apps.contacts import hcp_oauth_views
 from apps.oauth_server import views as views_mcp_oauth
-from apps.tokens import views_oauth
-from apps.tokens.views_oauth import client_metadata as oauth_client_metadata
-from apps.tokens.views_oauth import jwks as oauth_jwks
+from apps.host_grants import views_oauth
+from apps.host_grants.views_oauth import client_metadata as oauth_client_metadata
+from apps.host_grants.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
 from config.views import FLAT_ARTIFACT_PATH, csrf_view, flat_artifact_gone, health_check, spa_view
 
@@ -46,10 +46,10 @@ urlpatterns = [
     # Metadata Document — whose URL IS canopy's client_id — and the JWKS it
     # names. Bare views because the URL is the identifier a host allowlists;
     # public (a host must read them before trusting anything) and carrying
-    # public keys only. See apps/tokens/views_oauth.py.
+    # public keys only. See apps/host_grants/views_oauth.py.
     path("oauth/client.json", oauth_client_metadata, name="oauth-client-metadata"),
     path("oauth/jwks.json", oauth_jwks, name="oauth-jwks"),
-    # canopy-web as a HOST of its own MCP (apps/tokens/self_host.py): the
+    # canopy-web as a HOST of its own MCP (apps/host_grants/self_host.py): the
     # jwt-bearer token endpoint, the host signing key's public half, and the
     # RFC 8414 / RFC 9728 documents. All 503 until CANOPY_HOST_SIGNING_KEY and
     # the client keys are set. Public, like the two above.

@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from . import jwks as _jwks
+from apps.tokens import jwks as _jwks
 
 TIMEOUT_SECONDS = 5
 MAX_BYTES = 256 * 1024

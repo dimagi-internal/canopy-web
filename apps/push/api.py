@@ -34,11 +34,11 @@ def _push_configured() -> bool:
 def _refuse_unsendable(endpoint: str) -> None:
     # canopy POSTs to every stored endpoint from inside the VPC, so an endpoint
     # is an outbound URL a signed-in person typed — the blind-SSRF shape the
-    # host grant flow already guards (apps/tokens/outbound.py). A real browser's
+    # host grant flow already guards (apps/host_grants/outbound.py). A real browser's
     # endpoint is always https on a public push service (FCM, Mozilla, Apple,
     # WNS), so this refuses nothing a browser hands us. Deliberately NOT an
     # allowlist of those hosts: a new push service must not need a deploy.
-    from apps.tokens.outbound import OutboundError, refuse_private
+    from apps.host_grants.outbound import OutboundError, refuse_private
 
     parsed = urlparse((endpoint or "").strip())
     try:

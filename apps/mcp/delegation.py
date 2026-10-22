@@ -1,6 +1,6 @@
 """A host-grant token at canopy's own MCP: run as the visitor, only in scope.
 
-canopy-web is a host of its own MCP (`apps/tokens/self_host.py`), so `/api/mcp/`
+canopy-web is a host of its own MCP (`apps/host_grants/self_host.py`), so `/api/mcp/`
 accepts one more credential beside a PAT and a confined session's caller token:
 a DPoP-bound access token canopy's own token endpoint issued for a visitor on
 one of canopy's pages. Three pieces, each the SDK's, wired here:
@@ -44,7 +44,7 @@ def _run_sync(fn, *args):
 def _verifier():
     # Raises HostNotConfigured on a canopy that is not a host; the SDK's gate
     # (>= 0.3.0) answers that DPoP request 401 invalid_dpop_proof, never a 500.
-    from apps.tokens import self_host
+    from apps.host_grants import self_host
 
     return self_host.resource_verifier()
 
@@ -56,7 +56,7 @@ def gate(app):
 
 
 def _resolve(raw: str, jkt: str):
-    from apps.tokens import self_host
+    from apps.host_grants import self_host
 
     try:
         return self_host.resource_verifier().resolve(raw, jkt)

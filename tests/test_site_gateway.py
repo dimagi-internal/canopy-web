@@ -35,7 +35,7 @@ from apps.harness.models import Turn
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
-from apps.tokens import client_identity, host_gateway
+from apps.host_grants import client_identity, host_gateway
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -526,7 +526,7 @@ def test_a_grant_bound_to_another_agent_is_never_used(w, host):
 
 
 def test_the_agents_own_bound_grant_wins_over_an_unbound_one(w):
-    from apps.tokens.host_grants import grant_for
+    from apps.host_grants.host_grants import grant_for
 
     labsdata = _labsdata(w)
     unbound = _grant(w)

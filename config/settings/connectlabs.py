@@ -53,7 +53,7 @@ CANOPY_FORMER_BASE_URLS = ["https://labs.connect.dimagi.com/canopy"]
 
 # canopy's live probe of its OWN host half (the `canopy-web` Connected site):
 # the dedicated, non-admin user tokens/0026_probe_user creates. Non-secret, and
-# ON here so the probe runs once deployed (apps/tokens/live_probe.py).
+# ON here so the probe runs once deployed (apps/host_grants/live_probe.py).
 CANOPY_HOST_PROBE_USERNAME = env("CANOPY_HOST_PROBE_USERNAME", default="canopy-probe")
 
 # canopy's own verified SES domain (deploy/aws/canopy-email.cfn.yaml; see

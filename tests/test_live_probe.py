@@ -1,4 +1,4 @@
-"""canopy's live probe of a Connected site's grant chain (`apps/tokens/live_probe.py`).
+"""canopy's live probe of a Connected site's grant chain (`apps/host_grants/live_probe.py`).
 
 The probe must use the REAL redemption (`host_grants.redeem`) and the REAL
 gateway client (`host_gateway`) — so every test here drives both against a real
@@ -34,7 +34,7 @@ from apps.harness.signals import sessions_reported
 from apps.mcp import delegation
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
-from apps.tokens import client_identity, host_gateway, live_probe, outbound, self_host
+from apps.host_grants import client_identity, host_gateway, live_probe, outbound, self_host
 from apps.tokens.models import AppCredential, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 

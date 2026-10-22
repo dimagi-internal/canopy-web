@@ -22,7 +22,7 @@ from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.test import Client, override_settings
 
-from apps.tokens import client_identity, outbound, self_host
+from apps.host_grants import client_identity, outbound, self_host
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
 

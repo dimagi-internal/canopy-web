@@ -27,7 +27,7 @@ from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
 from apps.mcp_apps_host import mcp_apps
-from apps.tokens import client_identity, host_gateway
+from apps.host_grants import client_identity, host_gateway
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.mcp_apps_host import VIEW_URI, FakeLabs

@@ -442,7 +442,8 @@ def test_canopy_uses_the_sdks_constants_not_copies():
     the SDK's values, so they cannot silently diverge from what a host uses."""
     from canopy_sdk import contract
 
-    from apps.tokens import assertions, client_identity, host_gateway, host_grants
+    from apps.host_grants import client_identity, host_gateway, host_grants
+    from apps.tokens import assertions
 
     assert client_identity.JWT_BEARER_GRANT is contract.JWT_BEARER_GRANT
     assert client_identity.CLIENT_ASSERTION_TYPE is contract.CLIENT_ASSERTION_TYPE
@@ -489,7 +490,7 @@ def test_the_documented_arrival_field_is_the_one_the_endpoint_reads(doc):
 def test_the_documented_wire_constants_are_the_ones_canopy_uses(doc):
     """The grant type, the ID-JAG typ, the client-assertion type and the
     metadata document's fields are literals a host implements against."""
-    from apps.tokens import client_identity, host_grants
+    from apps.host_grants import client_identity, host_grants
 
     contract = CONTRACT.read_text()
     assert "host-grant-contract.md" in doc

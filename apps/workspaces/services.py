@@ -53,7 +53,7 @@ def ensure_default_workspace() -> Workspace | None:
     if ws is not None:
         return ws
     User = get_user_model()
-    # Never the live probe's dedicated user (apps/tokens/live_probe.py): on a
+    # Never the live probe's dedicated user (apps/host_grants/live_probe.py): on a
     # fresh deployment it can be the first row, and it must own nothing.
     probe = (getattr(settings, "CANOPY_HOST_PROBE_USERNAME", "") or "").strip()
     candidates = User.objects.exclude(username=probe) if probe else User.objects.all()

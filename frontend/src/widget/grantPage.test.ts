@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { grantPageFor, tokenUrlFor } from './grantPage'
 
 /**
- * The keys must match `apps/tokens/self_host.py::PAGE_SCOPES` exactly — a key
+ * The keys must match `apps/host_grants/self_host.py::PAGE_SCOPES` exactly — a key
  * the server does not know is silently no grant, so a typo here would look
  * like an agent that simply cannot read the page.
  */

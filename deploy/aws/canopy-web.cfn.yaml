@@ -273,7 +273,7 @@ Resources:
       SecretString: "PLACEHOLDER"
 
   # canopy as an OAuth CLIENT of a host site (host grant contract v1,
-  # docs/architecture/host-grant-contract.md; apps/tokens/client_identity.py).
+  # docs/architecture/host-grant-contract.md; apps/host_grants/client_identity.py).
   # Two Ed25519 (or P-256) private-key PEMs, deliberately separate:
   #   * the CLIENT key signs canopy's private_key_jwt client assertion; its
   #     public half is published at /canopy/oauth/jwks.json, named by the
@@ -297,7 +297,7 @@ Resources:
       Name: canopy-web/oauth-dpop-key
       SecretString: "PLACEHOLDER"
 
-  # canopy-web as a HOST of its own MCP (apps/tokens/self_host.py): signs the
+  # canopy-web as a HOST of its own MCP (apps/host_grants/self_host.py): signs the
   # ID-JAGs canopy issues for its own pages, so agents there call canopy's own
   # /api/mcp/ as the visitor. Ed25519 or P-256 private key PEM. Born
   # "PLACEHOLDER", which the app reads as unset (every host endpoint 503s and no
