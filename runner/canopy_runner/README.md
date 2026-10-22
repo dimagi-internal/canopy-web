@@ -164,7 +164,7 @@ runner is refused too — adopt it with `--runner-id <id>` or pick `--name`. Ove
 account's port. The installer says so when the port is not answering. The launcher
 **quits emdash first, which kills every session running inside it** — pick your moment.
 
-### Pipe mode (opt-in, experimental): no open debug port
+### Pipe mode (opt-in, experimental — NOT usable yet, see `cdp_pipe.py` STATUS): no open debug port
 
 emdash's debug port is unauthenticated, so any process on the machine, under any
 macOS account, can read or type into every session in it. Pipe mode closes it:

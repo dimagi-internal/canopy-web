@@ -26,6 +26,20 @@ matters most. Playwright sets `waitForDebuggerOnStart`, and if that outlived its
 client every new emdash window would sit paused, waiting for a debugger that left.
 
 Stdlib only, like the runner's core loop: a minimal RFC 6455 server, no dependency.
+
+STATUS (2026-10-22): EXPERIMENTAL, NOT USABLE YET. Parked on this branch, unmerged.
+- Proven live (haldimagi, Emdash 1.2.8 / Electron 40): emdash on the pipe opens no
+  TCP port; no token gets 401; the real Playwright sidecar connects with the token.
+- Unproven: a SECOND client. The first live run broke it (internal ids over 2**31,
+  which Chrome rejects with no id, so cleanup never ran and the page stayed attached
+  to the old session). Fixed here and covered by unit tests, but not re-run live.
+- Unanswered: whether emdash survives the broker dying. If it does not, a broker
+  crash kills every Claude session inside it, so this decides whether the design
+  is acceptable at all.
+- Why testing stopped: the broker has to LAUNCH emdash (only the parent holds the
+  pipe), and an emdash launched from an agent session's sandboxed shell hangs at
+  startup (jj, 2026-10-22: 0% CPU, no renderer, ignores TERM). The sandbox-off
+  launch was refused by the auto-mode check, and the haldimagi account was in use.
 """
 from __future__ import annotations
 
