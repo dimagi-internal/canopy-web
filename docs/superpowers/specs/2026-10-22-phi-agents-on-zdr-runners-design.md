@@ -350,7 +350,10 @@ Each step ships on its own and fails closed until the next lands.
    report; claim requires agreement (§2). Done (#1821).
 4. **Stand up the box.** Jonathan obtains the ZDR-org key; a dedicated cloud box in ZDR
    mode; Jonathan declares `zdr`. Done: `cloud-zdr-1`, declared and reporting ZDR mode.
-   The box holds only `data: phi` agents (§1, `is_zdr_box`). Next: the egress lock (§1).
+   The box holds only `data: phi` agents (§1, `is_zdr_box`). The egress lock is built
+   (`RunnerEgress=locked`: a loopback CONNECT proxy plus root's `CANOPY-EGRESS` chain,
+   `runner/ec2/README.md` § Egress lock), and ZDR mode is not ready without it; next,
+   `cloud-zdr-1` takes a stack update with `RunnerEgress=locked`.
 5. **canopy-web: storage rules** (§4). Done (#1847).
 6. **Declarations + the execution statement** (§5, §6), with the SDK's host half and a
    `dimagi-canopy` release; connect-labs verifies it and flips

@@ -39,6 +39,22 @@ Parameters:
       retention), every turn runs under a locked permission profile, and the
       box reports the mode on every heartbeat so a person's `zdr` declaration
       is in force. See docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md.
+      ZDR mode needs RunnerEgress=locked.
+  RunnerEgress:
+    Type: String
+    AllowedValues: ['', 'locked']
+    Default: ''
+    Description: >
+      `locked`: the box's isolation units reach the network only through a local
+      proxy that admits an allowlist of hostnames on 443 (canopy-web, the model,
+      GitHub, plus RunnerEgressAllow); root's iptables chain rejects the rest,
+      DNS included. Any box may lock its egress; ZDR mode requires it.
+  RunnerEgressAllow:
+    Type: String
+    Default: ''
+    Description: >
+      Extra hostnames a locked box admits, comma-separated; `.example.com` admits
+      every subdomain. Ignored unless RunnerEgress=locked.
   RunnerExecutor:
     Type: String
     AllowedValues: ['cli', 'acp']
@@ -290,6 +306,8 @@ Resources:
                 RUNNER_DIRECTED=${RunnerDirected}
                 RUNNER_EXECUTOR=${RunnerExecutor}
                 RUNNER_DATA_MODE=${RunnerDataMode}
+                RUNNER_EGRESS=${RunnerEgress}
+                RUNNER_EGRESS_ALLOW=${RunnerEgressAllow}
                 RUNNER_WORKSPACE=${RunnerWorkspace}
                 RUNNER_NAME=${RunnerName}
                 AGENT_SLUGS=${AgentSlugs}

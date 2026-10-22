@@ -1061,6 +1061,7 @@ def health_report() -> dict:
     try:
         _credential_check()
         _disk_check()
+        _egress_check()
         if _BOOTSTRAPPED_AT:
             # Before bootstrap the packages are not exposed yet; reporting them
             # as failed would be a false alarm on every start.
@@ -1891,6 +1892,7 @@ def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int) -> dict:
         "RUNNER_EXECUTOR": box.get("RUNNER_EXECUTOR", "acp"),
         # A box in ZDR mode runs every unit in it (one key, the locked profile).
         "RUNNER_DATA_MODE": box.get("RUNNER_DATA_MODE", ""),
+        "RUNNER_EGRESS": box.get("RUNNER_EGRESS", ""),
         "HOME": home, "USER": unit["user"], "LOGNAME": unit["user"],
         "PATH": f"{home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "WORK_DIR": f"{home}/work", "AGENT_ROOT": f"{home}/agents",
@@ -1905,6 +1907,12 @@ def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int) -> dict:
         "CANOPY_GOG_SECRET_FILE": str(UNIT_ETC / f"{unit['id']}.gog-secret"),
         "CANOPY_TURN_ENV_ROOT": str(TURN_ENV_BASE / str(uid)),
     }
+    if egress_locked(box):
+        # Every tool the unit runs reads these (urllib, git, node, websocket-client);
+        # one that ignores them is rejected by CANOPY-EGRESS rather than let out.
+        for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            env[name] = EGRESS_PROXY_URL
+        env["NO_PROXY"] = env["no_proxy"] = "localhost,127.0.0.1,::1"
     return env
 
 
@@ -1966,6 +1974,228 @@ def imds_rules(run=subprocess.run) -> list[str]:
             raise RuntimeError(f"iptables refused the IMDS rule: {res.stderr!r}")
         changed.append(tool)
     return changed
+
+
+# ── Egress lock (spec 2026-10-22-phi-agents-on-zdr-runners §1, "Egress locked") ──
+#
+# `RUNNER_EGRESS=locked` (a stack parameter, in box.env): an isolation unit's
+# processes — its runner, Claude, every tool — reach the network only through a
+# local CONNECT proxy that admits an allowlist of hostnames on 443. Root's chain
+# CANOPY-EGRESS rejects everything else a unit uid sends, including DNS to the
+# local resolver (a lookup is itself a way out). Root and the proxy's own user are
+# not in the chain: units cannot become either (no sudo, NoNewPrivileges).
+#
+# It is a runner setting of its own, not part of ZDR mode: any box may lock its
+# egress. ZDR mode requires it (`zdr_readiness`). Set on the box, never from
+# canopy-web, so nothing remote can loosen it; the box reports it on every beat.
+#
+# The proxy narrows HOSTS, not paths: GitHub stays reachable for the runner's own
+# code and clones. A ZDR turn cannot use it (no shell, no GitHub token).
+
+EGRESS_CHAIN = "CANOPY-EGRESS"
+EGRESS_USER = "canopy-egress"
+EGRESS_PORT = int(os.environ.get("CANOPY_EGRESS_PORT", "3128"))
+EGRESS_PROXY_URL = f"http://127.0.0.1:{EGRESS_PORT}"
+EGRESS_ALLOW_FILE = UNIT_ETC / "egress.allow"
+#: The only port the proxy tunnels to.
+EGRESS_UPSTREAM_PORT = 443
+#: Always allowed when locked: the model, and GitHub for the runner's own code, the
+#: canopy plugin and agent clones. canopy-web's host comes from CANOPY_BASE_URL.
+EGRESS_BASE_HOSTS = ("api.anthropic.com", "github.com", "api.github.com", "codeload.github.com",
+                     "objects.githubusercontent.com", "release-assets.githubusercontent.com")
+_HOSTNAME = re.compile(r"^\.?(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$")
+
+
+def egress_locked(env: dict) -> bool:
+    """Any non-empty RUNNER_EGRESS locks: a typo fails closed, never open."""
+    return bool(str(env.get("RUNNER_EGRESS", "")).strip())
+
+
+def egress_allowlist(box: dict) -> list[str]:
+    """The hostnames a locked box admits: the base set, canopy-web's host, and the
+    box's own `RUNNER_EGRESS_ALLOW` (comma-separated; `.example.com` admits every
+    subdomain of example.com). Raises ValueError on an entry that is not a hostname."""
+    hosts = set(EGRESS_BASE_HOSTS)
+    canopy = urllib.parse.urlparse(box.get("CANOPY_BASE_URL", "")).hostname
+    if canopy:
+        hosts.add(canopy.lower())
+    for item in str(box.get("RUNNER_EGRESS_ALLOW", "")).split(","):
+        item = item.strip().lower()
+        if not item:
+            continue
+        if not _HOSTNAME.match(item):
+            raise ValueError(f"RUNNER_EGRESS_ALLOW: {item!r} is not a hostname (or .suffix)")
+        hosts.add(item)
+    return sorted(hosts)
+
+
+def egress_host_allowed(host: str, allow) -> bool:
+    host = host.strip().lower().rstrip(".")
+    return any(host == a or (a.startswith(".") and host.endswith(a)) for a in allow)
+
+
+def egress_rules(units: list[dict], *, locked: bool, run=subprocess.run) -> list[str]:
+    """ROOT, every start: rebuild CANOPY-EGRESS. Locked: each unit uid may send only
+    on loopback, and not to port 53 there; everything else it sends is rejected.
+    Unlocked: the chain is emptied, which lets everything through. Returns the
+    tools it wrote. Raises if iptables refuses a locked box's rules: a box that
+    asked to be locked does not come up open."""
+    done = []
+    for tool in ("iptables", "ip6tables"):
+        if tool == "ip6tables" and not shutil.which(tool):
+            continue
+
+        def ipt(*args, _tool=tool):
+            return run([_tool, *args], capture_output=True)
+
+        try:
+            ipt("-N", EGRESS_CHAIN)          # exists already: harmless
+            res = ipt("-F", EGRESS_CHAIN)
+            if res.returncode != 0:
+                raise RuntimeError(f"{tool} -F {EGRESS_CHAIN}: {res.stderr!r}")
+            if ipt("-C", "OUTPUT", "-j", EGRESS_CHAIN).returncode != 0:
+                res = ipt("-I", "OUTPUT", "1", "-j", EGRESS_CHAIN)
+                if res.returncode != 0:
+                    raise RuntimeError(f"{tool} could not jump OUTPUT to {EGRESS_CHAIN}: {res.stderr!r}")
+            if locked:
+                for unit in units:
+                    own = ["-m", "owner", "--uid-owner", str(unit["uid"])]
+                    for rule in ([*own, "-o", "lo", "-p", "udp", "--dport", "53", "-j", "REJECT"],
+                                 [*own, "-o", "lo", "-p", "tcp", "--dport", "53", "-j", "REJECT"],
+                                 [*own, "-o", "lo", "-j", "RETURN"],
+                                 [*own, "-j", "REJECT"]):
+                        res = ipt("-A", EGRESS_CHAIN, *rule)
+                        if res.returncode != 0:
+                            raise RuntimeError(f"{tool} refused an egress rule: {res.stderr!r}")
+        except (OSError, RuntimeError) as exc:
+            if tool == "iptables" or locked:
+                raise RuntimeError(f"cannot install the egress rules: {exc}") from exc
+            continue
+        done.append(tool)
+    return done
+
+
+def setup_egress(box: dict, units: list[dict], *, run=subprocess.run, chown=os.chown,
+                 etc: pathlib.Path | None = None, systemd: pathlib.Path | None = None) -> bool:
+    """ROOT, every start (`--setup-units`): the egress lock as box.env says — the
+    proxy's user, allowlist and service, then the rules — or, unlocked, the proxy
+    stopped and the chain emptied. Returns whether the box is locked."""
+    etc = etc or UNIT_ETC
+    locked = egress_locked(box)
+    if not locked:
+        egress_rules(units, locked=False, run=run)
+        run(["systemctl", "disable", "--now", "canopy-egress.service"], capture_output=True)
+        return False
+    allow = egress_allowlist(box)
+    _write_owned(etc / EGRESS_ALLOW_FILE.name, ("\n".join(allow) + "\n").encode(), uid=0, gid=0,
+                 mode=0o644, chown=chown)
+    if run(["id", "-u", EGRESS_USER], capture_output=True).returncode != 0:
+        res = run(["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin",
+                   "--comment", "canopy egress proxy", EGRESS_USER], capture_output=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"useradd {EGRESS_USER} failed: {res.stderr!r}")
+    # Written here as well as by --install-units, so a box built before the lock
+    # gets the proxy on its next start.
+    unit_file = (systemd or SYSTEMD_DIR) / "canopy-egress.service"
+    text = SYSTEMD_UNITS["canopy-egress.service"]
+    try:
+        current = unit_file.read_text()
+    except OSError:
+        current = ""
+    if current != text:
+        unit_file.write_text(text)
+        run(["systemctl", "daemon-reload"], capture_output=True)
+    run(["systemctl", "enable", "--now", "--no-block", "canopy-egress.service"], capture_output=True)
+    egress_rules(units, locked=True, run=run)
+    return True
+
+
+def _egress_refuse(writer, status: str) -> None:
+    writer.write(f"HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode())
+
+
+async def _egress_pipe(reader, writer) -> None:
+    try:
+        while True:
+            data = await reader.read(65536)
+            if not data:
+                break
+            writer.write(data)
+            await writer.drain()
+    except (OSError, ConnectionError):
+        pass
+    finally:
+        with contextlib.suppress(Exception):
+            writer.close()
+
+
+def _egress_public(addr: str) -> bool:
+    import ipaddress
+
+    ip = ipaddress.ip_address(addr)
+    return ip.is_global and not ip.is_multicast
+
+
+async def _egress_handle(reader, writer, allow_file: pathlib.Path) -> None:
+    """One client: `CONNECT host:443` to an allowed host that resolves to a public
+    address is tunnelled; anything else gets a 4xx and is closed. Logs the host of
+    a refusal, never content."""
+    import asyncio
+
+    try:
+        line = await asyncio.wait_for(reader.readline(), 30)
+        for _ in range(100):                       # headers: read and drop
+            h = await asyncio.wait_for(reader.readline(), 30)
+            if h in (b"\r\n", b"\n", b""):
+                break
+        parts = line.decode("latin-1").split()
+        if len(parts) < 2 or parts[0].upper() != "CONNECT":
+            _egress_refuse(writer, "405 Method Not Allowed")
+            return
+        host, _, port = parts[1].rpartition(":")
+        host = host.strip("[]").lower()
+        try:
+            allow = [a for a in allow_file.read_text().split() if a]
+        except OSError:
+            allow = []
+        if port != str(EGRESS_UPSTREAM_PORT) or not egress_host_allowed(host, allow):
+            _log(f"egress: refused {host}:{port}")
+            _egress_refuse(writer, "403 Forbidden")
+            return
+        loop = asyncio.get_running_loop()
+        infos = await loop.getaddrinfo(host, EGRESS_UPSTREAM_PORT, type=socket.SOCK_STREAM)
+        addrs = [i[4][0] for i in infos if _egress_public(i[4][0])]
+        if not addrs:
+            _log(f"egress: refused {host} (no public address)")
+            _egress_refuse(writer, "403 Forbidden")
+            return
+        up_r, up_w = await asyncio.wait_for(
+            asyncio.open_connection(addrs[0], EGRESS_UPSTREAM_PORT), 15)
+        writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        await writer.drain()
+        await asyncio.gather(_egress_pipe(reader, up_w), _egress_pipe(up_r, writer))
+    except Exception:  # noqa: BLE001 — one client's failure is that client's
+        with contextlib.suppress(Exception):
+            _egress_refuse(writer, "502 Bad Gateway")
+    finally:
+        with contextlib.suppress(Exception):
+            writer.close()
+
+
+def egress_proxy_main(port: int = EGRESS_PORT, allow_file: pathlib.Path = EGRESS_ALLOW_FILE) -> int:
+    """`cloud_runner.py --egress-proxy`, as EGRESS_USER: serve on loopback until
+    stopped. The allowlist is re-read per connection, so a change needs no restart."""
+    import asyncio
+
+    async def serve():
+        server = await asyncio.start_server(
+            lambda r, w: _egress_handle(r, w, allow_file), "127.0.0.1", port)
+        _log(f"egress proxy on 127.0.0.1:{port}, allowlist {allow_file}")
+        async with server:
+            await server.serve_forever()
+
+    asyncio.run(serve())
+    return 0
 
 
 def setup_units(box: dict, *, run=subprocess.run, chown=os.chown, uid_of=None,
@@ -2178,7 +2408,7 @@ SYSTEMD_UNITS = {
     # Every start: re-read the stack's parameters, then (re)make every unit's user,
     # files and secrets and the IMDS rule — iptables does not survive a reboot.
     "canopy-units.service": f"""[Unit]
-Description=Canopy isolation units: users, env files, secrets, the IMDS rule
+Description=Canopy isolation units: users, env files, secrets, the IMDS and egress rules
 After=network-online.target
 Wants=network-online.target
 [Service]
@@ -2217,11 +2447,30 @@ RestartSec=30
 [Install]
 WantedBy=multi-user.target
 """,
+    # The egress proxy (`RUNNER_EGRESS=locked`): the only way out for a unit. Its own
+    # user, outside CANOPY-EGRESS; loopback only; no home, nothing writable.
+    "canopy-egress.service": f"""[Unit]
+Description=Canopy egress proxy: the only way out for an isolation unit when egress is locked
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=canopy-egress
+ExecStart=/usr/bin/python3 {RUNNER_PY} --egress-proxy
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+[Install]
+WantedBy=multi-user.target
+""",
     # One runner per unit, as that unit's user. No sudo, no instance role (IMDS is
     # root's), its own /tmp.
     "canopy-runner@.service": f"""[Unit]
 Description=Canopy runner, isolation unit %i
-After=network-online.target canopy-units.service canopy-kms-broker.service
+After=network-online.target canopy-units.service canopy-kms-broker.service canopy-egress.service
 Wants=network-online.target
 Requires=canopy-units.service
 [Service]
@@ -2281,7 +2530,7 @@ def install_broker(*, run=subprocess.run) -> bool:
 #: runner.env names them — what an in-place move carries over into box.env.
 BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS", "RUNNER_DIRECTED",
                 "RUNNER_EXECUTOR", "RUNNER_WORKSPACE", "RUNNER_NAME", "AGENT_SLUGS", "RUNNER_UNITS",
-                "RUNNER_DATA_MODE")
+                "RUNNER_DATA_MODE", "RUNNER_EGRESS", "RUNNER_EGRESS_ALLOW")
 _IN_PLACE_FETCH_ENV = """#!/bin/sh
 # Replaced by `cloud_runner.py --install-units` when this box moved to isolation
 # units in place: the old script re-wrote /opt/canopy-runner/runner.env (a PAT, the
@@ -3189,6 +3438,7 @@ def zdr_posture() -> dict:
         "settings": zdr_settings(),
         "executor": RUNNER_EXECUTOR,
         "credentials": [c[0] for c in _CLAUDE_CREDS],
+        "egress": RUNNER_EGRESS,
     }, sort_keys=True)
     return {"data_mode": RUNNER_DATA_MODE,
             "data_mode_hash": hashlib.sha256(material.encode()).hexdigest()[:16]}
@@ -3206,7 +3456,59 @@ def zdr_readiness() -> tuple[bool, str]:
     if not labels or not all(_is_api_key(lb) for lb in labels):
         return False, ("ZDR mode runs only on API keys (a zero-data-retention "
                        "organisation's), and none is staged")
+    if not EGRESS_LOCKED:
+        return False, "ZDR mode needs egress locked (stack parameter RunnerEgress=locked)"
+    status, detail = egress_probe()
+    if status != "ok":
+        return False, f"ZDR mode needs egress locked, and the lock is not holding: {detail}"
     return True, ""
+
+
+#: This unit's egress setting (`RUNNER_EGRESS`, from box.env via its env file);
+#: root sets up the proxy and rules (`setup_egress`), this process only checks them.
+RUNNER_EGRESS = os.environ.get("RUNNER_EGRESS", "").strip().lower()
+EGRESS_LOCKED = bool(RUNNER_EGRESS)
+#: A public address nothing on the allowlist resolves to; a direct connection to
+#: it must be refused by CANOPY-EGRESS. Overridable for a test.
+EGRESS_PROBE_ADDR = (os.environ.get("CANOPY_EGRESS_PROBE_HOST", "1.1.1.1"), 443)
+EGRESS_PROBE_TTL = 60.0
+_EGRESS_PROBE: dict = {}
+
+
+def egress_probe(connect=socket.create_connection, now=time.time) -> tuple[str, str]:
+    """("ok"|"fail", detail) for a locked box, cached a minute: the proxy answers on
+    loopback, and a direct connection out is refused. ("ok", "egress open") when
+    not locked."""
+    if not EGRESS_LOCKED:
+        return "ok", "egress open"
+    hit = _EGRESS_PROBE.get("result")
+    if hit and now() - _EGRESS_PROBE.get("at", 0.0) < EGRESS_PROBE_TTL:
+        return hit
+    result = ("ok", f"locked: out only through the proxy on {EGRESS_PROXY_URL}")
+    try:
+        connect(("127.0.0.1", EGRESS_PORT), timeout=2).close()
+    except OSError as exc:
+        result = ("fail", f"the egress proxy is not answering on {EGRESS_PROXY_URL} ({exc})")
+    else:
+        try:
+            connect(EGRESS_PROBE_ADDR, timeout=3).close()
+            result = ("fail", f"a direct connection to {EGRESS_PROBE_ADDR[0]} got out: "
+                      "the egress rules are not in place (systemctl restart canopy-units)")
+        except OSError:
+            pass
+    _EGRESS_PROBE.update(result=result, at=now())
+    return result
+
+
+def _egress_check() -> None:
+    if not EGRESS_LOCKED and not ZDR_MODE:
+        with _HEALTH_LOCK:
+            _HEALTH.pop("egress", None)
+        return
+    status, detail = egress_probe()
+    if not EGRESS_LOCKED:
+        status, detail = "fail", "egress open, and ZDR mode needs it locked (RunnerEgress=locked)"
+    _set_check("egress", status, detail)
 
 
 def _zdr_settings_file(turn: dict, confined_path: str | None) -> str:
@@ -9158,6 +9460,8 @@ def _units_cli(argv: list[str]) -> int:
         box = read_env_file(BOX_ENV_FILE)
         units = setup_units(box, role_name=_role_name())
         imds_rules()
+        locked = setup_egress(box, units)
+        _log(f"setup-units: egress {'locked' if locked else 'open'}")
         _log("setup-units: " + ", ".join(f"{u['id']} ({u['user']}, {u['name']})" for u in units))
         # A unit added to RunnerUnits later: start its runner, and pair it.
         for u in units:
@@ -9172,6 +9476,8 @@ def _units_cli(argv: list[str]) -> int:
 if __name__ == "__main__":
     if sys.argv[1:2] == ["repo-worktree"]:
         sys.exit(_repo_worktree_cli(sys.argv[2:]))
+    if sys.argv[1:2] == ["--egress-proxy"]:
+        sys.exit(egress_proxy_main())
     if sys.argv[1:2] in (["--install-units"], ["--setup-units"], ["--pair-units"]):
         sys.exit(_units_cli(sys.argv[1:]))
     signal.signal(signal.SIGTERM, _handle_stop)
