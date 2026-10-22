@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import io
 import json
+import re
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 UA = "canopy-kb/0.2 (research)"
@@ -56,6 +59,40 @@ def write_jsonl(p: Path, rows) -> int:
             n += 1
     tmp.replace(p)
     return n
+
+
+#: What a Google Docs export regenerates every time: its stylesheet, class names, and the
+#: timestamp and signature in each redirect link (`&ust=…&usg=…`).
+_GDOC_VOLATILE = re.compile(rb'<style[^>]*>.*?</style>|\sclass="[^"]*"|&(?:amp;)?(?:ust|usg)=[^&"]*', re.S)
+
+
+def _stable(url: str, ctype: str, body: bytes) -> bytes | None:
+    """The part of an export that changes only when its content does, or None when the
+    whole body is that. Google re-exports an unchanged Sheet with new comment-shape VML
+    and an unchanged Doc with reshuffled CSS class names and re-stamped links (measured
+    2026-10-22), so
+    comparing bytes would call every sheet and doc changed on every refresh."""
+    if body[:2] == b"PK" and "spreadsheetml" in ctype:
+        try:
+            z = zipfile.ZipFile(io.BytesIO(body))
+            h = hashlib.sha256()
+            for name in sorted(z.namelist()):
+                if not name.startswith("xl/drawings/vmlDrawing"):
+                    h.update(name.encode() + b"\0" + z.read(name))
+            return h.digest()
+        except zipfile.BadZipFile:
+            return None
+    if "html" in ctype and "docs.google.com/document" in url:
+        return hashlib.sha256(_GDOC_VOLATILE.sub(b"", body)).digest()
+    return None
+
+
+def same_content(url: str, ctype: str, old: bytes, new: bytes) -> bool:
+    """Whether a refetched export says the same as the copy we keep."""
+    if not old:
+        return False
+    a, b = _stable(url, ctype, old), _stable(url, ctype, new)
+    return a is not None and a == b
 
 
 class Raw:
@@ -109,10 +146,18 @@ class Raw:
                     row = {"url": url, "status": r.status_code}
                     time.sleep(2 ** attempt * 3)
                     continue
+                ctype = r.headers.get("content-type", "")
+                kept = self.body(old) if old.get("status") == 200 and self.path(old) and self.path(old).exists() else b""
+                if kept and kept != r.content and same_content(url, ctype, kept, r.content):
+                    # A re-export that differs only in what the exporter regenerates (a
+                    # Google Sheet's comment-shape ids, a Doc's class names): keep the old
+                    # bytes and row, so nothing downstream is re-read or re-published.
+                    row = {**old, "checked_at": now()}
+                    break
                 f = hashlib.sha1(url.encode()).hexdigest()
                 (self.dir / f).write_bytes(r.content)
                 row = {"url": url, "final_url": str(r.url), "status": r.status_code,
-                       "ctype": r.headers.get("content-type", ""), "cd": r.headers.get("content-disposition", ""),
+                       "ctype": ctype, "cd": r.headers.get("content-disposition", ""),
                        "file": f, "bytes": len(r.content), "sha256": sha(r.content), "fetched_at": now()}
                 for h, k in (("etag", "etag"), ("last-modified", "last_modified")):
                     if r.headers.get(h):

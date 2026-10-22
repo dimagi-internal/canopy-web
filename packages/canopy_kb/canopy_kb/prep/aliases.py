@@ -2,7 +2,8 @@
 alone, synonyms ("malaria nets" = "insecticide-treated nets").
 
 The most-covered names of each kind (from the cards) go to Gemini 2.5 Pro in one list per
-kind; it returns groups, written to <data>/aliases.json for the bundle. The engine merges
+kind; it returns groups, written to <data>/aliases.json for the bundle. When the names and
+counts are what they were last time (<data>/aliases.key), the model is not asked again. The engine merges
 spelling variants and spelled-out acronyms itself; this is for the rest. A curator passes
 examples from its own publisher (renames it knows), which steer the model better than
 generic ones.
@@ -10,6 +11,8 @@ generic ones.
 from __future__ import annotations
 
 import collections
+import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -50,13 +53,24 @@ def run(data: Path, publisher: str, renames: str = "", apart: str = "") -> dict:
                     k = _key(n)
                     counts[kind][k] += 1
                     spelled[kind].setdefault(k, n.strip())
-    out = {}
+    prompts = {}
     for kind, top in TOP.items():
         rows = [(spelled[kind][k], n) for k, n in counts[kind].most_common(top)]
         names = "\n".join(f"{name} ({n})" for name, n in rows)
         what = "organisation" if kind == "org" else "intervention/program"
-        prompt = PROMPT.format(kind=kind, what=what, publisher=publisher, names=names,
-                               examples=f" ({renames})" if renames else "", apart=f" ({apart})" if apart else "")
+        prompts[kind] = (rows, PROMPT.format(kind=kind, what=what, publisher=publisher, names=names,
+                                             examples=f" ({renames})" if renames else "",
+                                             apart=f" ({apart})" if apart else ""))
+    # Same names and counts as last time: keep the groups. Asking again would regroup them a
+    # little differently (the model is not deterministic), which is a new version of the KB
+    # with nothing new in it.
+    key = hashlib.sha256(json.dumps([prompts[k][1] for k in sorted(prompts)]).encode()).hexdigest()
+    key_path = data / "aliases.key"
+    if (data / "aliases.json").exists() and key_path.exists() and key_path.read_text().strip() == key:
+        log("aliases: names unchanged since the last run; keeping its groups")
+        return {k: len(v) for k, v in read_json(data / "aliases.json", {}).items()}
+    out = {}
+    for kind, (rows, prompt) in prompts.items():
         groups, _ = gemini.generate_json(gemini.PRO, [{"text": prompt}], max_tokens=65000, thinking=None,
                                          timeout=900, tries=3)
         valid = {name for name, _ in rows}
@@ -65,4 +79,5 @@ def run(data: Path, publisher: str, renames: str = "", apart: str = "") -> dict:
         out[kind] = [g for g in out[kind] if len(g["names"]) >= 2]
         log(f"aliases: {kind}: {len(out[kind])} groups over the top {len(rows)} names")
     write_json(data / "aliases.json", out)
+    key_path.write_text(key)
     return {k: len(v) for k, v in out.items()}
