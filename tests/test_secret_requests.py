@@ -27,7 +27,7 @@ from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.test_canopy_vault_zk import VECTORS, ref
+from tests.fixtures.vault_zk import VECTORS, ref
 
 pytestmark = pytest.mark.django_db
 

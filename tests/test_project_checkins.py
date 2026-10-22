@@ -25,28 +25,10 @@ from apps.huddles.models import CheckinRun, ProjectCheckin
 from apps.slack import ingest
 from apps.slack.models import SlackChannelIngest
 from apps.workspaces.testing import a_user
-from tests.test_slack import (  # noqa: F401
-    ALICE,
-    BOB,
-    _link_client,
-    _owner,
-    alice,
-    click,
-    configured,
-    hal,
-    installation,
-    slack,
-    ws,
-)
-from tests.test_slack_channel_ingest import (  # noqa: F401
-    CHAN,
-    _reads,
-    _run,
-    channel,
-    hal_login,
-)
+from tests.fixtures.slack import ALICE, BOB, _link_client, _owner, click
+from tests.fixtures.slack_channel_ingest import CHAN, _reads, _run
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 
 
 @pytest.fixture
@@ -455,7 +437,7 @@ def test_a_read_channel_in_between_does_not_hide_messages_from_the_check_in(chec
 
 def test_canopys_own_posts_are_not_material(checkin, slack, channel):
     """2026-10-17 run 2: the only "message" read was canopy's own "Confirmed by…"."""
-    from tests.test_slack import BOT
+    from tests.fixtures.slack import BOT
 
     channel.history.insert(0, {"ts": "1700000600.000000", "user": BOT, "bot_id": "B1",
                                "text": ":white_check_mark: Confirmed by someone. canopy is reading this channel"})

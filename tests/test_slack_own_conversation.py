@@ -31,11 +31,9 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_user
 
-from tests.test_slack import (  # noqa: F401
-    ALICE, TEAM, alice, configured, event, hal, installation, linked, mention, slack, ws,
-)
+from tests.fixtures.slack import ALICE, TEAM, event, mention
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 
 ROOT_TS = "1700000000.000100"          # the mention that started the thread
 NEW_TS = "1700000500.000100"           # what the new thread's opening post is given
@@ -103,7 +101,7 @@ def test_without_channels_read_the_name_is_null_but_the_thread_is_still_named(sl
 
 
 def test_a_session_from_before_the_cache_learns_its_location_on_its_next_message(named, linked, hal):
-    from tests.test_slack import thread_reply
+    from tests.fixtures.slack import thread_reply
 
     mention("hal hi")
     session = Session.objects.get()
@@ -118,7 +116,7 @@ def test_a_session_from_before_the_cache_learns_its_location_on_its_next_message
 def test_the_slash_command_names_the_channel_without_asking_slack(slack, linked, hal):
     from urllib.parse import urlencode
 
-    from tests.test_slack import _post
+    from tests.fixtures.slack import _post
 
     body = urlencode({"team_id": TEAM, "channel_id": "C1", "channel_name": "dev", "user_id": ALICE,
                       "command": "/canopy", "text": "hal hello"}).encode()
@@ -260,7 +258,7 @@ def test_an_agent_moves_its_conversation_to_a_new_thread_in_the_same_channel(nam
 
 
 def test_replies_follow_the_conversation_to_its_new_thread(named, linked, hal_bot):
-    from tests.test_slack import thread_reply
+    from tests.fixtures.slack import thread_reply
 
     mention("hal hi")
     turn = _slack_turn()

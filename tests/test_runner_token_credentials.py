@@ -19,18 +19,9 @@ from django.utils import timezone
 from apps.agents.models import Agent, AgentCredentialRead
 from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
-from tests.test_canopy_vault_phase1b import (  # noqa: F401 — fixtures
-    HTU,
-    RESOLVE,
-    _active_role,
-    _bind,
-    _fresh_cache,
-    _proof,
-    fleet,
-    sts,
-)
+from tests.fixtures.aws_proof import HTU, RESOLVE, _active_role, _bind, _proof
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("fresh_cache")]
 
 SESSIONS_HTU = "http://testserver/api/runner-sessions/"
 

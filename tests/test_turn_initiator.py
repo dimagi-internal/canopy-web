@@ -26,11 +26,9 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 # Slack's own fixtures, reused rather than re-built, so this file cannot drift
 # from how Slack is actually set up in its tests.
-from tests.test_slack import (  # noqa: F401
-    BOT, alice, configured, hal, installation, linked, mention, slack, ws,
-)
+from tests.fixtures.slack import BOT, mention
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 REPO = Path(__file__).resolve().parents[1]
 
 

@@ -16,17 +16,14 @@ from apps.mcp.server import mcp
 from apps.mcp.tools.close_review import VIEW_URI
 from apps.tokens import host_gateway, mcp_apps
 from apps.tokens.models import HostGrant
-from tests.test_self_host import (  # noqa: F401 - fixtures
-    _base,
-    _ctx,
-    _in_lifespan,
-    _mint,
-    gateway_to_self,
-    mcp_app,
-    world,
-)
+from tests.fixtures.self_host import _ctx, _in_lifespan, _mint
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("self_host_base")]
+
+
+@pytest.fixture()
+def world(self_host_world):
+    return self_host_world
 
 
 @pytest.fixture()

@@ -21,11 +21,9 @@ from apps.slack.models import SlackUserLink, SlackWorkspaceLink
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_user, a_workspace
-from tests.test_slack import (  # noqa: F401
-    ALICE, BOB, TEAM, _commands, alice, configured, event, hal, installation, linked, mention, slack, ws,
-)
+from tests.fixtures.slack import ALICE, BOB, TEAM, _commands, event, mention
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 
 
 @pytest.fixture

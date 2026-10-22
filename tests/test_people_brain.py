@@ -18,10 +18,9 @@ import datetime as dt
 
 import pytest
 from django.contrib.auth.models import User
-from django.test import Client
 from django.utils import timezone
 
-from apps.agents.models import Agent, AgentProject
+from apps.agents.models import AgentProject
 from apps.contacts import people
 from apps.contacts import services as contacts
 from apps.contacts.models import Contact, PersonAccess, PersonFact
@@ -29,6 +28,7 @@ from apps.harness import caller_context, services
 from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.people_brain import _agent, _client, _fact, _finish, _human_turn, _member
 
 pytestmark = pytest.mark.django_db
 
@@ -41,22 +41,6 @@ def _agent_memory_on(agents_granted):
 
 
 # --- fixtures -----------------------------------------------------------------------
-
-
-def _member(ws, username, role=WorkspaceMembership.EDITOR, **kw):
-    u = User.objects.create_user(username, f"{username}@dimagi.com", "pw", **kw)
-    WorkspaceMembership.objects.create(user=u, workspace=ws, role=role)
-    return u
-
-
-def _agent(ws, slug, owner, *, login=True):
-    agent = Agent.objects.create(slug=slug, name=slug.title(), workspace=ws, owner=owner)
-    if login:
-        u = User.objects.create_user(f"{slug}-login", f"{slug}@dimagi-ai.com", "pw")
-        WorkspaceMembership.objects.create(user=u, workspace=ws, role=WorkspaceMembership.EDITOR)
-        agent.user = u
-        agent.save(update_fields=["user"])
-    return agent
 
 
 @pytest.fixture()
@@ -72,33 +56,6 @@ def world():
     eva = _agent(other, "eva", owner)
     return {"owner": owner, "ws": ws, "other": other, "lili": lili,
             "ace": ace, "hal": hal, "eva": eva}
-
-
-def _client(user) -> Client:
-    c = Client()
-    c.force_login(user)
-    return c
-
-
-def _human_turn(agent, user, key, **kw):
-    turn, _ = services.enqueue_turn(
-        agent=agent, origin=Turn.ORIGIN_API, idempotency_key=key, prompt=kw.pop("prompt", "hi"),
-        initiator=who.for_user(user, via="chat", assurance=who.SESSION), **kw)
-    return turn
-
-
-def _finish(turn, status=Turn.DONE):
-    Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING)
-    turn.refresh_from_db()
-    return services.finish_turn(turn, status=status)
-
-
-def _fact(person, ws, kind="role", statement="Program lead for KC.", **kw):
-    if kw.get("by_agent") is not None and "source_turn" not in kw:
-        # An agent's write names the turn it comes from (hcp.refuse_if_zdr).
-        kw["source_turn"] = _human_turn(kw["by_agent"], person.user,
-                                        f"src-{PersonFact.objects.count()}-{statement[:20]}")
-    return people.record_fact(person=person, workspace=ws, kind=kind, statement=statement, **kw)
 
 
 # --- who a person is ----------------------------------------------------------------

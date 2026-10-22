@@ -16,12 +16,12 @@ from apps.harness import aws_iam_proof, device_keys
 from apps.harness.models import Runner, RunnerDeviceKey, RunnerInvitation
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.test_canopy_vault_phase1b import ROLE, sts  # noqa: F401 — sts is a fixture
-from tests.test_runner_invitations import (INVITES, PAIR, PAIR_HTU, _fresh_cache, _pat_client,  # noqa: F401
-                                           _person, _proof)
-from tests.test_runner_invitations import make_org
+from tests.fixtures.aws_proof import ROLE
+from tests.fixtures.runner_invitations import INVITES, _pat_client
+from tests.fixtures.runner_invitations import make_org
+from tests.fixtures.runner_units import BOX, UNITS, _approve, _invite, _pair_units
 
-pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts")]
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts", "fresh_cache")]
 
 
 @pytest.fixture
@@ -29,7 +29,6 @@ def org():
     return make_org()
 
 MACHINE = ROLE  # canonical role ARN == the machine id
-BOX = "cloud-ec2-9"
 
 
 def _jwk() -> dict:
@@ -49,32 +48,6 @@ def two_trees(org):
     WorkspaceMembership.objects.create(workspace=marsh, user=org["user"], role=WorkspaceMembership.EDITOR)
     Agent.objects.create(slug="eva", name="Eva", workspace=org["ws"])
     return org
-
-
-UNITS = [
-    {"name": BOX, "workspace": "connect", "kind": "tree"},
-    {"name": f"{BOX}-marsh", "workspace": "marsh", "kind": "tree"},
-    {"name": f"{BOX}-agent-eva", "workspace": "connect", "kind": "agent", "slug": "eva"},
-]
-
-
-def _invite(org, units=UNITS, name=BOX, **extra):
-    return _pat_client(org["pat"]).post(
-        INVITES, data={"name": name, "workspace": "connect", "role_arn": ROLE, "units": units, **extra},
-        content_type="application/json")
-
-
-def _approve(org, inv_id):
-    assert org["browser"].post(f"{INVITES}{inv_id}/approve").status_code == 200
-
-
-def _pair_units(units: dict[str, dict], *, name=BOX):
-    """What canopy-pair sends: the box's name, ONE role proof, every unit's keys."""
-    body = {"name": name, "kind": "cloud", "proof": _proof(PAIR_HTU), "units": [
-        {"name": n, "public_jwk": k["public_jwk"], "ecdh_public_jwk": k.get("ecdh_public_jwk"),
-         "ecdh_store": "kms-broker", "host": "ip-10-0-0-9", "capabilities": {"sessions": True}}
-        for n, k in units.items()]}
-    return Client().post(PAIR, data=body, content_type="application/json")
 
 
 def _keys(names) -> dict[str, dict]:
@@ -348,7 +321,7 @@ def test_adoption_with_a_different_ecdh_key_waits_for_a_person_and_drops_stale_w
 
 def test_a_single_runner_pairing_is_unchanged_by_units(org):
     """A box on older runner code (no `units`) pairs by role exactly as before."""
-    from tests.test_runner_invitations import _approved, _pair
+    from tests.fixtures.runner_invitations import _approved, _pair
 
     _approved(org)
     res = _pair()
@@ -382,7 +355,6 @@ def test_a_capabilities_write_that_omits_the_unit_keeps_it(two_trees):
         content_type="application/json")
     assert res.status_code == 200, res.content
     assert Runner.objects.get(pk=rid).unit() == {"kind": "agent", "slug": "eva"}
-
 
 
 # ---- a bare role proof never takes a runner's identity (review: HIGH) -------------------
