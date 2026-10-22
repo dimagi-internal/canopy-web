@@ -333,37 +333,29 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         reqs = getattr(request, "runner_requirements", ())
         if reqs:
             metadata["runner_requirements"] = list(reqs)
-    if payload.runner_id and agent is not None:
-        from apps.agents.access import may_pin_runner
+    if payload.runner_id:
         from apps.harness.models import Runner
 
-        # The stash is consumed on the first send WITHOUT asking who may pin
-        # (services._resolve_placement), so the pin is decided here, by the same
-        # rule a pinned dispatch and an explicit placement apply: the agent's
-        # admins may pin any box, anyone else only a box they administer. An id
-        # that names no runner is left as before — the first send ignores it.
-        # The message names no runner: the id may be one the caller cannot see.
+        # The stash is consumed on the first send WITHOUT asking who may choose
+        # (services._resolve_placement), so the choice is decided here, by the one
+        # placement rule every door asks (`services.may_place`): for a chat with
+        # an agent its admins may pin any box, anyone else only a box they
+        # administer; for a project chat, only someone who administers the box.
+        # An id that names no runner is left as before — the first send ignores
+        # it — and the message names no runner: the id may be one the caller
+        # cannot see.
         requested = Runner.objects.filter(pk=payload.runner_id).first()
-        if requested is not None and not may_pin_runner(request.user, agent, requested):
-            raise HttpError(
-                403,
-                f"running {agent.slug} on a chosen runner is for the agent's owner or "
-                "admins, or for someone who administers that runner; start the chat "
-                "without a runner and the agent's routing places it",
-            )
-    if payload.runner_id and agent is None:
-        from apps.harness.models import Runner
-
-        # A project chat on a chosen box: only someone who administers it may
-        # choose it (`services.may_place_project_chat`) — the stash is consumed on
-        # the first send without asking again. An id that names no runner is left
-        # as before, and the message does not say whether it names one.
-        requested = Runner.objects.filter(pk=payload.runner_id).first()
-        if requested is not None and not services.may_place_project_chat(
-                request.user, Session(project=payload.project), requested):
+        draft = Session(agent=agent, project=payload.project)
+        if requested is not None and not services.may_place(request.user, draft, requested):
+            if agent is not None:
+                raise HttpError(
+                    403,
+                    f"running {agent.slug} on a chosen runner is for the agent's owner or "
+                    "admins, or for someone who administers that runner; start the chat "
+                    "without a runner and the agent's routing places it",
+                )
             raise HttpError(403, services.PROJECT_CHAT_PLACEMENT_REFUSED.format(
                 runner="a chosen runner"))
-    if payload.runner_id:
         # Directed new chat: stashed for the session's first send to pin onto
         # (as long as it's still unbound at that point) — see services.send_message.
         metadata["requested_runner_id"] = str(payload.runner_id)
