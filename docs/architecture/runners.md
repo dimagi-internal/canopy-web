@@ -535,7 +535,9 @@ back to the stored PAT; phase 2 removes the PAT).
   recorded as a `TurnAgentToken`; logged as an `AgentCredentialRead`
   (`turn-agent-token`, `via=turn`) and an `agent.canopy_token.issued` event.
 - Revoked when the turn stops executing on that runner: `finish_turn` (every exit,
-  requeues included), the lease sweep, and `revoke_stale` on every sweep tick.
+  requeues included), every terminal transition (`harness.closing.close_turn`: the
+  lease sweep, a stop, an admission refusal, a moved turn), and `revoke_stale` on
+  every sweep tick.
 - Cloud runner: `CANOPY_WEB_PAT` in the turn env + `~/.canopy/agent-token/turn/<tid>.token`
   for the MCP headers helper. Laptop: the canopy CLI asks on demand with the box's
   runner token and the session's turn id.

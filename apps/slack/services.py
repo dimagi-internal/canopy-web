@@ -988,9 +988,8 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
     A turn on a runner
     that is still there is left alone, and the move then refuses as before.
     """
-    from django.utils import timezone
-
     from apps.harness import services as harness
+    from apps.harness.closing import close_turn
 
     from . import status
 
@@ -999,11 +998,13 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
                  .filter(chat_session=session, status__in=list(harness.EXECUTING))):
         if not status.runner_gone(turn):
             continue
-        if Turn.objects.filter(pk=turn.pk, status__in=list(harness.EXECUTING)) \
-                .update(status=Turn.LOST, finished_at=timezone.now()):
-            harness.append_events(turn, [{"kind": "status", "payload": {
-                "status": Turn.LOST, "reason": "runner_offline_moved"}}])
-            turn.refresh_from_db()
+        # What the lease sweep would do, minus the debugger: the words are asked
+        # again below on a live box, so there is no failure to investigate.
+        # Riders are left to the loop (each is a turn of this session too).
+        if close_turn(turn, Turn.LOST, from_states=harness.EXECUTING,
+                      event={"reason": "runner_offline_moved"}, riders=False,
+                      drill_summary="runner lost the turn (moved off an offline runner)",
+                      auto_debug=False):
             closed.append(turn)
     if not closed:
         last = Turn.objects.filter(chat_session=session).order_by("-created_at").first()

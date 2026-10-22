@@ -1077,7 +1077,6 @@ def finish_turn(
         and turn.attempts < MAX_SESSIONLESS_RETRIES
         and not RunnerDrill.objects.filter(turn=turn).exists()
     ):
-        now = timezone.now()
         requeued = Turn.objects.filter(
             pk=turn.pk, status__in=[Turn.CLAIMED, Turn.RUNNING], session_key=""
         ).update(
@@ -1137,21 +1136,46 @@ def finish_turn(
             f"{result_note} — NOTE: you asked to stop this turn and it ran to "
             f"completion anyway; the cancel never reached the runner"
         ).lstrip(" —")
-    now = timezone.now()
     from_states = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
     if allow_queued:
         from_states.append(Turn.QUEUED)
-    updated = Turn.objects.filter(pk=turn.pk, status__in=from_states).update(
-        status=status, finished_at=now, result_note=result_note
-    )
-    turn.refresh_from_db()
-    if not updated:
-        return turn
-    append_events(turn, [{"kind": "status", "payload": {"status": status, "result_note": result_note}}])
-    from apps.events import activity
+    # A drill turn that ends without its agent's report resolves its RunnerDrill
+    # here — the agent may never get far enough to curl the callback at all, and
+    # left alone the drill strands OUTCOME_PENDING forever (close_turn only
+    # touches a still-pending drill, so one already reported is never clobbered):
+    #
+    # * FAILED: auth expired, environment broken.
+    # * CANCELLED: drills queue behind real executing turns (start_drill's
+    #   docstring) and the plain /turns/{id}/cancel route has no origin filter,
+    #   so a queued drill can be cancelled out from under itself.
+    # * `stop_ignored`: such a turn USED to arrive here as CANCELLED, before the
+    #   DONE -> CANCELLED coercion went away. The drill's resolution depends on
+    #   "a stop was requested", not on which label the turn ended up with.
+    # * DONE without a report: the report IS the drill's answer, and "the turn
+    #   ran but the callback never arrived" is exactly the control-plane gap a
+    #   drill exists to catch (drill 50 on cloud-ec2-1, whose report had 404'd).
+    #   The agent reports DURING its turn, so any report has already landed.
+    #
+    # MISSED is the one status that leaves a drill alone.
+    if status == Turn.DONE and not stop_ignored:
+        drill_summary = "drill turn finished without reporting"
+        if result_note:
+            drill_summary += f" — the agent said: {result_note[:1500]}"
+    elif stop_ignored:
+        drill_summary = "drill turn completed after a cancel that never landed"
+    elif status == Turn.CANCELLED:
+        drill_summary = "drill turn cancelled"
+    elif status == Turn.FAILED:
+        drill_summary = result_note or "drill turn failed"
+    else:
+        drill_summary = None
+    from .closing import close_turn
 
-    activity.for_turn(activity.TURN_FINISHED, turn, at=now)
-    _finish_riders(turn)
+    # close_turn also tells the debugger about a turn that really ENDED failed —
+    # one requeued sessionless, or a rider sent back to wait, returned above.
+    if not close_turn(turn, status, result_note, from_states=from_states,
+                      drill_summary=drill_summary):
+        return turn
     if stop_ignored:
         # SAY IT WHERE THE PERSON WHO PRESSED STOP IS LOOKING. A `status` event
         # carries no client-visible frame (stream_map.turn_event_to_frames), so the
@@ -1160,92 +1184,14 @@ def finish_turn(
         append_events(turn, [{"kind": "error", "payload": {
             "detail": "your stop never reached the runner — this turn ran to completion",
         }}])
-    if turn.chat_session_id:
-        # "Your chat is done" — arms the quiet-timer (or pushes now, if the chat
-        # asked for every completion). Never allowed to fail the finish.
-        try:
-            from apps.push import services as push_services
-
-            push_services.on_session_turn_finished(turn)
-        except Exception:  # noqa: BLE001
-            logger.exception("push: could not arm the finish push for turn %s", turn.pk)
-        end_turns_ask(turn)
-    # A finished scheduled occurrence discharges any open nag for its schedule —
-    # you no longer owe attention to a slot that has since completed.
-    if status == Turn.DONE:
-        sid = (turn.origin_ref or {}).get("schedule_id")
-        if sid:
-            resolve_schedule_nags(sid)
-    # A drill turn that fails outright (auth expired, environment broken) resolves
-    # its RunnerDrill without waiting for the agent's own report callback — the
-    # agent may never get far enough to curl the callback at all. Scoped to
-    # OUTCOME_PENDING so a drill already resolved by a report is not clobbered.
-    # CANCELLED is included too: drills queue behind real executing turns
-    # (start_drill's docstring) and the plain /turns/{id}/cancel route has no
-    # origin filter, so a queued drill can be cancelled out from under itself —
-    # without this it would strand OUTCOME_PENDING forever, the same failure
-    # mode this hook exists to prevent for FAILED.
-    # Keyed on the RunnerDrill FK, not the origin: a drill is an ordinary `api`
-    # turn that names its runner, and the filter no-ops for a non-drill turn.
-    #
-    # `stop_ignored` is here for the same anti-stranding reason, and it is the one
-    # thing that had to move when the DONE -> CANCELLED coercion went away: such a
-    # turn USED to arrive here as CANCELLED and resolve its drill. Keying the hook on
-    # the status alone would have let it fall through as DONE and strand
-    # OUTCOME_PENDING forever — reintroducing, through the side door, the exact
-    # failure this hook exists to prevent. The drill's resolution depends on "a stop
-    # was requested", not on which label the turn ended up with.
-    # A drill turn that finished DONE without the agent ever reporting is a
-    # failure too: the report IS the drill's answer, and "the turn ran but the
-    # callback never arrived" is exactly the control-plane gap a drill exists to
-    # catch. Left alone it stranded OUTCOME_PENDING forever (drill 50 on
-    # cloud-ec2-1, 2026-09-22, whose report had 404'd). The agent reports DURING
-    # its turn, so by now any report has already landed and the PENDING filter
-    # below leaves it untouched.
-    unreported = status == Turn.DONE and not stop_ignored
-    if status in (Turn.FAILED, Turn.CANCELLED) or stop_ignored or unreported:
-        if unreported:
-            summary = "drill turn finished without reporting"
-            if result_note:
-                summary += f" — the agent said: {result_note[:1500]}"
-        elif stop_ignored:
-            summary = "drill turn completed after a cancel that never landed"
-        elif status == Turn.CANCELLED:
-            summary = "drill turn cancelled"
-        else:
-            summary = result_note or "drill turn failed"
-        RunnerDrill.objects.filter(
-            turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
-        ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=summary, finished_at=now)
-    # A turn that has really ENDED failed — not requeued sessionless, not a rider
-    # sent back to wait (both returned above) — starts a debugger turn
-    # (apps/harness/auto_debug.py: deduplicated by fingerprint, capped fleet-wide,
-    # and never for a drill, a human's stop, or a debug turn of its own). Jonathan
-    # 2026-10-07, after an ACE Slack turn failed and nothing looked at it.
-    # on_turn_failed never raises: a debug turn is never worth a failed finish.
-    if status == Turn.FAILED:
-        from . import auto_debug
-
-        auto_debug.on_turn_failed(turn)
     return turn
 
 
 def _finish_riders(turn: Turn, status: str | None = None) -> None:
-    """The follow-ups delivered into `turn` end when it does, the same way.
+    """The follow-ups delivered into `turn` end when it does (`closing.close_riders`)."""
+    from .closing import close_riders
 
-    They were typed into its session, so they have no life of their own: the
-    agent answered them in this turn's reply, or the turn's failure/stop took
-    them with it. A direct update rather than `finish_turn`, whose sessionless
-    requeue would re-type a message that was already delivered."""
-    status = status or turn.status
-    now = timezone.now()
-    for rider in Turn.objects.filter(rides_turn=turn, status__in=EXECUTING):
-        note = f"delivered into the running turn {str(turn.pk)[:8]} — {status}"
-        if Turn.objects.filter(pk=rider.pk, status__in=EXECUTING).update(
-                status=status, finished_at=now, result_note=note):
-            rider.status = status
-            append_events(rider, [{"kind": "status", "payload": {
-                "status": status, "result_note": note, "rode": str(turn.pk)}}])
+    close_riders(turn, status)
 
 
 def cancel_queued_turn(turn: Turn) -> Turn | None:
@@ -1280,22 +1226,11 @@ def cancel_turn(turn: Turn, *, by: str = "") -> Turn | None:
         # force-finish the now-claimed turn as CANCELLED out from under the
         # runner that just picked it up. Guard the UPDATE itself on
         # status=QUEUED so only a turn still queued at write-time is affected.
-        now = timezone.now()
-        updated = Turn.objects.filter(pk=turn.pk, status=Turn.QUEUED).update(
-            status=Turn.CANCELLED, finished_at=now, result_note="cancelled",
-        )
-        turn.refresh_from_db()
-        if updated:
-            append_events(turn, [{
-                "kind": "status",
-                "payload": {"status": Turn.CANCELLED, "result_note": "cancelled", **who},
-            }])
-            # Mirror finish_turn's drill hook (bypassed above) so a queued
-            # drill cancelled this way doesn't strand OUTCOME_PENDING. Keyed on
-            # the RunnerDrill FK — no-ops for a non-drill turn.
-            RunnerDrill.objects.filter(
-                turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
-            ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary="drill turn cancelled", finished_at=now)
+        from .closing import close_turn
+
+        # A queued drill cancelled this way must not strand OUTCOME_PENDING.
+        if close_turn(turn, Turn.CANCELLED, "cancelled", from_states=[Turn.QUEUED],
+                      event=who, drill_summary="drill turn cancelled"):
             return turn
         # Lost the race: the turn is no longer QUEUED (claimed out from under
         # us, or already terminal). Fall through to the freshly-refreshed
