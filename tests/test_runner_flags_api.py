@@ -1,12 +1,14 @@
 """Declaring what a runner's owner vouches for (`zdr`).
 
 canopy cannot check a declaration, so the whole value is in WHO may make one:
-a person, from the web app — never the box itself, which authenticates with its
-owner's PAT.
+a person, in the browser, with a fresh passkey confirmation — never a token: not a
+PAT, not an MCP call, and not the box's own RunnerAccessToken, which reaches every
+route under its own runner.
 """
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 from canopy_sdk import contract
@@ -14,7 +16,8 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.events.models import Event
-from apps.harness.models import Runner, RunnerAdmin, RunnerFlag
+from apps.harness.models import Runner, RunnerAccessToken, RunnerAdmin, RunnerDeviceKey, RunnerFlag
+from apps.passkeys import stepup
 from apps.harness.runner_requirements import UNSATISFIABLE
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -53,9 +56,13 @@ def runner(owner, admin, workspace):
     return r
 
 
-def _client(user) -> Client:
+def _client(user, stepped_up: bool = True) -> Client:
     c = Client()
     c.force_login(user)
+    if stepped_up:
+        s = c.session
+        s[stepup.SESSION_KEY] = {"user": user.pk, "until": time.time() + 60}
+        s.save()
     return c
 
 
@@ -100,10 +107,28 @@ def test_someone_who_cannot_administer_gets_404(stranger_client, runner):
     assert not RunnerFlag.objects.exists()
 
 
-def test_a_token_can_declare_it(pat_client, runner):
-    # A token acts as its user (a runner admin here): MCP can do what the web app can.
-    assert _put(pat_client, runner, ["zdr"]).status_code == 200
-    assert RunnerFlag.objects.exists()
+def test_a_token_cannot_declare_it(pat_client, runner):
+    # A PAT (and so MCP) acts as a runner admin here, and is still refused: a flag is
+    # a person vouching for a box.
+    assert _put(pat_client, runner, ["zdr"]).status_code == 403
+    assert not RunnerFlag.objects.exists()
+
+
+def test_the_box_cannot_declare_itself(owner, runner):
+    # The runner's own credential reaches every route under its runner
+    # (runner_auth.py), /flags included, and signs in as its owner.
+    key = RunnerDeviceKey.objects.create(runner=runner, jkt="k-flags", kind="software",
+                                         status=RunnerDeviceKey.ACTIVE, created_by=owner)
+    raw, _ = RunnerAccessToken.mint(key)
+    box = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert _put(box, runner, ["zdr"]).status_code == 403
+    assert not RunnerFlag.objects.exists()
+
+
+def test_a_browser_without_a_fresh_passkey_is_asked_for_one(owner, runner):
+    r = _put(_client(owner, stepped_up=False), runner, ["zdr"])
+    assert r.status_code == 403 and r.json()["error"] == "step_up_required"
+    assert not RunnerFlag.objects.exists()
 
 
 def test_an_unknown_flag_is_422(owner_client, runner):

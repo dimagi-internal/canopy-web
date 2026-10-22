@@ -1123,6 +1123,13 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
     visitors hold, and those conversations then run only on runners declaring it.
     """
     runner = _runner_admin_or_404(request, runner_id)
+    # A person vouching for a box, never a token: not a PAT, not an MCP call, and
+    # not the box's own RunnerAccessToken (which runner_auth lets reach every route
+    # under its own runner). 403 `step_up_required` -> the SPA asks for the passkey
+    # and retries; a token gets a plain 403 it cannot answer.
+    from apps.passkeys import stepup
+
+    stepup.require_recent_step_up(request)
     try:
         wanted = set(contract.parse_runner_requirements(payload.flags))
     except ValueError as exc:

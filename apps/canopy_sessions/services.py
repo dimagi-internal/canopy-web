@@ -2003,6 +2003,8 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
         high = Message.objects.filter(session=session).aggregate(m=Max("turn_index"))["m"]
         records = (int(high) - offset) // BLOCK_STRIDE + 1
 
+    from apps.harness import runner_requirements as rr
+
     title = (session.title or "").strip() or "session"
     with transaction.atomic():
         fork = create_session(
@@ -2016,6 +2018,10 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
                 "requested_runner_id": str(binding.runner_id),
                 # Its history is a cut of a transcript, whatever the executor.
                 TRANSCRIPT_SOURCED: True,
+                # The fork holds the same conversation, so the same runners: a fork
+                # never sheds a requirement (spec 2026-10-22-phi-agents-on-zdr-runners).
+                **({rr.METADATA_KEY: (session.metadata or {})[rr.METADATA_KEY]}
+                   if (session.metadata or {}).get(rr.METADATA_KEY) else {}),
             },
         )
         fork.parent_session = session

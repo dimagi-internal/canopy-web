@@ -301,3 +301,45 @@ def test_an_offline_zdr_box_names_zdr_only_when_a_non_zdr_box_is_live(fleet):
     RunnerAssignment.objects.create(agent=a, runner=laptop, rank=1)
     reach = services.turn_reach(turn)
     assert reach.kind == services.OFFLINE and reach.blocked_by_requirements
+
+
+# ---- inheritance (spec 2026-10-22-phi-agents-on-zdr-runners §3) ------------------
+
+
+def test_a_turn_started_from_a_zdr_turn_inherits_its_requirement(fleet):
+    """A dispatch, re-ask or transfer from a ZDR conversation has no chat session of
+    its own, but carries the conversation's data: same runners."""
+    from apps.harness import runner_requirements as rr
+
+    a, laptop = fleet["agent"], fleet["laptop"]
+    _sessions(laptop)
+    RunnerAssignment.objects.create(agent=a, runner=laptop, rank=0)
+    parent, _s = _zdr_turn(a)
+    Turn.objects.filter(pk=parent.pk).update(status=Turn.DONE)
+    child = Turn.objects.create(agent=a, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, idempotency_key="child",
+                                routing=Turn.ANY, parent_turn=parent)
+
+    assert rr.requirements_of(child) == {"zdr"}
+    assert services.claim_next_turn(laptop) is None
+
+
+def test_a_turn_started_from_a_zdr_conversation_inherits_its_requirement(fleet):
+    from apps.harness import runner_requirements as rr
+
+    a = fleet["agent"]
+    _parent, s = _zdr_turn(a)
+    child = Turn.objects.create(agent=a, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, idempotency_key="child",
+                                routing=Turn.ANY, parent_session=s)
+    assert rr.requirements_of(child) == {"zdr"}
+
+
+def test_a_chain_longer_than_the_cap_is_unclaimable_not_unrestricted(fleet):
+    from apps.harness import runner_requirements as rr
+
+    a = fleet["agent"]
+    node = Turn.objects.create(agent=a, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, idempotency_key="t0",
+                               routing=Turn.ANY)
+    for i in range(rr.MAX_ANCESTORS + 1):
+        node = Turn.objects.create(agent=a, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, idempotency_key=f"t{i + 1}",
+                                   routing=Turn.ANY, parent_turn=node)
+    assert rr.UNSATISFIABLE in rr.requirements_of(node)
