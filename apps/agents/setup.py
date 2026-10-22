@@ -21,8 +21,8 @@ from __future__ import annotations
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 
 from . import delegations
+from .credentials.oauth_api import GOG_TOKEN_REF
 from .models import Agent, AgentBootstrapReport, AgentCredential
-from .oauth_api import GOG_TOKEN_REF
 
 DONE, TODO, WAITING, OPTIONAL = "done", "todo", "waiting", "optional"
 
@@ -149,7 +149,7 @@ def _vault(agent: Agent, settings: str) -> dict:
     step and the workspace health dashboard cannot disagree. An agent resolving from
     the canopy-web vault is judged by that vault (every declared secret stored, every
     machine let in); one resolving from 1Password by its 1Password vault and key."""
-    from .vault_health import vault_health
+    from .credentials.vault_health import vault_health
 
     if agent.credential_source == Agent.CANOPY_WEB:
         return _canopy_vault(agent, settings, vault_health(agent))
@@ -162,7 +162,7 @@ def _canopy_login(agent: Agent, settings: str) -> dict | None:
     1Password agent's login comes from its vault like every other secret."""
     if agent.credential_source != Agent.CANOPY_WEB:
         return None
-    from .pat_rotation import CANOPY_PAT_REF
+    from .credentials.pat_rotation import CANOPY_PAT_REF
 
     has = AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).exists()
     return _step(
@@ -175,11 +175,11 @@ def _canopy_login(agent: Agent, settings: str) -> dict | None:
 
 
 def _canopy_vault(agent: Agent, settings: str, vh: dict) -> dict:
-    from .pat_rotation import CANOPY_PAT_REF
+    from .credentials.pat_rotation import CANOPY_PAT_REF
 
     title = "Give it a vault"
     if agent.zk_enabled:
-        from . import zk_seal
+        from .credentials import zk_seal
 
         if not zk_seal.has_recipients(agent):
             # Every value is sealed to the vault's readers (its approved runners'

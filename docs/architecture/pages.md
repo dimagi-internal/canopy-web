@@ -263,7 +263,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   across this workspace and every one below it (`GET /api/workspaces/{slug}/health`,
   `apps/agents/health.py`): every agent with its setup checklist (the SAME steps
   as its Settings page), its vault state (canopy-web / moving / 1Password / none,
-  `apps/agents/vault_health.py`) and properties — active projects, open tasks
+  `apps/agents/credentials/vault_health.py`) and properties — active projects, open tasks
   (`AgentTask.LIVE_STATUSES`) and those waiting on a person (`services.waiting_q`),
   each linking to the agent's page; who can use it (admins only, or the
   capabilities its interface publishes) and its turn mode; how it is used over

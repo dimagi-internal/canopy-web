@@ -142,7 +142,7 @@ def test_the_login_is_stored_under_the_variable_its_code_reads():
     the login lives under — `canopy-pat` (the 1Password item) would be dropped on
     the way, and an agent already storing CANOPY_WEB_PAT had its login reported
     missing."""
-    from apps.agents.pat_rotation import CANOPY_PAT_REF
+    from apps.agents.credentials.pat_rotation import CANOPY_PAT_REF
 
     assert CANOPY_PAT_REF == "CANOPY_WEB_PAT"
     owner = a_member()

@@ -89,7 +89,7 @@ class _McpWithoutSlash:
 
 import contextlib  # noqa: E402
 
-from apps.agents import pat_rotation_scheduler as _pat_rotation_scheduler  # noqa: E402
+from apps.agents.credentials import pat_rotation_scheduler as _pat_rotation_scheduler  # noqa: E402
 from apps.capabilities import scheduler as _capability_scheduler  # noqa: E402
 from apps.harness import schedule_clock as _schedule_clock  # noqa: E402
 from apps.slack import ingest_scheduler as _slack_ingest_scheduler  # noqa: E402

@@ -716,12 +716,12 @@ CAPABILITY_BROKER_ID = env("CAPABILITY_BROKER_ID", default="")
 
 # --- Canopy Vault Phase 1b (canopy-web#1549) ---
 # Seconds between the canopy-pat rotation's off-request ticks
-# (apps/agents/pat_rotation_scheduler.py, ASGI lifespan; deduplicated fleet-wide). 0 = off.
+# (apps/agents/credentials/pat_rotation_scheduler.py, ASGI lifespan; deduplicated fleet-wide). 0 = off.
 CANOPY_PAT_ROTATION_TICK_S = env.int("CANOPY_PAT_ROTATION_TICK_S", default=900)
 # How often canopy-web evaluates every schedule's cron and fires the due slots
 # (apps/harness/schedule_clock.py). <= 0 turns the server clock off.
 CANOPY_SCHEDULE_TICK_S = env.int("CANOPY_SCHEDULE_TICK_S", default=60)
-# A read-anomaly alert (apps/agents/vault_alerts.py) fires when one agent's secrets
+# A read-anomaly alert (apps/agents/credentials/vault_alerts.py) fires when one agent's secrets
 # are resolved more than this many times inside a 5-minute window.
 CANOPY_VAULT_READ_BURST_LIMIT = env.int("CANOPY_VAULT_READ_BURST_LIMIT", default=50)
 

@@ -116,7 +116,7 @@ def test_unit_a_token_cannot_open_bs_runner_routes(box):
 
 
 def test_bs_wraps_are_never_addressed_to_as_ecdh_key(box):
-    from apps.agents import zk
+    from apps.agents.credentials import zk
 
     eligible = {k.runner_id for k in zk.eligible_device_keys(box["eva"])}
     assert box["runners"][B].pk in eligible

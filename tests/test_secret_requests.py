@@ -19,7 +19,7 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents import secret_requests, zk_endorse
+from apps.agents.credentials import secret_requests, zk_endorse
 from apps.agents.models import Agent, AgentCredential, AgentSecretRequest, AgentVaultEndorsement
 from apps.canopy_sessions.models import Message, Session, SessionParticipant
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey

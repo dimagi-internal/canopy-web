@@ -176,7 +176,7 @@ def authorize(agent, user):
     when the caller list gives them the whole agent. Raises LocalRefusedError
     otherwise: a confined capability is a door canopy holds (the `ask` path), not
     something a session on someone's own machine can be held to."""
-    from apps.agents import licenses
+    from apps.agents.credentials import licenses
 
     try:
         return licenses.request(agent, user)
@@ -224,7 +224,7 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
     claude_session_id = (claude_session_id or "").strip()[:100]
     if not claude_session_id:
         raise ValueError("claude_session_id is required")
-    from apps.agents import licenses
+    from apps.agents.credentials import licenses
 
     lic = authorize(agent, user)
     licenses.touch(lic, private_runner=private_runner)

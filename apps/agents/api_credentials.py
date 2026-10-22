@@ -21,7 +21,8 @@ from apps.api.errors import (
 from apps.harness.schemas import RunnerDeviceKeyOut
 from apps.passkeys import stepup
 
-from . import credential_resolve, delegations, services
+from . import delegations, services
+from .credentials import credential_resolve
 from .gates import (
     agent_for_admin,
     agent_for_read,
@@ -87,7 +88,7 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
     # simply break `canopy vault import`.
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
-    from .zk import ZkError
+    from .credentials.zk import ZkError
 
     try:
         services.set_agent_credentials(agent, payload.values, user=request.user)
@@ -235,7 +236,7 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
 
 # ---- zero-knowledge vault (Canopy Vault Phase 2, canopy-web#1550) ------------------
 # Formats: docs/vault/zk-v1/zk_v1_reference.py. canopy-web only shape-checks and
-# stores; the browser and the canopy CLI do every encryption (apps/agents/zk.py).
+# stores; the browser and the canopy CLI do every encryption (apps/agents/credentials/zk.py).
 # Owner/admin only. Writes from a browser need a passkey step-up; a token held
 # by an admin may enable, set values, grant and rotate (the canopy CLI acts as
 # its device) — but turning ZK OFF hands plaintext back, so it is browser-only.
@@ -249,7 +250,7 @@ def _zk_admin(request: HttpRequest, slug: str, *, browser_only: bool = False):
 
 
 def _zk_state(agent, *, include_values: bool = False) -> ZkStateOut:
-    from . import zk
+    from .credentials import zk
 
     return ZkStateOut(**zk.state(agent, include_values=include_values))
 
@@ -277,7 +278,7 @@ def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkS
     member wrap, or a device wrap on a runner they own — the CLI enabling as
     its device; the owner's member wrap can be granted later). `values` must cover every stored credential; each one's
     custodial copy is wiped. Errors are problem+json with an `error` code."""
-    from . import zk
+    from .credentials import zk
 
     agent = _zk_admin(request, slug)
     try:
@@ -293,7 +294,7 @@ def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkS
 def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) -> ZkValuesOut:
     """Non-clobbering upsert of `{name, value_zk}`. A `kv` other than the
     current one is 409 `zk_kv_mismatch` (the vault key was rotated)."""
-    from . import zk
+    from .credentials import zk
 
     agent = _zk_admin(request, slug)
     try:
@@ -310,7 +311,7 @@ def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> Z
     an ACTIVE key with an ECDH key on a runner this agent routes to; a member
     target is a current agent admin with a vault key. Replaces that target's
     wrap at this kv. The recovery wrap is set only by enable and rotate."""
-    from . import zk
+    from .credentials import zk
 
     agent = _zk_admin(request, slug)
     try:
@@ -328,7 +329,7 @@ def rotate_agent_zk(request: HttpRequest, slug: str, payload: ZkRotateIn) -> ZkS
     otherwise); a revoked device or removed admin is simply left out. A fresh
     recovery wrap and a wrap the caller can open are required, and `values`
     must cover every stored credential."""
-    from . import zk
+    from .credentials import zk
 
     agent = _zk_admin(request, slug)
     try:
@@ -362,7 +363,7 @@ def _secret_request(request: HttpRequest, slug: str, request_id: uuid.UUID):
 
 
 def _secret_request_out(req, message: str = "") -> SecretRequestOut:
-    from . import secret_requests
+    from .credentials import secret_requests
 
     data = secret_requests.out(req)
     return SecretRequestOut(**data, secret_request_id=data["id"], message=message)
@@ -377,7 +378,7 @@ def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequest
     never receive the value, and must not ask for it in the chat. Read the
     request back (`get_agent_secret_request`) for `status: fulfilled`, then
     resolve the secret the usual way."""
-    from . import secret_requests
+    from .credentials import secret_requests
 
     agent = agent_for_read(request, slug)
     try:
@@ -397,7 +398,7 @@ def get_agent_secret_request(request: HttpRequest, slug: str, request_id: uuid.U
     """`status` is open, fulfilled, cancelled or expired; `has_value` says
     whether the agent now holds a value for the name. For the agent, its admins
     and whoever can read the chat it was asked from."""
-    from . import secret_requests
+    from .credentials import secret_requests
 
     req = _secret_request(request, slug, request_id)
     if not (secret_requests.may_read(req, request.user) or req.agent.is_own_login(request.user)):
@@ -414,7 +415,7 @@ def fulfil_agent_secret_request(request: HttpRequest, slug: str, request_id: uui
     person who can write to the request's chat may fill a MISSING value only
     (409 `value_exists`). An agent's own login can never answer. A browser
     needs a passkey step-up."""
-    from . import secret_requests
+    from .credentials import secret_requests
 
     req = _secret_request(request, slug, request_id)
     if not secret_requests.may_answer(req, request.user):
@@ -437,7 +438,8 @@ def get_agent_zk_recipients(request: HttpRequest, slug: str,
     `secret_request`. Verify each recipient's endorsement against a key you
     already trust BEFORE sealing to it (zk-v1 §7): this list is canopy-web's
     claim, the endorsements are not."""
-    from . import secret_requests, services, zk_endorse
+    from . import services
+    from .credentials import secret_requests, zk_endorse
 
     agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
@@ -460,7 +462,7 @@ def add_agent_zk_endorsements(request: HttpRequest, slug: str, payload: ZkEndors
     §7 signature by YOUR vault key over a CURRENT recipient's current key. The
     browser makes them whenever you wrap the vault key to someone (turn on,
     grant, rotate) or confirm who can read the agent."""
-    from . import zk_endorse
+    from .credentials import zk_endorse
 
     agent = _zk_admin(request, slug)
     try:
@@ -685,7 +687,7 @@ def agent_credential_alerts(request: HttpRequest, slug: str, limit: int = 50):
     someone not the owner or an admin, reads of undeclared refs, bursts, and
     resolves refused for a bad or missing device proof. At most one per kind
     per hour (`occurrences` counts the rest). The agent's owner or an admin."""
-    from . import vault_alerts
+    from .credentials import vault_alerts
 
     agent = agent_for_admin(request, slug)
     return vault_alerts.alerts_for(agent, limit=max(1, min(limit, 200)))
@@ -695,7 +697,7 @@ def agent_credential_alerts(request: HttpRequest, slug: str, limit: int = 50):
             summary="This agent's canopy-pat rotation: setting, next due, history")
 def get_pat_rotation(request: HttpRequest, slug: str) -> PatRotationOut:
     """Never a token. The agent's owner or an admin."""
-    from . import pat_rotation
+    from .credentials import pat_rotation
 
     agent = agent_for_admin(request, slug)
     return PatRotationOut(**pat_rotation.status(agent))
@@ -713,7 +715,7 @@ def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) ->
     workspace owner (422/403 otherwise). The owner or an admin."""
     from apps.events import audit
 
-    from . import pat_rotation
+    from .credentials import pat_rotation
 
     agent = agent_for_admin(request, slug)
     before = (agent.pat_rotation_enabled, agent.pat_rotation_days)
@@ -740,7 +742,7 @@ def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
     a new token in `canopy-pat`, the old one valid for 24 h then revoked. It
     changes a secret, so from a browser it needs a fresh passkey step-up (403
     `step_up_required`); a token may call it. The owner or an admin."""
-    from . import pat_rotation
+    from .credentials import pat_rotation
 
     agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):

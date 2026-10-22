@@ -81,7 +81,7 @@ def test_the_checklist_counts_a_live_hosted_route_as_done(w):
 
 def test_resolve_says_the_mailbox_is_ses_so_the_runner_skips_gmail(w):
     _create(w.owner, "scout", "scout@marshellis.com")
-    from apps.agents.credential_resolve import mailbox_backend as _mailbox_backend
+    from apps.agents.credentials.credential_resolve import mailbox_backend as _mailbox_backend
 
     assert _mailbox_backend(Agent.objects.get(slug="scout")) == "ses"
 

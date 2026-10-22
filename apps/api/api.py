@@ -218,8 +218,8 @@ from apps.agents.api_readiness import router as agent_readiness_router  # noqa: 
 from apps.agents.api_routing import router as agent_routing_router  # noqa: E402
 from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
 from apps.agents.contributors_api import router as contributors_router  # noqa: E402
-from apps.agents.oauth_api import oauth_router as google_oauth_router  # noqa: E402
-from apps.agents.oauth_api import router as agent_google_router  # noqa: E402
+from apps.agents.credentials.oauth_api import oauth_router as google_oauth_router  # noqa: E402
+from apps.agents.credentials.oauth_api import router as agent_google_router  # noqa: E402
 from apps.agent_runs.api import router as agent_runs_router  # noqa: E402
 from apps.agent_runs.documents import router as agent_run_docs_router  # noqa: E402
 from apps.workspaces.api import router as workspaces_router  # noqa: E402

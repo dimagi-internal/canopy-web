@@ -338,7 +338,7 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   `one_executing_turn_per_agent` and `routing.busy_agent_ids`: it is the person's
   session, not the agent's one continuous session, so it neither waits behind the
   agent's runner turns nor delays them, and two people may use the agent at once.
-* A **license** (`AgentLicense`, `apps/agents/licenses.py`) is person × agent: the
+* A **license** (`AgentLicense`, `apps/agents/credentials/licenses.py`) is person × agent: the
   record that someone uses the agent locally. The caller list decides who MAY
   (`decide`, above); the license is who DOES. Requested on the first local turn and
   issued at once when `decide` gives the whole agent (basis `owner`, `admin`,

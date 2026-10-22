@@ -44,7 +44,7 @@ from django.utils import timezone
 from apps.common.token_hash import hash_token
 from apps.tokens.models import PersonalToken
 
-from .models import Agent, AgentCredential, AgentPatRotation
+from ..models import Agent, AgentCredential, AgentPatRotation
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def enable_refusal(agent, actor) -> RotationRefused | None:
     from apps.workspaces import permissions as perms
 
     # A zero-knowledge agent rotates too: the new token is sealed to its
-    # devices and members (`zks1`, apps/agents/zk_seal.py), never stored readable.
+    # devices and members (`zks1`, apps/agents/credentials/zk_seal.py), never stored readable.
     if agent.zk_enabled:
         from . import zk_seal
 
@@ -161,7 +161,7 @@ def rotate(agent, *, trigger: str = "scheduler", actor=None):
 def _rotate_locked(agent, *, now, trigger: str, actor):
     """The rotation itself, inside `rotate`'s transaction (agent row locked)."""
 
-    from . import services
+    from .. import services
 
     old = _current_token(agent)
     raw, new = PersonalToken.create_for_user(

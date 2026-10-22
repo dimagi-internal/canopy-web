@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
-from apps.agents import pat_rotation
+from apps.agents.credentials import pat_rotation
 
 
 class Command(BaseCommand):

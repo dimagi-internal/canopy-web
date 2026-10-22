@@ -146,7 +146,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "unpublish_interface": ("agent-admin",),
     "list_admins": ("member",),
     "agent_access": ("member",),
-    # licenses to use the agent locally (apps/agents/licenses.py, canopy-web#1704)
+    # licenses to use the agent locally (apps/agents/credentials/licenses.py, canopy-web#1704)
     "list_agent_licenses": ("member",),
     "revoke_agent_license": ("agent-admin",),
     "approve_agent_license": ("agent-admin",),  # + access.decide must give them the whole agent (409)
@@ -163,13 +163,13 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_pat_rotation": ("agent-admin",),
     "set_pat_rotation": ("agent-admin",),  # turning it on also asks mint_agent_canopy_token's guard
     "rotate_pat_now": ("agent-admin",),  # browser: + passkey step-up; token allowed
-    # zero-knowledge vault (apps/agents/zk.py): browser writes need a passkey step-up
+    # zero-knowledge vault (apps/agents/credentials/zk.py): browser writes need a passkey step-up
     "get_agent_zk_state": ("agent-admin",),  # wraps are public; ?values= ciphertext, read-logged
     "enable_agent_zk": ("agent-admin",),  # browser: + step-up; token allowed
     "set_agent_zk_values": ("agent-admin",),  # browser: + step-up; token allowed
     "add_agent_zk_wraps": ("agent-admin",),  # browser: + step-up; token allowed
     "rotate_agent_zk": ("agent-admin",),  # browser: + step-up; token allowed
-    # give an agent a secret (apps/agents/secret_requests.py): no route returns a value
+    # give an agent a secret (apps/agents/credentials/secret_requests.py): no route returns a value
     "request_agent_secret": ("agent-login", "agent-admin"),  # declared names only
     "get_agent_secret_request": ("agent-login", "agent-admin", "session-acl"),  # status, never a value
     "fulfil_agent_secret_request": ("agent-admin", "secret-request"),  # zks1 only; browser: + step-up
@@ -261,7 +261,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "delete_agent_credential": ("agent-admin",),
     "agent_readiness": ("member",),
     "post_bootstrap_report": ("runner-holds-agent",),
-    # --- apps/agents/oauth_api.py
+    # --- apps/agents/credentials/oauth_api.py
     "start_google_mint": ("agent-admin",),
     "google_callback": ("signed-link", "agent-admin"),  # signed state must name the caller
     # --- apps/agents/a2a_api.py

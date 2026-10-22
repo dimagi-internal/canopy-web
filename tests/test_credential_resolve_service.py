@@ -1,4 +1,4 @@
-"""`apps.agents.credential_resolve.resolve` at the service level: each refusal
+"""`apps.agents.credentials.credential_resolve.resolve` at the service level: each refusal
 is a typed `Refusal` (never an exception), and the read classification and
 license withholding that the route used to hold inline.
 
@@ -14,7 +14,7 @@ from django.core.cache import cache
 from django.test import RequestFactory
 from django.utils import timezone
 
-from apps.agents import credential_resolve as cr
+from apps.agents.credentials import credential_resolve as cr
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces.models import Workspace, WorkspaceMembership
