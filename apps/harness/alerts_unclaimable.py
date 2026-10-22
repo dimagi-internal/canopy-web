@@ -26,8 +26,6 @@ import uuid
 from collections import defaultdict
 from datetime import timedelta
 
-from django.db.models import Q
-
 from apps.agents.models import Agent
 from apps.attention.alerts import DISMISS, Action, Raise
 from apps.workspaces.models import Workspace
@@ -99,18 +97,19 @@ def _agent_of(alert):
     return Agent.objects.filter(slug=parts[1], workspace_id=alert.workspace_id).first()
 
 
-def _queued_turns(agent):
-    return Turn.objects.filter(status=Turn.QUEUED).filter(Q(agent=agent) | Q(chat_session__agent=agent)) \
-        .select_related("agent", "chat_session")
+def _cancellable_stuck(agent, user) -> bool:
+    """May `user` cancel EVERY config-stuck turn this alert is about? One they
+    may not would stay queued after `cancel`, and the framework would resolve
+    the alert anyway — so it is offered only when it truly clears the alert."""
+    turns = stuck_by_agent().get(agent.slug, [])
+    return bool(turns) and all(not _cancel_refusal(user, t) for t in turns)
 
 
 def actions(alert, user) -> list[Action]:
     if not getattr(user, "is_authenticated", False):
         return []
     agent = _agent_of(alert)
-    if agent is None:
-        return []
-    if not any(not _cancel_refusal(user, t) for t in _queued_turns(agent)):
+    if agent is None or not _cancellable_stuck(agent, user):
         return []
     return [Action("cancel", "Cancel these turns", True),
             Action("route", "Fix routing", False, href=settings_path(agent)),
@@ -123,6 +122,9 @@ def perform(alert, user, action_id) -> None:
     agent = _agent_of(alert)
     if agent is None:
         return
-    for turn in stuck_by_agent().get(agent.slug, []):
-        if not _cancel_refusal(user, turn):
-            services.cancel_queued_turn(turn)
+    turns = stuck_by_agent().get(agent.slug, [])
+    # Re-check before touching anything: a partial cancel must not resolve.
+    if any(_cancel_refusal(user, t) for t in turns):
+        raise ValueError("some of these turns may not be cancelled by you; nothing was cancelled")
+    for turn in turns:
+        services.cancel_queued_turn(turn)

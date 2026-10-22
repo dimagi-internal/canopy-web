@@ -74,7 +74,8 @@ def test_config_stuck_turns_raise_one_alert_per_agent(fleet):
     t3 = _stuck_turn(fleet["eva"], "d")
     (again,) = [r for r in src.reconcile(timezone.now()) if r.subject_key == "agent:eva:unclaimable"]
     assert again.digest() != before  # a newly stuck turn is a change
-    assert {t1.pk, t2.pk, t3.pk}
+    assert len(set(Turn.objects.filter(agent=fleet['eva']).values_list('pk', flat=True))
+               & {t1.pk, t2.pk, t3.pk}) == 3
 
 
 def test_offline_stuck_turns_raise_nothing(fleet):
@@ -108,3 +109,28 @@ def test_cancel_action_cancels_and_resolves(fleet):
     assert a.status == Alert.RESOLVED and a.resolved_reason == Alert.REASON_ACTION
     alerts.tick(timezone.now())  # and the source agrees: nothing reopens
     assert _alert().status == Alert.RESOLVED
+
+
+def test_cancel_needs_the_right_over_every_stuck_turn(fleet, monkeypatch):
+    t1, t2 = _stuck_turn(fleet["eva"], "a"), _stuck_turn(fleet["eva"], "b")
+    alerts.tick(timezone.now())
+    real = src._cancel_refusal
+    monkeypatch.setattr(src, "_cancel_refusal", lambda u, t: "no" if t.pk == t2.pk else real(u, t))
+    assert src.actions(_alert(), fleet["ed"]) == []  # only part of the stuck set
+    with pytest.raises(alerts.ActionNotOffered):
+        alerts.act(_alert(), fleet["ed"], "cancel")
+    with pytest.raises(ValueError):  # perform itself refuses, cancelling nothing
+        src.perform(_alert(), fleet["ed"], "cancel")
+    assert set(Turn.objects.filter(pk__in=[t1.pk, t2.pk]).values_list("status", flat=True)) == {Turn.QUEUED}
+    assert _alert().status == Alert.OPEN
+
+
+def test_an_unrelated_queued_turn_does_not_earn_cancel(fleet, monkeypatch):
+    stuck = _stuck_turn(fleet["eva"], "a")
+    alerts.tick(timezone.now())
+    fresh = services.enqueue_turn(initiator=initiator.system(via="test"), agent=fleet["eva"],
+                                  origin=Turn.ORIGIN_API, idempotency_key="fresh", prompt="hi")[0]
+    real = src._cancel_refusal
+    monkeypatch.setattr(src, "_cancel_refusal", lambda u, t: "" if t.pk == fresh.pk else real(u, t) or "no")
+    assert src.actions(_alert(), fleet["viewer"]) == []
+    assert Turn.objects.get(pk=stuck.pk).status == Turn.QUEUED
