@@ -26,6 +26,8 @@ from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 
+from apps.events import audit
+
 from .models import Runner, RunnerDeviceKey, Turn
 
 ALG = "ES256"
@@ -229,3 +231,17 @@ def keys_for_agent(agent):
                if runner_serves_agent(r, agent)]
     return (RunnerDeviceKey.objects.filter(runner__in=runners)
             .select_related("runner", "approved_by").order_by("-created_at"))
+
+
+def revoke(key: RunnerDeviceKey, *, by) -> RunnerDeviceKey:
+    """Revoke (or reject, while pending) a device key: the next proof it signs is
+    refused. Idempotent; the change is noted in the settings audit."""
+    before = key.status
+    if key.status != RunnerDeviceKey.REVOKED:
+        key.status = RunnerDeviceKey.REVOKED
+        key.revoked_by = by
+        key.revoked_at = timezone.now()
+        key.save(update_fields=["status", "revoked_by", "revoked_at"])
+    audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
+                      before=before, after=key.status)
+    return key

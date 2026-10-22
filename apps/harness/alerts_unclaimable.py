@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 from apps.agents.models import Agent
-from apps.attention.alerts import DISMISS, Action, Raise
+from apps.attention.alerts import Action, Raise
 from apps.workspaces import permissions as perms
 from apps.workspaces.models import Workspace
 
@@ -53,7 +53,7 @@ from .models import Turn
 KIND = "unclaimable_turns"
 SEVERITY = "blocking"
 CONFIRM_WITHIN = timedelta(minutes=30)
-CLOSING_ACTION_IDS = ("cancel", "dismiss")
+CLOSING_ACTION_IDS = ("cancel", "route")
 
 
 def settings_path(agent) -> str:
@@ -119,8 +119,8 @@ def fingerprint(stuck: Stuck) -> str:
 
 def _title(agent, n: int) -> str:
     if n == 1:
-        return f"1 queued turn for {agent.name} has no runner that can take it"
-    return f"{n} queued turns for {agent.name} have no runner that can take them"
+        return f"1 turn for {agent.name} is stuck: no runner can take it"
+    return f"{n} turns for {agent.name} are stuck: no runner can take them"
 
 
 def reconcile(now) -> list[Raise]:
@@ -166,8 +166,8 @@ def actions(alert, user) -> list[Action]:
     cancel = _cancellable_stuck(agent, user)
     if not cancel and not perms.can(user, agent.workspace_id, perms.AGENT_WORK):
         return []
-    return ([Action("cancel", "Cancel these turns", True)] if cancel else []) + [
-        Action("route", "Fix routing", False, href=settings_path(agent)), DISMISS]
+    return [Action("route", "Fix routing", True, href=settings_path(agent))] + (
+        [Action("cancel", "Cancel turns", True)] if cancel else [])
 
 
 def perform(alert, user, action_id) -> None:

@@ -355,13 +355,5 @@ def agents_key_opens(key: RunnerDeviceKey, agents: list) -> list[DeviceKeyAgentO
 @gate("runner-admin", setting=True)
 def revoke_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     """Immediate: the next proof signed by this key is refused. Idempotent."""
-    key = _key_or_404(request, key_id)
-    before = key.status
-    if key.status != RunnerDeviceKey.REVOKED:
-        key.status = RunnerDeviceKey.REVOKED
-        key.revoked_by = request.user
-        key.revoked_at = timezone.now()
-        key.save(update_fields=["status", "revoked_by", "revoked_at"])
-    audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
-                      before=before, after=key.status)
+    key = device_keys.revoke(_key_or_404(request, key_id), by=request.user)
     return key_out(key, can_manage=may_trust_device_keys(request.user, key.runner))

@@ -21,17 +21,18 @@ from __future__ import annotations
 
 import uuid
 
-from apps.attention.alerts import DISMISS, Action, Raise
+from apps.attention.alerts import Action, Raise
 
+from . import device_keys
 from .api_device_keys import approve_path
 from .models import Runner, RunnerDeviceKey
 from .routing import agents_routed_to
-from .runners import may_trust_device_keys
+from .runners import can_administer_runner, may_trust_device_keys
 
 KIND = "device_key_pending"
 SEVERITY = "blocking"
 CONFIRM_WITHIN = None
-CLOSING_ACTION_IDS = ("approve", "dismiss")
+CLOSING_ACTION_IDS = ("approve", "reject")
 
 
 def reconcile(now) -> list[Raise]:
@@ -44,7 +45,7 @@ def reconcile(now) -> list[Raise]:
         out.append(Raise(
             subject_key=f"device_key:{key.pk}",
             workspace=runner.workspace_id,
-            title=f"A new device key on {runner.name} is waiting for approval",
+            title=f"{runner.name} has a new device key waiting for approval",
             url=approve_path(key),
             scopes=(f"runner:{runner.pk}", f"workspace:{runner.workspace_id}",
                     *[f"agent:{s}" for s in slugs]),
@@ -71,9 +72,18 @@ def actions(alert, user) -> list[Action]:
     key = _key_of(alert)
     if key is None or not may_trust_device_keys(user, key.runner):
         return []
-    return [Action("approve", "Approve key", True, href=approve_path(key)), DISMISS]
+    out = [Action("approve", "Approve key", True, href=approve_path(key))]
+    if can_administer_runner(user, key.runner):  # the revoke route's own gate
+        out.append(Action("reject", "Reject key", True))
+    return out
 
 
 def perform(alert, user, action_id) -> None:
-    """No server-side handlers: `approve` is a link and `dismiss` the framework's."""
-    raise ValueError(f"device_key_pending has no handler for {action_id!r}")
+    """`reject` revokes the pending key (`device_keys.revoke`, as the revoke
+    route does). `approve` is a link (approving needs a passkey step-up)."""
+    if action_id != "reject":
+        raise ValueError(f"device_key_pending has no handler for {action_id!r}")
+    key = _key_of(alert)
+    if key is None or key.status != RunnerDeviceKey.PENDING:
+        raise ValueError("That key is no longer waiting for approval; nothing was changed.")
+    device_keys.revoke(key, by=user)

@@ -34,7 +34,7 @@ from . import topology
 KIND = "agent_cant_run"
 SEVERITY = "setup"
 CONFIRM_WITHIN: timedelta | None = None
-CLOSING_ACTION_IDS = ("dismiss",)
+CLOSING_ACTION_IDS = ("routing", "dismiss")
 
 
 def settings_path(workspace: str, slug: str) -> str:
@@ -119,7 +119,7 @@ def actions(alert, user) -> list[Action]:
     agent = _agent_of(alert)
     if agent is None or not perms.can(user, agent.workspace_id, perms.AGENT_WORK):
         return []
-    return [Action("routing", "Fix routing", False, href=settings_path(agent.workspace_id, agent.slug)),
+    return [Action("routing", "Fix routing", True, href=settings_path(agent.workspace_id, agent.slug)),
             DISMISS]
 
 

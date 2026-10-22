@@ -40,7 +40,7 @@ from __future__ import annotations
 import re
 
 from apps.agents.models import Agent
-from apps.attention.alerts import DISMISS, Action, Raise
+from apps.attention.alerts import Action, Raise
 from apps.workspaces import services as wsvc
 
 from . import auto_debug
@@ -49,7 +49,7 @@ from .models import FailureInvestigation, Runner
 KIND = "turn_failure"
 SEVERITY = "action"
 CONFIRM_WITHIN = None
-CLOSING_ACTION_IDS = ("mark_resolved", "dismiss")
+CLOSING_ACTION_IDS = ("mark_resolved",)
 
 #: A person's, not Ada's: never `open` (a debug turn has it) or `resolved`.
 RAISING_STATUSES = (
@@ -73,7 +73,7 @@ def _first_sentence(note: str) -> str:
 
 def title_for(inv) -> str:
     runners = ", ".join(inv.runners or []) or "the fleet"
-    return f"Turns failing on {runners}: {_first_sentence(inv.sample_note)}"
+    return f"Turns keep failing on {runners}: {_first_sentence(inv.sample_note)}"
 
 
 def investigation_path(inv) -> str:
@@ -126,8 +126,8 @@ def actions(alert, user) -> list[Action]:
     inv = _investigation_of(alert)
     if inv is None or not auto_debug.can_handle(user, alert.workspace_id):
         return []
-    return [Action("open", "Open the investigation", False, href=investigation_path(inv)),
-            Action("mark_resolved", "Mark resolved", True), DISMISS]
+    return [Action("open", "See failed turns", False, href=investigation_path(inv)),
+            Action("mark_resolved", "Mark resolved", True)]
 
 
 def perform(alert, user, action_id) -> None:

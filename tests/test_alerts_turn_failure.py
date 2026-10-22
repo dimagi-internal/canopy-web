@@ -62,7 +62,7 @@ def test_escalated_raises_action_alert(fleet, status):
     (r,) = src.reconcile(timezone.now())
     assert r.subject_key == f"investigation:{inv.pk}"
     assert r.workspace == "dimagi"
-    assert r.title == ("Turns failing on cloud-ec2-2, ghost-box: "
+    assert r.title == ("Turns keep failing on cloud-ec2-2, ghost-box: "
                        "Couldn't confirm your message was delivered to the session.")
     assert r.scopes == ("workspace:dimagi", f"runner:{runner.pk}", "agent:ace")  # unknown runner skipped
     assert r.url == "/w/dimagi/agents/ace/turns"
@@ -76,7 +76,7 @@ def test_title_is_capped_and_url_falls_back(fleet):
     inv.save()
     (r,) = src.reconcile(timezone.now())
     assert len(r.title.split(": ", 1)[1]) <= 120
-    assert r.title.startswith("Turns failing on ")
+    assert r.title.startswith("Turns keep failing on ")
     assert r.url == "/w/dimagi/activity"
 
 
@@ -85,7 +85,7 @@ def test_mark_resolved_resolves_investigation_and_alert(fleet):
     alerts.tick(timezone.now())
     alert = Alert.objects.get(kind=src.KIND)
     ids = [a.id for a in alerts.visible_actions(alert, fleet["jj"])]
-    assert ids == ["open", "mark_resolved", "dismiss"]
+    assert ids == ["open", "mark_resolved"]
     alerts.act(alert, fleet["jj"], "mark_resolved")
     inv.refresh_from_db()
     assert inv.status == FailureInvestigation.RESOLVED
@@ -119,7 +119,7 @@ def test_dismiss_sticks_through_repeats_and_reopens_on_status_change(fleet):
     inv = _inv(fleet)
     alerts.tick(timezone.now())
     alert = Alert.objects.get(kind=src.KIND)
-    alerts.act(alert, fleet["jj"], "dismiss")
+    alerts.dismiss(alert, fleet["jj"])  # not offered on screen; pins the fingerprint rule
     _repeat(inv)
     _repeat(inv)
     alerts.tick(timezone.now())
