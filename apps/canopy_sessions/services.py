@@ -2260,47 +2260,10 @@ def _send_message(
         message = Message.objects.create(
             session=session, turn_index=index, role=Message.USER, plaintext=text, content=content,
         )
-        # Continuity: every send in a chat reuses ONE emdash session (the runner's
-        # _thread_key reads this), so a conversation is one durable thread rather
-        # than a fresh session per message. chat_session_id tells a session-capable
-        # runner to BRIDGE the emdash response back into the ledger (vs the normal
-        # fire-and-continue), so the website streams the reply.
-        #
-        # A RUNNER-DISCOVERED session already has a binding keyed `emdash:<task>` (the
-        # report sweep wrote it). Sending str(session.id) there matched nothing, so
-        # resolve_session answered new_thread and the runner SPAWNED A FRESH emdash
-        # session instead of typing into the live one you were looking at. Prefer the
-        # binding's existing thread_key; web sessions (no binding yet) keep the
-        # session id, which is what record_session then stores.
-        binding = getattr(session, "runner_binding", None)
-        thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
-        pinned = _resolve_placement(session, placement, user)
-        ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
-        if client_id:
-            # The one place a send's client nonce survives as itself: the
-            # idempotency key's suffix is an index when there is none, and
-            # `queued_messages` must not report an index as a client_id.
-            ref["client_id"] = client_id
-        attachments = claim_pending_attachments(session, message, user)
-        if attachments:
-            ref["attachments"] = [*(ref.get("attachments") or []), *attachments]
-        turn, _created = harness_services.enqueue_turn(
-            session=session,
-            origin=origin,
-            idempotency_key=f"chat:{session.id.hex}:{client_id or index}",
-            prompt=text,
-            origin_ref=ref,
-            # WHO sent it. Not decoration: this is the actor half of the routing key
-            # (spec 2026-09-05), and it is the ONLY place an `ace_web` or
-            # `canopy_web_chat` turn can get one — neither carries the
-            # `origin_ref["from"]` an email turn is routed by. Left unset, every actor
-            # rule on those sources silently matches nothing. `enqueue_turn` ignores an
-            # unauthenticated user, so this is safe to pass unconditionally.
-            enqueued_by=user,
-            pinned_runner=pinned,
-            initiator=_initiator(initiator, user, origin),
-            capability=capability,
-            parent=parent,
+        turn = _enqueue_chat_turn(
+            session=session, message=message, text=text, user=user, client_id=client_id,
+            fallback_key=str(index), placement=placement, origin=origin, initiator=initiator,
+            origin_ref=origin_ref, capability=capability, parent=parent,
         )
         # The ledger path writes its own row, so it records the author directly
         # rather than through the transcript marker.
@@ -2324,6 +2287,61 @@ def _send_message(
         # since the real id is already in hand — no ledger round trip needed.
         _publish_user_message(session.id, message, client_id)
     return message, turn
+
+
+def _enqueue_chat_turn(
+    *, session: Session, message: Message | None, text: str, user, client_id: str,
+    fallback_key: str, placement: str | None, origin: str, initiator, origin_ref: dict | None,
+    capability: str | None, parent,
+) -> Turn | None:
+    """Enqueue the session Turn that answers one send — shared by the ledger and
+    the transcript-sourced paths, which differ only in whether `message` is a
+    durable row and in `fallback_key` (the idempotency suffix when the client
+    sent no nonce).
+
+    Continuity: every send in a chat reuses ONE emdash session (the runner's
+    _thread_key reads this), so a conversation is one durable thread rather than
+    a fresh session per message. chat_session_id tells a session-capable runner
+    to BRIDGE the emdash response back into the ledger (vs the normal
+    fire-and-continue), so the website streams the reply.
+
+    A RUNNER-DISCOVERED session already has a binding keyed `emdash:<task>` (the
+    report sweep wrote it). Sending str(session.id) there matched nothing, so
+    resolve_session answered new_thread and the runner SPAWNED A FRESH emdash
+    session instead of typing into the live one you were looking at. Prefer the
+    binding's existing thread_key; web sessions (no binding yet) keep the session
+    id, which is what record_session then stores."""
+    binding = getattr(session, "runner_binding", None)
+    thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
+    pinned = _resolve_placement(session, placement, user)
+    ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
+    if client_id:
+        # The one place a send's client nonce survives as itself: the
+        # idempotency key's suffix is `fallback_key` when there is none, and
+        # `queued_messages` must not report that as a client_id.
+        ref["client_id"] = client_id
+    attachments = claim_pending_attachments(session, message, user)
+    if attachments:
+        ref["attachments"] = [*(ref.get("attachments") or []), *attachments]
+    turn, _created = harness_services.enqueue_turn(
+        session=session,
+        origin=origin,
+        idempotency_key=f"chat:{session.id.hex}:{client_id or fallback_key}",
+        prompt=text,
+        origin_ref=ref,
+        # WHO sent it. Not decoration: this is the actor half of the routing key
+        # (spec 2026-09-05), and it is the ONLY place an `ace_web` or
+        # `canopy_web_chat` turn can get one — neither carries the
+        # `origin_ref["from"]` an email turn is routed by. Left unset, every actor
+        # rule on those sources silently matches nothing. `enqueue_turn` ignores an
+        # unauthenticated user, so this is safe to pass unconditionally.
+        enqueued_by=user,
+        pinned_runner=pinned,
+        initiator=_initiator(initiator, user, origin),
+        capability=capability,
+        parent=parent,
+    )
+    return turn
 
 
 def _publish_user_message(session_id, message: Message, client_id: str = "") -> None:
@@ -2575,38 +2593,17 @@ def _send_transcript_sourced_message(
     )
     message.pk = f"transient:{uuid.uuid4().hex}"
     message.created_at = timezone.now()
-    binding = getattr(session, "runner_binding", None)
-    thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
     # Without a durable row, _next_index no longer advances between sends, so the
     # old index fallback would collapse DISTINCT no-nonce sends onto one turn —
     # fall back to a fresh nonce instead (same dedupe strength as before: only a
     # real client_id makes a retry idempotent).
-    pinned = _resolve_placement(session, placement, user)
-    ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
-    if client_id:
-        ref["client_id"] = client_id   # see send_message: the key suffix may be a nonce
-    # message=None: this path writes no durable user row, so the sent_at stamp is
-    # the only thing stopping these attachments riding along on every later send.
-    attachments = claim_pending_attachments(session, None, user)
-    if attachments:
-        ref["attachments"] = [*(ref.get("attachments") or []), *attachments]
-    turn, _created = harness_services.enqueue_turn(
-        session=session,
-        origin=origin,
-        idempotency_key=f"chat:{session.id.hex}:{client_id or uuid.uuid4().hex}",
-        prompt=text,
-        origin_ref=ref,
-        # WHO sent it. Not decoration: this is the actor half of the routing key
-        # (spec 2026-09-05), and it is the ONLY place an `ace_web` or
-        # `canopy_web_chat` turn can get one — neither carries the
-        # `origin_ref["from"]` an email turn is routed by. Left unset, every actor
-        # rule on those sources silently matches nothing. `enqueue_turn` ignores an
-        # unauthenticated user, so this is safe to pass unconditionally.
-        enqueued_by=user,
-        pinned_runner=pinned,
-        initiator=_initiator(initiator, user, origin),
-        capability=capability,
-        parent=parent,
+    #
+    # message=None: this path writes no durable user row, so the attachments'
+    # sent_at stamp is the only thing stopping them riding along on every later send.
+    turn = _enqueue_chat_turn(
+        session=session, message=None, text=text, user=user, client_id=client_id,
+        fallback_key=uuid.uuid4().hex, placement=placement, origin=origin,
+        initiator=initiator, origin_ref=origin_ref, capability=capability, parent=parent,
     )
     return message, turn
 

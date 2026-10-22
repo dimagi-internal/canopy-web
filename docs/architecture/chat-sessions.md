@@ -111,6 +111,12 @@ an emdash task name alone is not an identity.
   `drafts.set_visibility`) — never a field on the version-guarded `draft.update`
   keystroke frame, where a stale echo can silently downgrade it. The control lives
   in the chat's ⋯ menu (`ChatSessionMenu`).
+- **Every door sends through `doors.send_from(door, ...)`** (REST, socket, app
+  views, contact API, Slack): it stamps the site's runner requirements, caps the
+  client nonce, turns a refusal into a 422 on an HTTP door and runs the dev stub
+  inline; what differs per door is a row of `doors.DOORS`. Who may send, the
+  initiator and door-only follow-ups stay at the door
+  (`tests/test_one_chat_send_path.py`).
 - **A send only enqueues.** `services.queued_messages` (derived, never stored) shows
   every watcher the sends not yet in the transcript; REST and contact sends carry a
   `client_id` so the sender's optimistic row dedupes against the queued entry.

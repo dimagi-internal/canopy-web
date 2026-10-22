@@ -108,17 +108,13 @@ def app_view_message(request: HttpRequest, session_id: uuid.UUID, tool_call_id: 
                      payload: AppMessageIn):
     from apps.harness import initiator as who
 
-    from . import services
+    from . import doors
 
     session = _session(request, session_id)
     ref = _run(views.check_message, session, _viewer(request), tool_call_id, payload.text)
-    try:
-        message, turn = services.send_message(
-            session=session, text=payload.text, user=request.user,
-            client_id=(payload.client_id or "")[:100],
-            initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
-        )
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from None
-    services.maybe_execute_inline(turn)
+    message, turn = doors.send_from(
+        "app_view", session=session, text=payload.text, user=request.user,
+        client_id=payload.client_id,
+        initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
+    )
     return {"turn_id": str(turn.id) if turn else None, "message_id": str(message.id)}

@@ -32,6 +32,7 @@ from apps.workspaces import services as wsvc
 from . import (
     access,
     attachment_storage,
+    doors,
     feed,
     filing,
     page_actions,
@@ -1238,31 +1239,19 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
     session = _session_or_404(request, session_id, write=True)
     if not payload.text.strip():
         raise HttpError(422, "message text is required")
-    # A site's token carries its runner requirements (ZDR); stamp them before
-    # the send so the turn is routed under them. A union — never lifts one.
-    services.add_runner_requirements(session, getattr(request, "runner_requirements", ()))
-    try:
-        message, turn = services.send_message(
-            session=session, text=payload.text, user=request.user,
-            # Capped the same way the WS path caps it (consumers.py's
-            # `chat.send` handler) — the schema field itself stays an
-            # unbounded `str` so `generated.ts` needs no regen; the length
-            # limit is enforced where the id is actually used.
-            client_id=payload.client_id[:100], placement=payload.placement,
-            origin=payload.origin,
-            initiator=who.for_request(request, via=who.channel(request, "chat")),
-            parent=payload.parent,
-            origin_ref={"clear_prompt": True} if payload.clear_prompt else None,
-        )
-    except ValueError as exc:
-        raise HttpError(422, str(exc))
+    message, turn = doors.send_from(
+        "rest", session=session, text=payload.text, user=request.user,
+        client_id=payload.client_id,
+        runner_requirements=getattr(request, "runner_requirements", ()),
+        initiator=who.for_request(request, via=who.channel(request, "chat")),
+        placement=payload.placement, origin=payload.origin, parent=payload.parent,
+        origin_ref={"clear_prompt": True} if payload.clear_prompt else None,
+    )
     # The socket path commits the sender's server draft; this one did not, so a
     # line sent here stayed in the draft and came back on every later connect
     # as "<you> is typing". Clear it and tell the room, same frame the socket
     # sends (`draft.updated`, rendered per recipient by the consumer).
     services.clear_draft_after_http_send(session, request.user, payload.text)
-    # Dev/test: run the stub inline. Production: leave it queued for a cloud runner.
-    services.maybe_execute_inline(turn)
     return {"turn_id": turn.id if turn else None, "message": MessageOut.from_orm(message)}
 
 

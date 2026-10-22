@@ -556,36 +556,25 @@ def contact_archive_session(request: HttpRequest, session_id: str) -> ContactSes
 @contact_router.post("/sessions/{session_id}/send", response=dict,
                      summary="Say something")
 def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import doors
 
     session = _session_or_404(request, session_id)
     if not payload.text.strip():
         raise HttpError(422, "message text is required")
-    # Before the send, so the turn it enqueues is routed under the site's floor.
-    # A union: a token without the claim never lifts one an earlier token set.
-    session_services.add_runner_requirements(session, getattr(request, "runner_requirements", ()))
-    try:
-        # `user` is the anonymous request user. `enqueue_turn` ignores an
-        # unauthenticated one, so the turn simply carries no `enqueued_by` —
-        # which is correct: nobody with an account sent this. A routing rule
-        # that wants to know reads `turn.session.contact`, which is the
-        # authoritative answer rather than a copy.
-        from apps.harness.models import Turn
+    from apps.harness.models import Turn
 
-        if payload.origin and payload.origin not in (Turn.ORIGIN_API, Turn.ORIGIN_ACE_WEB):
-            raise HttpError(422, f"origin {payload.origin!r} is not one a caller may name")
-        message, turn = session_services.send_message(
-            session=session, text=payload.text, user=request.user,
-            # Capped the same way the WS path caps it (canopy_sessions'
-            # consumers.py `chat.send` handler) — `ContactSendIn.client_id`
-            # stays an unbounded `str` so `generated.ts` needs no regen; the
-            # length limit is enforced where the id is actually used.
-            client_id=payload.client_id[:100], origin=payload.origin or None,
-            initiator=who.for_request(request, via=who.channel(request, "contact")),
-        )
-    except ValueError as exc:
-        raise HttpError(422, str(exc))
-    session_services.maybe_execute_inline(turn)
+    if payload.origin and payload.origin not in (Turn.ORIGIN_API, Turn.ORIGIN_ACE_WEB):
+        raise HttpError(422, f"origin {payload.origin!r} is not one a caller may name")
+    # `user` is the anonymous request user. `enqueue_turn` ignores an
+    # unauthenticated one, so the turn simply carries no `enqueued_by` — which
+    # is correct: nobody with an account sent this. A routing rule that wants
+    # to know reads `turn.session.contact`, the authoritative answer.
+    message, turn = doors.send_from(
+        "contact", session=session, text=payload.text, user=request.user,
+        client_id=payload.client_id, origin=payload.origin or None,
+        runner_requirements=getattr(request, "runner_requirements", ()),
+        initiator=who.for_request(request, via=who.channel(request, "contact")),
+    )
     return {"turn_id": str(turn.id) if turn else None, "message_id": message.id}
 
 
@@ -846,23 +835,19 @@ def contact_app_view_context(request: HttpRequest, session_id: str, tool_call_id
                      summary="An app view's ui/message: a message from you, which starts a turn")
 def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id: str,
                              payload: AppMessageIn):
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import doors
 
     from . import mcp_apps_views
 
     session = _session_or_404(request, session_id)
     text = payload.text
     ref = _app_run(mcp_apps_views.check_message, session, _app_viewer(request), tool_call_id, text)
-    session_services.add_runner_requirements(session, getattr(request, "runner_requirements", ()))
-    try:
-        message, turn = session_services.send_message(
-            session=session, text=text, user=request.user,
-            client_id=(payload.client_id or "")[:100],
-            initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
-        )
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from None
-    session_services.maybe_execute_inline(turn)
+    message, turn = doors.send_from(
+        "contact_app_view", session=session, text=text, user=request.user,
+        client_id=payload.client_id,
+        runner_requirements=getattr(request, "runner_requirements", ()),
+        initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
+    )
     return {"turn_id": str(turn.id) if turn else None, "message_id": str(message.id)}
 
 
