@@ -684,19 +684,18 @@ def _credential_check() -> None:
         for name in [k for k in _HEALTH
                      if k.startswith("claude.probe.") and k[len("claude.probe."):] not in staged]:
             del _HEALTH[name]
+    # Only none is a problem. Any mix of logins, tokens and API keys, one or
+    # several, is a working box — how many to hold is the operator's choice.
     n = len(_CLAUDE_CREDS)
     if n == 0:
         _set_check("claude.credentials", "fail",
-                   "no Claude credential staged: this box cannot run a turn. Sign in with "
-                   "Claude (or create a long-lived token) on the runner's credentials.")
-    elif n == 1:
-        _set_check("claude.credentials", "warn",
-                   "one Claude credential: a usage cap stops every agent here with nothing to fail over to")
+                   "no Claude credential staged: this box cannot run a turn. Add a login, "
+                   "token or API key on the runner's credentials.")
     else:
-        _set_check("claude.credentials", "ok", f"{n} credentials in the fallback chain")
-    # Separate from the count on purpose: a box can have plenty of credentials
-    # and still none that sees a claude.ai connector. The credentials page reads
-    # this one check to say whether the runner is signed in.
+        _set_check("claude.credentials", "ok",
+                   "1 credential" if n == 1 else f"{n} credentials, used in order")
+    # The credentials page reads this check to show which account the box's own
+    # login is. A box with no login is not missing anything, so it reports nothing.
     first = next((c[0] for c in _CLAUDE_CREDS if _is_login(c[0])), "")
     if first:
         who = box_login_account(key=_login_key_of(first))
@@ -704,9 +703,8 @@ def _credential_check() -> None:
                    f"signed in on this box as {who} — claude.ai connectors available" if who
                    else "signed in on this box — claude.ai connectors available")
     else:
-        _set_check("claude.login", "warn",
-                   "not signed in on this box: turns run on long-lived tokens, which cannot use "
-                   "claude.ai connectors (Claude Docs). Sign in with Claude on the runner's credentials.")
+        with _HEALTH_LOCK:
+            _HEALTH.pop("claude.login", None)
 
 
 #: Root-volume thresholds (percent used). cloud-ec2-1 reached 100% on 2026-10-04 —
@@ -6597,10 +6595,6 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
             _CLAUDE_CREDS.extend(_cascade_from(cred))
             _apply_claude_credential(0)
             _log(f"claude credential cascade: {', '.join(c[0] for c in _CLAUDE_CREDS)}")
-            if len(_CLAUDE_CREDS) == 1:
-                _log("warn: only ONE Claude credential is set — a usage cap will stop "
-                     "every agent on this box with nothing to fail over to "
-                     "(`canopy runner credential` adds a fallback)")
             # There is no box-wide 1Password key any more, and canopy-web no
             # longer serves one. A key here would be staged into this process's
             # environment, which every turn inherits — one credential reading

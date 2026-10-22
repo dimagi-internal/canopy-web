@@ -27013,7 +27013,7 @@ export interface components {
         /**
          * HealthCheck
          * @description One feature a runner checked on itself. `warn` is "works, but a person
-         *     should know" (one Claude credential, no fallback); `fail` is "this feature
+         *     should know" (a CLI behind its plugin); `fail` is "this feature
          *     is off" (a package that did not import, so no transcripts).
          */
         readonly HealthCheck: {
