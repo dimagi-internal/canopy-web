@@ -314,7 +314,8 @@ jobs:
 
   # What SQLite cannot test: pgvector (the dormant KB vectors, kept working for a
   # corpus that turns them on — the HNSW index, the filtered nearest-neighbour
-  # query, vectors joining search through the MCP tool). The
+  # query, vectors joining search through the MCP tool), and the KB version log's
+  # row locks (the index job claims with SELECT … FOR UPDATE SKIP LOCKED). The
   # suite skips itself on SQLite, so `Backend pytest` alone would wave a broken
   # vector path through. Runs only the PostgreSQL-specific files (the whole suite
   # on Postgres is minutes longer and adds nothing SQLite does not already cover).
@@ -348,7 +349,9 @@ jobs:
       - name: Run the PostgreSQL suites
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/canopy_web
-        run: uv run pytest --ds=config.settings.pgtest tests/test_kb_vectors_pg.py tests/test_kb_vectors.py -q
+        run: >-
+          uv run pytest --ds=config.settings.pgtest tests/test_kb_vectors_pg.py tests/test_kb_vectors.py
+          tests/test_kb_versions.py tests/test_project_mcp.py -q
 
   # The checks that only make sense on a PR, because they compare against the
   # PR's BASE — which a merge-group run does not have. On a PR these are the

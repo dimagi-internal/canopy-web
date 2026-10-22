@@ -426,6 +426,22 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Open the project page', 'Share its address'],
   },
   {
+    path: '/w/:workspace/projects/:handle/kb',
+    home: '/w/:workspace/mcp',
+    title: 'Knowledge base',
+    audience: "A knowledge base's owner, its steward and the people the owner lets query it",
+    what: "A workspace project's knowledge base: where its documents come from and, for a Google Drive source, the owner's review of every file and folder under it. Nothing in those folders is read until the owner switches it on here; a folder's switch reaches everything under it, and files that appear later wait in New since approval unless the folder auto-approves them. Flagged files look like they may hold personal data, and a spreadsheet whose headers look like personal data is held until released. Also who may query it, what was skipped and why, and its version log. Anyone else gets a 404; only the owner sees the controls.",
+    needsFirst: 'A workspace project serving a knowledge base, with a source its steward added (a Drive source also needs its first inventory).',
+    actions: [
+      'Switch a file or folder on or off',
+      'Let a folder auto-approve new files',
+      'Approve or exclude files that are new since approval',
+      'Release a held spreadsheet',
+      'Add or remove who may query it',
+      'See what was skipped and the version log',
+    ],
+  },
+  {
     path: '/w/:workspace/mcp',
     title: 'MCP servers',
     audience: 'Anyone in the workspace',

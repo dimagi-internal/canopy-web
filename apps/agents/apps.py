@@ -24,6 +24,9 @@ class AgentsConfig(AppConfig):
         ticks.register("agents.vault_reconcile", _vault_reconcile, 60)
         ticks.register("agents.workspace_vault_reconcile", _workspace_vault_reconcile, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
+        # A knowledge base delta waiting to be indexed (`kb_index`): the clock only kicks the
+        # builder thread, and picks up a version whose builder died with its task.
+        ticks.register("agents.kb_index", _kb_index, 30)
 
 
 def _make_vault(sender, instance, created, raw=False, **kwargs) -> None:
@@ -70,3 +73,9 @@ def _pat_rotation() -> None:
             proposals.expire_stale()
         except Exception:  # noqa: BLE001
             logging.getLogger(__name__).exception("proposed-project expiry failed")
+
+
+def _kb_index() -> None:
+    from . import kb_index  # noqa: PLC0415 — a tick: imported once the app is ready
+
+    kb_index.tick()

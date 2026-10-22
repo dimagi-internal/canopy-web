@@ -22,7 +22,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.links import scoped_path
 from apps.workspaces.models import Workspace
 
-from . import kb_store, kb_vectors, services
+from . import kb_drive, kb_store, kb_vectors, kb_versions, services
 from .api import list_agents
 from .api_board import apply_project_patch, project_detail, require_workspace_editor
 from .gates import agent_for_work, listed_agent_workspaces, visible_agent_workspaces
@@ -230,7 +230,7 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
 
     listed = listed_agent_workspaces(request)
     projects = [p for p in services.workspace_projects(listed, steward_workspaces=listed)
-                if p.mcp_path and p.status != AgentProject.ARCHIVED]
+                if p.mcp_path and p.status != AgentProject.ARCHIVED and kb_drive.may_read(request.user, p)]
     names = dict(Workspace.objects.filter(slug__in={p.owner_workspace_id for p in projects})
                  .values_list("slug", "display_name"))
     base = issuer(request)
@@ -329,11 +329,19 @@ def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, paylo
 @gate("agent.work", kind="content")
 def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPublishIn) -> AgentProjectOut:
     """The project answers its tools at `mcp_path` from this upload from now on
-    (every serving instance re-fetches it by its sha256); the previous one is deleted."""
+    (every serving instance re-fetches it by its sha256), as a new FULL version of its
+    log (`…/kb/versions`). With the `state` it was built from, the next publish can send
+    only what changed (`…/kb/plan`). Earlier versions' files are kept for rollback
+    (the newest few)."""
 
     project = _workspace_project_or_404(request, workspace, handle)
     agent_for_work(request, project.agent.slug)
-    project = _kb_call(lambda: kb_store.publish(project, payload.key, payload.sha256))
+    state = payload.state.model_dump() if payload.state else None
+    try:
+        project, _ = _kb_call(lambda: kb_versions.publish_full(project, payload.key, payload.sha256, state,
+                                                               published_by=kb_versions.publisher(request.user)))
+    except kb_versions.KbConflict as exc:
+        raise HttpError(409, str(exc)) from exc
     # Dormant: a no-op while KB_VECTORS is off (kb_vectors.py). When on, it brings
     # the vectors in step with the new file off the request.
 

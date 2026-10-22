@@ -47,6 +47,7 @@ import { PeopleMePage, PersonPageView } from './pages/PeopleMePage'
 import { HcpClientsPage } from './pages/HcpClientsPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { WorkspaceProjectRedirect } from './pages/projects/WorkspaceProjects'
+import { KnowledgeBasePage } from './pages/projects/KnowledgeBasePage'
 import { McpServersPage } from './pages/projects/McpServersPage'
 import { ProjectsPage } from './pages/projects/ProjectsPage'
 import { HomePage } from './pages/home/HomePage'
@@ -362,6 +363,9 @@ export const routeTable: RouteObject[] = [
       // project, outside the agent console. A project has one page now; links
       // already sent land on it.
       { path: '/w/:workspace/projects/:handle', element: <WorkspaceProjectRedirect /> },
+      // A knowledge base's sources and its owner's review of a Drive source. Static
+      // `kb` outranks `:agent/:ref`.
+      { path: '/w/:workspace/projects/:handle/kb', element: <KnowledgeBasePage /> },
       { path: '/w/:workspace/projects/:agent/:ref', element: <ProjectPageRedirect /> },
       { path: '/w/:workspace/projects/:agent/:ref/people/:person', element: <ProjectPageRedirect /> },
       { path: '/w/:workspace/schedules', element: <SchedulesPage /> },

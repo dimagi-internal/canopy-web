@@ -1,8 +1,9 @@
 import { useEffect, useState, type JSX } from 'react'
-import { Navigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 
 import { CopyCommand } from '@/components/agents/CopyCommand'
 import { AgentApiError, getWorkspaceProject, type ProjectDetailOut, type ProjectOut } from '@/api/agents'
+import { scopedPath } from '@/lib/scopedLinks'
 
 // WORKSPACE PROJECTS — owned by the workspace rather than one agent (a funder
 // knowledge base many agents read), each kept current by a steward agent and
@@ -55,6 +56,7 @@ function WorkspaceProjectReadOnly({ project }: { project: ProjectDetailOut }): J
     <div className="p-6 max-w-3xl">
       <h1 className="text-lg font-semibold text-foreground">{project.name}</h1>
       <WorkspaceProjectLine project={project} />
+      <ProjectKbLink project={project} />
       <ProjectMcpInstall project={project} />
       {project.outcome && <p className="text-[13px] text-foreground-secondary mt-3">{project.outcome}</p>}
       {project.drive_folder_url && (
@@ -91,6 +93,22 @@ export function WorkspaceProjectLine({ project }: { project: ProjectOut }): JSX.
     <p className="text-[12px] text-muted-foreground mt-1" data-testid="workspace-project-line">
       Workspace project <span className="font-mono">{project.address}</span> · kept current by{' '}
       {project.steward_slug} · any agent in the workspace can file tasks into it
+    </p>
+  )
+}
+
+/** A link to a knowledge-base project's sources and its owner's review (`…/projects/:handle/kb`). */
+export function ProjectKbLink({ project }: { project: ProjectOut }): JSX.Element | null {
+  if (project.scope !== 'workspace' || project.mcp_kind !== 'kb') return null
+  // The address names the project's own workspace, which for a division's project
+  // kept from the parent is not the board's.
+  const [ws, handle] = project.address.split('/')
+  if (!ws || !handle) return null
+  return (
+    <p className="text-[12px] mt-2" data-testid="project-kb-link">
+      <Link to={scopedPath(ws, `/projects/${encodeURIComponent(handle)}/kb`)} className="text-primary hover:underline">
+        Knowledge base sources &amp; review →
+      </Link>
     </p>
   )
 }

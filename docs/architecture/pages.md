@@ -73,6 +73,13 @@ Every browser-facing address canopy-web serves. The SPA route table is
   workspace's `GET /api/workspace-projects/` (a workspace project kept by a
   parent workspace's agent is only in the second). Active and proposed by
   default; a row opens the project's one page on its agent's board.
+- **`/projects/:handle/kb`** — a knowledge base's sources and its owner's review
+  (`GET …/kb/review`, `KnowledgeBasePage.tsx`): each Drive source as a folder tree
+  with every file's status (pending, approved, excluded, new since approval, held
+  on its headers, skipped for narrower sharing, gone) and name flags; the owner
+  alone gets the switches, the per-folder auto-approve rule, Release hold, and the
+  list of who may query it; everyone it admits (owner, steward, named readers) sees
+  the version log. Linked from a KB project's page.
 - **`/projects/:agent/:ref`** (+ `/people/:person`) → redirects to the
   project's one page, `/agents/:agent/projects/:ref`.
   **An idea is a task with `kind: "idea"`** — never inferred; `work` is the

@@ -22,9 +22,12 @@ signs in for (`/api/mcp/`, RFC 9728) already covers it — MCP clients accept a
 protected resource that is a path prefix of the server URL.
 
 **Who may call it:** a member of the project's workspace or of its steward's —
-the same readers `GET /api/workspace-projects/<ws>/<handle>/` admits. Anyone else
-sees no tools and every call is refused, with the same answer as a project that
-does not exist.
+the same readers `GET /api/workspace-projects/<ws>/<handle>/` admits — and, for a
+KB with a Drive source, only its owner, its steward and the readers its owner named
+(`kb_drive.may_read`). Anyone else sees no tools and every call is refused, with the
+same answer as a project that does not exist.
+
+`whats_new` answers from the project's version log (`kb_versions.whats_new`).
 """
 from __future__ import annotations
 
@@ -65,7 +68,7 @@ def _current_user():
 
 def readable_project(user, workspace: str, handle: str):
     """The project, if `user` may read it and it serves something; else None."""
-    from apps.agents import services
+    from apps.agents import kb_drive, services
     from apps.workspaces import services as wsvc
 
     if user is None:
@@ -74,6 +77,8 @@ def readable_project(user, workspace: str, handle: str):
     if project is None or not project.mcp_path:
         return None
     if not ({project.owner_workspace_id, project.agent.workspace_id} & wsvc.user_workspace_slugs(user)):
+        return None
+    if not kb_drive.may_read(user, project):  # a KB made from private Drive folders: its readers only
         return None
     return project
 
@@ -93,7 +98,7 @@ def _specs(workspace: str, handle: str) -> list[dict]:
 
 
 def _call(workspace: str, handle: str, name: str, arguments: dict):
-    from apps.agents import kb_rerank, kb_store, kb_vectors
+    from apps.agents import kb_rerank, kb_store, kb_vectors, kb_versions
     from canopy_kb import KBError
     from canopy_kb.tools import run
 
@@ -107,6 +112,9 @@ def _call(workspace: str, handle: str, name: str, arguments: dict):
         rerank = kb_rerank.reranker() if name == "search" else None
         semantic = kb_vectors.semantic_for(project) if name == "search" else None
         link = kb_store.original_link(project) if name == "original" else None
+        if name == "whats_new":  # the version log, not the file's own history
+            return kb_versions.whats_new(project, kb, str(arguments.get("since") or ""),
+                                         int(arguments.get("limit") or 100))
         return run(kb, name, arguments, semantic, rerank, link)
     except (KBError, KeyError, ValueError, TypeError) as exc:
         raise ToolError(f"{name}: {exc}") from exc

@@ -27,8 +27,16 @@ Two artifacts, one direction:
     declared table (plus table_rows), changes, originals, meta
 
 `build` diffs against the previous kb.sqlite by each item's sha256, so `changes`
-accumulates a dated history of what appeared or changed — that is what `whats_new`
-answers, and it survives rebuilds because each build carries the old rows forward.
+accumulates a dated history of what appeared, changed or was removed, and it survives
+rebuilds because each build carries the old rows forward.
+
+`apply` is the incremental path: a delta (whole new or changed item records, removed
+ids, and any changed manifest, aliases or tables) applied to a copy of the previous
+kb.sqlite. Both run one writer (`_Index`): per-item rows are put and dropped, the
+full-text index is kept in step, and everything derived from more than one item is
+recomputed in item-id order — so applying a delta gives the full build of the same
+content (tests/test_apply.py). A host serving the KB publishes deltas this way
+(`canopy_kb.records`: content-addressed records and states).
 `originals` is carried the same way: a file an item no longer points at (the publisher
 changed or removed it) stays listed as an earlier version, and its bytes stay in the
 host's store, which never deletes one.
@@ -50,6 +58,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import re
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -145,8 +154,8 @@ def _card(c: Any) -> dict | None:
             "superseded": str(c.get("superseded") or ""), "answers": names(c.get("answers"))}
 
 
-def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
-    """Build kb.sqlite from a bundle directory. Returns a summary dict."""
+def _load_bundle(bundle: Path) -> tuple[dict, Path, dict, dict[str, list[dict]]]:
+    """A bundle's manifest, items path, aliases and declared tables' rows."""
     bundle = Path(bundle)
     manifest_path = bundle / "manifest.json"
     if not manifest_path.exists():
@@ -157,16 +166,183 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
         raise KBError(f"{bundle}: no items.jsonl")
     aliases_path = bundle / "aliases.json"
     aliases = json.loads(aliases_path.read_text(encoding="utf-8")) if aliases_path.exists() else {}
+    tables: dict[str, list[dict]] = {}
+    for name in (manifest.get("tables") or {}):
+        p = bundle / "tables" / f"{name}.jsonl"
+        if not p.exists():
+            raise KBError(f"manifest declares table {name!r} but {p} is missing")
+        tables[name] = list(_read_jsonl(p))
+    return manifest, items_path, aliases, tables
 
+
+class _Index:
+    """The one writer of a kb.sqlite's rows, shared by `build` (every item, into an empty
+    file) and `apply` (a delta, into a copy of the previous file). Because both run the
+    same code, an incrementally maintained index is the full build of the same content:
+    the per-item rows are written by `put` and removed by `drop`, and everything that
+    depends on more than one item (links, the entity index, card search, tables, the
+    summary) is recomputed from the stored rows by `finish`, in item-id order."""
+
+    def __init__(self, db: sqlite3.Connection, now: str, live_fts: bool):
+        self.db, self.now = db, now
+        # build bulk-indexes passages once at the end ('rebuild'); apply keeps the
+        # external-content FTS table in step row by row ('delete' needs the old values).
+        self.live_fts = live_fts
+
+    def put(self, it: dict, first_seen: str) -> None:
+        db, iid = self.db, it["id"]
+        text = it.get("text") or ""
+        meta = it.get("meta") or {}
+        title = it.get("title", "")
+        db.execute("INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?)", (
+            iid, it.get("type", ""), title, it.get("url", ""), it.get("date", "") or "",
+            it.get("sha256") or "", it.get("fetched_at", ""), first_seen, json.dumps(meta), len(text)))
+        db.executemany('INSERT INTO chunks(item_id, ord, start, "end", title, heading, context, body) '
+                       'VALUES (?,?,?,?,?,?,?,?)',
+                       [(iid, i, p.start, p.end, title, p.heading, "", text[p.start:p.end])
+                        for i, p in enumerate(chunk(text))])
+        if self.live_fts:
+            db.execute("INSERT INTO chunks_fts(rowid, title, heading, context, body) "
+                       "SELECT id, title, heading, context, body FROM chunks WHERE item_id = ?", (iid,))
+        db.executemany('INSERT INTO sections VALUES (?,?,?,?,?,?)',
+                       [(iid, i, s.level, s.path, s.start, s.end) for i, s in enumerate(outline(text))])
+        c = _card(it.get("card"))
+        if c:
+            db.execute("INSERT INTO cards VALUES (?,?,?,?,?,?,?,?,?)", (
+                iid, c["kind"], c["summary"], json.dumps(c["orgs"]), json.dumps(c["programs"]),
+                json.dumps(c["countries"]), c["period"], c["superseded"], json.dumps(c["answers"])))
+        o = it.get("original")
+        self._original(iid, o if isinstance(o, dict) and o.get("sha256") else None)
+
+    def _original(self, iid: str, o: dict | None) -> None:
+        """The item's current original is `o`; any other it pointed at is now an earlier
+        version, dated when it was first found superseded. Never deleted."""
+        db, sha = self.db, (o or {}).get("sha256") or ""
+        db.execute("UPDATE originals SET superseded_at = ? WHERE item_id = ? AND superseded_at = '' AND sha256 != ?",
+                   (self.now, iid, sha))
+        if not o:
+            return
+        fields = (o.get("filename") or "", o.get("content_type") or "", int(o.get("bytes") or 0),
+                  o.get("source_url") or "", o.get("fetched_at") or "")
+        if db.execute("SELECT 1 FROM originals WHERE item_id = ? AND sha256 = ?", (iid, sha)).fetchone():
+            db.execute("UPDATE originals SET filename = ?, content_type = ?, bytes = ?, source_url = ?, fetched_at = ?, "
+                       "superseded_at = '' WHERE item_id = ? AND sha256 = ?", (*fields, iid, sha))
+        else:
+            db.execute("INSERT INTO originals VALUES (?,?,?,?,?,?,?,?,?)", (iid, sha, *fields, self.now, ""))
+
+    def drop(self, iid: str, removed: bool) -> None:
+        """Delete an item's own rows. Its originals stay: a changed item's `put` decides
+        which is current, and a removed item's become earlier versions."""
+        db = self.db
+        if self.live_fts:
+            db.execute("INSERT INTO chunks_fts(chunks_fts, rowid, title, heading, context, body) "
+                       "SELECT 'delete', id, title, heading, context, body FROM chunks WHERE item_id = ?", (iid,))
+        for table, col in (("items", "id"), ("chunks", "item_id"), ("sections", "item_id"), ("cards", "item_id")):
+            db.execute(f"DELETE FROM {table} WHERE {col} = ?", (iid,))
+        if removed:
+            self._original(iid, None)
+
+    def change(self, iid: str, change: str, it: dict | sqlite3.Row) -> None:
+        self.db.execute("INSERT INTO changes VALUES (?,?,?,?,?,?,?)", (
+            self.now, iid, change, it["type"], it["title"], it["url"], it["date"]))
+
+    def finish(self, manifest: dict, aliases: dict, tables: dict[str, list[dict]] | None,
+               old_manifest: dict | None, counts: dict) -> dict:
+        """Everything derived from more than one item, recomputed from the stored rows.
+        `tables` holds the declared tables to (re)write; one left out keeps its rows."""
+        db = self.db
+        rows = db.execute("SELECT id, type, title, url, meta FROM items ORDER BY id").fetchall()
+        ids = {r[0] for r in rows}
+        refs: dict[str, str] = {}        # url (and also_at urls) -> item id, for resolving links
+        raw_links: list[tuple[str, str]] = []
+        titles: dict[str, str] = {}
+        for iid, _type, title, url, meta_json in rows:
+            meta = json.loads(meta_json or "{}")
+            titles[iid] = title or ""
+            for u in [url or ""] + list(meta.get("also_at") or []):
+                if u:
+                    refs.setdefault(u.rstrip("/"), iid)
+            raw_links += [(str(src), iid) for src in meta.get("linked_from") or []]
+            if meta.get("parent"):
+                raw_links.append((str(meta["parent"]), iid))
+        # links: a curator names an item's referrers by id or url
+        pairs = set()
+        for src, dst in raw_links:
+            s = src if src in ids else refs.get(src.rstrip("/"))
+            if s and s != dst:
+                pairs.add((s, dst))
+        db.execute("DELETE FROM links")
+        db.executemany("INSERT INTO links VALUES (?,?)", sorted(pairs))
+
+        # catalog cards and the entity index built from them
+        cards: dict[str, dict] = {}
+        for r in db.execute("SELECT item_id, summary, answers, orgs, programs, countries FROM cards ORDER BY item_id"):
+            cards[r[0]] = {"summary": r[1], "answers": json.loads(r[2] or "[]"), "orgs": json.loads(r[3] or "[]"),
+                           "programs": json.loads(r[4] or "[]"), "countries": json.loads(r[5] or "[]")}
+        ents, by_item = _entities.index(cards, aliases)
+        for t in ("entities", "item_entities", "cards_fts"):
+            db.execute(f"DELETE FROM {t}")
+        db.executemany("INSERT INTO entities VALUES (?,?,?,?,?)",
+                       [(i, e["kind"], e["name"], json.dumps(e["aliases"]), len(e["items"])) for i, e in enumerate(ents)])
+        db.executemany("INSERT INTO item_entities VALUES (?,?)",
+                       [(iid, e) for iid in sorted(by_item) for e in sorted(by_item[iid])])
+        for iid, c in cards.items():
+            names = " ; ".join(a for e in sorted(by_item.get(iid, ())) for a in ents[e]["aliases"])
+            db.execute("INSERT INTO cards_fts VALUES (?,?,?,?,?)",
+                       (iid, titles.get(iid, ""), c["summary"], " ".join(c["answers"]), names))
+
+        declared = manifest.get("tables") or {}
+        for name in set((old_manifest or {}).get("tables") or {}) | set(tables or {}):
+            if name not in declared or name in (tables or {}):
+                db.execute("DELETE FROM table_rows WHERE tbl = ?", (name,))
+                db.execute(f'DROP TABLE IF EXISTS "{sql_table_name(name)}"')
+        for name, trows in (tables or {}).items():
+            if name not in declared:
+                continue
+            db.executemany("INSERT INTO table_rows VALUES (?,?,?)", [(name, i, json.dumps(r)) for i, r in enumerate(trows)])
+            cols = list(dict.fromkeys(k for r in trows for k in r))
+            if cols:
+                tn = sql_table_name(name)
+                db.execute(f'CREATE TABLE "{tn}" ({", ".join(chr(34) + c.replace(chr(34), "") + chr(34) for c in cols)})')
+                db.executemany(f'INSERT INTO "{tn}" VALUES ({",".join("?" * len(cols))})',
+                               [[v if v is None or isinstance(v, (int, float, str)) else json.dumps(v)
+                                 for v in (r.get(c) for c in cols)] for r in trows])
+        n_tables = {name: db.execute("SELECT count(*) FROM table_rows WHERE tbl = ?", (name,)).fetchone()[0]
+                    for name in declared}
+
+        current = db.execute("SELECT count(*), count(DISTINCT sha256) FROM originals WHERE superseded_at = ''").fetchone()
+        n_bytes = db.execute("SELECT coalesce(sum(b), 0) FROM (SELECT max(bytes) b FROM originals "
+                             "WHERE superseded_at = '' GROUP BY sha256)").fetchone()[0]
+        n_superseded = db.execute("SELECT count(*) FROM originals WHERE superseded_at != ''").fetchone()[0]
+        summary = {"schema": SCHEMA_VERSION, "built_at": self.now, "name": manifest.get("name", ""),
+                   "items": len(ids), "passages": db.execute("SELECT count(*) FROM chunks").fetchone()[0],
+                   "cards": len(cards), "entities": len(ents), "links": len(pairs),
+                   "by_type": dict(db.execute("SELECT type, count(*) FROM items GROUP BY type ORDER BY type").fetchall()),
+                   "tables": n_tables,
+                   "originals": {"current": current[0], "superseded": n_superseded, "files": current[1], "bytes": n_bytes},
+                   **counts}
+        db.execute("DELETE FROM meta")
+        db.executemany("INSERT INTO meta VALUES (?,?)", [
+            ("manifest", json.dumps(manifest)), ("aliases", json.dumps(aliases)), ("summary", json.dumps(summary)),
+            ("schema", str(SCHEMA_VERSION))])
+        return summary
+
+
+def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
+    """Build kb.sqlite from a bundle directory. Returns a summary dict."""
+    manifest, items_path, aliases, tables = _load_bundle(bundle)
     prev: dict[str, tuple[str, str]] = {}
+    prev_items: dict[str, sqlite3.Row] = {}
     prev_changes: list[tuple] = []
     prev_originals: list[dict] = []
     if previous and Path(previous).is_file() and Path(previous).stat().st_size:
         pc = sqlite3.connect(f"file:{previous}?mode=ro", uri=True)
+        pc.row_factory = sqlite3.Row
         try:
-            prev = {r[0]: (r[1], r[2]) for r in pc.execute("SELECT id, sha256, first_seen FROM items")}
-            prev_changes = list(pc.execute("SELECT at, item_id, change, type, title, url, date FROM changes"))
-            pc.row_factory = sqlite3.Row
+            for r in pc.execute("SELECT id, type, title, url, date, sha256, first_seen FROM items"):
+                prev[r["id"]] = (r["sha256"], r["first_seen"])
+                prev_items[r["id"]] = r
+            prev_changes = [tuple(r) for r in pc.execute("SELECT at, item_id, change, type, title, url, date FROM changes")]
             if pc.execute("SELECT 1 FROM sqlite_master WHERE name = 'originals'").fetchone():
                 prev_originals = [dict(r) for r in pc.execute("SELECT * FROM originals")]
         except sqlite3.DatabaseError as e:
@@ -181,103 +357,32 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
     db = sqlite3.connect(tmp)
     db.executescript(SCHEMA)
     now = _now()
-    counts: dict[str, int] = {}
+    db.executemany("INSERT INTO changes VALUES (?,?,?,?,?,?,?)", prev_changes)
+    db.executemany("INSERT INTO originals VALUES (?,?,?,?,?,?,?,?,?)", [
+        (r["item_id"], r["sha256"], r["filename"], r["content_type"], r["bytes"], r["source_url"],
+         r["fetched_at"], r["first_seen"], r["superseded_at"] or "") for r in prev_originals])
+    idx = _Index(db, now, live_fts=False)
     new = changed = 0
     seen: set[str] = set()
-    cards: dict[str, dict] = {}
-    titles: dict[str, str] = {}
-    refs: dict[str, str] = {}        # url (and also_at urls) -> item id, for resolving links
-    raw_links: list[tuple[str, str]] = []
-    originals: dict[tuple[str, str], dict] = {}
     for it in _read_jsonl(items_path):
         iid = it.get("id")
         if not iid or iid in seen:
             continue
         seen.add(iid)
-        text = it.get("text") or ""
-        sha = it.get("sha256") or ""
-        meta = it.get("meta") or {}
         old = prev.get(iid)
-        first_seen = old[1] if old else now
         if previous and not old:
             new += 1
-            prev_changes.append((now, iid, "new", it.get("type"), it.get("title"), it.get("url"), it.get("date")))
-        elif old and sha and old[0] != sha:
+            idx.change(iid, "new", {k: it.get(k) for k in ("type", "title", "url", "date")})
+        elif old and it.get("sha256") and old[0] != it.get("sha256"):
             changed += 1
-            prev_changes.append((now, iid, "changed", it.get("type"), it.get("title"), it.get("url"), it.get("date")))
-        db.execute("INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?)", (
-            iid, it.get("type", ""), it.get("title", ""), it.get("url", ""), it.get("date", "") or "",
-            sha, it.get("fetched_at", ""), first_seen, json.dumps(meta), len(text)))
-        title = it.get("title", "")
-        db.executemany('INSERT INTO chunks(item_id, ord, start, "end", title, heading, context, body) '
-                       'VALUES (?,?,?,?,?,?,?,?)',
-                       [(iid, i, p.start, p.end, title, p.heading, "", text[p.start:p.end])
-                        for i, p in enumerate(chunk(text))])
-        db.executemany('INSERT INTO sections VALUES (?,?,?,?,?,?)',
-                       [(iid, i, s.level, s.path, s.start, s.end) for i, s in enumerate(outline(text))])
-        card = _card(it.get("card"))
-        if card:
-            cards[iid] = card
-        titles[iid] = it.get("title", "")
-        for u in [it.get("url", "")] + list(meta.get("also_at") or []):
-            if u:
-                refs.setdefault(u.rstrip("/"), iid)
-        for src in meta.get("linked_from") or []:
-            raw_links.append((str(src), iid))
-        if meta.get("parent"):
-            raw_links.append((str(meta["parent"]), iid))
-        counts[it.get("type", "")] = counts.get(it.get("type", ""), 0) + 1
-        o = it.get("original")
-        if isinstance(o, dict) and o.get("sha256"):
-            originals[(iid, o["sha256"])] = {f: o.get(f) for f in ORIGINAL_FIELDS}
-
-    # links: a curator names an item's referrers by id or url
-    pairs = set()
-    for src, dst in raw_links:
-        s = src if src in seen else refs.get(src.rstrip("/"))
-        if s and s != dst:
-            pairs.add((s, dst))
-    db.executemany("INSERT INTO links VALUES (?,?)", sorted(pairs))
-
-    # catalog cards and the entity index built from them
-    ents, by_item = _entities.index(cards, aliases)
-    db.executemany("INSERT INTO entities VALUES (?,?,?,?,?)",
-                   [(i, e["kind"], e["name"], json.dumps(e["aliases"]), len(e["items"])) for i, e in enumerate(ents)])
-    db.executemany("INSERT INTO item_entities VALUES (?,?)", [(iid, e) for iid, es in by_item.items() for e in sorted(es)])
-    for iid, c in cards.items():
-        db.execute("INSERT INTO cards VALUES (?,?,?,?,?,?,?,?,?)", (
-            iid, c["kind"], c["summary"], json.dumps(c["orgs"]), json.dumps(c["programs"]),
-            json.dumps(c["countries"]), c["period"], c["superseded"], json.dumps(c["answers"])))
-        names = " ; ".join(a for e in sorted(by_item.get(iid, ())) for a in ents[e]["aliases"])
-        db.execute("INSERT INTO cards_fts VALUES (?,?,?,?,?)",
-                   (iid, titles.get(iid, ""), c["summary"], " ".join(c["answers"]), names))
-
-    tables: dict[str, int] = {}
-    tdir = bundle / "tables"
-    for name in (manifest.get("tables") or {}):
-        p = tdir / f"{name}.jsonl"
-        if not p.exists():
-            raise KBError(f"manifest declares table {name!r} but {p} is missing")
-        rows = list(_read_jsonl(p))
-        db.executemany("INSERT INTO table_rows VALUES (?,?,?)", [(name, i, json.dumps(r)) for i, r in enumerate(rows)])
-        cols = list(dict.fromkeys(k for r in rows for k in r))
-        if cols:
-            tn = sql_table_name(name)
-            db.execute(f'CREATE TABLE "{tn}" ({", ".join(chr(34) + c.replace(chr(34), "") + chr(34) for c in cols)})')
-            db.executemany(f'INSERT INTO "{tn}" VALUES ({",".join("?" * len(cols))})',
-                           [[v if v is None or isinstance(v, (int, float, str)) else json.dumps(v)
-                             for v in (r.get(c) for c in cols)] for r in rows])
-        tables[name] = len(rows)
-
-    db.executemany("INSERT INTO changes VALUES (?,?,?,?,?,?,?)", prev_changes)
-    n_originals = _write_originals(db, originals, prev_originals, now)
-    n_passages = db.execute("SELECT count(*) FROM chunks").fetchone()[0]
-    summary = {"schema": SCHEMA_VERSION, "built_at": now, "name": manifest.get("name", ""),
-               "items": len(seen), "passages": n_passages, "cards": len(cards), "entities": len(ents),
-               "links": len(pairs), "by_type": counts, "tables": tables, "originals": n_originals,
-               "new": new, "changed": changed, "baseline": not bool(previous and prev)}
-    db.executemany("INSERT INTO meta VALUES (?,?)", [
-        ("manifest", json.dumps(manifest)), ("summary", json.dumps(summary)), ("schema", str(SCHEMA_VERSION))])
+            idx.change(iid, "changed", {k: it.get(k) for k in ("type", "title", "url", "date")})
+        idx.put(it, old[1] if old else now)
+    removed = sorted(set(prev) - seen)
+    for iid in removed:
+        idx.change(iid, "removed", prev_items[iid])
+        idx._original(iid, None)
+    summary = idx.finish(manifest, aliases, tables, None, {
+        "new": new, "changed": changed, "removed": len(removed), "baseline": not bool(previous and prev)})
     db.commit()
     db.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
     db.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('optimize')")
@@ -289,23 +394,70 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
     return summary
 
 
-def _write_originals(db: sqlite3.Connection, current: dict[tuple[str, str], dict], prev: list[dict], now: str) -> dict:
-    """This build's originals, then every earlier one no item points at any more (kept as
-    a superseded version, dated when it was first found superseded)."""
-    seen = {(r["item_id"], r["sha256"]): r for r in prev}
-    rows = []
-    for (iid, sha), o in current.items():
-        old = seen.get((iid, sha))
-        rows.append((iid, sha, o["filename"] or "", o["content_type"] or "", int(o["bytes"] or 0),
-                     o["source_url"] or "", o["fetched_at"] or "", old["first_seen"] if old else now, ""))
-    for key, r in seen.items():
-        if key not in current:
-            rows.append((r["item_id"], r["sha256"], r["filename"], r["content_type"], r["bytes"], r["source_url"],
-                         r["fetched_at"], r["first_seen"], r["superseded_at"] or now))
-    db.executemany("INSERT INTO originals VALUES (?,?,?,?,?,?,?,?,?)", rows)
-    return {"current": len(current), "superseded": len(rows) - len(current),
-            "files": len({sha for _, sha in current}),
-            "bytes": sum({sha: int(o["bytes"] or 0) for (_, sha), o in current.items()}.values())}
+def apply(previous: Path, out: Path, upserts: Iterable[dict], removed: Iterable[str] = (), *,
+          manifest: dict | None = None, aliases: dict | None = None,
+          tables: dict[str, list[dict]] | None = None) -> dict:
+    """Apply a delta to a previous kb.sqlite, writing a new one at `out` (the previous
+    file is only read). `upserts` are whole item records (new or changed), `removed` the
+    ids that are gone; `manifest` and `aliases` replace the previous ones when given, and
+    `tables` holds only the declared tables whose rows changed. The result is what `build`
+    makes of the same content (`_Index`). Returns the summary, with `applied`: the ids
+    this delta added, changed and removed."""
+    previous, out = Path(previous), Path(out)
+    tmp = Path(str(out) + ".apply")
+    part = Path(str(out) + ".part")
+    for p in (tmp, part):
+        p.unlink(missing_ok=True)
+    shutil.copyfile(previous, tmp)
+    db = sqlite3.connect(tmp)
+    db.row_factory = sqlite3.Row
+    try:
+        meta = dict(db.execute("SELECT key, value FROM meta").fetchall())
+        if int(json.loads(meta.get("summary") or "{}").get("schema") or 0) < SCHEMA_VERSION:
+            raise KBError(f"{previous} is an older schema; publish a full build first")
+        old_manifest = json.loads(meta.get("manifest") or "{}")
+        if aliases is None:
+            if "aliases" not in meta:
+                raise KBError(f"{previous} does not carry its aliases; pass them")
+            aliases = json.loads(meta["aliases"])
+        idx = _Index(db, _now(), live_fts=True)
+        applied: dict[str, list[str]] = {"new": [], "changed": [], "removed": []}
+        seen: set[str] = set()
+        for it in upserts:
+            iid = it.get("id")
+            if not iid or iid in seen:
+                continue
+            seen.add(iid)
+            old = db.execute("SELECT sha256, first_seen FROM items WHERE id = ?", (iid,)).fetchone()
+            row = {k: it.get(k) for k in ("type", "title", "url", "date")}
+            if old is None:
+                applied["new"].append(iid)
+                idx.change(iid, "new", row)
+            else:
+                applied["changed"].append(iid)
+                if it.get("sha256") and old["sha256"] != it.get("sha256"):
+                    idx.change(iid, "changed", row)
+                idx.drop(iid, removed=False)
+            idx.put(it, old["first_seen"] if old else idx.now)
+        for iid in removed:
+            if iid in seen:
+                continue
+            old = db.execute("SELECT type, title, url, date FROM items WHERE id = ?", (iid,)).fetchone()
+            if old is None:
+                continue
+            applied["removed"].append(iid)
+            idx.change(iid, "removed", old)
+            idx.drop(iid, removed=True)
+        summary = idx.finish(manifest if manifest is not None else old_manifest, aliases, tables or {}, old_manifest, {
+            "new": len(applied["new"]), "changed": len(applied["changed"]), "removed": len(applied["removed"]),
+            "baseline": False})
+        db.commit()
+        db.execute("VACUUM INTO ?", (str(part),))
+    finally:
+        db.close()
+        tmp.unlink(missing_ok=True)
+    part.replace(out)
+    return {**summary, "applied": applied}
 
 
 class KB:
@@ -409,7 +561,8 @@ class KB:
         if not self.db.execute("SELECT 1 FROM sqlite_master WHERE name = 'originals'").fetchone():
             return []
         return [dict(r) for r in self.db.execute(
-            "SELECT * FROM originals WHERE item_id = ? ORDER BY superseded_at != '', first_seen DESC", (item_id,))]
+            "SELECT * FROM originals WHERE item_id = ? ORDER BY superseded_at != '', first_seen DESC, rowid DESC",
+            (item_id,))]
 
     def has_originals(self) -> bool:
         try:
@@ -511,6 +664,8 @@ class KB:
 
     # -- change history --------------------------------------------------------------
     def whats_new(self, since: str = "", limit: int = 100) -> dict:
+        """The file's own change history (new, changed, removed per build or delta). A host
+        that keeps a version log answers from that instead (canopy-web does)."""
         sql, args = "SELECT * FROM changes", []
         if since:
             sql += " WHERE at >= ?"

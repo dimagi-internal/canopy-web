@@ -150,5 +150,5 @@ def test_a_rebuild_reports_what_is_new_and_changed(tmp_path):
          "text": "Brand new.", "sha256": "n"}])
     second = tmp_path / "b.sqlite"
     s = build(b, second, previous=first)
-    assert (s["new"], s["changed"]) == (1, 1)
-    assert {c["change"] for c in KB(second).whats_new()["changes"]} == {"new", "changed"}
+    assert (s["new"], s["changed"], s["removed"]) == (1, 1, 3)
+    assert {c["change"] for c in KB(second).whats_new()["changes"]} == {"new", "changed", "removed"}
