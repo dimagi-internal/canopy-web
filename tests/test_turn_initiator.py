@@ -10,7 +10,6 @@ stamped the CALLER as `enqueued_by`, so an email posted by a runner read as
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import User
@@ -23,13 +22,13 @@ from apps.harness import services
 from apps.harness.models import AgentSchedule, Turn
 from apps.tokens.models import AppCredential, DelegatedToken, PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests._source import iter_app_sources
 
 # Slack's own fixtures, reused rather than re-built, so this file cannot drift
 # from how Slack is actually set up in its tests.
 from tests.fixtures.slack import BOT, mention
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
-REPO = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture()
@@ -314,11 +313,7 @@ ENTRY_POINTS = {"enqueue_turn", "send_message", "transfer_session"}
 
 def _calls_missing_initiator() -> list[str]:
     missing = []
-    for path in (REPO / "apps").rglob("*.py"):
-        rel = path.relative_to(REPO).as_posix()
-        if "/tests/" in rel or "/migrations/" in rel:
-            continue
-        tree = ast.parse(path.read_text())
+    for rel, tree in ((src.rel, src.tree) for src in iter_app_sources(("apps",))):
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue

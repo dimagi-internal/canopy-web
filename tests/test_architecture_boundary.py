@@ -18,9 +18,9 @@ Never silence a violation by reclassifying an app just to make this pass.
 from __future__ import annotations
 
 import ast
-import pathlib
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+from tests._source import ROOT, iter_app_sources
+
 APPS = ROOT / "apps"
 
 # ── The tiers (canonical copy lives in ARCHITECTURE.md; keep them in sync) ──────
@@ -58,9 +58,8 @@ STRING_REF_ALLOWED = ALLOWED_FILES | {
 _PRODUCT_MODULE_PREFIXES = tuple(f"apps.{p}" for p in PRODUCT)
 
 
-def _imported_apps(path: pathlib.Path) -> set[str]:
+def _imported_apps(tree: ast.Module) -> set[str]:
     """The set of local app names this module imports (via `apps.<name>`)."""
-    tree = ast.parse(path.read_text(), filename=str(path))
     targets: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("apps."):
@@ -72,32 +71,27 @@ def _imported_apps(path: pathlib.Path) -> set[str]:
     return targets
 
 
-def _is_excluded(rel: str, name: str) -> bool:
-    return "/migrations/" in rel or "/tests/" in rel or name.startswith("test_")
+def _framework_sources(exclude: set[str]):
+    return iter_app_sources(tuple(f"apps/{app}" for app in sorted(FRAMEWORK - COMPOSITION_ROOT)),
+                            exclude=exclude)
 
 
 def test_framework_apps_do_not_import_product() -> None:
     violations: list[str] = []
-    for app in sorted(FRAMEWORK - COMPOSITION_ROOT):
-        base = APPS / app
-        for path in base.rglob("*.py"):
-            rel = path.relative_to(ROOT).as_posix()
-            if _is_excluded(rel, path.name) or rel in ALLOWED_FILES:
-                continue
-            leaked = _imported_apps(path) & PRODUCT
-            if leaked:
-                violations.append(f"{rel} imports product app(s) {sorted(leaked)}")
+    for src in _framework_sources(ALLOWED_FILES):
+        leaked = _imported_apps(src.tree) & PRODUCT
+        if leaked:
+            violations.append(f"{src.rel} imports product app(s) {sorted(leaked)}")
     assert not violations, (
         "FRAMEWORK code must not import PRODUCT code (see ARCHITECTURE.md):\n  "
         + "\n  ".join(violations)
     )
 
 
-def _product_module_strings(path: pathlib.Path) -> set[str]:
+def _product_module_strings(tree: ast.Module) -> set[str]:
     """Product module paths (`apps.<product>...`) named in this module's string
     literals — including its docstring. Catches content the import-check can't see:
     a lazy `import_module("apps.reviews...")`, a dotted path in a registry, etc."""
-    tree = ast.parse(path.read_text(), filename=str(path))
     found: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -113,14 +107,10 @@ def test_framework_source_does_not_reference_product_modules() -> None:
     just as surely as one that imports it — see the ddd.py move (product run-id
     grammar that had been parked in apps/common)."""
     violations: list[str] = []
-    for app in sorted(FRAMEWORK - COMPOSITION_ROOT):
-        for path in (APPS / app).rglob("*.py"):
-            rel = path.relative_to(ROOT).as_posix()
-            if _is_excluded(rel, path.name) or rel in STRING_REF_ALLOWED:
-                continue
-            leaked = _product_module_strings(path)
-            if leaked:
-                violations.append(f"{rel} names product module(s) {sorted(leaked)} in a string")
+    for src in _framework_sources(STRING_REF_ALLOWED):
+        leaked = _product_module_strings(src.tree)
+        if leaked:
+            violations.append(f"{src.rel} names product module(s) {sorted(leaked)} in a string")
     assert not violations, (
         "FRAMEWORK code must not reference PRODUCT modules, even as strings "
         "(see ARCHITECTURE.md). Move the code to a product app, or document a new "

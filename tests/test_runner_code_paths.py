@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import ast
 import re
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from tests._source import ROOT
 
 
 def _provenance_paths() -> tuple[str, ...]:

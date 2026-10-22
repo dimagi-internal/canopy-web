@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import ast
 import json
-import pathlib
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -21,6 +20,7 @@ from django.test import Client
 
 from apps.workspaces import services
 from apps.workspaces.models import Workspace, WorkspaceAccessRequest, WorkspaceMembership as M
+from tests._source import iter_app_sources
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -341,7 +341,6 @@ def test_only_invite_acceptance_approval_and_creation_create_memberships():
     named, deliberate door: `_grant` (invite acceptance + request approval),
     `ensure_member` (the default-workspace bootstrap), and workspace creation
     (the creator becomes its owner). A new one fails here."""
-    root = pathlib.Path(__file__).resolve().parents[3]
     allowed = {
         ("apps/workspaces/services.py", "_grant"),
         ("apps/workspaces/services.py", "ensure_member"),
@@ -349,12 +348,11 @@ def test_only_invite_acceptance_approval_and_creation_create_memberships():
     }
     creating = {"create", "get_or_create", "update_or_create", "bulk_create"}
     offenders = []
-    for path in root.glob("apps/**/*.py"):
-        rel = str(path.relative_to(root))
-        if "/migrations/" in rel or "/tests/" in rel or rel.endswith("testing.py"):
+    for src in iter_app_sources(("apps",)):
+        rel = src.rel
+        if rel.endswith("testing.py"):
             continue
-        tree = ast.parse(path.read_text(), filename=rel)
-        for fn in ast.walk(tree):
+        for fn in ast.walk(src.tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for node in ast.walk(fn):
