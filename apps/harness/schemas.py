@@ -296,10 +296,10 @@ class RunnerOut(Schema):
         # 2026-10-03). So it is answered here, from the rows, on every read.
         from apps.agents import delegations
 
-        from .services import agents_served_by
+        from .services import agents_routed_to
 
         checks = {n: c for n, c in checks.items() if n != "github" and not n.startswith("github.")}
-        for agent in agents_served_by(obj):
+        for agent in agents_routed_to(obj):
             status, detail = delegations.readiness(agent)
             checks[f"github.{agent.slug}"] = HealthCheck(
                 name=f"github.{agent.slug}", status=status, detail=detail)

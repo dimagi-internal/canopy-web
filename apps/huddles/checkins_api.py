@@ -6,7 +6,6 @@ route is also an MCP tool.
 * `GET /api/agents/{slug}/projects/{ref}/checkin-runs` — the project's timeline
 * `GET /api/checkins/` — every check-in in your workspaces (a navigation view)
 * `GET /api/checkins/runs/{id}` (with its material), `POST …/runs/{id}/finished`
-* `GET /api/huddle-groups/runs/{id}` and `…/finished` — aliases for one release
 
 Members read; the project's owner or a workspace owner or admin writes. Nothing
 here reads a Slack channel or can start a read: a run is read only when its lead
@@ -36,15 +35,12 @@ from .schemas import (
     CheckinRunFinishIn,
     CheckinRunOut,
     CheckinTimelineRunOut,
-    LegacyGroupRunOut,
 )
 
 #: Mounted at /api/agents: a project's check-ins and its timeline.
 project_router = Router(auth=session_auth, tags=["huddles"])
 #: Mounted at /api/checkins.
 router = Router(tags=["huddles"])
-#: Mounted at /api/huddle-groups: the two run routes an un-updated engine still calls.
-legacy_router = Router(tags=["huddles"])
 
 
 def _project_ref(p: AgentProject) -> dict:
@@ -289,26 +285,3 @@ def finish_checkin_run(request: HttpRequest, run_id: int, payload: CheckinRunFin
     tasks it proposed, and (with a channel) posts one line in the announcement's
     thread pointing at the result — the content stays in canopy."""
     return run_out(_finish(request, run_id, payload), material=True)
-
-
-# ---- the old work-group run routes, for one release ---------------------------------
-
-
-def _legacy(row: dict) -> dict:
-    return {**row, "group": row["checkin_name"], "group_name": row["checkin_name"]}
-
-
-@legacy_router.get("/runs/{run_id}", response=LegacyGroupRunOut,
-                   summary="Deprecated: GET /api/checkins/runs/{id}")
-def get_huddle_group_run(request: HttpRequest, run_id: int) -> dict:
-    """Kept for one release so an engine that still says `--group-run` reads its
-    run. Use `GET /api/checkins/runs/{id}`."""
-    return _legacy(run_out(_run_or_404(request, run_id), material=True))
-
-
-@legacy_router.post("/runs/{run_id}/finished", response=LegacyGroupRunOut,
-                    summary="Deprecated: POST /api/checkins/runs/{id}/finished")
-def finish_huddle_group_run(request: HttpRequest, run_id: int, payload: CheckinRunFinishIn) -> dict:
-    """Kept for one release so an engine that still says `--group-run` finishes
-    its run. Use `POST /api/checkins/runs/{id}/finished`."""
-    return _legacy(run_out(_finish(request, run_id, payload), material=True))

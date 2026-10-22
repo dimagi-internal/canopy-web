@@ -176,12 +176,6 @@ class AgentSetupStepOut(StrictModel):
     only_to_run_on_its_own: bool = False
 
 
-class RunnerPreferenceIn(StrictModel):
-    """Set an agent's ordered runner-kind preference (the runner-order UI)."""
-
-    runner_preference: list[str] = Field(default_factory=list)
-
-
 class TurnModeIn(StrictModel):
     """Flip an agent's turn mode — a human decision, made from the board.
 

@@ -240,11 +240,3 @@ class CheckinRunFinishIn(StrictModel):
     summary: str = ""
     #: How many tasks it proposed in the project; counted from the tasks filed with `run` when absent.
     tasks_proposed: int | None = Field(default=None, ge=0)
-
-
-class LegacyGroupRunOut(CheckinRunOut):
-    """`/api/huddle-groups/runs/{id}` — kept for one release so an engine that
-    has not moved to check-ins still reads and finishes its run."""
-
-    group: str = ""
-    group_name: str = ""

@@ -245,7 +245,7 @@ box and agent pair:
 |---|---|
 | **The vault**: a resolve's device proof (`device_keys.runner_serves_agent`) | the rule, OR the box holds a live turn of the agent (a pinned dispatch, a bound chat), OR it is the agent owner's own LAPTOP working by hand, OR a private runner whose owner holds an active licence. An owner's cloud box reads only what it runs. A `computer` runner (no runner app) is asked only: does its owner administer the agent, or hold an active licence for it. |
 | **The box's refresh**: `GET /runners/{id}/agents`, read by `bootstrap_agents.sh` | exactly the rule. A box prepares the agents it runs, not every agent its token can list. An answer is final, an empty one included (a new box prepares nothing); only no answer (not paired, an error, not a list) falls back to the registry. |
-| **Readiness and the fleet view** (`agents_served_by`) | exactly the rule. |
+| **Readiness and the fleet view** (`agents_routed_to`) | exactly the rule. |
 
 A resolve refused because an APPROVED box does not run the agent is routing, not
 a misused token. The 401 says `reason: not_routed`, and it is recorded as an

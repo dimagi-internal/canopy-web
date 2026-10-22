@@ -109,7 +109,6 @@ from .schemas import (
     ActOut,
     ActionAppliedIn,
     CountOut,
-    RunnerPreferenceIn,
     SkillHistoryOut,
     ProjectParticipantOut,
     SlackEnabledIn,
@@ -979,26 +978,6 @@ def delete_agent(request: HttpRequest, slug: str):
     close_agent_sessions(agent)
     agent.delete()
     return Status(204, None)
-
-
-@router.patch("/{slug}/runner-preference", response=AgentDetailOut,
-              summary="Set an agent's ordered runner-kind preference")
-def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPreferenceIn) -> AgentDetailOut:
-    """DEPRECATED: superseded by PUT /api/agents/{slug}/runners; removed next release.
-
-    Update just the ordered runner-kind preference (cloud/emdash/remote), no
-    clobber of the agent's other fields. Honored at claim time — see
-    harness.services.claim_next_turn."""
-    from apps.harness.models import Runner
-
-    valid = {k for k, _ in Runner.KIND_CHOICES} - {Runner.COMPUTER}
-    bad = [k for k in payload.runner_preference if k not in valid]
-    if bad:
-        raise HttpError(422, f"unknown runner kind(s): {', '.join(bad)}")
-    agent = agent_for_work(request, slug)
-    agent.runner_preference = list(payload.runner_preference)
-    agent.save(update_fields=["runner_preference", "updated_at"])
-    return _detail(request, agent)
 
 
 @router.patch("/{slug}/turn-mode", response=AgentDetailOut,

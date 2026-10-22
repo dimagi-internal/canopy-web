@@ -803,7 +803,7 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
 
     runner = _runner_or_404(request, runner_id)
     out = []
-    for agent in services.agents_served_by(runner):
+    for agent in services.agents_routed_to(runner):
         delegations.check_github(agent)
         status, detail = delegations.readiness(agent)
         st = delegations.status(agent)

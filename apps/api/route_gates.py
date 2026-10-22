@@ -141,7 +141,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "grant_admin": ("agent-owner",),
     "revoke_admin": ("agent-owner",),
     "delete_agent": ("agent.work",),
-    "set_runner_preference": ("agent.work",),
     "set_turn_mode": ("agent.work",),
     "set_credential_source": ("agent-admin",),
     "set_repository": ("agent-admin",),  # what its boxes run: a DEFINITION_FIELDS change
@@ -397,9 +396,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_checkins": ("member",),
     "get_checkin_run": ("member", "agent-login"),  # material included: members, and the project agent's login
     "finish_checkin_run": ("agent-login",),  # the project agent's own login only
-    # the two work-group run routes, kept one release as aliases of the two above
-    "get_huddle_group_run": ("member", "agent-login"),
-    "finish_huddle_group_run": ("agent-login",),
     # --- apps/threads/api.py: bounded agent->agent conversations; messages are tagged turns
     "open_thread": ("agent.work",),  # editor in the moderator agent's workspace
     "list_threads": ("member",),  # threads in the caller's workspaces; no message content
@@ -938,7 +934,7 @@ SETTINGS: frozenset[str] = frozenset({
     "set_agent_github", "delete_agent_github", "set_agent_salesforce", "delete_agent_salesforce",
     "set_slack_enabled", "set_turn_mode", "set_sender_trust", "delete_sender_trust",
     # agents: routing (handlers report before/after — apps/harness/routing_audit.py)
-    "set_runner_preference", "replace_agent_runners", "replace_agent_runner_rules",
+    "replace_agent_runners", "replace_agent_runner_rules",
     "set_agent_runner_rule", "delete_agent_runner_rule",
     "set_agent_actor_route", "delete_agent_actor_route",
     # agents: schedules
@@ -1092,7 +1088,6 @@ NOT_SETTINGS: dict[str, str] = {
     "open_local_turn": "turn", "renew_local_turn": "turn",
     "fire_schedule_route": "turn",
     "finish_checkin_run": "turn",  # the project agent's turn reporting its check-in run done
-    "finish_huddle_group_run": "turn",  # the same, through the one-release alias
     # runner-protocol
     "post_bootstrap_report": "runner-protocol", "update_runner_capabilities": "runner-protocol",
     "claim_admission_notices": "runner-protocol", "report_admission_notice": "runner-protocol",
