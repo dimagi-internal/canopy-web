@@ -20,8 +20,9 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.workspaces import services as wsvc
+from apps.api.route_gates import gate
 from apps.workspaces import links as wslinks
+from apps.workspaces import services as wsvc
 
 from . import local
 from .models import PrivateRunner, Runner, Turn
@@ -40,6 +41,7 @@ local_turns_router = Router(auth=session_auth, tags=["harness"])
 
 @private_runners_router.post("/", response={200: PrivateRunnerOut, 201: PrivateRunnerOut},
                           summary="Register this machine as one of your private runners")
+@gate("self", setting=True)  # your own machines (local use)
 def register_private_runner(request: HttpRequest, payload: PrivateRunnerIn):
     """Idempotent per (you, name): registering the same machine again returns it
     (and brings back a retired one). A private runner is yours, not an agent's or a
@@ -63,12 +65,14 @@ def register_private_runner(request: HttpRequest, payload: PrivateRunnerIn):
 
 
 @private_runners_router.get("/", response=list[PrivateRunnerOut], summary="Your private runners")
+@gate("self")
 def list_private_runners(request: HttpRequest):
     return list(PrivateRunner.objects.filter(owner=request.user, retired_at__isnull=True))
 
 
 @private_runners_router.get("/used", response=list[PrivateRunnerUseOut],
                          summary="Private runners people use this workspace's agents from")
+@gate("member")  # those local turns on the workspace's agents ran on
 def list_workspace_private_runners(request: HttpRequest, workspace: str):
     """Every private runner a local turn on one of `workspace`'s agents ran on: whose
     it is, which agents, how many local turns, and when it was last seen. Shown
@@ -105,6 +109,7 @@ def list_workspace_private_runners(request: HttpRequest, workspace: str):
 
 @private_runners_router.post("/{private_runner_id}/retire", response=PrivateRunnerOut,
                           summary="Retire one of your private runners")
+@gate("self", setting=True)  # your own machines (local use)
 def retire_private_runner(request: HttpRequest, private_runner_id: uuid.UUID):
     """Its local sessions stop opening, a runner app linked to it goes back to
     being shared, and the runner that held its keys when it has no runner app
@@ -141,6 +146,16 @@ def _local_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
 @local_turns_router.post("/", response={200: LocalTurnOut, 201: LocalTurnOut},
                          summary="Open the local turn for a Claude Code session on your private runner")
+# member of the agent's workspace (else 404), AND access.decide must give the
+# WHOLE agent (owner/admin, a `full:` rule, or a workspace editor) — else 403
+@gate(
+    "member",
+    kind="turn",
+    viewer_write=(
+        "records the caller's OWN session on their own private runner; access.decide must give them the whole agent "
+        "(403 otherwise), so a viewer is refused in the route"
+    ),
+)
 def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
     """A session on your private runner is using `agent`: record it as a turn.
 
@@ -184,6 +199,7 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
 
 @local_turns_router.post("/{turn_id}/renew", response=LocalTurnRenewOut,
                          summary="Keep your local turn's lease alive")
+@gate("self", kind="turn")  # the local turn's own initiator
 def renew_local_turn(request: HttpRequest, turn_id: uuid.UUID):
     turn = local.renew(_local_turn_or_404(request, turn_id))
     return {"turn_id": turn.pk, "status": turn.status, "lease_expires_at": turn.lease_expires_at}

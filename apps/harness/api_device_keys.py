@@ -31,6 +31,7 @@ from ninja.errors import HttpError
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.events import audit
 from apps.passkeys import stepup
 
@@ -103,6 +104,10 @@ def _is_browser_session(request: HttpRequest) -> bool:
 
 @router.post("/", response={200: RunnerDeviceKeyCreatedOut, 201: RunnerDeviceKeyCreatedOut},
              summary="Register a runner device key (pending until approved)")
+# lands pending; on a private runner, owner only
+# a box registering its own key: lands `pending`, trusted only once a person
+# approves it (approve_runner_device_key, a setting)
+@gate("runner-admin", kind="runner-protocol")
 def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn):
     """The box registers the public half of a key it holds. It starts `pending`;
     nothing it signs is accepted until a person approves it at `approve_url`.
@@ -232,6 +237,7 @@ def verified_role(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[str
 
 
 @router.get("/", response=list[RunnerDeviceKeyOut], summary="List runner device keys")
+@gate("runner-admin")
 def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = None):
     """Keys on one runner (`?runner=`), or on every runner the caller owns or
     administers."""
@@ -260,6 +266,7 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
 
 @router.post("/{key_id}/approve", response=RunnerDeviceKeyOut,
              summary="Approve a pending device key (browser session + passkey step-up)")
+@gate("runner-admin", setting=True)  # browser + passkey step-up; private runner: owner only
 def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     """`pending` → `active`, and its ECDH key approved with it; on an active key
     whose new ECDH key waits, approves just that. A revoked key cannot be
@@ -340,6 +347,7 @@ def agents_key_opens(key: RunnerDeviceKey, agents: list) -> list[DeviceKeyAgentO
 
 
 @router.delete("/{key_id}", response=RunnerDeviceKeyOut, summary="Revoke a device key")
+@gate("runner-admin", setting=True)
 def revoke_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     """Immediate: the next proof signed by this key is refused. Idempotent."""
     key = _key_or_404(request, key_id)

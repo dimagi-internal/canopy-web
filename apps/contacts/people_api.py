@@ -24,6 +24,7 @@ from ninja import Router
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.route_gates import gate
 from apps.workspaces import services as wsvc
 
 from . import hcp, people
@@ -31,6 +32,8 @@ from . import services as contact_services
 from .models import MemoryCollection, Person, PersonAccess, PersonFact, PersonGrant
 from .people_schemas import (
     AgentGrantIn,
+    AgentMemoryIn,
+    AgentMemoryOut,
     GrantCollectionIn,
     MemoryCollectionIn,
     MemoryCollectionOut,
@@ -40,11 +43,6 @@ from .people_schemas import (
     MemoryPageOut,
     MemoryViewerIn,
     MemoryViewersOut,
-    SharedPagesOut,
-    AgentMemoryIn,
-    AgentMemoryOut,
-    SessionMemoryIn,
-    SessionMemoryOut,
     PeopleCoverageOut,
     PersonConversationsOut,
     PersonFactCreatedOut,
@@ -56,6 +54,9 @@ from .people_schemas import (
     SearchHistoryOut,
     SearchPreviewIn,
     SearchPreviewOut,
+    SessionMemoryIn,
+    SessionMemoryOut,
+    SharedPagesOut,
 )
 
 router = Router(auth=session_auth, tags=["people"])
@@ -104,6 +105,10 @@ def _ref(person: Person) -> dict:
 
 
 @router.get("/me/", response=PersonMeOut, summary="Your memory")
+# Every per-person route is ALSO gated on `people.known_in` — a person the
+# workspace does not deal with is 404, so ids and addresses confirm nothing.
+# only ever the caller's own Person
+@gate("self")
 def people_me(request: HttpRequest) -> dict:
     """Everything canopy holds about YOU: every live fact in every workspace
     (corrections first) and the last 50 times an agent or a
@@ -201,6 +206,9 @@ def _the_person_themself(request: HttpRequest) -> Person:
 
 @router.put("/me/agent-memory/", response=AgentMemoryOut,
             summary="Choose what agent memory is available, and its defaults")
+# The person's agent-memory switch: their own Person only, and refused to an agent's
+# login, a caller token and a system account — nobody may flip it for them.
+@gate("self", setting=True)
 def set_my_agent_memory(request: HttpRequest, payload: AgentMemoryIn) -> dict:
     """Your agent memory at the canopy level. For each of `record` (agents may
     learn about me) and `use` (agents may use what they've learned): `available`
@@ -258,6 +266,7 @@ def session_memory_payload(person: Person, session) -> dict:
 
 @router.get("/me/sessions/{session_id}/agent-memory/", response=SessionMemoryOut,
             summary="Agent memory in one of your sessions")
+@gate("self")  # One of the caller's OWN sessions (`created_by`), as that person only — same refusals.
 def get_my_session_memory(request: HttpRequest, session_id: str) -> dict:
     """What applies in this session of yours: per feature, whether it is
     available, its default, this session's choice, and the effective value."""
@@ -267,6 +276,7 @@ def get_my_session_memory(request: HttpRequest, session_id: str) -> dict:
 
 @router.put("/me/sessions/{session_id}/agent-memory/", response=SessionMemoryOut,
             summary="Turn agent memory on or off for one of your sessions")
+@gate("self", setting=True)
 def set_my_session_memory(request: HttpRequest, session_id: str,
                           payload: SessionMemoryIn) -> dict:
     """For this session only: `on`, `off` or `inherit` (use your default) for
@@ -286,6 +296,7 @@ def set_my_session_memory(request: HttpRequest, session_id: str,
 
 @router.post("/me/sessions/{session_id}/agent-grants/", response=SessionMemoryOut,
              summary="Grant this session's agent access to what it learns about you")
+@gate("self", setting=True)  # The person granting their session's agent (HCP 4.1.6) — only the person, never an agent.
 def grant_my_session_agent(request: HttpRequest, session_id: str, payload: AgentGrantIn) -> dict:
     """Your act (HCP 4.1.6): give the agent of this session of yours `record`
     (it may save what it learns about you) and/or `use` (it may be told what has
@@ -316,6 +327,7 @@ def grant_my_session_agent(request: HttpRequest, session_id: str, payload: Agent
 
 @router.get("/coverage/", response=PeopleCoverageOut,
             summary="Is the people brain working? Per-agent coverage")
+@gate("member", "agent-admin")  # counts only; a non-member agent admin sees just their agents
 def people_coverage(request: HttpRequest, workspace: str | None = None, days: int = 7) -> dict:
     """Per agent of the workspace, over the last `days` (1–90, default 7): the
     turns humans started with it, how many of those were handed what canopy
@@ -349,6 +361,7 @@ def people_coverage(request: HttpRequest, workspace: str | None = None, days: in
 
 
 @router.get("/lookup/", response=PersonRefOut, summary="Find a person by email")
+@gate("member")  # 404 unless known in one of the caller's workspaces
 def lookup_person(request: HttpRequest, email: str, workspace: str | None = None) -> dict:
     """The person an address names — only if a workspace you are a member of
     deals with them (`?workspace=` narrows to one), else 404. Creates nothing."""
@@ -366,6 +379,7 @@ def lookup_person(request: HttpRequest, email: str, workspace: str | None = None
 
 
 @router.get("/{person_id}/", response=PersonOut, summary="A person, as one workspace knows them")
+@gate("member")  # read logged as PersonAccess(via=api)
 def get_person(request: HttpRequest, person_id: int, workspace: str | None = None) -> dict:
     """Live facts (corrections first) for `?workspace=`. Members
     of that workspace only, and the read is logged where the person can see it."""
@@ -388,6 +402,7 @@ def get_person(request: HttpRequest, person_id: int, workspace: str | None = Non
 
 @router.get("/{person_id}/projects/", response=PersonProjectsOut,
             summary="The projects a person takes part in, in one workspace")
+@gate("member")  # same gate as get_person (known_in); read logged
 def list_person_projects(request: HttpRequest, person_id: int, workspace: str | None = None) -> dict:
     """The projects of `?workspace=`'s agents this person is a participant of —
     most recently active first, archived included. Members of that workspace
@@ -407,6 +422,14 @@ def list_person_projects(request: HttpRequest, person_id: int, workspace: str | 
 
 @router.post("/{person_id}/facts/", response={201: PersonFactCreatedOut},
              summary="Remember something about a person")
+@gate(
+    "member",
+    kind="person-data",
+    viewer_write=(
+        "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, "
+        "attributed, visible to its subject and retractable by them"
+    ),
+)
 def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn):
     """Append a work-context fact (`kind` is closed: anything outside role,
     project, instance, preference, correction, terminology is a 400). With
@@ -461,6 +484,7 @@ def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn)
 
 @router.post("/{person_id}/facts/{fact_id}/retract/", response=PersonFactCreatedOut,
              summary="Take back a fact")
+@gate("self", "members.manage", kind="person-data")  # the subject, the asserter, or a workspace admin
 def retract_person_fact(request: HttpRequest, person_id: int, fact_id: int) -> dict:
     """The person themself, an admin of the fact's workspace, or whoever asserted
     it (the user, or the asserting agent's login). Anyone else: 404."""
@@ -474,6 +498,7 @@ def retract_person_fact(request: HttpRequest, person_id: int, fact_id: int) -> d
 
 @router.get("/{person_id}/conversations/", response=PersonConversationsOut,
             summary="The conversations a person had with one agent")
+@gate("agent-admin")  # or the agent's OWN login; an admin gets only turns turn_access already shows them
 def list_person_conversations(request: HttpRequest, person_id: int, agent: str,
                               since: str | None = None) -> dict:
     """The turns this person started WITH `agent` (directly or in its chats),
@@ -555,6 +580,9 @@ def _collections(person: Person) -> dict:
 
 @router.get("/me/memory-collections/", response=MemoryCollectionsOut,
             summary="Your memory collections")
+# The person's own memory collections, and which one an agent they allowed uses
+# (HCP 4.1.5.1) — only the person; a widening also needs their explicit confirm.
+@gate("self")
 def list_my_memory_collections(request: HttpRequest) -> dict:
     """The collections you made — named sets of contexts (all of an organisation,
     one workspace, entries in no workspace) you can point an agent at, resolved
@@ -565,6 +593,10 @@ def list_my_memory_collections(request: HttpRequest) -> dict:
 
 @router.post("/me/memory-search-preview/", response=SearchPreviewOut,
              summary="Try a search over your memory, and see why each entry would come back")
+# Trying a search over your own memory (scores only, records nothing) — only
+# the person, and only inside the memory rollout.
+# POST for the question in a body; writes nothing
+@gate("self", kind="action")
 def preview_my_memory_search(request: HttpRequest, payload: SearchPreviewIn) -> dict:
     """Scores every entry you hold against a question the way an agent's search
     does (`hcp.explain`): shared words, closeness in meaning, and the reason each
@@ -614,6 +646,7 @@ def _with_text(person: Person, rows: list[dict]) -> list[dict]:
 
 @router.get("/me/memory-searches/", response=SearchHistoryOut,
             summary="Every search agents ran over your memory, as it ran")
+@gate("self")  # Every search agents ran over your memory, as it ran — only the person.
 def list_my_memory_searches(request: HttpRequest, before: str | None = None, limit: int = 30) -> dict:
     """Newest first: who searched, for which turn (with a link to its session),
     the question, and every entry it scored — what came back, in what place,
@@ -654,6 +687,7 @@ def _searches(person: Person, before: str | None, limit: int) -> dict:
 
 @router.post("/me/memory-collections/", response=MemoryCollectionOut,
              summary="Make a memory collection")
+@gate("self", setting=True)
 def create_my_memory_collection(request: HttpRequest, payload: MemoryCollectionIn) -> dict:
     from . import hcp_collections
 
@@ -668,6 +702,7 @@ def create_my_memory_collection(request: HttpRequest, payload: MemoryCollectionI
 
 @router.put("/me/memory-collections/{collection_id}/", response=MemoryCollectionOut,
             summary="Change a memory collection")
+@gate("self", setting=True)
 def update_my_memory_collection(request: HttpRequest, collection_id: int,
                                 payload: MemoryCollectionUpdateIn) -> dict:
     """Rename it or change what it holds. Every agent using it follows at once.
@@ -689,6 +724,7 @@ def update_my_memory_collection(request: HttpRequest, collection_id: int,
 
 @router.delete("/me/memory-collections/{collection_id}/", response={204: None},
                summary="Remove a memory collection")
+@gate("self", setting=True)
 def delete_my_memory_collection(request: HttpRequest, collection_id: int):
     """Refused (409) while an agent still uses it — point it elsewhere first."""
     from . import hcp_collections
@@ -704,6 +740,7 @@ def delete_my_memory_collection(request: HttpRequest, collection_id: int):
 
 @router.put("/me/grants/{grant_id}/collection/", response=MemoryCollectionsOut,
             summary="Choose what an agent you allowed may reach")
+@gate("self", setting=True)
 def set_my_grant_collection(request: HttpRequest, grant_id: str, payload: GrantCollectionIn) -> dict:
     """Point the agent behind this grant at one of your collections, or back to
     its default (`collection_id: null` — its own organisation). If that lets it
@@ -751,6 +788,9 @@ def _viewers(person: Person, user) -> dict:
 
 @router.get("/me/viewers/", response=MemoryViewersOut,
             summary="The agents you let see your memory page")
+# Letting an agent see your memory page, read-only (apps/contacts/viewers.py):
+# choosing who is the person's own act; the agent's own login then reads it.
+@gate("self")
 def list_my_viewers(request: HttpRequest) -> dict:
     """Which agents may see this page, read-only, and which you could let in
     (the agents of workspaces you belong to). Only you see this."""
@@ -759,6 +799,7 @@ def list_my_viewers(request: HttpRequest) -> dict:
 
 @router.post("/me/viewers/", response=MemoryViewersOut,
              summary="Let an agent see your memory page, read-only")
+@gate("self", setting=True)  # who may see your memory page
 def add_my_viewer(request: HttpRequest, payload: MemoryViewerIn) -> dict:
     """Your act: the agent's own login may then read everything this page shows
     you — what is held, who may read it, what happened, how agents searched it —
@@ -775,6 +816,7 @@ def add_my_viewer(request: HttpRequest, payload: MemoryViewerIn) -> dict:
 
 @router.delete("/me/viewers/{agent_slug}/", response=MemoryViewersOut,
                summary="Stop an agent seeing your memory page")
+@gate("self", setting=True)  # who may see your memory page
 def remove_my_viewer(request: HttpRequest, agent_slug: str) -> dict:
     """At once: its next read is "not found". Only you can do this."""
     from apps.agents.models import Agent
@@ -790,6 +832,7 @@ def remove_my_viewer(request: HttpRequest, agent_slug: str) -> dict:
 
 @router.get("/pages/shared-with-me/", response=SharedPagesOut,
             summary="The memory pages people let this agent see")
+@gate("authenticated")  # empty unless the caller is an agent's own login
 def list_shared_pages(request: HttpRequest) -> dict:
     """For an agent's own login: whose memory page it may read, and where.
     Anyone else gets an empty list."""
@@ -814,6 +857,7 @@ def _page_of(request: HttpRequest, person_id: int) -> Person:
 
 @router.get("/{person_id}/page/", response=MemoryPageOut,
             summary="A person's memory page, as they let this agent see it")
+@gate("page-viewer")
 def get_memory_page(request: HttpRequest, person_id: int) -> dict:
     """What /people/me shows the person — what is held, who may read it (their
     grants, their collections) — for an agent whose own login they let see it.
@@ -827,6 +871,7 @@ def get_memory_page(request: HttpRequest, person_id: int) -> dict:
 
 @router.get("/{person_id}/page/audit/", response=MemoryPageAuditOut,
             summary="What happened to a person's memory, as they let this agent see it")
+@gate("page-viewer")
 def get_memory_page_audit(request: HttpRequest, person_id: int, cursor: str | None = None) -> dict:
     """Their audit log, newest first, 50 at a time — the page's "What happened"."""
     from .hcp_api import audit_page
@@ -840,6 +885,7 @@ def get_memory_page_audit(request: HttpRequest, person_id: int, cursor: str | No
 
 @router.get("/{person_id}/page/searches/", response=SearchHistoryOut,
             summary="How agents searched a person's memory, as they let this agent see it")
+@gate("page-viewer")
 def get_memory_page_searches(request: HttpRequest, person_id: int, before: str | None = None,
                              limit: int = 30) -> dict:
     """The page's "How agents searched it"."""

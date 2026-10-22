@@ -24,13 +24,13 @@ from apps.api.errors import (
     TYPE_VALIDATION,
     ProblemError,
 )
+from apps.api.route_gates import gate
 from apps.walkthroughs import storage
 from apps.walkthroughs.drive_client import DriveNotConfigured
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import aggregate, delete, sources
-from .transfer import TransferError, apply_move, plan_move, public_plan
 from .schemas import (
     NarrativeDetailOut,
     NarrativeListItemOut,
@@ -44,6 +44,7 @@ from .schemas import (
     RunPackageOut,
     RunReleaseOut,
 )
+from .transfer import TransferError, apply_move, plan_move, public_plan
 
 router = Router(auth=session_auth, tags=["ddd"])
 
@@ -83,6 +84,7 @@ def _forbidden(what: str) -> ProblemError:
     response=list[NarrativeListItemOut],
     summary="List DDD narratives",
 )
+@gate("member")
 def list_narratives(
     request: HttpRequest, project: str = "", mine: str = "", session: str = "",
     agent_project: str = "",
@@ -105,6 +107,7 @@ def list_narratives(
     response=NarrativeDetailOut,
     summary="Get a narrative + its runs",
 )
+@gate("member")
 def get_narrative(request: HttpRequest, slug: str) -> NarrativeDetailOut:
     data = aggregate.build_narrative(slug, workspace_slugs=_workspace_slugs(request))
     if data is None:
@@ -120,6 +123,7 @@ def get_narrative(request: HttpRequest, slug: str) -> NarrativeDetailOut:
     response=RunPackageOut,
     summary="Get a run package (video + deck + narrative + links)",
 )
+@gate("member")
 def get_run(request: HttpRequest, run_id: str) -> RunPackageOut:
     data = aggregate.build_run(run_id, workspace_slugs=_workspace_slugs(request))
     if data is None:
@@ -133,6 +137,7 @@ def get_run(request: HttpRequest, run_id: str) -> RunPackageOut:
     auth=None,
     summary="Clean, shareable run release page (public via ?t=<share_token>)",
 )
+@gate("token-link")  # auth=None; member or ?t= on the primary artifact
 def get_run_release(request: HttpRequest, run_id: str, ws: str = "") -> RunReleaseOut:
     """Anonymous-capable: the handler self-enforces access (workspace member OR a
     matching ``?t=`` share token) inside ``build_release`` — the middleware
@@ -149,6 +154,7 @@ def get_run_release(request: HttpRequest, run_id: str, ws: str = "") -> RunRelea
     response=NarrativeVisibilityOut,
     summary="Set visibility for an entire narrative (cascades to all artifacts + reviews)",
 )
+@gate("content.write", setting=True)  # scoped by editor slugs
 def set_narrative_visibility(
     request: HttpRequest, slug: str, payload: NarrativeVisibilityIn
 ) -> NarrativeVisibilityOut:
@@ -190,6 +196,7 @@ def set_narrative_visibility(
     response={204: None},
     summary="Delete a run (its walkthroughs + reviews)",
 )
+@gate("content.write", kind="content")
 def delete_run(request: HttpRequest, run_id: str):
     if delete.delete_run(run_id, workspace_slugs=_editor_slugs(request)) is None:
         if aggregate.build_run(run_id, workspace_slugs=_workspace_slugs(request)) is not None:
@@ -203,6 +210,7 @@ def delete_run(request: HttpRequest, run_id: str):
     response={204: None},
     summary="Delete a narrative version (and the runs under it)",
 )
+@gate("content.write", kind="content")
 def delete_version(request: HttpRequest, slug: str, version: int):
     if delete.delete_version(
         slug, version, workspace_slugs=_editor_slugs(request)
@@ -219,6 +227,7 @@ def delete_version(request: HttpRequest, slug: str, version: int):
     response={204: None},
     summary="Delete an entire narrative (all versions + runs)",
 )
+@gate("content.write", kind="content")
 def delete_narrative(request: HttpRequest, slug: str):
     if delete.delete_narrative(slug, workspace_slugs=_editor_slugs(request)) is None:
         if aggregate.build_narrative(slug, workspace_slugs=_workspace_slugs(request)) is not None:
@@ -232,6 +241,7 @@ def delete_narrative(request: HttpRequest, slug: str):
     response=NarrativeMoveOut,
     summary="Move a narrative (and its storyboards) to another workspace",
 )
+@gate("content.write", kind="content")  # editor on source AND destination
 def move_narrative(request: HttpRequest, slug: str, payload: NarrativeMoveIn) -> dict:
     """Re-home a narrative — supported, not a repair script.
 
@@ -317,6 +327,7 @@ def _versions_by_review(slug: str, workspace_slugs: set[str]) -> dict[str, int |
     response={201: NarrativeSourceUploadOut},
     summary="Pin an iteration source (recipe, master, capture report) to a narrative version",
 )
+@gate("content.write", kind="content")  # editor of the pinned version's workspace
 def upload_narrative_source(
     request: HttpRequest,
     slug: str,
@@ -363,6 +374,7 @@ def upload_narrative_source(
     response=list[NarrativeSourceOut],
     summary="List a narrative's iteration sources (newest first)",
 )
+@gate("member")
 def list_narrative_sources(request: HttpRequest, slug: str) -> list[NarrativeSourceOut]:
     scope = _workspace_slugs(request)
     rows = sources.for_slug(slug, scope)
@@ -374,6 +386,7 @@ def list_narrative_sources(request: HttpRequest, slug: str) -> list[NarrativeSou
     "/narratives/{slug}/sources/{source_id}/content",
     summary="Download one iteration source's bytes",
 )
+@gate("member")
 def get_narrative_source_content(request: HttpRequest, slug: str, source_id: uuid.UUID):
     src = next(
         (s for s in sources.for_slug(slug, _workspace_slugs(request)) if s.id == source_id),

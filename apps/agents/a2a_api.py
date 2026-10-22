@@ -12,6 +12,7 @@ from django.http import Http404, HttpRequest, HttpResponse
 from ninja import Router
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 
 from . import agent_card
 from .models import Agent
@@ -56,6 +57,7 @@ def _respond(request: HttpRequest, response: HttpResponse, card: A2AAgentCardOut
             response={200: A2AAgentCardOut, 304: None},
             auth=None, by_alias=True, exclude_none=True,
             summary="An agent's public A2A Agent Card")
+@gate("anonymous")  # only for agents with an outsider capability
 def public_agent_card(request: HttpRequest, slug: str, response: HttpResponse):
     """The agent's public Agent Card (A2A v1.0): what it offers people outside its workspace.
 
@@ -72,6 +74,7 @@ def public_agent_card(request: HttpRequest, slug: str, response: HttpResponse):
             response={200: A2AAgentCardOut, 304: None},
             auth=session_auth, by_alias=True, exclude_none=True,
             summary="An agent's authenticated extended A2A Agent Card")
+@gate("authenticated")  # per-caller card, any agent slug
 def extended_agent_card(request: HttpRequest, slug: str, response: HttpResponse):
     """The Agent Card as the signed-in caller sees it (A2A `GetExtendedAgentCard`).
 

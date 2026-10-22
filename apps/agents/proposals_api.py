@@ -26,6 +26,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.contacts import services as contacts
 from apps.harness.models import Turn
 from apps.huddles.models import CheckinRun
@@ -75,6 +76,7 @@ def resolve_task_ref(request: HttpRequest, ref: str) -> AgentTask:
 
 @router.post("/{slug}/projects/propose/", response={200: ProjectProposeOut, 201: ProjectProposeOut},
              summary="Propose a project (or revise an open proposal of the same name)")
+@gate("agent.work", "agent-login", kind="content")  # an editor, or the agent itself
 def propose_project(request: HttpRequest, slug: str, payload: ProjectProposeIn) -> Status:
     """Creates the project with `status=proposed`, its plan steps as `suggested`
     tasks, ONE decision card ("Start this project?", a review ask whose body is
@@ -109,6 +111,7 @@ def propose_project(request: HttpRequest, slug: str, payload: ProjectProposeIn) 
 
 @router.get("/{slug}/projects/{ref}/backings/", response=list[ProjectBackingOut],
             summary="Where everyone stands on a project: backs, backs with changes, passes")
+@gate("member")
 def list_project_backings(request: HttpRequest, slug: str, ref: str) -> list[dict]:
     """Oldest first. `stale` marks a backing of an earlier version (the project was
     revised since); `mine` marks the caller's own. Members."""
@@ -129,6 +132,15 @@ def _me(request: HttpRequest):
 
 @router.put("/{slug}/projects/{ref}/backings/me/", response=ProjectBackingOut,
             summary="Back a project, back it with changes, or pass — as yourself")
+# as yourself; an agent's login is refused (it backs as itself)
+@gate(
+    "member",
+    kind="content",
+    viewer_write=(
+        "any member says where they stand on a project, as themself, in one line — a signal that starts nothing "
+        "(decision 5, 2026-10-16); deciding is the decision card's, gated to projects.decide or the project's owner"
+    ),
+)
 def back_project(request: HttpRequest, slug: str, ref: str, payload: ProjectBackingIn) -> dict:
     """Replaces your earlier stance. `line` (at most 280 characters) is required
     unless you simply back it. You become one of the project's participants. Any
@@ -148,6 +160,7 @@ def back_project(request: HttpRequest, slug: str, ref: str, payload: ProjectBack
 
 @router.delete("/{slug}/projects/{ref}/backings/me/", response={204: None},
                summary="Withdraw your backing of a project")
+@gate("member", "self", kind="content", viewer_write="withdraws only the caller's OWN backing")
 def unback_project(request: HttpRequest, slug: str, ref: str) -> Status:
     project = project_or_404(agent_for_read(request, slug), ref)
     proposals.unback(project, _me(request))
@@ -177,6 +190,7 @@ def _may_record_stance(request: HttpRequest, agent, who, huddle_id: str | None) 
 
 @router.put("/{slug}/projects/{ref}/backings/agents/{backer}/", response=ProjectBackingOut,
             summary="Record an agent's stance on a project (a co-sign)")
+@gate("agent-login", kind="content")  # the backer's own login, or the project's agent's
 def back_project_as_agent(request: HttpRequest, slug: str, ref: str, backer: str,
                           payload: AgentBackingIn) -> dict:
     """Called by `backer`'s own login, or by the project's agent's (a huddle's lead
@@ -219,6 +233,9 @@ def _task_in(project, ref: str) -> AgentTask:
 
 @router.post("/{slug}/projects/{ref}/tasks/propose/", response={200: TaskProposeOut, 201: TaskProposeOut},
              summary="Propose a task in a project (or revise an open proposed task of the same title)")
+# proposed TASKS in a project (check-ins, 2026-10-17): the same gates one level down
+# an editor, or the project's agent itself
+@gate("agent.work", "agent-login", kind="content")
 def propose_task(request: HttpRequest, slug: str, ref: str, payload: TaskProposeIn) -> Status:
     """The task-level twin of `projects/propose/`, and what a project's check-in
     files: one task, `status=suggested`, in the project, its `plan` steps as
@@ -258,6 +275,7 @@ def propose_task(request: HttpRequest, slug: str, ref: str, payload: TaskPropose
 
 @router.get("/{slug}/projects/{ref}/tasks/{task}/backings/", response=list[ProjectBackingOut],
             summary="Where everyone stands on a proposed task")
+@gate("member")
 def list_task_backings(request: HttpRequest, slug: str, ref: str, task: str) -> list[dict]:
     """Oldest first. `stale` marks a backing of an earlier version; `mine` the caller's own. Members."""
 
@@ -267,6 +285,16 @@ def list_task_backings(request: HttpRequest, slug: str, ref: str, task: str) -> 
 
 @router.put("/{slug}/projects/{ref}/tasks/{task}/backings/me/", response=ProjectBackingOut,
             summary="Back a proposed task, back it with changes, or pass — as yourself")
+# as yourself; an agent's login is refused (it backs as itself)
+@gate(
+    "member",
+    kind="content",
+    viewer_write=(
+        "any member says where they stand on a check-in's proposed task, as themself, in one line — a signal that "
+        "starts nothing; starting it is the task's approve, gated to the project's owner, the check-in's lead or "
+        "projects.decide"
+    ),
+)
 def back_task(request: HttpRequest, slug: str, ref: str, task: str, payload: ProjectBackingIn) -> dict:
     """Replaces your earlier stance. `line` (at most 280 characters) is required
     unless you simply back it. You become one of the project's participants. Any
@@ -287,6 +315,7 @@ def back_task(request: HttpRequest, slug: str, ref: str, task: str, payload: Pro
 
 @router.delete("/{slug}/projects/{ref}/tasks/{task}/backings/me/", response={204: None},
                summary="Withdraw your backing of a proposed task")
+@gate("member", "self", kind="content", viewer_write="withdraws only the caller's OWN backing")
 def unback_task(request: HttpRequest, slug: str, ref: str, task: str) -> Status:
     project = project_or_404(agent_for_read(request, slug), ref)
     proposals.unback(None, _me(request), task=_task_in(project, task))
@@ -295,6 +324,7 @@ def unback_task(request: HttpRequest, slug: str, ref: str, task: str) -> Status:
 
 @router.put("/{slug}/projects/{ref}/tasks/{task}/backings/agents/{backer}/", response=ProjectBackingOut,
             summary="Record an agent's stance on a proposed task (a co-sign)")
+@gate("agent-login", kind="content")  # the backer's own login, or the project's agent's
 def back_task_as_agent(request: HttpRequest, slug: str, ref: str, task: str, backer: str,
                        payload: AgentBackingIn) -> dict:
     """Called by `backer`'s own login, or by the project's agent's (`canopy huddle

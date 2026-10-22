@@ -24,6 +24,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.api.route_gates import gate
 from apps.workspaces import services as wsvc
 
 from . import schedule_services as ss
@@ -90,6 +91,7 @@ def _visible_workspace_ids(request: HttpRequest) -> set[str]:
 # literal.
 @router.get("/schedules/week", response=ScheduleWeekOut,
             summary="A week of scheduled fires across the visible fleet",)
+@gate("member")
 def schedule_week(request: HttpRequest, start: dt.datetime, mine: bool = False) -> ScheduleWeekOut:
     """Every enabled schedule the caller can see, each with its fires in
     [start, start+7d). Scope is the URL: flat → all my workspaces; /w/{ws}/ →
@@ -104,6 +106,7 @@ def schedule_week(request: HttpRequest, start: dt.datetime, mine: bool = False) 
 
 @router.get("/{slug}/schedules/", response=Page[ScheduleOut],
             summary="List an agent's recurring schedules",)
+@gate("member")
 def list_schedules(request: HttpRequest, slug: str, limit: int = 100) -> Page[ScheduleOut]:
     try:
         schedules = ss.list_schedules(request.user, slug, workspace_slug=_pin(request))
@@ -115,6 +118,7 @@ def list_schedules(request: HttpRequest, slug: str, limit: int = 100) -> Page[Sc
 
 @router.post("/{slug}/schedules/", response={201: ScheduleOut},
              summary="Create a recurring schedule",)
+@gate("agent.work", setting=True)  # enforced in schedule_services._resolve_agent
 def create_schedule(request: HttpRequest, slug: str, payload: ScheduleIn) -> Status:
     try:
         schedule = ss.create_schedule(request.user, slug, payload.dict(), workspace_slug=_pin(request))
@@ -138,6 +142,7 @@ def create_schedule(request: HttpRequest, slug: str, payload: ScheduleIn) -> Sta
 # this block below PATCH/DELETE would silently shadow it.
 @router.post("/{slug}/schedules/preview", response=SchedulePreviewOut,
              summary="Preview the next fire times for a cron expression",)
+@gate("member", kind="action", viewer_write="POST but read-only: computes next fire times, writes nothing")
 def preview_cron(
     request: HttpRequest, slug: str, payload: SchedulePreviewIn
 ) -> SchedulePreviewOut:
@@ -154,6 +159,7 @@ def preview_cron(
 
 @router.patch("/{slug}/schedules/{schedule_id}", response=ScheduleOut,
               summary="Update a recurring schedule",)
+@gate("agent.work", setting=True)
 def update_schedule(
     request: HttpRequest, slug: str, schedule_id: int, payload: SchedulePatch
 ) -> ScheduleOut:
@@ -178,6 +184,7 @@ def update_schedule(
 
 @router.delete("/{slug}/schedules/{schedule_id}", response={204: None},
                summary="Delete a recurring schedule",)
+@gate("agent.work", setting=True)
 def delete_schedule(request: HttpRequest, slug: str, schedule_id: int) -> Status:
     try:
         ss.delete_schedule(request.user, slug, schedule_id, workspace_slug=_pin(request))
@@ -190,6 +197,7 @@ def delete_schedule(request: HttpRequest, slug: str, schedule_id: int) -> Status
 
 @router.post("/{slug}/schedules/{schedule_id}/run-now", response={202: ScheduleOut},
              summary="Trigger a schedule off-cycle, now",)
+@gate("agent.work", kind="action")
 def run_schedule_now(request: HttpRequest, slug: str, schedule_id: int) -> Status:
     try:
         schedule = ss.run_schedule_now(request.user, slug, schedule_id, workspace_slug=_pin(request))

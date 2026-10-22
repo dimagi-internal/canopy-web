@@ -3,6 +3,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.errors import TYPE_CONFLICT, TYPE_RATE_LIMIT, ProblemError
+from apps.api.route_gates import gate
 from apps.embedding.audit import client_ip
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as ws_services
@@ -20,6 +21,7 @@ router = Router(tags=["beta"])
 # a repeat, so the form cannot be used to learn who has already asked.
 @router.post("/beta-requests", response=BetaRequestOut, auth=None,
              summary="Request access to Canopy (anonymous)")
+@gate("anonymous", kind="request")  # the public site's request-access form; grants nothing
 def submit_beta_request(request: HttpRequest, payload: BetaRequestIn) -> dict:
     """Ask for access to canopy, which is currently closed to Dimagi and its partners.
 
@@ -64,6 +66,7 @@ def _review_or_404(request: HttpRequest, request_id: int | None = None) -> BetaR
 
 @router.get("/beta-requests", response=list[BetaRequestDetailOut],
             summary="List requests for access to Canopy (reviewers)")
+@gate("beta-reviewer")
 def list_beta_requests(request: HttpRequest, status: str | None = None) -> list[BetaRequestDetailOut]:
     """Newest first; `status` filters to pending, invited or declined. Only the
     person requests are mailed to, and superusers, may read them."""
@@ -76,12 +79,14 @@ def list_beta_requests(request: HttpRequest, status: str | None = None) -> list[
 
 @router.get("/beta-requests/{request_id}", response=BetaRequestDetailOut,
             summary="One request for access to Canopy (reviewers)")
+@gate("beta-reviewer")
 def get_beta_request(request: HttpRequest, request_id: int) -> BetaRequestDetailOut:
     return _out(_review_or_404(request, request_id))
 
 
 @router.post("/beta-requests/{request_id}/invite", response=BetaRequestDetailOut,
              summary="Approve: invite the requester to a workspace (reviewers)")
+@gate("beta-reviewer", "members.manage", setting=True)  # reviewer, AND may invite at that role there
 def invite_beta_request(request: HttpRequest, request_id: int,
                         payload: BetaRequestInviteIn) -> BetaRequestDetailOut:
     """Invites the requester to `workspace` at `role` and emails them the link —
@@ -108,6 +113,7 @@ def invite_beta_request(request: HttpRequest, request_id: int,
 
 @router.post("/beta-requests/{request_id}/decline", response=BetaRequestDetailOut,
              summary="Decline a request for access to Canopy (reviewers)")
+@gate("beta-reviewer", kind="request")
 def decline_beta_request(request: HttpRequest, request_id: int) -> BetaRequestDetailOut:
     """Closes the request. Emails nobody — reply to the notification email to
     tell them why. 409 if it was already answered."""

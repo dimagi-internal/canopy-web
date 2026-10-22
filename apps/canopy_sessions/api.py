@@ -10,9 +10,8 @@ import base64
 import datetime as dt
 import uuid
 
-from django.db.models import Max
-
 from django.conf import settings
+from django.db.models import Max
 from django.http import Http404, HttpRequest
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -20,48 +19,49 @@ from ninja import File, Router
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
+from apps.agents import services as agent_services
+from apps.api.auth import session_auth
+from apps.api.pagination import clamp_limit
+from apps.api.route_gates import gate
 from apps.harness import initiator as who
 from apps.harness import provenance
 from apps.harness import runner_requirements as rr
 from apps.realtime import groups
-from apps.agents import services as agent_services
-from apps.api.auth import session_auth
-from apps.api.pagination import clamp_limit
 from apps.workspaces import services as wsvc
 
 from . import (
     access,
     attachment_storage,
     channel_bindings,
+    control,
     doors,
     feed,
     filing,
     page_actions,
     page_state,
+    placement,
     secrets,
     serializers,
     services,
     staleness,
     status_feed,
+    transcript_ingest,
+    transcript_read,
 )
-from . import control
-from . import placement
-from . import send as cs_send
-from . import transcript_ingest
-from . import transcript_read
 from . import activity as session_activity
+from . import send as cs_send
 from .models import Attachment, Session
 from .schemas import (
+    AttachmentOut,
+    BackfillStateOut,
+    ForkIn,
+    HumanInputPageOut,
+    MenuAnswerIn,
+    MessageOut,
+    MessagePageOut,
     NoisePurgeIn,
     NoisePurgeOut,
     NoiseReportOut,
-    SessionExportOut,
-    AttachmentOut,
-    BackfillStateOut,
-    MenuAnswerIn,
-    HumanInputPageOut,
-    MessageOut,
-    MessagePageOut,
     PageActionInvokeIn,
     PageActionOut,
     PageActionResultIn,
@@ -69,32 +69,32 @@ from .schemas import (
     PageActionSpec,
     PageStateIn,
     PageStateOut,
-    RunAgentInputIn,
-    RunAgentInputOut,
-    ForkIn,
+    ParticipantAddIn,
+    ParticipantOut,
     PlaceIn,
     ResetIn,
     ResetOut,
     ResetSummaryOut,
+    RunAgentInputIn,
+    RunAgentInputOut,
     SendIn,
     SendOut,
     SessionCreateIn,
     SessionDetailOut,
+    SessionExportOut,
     SessionInfoOut,
     SessionMoveIn,
-    ParticipantAddIn,
-    ParticipantOut,
     SessionNotifyIn,
-    SessionTitleIn,
     SessionOut,
     SessionSearchPageOut,
     SessionSecretIn,
     SessionSecretOut,
+    SessionTitleIn,
     StreamStateOut,
     TransferDecisionIn,
-    TransferRequestOut,
     TransferIn,
     TransferOut,
+    TransferRequestOut,
     TurnOutMinimal,
 )
 
@@ -296,6 +296,14 @@ def _set_status(request: HttpRequest, session_id: uuid.UUID, status: str) -> dic
 
 
 @router.post("/", response=SessionOut, summary="Create a chat session")
+# wsvc.current_workspace; any member may start a chat
+@gate(
+    "member",
+    kind="conversation",
+    viewer_write=(
+        "starting a chat with an agent is the interaction tier a viewer holds"
+    ),
+)
 def create_session(request: HttpRequest, payload: SessionCreateIn):
     """Create a chat session. Started from inside a canopy session? Pass
     `parent={turn, session}` (the caller-context hook prints both ids) so the new
@@ -471,6 +479,7 @@ def _filtered_sessions(
 
 
 @router.get("/", response=list[SessionOut], summary="List sessions (web + runner-discovered)")
+@gate("session-acl")  # readable_sessions
 def list_sessions(
     request: HttpRequest, state: str = "active", limit: int = 200,
     source: str = "", opp_slug: str = "", opp_run_id: str = "",
@@ -540,6 +549,7 @@ me_router = Router(auth=session_auth, tags=["chat"])
 
 
 @me_router.get("/sessions/", response=list[SessionOut], summary="Your sessions, across every workspace you are in")
+@gate("session-acl")  # the same list per organisation (wsvc.each_organisation)
 def list_my_sessions(request: HttpRequest, state: str = "active", limit: int = 200, reply: bool = False, q: str = ""):
     """The session list (`GET /api/canopy-sessions/`) as a user-level view:
     each organisation you are in is read on its own and every row carries its
@@ -566,6 +576,7 @@ def _decode_cursor(cursor: str) -> tuple[dt.datetime, uuid.UUID]:
 
 
 @router.get("/search", response=SessionSearchPageOut, summary="Page through every session (cursor)")
+@gate("session-acl")  # readable_sessions, via the list's _filtered_sessions
 def search_sessions(
     request: HttpRequest, cursor: str = "", limit: int = 100, state: str = "all",
     q: str = "", repo: str = "", since: dt.datetime | None = None,
@@ -611,6 +622,7 @@ def search_sessions(
 # "reset" would otherwise match the session-id pattern and 405 on its GET-only
 # view. Any future collection-level route belongs above here too.
 @router.post("/reset", response=ResetSummaryOut, summary="Reset every visible session")
+@gate("session-acl", kind="conversation")  # readable rows filtered to can_write
 def reset_sessions(request: HttpRequest, payload: ResetIn):
     """Bulk reset, scoped to the workspaces the caller can see (and to the pinned
     one on a tenant route). Use `dry_run` to see what would happen first.
@@ -635,6 +647,7 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
 
 
 @router.get("/noise", response=NoiseReportOut, summary="Find harness output stored as your messages")
+@gate("session-acl")  # rows of sessions the caller can read
 def audit_session_noise(request: HttpRequest, session_id: str | None = None, sample: int = 5):
     """Report harness output stored as USER messages in your sessions.
 
@@ -657,6 +670,7 @@ def audit_session_noise(request: HttpRequest, session_id: str | None = None, sam
 
 @router.post("/noise/purge", response=NoisePurgeOut,
              summary="Delete harness output stored as your messages")
+@gate("session-acl", kind="conversation")  # write; readable sessions, write scope when applied
 def purge_session_noise(request: HttpRequest, payload: NoisePurgeIn):
     """Delete the rows `audit_session_noise` reports.
 
@@ -721,6 +735,7 @@ def _transfer_request_or_404(request: HttpRequest, request_id: uuid.UUID):
 
 @router.get("/transfer-requests", response=list[TransferRequestOut],
             summary="Transfer requests waiting on you, or that you made")
+@gate("self", "runner-admin")  # ones you asked for, or for boxes you administer
 def list_transfer_requests(request: HttpRequest, status: str = "pending"):
     """Requests to move a session onto a runner you administer (yours to approve
     or decline), plus the ones you asked for. `status` filters (default
@@ -738,6 +753,7 @@ def list_transfer_requests(request: HttpRequest, status: str = "pending"):
 
 @router.post("/transfer-requests/{request_id}/approve", response=TransferRequestOut,
              summary="Approve a transfer onto your runner (and carry it out)")
+@gate("runner-admin", kind="conversation")  # the target box's admins, re-checked at decision
 def approve_transfer_request(request: HttpRequest, request_id: uuid.UUID):
     """Approve moving the session onto your runner; the move happens now and
     `transfer` reports it LAUNCHED. Only an administrator of the target runner may
@@ -762,6 +778,7 @@ def approve_transfer_request(request: HttpRequest, request_id: uuid.UUID):
 
 @router.post("/transfer-requests/{request_id}/decline", response=TransferRequestOut,
              summary="Decline a transfer onto your runner")
+@gate("runner-admin", kind="conversation")
 def decline_transfer_request(request: HttpRequest, request_id: uuid.UUID, payload: TransferDecisionIn):
     """Decline; the session stays where it is. `note` is shown to the requester."""
     from . import transfer_requests
@@ -778,6 +795,7 @@ def decline_transfer_request(request: HttpRequest, request_id: uuid.UUID, payloa
 
 @router.post("/transfer-requests/{request_id}/cancel", response=TransferRequestOut,
              summary="Withdraw a transfer request you made")
+@gate("self", kind="conversation")  # only whoever asked
 def cancel_transfer_request(request: HttpRequest, request_id: uuid.UUID):
     from . import transfer_requests
 
@@ -819,6 +837,7 @@ def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID) -> Session:
 
 
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
+@gate("session-acl")
 def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False):
     """A session and the tail of its transcript.
 
@@ -838,8 +857,8 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data = _out(session)
     rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
     from apps.agents.credentials import secret_requests
-    from apps.mcp_apps_host import mcp_apps_views
     from apps.embedding import delegation
+    from apps.mcp_apps_host import mcp_apps_views
 
     mcp_apps_views.annotate(session, rows)
     secret_requests.annotate(session, rows)
@@ -892,6 +911,7 @@ def _info_binding(binding) -> dict | None:
 
 
 @router.get("/{session_id}/info", response=SessionInfoOut, summary="Everything stored about a session")
+@gate("session-acl")
 def get_session_info(request: HttpRequest, session_id: uuid.UUID):
     """What canopy stores about one session: the session itself (who opened it,
     what created it and under which parent, what it did), the runner binding
@@ -941,6 +961,7 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
     response=MessagePageOut,
     summary="Load earlier transcript (scroll-back)",
 )
+@gate("session-acl")
 def list_messages(
     request: HttpRequest,
     session_id: uuid.UUID,
@@ -956,8 +977,8 @@ def list_messages(
     limit = clamp_limit(limit)
     rows, has_more = transcript_read.messages_before(session, before=before, limit=limit)
     from apps.agents.credentials import secret_requests
-    from apps.mcp_apps_host import mcp_apps_views
     from apps.embedding import delegation
+    from apps.mcp_apps_host import mcp_apps_views
 
     mcp_apps_views.annotate(session, rows)
     secret_requests.annotate(session, rows)
@@ -975,6 +996,7 @@ def list_messages(
     response=HumanInputPageOut,
     summary="What people typed into a session (cursor)",
 )
+@gate("session-acl")  # _session_or_404 / _session_by_key_or_404, as get_session
 def list_human_inputs(
     request: HttpRequest,
     session_id: uuid.UUID,
@@ -1016,6 +1038,7 @@ def list_human_inputs(
 
 
 @router.post("/{session_id}/archive", response=SessionOut, summary="Archive a session")
+@gate("session-acl", kind="conversation")  # write
 def archive_session(request: HttpRequest, session_id: uuid.UUID):
     """Retire a session by hand. The escape hatch for a web chat — no runner will ever
     report it archived — and for force-retiring a row without touching emdash.
@@ -1024,6 +1047,7 @@ def archive_session(request: HttpRequest, session_id: uuid.UUID):
 
 
 @router.post("/{session_id}/reset", response=ResetOut, summary="Reset a session from its transcript")
+@gate("session-acl", kind="conversation")  # write
 def reset_session(request: HttpRequest, session_id: uuid.UUID, dry_run: bool = False):
     """Drop this session's derived messages and re-derive them from the runner's
     transcript.
@@ -1043,6 +1067,7 @@ def reset_session(request: HttpRequest, session_id: uuid.UUID, dry_run: bool = F
 
 
 @router.post("/{session_id}/unarchive", response=SessionOut, summary="Unarchive a session")
+@gate("session-acl", kind="conversation")  # write
 def unarchive_session(request: HttpRequest, session_id: uuid.UUID):
     """Undo an archive. Note this clears only the WRITTEN half: a runner session that
     is also past SESSION_STALE_AFTER stays out of `state=active` until its runner
@@ -1051,6 +1076,7 @@ def unarchive_session(request: HttpRequest, session_id: uuid.UUID):
 
 
 @router.put("/{session_id}/notify", response=SessionOut, summary="Set a session's completion notifications")
+@gate("session-acl", kind="conversation")  # write
 def set_session_notify(request: HttpRequest, session_id: uuid.UUID, payload: SessionNotifyIn):
     """`every_completion: true` pushes a notification each time a turn in this
     session finishes. Off (the default), one notification is sent once the session
@@ -1063,6 +1089,7 @@ def set_session_notify(request: HttpRequest, session_id: uuid.UUID, payload: Ses
 
 
 @router.put("/{session_id}/title", response=SessionOut, summary="Rename a session")
+@gate("session-acl", kind="conversation")  # write
 def set_session_title(request: HttpRequest, session_id: uuid.UUID, payload: SessionTitleIn):
     """Give this session a title of your own. A title somebody typed is never
     replaced by the emdash task name or the first message; a blank one clears
@@ -1081,6 +1108,9 @@ def set_session_title(request: HttpRequest, session_id: uuid.UUID, payload: Sess
 
 
 @router.post("/{session_id}/move", response=SessionOut, summary="Move a session to another workspace")
+# filing.move: read gate, then the session's own person (creator / runner owner),
+# then content.write in the TARGET workspace; an agent's session is a 422.
+@gate("session-acl", "content.write", kind="conversation")
 def move_session(request: HttpRequest, session_id: uuid.UUID, payload: SessionMoveIn):
     """File this session in another workspace you belong to.
 
@@ -1108,6 +1138,7 @@ def _participants(session: Session) -> list[dict]:
 
 @router.get("/{session_id}/participants", response=list[ParticipantOut],
             summary="Who has been given this chat")
+@gate("session-acl")
 def list_participants(request: HttpRequest, session_id: uuid.UUID):
     """Everyone explicitly in this conversation, with their role."""
     return _participants(_session_or_404(request, session_id))
@@ -1115,6 +1146,7 @@ def list_participants(request: HttpRequest, session_id: uuid.UUID):
 
 @router.post("/{session_id}/participants", response=list[ParticipantOut],
              summary="Give a teammate this chat")
+@gate("session-acl", setting=True)  # can_share (chat owner)
 def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: ParticipantAddIn):
     """Owner only. The teammate must already be a member of the chat's
     workspace; adding someone again changes their role."""
@@ -1137,6 +1169,7 @@ def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: Partic
 
 @router.delete("/{session_id}/participants/{user_id}", response=list[ParticipantOut],
                summary="Take a chat away from someone")
+@gate("session-acl", setting=True)  # can_share, or self-removal
 def remove_participant(request: HttpRequest, session_id: uuid.UUID, user_id: int):
     """The owner can remove anyone but themselves; anyone can remove themselves."""
     from .models import SessionParticipant
@@ -1151,6 +1184,7 @@ def remove_participant(request: HttpRequest, session_id: uuid.UUID, user_id: int
 
 
 @router.post("/{session_id}/send", response=SendOut, summary="Send a message")
+@gate("session-acl", kind="conversation")  # write
 def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
     session = _session_or_404(request, session_id, write=True)
     if not payload.text.strip():
@@ -1175,6 +1209,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
     "/{session_id}/place", response=TurnOutMinimal,
     summary="Re-pin a session's oldest queued turn to a runner",
 )
+@gate("session-acl", kind="conversation")  # write
 def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     # The chat banner's after-the-fact directed-placement decision (vs. `runner_id`
     # on create / `placement` on send, which only apply to a turn at enqueue time).
@@ -1190,6 +1225,7 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
 
 
 @router.post("/{session_id}/fork", response=SessionOut, summary="Fork a session from a message")
+@gate("session-acl", kind="conversation")  # write
 def fork_session(request: HttpRequest, session_id: uuid.UUID, payload: ForkIn):
     """Start a new session from this one's conversation up to the end of the turn
     `turn_index` belongs to. The new session runs on the same runner, in the same
@@ -1215,6 +1251,7 @@ def fork_session(request: HttpRequest, session_id: uuid.UUID, payload: ForkIn):
     "/{session_id}/transfer", response=TransferOut,
     summary="Move a live session onto another runner",
 )
+@gate("session-acl", kind="conversation")  # write
 def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
     """Move a session between boxes — cloud -> laptop, or between the two macOS
     accounts — carrying its message history across.
@@ -1276,6 +1313,7 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
     "/{session_id}/answer-menu", response=dict,
     summary="Answer the dialog an agent is blocked on",
 )
+@gate("session-acl", kind="conversation")  # write
 def answer_menu(request: HttpRequest, session_id: uuid.UUID, payload: MenuAnswerIn):
     """Approve or refuse a permission prompt from the web.
 
@@ -1292,6 +1330,7 @@ def answer_menu(request: HttpRequest, session_id: uuid.UUID, payload: MenuAnswer
 
 
 @router.post("/{session_id}/close", response=dict, summary="Close a session for good")
+@gate("session-acl", kind="conversation")  # write
 def close_session(request: HttpRequest, session_id: uuid.UUID):
     """End a session — delete its emdash task if a runner is reporting one, or
     archive it outright if nothing exists on a box.
@@ -1313,6 +1352,7 @@ def close_session(request: HttpRequest, session_id: uuid.UUID):
 
 @router.post("/{session_id}/stop", response=dict,
              summary="Stop this session: cancel its open turns, or interrupt its agent")
+@gate("session-acl", kind="conversation")  # write
 def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
     """Stop whatever this session is doing — the same stop as the web UI's button.
     Returns `cancelled` (an open turn was cancelled), `interrupted` (no turn was
@@ -1327,18 +1367,21 @@ def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
 
 
 @router.post("/{session_id}/attach", response=StreamStateOut, summary="Attach a viewer (start live streaming)")
+@gate("session-acl", kind="conversation")  # READ gate on a POST (viewer signal)
 def attach_session(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
     return {"streaming": transcript_ingest.attach_session(session)}
 
 
 @router.post("/{session_id}/detach", response=StreamStateOut, summary="Detach a viewer (stop when last leaves)")
+@gate("session-acl", kind="conversation")  # READ gate on a POST
 def detach_session(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
     return {"streaming": transcript_ingest.detach_session(session)}
 
 
 @router.post("/{session_id}/backfill", response=BackfillStateOut, summary="Request full history from the runner")
+@gate("session-acl", kind="conversation")  # READ gate on a POST
 def request_backfill(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
     return {"status": transcript_read.request_backfill(session)}
@@ -1349,6 +1392,7 @@ def request_backfill(request: HttpRequest, session_id: uuid.UUID):
     response={201: AttachmentOut},
     summary="Upload an attachment for this session",
 )
+@gate("session-acl", kind="conversation")  # write
 def upload_attachment(
     request: HttpRequest, session_id: uuid.UUID, file: UploadedFile = File(...)
 ):
@@ -1396,6 +1440,7 @@ def upload_attachment(
     "/attachments/{attachment_id}/content",
     summary="Stream an attachment's bytes",
 )
+@gate("session-acl")  # can_read
 def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
     """The bytes, for a person who can read the chat — the browser rendering a
     thumbnail. Gated on who can read the session, not on who uploaded it: a
@@ -1416,6 +1461,7 @@ def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
 
 
 @router.delete("/attachments/{attachment_id}", response={204: None})
+@gate("session-acl", kind="conversation")  # can_write
 def delete_attachment(request: HttpRequest, attachment_id: uuid.UUID):
     """Remove an attachment you have not sent yet — the composer's "x" on a chip.
 
@@ -1454,6 +1500,7 @@ def delete_attachment(request: HttpRequest, attachment_id: uuid.UUID):
 
 @router.put("/{session_id}/page-actions", response=list[PageActionSpec],
             summary="Declare what the attached page can do")
+@gate("session-acl", kind="conversation")  # write
 def declare_page_actions(request: HttpRequest, session_id: uuid.UUID,
                          payload: PageActionsDeclareIn) -> list[PageActionSpec]:
     """Called by the page itself as it mounts, and whenever its actions change.
@@ -1470,6 +1517,7 @@ def declare_page_actions(request: HttpRequest, session_id: uuid.UUID,
 
 @router.get("/{session_id}/page-actions", response=list[PageActionSpec],
             summary="What the attached page can do")
+@gate("session-acl")
 def list_page_actions(request: HttpRequest, session_id: uuid.UUID) -> list[PageActionSpec]:
     """How the agent discovers its options. An empty list means no page is
     attached — not that the page can do nothing."""
@@ -1479,6 +1527,7 @@ def list_page_actions(request: HttpRequest, session_id: uuid.UUID) -> list[PageA
 
 @router.put("/{session_id}/page-state", response=PageStateOut,
             summary="Declare what the attached page is showing")
+@gate("session-acl", kind="conversation")  # write
 def declare_page_state(request: HttpRequest, session_id: uuid.UUID,
                        payload: PageStateIn) -> PageStateOut:
     """Called by the page as it mounts and whenever its view changes.
@@ -1499,6 +1548,7 @@ def declare_page_state(request: HttpRequest, session_id: uuid.UUID,
 
 @router.put("/{session_id}/run-input", response=RunAgentInputOut,
             summary="Declare the page in AG-UI's own shape")
+@gate("session-acl", kind="conversation")  # write
 def declare_run_input(request: HttpRequest, session_id: uuid.UUID,
                       payload: RunAgentInputIn) -> RunAgentInputOut:
     """Accepts AG-UI's `RunAgentInput` and applies the parts canopy honours.
@@ -1532,6 +1582,7 @@ def declare_run_input(request: HttpRequest, session_id: uuid.UUID,
 
 @router.get("/{session_id}/page-state", response=PageStateOut,
             summary="What the attached page is showing")
+@gate("session-acl")
 def read_page_state(request: HttpRequest, session_id: uuid.UUID) -> PageStateOut:
     """How a surface other than the agent's MCP tool reads the current view."""
     session = _session_or_404(request, session_id)
@@ -1541,6 +1592,7 @@ def read_page_state(request: HttpRequest, session_id: uuid.UUID) -> PageStateOut
 
 @router.post("/{session_id}/page-actions/invoke", response=PageActionOut,
              summary="Ask the attached page to run an action")
+@gate("session-acl", kind="conversation")  # write
 def invoke_page_action(request: HttpRequest, session_id: uuid.UUID,
                        payload: PageActionInvokeIn) -> PageActionOut:
     """Blocks until the page answers, or refuses with a reason.
@@ -1564,6 +1616,7 @@ def invoke_page_action(request: HttpRequest, session_id: uuid.UUID,
 
 @router.post("/{session_id}/page-actions/{action_id}/result", response=PageActionOut,
              summary="The page reporting an action's outcome")
+@gate("session-acl", kind="conversation")  # write
 def resolve_page_action(request: HttpRequest, session_id: uuid.UUID, action_id: uuid.UUID,
                         payload: PageActionResultIn) -> PageActionOut:
     """Posted by the page after it runs the callback.
@@ -1597,6 +1650,7 @@ def _secret_out(row) -> dict:
 
 @router.post("/{session_id}/secrets", response={201: SessionSecretOut},
              summary="Share a secret with this chat (write-only)")
+@gate("session-acl", kind="conversation")  # write
 def share_secret(request: HttpRequest, session_id: uuid.UUID, payload: SessionSecretIn):
     """Stores the value encrypted. Posts NOTHING into the chat: the person just
     refers to it by name, and the session finds it with `canopy secret list`."""
@@ -1610,6 +1664,7 @@ def share_secret(request: HttpRequest, session_id: uuid.UUID, payload: SessionSe
 
 @router.get("/{session_id}/secrets", response=list[SessionSecretOut],
             summary="Secrets shared with this chat (names only, never values)")
+@gate("session-acl")
 def list_secrets(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
     return [_secret_out(r) for r in secrets.live_secrets(session)]
@@ -1617,6 +1672,7 @@ def list_secrets(request: HttpRequest, session_id: uuid.UUID):
 
 @router.delete("/{session_id}/secrets/{name}", response={204: None},
                summary="Forget a shared secret")
+@gate("session-acl", kind="conversation")  # write
 def delete_secret(request: HttpRequest, session_id: uuid.UUID, name: str):
     session = _session_or_404(request, session_id, write=True)
     session.secrets.filter(name=name).delete()
@@ -1625,6 +1681,7 @@ def delete_secret(request: HttpRequest, session_id: uuid.UUID, name: str):
 
 @router.get("/{session_id}/export", response=SessionExportOut,
             summary="Export a session's conversation to pick it up in your own Claude")
+@gate("session-acl", "self")  # visible AND you started it
 def export_session(request: HttpRequest, session_id: uuid.UUID):
     """This session as readable markdown — the same rows the web view shows, tool
     output shortened — for handing to your own Claude so it can see where the

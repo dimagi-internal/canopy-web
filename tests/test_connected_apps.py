@@ -394,7 +394,7 @@ def test_a_site_with_no_key_says_so():
 
 def test_changing_a_sites_origins_and_agents_is_audited():
     """Origins and agents are settings: every change is a SettingChange, from
-    every entry point (`route_gates.SETTINGS`)."""
+    every entry point (`@gate(..., setting=True)`)."""
     from apps.events.models import SettingChange
 
     _user, ws, c = _ctx()

@@ -7,6 +7,7 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.api.route_gates import gate
 from apps.harness.api_turns import visible_turns_qs
 from apps.realtime.groups import turn_workspace_slug
 from apps.workspaces import services as wsvc
@@ -41,6 +42,7 @@ def _scope(request: HttpRequest):
 
 
 @router.get("/", response=list[HuddleSummaryOut], summary="List huddles")
+@gate("member", "session-acl")  # anchors via visible_turns_qs; summary carries no content
 def list_huddles(request: HttpRequest, agent: str | None = None, limit: int = 50):
     """Huddles the caller can see, newest first: one per leader-filed anchor turn, with
     its type, team, leader, members, how many rounds have been dispatched, whether it
@@ -67,6 +69,7 @@ def list_huddles(request: HttpRequest, agent: str | None = None, limit: int = 50
 
 
 @router.get("/{huddle_id}", response=HuddleOut, summary="Get one huddle")
+@gate("member", "session-acl", "turn-content")  # prompt/reply/digest only with turn-content
 def get_huddle(request: HttpRequest, huddle_id: str):
     """One huddle: a cell per (member, round) — the latest attempt's status and, when
     you may read that turn's content, its prompt and the member's parsed reply block

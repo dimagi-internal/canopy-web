@@ -20,6 +20,7 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.mcp_apps_host import mcp_apps_views as views
 
 router = Router(auth=session_auth, tags=["chat"])
@@ -70,6 +71,10 @@ def _run(fn, *args):
 
 @router.get("/{session_id}/apps/{tool_call_id}/resource", response=dict,
             summary="Load an app view, as the person looking at it")
+# MCP Apps View plumbing (apps/mcp_apps_host/mcp_apps_views.py): a session reader may
+# load a View read-only; every act (call/read/context/message) needs a WRITE
+# role in the session and the viewer's OWN host grant, and a PAT is refused.
+@gate("session-acl")
 def app_view_resource(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str):
     session = _session(request, session_id)
     return _run(views.resource, session, _viewer(request), tool_call_id)
@@ -77,6 +82,7 @@ def app_view_resource(request: HttpRequest, session_id: uuid.UUID, tool_call_id:
 
 @router.post("/{session_id}/apps/{tool_call_id}/call", response=dict,
              summary="An app view's tools/call, as the person who clicked")
+@gate("session-acl", kind="conversation")  # write + the viewer's own host grant
 def app_view_call(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str,
                   payload: AppCallIn):
     session = _session(request, session_id)
@@ -86,6 +92,7 @@ def app_view_call(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str
 
 @router.post("/{session_id}/apps/{tool_call_id}/read", response=dict,
              summary="An app view's resources/read, same server only")
+@gate("session-acl", kind="conversation")  # the viewer's own host grant
 def app_view_read(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str,
                   payload: AppReadIn):
     session = _session(request, session_id)
@@ -94,6 +101,7 @@ def app_view_read(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str
 
 @router.put("/{session_id}/apps/{tool_call_id}/context", response=dict,
             summary="An app view's ui/update-model-context")
+@gate("session-acl", kind="conversation")  # write
 def app_view_context(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str,
                      payload: AppContextIn):
     session = _session(request, session_id)
@@ -104,6 +112,7 @@ def app_view_context(request: HttpRequest, session_id: uuid.UUID, tool_call_id: 
 
 @router.post("/{session_id}/apps/{tool_call_id}/message", response=dict,
              summary="An app view's ui/message: a message from the viewer, which starts a turn")
+@gate("session-acl", kind="conversation")  # write
 def app_view_message(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str,
                      payload: AppMessageIn):
     from apps.harness import initiator as who

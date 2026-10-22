@@ -15,6 +15,7 @@ from ninja import Router
 
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
+from apps.api.route_gates import gate
 from apps.workspaces import services as wsvc
 
 from . import sources
@@ -47,6 +48,7 @@ def _parse_cursor(raw: str | None) -> tuple[dt.datetime, str] | None:
 
 
 @router.get("/", response=TimelineOut, summary="Team activity timeline")
+@gate("member")
 def list_timeline(
     request: HttpRequest,
     subsystem: str | None = None,

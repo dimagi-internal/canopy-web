@@ -15,6 +15,7 @@ from django.http import HttpRequest
 from ninja import Router
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.workspaces import services as wsvc
 
 from . import services
@@ -24,6 +25,9 @@ router = Router(auth=session_auth, tags=["attention"])
 
 
 @router.get("/", response=AttentionOut, summary="What is waiting on you")
+# the caller's own list; each source applies its own gate: tasks by the board filter, chats by the session ACL, access
+# requests by members.manage
+@gate("self")
 def list_attention(request: HttpRequest) -> AttentionOut:
     """Everything waiting on the caller in scope — chats whose agent needs your
     next message, tasks asking you to decide or parked on you, requests to join a
@@ -42,6 +46,7 @@ def list_attention(request: HttpRequest) -> AttentionOut:
 
 
 @router.post("/hide", response=HideOut, summary="Hide things from your list without deciding them")
+@gate("self", kind="action")  # a person setting things aside on their OWN list: nothing is decided or sent
 def hide_attention(request: HttpRequest, payload: HideIn) -> HideOut:
     """Takes `keys` off your own list and nothing more: no task is closed,
     approved or declined, no chat is ended, nothing is sent, and the agent is not
@@ -51,5 +56,6 @@ def hide_attention(request: HttpRequest, payload: HideIn) -> HideOut:
 
 
 @router.delete("/hide/{key}", response=HideOut, summary="Put something you hid back on your list")
+@gate("self", kind="action")  # a person setting things aside on their OWN list: nothing is decided or sent
 def unhide_attention(request: HttpRequest, key: str) -> HideOut:
     return HideOut(count=int(services.unhide(request.user, key)))

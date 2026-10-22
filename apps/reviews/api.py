@@ -28,6 +28,7 @@ from ninja import Router, Status
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.route_gates import gate
 from apps.common.csrf import csrf_rejected
 from apps.feedback import reactions
 from apps.harness import artifact_origin
@@ -40,9 +41,9 @@ from apps.runs.ddd import (
 )
 from apps.walkthroughs import pinned
 from apps.walkthroughs.models import Walkthrough
+from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces import links as wslinks
 
 from .models import ReviewRequest
 from .schemas import (
@@ -307,6 +308,7 @@ def _list_item_payload(request: HttpRequest, review: ReviewRequest, signals: dic
     response=list[ReviewListItemOut],
     summary="List review requests (DDD-plans dashboard)",
 )
+@gate("member")
 def list_reviews(
     request: HttpRequest,
     q: str = "",
@@ -390,6 +392,7 @@ def list_reviews(
     response={201: ReviewCreateOut},
     summary="Create a review request (orchestrator)",
 )
+@gate("content.write", kind="content")  # creation_workspace + CONTENT_WRITE
 def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
     """
     Called by the canopy orchestrator when it hits a pause gate.
@@ -516,6 +519,7 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
     auth=None,  # Public (visibility=link) reviews are readable without a session.
     summary="Get review request detail or poll for resolution",
 )
+@gate("token-link")  # auth=None; link review readable TOKENLESS by anyone, else member
 def get_review(request: HttpRequest, rid: UUID, ws: str = "") -> ReviewRequestOut:
     """
     Returns the full review request + current status.
@@ -581,6 +585,8 @@ def destination_for(request: HttpRequest, review: ReviewRequest) -> tuple[str, s
     auth=None,  # a valid ?t= review token, or a member of the review's workspace
     summary="Where a review's page now lives (its narrative on a storyboard)",
 )
+# auth=None; ?t= review token (board token handed on) or a member; may create the review's board
+@gate("token-link", "member")
 def get_review_destination(request: HttpRequest, rid: UUID, ws: str = "") -> ReviewDestinationOut:
     """The review page is retired: a narrative review is read and decided on a
     storyboard. Returns that board's address at the narrative's entry — with the
@@ -607,6 +613,7 @@ def get_review_destination(request: HttpRequest, rid: UUID, ws: str = "") -> Rev
     auth=None,  # handler enforces _can_write (auth required) + CSRF; 403 not 401 for readable-but-anonymous
     summary="Submit decisions + narration edits (human → server)",
 )
+@gate("content.write", kind="content")  # auth=None but handler requires editor + CSRF
 def submit_review(request: HttpRequest, rid: UUID, payload: ReviewSubmitIn) -> ReviewRequestOut:
     """
     Human submits their decisions and any narration edits.
@@ -670,6 +677,7 @@ def submit_review(request: HttpRequest, rid: UUID, payload: ReviewSubmitIn) -> R
     auth=None,  # share token OR a workspace member's session — checked below.
     summary="Submit a SUGGESTION (share-token reviewer, or a member saving edits)",
 )
+@gate("token-link", kind="content")  # auth=None; ?t= share token on a link review; never resolves the gate
 def suggest_review(request: HttpRequest, rid: UUID, payload: ReviewSuggestIn) -> ReviewSuggestOut:
     """Suggested edits that NEVER resolve the gate — appended to the review's
     suggestions for its owner to review and accept, and the owner is told.
@@ -748,6 +756,7 @@ def _valid_email(value: str | None) -> str | None:
     response={204: None},
     summary="Delete a review request (dashboard cleanup)",
 )
+@gate("content.write", kind="content")
 def delete_review(request: HttpRequest, rid: UUID):
     """
     Delete a review request.

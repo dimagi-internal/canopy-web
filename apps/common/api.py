@@ -5,6 +5,7 @@ from django.http import HttpRequest
 from ninja import Router
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.realtime.models import PresencePreference, show_presence_for
 
 from .schemas import (
@@ -28,6 +29,7 @@ public_router = Router(tags=["public"])
 
 
 @public_router.get("/health/", auth=None, response=HealthOut, summary="Health check")
+@gate("anonymous")
 def health(request: HttpRequest) -> HealthOut:
     return HealthOut(status="ok")
 
@@ -36,6 +38,7 @@ def health(request: HttpRequest) -> HealthOut:
 
 
 @common_router.get("/me/", response=MeOut, summary="Current user")
+@gate("authenticated")
 def me(request: HttpRequest) -> MeOut:
     from apps.workspaces.login_gate import can_create_workspace
 
@@ -72,6 +75,7 @@ def me(request: HttpRequest) -> MeOut:
     response=PresencePreferenceOut,
     summary="Get the current user's presence visibility preference",
 )
+@gate("self")
 def get_presence_preference(request: HttpRequest) -> PresencePreferenceOut:
     return PresencePreferenceOut(show_presence=show_presence_for(request.user))
 
@@ -81,6 +85,7 @@ def get_presence_preference(request: HttpRequest) -> PresencePreferenceOut:
     response=PresencePreferenceOut,
     summary="Set the current user's presence visibility preference",
 )
+@gate("self", setting=True)
 def set_presence_preference(
     request: HttpRequest, payload: PresencePreferenceIn
 ) -> PresencePreferenceOut:
@@ -107,6 +112,7 @@ def _runner_app_out(opens_on: str) -> RunnerAppPreferenceOut:
     response=RunnerAppPreferenceOut,
     summary="Get the page your Canopy Runner app opens on",
 )
+@gate("self")
 def get_runner_app_preference(request: HttpRequest) -> RunnerAppPreferenceOut:
     """The page the Canopy Runner desktop app's window opens on (it loads
     `/runner-app/`, which redirects there), and the pages it can open on —
@@ -121,6 +127,7 @@ def get_runner_app_preference(request: HttpRequest) -> RunnerAppPreferenceOut:
     response=RunnerAppPreferenceOut,
     summary="Set the page your Canopy Runner app opens on",
 )
+@gate("self", setting=True)
 def set_runner_app_preference(
     request: HttpRequest, payload: RunnerAppPreferenceIn
 ) -> RunnerAppPreferenceOut:
@@ -160,6 +167,7 @@ def _session_workspace_out(user) -> SessionWorkspacePreferenceOut:
     response=SessionWorkspacePreferenceOut,
     summary="Get the workspace your own emdash sessions are filed in",
 )
+@gate("self")
 def get_session_workspace_preference(request: HttpRequest) -> SessionWorkspacePreferenceOut:
     """Your default for NEW sessions a runner you own discovers in emdash, when the
     emdash project is not an agent's (an agent's project follows the agent's
@@ -172,6 +180,7 @@ def get_session_workspace_preference(request: HttpRequest) -> SessionWorkspacePr
     response=SessionWorkspacePreferenceOut,
     summary="Set the workspace your own emdash sessions are filed in",
 )
+@gate("self", setting=True)  # target needs content.write (filing.set_default)
 def set_session_workspace_preference(
     request: HttpRequest, payload: SessionWorkspacePreferenceIn
 ) -> SessionWorkspacePreferenceOut:

@@ -10,6 +10,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.github_connect.github_app import GitHubAuthError, GitHubNotConfigured
 
 from . import services
@@ -32,12 +33,14 @@ router = Router(auth=session_auth, tags=["agents"])
 
 # ---- skill catalog ----
 @router.get("/{slug}/skills/", response=list[AgentSkillOut], summary="List the agent's skill catalog",)
+@gate("member")
 def list_skills(request: HttpRequest, slug: str) -> list[AgentSkillOut]:
     agent = agent_for_read(request, slug)
     return [AgentSkillOut.model_validate(s) for s in services.list_skills(agent)]
 
 
 @router.put("/{slug}/skills/", response=CountOut, summary="Replace the agent's skill catalog",)
+@gate("agent.work", kind="content")
 def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn) -> CountOut:
     agent = agent_for_work(request, slug)
     count = services.replace_skills(agent, payload.skills)
@@ -50,6 +53,7 @@ def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn
 # click). The sync itself is debounced per agent, so many open tabs clone once.
 @router.get("/{slug}/skill-history/", response=SkillHistoryOut,
             summary="How the agent's skills changed, from its repository's history")
+@gate("member")  # may auto-sync (clone) on read
 def get_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
     agent = agent_for_read(request, slug)
     # Due = stale AND no attempt in the last hour: a FAILED attempt never moves
@@ -69,6 +73,7 @@ def get_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
 
 @router.post("/{slug}/skill-history/sync", response=SkillHistoryOut,
              summary="Re-read the agent's skill history from its repository now")
+@gate("agent.work", kind="content")
 def sync_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
     agent = agent_for_work(request, slug)
     history.sync(agent, force=True)
@@ -77,6 +82,7 @@ def sync_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
 
 @router.get("/{slug}/skill-history/revisions", response=dict[str, Any],
             summary="Skill revisions, newest first, with their commit messages")
+@gate("member")
 def skill_history(
     request: HttpRequest, slug: str, skill: str | None = None, group: str | None = None,
     since: dt.date | None = None, until: dt.date | None = None, limit: int | None = None,
@@ -115,6 +121,7 @@ def skill_history(
 
 @router.get("/{slug}/skill-history/diff", response=dict[str, Any],
             summary="The change one commit made to one skill, as a unified diff")
+@gate("member")
 def skill_revision_diff(request: HttpRequest, slug: str, sha: str, skill: str) -> dict:
     """The exact change one commit made to one skill's SKILL.md, as a unified diff.
 

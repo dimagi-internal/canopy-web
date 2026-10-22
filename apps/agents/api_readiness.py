@@ -7,6 +7,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.harness.device_keys import runner_serves_agent
 
 from . import services
@@ -25,6 +26,7 @@ router = Router(auth=session_auth, tags=["agents"])
 
 @router.get("/{slug}/readiness", response=list[BootstrapReportOut],
             summary="What each BOX reports it could actually materialize")
+@gate("member")
 def agent_readiness(request: HttpRequest, slug: str) -> list[BootstrapReportOut]:
     """The counterpart to `credentials/status`, and the difference is the point.
 
@@ -54,6 +56,7 @@ def agent_readiness(request: HttpRequest, slug: str) -> list[BootstrapReportOut]
 
 @router.get("/{slug}/setup", response=list[AgentSetupStepOut],
             summary="What is left before this agent can do its job")
+@gate("member")
 def agent_setup(request: HttpRequest, slug: str) -> list[AgentSetupStepOut]:
     """The setup checklist, in order: repository, GitHub identity, mailbox, vault (the
     vault before the mailbox for a zero-knowledge agent), runner, its first real skill (done in Claude Code — `command` starts that session), first
@@ -65,6 +68,7 @@ def agent_setup(request: HttpRequest, slug: str) -> list[AgentSetupStepOut]:
 
 @router.post("/{slug}/bootstrap-report", response=BootstrapReportOut,
              summary="A box reports what it materialized for this agent")
+@gate("runner-holds-agent", kind="runner-protocol")
 def post_bootstrap_report(request: HttpRequest, slug: str,
                           payload: BootstrapReportIn) -> BootstrapReportOut:
     """Same gate as `credentials/resolve`: only a caller pairing a live runner

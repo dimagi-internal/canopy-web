@@ -36,9 +36,10 @@ from django.utils import timezone
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.common.token_hash import hash_token
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_AUTH, ProblemError
+from apps.api.route_gates import gate
+from apps.common.token_hash import hash_token
 from apps.events import activity
 from apps.passkeys import stepup
 from apps.workspaces import links as wslinks
@@ -127,6 +128,12 @@ def _paired_out(status: str, key: RunnerDeviceKey) -> RunnerPairedOut:
 
 @router.post("/", response={200: RunnerPairedOut, 201: RunnerPairingCreatedOut}, auth=None,
              summary="A new laptop box asks to be paired by browser (no token)")
+# anonymous door: a proof of the box's key; makes only the pairing (or answers
+# `reattached` for a key that is already an ACTIVE runner's). Uniform 401.
+# a laptop box asking to be paired, a person saying yes or no (passkey-gated;
+# recorded as runner.pairing.approved), and the box claiming what was approved
+# (runner.paired) — a new runner row, like pair_runner_by_role, not a changed setting
+@gate("paired-key", kind="request")
 def create_runner_pairing(request: HttpRequest, payload: RunnerPairingIn):
     """Carry a DPoP proof (bound to this URL) by the key in `public_jwk`. 201:
     a pairing — show `user_code`, open `verify_url`, and poll the claim every
@@ -184,6 +191,9 @@ def create_runner_pairing(request: HttpRequest, payload: RunnerPairingIn):
 
 @router.post("/{pairing_id}/claim", response={201: RunnerPairedOut, 202: RunnerPairedOut}, auth=None,
              summary="The box claims its approved pairing (no token)")
+# anonymous door: the pairing's key + the approval's one-time secret; the
+# runner is the approver's, and only while they still hold agent.work there
+@gate("paired-key", kind="runner-protocol")
 def claim_runner_pairing(request: HttpRequest, pairing_id: uuid.UUID, payload: RunnerPairingClaimIn):
     """Carry a DPoP proof (bound to this URL) by the pairing's key. 202
     `waiting` until a person approves; then, with the `secret` the approval
@@ -280,6 +290,7 @@ def _workspaces_for(user) -> list[RunnerPairingWorkspaceOut]:
 
 
 @router.get("/{user_code}", response=RunnerPairingOut, summary="A runner pairing, by its code")
+@gate("authenticated")  # the code is the capability; workspaces listed are the caller's with agent.work
 def get_runner_pairing(request: HttpRequest, user_code: str):
     """What the box says it is, where the pairing stands, and the workspaces you
     may put it in (those where you may run work). Anyone signed in who has the
@@ -308,6 +319,12 @@ def _refuse_finished(pairing: RunnerPairing) -> None:
 
 @router.post("/{user_code}/approve", response=RunnerPairingApprovedOut,
              summary="Approve a runner pairing (browser session + passkey step-up)")
+# browser session + passkey step-up (a token is refused); member (else 404)
+# with agent.work in the chosen workspace; the runner will be the caller's
+# a laptop box asking to be paired, a person saying yes or no (passkey-gated;
+# recorded as runner.pairing.approved), and the box claiming what was approved
+# (runner.paired) — a new runner row, like pair_runner_by_role, not a changed setting
+@gate("agent.work", kind="action")
 def approve_runner_pairing(request: HttpRequest, user_code: str, payload: RunnerPairingApproveIn):
     """Make the box your runner, named `name`, in `workspace` (one where you may
     run work). Only from a browser after a fresh passkey touch; a token is
@@ -353,6 +370,7 @@ def approve_runner_pairing(request: HttpRequest, user_code: str, payload: Runner
 
 
 @router.post("/{user_code}/decline", response=RunnerPairingDeclinedOut, summary="Decline a runner pairing")
+@gate("authenticated", kind="action")  # anyone holding the code may refuse it; it grants nothing
 def decline_runner_pairing(request: HttpRequest, user_code: str):
     """This is not your computer, or not one you meant to pair: the box's claim
     is refused from now on. Used or expired: 409."""

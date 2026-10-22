@@ -11,6 +11,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 
 from . import runner_releases as rel
 from .schemas import RunnerDownloadOut, RunnerDownloadsOut, RunnerReleaseOut
@@ -26,6 +27,7 @@ def _manifest_or_503(sha: str) -> dict | None:
 
 
 @router.get("/current", response=RunnerReleaseOut, summary="The deployed runner version's update for a platform")
+@gate("authenticated")  # a person, or a runner's own token (runner_auth)
 def current_runner_release(request: HttpRequest, platform: str):
     """The update artifact of the runner version this deployment ships, for
     `platform` (`macos-arm64`, `macos-x86_64`, `windows-x86_64`): its sha, file,
@@ -44,6 +46,7 @@ def current_runner_release(request: HttpRequest, platform: str):
 
 
 @router.get("/downloads", response=RunnerDownloadsOut, summary="Download links for Canopy Runner")
+@gate("authenticated")
 def runner_downloads(request: HttpRequest):
     """The installers of the runner version this deployment ships, one per
     platform built — empty when none is. `href` signs you in if needed and

@@ -19,7 +19,10 @@ import logging
 from canopy_sdk import contract
 from django.http import HttpRequest
 from ninja import Router, Schema
+from ninja.errors import HttpError
+from ninja.security import HttpBearer
 
+from apps.api.route_gates import gate
 from apps.canopy_sessions.schemas import (
     MessagePageOut,
     PageActionOut,
@@ -29,21 +32,18 @@ from apps.canopy_sessions.schemas import (
     PageStateIn,
     PageStateOut,
 )
-from apps.harness.schemas import TurnOut
-from ninja.errors import HttpError
-from ninja.security import HttpBearer
-
-from apps.harness import initiator as who
-
 from apps.embedding import assertions
-from apps.embedding.audit import client_ip, record as audit
-from apps.tokens.models import ContactToken, EmbedAuditLog
-from apps.tokens.schemas import WsTicketOut
+from apps.embedding.audit import client_ip
+from apps.embedding.audit import record as audit
 from apps.embedding.rate_limit import (
     ContactTokenRateLimitError,
     check_contact_token_client,
     check_contact_token_issuer,
 )
+from apps.harness import initiator as who
+from apps.harness.schemas import TurnOut
+from apps.tokens.models import ContactToken, EmbedAuditLog
+from apps.tokens.schemas import WsTicketOut
 
 #: Published as `tokens_contact_<name>` before this module moved from apps/tokens;
 #: those operationIds are MCP tool names and `generated.ts` keys, so they stay.
@@ -141,6 +141,7 @@ _STATUS = {
 
 @contact_token_router.post("/contact-token", response=ContactTokenOut, auth=None,
                            summary="Exchange a signed assertion for a contact token")
+@gate("host", kind="ephemeral-credential")  # auth=None; site-signed assertion (+ optional ID-JAG)
 def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactTokenOut:
     """A connected site vouches for one of its visitors, and gets them a session.
 
@@ -356,6 +357,7 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
 
 @contact_router.post("/ws-ticket", response=WsTicketOut,
                      summary="Trade this contact token for a one-time socket ticket")
+@gate("contact", kind="ephemeral-credential")  # a one-time socket ticket standing for the caller's own contact token
 def contact_ws_ticket(request: HttpRequest) -> WsTicketOut:
     """A single-use ticket to open my chat socket with, in place of the token.
 
@@ -370,6 +372,7 @@ def contact_ws_ticket(request: HttpRequest) -> WsTicketOut:
 
 
 @contact_router.get("/me", response=ContactMeOut, summary="Who canopy thinks I am")
+@gate("contact")
 def contact_me(request: HttpRequest) -> ContactMeOut:
     """The contact's own view: themselves, and the agents this site may offer.
 
@@ -506,6 +509,7 @@ def _session_out(s) -> ContactSessionOut:
 
 @contact_router.post("/sessions", response=ContactSessionOut,
                      summary="Start a conversation with an agent this site offers")
+@gate("contact", kind="conversation")
 def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> ContactSessionOut:
     """The agent must be one the SITE was allowed to offer.
 
@@ -551,6 +555,7 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
 
 @contact_router.get("/sessions", response=list[ContactSessionOut],
                     summary="My conversations on this site")
+@gate("contact")
 def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
                   opp_slug: str = "", opp_run_id: str = "", resource: str = "",
                   page_path: str = "", state: str = "all") -> list[ContactSessionOut]:
@@ -582,12 +587,14 @@ def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
 
 @contact_router.get("/sessions/{session_id}", response=ContactSessionOut,
                     summary="One of my conversations")
+@gate("contact")
 def get_session(request: HttpRequest, session_id: str) -> ContactSessionOut:
     return _session_out(_session_or_404(request, session_id))
 
 
 @contact_router.post("/sessions/{session_id}/archive", response=ContactSessionOut,
                      summary="Put one of my conversations away")
+@gate("contact", kind="conversation")
 def contact_archive_session(request: HttpRequest, session_id: str) -> ContactSessionOut:
     """Takes it off `state=active`, so a list that asks for active
     conversations stops offering it. Idempotent, and nothing is deleted: the
@@ -603,6 +610,7 @@ def contact_archive_session(request: HttpRequest, session_id: str) -> ContactSes
 
 @contact_router.post("/sessions/{session_id}/send", response=dict,
                      summary="Say something")
+@gate("contact", kind="conversation")
 def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
     from apps.canopy_sessions import doors
 
@@ -628,6 +636,7 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
 
 @contact_router.get("/sessions/{session_id}/messages", response=MessagePageOut,
                     summary="Earlier messages")
+@gate("contact")
 def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50):
     """The SAME page a user's scroll-back returns (`MessagePageOut`), so a chat UI
     renders a contact's conversation with the one renderer it already has.
@@ -654,6 +663,7 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
 
 @contact_router.post("/sessions/{session_id}/attach", response=dict,
                      summary="I am watching this conversation (stream it live)")
+@gate("contact", kind="conversation")
 def attach(request: HttpRequest, session_id: str) -> dict:
     """The same viewer signal a user's chat sends, so a contact watching their
     own conversation sees the agent's reply as it is written, not when it lands."""
@@ -664,6 +674,7 @@ def attach(request: HttpRequest, session_id: str) -> dict:
 
 @contact_router.post("/sessions/{session_id}/detach", response=dict,
                      summary="I stopped watching")
+@gate("contact", kind="conversation")
 def detach(request: HttpRequest, session_id: str) -> dict:
     from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
 
@@ -692,6 +703,7 @@ def detach(request: HttpRequest, session_id: str) -> dict:
 
 @contact_router.put("/sessions/{session_id}/page-state", response=PageStateOut,
                     summary="What I am looking at")
+@gate("contact", kind="conversation")
 def declare_page_state(request: HttpRequest, session_id: str,
                        payload: PageStateIn) -> PageStateOut:
     """Replaces the declaration wholesale, exactly as the user route does.
@@ -712,6 +724,7 @@ def declare_page_state(request: HttpRequest, session_id: str,
 
 @contact_router.put("/sessions/{session_id}/page-actions", response=list[PageActionSpec],
                     summary="What my page can do")
+@gate("contact", kind="conversation")
 def declare_page_actions(request: HttpRequest, session_id: str,
                          payload: PageActionsDeclareIn) -> list[PageActionSpec]:
     """Replaces the declaration wholesale — merging would leave the agent able
@@ -726,6 +739,7 @@ def declare_page_actions(request: HttpRequest, session_id: str,
 @contact_router.post("/sessions/{session_id}/page-actions/{action_id}/result",
                      response=PageActionOut,
                      summary="My page reporting an action's outcome")
+@gate("contact", kind="conversation")
 def resolve_page_action(request: HttpRequest, session_id: str, action_id: str,
                         payload: PageActionResultIn) -> PageActionOut:
     """Posted by the page after it runs the callback.
@@ -778,6 +792,7 @@ def _turn_or_404(request: HttpRequest, turn_id: str):
 
 @contact_router.post("/sessions/{session_id}/stop", response=dict,
                      summary="Cancel every unfinished turn in my conversation")
+@gate("contact", kind="conversation")
 def stop(request: HttpRequest, session_id: str) -> dict:
     from apps.canopy_sessions import control as session_control
 
@@ -786,6 +801,7 @@ def stop(request: HttpRequest, session_id: str) -> dict:
 
 @contact_router.get("/turns/unclaimable", response=list[dict],
                     summary="My queued turns no online runner can take")
+@gate("contact")
 def my_unclaimable(request: HttpRequest) -> list[dict]:
     from django.db.models import Q
 
@@ -799,11 +815,13 @@ def my_unclaimable(request: HttpRequest) -> list[dict]:
 
 
 @contact_router.get("/turns/{turn_id}", response=TurnOut, summary="One turn of my conversation")
+@gate("contact")
 def my_turn(request: HttpRequest, turn_id: str):
     return _turn_or_404(request, turn_id)
 
 
 @contact_router.get("/turns/{turn_id}/transcript", summary="That turn's raw transcript")
+@gate("contact")
 def my_turn_transcript(request: HttpRequest, turn_id: str):
     from django.http import StreamingHttpResponse
 
@@ -820,7 +838,10 @@ def my_turn_transcript(request: HttpRequest, turn_id: str):
 
 
 from apps.canopy_sessions.app_views_api import (  # noqa: E402
-    AppCallIn, AppContextIn, AppMessageIn, AppReadIn,
+    AppCallIn,
+    AppContextIn,
+    AppMessageIn,
+    AppReadIn,
 )
 
 
@@ -841,6 +862,7 @@ def _app_run(fn, *args):
 
 @contact_router.get("/sessions/{session_id}/apps/{tool_call_id}/resource", response=dict,
                     summary="Load an app view, as you")
+@gate("contact")
 def contact_app_view_resource(request: HttpRequest, session_id: str, tool_call_id: str):
     from apps.mcp_apps_host import mcp_apps_views
 
@@ -850,6 +872,7 @@ def contact_app_view_resource(request: HttpRequest, session_id: str, tool_call_i
 
 @contact_router.post("/sessions/{session_id}/apps/{tool_call_id}/call", response=dict,
                      summary="An app view's tools/call, as you")
+@gate("contact", kind="conversation")  # own session + own host grant
 def contact_app_view_call(request: HttpRequest, session_id: str, tool_call_id: str,
                           payload: AppCallIn):
     from apps.mcp_apps_host import mcp_apps_views
@@ -860,6 +883,7 @@ def contact_app_view_call(request: HttpRequest, session_id: str, tool_call_id: s
 
 @contact_router.post("/sessions/{session_id}/apps/{tool_call_id}/read", response=dict,
                      summary="An app view's resources/read, as you")
+@gate("contact", kind="conversation")
 def contact_app_view_read(request: HttpRequest, session_id: str, tool_call_id: str,
                           payload: AppReadIn):
     from apps.mcp_apps_host import mcp_apps_views
@@ -870,6 +894,7 @@ def contact_app_view_read(request: HttpRequest, session_id: str, tool_call_id: s
 
 @contact_router.put("/sessions/{session_id}/apps/{tool_call_id}/context", response=dict,
                     summary="An app view's ui/update-model-context")
+@gate("contact", kind="conversation")
 def contact_app_view_context(request: HttpRequest, session_id: str, tool_call_id: str,
                              payload: AppContextIn):
     from apps.mcp_apps_host import mcp_apps_views
@@ -881,10 +906,10 @@ def contact_app_view_context(request: HttpRequest, session_id: str, tool_call_id
 
 @contact_router.post("/sessions/{session_id}/apps/{tool_call_id}/message", response=dict,
                      summary="An app view's ui/message: a message from you, which starts a turn")
+@gate("contact", kind="conversation")
 def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id: str,
                              payload: AppMessageIn):
     from apps.canopy_sessions import doors
-
     from apps.mcp_apps_host import mcp_apps_views
 
     session = _session_or_404(request, session_id)

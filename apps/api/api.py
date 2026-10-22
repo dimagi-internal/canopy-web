@@ -5,11 +5,14 @@ All v2 routers register against this. Routers live in
 """
 from __future__ import annotations
 
+import inspect
 import logging
 
 from django.http import Http404, HttpRequest, HttpResponse
 from ninja import NinjaAPI
 from ninja.errors import AuthenticationError, HttpError, ValidationError
+
+from apps.api.route_gates import gate
 
 from .auth import session_auth
 from .errors import (
@@ -56,6 +59,21 @@ class CanopyNinjaAPI(NinjaAPI):
         self._shared_names_cache = shared
         return shared
 
+    def explicit_operation_ids(self) -> dict:
+        """Unwrapped view function -> the ``operation_id=`` its route spells out."""
+        cached = getattr(self, "_explicit_ids_cache", None)
+        if cached is not None:
+            return cached
+        explicit = {
+            inspect.unwrap(op.view_func): op.operation_id
+            for bound in self._get_bound_routers()
+            for path_view in bound.path_operations.values()
+            for op in path_view.operations
+            if op.operation_id
+        }
+        self._explicit_ids_cache = explicit
+        return explicit
+
 
 def _app_label(module: str) -> str:
     """``apps.canopy_sessions.contact_api`` → ``canopy_sessions_contact``.
@@ -91,7 +109,7 @@ api = CanopyNinjaAPI(
 )
 
 # Every route is wrapped by the settings audit (`apps/events/audit.py`): a no-op
-# except on the routes `route_gates.SETTINGS` names, where the change and its
+# except on the routes declared `@gate(..., setting=True)`, where the change and its
 # `SettingChange` row commit together. Registered here, before any router is
 # added, so it reaches every route — and so every entry point (web UI, CLI,
 # script, MCP tool) through the one place they all pass.
@@ -195,22 +213,14 @@ def _on_unhandled(request: HttpRequest, exc: Exception) -> HttpResponse:
 
 
 @api.get("/_auth_smoke/", auth=session_auth, response={200: dict})
+@gate("authenticated")  # internal smoke route
 def _auth_smoke(request: HttpRequest) -> dict:
     """Internal smoke route — verifies session auth works."""
     return {"email": getattr(request.user, "email", "")}
 
 
-from apps.common.api import common_router, public_router  # noqa: E402
-from apps.issues.api import router as issues_router  # noqa: E402
-from apps.tokens.api import router as tokens_router  # noqa: E402
-from apps.github_connect.api import router as github_router  # noqa: E402
-from apps.oauth_server.api import router as oauth_connected_router  # noqa: E402
-from apps.reviews.api import router as reviews_router  # noqa: E402
-from apps.runs.api import router as runs_router  # noqa: E402
-from apps.walkthroughs.api import router as walkthroughs_router  # noqa: E402
-from apps.shareouts.api import router as shareouts_router  # noqa: E402
-from apps.session_sharing.api import router as sessions_router  # noqa: E402
-from apps.session_sharing.api import share_router as session_share_router  # noqa: E402
+from apps.agent_runs.api import router as agent_runs_router  # noqa: E402
+from apps.agent_runs.documents import router as agent_run_docs_router  # noqa: E402
 from apps.agents.a2a_api import router as a2a_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
 from apps.agents.api import turns_router as agent_turns_router  # noqa: E402
@@ -222,56 +232,65 @@ from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
 from apps.agents.contributors_api import router as contributors_router  # noqa: E402
 from apps.agents.credentials.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.credentials.oauth_api import router as agent_google_router  # noqa: E402
-from apps.agent_runs.api import router as agent_runs_router  # noqa: E402
-from apps.agent_runs.documents import router as agent_run_docs_router  # noqa: E402
-from apps.workspaces.api import router as workspaces_router  # noqa: E402
-from apps.timeline.api import router as timeline_router  # noqa: E402
-from apps.system.api import router as system_router  # noqa: E402
-from apps.harness.api import router as harness_router  # noqa: E402
-from apps.events.api import router as events_router  # noqa: E402
-from apps.inbound.api import router as inbound_router  # noqa: E402
-from apps.mail.api import router as mail_router  # noqa: E402
-from apps.slack.api import router as slack_config_router  # noqa: E402
-from apps.slack.ingest_api import router as slack_ingests_router  # noqa: E402
-from apps.feedback.api import router as feedback_router  # noqa: E402
-from apps.storyboards.api import router as storyboards_router  # noqa: E402
-from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
-from apps.huddles.api import router as huddles_router  # noqa: E402
-from apps.attention.api import router as attention_router  # noqa: E402
-from apps.huddles.checkins_api import project_router as checkins_project_router  # noqa: E402
-from apps.huddles.checkins_api import router as checkins_router  # noqa: E402
-from apps.threads.api import router as threads_router  # noqa: E402
-from apps.harness.api_schedules import router as schedules_router  # noqa: E402
-from apps.harness.api_investigations import router as investigations_router  # noqa: E402
-from apps.harness.api_device_keys import router as device_keys_router  # noqa: E402
-from apps.harness.api_runner_sessions import router as runner_sessions_router  # noqa: E402
-from apps.harness.api_local import local_turns_router, private_runners_router  # noqa: E402
-from apps.harness.api_device_key_requests import router as device_key_requests_router  # noqa: E402
-from apps.harness.api_runner_invitations import pair_router as runner_pair_by_role_router  # noqa: E402
-from apps.harness.api_runner_invitations import router as runner_invitations_router  # noqa: E402
-from apps.harness.api_runner_pairings import router as runner_pairings_router  # noqa: E402
-from apps.harness.api_runner_releases import router as runner_releases_router  # noqa: E402
-from apps.harness.api_turn_agent_token import router as turn_agent_token_router  # noqa: E402
-from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.agents.engagement_api import router as engagement_router  # noqa: E402
+from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.agents.proposals_api import router as proposals_router  # noqa: E402
-from apps.push.api import router as push_router  # noqa: E402
+from apps.attention.api import router as attention_router  # noqa: E402
+from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.canopy_sessions.api import me_router as my_sessions_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
 from apps.canopy_sessions.app_views_api import router as app_views_router  # noqa: E402
-from apps.slack.session_api import router as slack_session_router  # noqa: E402
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
+from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
+from apps.capabilities.api import router as capabilities_router  # noqa: E402
+from apps.common.api import common_router, public_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
+from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
 from apps.contacts.hcp_clients_api import router as hcp_clients_router  # noqa: E402
 from apps.contacts.people_api import router as people_router  # noqa: E402
 from apps.embedding.connected_apps_api import connected_apps_router  # noqa: E402
-from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.embedding.embed_api import embed_router
-from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
-from apps.capabilities.api import router as capabilities_router  # noqa: E402
+from apps.events.api import router as events_router  # noqa: E402
+from apps.feedback.api import router as feedback_router  # noqa: E402
+from apps.github_connect.api import router as github_router  # noqa: E402
+from apps.harness.api import router as harness_router  # noqa: E402
+from apps.harness.api_device_key_requests import router as device_key_requests_router  # noqa: E402
+from apps.harness.api_device_keys import router as device_keys_router  # noqa: E402
+from apps.harness.api_investigations import router as investigations_router  # noqa: E402
+from apps.harness.api_local import local_turns_router, private_runners_router  # noqa: E402
+from apps.harness.api_runner_invitations import pair_router as runner_pair_by_role_router  # noqa: E402
+from apps.harness.api_runner_invitations import router as runner_invitations_router  # noqa: E402
+from apps.harness.api_runner_pairings import router as runner_pairings_router  # noqa: E402
+from apps.harness.api_runner_releases import router as runner_releases_router  # noqa: E402
+from apps.harness.api_runner_sessions import router as runner_sessions_router  # noqa: E402
+from apps.harness.api_schedules import router as schedules_router  # noqa: E402
+from apps.harness.api_turn_agent_token import router as turn_agent_token_router  # noqa: E402
+from apps.huddles.api import router as huddles_router  # noqa: E402
+from apps.huddles.checkins_api import project_router as checkins_project_router  # noqa: E402
+from apps.huddles.checkins_api import router as checkins_router  # noqa: E402
+from apps.inbound.api import router as inbound_router  # noqa: E402
+from apps.issues.api import router as issues_router  # noqa: E402
+from apps.mail.api import router as mail_router  # noqa: E402
+from apps.oauth_server.api import router as oauth_connected_router  # noqa: E402
 from apps.passkeys.api import router as passkeys_router  # noqa: E402
 from apps.passkeys.api_vault import router as vault_keyset_router  # noqa: E402
+from apps.push.api import router as push_router  # noqa: E402
+from apps.reviews.api import router as reviews_router  # noqa: E402
+from apps.runs.api import router as runs_router  # noqa: E402
+from apps.session_sharing.api import router as sessions_router  # noqa: E402
+from apps.session_sharing.api import share_router as session_share_router  # noqa: E402
+from apps.shareouts.api import router as shareouts_router  # noqa: E402
+from apps.slack.api import router as slack_config_router  # noqa: E402
+from apps.slack.ingest_api import router as slack_ingests_router  # noqa: E402
+from apps.slack.session_api import router as slack_session_router  # noqa: E402
+from apps.storyboards.api import router as storyboards_router  # noqa: E402
+from apps.system.api import router as system_router  # noqa: E402
+from apps.threads.api import router as threads_router  # noqa: E402
+from apps.timeline.api import router as timeline_router  # noqa: E402
+from apps.tokens.api import router as tokens_router  # noqa: E402
+from apps.walkthroughs.api import router as walkthroughs_router  # noqa: E402
+from apps.workspaces.api import router as workspaces_router  # noqa: E402
 
 api.add_router("/issues", issues_router)
 api.add_router("", common_router)

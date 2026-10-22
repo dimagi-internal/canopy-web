@@ -18,6 +18,7 @@ from apps.api.errors import (
     TYPE_VALIDATION,
     ProblemError,
 )
+from apps.api.route_gates import gate
 from apps.events import audit
 from apps.harness import device_keys
 from apps.harness.api_device_keys import agents_key_opens, key_out, zk_agents_waiting_on
@@ -81,6 +82,7 @@ router = Router(auth=session_auth, tags=["agents"])
 
 @router.put("/{slug}/credentials", response=list[AgentCredentialStatusOut],
             summary="Set named secrets for an agent (write-only)")
+@gate("agent-admin", setting=True)
 def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredentialsIn):
     """Upsert. Non-clobbering: a ref absent from the body is untouched.
 
@@ -106,6 +108,7 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
 
 @router.get("/{slug}/credentials/status", response=list[AgentCredentialStatusOut],
             summary="Which declared refs are set (masked — booleans, never values)")
+@gate("member")
 def agent_credential_status(request: HttpRequest, slug: str):
     """The question this answers is 'what is stopping this agent from running',
     which today requires SSH-ing to a box and reading a keyring."""
@@ -115,6 +118,7 @@ def agent_credential_status(request: HttpRequest, slug: str):
 
 @router.get("/{slug}/credentials/access", response=AgentCredentialAccessOut,
             summary="May the caller resolve this agent's secrets? (never values)")
+@gate("member")  # no values; reports the resolve gate for the caller
 def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialAccessOut:
     """The cheap check `canopy cred` makes before fetching anything
     (canopy#850): which backend the agent resolves from, and whether THIS
@@ -136,6 +140,7 @@ def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialA
             response={200: AgentCredentialsResolveOut, 401: DeviceProofRequiredOut,
                       409: ZkWrapMissingOut},
             summary="PLAINTEXT — a runner stages this agent's secrets")
+@gate("runner-holds-agent", "agent-admin", "license")  # bearer only
 def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None = None):
     """The one route that returns values, and it is not for a browser.
 
@@ -220,6 +225,7 @@ def _credential_refusal(refusal: credential_resolve.Refusal) -> Exception:
 
 @router.get("/{slug}/vault", response=AgentVaultOut,
             summary="This agent's 1Password vault (masked — never the key)")
+@gate("member")
 def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
     agent = agent_for_read(request, slug)
     return services.agent_vault_status(agent)
@@ -227,6 +233,7 @@ def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
 
 @router.put("/{slug}/vault", response=AgentVaultOut,
             summary="Set the vault + its service-account token (write-only)")
+@gate("agent-admin", setting=True)
 def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> AgentVaultOut:
     """The key is scoped to ONE agent's vault by design.
 
@@ -261,6 +268,9 @@ def _zk_state(agent, *, include_values: bool = False) -> ZkStateOut:
 
 @router.get("/{slug}/vault/zk", response=ZkStateOut,
             summary="Zero-knowledge state: kv, wraps, and who still needs one")
+# zero-knowledge vault (apps/agents/credentials/zk.py): browser writes need a passkey step-up
+# wraps are public; ?values= ciphertext, read-logged
+@gate("agent-admin")
 def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) -> ZkStateOut:
     """`pending` lists active device keys (with an ECDH key) on runners this
     agent's resolve accepts, and current agent admins with a vault key, that
@@ -276,6 +286,7 @@ def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) ->
 
 @router.post("/{slug}/vault/zk/enable", response=ZkStateOut,
              summary="Turn on zero-knowledge: wraps + every value as ciphertext, atomically")
+@gate("agent-admin", setting=True)  # browser: + step-up; token allowed
 def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkStateOut:
     """`{kv: 1, wraps: [{kind, target, wrap}], values: [{name, value_zk}]}`.
     Needs exactly one `recovery` wrap and a wrap the caller can open (their
@@ -294,6 +305,7 @@ def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkS
 
 @router.put("/{slug}/vault/zk/values", response=ZkValuesOut,
             summary="Set zero-knowledge values (ciphertext) at the current kv")
+@gate("agent-admin", setting=True)  # browser: + step-up; token allowed
 def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) -> ZkValuesOut:
     """Non-clobbering upsert of `{name, value_zk}`. A `kv` other than the
     current one is 409 `zk_kv_mismatch` (the vault key was rotated)."""
@@ -308,6 +320,7 @@ def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) ->
 
 @router.post("/{slug}/vault/zk/wraps", response=ZkStateOut,
              summary="Grant: wrap the vault key to pending devices or admins")
+@gate("agent-admin", setting=True)  # browser: + step-up; token allowed
 def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> ZkStateOut:
     """`{kv, wraps: [{kind: device|member, target, wrap}]}`. A device target is
     an ACTIVE key with an ECDH key on a runner this agent routes to; a member
@@ -324,6 +337,7 @@ def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> Z
 
 @router.post("/{slug}/vault/zk/rotate", response=ZkStateOut,
              summary="Rotate the vault key: replace every wrap and value atomically")
+@gate("agent-admin", setting=True)  # browser: + step-up; token allowed
 def rotate_agent_zk(request: HttpRequest, slug: str, payload: ZkRotateIn) -> ZkStateOut:
     """`{new_kv: kv + 1, wraps, values}`. Every target holding a wrap now that
     still qualifies must get one at `new_kv` (422 `zk_rewrap_required`
@@ -370,6 +384,11 @@ def _secret_request_out(req, message: str = "") -> SecretRequestOut:
 
 @router.post("/{slug}/secret-requests", response=SecretRequestOut,
              summary="Ask a person for one of this agent's declared secrets")
+# give an agent a secret (apps/agents/credentials/secret_requests.py): no route returns a value
+# declared names only
+# an agent asking a person for a declared secret: carries no value; the
+# answer (fulfil_agent_secret_request) is the setting
+@gate("agent-login", "agent-admin", kind="request")
 def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequestIn) -> SecretRequestOut:
     """For the agent itself (its own login) or an admin. `name` must be declared
     in the agent's runtime.yaml. The chat this is called from shows the person a
@@ -392,6 +411,7 @@ def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequest
 
 @router.get("/{slug}/secret-requests/{request_id}", response=SecretRequestOut,
             summary="A secret request's status (never its value)")
+@gate("agent-login", "agent-admin", "session-acl")  # status, never a value
 def get_agent_secret_request(request: HttpRequest, slug: str, request_id: uuid.UUID) -> SecretRequestOut:
     """`status` is open, fulfilled, cancelled or expired; `has_value` says
     whether the agent now holds a value for the name. For the agent, its admins
@@ -405,6 +425,7 @@ def get_agent_secret_request(request: HttpRequest, slug: str, request_id: uuid.U
 
 @router.put("/{slug}/secret-requests/{request_id}/value", response=SecretRequestOut,
             summary="Answer a secret request with a value sealed in the browser (zks1)")
+@gate("agent-admin", "secret-request", setting=True)  # zks1 only; browser: + step-up
 def fulfil_agent_secret_request(request: HttpRequest, slug: str, request_id: uuid.UUID,
                                 payload: SecretRequestValueIn) -> SecretRequestOut:
     """`value_zk` must be `zks1:` — sealed to the agent's readers before it left
@@ -428,6 +449,7 @@ def fulfil_agent_secret_request(request: HttpRequest, slug: str, request_id: uui
 
 @router.get("/{slug}/vault/zk/recipients", response=ZkRecipientsOut,
             summary="Who a sealed value is for, and who vouched for each (public keys only)")
+@gate("agent-admin", "secret-request")  # public keys + endorsements
 def get_agent_zk_recipients(request: HttpRequest, slug: str,
                             secret_request: uuid.UUID | None = None) -> ZkRecipientsOut:
     """For an admin, or for someone who may answer the open request named by
@@ -451,6 +473,7 @@ def get_agent_zk_recipients(request: HttpRequest, slug: str,
 
 @router.post("/{slug}/vault/zk/endorsements", response=ZkEndorsementsOut,
              summary="Vouch, with your own vault key, that keys may read this agent")
+@gate("agent-admin", setting=True)  # own vault key's signatures; browser: + step-up
 def add_agent_zk_endorsements(request: HttpRequest, slug: str, payload: ZkEndorsementsIn) -> ZkEndorsementsOut:
     """`{endorsements: [{kind, target, key_jkt, by_jkt, sig}]}` — each a zk-v1
     §7 signature by YOUR vault key over a CURRENT recipient's current key. The
@@ -482,6 +505,7 @@ def _sender_trust_out(rule) -> SenderTrustOut:
 
 @router.get("/{slug}/sender-trust", response=list[SenderTrustOut],
             summary="List temporary trust rules for members' unaligned email")
+@gate("member")
 def list_sender_trust(request: HttpRequest, slug: str) -> list[SenderTrustOut]:
     """Addresses whose mail is tied to their member account although it is not
     DMARC- or DKIM-aligned — each with why, and when it lapses (expired rules
@@ -494,6 +518,7 @@ def list_sender_trust(request: HttpRequest, slug: str) -> list[SenderTrustOut]:
 
 @router.put("/{slug}/sender-trust/{email}", response=SenderTrustOut,
             summary="Temporarily trust one member's unaligned email")
+@gate("agent-admin", setting=True)
 def set_sender_trust(request: HttpRequest, slug: str, email: str,
                      payload: SenderTrustIn) -> SenderTrustOut:
     """For `days` (1–90), mail From: this exact address is tied to its member
@@ -523,6 +548,7 @@ def set_sender_trust(request: HttpRequest, slug: str, email: str,
 
 @router.delete("/{slug}/sender-trust/{email}", response={204: None},
                summary="End a temporary email trust rule")
+@gate("agent-admin", setting=True)
 def delete_sender_trust(request: HttpRequest, slug: str, email: str):
     """Their mail goes back to needing DMARC or own-domain DKIM. Idempotent."""
 
@@ -538,6 +564,7 @@ def delete_sender_trust(request: HttpRequest, slug: str, email: str):
 
 @router.get("/{slug}/github", response=AgentGitHubOut,
             summary="How this agent acts on GitHub (masked — never the token)")
+@gate("member")
 def get_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     """Whose GitHub identity this agent's pull requests use, when that token
     expires, and whether it can open a pull request on the agent's repo."""
@@ -551,6 +578,7 @@ def _github_out(request: HttpRequest, agent) -> AgentGitHubOut:
 
 @router.put("/{slug}/github", response=AgentGitHubOut,
             summary="Lend this agent your GitHub identity (owner or admin, write-only)")
+@gate("agent-owner", setting=True)  # strictly the agent's own owner (delegations.set_github)
 def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) -> AgentGitHubOut:
     """Store the caller's fine-grained GitHub token for this agent — its owner's,
     or an admin's (used while the owner has lent none).
@@ -568,6 +596,13 @@ def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) ->
 
 @router.post("/{slug}/github/check", response=AgentGitHubOut,
              summary="Re-check this agent's GitHub token against GitHub")
+@gate(
+    "member",
+    kind="action",
+    viewer_write=(
+        "re-probes the stored token against GitHub and records the result; grants and changes nothing"
+    ),
+)
 def check_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     agent = agent_for_read(request, slug)
     delegations.check_github(agent)
@@ -576,6 +611,8 @@ def check_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 
 @router.delete("/{slug}/github", response=AgentGitHubOut,
                summary="Withdraw your GitHub identity from this agent")
+# removes only the caller's own delegation
+@gate("member", "self", setting=True, viewer_write="withdraws only the caller's OWN GitHub delegation")
 def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     """Removes the CALLER's own delegation — nobody can withdraw someone
     else's."""
@@ -591,6 +628,7 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 
 @router.get("/{slug}/salesforce", response=AgentSalesforceOut,
             summary="Whose Salesforce identity this agent borrows (masked — never the credential)")
+@gate("member")
 def get_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
     agent = agent_for_read(request, slug)
     return AgentSalesforceOut(**delegations.salesforce_status(agent))
@@ -598,6 +636,7 @@ def get_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
 
 @router.put("/{slug}/salesforce", response=AgentSalesforceOut,
             summary="Lend this agent another agent's Salesforce identity (owner of both)")
+@gate("agent-owner", setting=True)  # owner of BOTH borrower and lender (delegations.set_salesforce)
 def set_agent_salesforce(request: HttpRequest, slug: str,
                          payload: AgentSalesforceIn) -> AgentSalesforceOut:
     """Checked before it is stored: the lender must hold a Salesforce credential
@@ -612,6 +651,13 @@ def set_agent_salesforce(request: HttpRequest, slug: str,
 
 @router.post("/{slug}/salesforce/check", response=AgentSalesforceOut,
              summary="Re-check the Salesforce identity this agent borrows")
+@gate(
+    "member",
+    kind="action",
+    viewer_write=(
+        "re-probes the lender's credential against Salesforce and records the result; grants and changes nothing"
+    ),
+)
 def check_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
     agent = agent_for_read(request, slug)
     delegations.check_salesforce(agent)
@@ -620,6 +666,8 @@ def check_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOu
 
 @router.delete("/{slug}/salesforce", response=AgentSalesforceOut,
                summary="Stop lending this agent a Salesforce identity")
+# removes only the caller's own delegation
+@gate("member", "self", setting=True, viewer_write="withdraws only the caller's OWN Salesforce delegation")
 def delete_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
     agent = agent_for_read(request, slug)
     delegations.clear_salesforce(agent, request.user)
@@ -631,6 +679,7 @@ def delete_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceO
 # answers 405 Method Not Allowed — the route exists, it is simply unreachable.
 @router.delete("/{slug}/credentials/{name}", response=list[AgentCredentialStatusOut],
                summary="Remove one named secret")
+@gate("agent-admin", setting=True)
 def delete_agent_credential(request: HttpRequest, slug: str, name: str):
     agent = agent_for_admin(request, slug)
     services.delete_agent_credential(agent, name)
@@ -639,6 +688,7 @@ def delete_agent_credential(request: HttpRequest, slug: str, name: str):
 
 @router.get("/{slug}/credentials/{name}/reads", response=list[AgentCredentialReadOut],
             summary="Who read this credential's value, from which box and turn")
+@gate("agent-admin")  # the read log; never a value
 def agent_credential_reads(request: HttpRequest, slug: str, name: str, limit: int = 100):
     """The read log (canopy-web#1538), newest first. Never the value. The
     agent's owner or an admin — the same people who may set the value."""
@@ -648,6 +698,7 @@ def agent_credential_reads(request: HttpRequest, slug: str, name: str, limit: in
 
 @router.get("/{slug}/device-keys", response=list[RunnerDeviceKeyOut],
             summary="Runner device keys that could prove themselves for this agent")
+@gate("agent-admin")  # can_manage per key = runners.may_trust_device_keys
 def agent_device_keys(request: HttpRequest, slug: str):
     """Every device key on a runner this agent routes to or its owner owns —
     the keys `require_device_binding` would accept once active. `can_manage`
@@ -670,6 +721,7 @@ def agent_device_keys(request: HttpRequest, slug: str):
 
 @router.get("/{slug}/credential-alerts", response=list[AgentCredentialAlertOut],
             summary="Read-anomaly alerts on this agent's secrets")
+@gate("agent-admin")  # read-anomaly alerts; never a value
 def agent_credential_alerts(request: HttpRequest, slug: str, limit: int = 50):
     """Canopy Vault (canopy-web#1549), newest first: reads with no turn id by
     someone not the owner or an admin, reads of undeclared refs, bursts, and
@@ -682,6 +734,7 @@ def agent_credential_alerts(request: HttpRequest, slug: str, limit: int = 50):
 
 @router.get("/{slug}/pat-rotation", response=PatRotationOut,
             summary="This agent's canopy-pat rotation: setting, next due, history")
+@gate("agent-admin")
 def get_pat_rotation(request: HttpRequest, slug: str) -> PatRotationOut:
     """Never a token. The agent's owner or an admin."""
 
@@ -691,6 +744,7 @@ def get_pat_rotation(request: HttpRequest, slug: str) -> PatRotationOut:
 
 @router.patch("/{slug}/pat-rotation", response=PatRotationOut,
               summary="Turn automatic canopy-pat rotation on or off")
+@gate("agent-admin", setting=True)  # turning it on also asks mint_agent_canopy_token's guard
 def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) -> PatRotationOut:
     """Canopy Vault (canopy-web#1549). When on, every `period_days` (default
     30) canopy-web mints a new token for the agent's own canopy login, writes
@@ -720,6 +774,7 @@ def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) ->
 
 @router.post("/{slug}/pat-rotation/rotate", response=PatRotationOut,
              summary="Rotate this agent's canopy-pat now")
+@gate("agent-admin", setting=True)  # browser: + passkey step-up; token allowed
 def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
     """The same rotation the schedule does, now, whether or not rotation is on:
     a new token in `canopy-pat`, the old one valid for 24 h then revoked. It
@@ -739,6 +794,9 @@ def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
 
 @router.post("/{slug}/credentials/{name}/reveal", response=AgentCredentialRevealOut,
              summary="PLAINTEXT — show one stored value to an admin who just confirmed a passkey")
+# browser session + passkey step-up only (apps/passkeys)
+# reads one value; changes no configuration (recorded as an event)
+@gate("agent-admin", kind="action")
 def reveal_agent_credential(request: HttpRequest, response: HttpResponse, slug: str, name: str):
     """Owner/agent admin, at a browser, with a passkey step-up in the last five
     minutes (403 `step_up_required` otherwise). Returns the value once and

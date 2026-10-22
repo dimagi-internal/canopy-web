@@ -7,6 +7,7 @@ from ninja import Router, Status
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, ProblemError
+from apps.api.route_gates import gate
 
 from .models import PersonalToken
 from .schemas import (
@@ -31,6 +32,7 @@ def _serialize(token: PersonalToken) -> dict:
 
 
 @router.get("/", response=list[PersonalTokenOut], summary="List my tokens")
+@gate("self")
 def list_tokens(request: HttpRequest) -> list[PersonalTokenOut]:
     # Tokens an MCP login minted are listed under their connected app instead:
     # they live an hour and are replaced on every refresh.
@@ -40,6 +42,7 @@ def list_tokens(request: HttpRequest) -> list[PersonalTokenOut]:
 
 
 @router.post("/", response={201: PersonalTokenCreatedOut}, summary="Mint a token")
+@gate("self", setting=True)
 def create_token(request: HttpRequest, payload: PersonalTokenCreateIn) -> Status:
     # An hour-long OAuth token (or a site's delegated token) minting a PAT that
     # never expires and survives "Disconnect" is the escalation this refuses.
@@ -57,6 +60,7 @@ def create_token(request: HttpRequest, payload: PersonalTokenCreateIn) -> Status
 
 
 @router.delete("/{pk}/", response={204: None}, summary="Revoke a token (mine only)")
+@gate("self", setting=True)
 def revoke_token(request: HttpRequest, pk: int) -> Status:
     token = PersonalToken.objects.filter(pk=pk, user=request.user).first()
     if token is None:

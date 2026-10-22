@@ -14,6 +14,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.harness.api_turns import visible_turns_qs
 from apps.huddles import services as huddles
 from apps.realtime.groups import turn_workspace_slug
@@ -40,6 +41,15 @@ def _huddle_workspace(request: HttpRequest, huddle_id: str) -> str:
 
 
 @router.post("/view", response=EngagementViewOut, summary="Record that you opened a project or a huddle")
+# the project's agent workspace / the huddle's visible anchor
+# the engagement view beacon
+@gate(
+    "member",
+    kind="telemetry",
+    viewer_write=(
+        "records only that the caller opened a page they can already read, once a day; changes nothing"
+    ),
+)
 def record_engagement_view(request: HttpRequest, payload: EngagementViewIn) -> dict:
     """Name exactly one of `project` (its numeric id) or `huddle_id`. Counted once
     per person, per object, per UTC day — `recorded` is false for a repeat. 404
@@ -64,6 +74,7 @@ def record_engagement_view(request: HttpRequest, payload: EngagementViewIn) -> d
 
 @router.get("/summary", response=EngagementSummaryOut,
             summary="What people actually did with projects, huddles and check-in runs")
+@gate("member")  # events of the caller's listed workspaces (the read rule)
 def engagement_summary(request: HttpRequest, days: int = 14, checkin: str = "", agent: str = "") -> dict:
     """Over the last `days` (default 14), in the workspaces you can list: event
     counts by kind and surface; the unique people who did anything; for each

@@ -26,6 +26,7 @@ from apps.api.errors import (
     ProblemError,
 )
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.api.route_gates import gate
 from apps.canopy_sessions.control import close_agent_sessions
 from apps.events import audit
 from apps.harness import closeout, turn_access
@@ -108,6 +109,7 @@ def _plugin_out(agent, refs: dict[int, dict]) -> AgentPluginOut | None:
 
 
 @router.get("/", response=Page[AgentOut], summary="List agents",)
+@gate("member")
 def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
     limit = clamp_limit(limit)
     visible = listed_agent_workspaces(request)
@@ -118,6 +120,7 @@ def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
 
 
 @router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",)
+@gate("agent.work", "agent-admin", setting=True)  # editor in target ws; a MOVE also needs agent admin
 def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # The tenant is resolved BEFORE the row is written, because Agent.workspace is
     # NOT NULL (agents/0013) — an agent is never briefly unhomed. A home matters
@@ -260,6 +263,7 @@ def _move(request: HttpRequest, agent, workspace: str, *, dry_run: bool = False)
 
 @router.post("/{slug}/move", response=AgentMoveOut,
              summary="Move an agent, with its history, to another workspace")
+@gate("agent-admin", "agent.work", setting=True)  # admin of the agent where it is + editor in the destination
 def move_agent(request: HttpRequest, slug: str, payload: AgentMoveIn, dry_run: bool = False):
     """Re-home the agent and everything that is its history — turns, chat
     sessions, mail threads and messages, mail routes the destination can hold,
@@ -344,6 +348,9 @@ def _inspect(token: str, full: str, slug: str):
 # POST, though it writes nothing: it carries a token, which does not belong in a URL.
 @router.post("/scaffold/check", response=RepoCheckOut,
              summary="Can a new agent's scaffold be pushed into this repository with this token?")
+# editor in the target ws; reads GitHub with the caller's own token
+# POST only to keep a token out of the URL; writes nothing
+@gate("agent.work", kind="action")
 def check_scaffold_repo(request: HttpRequest, payload: RepoCheckIn) -> RepoCheckOut:
     """Reads only, and stores nothing. `ready` means empty and the token can see it,
     `update` means it already holds this agent's scaffold (or only GitHub's starter
@@ -367,6 +374,9 @@ def check_scaffold_repo(request: HttpRequest, payload: RepoCheckIn) -> RepoCheck
 
 @router.post("/scaffold", response={201: AgentScaffoldOut},
              summary="Push a new agent's scaffold into an empty repository")
+# editor in target ws; re-pushing a taken slug needs its admin
+# pushes code into the caller's own repo; registering is upsert_agent (a setting)
+@gate("agent.work", "agent-admin", kind="content")
 def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
     """Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it into
     an empty repository you created (or adds just the missing files to one that already
@@ -426,6 +436,7 @@ def _detail(request: HttpRequest, agent) -> AgentDetailOut:
 
 
 @router.get("/{slug}/", response=AgentDetailOut, summary="Agent detail (with counts)",)
+@gate("member")
 def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     agent = agent_for_read(request, slug)
     return _detail(request, agent)
@@ -436,6 +447,7 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
 # so it is a decision a PERSON makes in the canopy UI. The owner or an admin.
 @router.put("/{slug}/canopy-user", response=AgentDetailOut,
             summary="Link this agent to the canopy user it is")
+@gate("agent-admin", setting=True)
 def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn) -> AgentDetailOut:
     """The canopy user account this agent's own token signs in as. `user_id`
     null unlinks it."""
@@ -454,6 +466,9 @@ def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn
 # MCP twin of this route, whose result would land in a transcript.
 @router.post("/{slug}/canopy-token", response={201: AgentCanopyTokenOut},
              summary="Mint the agent's own canopy-web token (shown once)")
+# + members.manage to CREATE the agent's login, own for one that has signed in
+# (services.mint_agent_canopy_token / agents/agent_login.py)
+@gate("agent-admin", setting=True)
 def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanopyTokenIn) -> Status:
     """For the agent's own login, creating it when the agent has none. See
     `services.mint_agent_canopy_token` for who may, and why it never adopts an
@@ -477,6 +492,7 @@ def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanop
 # above, nothing here can land in a transcript or a page.
 @router.post("/{slug}/canopy-login", response={201: AgentCanopyLoginOut},
              summary="Give the agent its canopy login, stored in its Canopy vault")
+@gate("agent-admin", setting=True)  # The same mint, stored sealed and never returned. Browser: + passkey step-up.
 def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanopyTokenIn) -> Status:
     """Mint the agent's own canopy token, store it as its `canopy-pat` sealed to the
     people and machines that may read the agent, and turn on automatic rotation. Only
@@ -504,6 +520,7 @@ def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanop
 # Resolve first so a non-member still gets 404, never 403.
 @router.put("/{slug}/owner", response=AgentDetailOut,
             summary="Transfer the agent's ownership to a member of its workspace")
+@gate("agent-owner", setting=True)  # leaving it ownerless needs OWN
 def transfer_owner(request: HttpRequest, slug: str, payload: AgentOwnerIn) -> AgentDetailOut:
     agent = agent_for_read(request, slug)
     if not _may_transfer_owner(request, agent):
@@ -566,6 +583,7 @@ def _interface_out(agent) -> dict:
 
 @router.get("/{slug}/interface", response=AgentInterfaceOut,
             summary="What this agent offers callers — its declared interface")
+@gate("member")
 def get_interface(request: HttpRequest, slug: str):
     return _interface_out(agent_for_read(request, slug))
 
@@ -575,6 +593,7 @@ def get_interface(request: HttpRequest, slug: str):
 # it do — so loosening it is the same kind of act as handing over its keys.
 @router.put("/{slug}/interface", response=AgentInterfaceOut,
             summary="Save the agent's declared interface (YAML source, or a parsed mapping)")
+@gate("agent-admin", setting=True)
 def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
     import yaml
     from django.utils import timezone
@@ -618,6 +637,7 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
 
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,
                summary="Unpublish the declared interface: only the agent's admins and its workspace's editors can reach it")
+@gate("agent-admin", setting=True)
 def unpublish_interface(request: HttpRequest, slug: str):
     agent = agent_for_admin(request, slug)
     agent.interface = {}
@@ -632,12 +652,14 @@ def unpublish_interface(request: HttpRequest, slug: str):
 
 @router.get("/{slug}/admins", response=list[AgentAdminOut],
             summary="Who holds this agent's keys: its owner and admins")
+@gate("member")
 def list_admins(request: HttpRequest, slug: str):
     return _admin_rows(agent_for_read(request, slug))
 
 
 @router.get("/{slug}/access", response=AgentAccessOut,
             summary="Everyone's role on this agent, why, and what they can reach")
+@gate("member")
 def agent_access(request: HttpRequest, slug: str):
     """Every member of the agent's workspace with their role on the agent
     (owner / admin / member), the reason for it, and what they reach signed in:
@@ -684,6 +706,7 @@ def _license_rows(agent) -> list[dict]:
 
 @router.get("/{slug}/licenses", response=list[AgentLicenseOut],
             summary="Who uses this agent locally: its license holders")
+@gate("member")  # licenses to use the agent locally (apps/agents/credentials/licenses.py, canopy-web#1704)
 def list_agent_licenses(request: HttpRequest, slug: str):
     """Every license to use the agent in someone's own Claude Code — active,
     requested (the caller list did not allow it yet) or revoked — with the
@@ -706,6 +729,7 @@ def _license_target(request: HttpRequest, slug: str, user_id: int):
 
 @router.post("/{slug}/licenses/{user_id}/revoke", response=AgentLicenseOut,
              summary="Revoke a person's license to use this agent locally")
+@gate("agent-admin", setting=True)
 def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
                          payload: AgentLicenseRevokeIn | None = None):
     """Per person, without editing the caller list: they may not open a local turn
@@ -722,6 +746,7 @@ def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
 
 @router.post("/{slug}/licenses/{user_id}/approve", response=AgentLicenseOut,
              summary="Issue or reinstate a person's license to use this agent locally")
+@gate("agent-admin", setting=True)  # + access.decide must give them the whole agent (409)
 def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
     """Re-asks the caller list: refused (409) unless it gives them the whole agent —
     make them an editor or add a `full:` rule first."""
@@ -749,6 +774,7 @@ def _admin_change_gate(request: HttpRequest, slug: str):
 
 @router.put("/{slug}/admins/{user_id}", response=list[AgentAdminOut],
             summary="Make a workspace member an admin of this agent")
+@gate("agent-owner", setting=True)
 def grant_admin(request: HttpRequest, slug: str, user_id: int):
     from django.contrib.auth import get_user_model
 
@@ -764,6 +790,7 @@ def grant_admin(request: HttpRequest, slug: str, user_id: int):
 
 @router.delete("/{slug}/admins/{user_id}", response=list[AgentAdminOut],
                summary="Revoke an admin of this agent")
+@gate("agent-owner", setting=True)
 def revoke_admin(request: HttpRequest, slug: str, user_id: int):
 
     agent = _admin_change_gate(request, slug)
@@ -774,6 +801,7 @@ def revoke_admin(request: HttpRequest, slug: str, user_id: int):
 
 
 @router.delete("/{slug}/", response={204: None}, summary="Delete an agent (editor/owner)",)
+@gate("agent.work", setting=True)
 def delete_agent(request: HttpRequest, slug: str):
     """Remove an agent and everything hanging off it.
 
@@ -816,6 +844,7 @@ def delete_agent(request: HttpRequest, slug: str):
 
 @router.patch("/{slug}/turn-mode", response=AgentDetailOut,
               summary="Set an agent's turn mode (manual | auto)")
+@gate("agent.work", setting=True)
 def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> AgentDetailOut:
     """Flip the agent's runtime autonomy posture — the board-side switch the
     fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).
@@ -832,6 +861,7 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
 
 @router.patch("/{slug}/repository", response=AgentDetailOut,
               summary="Point an agent at its GitHub repository")
+@gate("agent-admin", setting=True)  # what its boxes run: a DEFINITION_FIELDS change
 def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> AgentDetailOut:
     """Set the repository (and optionally the branch) its runners clone and run —
     the one field the setup checklist's first step asks for, without the create
@@ -860,6 +890,7 @@ def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> Ag
 
 @router.patch("/{slug}/credential-source", response=AgentDetailOut,
               summary="Set where an agent's secrets resolve from (1password | canopy-web)")
+@gate("agent-admin", setting=True)
 def set_credential_source(request: HttpRequest, slug: str,
                           payload: CredentialSourceIn) -> AgentDetailOut:
     """Choose the backend `canopy cred` resolves this agent's secrets from
@@ -892,6 +923,7 @@ def set_credential_source(request: HttpRequest, slug: str,
 
 @router.patch("/{slug}/device-binding", response=AgentDetailOut,
               summary="Require a runner device proof to resolve this agent's secrets")
+@gate("agent-admin", setting=True)
 def set_device_binding(request: HttpRequest, slug: str, payload: DeviceBindingIn) -> AgentDetailOut:
     """Canopy Vault (canopy-web#1538). When on and `credential_source` is
     `canopy-web`, `GET /credentials/resolve` answers 401
@@ -906,6 +938,7 @@ def set_device_binding(request: HttpRequest, slug: str, payload: DeviceBindingIn
 
 @router.patch("/{slug}/slack", response=SlackEnabledOut,
               summary="Turn Slack access to an agent on or off")
+@gate("agent-admin", setting=True)
 def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) -> SlackEnabledOut:
     """Whether people in this workspace's connected Slack can talk to the agent
     (by mention, DM, `/canopy <slug>` or `/<slug>`). Owner only. Adds or removes
@@ -932,6 +965,7 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
 
 @router.get("/{slug}/runtime", response=AgentRuntimeOut,
             summary="Agent runtime info — how a runner provisions + runs this agent")
+@gate("member")
 def get_agent_runtime(request: HttpRequest, slug: str) -> AgentRuntimeOut:
     """The registry entry point (Agent Runtime Registry). A runner (PAT-authed)
     asks 'how do I run agent X?' and gets the repo pointer, the secret-reference
@@ -953,6 +987,7 @@ turns_router = Router(auth=session_auth, tags=["agents"])
 
 # ---- syncs (Google-Doc backed) ----
 @turns_router.get("/{slug}/syncs/", response=Page[AgentSyncOut], summary="List the agent's syncs",)
+@gate("member")
 def list_syncs(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentSyncOut]:
     limit = clamp_limit(limit)
     agent = agent_for_read(request, slug)
@@ -962,6 +997,7 @@ def list_syncs(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentS
 
 @turns_router.post("/{slug}/syncs/", response={201: AgentSyncOut},
              summary="Post a Google-Doc sync (idempotent per period+source)",)
+@gate("agent.work", kind="content")
 def create_sync(request: HttpRequest, slug: str, payload: AgentSyncIn) -> Status:
     agent = agent_for_work(request, slug)
     sync = services.upsert_sync(agent, payload)
@@ -970,6 +1006,7 @@ def create_sync(request: HttpRequest, slug: str, payload: AgentSyncIn) -> Status
 
 @turns_router.delete("/{slug}/syncs/{sync_id}/", response={204: None},
                summary="Delete a sync (wrong period / stray record)",)
+@gate("agent.work", kind="content")
 def delete_sync(request: HttpRequest, slug: str, sync_id: int) -> Status:
     """POST upserts per (period, source), so re-posting only corrects a sync for the
     SAME window — a sync filed under the wrong period is otherwise unreachable."""
@@ -981,6 +1018,7 @@ def delete_sync(request: HttpRequest, slug: str, sync_id: int) -> Status:
 
 # ---- turns (a packaged unit of work + optional transcript link) ----
 @turns_router.get("/{slug}/turns/", response=Page[AgentTurnOut], summary="List the agent's turns",)
+@gate("member", "turn-content")  # content redacted per turn_access
 def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentTurnOut]:
     limit = clamp_limit(limit)
     agent = agent_for_read(request, slug)
@@ -995,6 +1033,7 @@ def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentT
 
 @turns_router.post("/{slug}/turns/", response={201: AgentTurnOut},
              summary="Package a turn (idempotent per cli_session_id)",)
+@gate("agent.work", kind="turn")
 def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status:
     agent = agent_for_work(request, slug)
 

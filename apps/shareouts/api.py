@@ -9,6 +9,7 @@ from ninja import Router, Status
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_VALIDATION, ProblemError
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -29,6 +30,7 @@ router = Router(auth=session_auth, tags=["shareouts"])
     response=Page[ShareoutOut],
     summary="List shareouts",
 )
+@gate("member")
 def list_shareouts(
     request: HttpRequest,
     date_from: dt.date | None = None,
@@ -60,6 +62,7 @@ def list_shareouts(
     response={201: ShareoutBatchOut},
     summary="Create shareouts (batch, idempotent per period+source)",
 )
+@gate("content.write", kind="content")  # replaces only the caller's own rows
 def create_shareouts(
     request: HttpRequest,
     payload: ShareoutBatchIn,
@@ -101,6 +104,7 @@ def create_shareouts(
     response=ShareoutsClearOut,
     summary="Clear shareouts by source / project / date (AND-combined)",
 )
+@gate("content.write", "own", kind="content")  # editor clears own rows; owner clears all
 def clear_shareouts(
     request: HttpRequest,
     payload: ShareoutsClearIn,

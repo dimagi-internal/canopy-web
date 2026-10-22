@@ -18,6 +18,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_NOT_FOUND, ProblemError
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
+from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -76,6 +77,7 @@ def _contact_or_404(request: HttpRequest, contact_id: int) -> Contact:
 
 
 @router.get("/", response=Page[ContactOut], summary="People this workspace knows")
+@gate("member")
 def list_contacts(
     request: HttpRequest, q: str | None = None, offset: int = 0, limit: int = 50,
 ) -> Page[ContactOut]:
@@ -93,12 +95,14 @@ def list_contacts(
 
 
 @router.get("/{contact_id}/", response=ContactOut, summary="One person")
+@gate("member")
 def get_contact(request: HttpRequest, contact_id: int) -> ContactOut:
     return ContactOut.model_validate(_serialize(_contact_or_404(request, contact_id)))
 
 
 @router.patch("/{contact_id}/", response=ContactOut,
               summary="Correct what we know about a person (editor)")
+@gate("content.write", kind="content")
 def patch_contact(request: HttpRequest, contact_id: int, payload: ContactPatchIn) -> ContactOut:
     """Editor or better: this is the tenant's record of a person, and changing
     it changes what an agent will believe on the next turn.

@@ -1,8 +1,8 @@
 """The settings audit trail — one plumbing for every settings change.
 
-Every REST route that changes a setting is listed in
-`apps/api/route_gates.py::SETTINGS`, and `audited` (registered once on the API in
-`apps/api/api.py`) wraps each of them. Because the web UI, the `canopy` CLI,
+Every REST route that changes a setting says so at the route —
+`@gate(..., setting=True)` (`apps/api/route_gates.py`) — and `audited`
+(registered once on the API in `apps/api/api.py`) wraps each of them. Because the web UI, the `canopy` CLI,
 scripts and MCP tools all reach a setting through those routes — an MCP tool IS a
 route, called in-process — every change from every entry point lands here, as one
 `SettingChange` row naming who, through what, the request (secrets redacted) and,
@@ -24,10 +24,13 @@ from __future__ import annotations
 
 import contextvars
 import functools
+import inspect
 import re
 from typing import Any
 
 from django.db import transaction
+
+from apps.api.route_gates import gate_of
 
 #: Body keys whose VALUES are withheld. Matched against each key, at any depth.
 _SECRET_KEY = re.compile(
@@ -49,7 +52,7 @@ _notes: contextvars.ContextVar[list | None] = contextvars.ContextVar("canopy_aud
 def note_change(*, scope: str, before: Any, after: Any, workspace=None, summary: str = "") -> bool:
     """Report what this request changed, for the audit row the route will write.
 
-    Call it from a route listed in SETTINGS, inside the write. Returns False
+    Call it from a route declared `setting=True`, inside the write. Returns False
     when nothing changed. Outside an audited route it does nothing (and returns
     whether anything changed), so a helper shared with unaudited code is safe.
     `workspace` overrides the one `audited` infers from the path; `summary`
@@ -66,9 +69,13 @@ def note_change(*, scope: str, before: Any, after: Any, workspace=None, summary:
 # ---- the wrapper ----
 
 def operation_id(func) -> str:
-    """The route's operationId — the same rule `CanopyNinjaAPI` uses."""
+    """The route's operationId — its explicit `operation_id=`, else the same rule
+    `CanopyNinjaAPI` uses."""
     from apps.api.api import _app_label, api
 
+    explicit = api.explicit_operation_ids().get(inspect.unwrap(func))
+    if explicit:
+        return explicit
     name = func.__name__
     if name in api._shared_view_names():
         return f"{_app_label(func.__module__)}_{name}"
@@ -77,18 +84,17 @@ def operation_id(func) -> str:
 
 def audited(func):
     """Ninja operation decorator (mode "operation": after validation). A no-op
-    for every route not in SETTINGS; for those, runs the route and writes its
-    `SettingChange` in one transaction."""
+    for every route not declared `setting=True`; for those, runs the route and
+    writes its `SettingChange` in one transaction."""
 
     @functools.wraps(func)
     def wrapper(request, *args, **kwargs):
-        from apps.api import route_gates
-
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return func(request, *args, **kwargs)
-        op = operation_id(func)
-        if op not in route_gates.SETTINGS:
+        declared = gate_of(func)
+        if declared is None or not declared.setting:
             return func(request, *args, **kwargs)
+        op = operation_id(func)
 
         notes: list = []
         token = _notes.set(notes)

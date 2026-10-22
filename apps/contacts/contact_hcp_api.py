@@ -43,10 +43,12 @@ from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
+from apps.api.route_gates import gate
 from apps.common.token_hash import hash_token
-from .contact_api import contact_auth
-from apps.tokens.models import HcpFrameProof
 from apps.embedding.views_embed import FRAME_COOKIE
+from apps.tokens.models import HcpFrameProof
+
+from .contact_api import contact_auth
 
 contact_hcp_router = Router(auth=contact_auth, tags=["contact"])
 
@@ -107,6 +109,10 @@ class ProofOut(Schema):
 
 @contact_hcp_router.post("/proof", response=ProofOut,
                          summary="A single-use proof that this is canopy's own panel")
+# Every route but `proof` also spends a single-use frame proof — the contact's act in
+# canopy's own frame, which the site holding the token cannot produce.
+# canopy's frame cookie + Sec-Fetch-Site same-origin
+@gate("contact", kind="person-data")
 def contact_hcp_proof(request: HttpRequest) -> ProofOut:
     """Only canopy's panel can get one: send it as `X-Canopy-Frame-Proof` on the
     next call to `/api/contact/hcp/`. One proof, one call, five minutes."""
@@ -299,6 +305,7 @@ def _state(request: HttpRequest, session=None, person=None) -> ContactHcpOut:
 
 @contact_hcp_router.get("/state", response=ContactHcpOut,
                         summary="What canopy may learn about me, from this site")
+@gate("contact")
 def contact_hcp_state(request: HttpRequest, session_id: str = "") -> ContactHcpOut:
     """Whether you can use agent memory from this site, whether you have opted in,
     your settings, this conversation's state, and every grant you have given.
@@ -316,6 +323,7 @@ class OptInIn(Schema):
 
 @contact_hcp_router.post("/opt-in", response=ContactHcpOut,
                          summary="Let canopy learn about me in this conversation")
+@gate("contact", setting=True)
 def contact_hcp_opt_in(request: HttpRequest, payload: OptInIn) -> ContactHcpOut:
     """Your act, in canopy's panel: turns agent memory on for you (learning on by
     default; use only if you ticked it) and lets THIS conversation's agent learn
@@ -354,6 +362,7 @@ class ContactGrantIn(Schema):
 
 @contact_hcp_router.post("/sessions/{session_id}/agent-grants", response=ContactHcpOut,
                          summary="Grant this conversation's agent, or keep it")
+@gate("contact", setting=True)
 def contact_hcp_grant(request: HttpRequest, session_id: str, payload: ContactGrantIn) -> ContactHcpOut:
     """`duration=session`: let this conversation's agent learn / use, for this
     conversation. `duration=always`: keep what this conversation already allows,
@@ -382,6 +391,7 @@ class SessionChoiceIn(Schema):
 
 @contact_hcp_router.put("/sessions/{session_id}/memory", response=ContactHcpOut,
                         summary="Turn learning or use on or off for this conversation")
+@gate("contact", setting=True)
 def contact_hcp_session_memory(request: HttpRequest, session_id: str,
                                payload: SessionChoiceIn) -> ContactHcpOut:
     """For this conversation only: `on`, `off` or `inherit` for `record` and `use`.
@@ -413,6 +423,7 @@ class PolicyIn(Schema):
 
 @contact_hcp_router.put("/policy", response=ContactHcpOut,
                         summary="Change what agents may do with what they learn about me")
+@gate("contact", setting=True)
 def contact_hcp_policy(request: HttpRequest, payload: PolicyIn) -> ContactHcpOut:
     """Your settings: for `record` and `use`, `available` and `default`. Turning
     both off is opting out — nothing is deleted. Needs a frame proof."""
@@ -433,6 +444,7 @@ def contact_hcp_policy(request: HttpRequest, payload: PolicyIn) -> ContactHcpOut
 
 @contact_hcp_router.delete("/grants/{grant_id}", response=ContactHcpOut,
                            summary="Take back a grant")
+@gate("contact", setting=True)
 def contact_hcp_revoke(request: HttpRequest, grant_id: str) -> ContactHcpOut:
     """Revoke one agent's access, immediately. Needs a frame proof."""
     from apps.contacts import hcp
@@ -453,6 +465,7 @@ def contact_hcp_revoke(request: HttpRequest, grant_id: str) -> ContactHcpOut:
 
 @contact_hcp_router.delete("/entries/{entry_id}", response=ContactHcpOut,
                            summary="Remove something canopy holds about me")
+@gate("contact", kind="person-data")
 def contact_hcp_delete_entry(request: HttpRequest, entry_id: str) -> ContactHcpOut:
     """Delete one entry (HCP 3.2.4: soft — it stays in your export and audit log as
     deleted, and no agent is told it again). Needs a frame proof."""
@@ -473,6 +486,7 @@ def contact_hcp_delete_entry(request: HttpRequest, entry_id: str) -> ContactHcpO
 
 
 @contact_hcp_router.get("/export", summary="Everything canopy holds about me")
+@gate("contact")
 def contact_hcp_export(request: HttpRequest) -> dict:
     """Every entry held about you (current versions, deleted ones included) and
     your audit log — the same as /api/hcp/v1/export with include=audit. Needs a

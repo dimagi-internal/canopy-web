@@ -1,6 +1,6 @@
 """The settings audit — one plumbing for every settings change (`apps/events/audit.py`).
 
-Pins the contract every SETTINGS route gets without writing a line of its own:
+Pins the contract every `setting=True` route gets without writing a line of its own:
 a row per change naming who and through what (web UI, CLI, other token, MCP),
 the request with secrets withheld, the change and its row committing together,
 nothing for a refused write or a write that is not a setting, and a person's own
@@ -127,6 +127,16 @@ def test_a_write_that_is_not_a_setting_records_nothing(fleet):
                  content_type="application/json")
     assert res.status_code in (200, 201), res.content
     assert not SettingChange.objects.exists()
+
+
+def test_a_setting_with_a_spelled_out_operation_id_is_audited_under_it():
+    """The audit follows the route's own `@gate(..., setting=True)`, and names the
+    operation as the schema (and MCP) does, even where the route spells it out."""
+    from apps.api.route_gates import gate_of
+    from apps.contacts.hcp_api import hcp_revoke_grant
+
+    assert gate_of(hcp_revoke_grant).setting
+    assert audit.operation_id(hcp_revoke_grant) == "hcp_revokeGrant"
 
 
 def test_a_persons_own_setting_is_theirs_alone(fleet):

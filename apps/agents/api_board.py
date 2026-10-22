@@ -11,6 +11,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
+from apps.api.route_gates import gate
 from apps.contacts import services as contacts
 from apps.harness import turn_access
 from apps.harness.models import Turn, agent_turns_q
@@ -52,6 +53,7 @@ router = Router(auth=session_auth, tags=["agents"])
 
 @router.get("/{slug}/projects/", response=list[AgentProjectOut],
             summary="List the agent's projects",)
+@gate("member")
 def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[AgentProjectOut]:
     agent = agent_for_read(request, slug)
     projects = services.list_projects(agent, status=status)
@@ -63,6 +65,7 @@ def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[Age
 
 
 @router.post("/{slug}/projects/", response={201: AgentProjectOut}, summary="Create a project",)
+@gate("agent.work", kind="content")
 def create_project(request: HttpRequest, slug: str, payload: AgentProjectIn) -> Status:
     agent = agent_for_work(request, slug)
     try:
@@ -108,6 +111,7 @@ def _turn_brief(turn) -> TurnBriefOut:
 
 @router.get("/{slug}/projects/{ref}/", response=AgentProjectDetailOut,
             summary="Get one project: its fields and links, its tasks, its recent turns",)
+@gate("member")
 def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetailOut:
     agent = agent_for_read(request, slug)
     return project_detail(request, project_or_404(agent, ref))
@@ -150,6 +154,7 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
 
 
 @router.patch("/{slug}/projects/{ref}/", response=AgentProjectOut, summary="Update a project",)
+@gate("agent.work", kind="content")
 def patch_project(request: HttpRequest, slug: str, ref: str,
                   payload: AgentProjectPatch) -> AgentProjectOut:
     agent = agent_for_work(request, slug)
@@ -209,6 +214,7 @@ def _get_task_or_404(agent, ref: str):
 
 
 @router.get("/{slug}/tasks/", response=list[AgentTaskOut], summary="List the agent's tasks",)
+@gate("member")
 def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str = "",
                waiting: str = "", ask: str = "", batch: str = "",
                parent: str = "") -> list[AgentTaskOut]:
@@ -227,6 +233,7 @@ def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str =
 
 @router.post("/{slug}/tasks/", response={201: list[AgentTaskOut]},
              summary="Create tasks (a list; an idempotency_key replays instead of duplicating)",)
+@gate("agent.work", kind="content")  # or the agent's own login
 def create_tasks(request: HttpRequest, slug: str, payload: list[AgentTaskIn]) -> Status:
     agent = agent_for_read(request, slug)
     # A task can carry `on_approve` — work that runs the moment a viewer approves
@@ -249,6 +256,7 @@ def create_tasks(request: HttpRequest, slug: str, payload: list[AgentTaskIn]) ->
 
 @router.get("/{slug}/tasks/{ref}/", response=AgentTaskDetailOut,
             summary="Get one task with everything done to it",)
+@gate("member")
 def get_task(request: HttpRequest, slug: str, ref: str) -> AgentTaskDetailOut:
     agent = agent_for_read(request, slug)
     task = _get_task_or_404(agent, ref)
@@ -261,6 +269,7 @@ def get_task(request: HttpRequest, slug: str, ref: str) -> AgentTaskDetailOut:
 
 
 @router.patch("/{slug}/tasks/{ref}/", response=AgentTaskOut, summary="Update a task's fields",)
+@gate("agent.work", kind="content")
 def patch_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskPatch) -> AgentTaskOut:
     agent = agent_for_work(request, slug)
     task = _get_task_or_404(agent, ref)
@@ -302,6 +311,18 @@ def _engaged_with_project_task(request: HttpRequest, task, action: str) -> None:
 
 @router.post("/{slug}/tasks/{ref}/actions", response=ActOut,
              summary="Act on a task: approve, decline, reply, nudge or done",)
+# approve/decline/reply = member; dispatch/done = editor, or the idea's own person marking a kind=idea task done
+# (shipped)
+@gate(
+    "member",
+    "agent.work",
+    kind="content",
+    viewer_write=(
+        "approve/decline/reply answer what is already on the board (interaction tier); dispatch/done require "
+        "agent.work — except that the person whose words an idea task carries may mark it done (shipped): it is their "
+        "idea"
+    ),
+)
 def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskActionIn) -> ActOut:
     """approve → in progress, and the agent starts now: its `on_approve` turns,
     or one turn written from the card when it has none. decline → declined (the
@@ -356,6 +377,7 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
 
 @router.get("/{slug}/actions/", response=list[AgentTaskActionOut],
             summary="List actions on the agent's tasks (the agent drains ?status=pending)",)
+@gate("member")
 def list_task_actions(request: HttpRequest, slug: str, status: str = "",
                       limit: int = 200) -> list[AgentTaskActionOut]:
     """At most `limit` rows (default 200, cap 500). Unfiltered, PENDING rows come
@@ -378,6 +400,7 @@ def list_task_actions(request: HttpRequest, slug: str, status: str = "",
 
 @router.post("/{slug}/actions/{action_id}/applied", response=AgentTaskActionOut,
              summary="Mark an action applied (the agent calls this after carrying it out)",)
+@gate("agent.work", kind="content")  # or the agent's own login
 def mark_task_action_applied(request: HttpRequest, slug: str, action_id: int,
                              payload: ActionAppliedIn) -> AgentTaskActionOut:
     # Marking an action applied tells the agent it is done, so the agent never

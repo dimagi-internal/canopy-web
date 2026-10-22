@@ -127,7 +127,7 @@
 "apps/events/activity.py" = ["PLC0415"]  # 2
 "apps/events/analytics.py" = ["PLC0415"]  # 8
 "apps/events/api.py" = ["PLC0415"]  # 4
-"apps/events/audit.py" = ["PLC0415"]  # 12
+"apps/events/audit.py" = ["PLC0415"]  # 11
 "apps/events/management/commands/backfill_activity.py" = ["PLC0415"]  # 5
 "apps/events/management/commands/prune_events.py" = ["PLC0415"]  # 2
 "apps/events/usage.py" = ["PLC0415"]  # 8

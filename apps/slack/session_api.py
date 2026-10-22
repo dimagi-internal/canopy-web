@@ -14,6 +14,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.canopy_sessions import access
 from apps.canopy_sessions import api as session_api
 
@@ -31,6 +32,7 @@ router = Router(auth=session_auth, tags=["chat"])
 
 
 @router.post("/slack/share", response=SlackShareOut, summary="Post a session's summary to Slack")
+@gate("session-acl", "agent-login", kind="conversation")  # write; or the agent's own live turn
 def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
     """Post a summary of the current session into a Slack channel.
 
@@ -88,6 +90,7 @@ def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
 
 @router.post("/slack/detach", response=SlackDetachOut,
              summary="Disconnect a session from its Slack thread")
+@gate("session-acl", "agent-login", kind="conversation")  # write; or the agent's own live turn
 def detach_session_from_slack(request: HttpRequest, payload: SlackDetachIn):
     """Disconnect a session from the Slack thread it is bound to — the undo of
     sharing it with `bind` (`share_session_to_slack`), and works as well on a
@@ -150,6 +153,7 @@ def _slack_session_for(request: HttpRequest, *, turn_id: str = "", session_id: s
 
 @router.post("/slack/new-thread", response=SlackNewThreadOut,
              summary="Move a session's conversation to a new Slack thread in the same channel")
+@gate("session-acl", "agent-login", kind="conversation")  # write; or the agent's own live turn
 def start_new_slack_thread(request: HttpRequest, payload: SlackNewThreadIn):
     """Start a new thread in the channel this conversation is in, and move the
     conversation there.

@@ -22,13 +22,13 @@ from ninja.errors import HttpError
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, ProblemError
+from apps.api.route_gates import gate
+from apps.tokens.models import AppCredential, DelegatedToken, EmbedAuditLog
+from apps.tokens.schemas import WsTicketOut
 from apps.workspaces import services as wsvc
 
 from .audit import record as audit
-from apps.tokens.models import AppCredential, DelegatedToken, EmbedAuditLog
 from .rate_limit import MintRateLimitError, check_mint_limit
-from apps.tokens.schemas import WsTicketOut
-
 from .schemas import EmbedAgentOut, EmbedSelfOut, EmbedSelfTokenOut, EmbedSessionMemoryOut
 
 embed_router = Router(auth=session_auth, tags=["embed"])
@@ -71,6 +71,7 @@ def _acting_app(request: HttpRequest):
 
 @embed_router.get("/agents", response=list[EmbedAgentOut],
                   summary="Agents this embedding app may offer to this user")
+@gate("member")  # delegated token required; app allowlist ∩ caller's workspaces
 def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
     """Agents this embedding app may offer, that you can also reach.
 
@@ -139,6 +140,7 @@ def _self_app() -> AppCredential | None:
 
 @embed_router.get("/self", response=EmbedSelfOut,
                   summary="Whether canopy-web offers the widget on its own pages")
+@gate("authenticated")
 def embed_self(request: HttpRequest) -> EmbedSelfOut:
     """Drives the frontend's decision to mount the widget at all.
 
@@ -160,6 +162,7 @@ def embed_self(request: HttpRequest) -> EmbedSelfOut:
 
 @embed_router.post("/token", response=EmbedSelfTokenOut,
                    summary="Mint a delegated token for the caller, for canopy's own widget")
+@gate("self", kind="ephemeral-credential")
 def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     """The host-side token endpoint every embedder needs — for the host that is
     canopy itself.
@@ -218,6 +221,8 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
 
 @embed_router.post("/ws-ticket", response=WsTicketOut,
                    summary="Trade this delegated token for a one-time socket ticket")
+# a one-time socket ticket standing for the caller's own delegated token  # mints a 15-min DelegatedToken for the caller
+@gate("self", kind="ephemeral-credential")
 def embed_ws_ticket(request: HttpRequest) -> WsTicketOut:
     """A single-use ticket to open a chat socket with, in place of the token.
 
@@ -238,6 +243,8 @@ def embed_ws_ticket(request: HttpRequest) -> WsTicketOut:
 
 @embed_router.get("/sessions/{session_id}/agent-memory", response=EmbedSessionMemoryOut,
                   summary="Agent memory in this session, for the widget to show")
+# read-only: the caller's OWN session with an agent this app offers; writes stay person-only on /api/people/me/
+@gate("self")
 def embed_session_memory(request: HttpRequest, session_id: str) -> EmbedSessionMemoryOut:
     """What applies in this conversation of yours: per feature (`record` — agents
     may learn about you; `use` — agents are told what they learned), whether it is

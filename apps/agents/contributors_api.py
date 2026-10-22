@@ -23,6 +23,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.contacts import hcp, people
 from apps.contacts.models import Person, PersonAccess
 
@@ -63,6 +64,9 @@ def _log_read(person, project, request: HttpRequest, reader: svc.Reader) -> None
 
 @router.get("/{slug}/projects/{ref}/team/", response=ProjectTeamOut,
             summary="A project as a teammate sees it: what it is, where it stands, its ideas and people")
+# hal T82: the team view, and adding your OWN idea (a kind=idea task with
+# your words). Someone else's words go through create_tasks (agent.work).
+@gate("member")
 def project_team(request: HttpRequest, slug: str, ref: str) -> dict:
     """The team view's one read. What it is (outcome, links, owner); where it
     stands — ideas shipped and in progress, and the decisions waiting on people,
@@ -77,6 +81,16 @@ def project_team(request: HttpRequest, slug: str, ref: str) -> dict:
 
 @router.post("/{slug}/projects/{ref}/ideas/", response={201: IdeaCreatedOut},
              summary="Add your own idea to a project, in your own words")
+# an idea is a task with kind=idea
+@gate(
+    "member",
+    kind="content",
+    viewer_write=(
+        "any member may put their OWN want on a project, in their own words, as themself — a suggested kind=idea task "
+        "carrying only their quote, with no on_approve; it names nobody else, and recording someone else's words is "
+        "create_tasks (agent.work)"
+    ),
+)
 def create_idea(request: HttpRequest, slug: str, ref: str, payload: IdeaIn) -> Status:
     """Any member of the workspace. It becomes a task with `kind: "idea"` on the
     project, with your words as its human-why and you as its person; it tells
@@ -102,6 +116,7 @@ def create_idea(request: HttpRequest, slug: str, ref: str, payload: IdeaIn) -> S
 
 @router.get("/{slug}/projects/{ref}/contributors/", response=ProjectIdeasOut,
             summary="A project's ideas (where each stands, whose it is) and its contributors")
+@gate("member")  # page content withheld from an agent without the person's `use`
 def project_ideas(request: HttpRequest, slug: str, ref: str) -> dict:
     """The project's ideas: its top-level tasks with `kind: "idea"` — a
     person's want in their words, with the work toward it as subtasks. A task
@@ -118,6 +133,7 @@ def project_ideas(request: HttpRequest, slug: str, ref: str) -> dict:
 
 @router.get("/{slug}/projects/{ref}/contributors/{person}/", response=ContributorPageOut,
             summary="One contributor's page: their goal in their own words, and their ideas")
+@gate("member")  # the person must be known_in the workspace; read logged
 def contributor_page(request: HttpRequest, slug: str, ref: str, person: str) -> dict:
     """What they are trying to achieve, quoted with links to where they said it,
     and their ideas on this project as shipped / started / proposed (the
@@ -136,6 +152,16 @@ def contributor_page(request: HttpRequest, slug: str, ref: str, person: str) -> 
 
 @router.put("/{slug}/projects/{ref}/contributors/{person}/summary/", response=ContributorPageOut,
             summary="Write a contributor's page (an agent, with their permission)")
+# An agent's login (a member) under the PERSON's record switch + its grant, or the person.
+@gate(
+    "member",
+    "self",
+    kind="content",
+    viewer_write=(
+        "an agent's login is a member, and that is who writes a contributor page — only while the person lets agents "
+        "learn about them and has granted that agent; otherwise only the person themself"
+    ),
+)
 def put_contributor_summary(request: HttpRequest, slug: str, ref: str, person: str,
                             payload: ContributorSummaryIn) -> dict:
     """Replace the person's page on this project with the agent's reading of
@@ -163,6 +189,7 @@ def put_contributor_summary(request: HttpRequest, slug: str, ref: str, person: s
 
 @router.delete("/{slug}/projects/{ref}/contributors/{person}/summary/", response={204: None},
                summary="Delete a contributor's page")
+@gate("self", "agent-admin", kind="content")  # or the agent that wrote it
 def delete_contributor_summary(request: HttpRequest, slug: str, ref: str, person: str):
     """The person themself, the agent's admins, or the agent that wrote it.
     Leaves them a participant; their ideas stay on the board."""

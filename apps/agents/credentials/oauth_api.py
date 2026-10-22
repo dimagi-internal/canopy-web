@@ -17,6 +17,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 
 from .. import services
 from ..gates import agent_for_admin
@@ -43,6 +44,7 @@ def _agent_for_mint(request: HttpRequest, slug: str):
 
 @router.get("/{slug}/google/authorize", response=GoogleMintStartOut,
             summary="Start the Google mint for this agent's mailbox")
+@gate("agent-admin")
 def start_google_mint(request: HttpRequest, slug: str, login_hint: str = "") -> GoogleMintStartOut:
     """Returns the URL rather than redirecting, so the caller opens it itself.
 
@@ -72,6 +74,7 @@ oauth_router = Router(auth=session_auth, tags=["agents"])
 
 
 @oauth_router.get("/google/callback", summary="Google returns here; the token is stored")
+@gate("signed-link", "agent-admin")  # signed state must name the caller
 def google_callback(request: HttpRequest, code: str = "", state: str = "", error: str = ""):
     from django.core import signing
 

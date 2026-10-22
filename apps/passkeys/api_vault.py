@@ -16,6 +16,7 @@ from ninja import Router
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.route_gates import gate
 from apps.passkeys import stepup
 from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.schemas import VaultKeysetIn, VaultKeysetOut, VaultKeysetPasskeyOut
@@ -43,6 +44,7 @@ def _out(user) -> VaultKeysetOut:
 
 
 @router.get("/keyset", response=VaultKeysetOut, summary="My zero-knowledge vault key (public half + seals)")
+@gate("self")
 def get_vault_keyset(request: HttpRequest) -> VaultKeysetOut:
     """`{user_id, public_jwk, seals, prf_input, passkeys, …}`; 404 (problem+json,
     `error: "no_vault_keyset"`) until set up — the 404 body still carries
@@ -57,6 +59,9 @@ def get_vault_keyset(request: HttpRequest) -> VaultKeysetOut:
 
 
 @router.put("/keyset", response=VaultKeysetOut, summary="Set up or extend my vault key (browser + passkey)")
+# browser session + passkey step-up only
+# the person's zero-knowledge vault key
+@gate("self", setting=True)
 def put_vault_keyset(request: HttpRequest, payload: VaultKeysetIn) -> VaultKeysetOut:
     """`{public_jwk, seals, replace}`. `seals` replaces the stored list; each
     must name one of the caller's passkeys. A different `public_jwk` from the

@@ -16,11 +16,11 @@ from ninja.errors import HttpError
 from apps.agents.gates import agent_for_read
 from apps.agents.models import Agent
 from apps.api.errors import ProblemError
+from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import claim, ledger, services, turn_gates
-from . import session_sync
+from . import claim, ledger, services, session_sync, turn_gates
 
 # The one harness router and the helpers every harness route shares; api.py
 # imports this module after defining them.
@@ -64,6 +64,7 @@ OPERATION_LABEL = "harness"
 
 @router.get("/turns/unclaimable", response=list[UnclaimableTurnOut],
             summary="Queued turns no online runner can claim")
+@gate("member", "session-acl", "turn-content")  # prompt blanked unless turn-content
 def list_unclaimable_turns(request: HttpRequest):
     """A queued turn addressed to an agent/repo nothing declares sits forever with
     no signal (one sat 12h). Surfacing it turns a silent stall into a warning."""
@@ -84,6 +85,7 @@ def list_unclaimable_turns(request: HttpRequest):
 
 
 @router.post("/turns/", response={200: TurnOut, 201: TurnOut})
+@gate("agent.work", kind="turn")  # agent and project turns alike
 def enqueue_turn(request: HttpRequest, payload: TurnIn):
     """Queue a turn for a runner. Started from inside a canopy session? Pass
     `parent={turn, session}` (the caller-context hook prints both ids) so the
@@ -183,6 +185,7 @@ def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
 
 
 @router.get("/turns/", response=list[TurnOut])
+@gate("member", "session-acl", "turn-content")  # session turns by chat ACL; redacted
 def list_turns(
     request: HttpRequest,
     agent: str | None = None,
@@ -238,6 +241,7 @@ def list_turns(
 
 
 @router.get("/sessions", response=list[EmdashSessionOut])
+@gate("member", "session-acl")
 def list_sessions(request: HttpRequest):
     """Open emdash sessions the caller can see — across their workspaces, live runners
     only, newest-first. Drives the phone's Open Sessions list."""
@@ -252,6 +256,7 @@ def list_sessions(request: HttpRequest):
 
 
 @router.get("/turns/{turn_id}", response=TurnOut)
+@gate("member", "session-acl", "turn-content")  # redacted unless turn-content
 def get_turn(request: HttpRequest, turn_id: uuid.UUID):
     from . import turn_access
 
@@ -260,6 +265,7 @@ def get_turn(request: HttpRequest, turn_id: uuid.UUID):
 
 @router.get("/turns/{turn_id}/caller-context", response=CallerContextOut,
             summary="Who asked for this turn, and what canopy knows about them")
+@gate("turn-content")
 def get_turn_caller_context(request: HttpRequest, turn_id: uuid.UUID):
     """The caller envelope for one turn: the asker, how sure canopy is (for THIS
     message), their relationship to the agent, and the contact profile canopy
@@ -272,6 +278,7 @@ def get_turn_caller_context(request: HttpRequest, turn_id: uuid.UUID):
 
 
 @router.post("/turns/{turn_id}/events", response=TurnEventCountOut)
+@gate("runner", "agent.work", "session-acl", kind="turn")  # claimed: owner; unclaimed: agent.work / chat write
 def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEventsIn):
     turn = reporting_turn_or_404(request, turn_id)
     for event in payload.events:
@@ -287,6 +294,7 @@ def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEv
 
 
 @router.get("/turns/{turn_id}/events", response=TurnEventsOut)
+@gate("turn-content")
 def read_turn_events(request: HttpRequest, turn_id: uuid.UUID, after: int = 0):
     turn = turn_content_or_404(request, turn_id)
     events = turn.events.filter(seq__gt=after).order_by("seq")[:500]
@@ -294,6 +302,7 @@ def read_turn_events(request: HttpRequest, turn_id: uuid.UUID, after: int = 0):
 
 
 @router.post("/turns/{turn_id}/transcript", response=TranscriptAppendOut)
+@gate("runner", "agent.work", "session-acl", kind="turn")
 def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: TranscriptAppendIn):
     """Ingest a batch of raw `claude -p` JSONL lines onto a turn's retained
     transcript. Same tenancy gate as every other turn route (_turn_or_404) —
@@ -332,6 +341,7 @@ def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: Tr
     "/turns/{turn_id}/messages", response=TurnMessagesOut,
     summary="A turn's transcript as readable messages",
 )
+@gate("turn-content")
 def read_turn_messages(request: HttpRequest, turn_id: uuid.UUID):
     """The turn's retained transcript parsed into messages (user, assistant,
     tool use, tool result), with secrets scrubbed. Bounded: `truncated` is true
@@ -345,6 +355,7 @@ def read_turn_messages(request: HttpRequest, turn_id: uuid.UUID):
 
 
 @router.get("/turns/{turn_id}/transcript", summary="Raw retained JSONL for a turn")
+@gate("turn-content")
 def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
     """The byte-for-byte raw transcript, streamed as plain JSONL bytes — a
     turn with nothing ever appended reads as an empty 200, not a 404;
@@ -377,6 +388,7 @@ def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
 
 
 @router.post("/turns/{turn_id}/start", response=TurnOut)
+@gate("runner", "agent.work", "session-acl", kind="turn")
 def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
     turn = reporting_turn_or_404(request, turn_id)
     if turn.status not in (Turn.CLAIMED, Turn.RUNNING):
@@ -385,6 +397,7 @@ def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
 
 
 @router.post("/turns/{turn_id}/finish", response=TurnOut)
+@gate("runner", "agent.work", "session-acl", kind="turn")  # a LOCAL turn: its initiator only
 def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn):
     from . import runner_protocol
 
@@ -427,6 +440,8 @@ def _cancel_refusal(user, turn: Turn) -> str:
 
 
 @router.post("/turns/{turn_id}/cancel", response=TurnOut)
+# agent/project: agent.work; chat: write access, or your own send
+@gate("agent.work", "session-acl", "self", kind="turn")
 def cancel_turn(request: HttpRequest, turn_id: uuid.UUID):
     """Cancel a QUEUED turn that has not started — the misfire case the phone
     composer needs (dispatch the wrong command, take it back before a runner

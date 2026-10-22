@@ -38,6 +38,7 @@ from ninja.errors import HttpError
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.inbound import services
 from apps.inbound.models import InboundMailbox
 from apps.inbound.schemas import (
@@ -139,6 +140,7 @@ def _decode(message: dict) -> dict:
     url_name="gmail_push",
     summary="Gmail Pub/Sub push (doorbell — carries no mail)",
 )
+@gate("host", kind="telemetry")  # auth=None; Pub/Sub push verified by verify_push (OIDC/audience), 404 otherwise
 def gmail_push(request: HttpRequest, workspace: str, payload: PushEnvelopeIn) -> dict:
     """Ring the runner that holds this mailbox's credentials.
 
@@ -174,12 +176,14 @@ def gmail_push(request: HttpRequest, workspace: str, payload: PushEnvelopeIn) ->
 
 
 @router.get("/config/{workspace}", response=PushConfigOut, summary="Read push config")
+@gate("member")
 def get_push_config(request: HttpRequest, workspace: str) -> dict:
     ws = _workspace_or_404(request.user, workspace)
     return _config_out(request, services.get_config(ws))
 
 
 @router.put("/config/{workspace}", response=PushConfigOut, summary="Set push config (admin or owner)")
+@gate("integrations", setting=True)
 def set_push_config(request: HttpRequest, workspace: str, payload: PushConfigIn) -> dict:
     ws = _admin_workspace_or_404(request.user, workspace)
     cfg = services.set_config(
@@ -192,6 +196,7 @@ def set_push_config(request: HttpRequest, workspace: str, payload: PushConfigIn)
 
 
 @router.get("/mailboxes/{workspace}", response=MailboxListOut, summary="List mailboxes")
+@gate("member")
 def list_mailboxes(request: HttpRequest, workspace: str) -> dict:
     _workspace_or_404(request.user, workspace)
     qs = (
@@ -203,6 +208,7 @@ def list_mailboxes(request: HttpRequest, workspace: str) -> dict:
 
 
 @router.post("/mailboxes/{workspace}", response=MailboxOut, summary="Register a mailbox (admin or owner)")
+@gate("integrations", setting=True)
 def create_mailbox(request: HttpRequest, workspace: str, payload: MailboxIn) -> dict:
     _admin_workspace_or_404(request.user, workspace)
     agent = Agent.objects.filter(slug=payload.agent_slug, workspace_id=workspace).first()
@@ -225,6 +231,7 @@ def create_mailbox(request: HttpRequest, workspace: str, payload: MailboxIn) -> 
 
 @router.patch("/mailboxes/{workspace}/{mailbox_id}", response=MailboxOut,
               summary="Update a mailbox (admin or owner)")
+@gate("integrations", setting=True)
 def update_mailbox(request: HttpRequest, workspace: str, mailbox_id: int,
                    payload: MailboxPatchIn) -> dict:
     _admin_workspace_or_404(request.user, workspace)
@@ -252,6 +259,7 @@ def update_mailbox(request: HttpRequest, workspace: str, mailbox_id: int,
 
 @router.delete("/mailboxes/{workspace}/{mailbox_id}", response={204: None},
                summary="Remove a mailbox (admin or owner)")
+@gate("integrations", setting=True)
 def delete_mailbox(request: HttpRequest, workspace: str, mailbox_id: int):
     _admin_workspace_or_404(request.user, workspace)
     deleted, _ = InboundMailbox.objects.filter(
@@ -267,6 +275,7 @@ def delete_mailbox(request: HttpRequest, workspace: str, mailbox_id: int):
 
 @router.get("/runner-mailboxes", response=RunnerMailboxListOut,
             summary="Mailboxes this caller may read, and the topic to arm each on")
+@gate("member")  # every workspace the caller is in
 def runner_mailboxes(request: HttpRequest) -> dict:
     """Every enabled mailbox in the caller's workspaces, with its agent and topic.
 
@@ -297,6 +306,7 @@ def runner_mailboxes(request: HttpRequest) -> dict:
 
 @router.post("/watch/", response=WatchReportOut,
              summary="Report a mailbox's Gmail watch expiry")
+@gate("events.write", kind="telemetry")  # mailbox's agent's workspace membership only
 def report_watch(request: HttpRequest, payload: WatchReportIn) -> dict:
     """Tell canopy-web when this mailbox's Gmail watch lapses.
 
