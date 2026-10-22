@@ -297,6 +297,14 @@ class Runner(models.Model):
     #: puts on it (a pin, a session bound to it) and the local sessions opened on it
     #: (`apps/harness/local.py`). Set by its owner, never reported by the box.
     private = models.BooleanField(default=False)
+    #: The agents this box is DEDICATED to: when any are listed it runs only their
+    #: turns and chats — no other agent's, no repo turn, no agentless chat — however
+    #: they reach it (an assignment, an inherited order, a pin). Empty = no
+    #: restriction. Set by a person on the runner page, never reported by the box,
+    #: and it only ever narrows what the box takes — the person-set counterpart of a
+    #: box's own agent unit (`unit()`); both apply when both are set
+    #: (`routing.dedicated_agent_slugs`).
+    only_agents = models.ManyToManyField("agents.Agent", blank=True, related_name="dedicated_runners")
 
     class Meta:
         indexes = [models.Index(fields=["kind", "status"])]
@@ -317,6 +325,19 @@ class Runner(models.Model):
 
     def agent_slugs(self) -> list[str]:
         return list(self.capabilities.get("agents", []))
+
+    #: Where `only_agent_slugs` keeps its answer; `routing.prime_dedicated_agents`
+    #: fills it for a batch of runners in one query.
+    ONLY_AGENTS_CACHE = "_only_agent_slugs"
+
+    def only_agent_slugs(self) -> set[str]:
+        """The slugs of `only_agents` (empty: no restriction) — from the cache when
+        primed, else one query, cached on this instance."""
+        cached = getattr(self, self.ONLY_AGENTS_CACHE, None)
+        if cached is None:
+            cached = set(self.only_agents.values_list("slug", flat=True)) if self.pk else set()
+            setattr(self, self.ONLY_AGENTS_CACHE, cached)
+        return cached
 
     def unit(self) -> dict:
         """The isolation unit this runner says it is (`capabilities.unit`):

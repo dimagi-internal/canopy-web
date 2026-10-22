@@ -46,6 +46,19 @@ holds its device keys: it never claims or heartbeats and is left out of every fl
 list, routing picker and health report. See [`access.md`](access.md) → "Local use
 of an agent".
 
+### Runners dedicated to agents
+
+**Only these agents** is a setting on a runner (`PUT /api/harness/runners/{id}/only-agents`,
+owner or runner admin; `Runner.only_agents`): listed, the box runs only those agents'
+turns and chats — no other agent's, no repo turn, no agentless chat — however they
+reach it, a pin included. Empty lifts it. It never adds work: an agent still reaches
+the box only through its runner list or the order it follows. It is the person-set
+counterpart of a box's own agent unit and is asked in the same places
+(`routing.unit_refusal`, `turn_unit_refusal`, `runner_target_q`), so the claim, turn
+status, the unclaimable report, the vault and what the box prepares all agree. A ZDR
+box is the usual case: dedicate it to its PHI agents rather than making it
+directed-only, which would leave their routed turns with no taker.
+
 ## Which workspaces a runner serves (the tenant gate)
 
 `routing.runner_tenant_slugs(runner)` is THE answer, and every runner-scoped

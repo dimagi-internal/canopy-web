@@ -111,6 +111,11 @@ class RunnerPrivateIn(Schema):
     private: bool
 
 
+class RunnerOnlyAgentsIn(Schema):
+    # Agent slugs; [] = no restriction (the box runs whatever routes to it).
+    agents: list[str]
+
+
 class RunnerEngineIn(Schema):
     # emdash | claude-desktop | claude-cli (Runner.ENGINE_CHOICES). Validated in the view so the
     # error names the choices rather than a pydantic literal mismatch.
@@ -226,6 +231,9 @@ class RunnerOut(Schema):
     # The private-runner registration linked to this box (canopy-web#1705): the runner
     # writes it to ~/.canopy/private-runner.json, so local sessions there need no CLI.
     private_runner_id: uuid.UUID | None = None
+    # The agents a person dedicated this box to (`Runner.only_agents`): it runs only
+    # their turns and chats. [] = no restriction.
+    only_agents: list[str] = []
 
     # The roots of the workspace trees the box is enrolled in, as far as the
     # caller may know them: all of them for the box's owner, else only the trees
@@ -250,6 +258,10 @@ class RunnerOut(Schema):
         except Exception:  # noqa: BLE001 - the reverse one-to-one is absent
             return None
         return pr.pk if pr is not None and pr.retired_at is None else None
+
+    @staticmethod
+    def resolve_only_agents(obj) -> list[str]:
+        return sorted(obj.only_agent_slugs())
 
     @staticmethod
     def resolve_key_waiting(obj) -> str:

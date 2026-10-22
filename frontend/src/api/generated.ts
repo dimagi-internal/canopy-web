@@ -9007,6 +9007,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/only-agents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Dedicate this runner to a list of agents
+         * @description Replace the agents this runner is dedicated to. Listed: it runs only their
+         *     turns and chats — no other agent's, no repo turn, no agentless chat — however
+         *     they reach it, a pin included. [] lifts the restriction. It never ADDS work:
+         *     an agent still routes here only through its runner list or the order it
+         *     follows. Each agent must be one the box may serve (in its tenant). Owner or a
+         *     runner administrator.
+         */
+        readonly put: operations["set_runner_only_agents"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/engine": {
         readonly parameters: {
             readonly query?: never;
@@ -27941,6 +27966,11 @@ export interface components {
             /** Private Runner Id */
             readonly private_runner_id?: string | null;
             /**
+             * Only Agents
+             * @default []
+             */
+            readonly only_agents: readonly string[];
+            /**
              * Roots
              * @default []
              */
@@ -28557,6 +28587,11 @@ export interface components {
         readonly RunnerPrivateIn: {
             /** Private */
             readonly private: boolean;
+        };
+        /** RunnerOnlyAgentsIn */
+        readonly RunnerOnlyAgentsIn: {
+            /** Agents */
+            readonly agents: readonly string[];
         };
         /** RunnerEngineIn */
         readonly RunnerEngineIn: {
@@ -45686,6 +45721,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["RunnerPrivateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly set_runner_only_agents: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerOnlyAgentsIn"];
             };
         };
         readonly responses: {

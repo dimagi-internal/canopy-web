@@ -44,6 +44,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     known_flags: ['zdr'],
     private: false,
     private_runner_id: null,
+    only_agents: [],
     roots: ['dimagi'], spans_trees: false,
     ...overrides,
   };
