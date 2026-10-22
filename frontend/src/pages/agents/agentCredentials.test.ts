@@ -78,4 +78,11 @@ describe('sections — a mailbox implies gog-token', () => {
     expect(s.storedHere.map((r) => r.name)).toEqual(['gog-token'])
     expect(headline(rows, ['gog-token'])).not.toMatch(/worth removing/)
   })
+
+  it('on canopy vault an unset ref is missing, not "from 1Password"', () => {
+    const rows = [row({ name: 'a', set: true }), row({ name: 'b' })]
+    expect(headline(rows, [], 'canopy-web')).toMatch(/1 declared secret\(s\) not set yet/)
+    expect(headline(rows, [], 'canopy-web')).not.toMatch(/1Password/)
+    expect(headline([row({ name: 'a', set: true })], [], 'canopy-web')).toMatch(/All 1 declared/)
+  })
 })

@@ -52,6 +52,9 @@ import { CopyButton } from 'canopy-ui/ui'
 // Overview (it used to be its own rail entry, which is why people could not
 // find settings that sat one click away from each other).
 
+// A credential file is a few KB; anything far larger is the wrong file.
+const MAX_UPLOAD_BYTES = 64 * 1024
+
 const TONE: Record<CredStatus['tone'], string> = {
   success: toneClasses('success'),
   warning: toneClasses('warning'),
@@ -166,9 +169,21 @@ export function AgentCredentialsPanel({
 
   // Saving from the browser needs a passkey step-up; the API client prompts
   // for it and retries, so this is written as a plain call.
-  const save = async (name: string) => {
-    const value = (draft[name] ?? '').trim()
-    if (!value) return
+  const save = (name: string) => store(name, (draft[name] ?? '').trim())
+
+  // A key file (a service-account JSON, a PEM) is read straight from disk into
+  // the save, never into component state; only a trailing newline is dropped.
+  const upload = async (name: string, file: File | undefined) => {
+    if (!file) return
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(`${file.name} is larger than ${MAX_UPLOAD_BYTES / 1024} KB — not a credential file?`)
+      return
+    }
+    await store(name, (await file.text()).replace(/\r?\n$/, ''))
+  }
+
+  const store = async (name: string, value: string) => {
+    if (!value.trim()) return
     setBusy(true)
     setError(null)
     try {
@@ -290,7 +305,7 @@ export function AgentCredentialsPanel({
         autoComplete="off"
         value={draft[r.name] ?? ''}
         onChange={(e) => setDraft((d) => ({ ...d, [r.name]: e.target.value }))}
-        placeholder={r.set ? 'rotate…' : 'store here instead'}
+        placeholder={r.set ? 'rotate…' : source === 'canopy-web' ? 'paste a value' : 'store here instead'}
         aria-label={`Value for ${r.name}`}
         className="ml-auto min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground sm:min-h-0 sm:w-56"
       />
@@ -302,6 +317,24 @@ export function AgentCredentialsPanel({
       >
         Save
       </button>
+      <label
+        title="Store the contents of a file from your computer (e.g. a service-account JSON key)"
+        className={`inline-flex min-h-11 cursor-pointer items-center rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary sm:min-h-0 ${busy ? 'pointer-events-none opacity-40' : ''}`}
+      >
+        Upload file
+        <input
+          type="file"
+          className="sr-only"
+          disabled={busy}
+          aria-label={`Upload a file as the value of ${r.name}`}
+          data-testid={`upload-${r.name}`}
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            void upload(r.name, file)
+          }}
+        />
+      </label>
       {r.set && canEdit && (
         // The one way a value comes back into a browser: agent admins only,
         // behind a passkey, recorded server-side (canopy-web#1538).
@@ -459,7 +492,7 @@ export function AgentCredentialsPanel({
         <>
           {/* The lede: whether this screen wants anything from the reader. */}
           <p className="mb-4 text-[13px] text-muted-foreground" data-testid="agent-credentials-summary">
-            {headline(rows, implied)}
+            {headline(rows, implied, source)}
           </p>
 
 
@@ -484,7 +517,18 @@ export function AgentCredentialsPanel({
             </section>
           )}
 
-          {sec.fromVault.length > 0 && (
+          {sec.fromVault.length > 0 && source === 'canopy-web' && (
+            // On canopy vault nothing stands behind an unset ref: it is missing,
+            // so it leads, open, instead of hiding under a 1Password toggle.
+            <section className="mb-5" data-testid="not-set">
+              <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-warning">
+                Declared, not set yet
+              </h3>
+              <div className="space-y-2">{sec.fromVault.map(credentialRow)}</div>
+            </section>
+          )}
+
+          {sec.fromVault.length > 0 && source !== 'canopy-web' && (
             <section>
               <button
                 type="button"

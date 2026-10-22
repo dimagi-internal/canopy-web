@@ -64,10 +64,21 @@ export function sections(rows: readonly CredRow[], implied: readonly string[] = 
 /** One line saying whether anything is wanted from the reader.
  *  Deliberately not a count of what canopy-web holds: "stores 0 of 45" is a fact
  *  about the store, and the reader wants a fact about their afternoon. */
-export function headline(rows: readonly CredRow[], implied: readonly string[] = []): string {
+export function headline(
+  rows: readonly CredRow[],
+  implied: readonly string[] = [],
+  source: string = '1password',
+): string {
   const s = sections(rows, implied)
   if (s.orphans.length > 0) {
     return `${s.orphans.length} stored secret(s) nothing declares any more — worth removing.`
+  }
+  // On canopy vault there is no 1Password behind a declared ref: an unset one
+  // is simply missing, and the one thing on the page that needs a person.
+  if (source === 'canopy-web') {
+    return s.fromVault.length > 0
+      ? `${s.fromVault.length} declared secret(s) not set yet — add a value below.`
+      : `All ${s.storedHere.length} declared secrets are stored here.`
   }
   if (s.storedHere.length === 0 && s.fromVault.length > 0) {
     return `Nothing here needs you. All ${s.fromVault.length} of this agent's secrets resolve from 1Password on the box.`
