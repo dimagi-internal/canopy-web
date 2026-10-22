@@ -26,7 +26,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents import delegations
+from apps.agents.credentials import delegations
 from apps.agents.models import Agent, AgentAdmin, AgentDelegation
 from apps.common.encryption import decrypt_secret
 from apps.harness import services

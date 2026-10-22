@@ -36,8 +36,8 @@ from django.utils import timezone
 from apps.common.encryption import decrypt_secret, encrypt_secret
 from apps.workspaces import services as wsvc
 
-from .definition import definition_key
-from .models import Agent, AgentCredential, AgentDelegation, RepoIdentity
+from ..definition import definition_key
+from ..models import Agent, AgentCredential, AgentDelegation, RepoIdentity
 
 GITHUB_API = "https://api.github.com"
 HTTP_TIMEOUT = 15

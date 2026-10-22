@@ -267,7 +267,7 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
     runner only names the turn. Refused (409, with the reason) when the owner
     has lent none or it has expired, and always for a caller's turn (one confined
     to a capability); there is no shared fallback."""
-    from apps.agents import delegations
+    from apps.agents.credentials import delegations
 
     runner = runner_or_404(request, runner_id)
     # Only a turn this runner holds right now. A finished turn, or one another
@@ -326,7 +326,7 @@ def turn_attachment_content(request: HttpRequest, runner_id: uuid.UUID, turn_id:
     # teammate's private chat with an agent is visible to its creator and
     # participants only, canopy_sessions/access.py). Claiming the turn is what
     # entitles the box to it — the same rule as turn_github_token above.
-    from apps.agents import delegations
+    from apps.agents.credentials import delegations
     from apps.agents.services import runner_may_hold_agent
     from apps.canopy_sessions import attachment_storage
 
@@ -360,7 +360,7 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
     """Checked live against GitHub, per agent routed to this runner. A box calls
     this when it boots so a missing, expired or under-scoped token is a health
     check going red, not a 403 in the middle of a turn."""
-    from apps.agents import delegations
+    from apps.agents.credentials import delegations
 
     runner = runner_or_404(request, runner_id)
     out = []

@@ -22,8 +22,8 @@ from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 from apps.harness.routing import inherited_orders, runner_tenant_slugs
 from apps.harness.runners import request_refresh
 
-from . import delegations, mailbox
-from .credentials import zk_seal
+from . import mailbox
+from .credentials import delegations, zk_seal
 from .credentials.oauth_api import GOG_TOKEN_REF
 from .credentials.pat_rotation import CANOPY_PAT_REF
 from .credentials.vault_health import vault_health

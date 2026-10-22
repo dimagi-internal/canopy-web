@@ -31,8 +31,8 @@ from django.utils import timezone
 from apps.push.services import send_to_user
 from apps.workspaces import links as wslinks
 
-from .credentials import zk
-from .models import Agent, AgentVaultWrap, ZkGrantNotice
+from . import zk
+from ..models import Agent, AgentVaultWrap, ZkGrantNotice
 
 logger = logging.getLogger(__name__)
 

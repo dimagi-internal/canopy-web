@@ -1267,7 +1267,7 @@ def stamp_turn_session(turn_id, runner: Runner, session_key: str) -> bool:
 
     `finish` writes `session_key` too, but finish comes LAST — after the
     agent has already posted its close-out report, which joins on that key
-    (apps/agents/services._claim_dispatch_row). A laptop finishes seconds in
+    (apps/harness/closeout.py::_claim_dispatch_row). A laptop finishes seconds in
     (emdash runs the work after), so it never noticed; a cloud runner finishes
     when the work does, so every cloud close-out found no turn and became a
     second, report-only row (labs, echo, 2026-10-02 17:00).

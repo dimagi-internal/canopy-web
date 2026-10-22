@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 import requests
 from django.core.cache import cache
 
-from apps.agents.delegations import agent_repo
+from apps.agents.credentials.delegations import agent_repo
 from apps.agents.models import Agent
 from apps.workspaces import services as wsvc
 from apps.workspaces import links as wslinks

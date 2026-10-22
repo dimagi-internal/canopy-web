@@ -762,7 +762,7 @@ class AgentSecretRequest(models.Model):
 
 class ZkGrantNotice(models.Model):
     """A wrap target the agent's vault key has not reached yet, and whether the
-    people who hold that key were told (canopy-web#1550; `apps/agents/zk_notify.py`).
+    people who hold that key were told (canopy-web#1550; `apps/agents/credentials/zk_notify.py`).
 
     One row per (agent, kind, target, kv): seen first at `first_seen_at`, told
     at most once (`notified_at`), closed (`cleared_at`) once the target is

@@ -294,7 +294,7 @@ class RunnerOut(Schema):
         # asks about at boot. Served from the box's report it stayed red for a
         # token lent after that boot, under a fresh `health_received_at` (eva,
         # 2026-10-03). So it is answered here, from the rows, on every read.
-        from apps.agents import delegations
+        from apps.agents.credentials import delegations
 
         from .routing import agents_routed_to
 

@@ -18,7 +18,7 @@ from django.contrib.auth.models import User
 from fastmcp.exceptions import ToolError
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
-from apps.agents import delegations
+from apps.agents.credentials import delegations
 from apps.agents.models import Agent, RepoIdentity
 from apps.canopy_sessions.models import Session
 from apps.harness import caller_tokens, claiming, services

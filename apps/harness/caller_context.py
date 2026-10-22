@@ -561,7 +561,7 @@ def _ship_grant(turn, agent, rel: str) -> dict | None:
     dispatcher = getattr(user, "agent_identity", None) if user is not None else None
     if dispatcher is None or dispatcher.pk == agent.pk:
         return None
-    from apps.agents.delegations import agent_repo
+    from apps.agents.credentials.delegations import agent_repo
 
     repo = agent_repo(agent)
     if not repo:

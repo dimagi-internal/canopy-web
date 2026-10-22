@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from django.contrib.auth.models import User
 
-from apps.agents import delegations
+from apps.agents.credentials import delegations
 from apps.agents.models import Agent, AgentDelegation, RepoIdentity
 from apps.common.encryption import encrypt_secret
 from apps.harness import services

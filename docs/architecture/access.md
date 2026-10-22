@@ -594,7 +594,7 @@ tool; and beside every delivered prompt — the runner leaves
   Expired, long-finished, or a conversation whose current turn is not confined → it
   authenticates nothing; `who_is_asking` answers only about its own conversation.
 * **A confined turn holds no credentials it does not need.** canopy refuses it
-  the owner's GitHub token (`agents.delegations.github_token_for_turn` → 409).
+  the owner's GitHub token (`agents.credentials.delegations.github_token_for_turn` → 409).
   The cloud runner builds its env from an allowlist (`_confined_env` in
   `runner/ec2/cloud_runner.py`: Claude's login, locale/paths/TLS, which agent and
   turn) — no `CANOPY_TOKEN`, no agent `.env`, no 1Password key (it never calls

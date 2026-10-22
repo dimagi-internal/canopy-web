@@ -26,8 +26,8 @@ from apps.harness.runners import may_trust_device_keys
 from apps.harness.schemas import RunnerDeviceKeyOut
 from apps.passkeys import stepup
 
-from . import delegations, services
-from .credentials import credential_resolve, pat_rotation, secret_requests, vault_alerts, zk, zk_endorse
+from . import services
+from .credentials import credential_resolve, delegations, pat_rotation, secret_requests, vault_alerts, zk, zk_endorse
 from .credentials.zk import ZkError
 from .gates import (
     agent_for_admin,
@@ -533,7 +533,7 @@ def delete_sender_trust(request: HttpRequest, slug: str, email: str):
 
 # ---- GitHub: the owner's (or an admin's) identity, lent to this agent ---------
 # The owner or an admin pastes a fine-grained token here; a runner is handed it one turn at a
-# time. See apps/agents/delegations.py for the rule and AgentDelegation for why it
+# time. See apps/agents/credentials/delegations.py for the rule and AgentDelegation for why it
 # is not a vault item.
 
 @router.get("/{slug}/github", response=AgentGitHubOut,
@@ -587,7 +587,7 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 # ---- Salesforce: another agent's own identity, lent to this one ---------------
 # chrome-sales acts in Salesforce as one delegated identity (Eva's SF user). The
 # row names the lender; the credential is the lender's own, resolved at use time.
-# See the Salesforce section of apps/agents/delegations.py.
+# See the Salesforce section of apps/agents/credentials/delegations.py.
 
 @router.get("/{slug}/salesforce", response=AgentSalesforceOut,
             summary="Whose Salesforce identity this agent borrows (masked — never the credential)")

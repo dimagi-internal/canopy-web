@@ -39,10 +39,10 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, creation, delegations, mailbox, services
+from . import access, creation, mailbox, services
 from . import move as agent_move
 from .creation import repo_url
-from .credentials import licenses, zk
+from .credentials import delegations, licenses, zk
 from .gates import (
     agent_for_admin,
     agent_for_read,

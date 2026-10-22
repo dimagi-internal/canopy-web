@@ -18,7 +18,7 @@ class AgentsConfig(AppConfig):
 
 
 def _zk_notify() -> None:
-    from . import zk_notify
+    from .credentials import zk_notify
 
     zk_notify.maybe_sweep()
 
