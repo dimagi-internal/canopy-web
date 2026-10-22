@@ -532,12 +532,13 @@ def test_values_put_refuses_an_agent_that_is_not_zk(fleet):
     assert res.status_code == 409 and res.json()["error"] == "zk_not_enabled"
 
 
-def test_grant_pending_devices_and_admins(fleet):
+def test_grant_pending_devices_and_members(fleet):
     assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
     other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
-    WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.EDITOR)
+    ms = WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.VIEWER)
     o_priv, _ = _make_keyset(other, _add_passkey(other, "o-cred").credential_id)
-    # Not an admin yet: not pending, and not grantable.
+    # A viewer has no full access to the agent, so is not a member of its vault:
+    # not pending, and not grantable.
     state = fleet.client.get(ZK).json()
     assert [(p["kind"], p["target"]) for p in state["pending"]] == [("device", str(fleet.device.pk))]
     assert state["pending"][0]["public_jwk"] == ref.jwk(fleet.ecdh.public_key())
@@ -545,7 +546,9 @@ def test_grant_pending_devices_and_admins(fleet):
     res = fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [
         member_wrap(fleet, user=other, pub=o_priv.public_key())]}, content_type="application/json")
     assert res.status_code == 422 and res.json()["error"] == "zk_invalid_target"
-    AgentAdmin.objects.create(agent=fleet.agent, user=other, granted_by=fleet.user)
+    # An editor has full access, so the agent's vault link makes them a member.
+    ms.role = WorkspaceMembership.EDITOR
+    ms.save()
     assert len(fleet.client.get(ZK).json()["pending"]) == 2
     res = fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [
         device_wrap(fleet), member_wrap(fleet, user=other, pub=o_priv.public_key())]},

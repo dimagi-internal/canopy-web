@@ -4437,8 +4437,9 @@ export interface paths {
         /**
          * Grant: wrap the vault key to pending devices or admins
          * @description `{kv, wraps: [{kind: device|member, target, wrap}]}`. A device target is
-         *     an ACTIVE key with an ECDH key on a runner this agent routes to; a member
-         *     target is a current agent admin with a vault key. Replaces that target's
+         *     an ACTIVE key with an ECDH key on a runner this agent routes to, working for
+         *     a member of the agent's vault; a member target is a member of the agent's
+         *     vault with a vault key. Replaces that target's
          *     wrap at this kv. The recovery wrap is set only by enable and rotate.
          */
         readonly post: operations["add_agent_zk_wraps"];
@@ -4461,11 +4462,82 @@ export interface paths {
          * Rotate the vault key: replace every wrap and value atomically
          * @description `{new_kv: kv + 1, wraps, values}`. Every target holding a wrap now that
          *     still qualifies must get one at `new_kv` (422 `zk_rewrap_required`
-         *     otherwise); a revoked device or removed admin is simply left out. A fresh
+         *     otherwise); a revoked device or a removed member is simply left out. A fresh
          *     recovery wrap and a wrap the caller can open are required, and `values`
          *     must cover every stored credential.
          */
         readonly post: operations["rotate_agent_zk"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/members": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who may open the agent's vault, and why
+         * @description Every member of the agent's vault with their role (`manage` or `use`) and
+         *     every source of their membership: `direct` (added by name) or a link
+         *     (`agent:<slug>` — full access to the agent). `you` is the caller's role.
+         */
+        readonly get: operations["get_agent_vault_members"];
+        readonly put?: never;
+        /**
+         * Add a person to the agent's vault by name
+         * @description `{email, role}` — a direct membership, kept whatever happens to the
+         *     agent's access list. The person must be a member of the agent's workspace.
+         */
+        readonly post: operations["add_agent_vault_member"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/members/{user_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a person's direct membership of the agent's vault
+         * @description Removes only the DIRECT membership. Membership through a link stays until
+         *     the person leaves the linked set (e.g. loses full access to the agent).
+         */
+        readonly delete: operations["remove_agent_vault_member"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/vault/agent-link": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Link the agent's vault to the agent's access list, or unlink it
+         * @description `{linked, role}`. Linked, everyone with full access to the agent is a
+         *     member: its owner and admins as `manage`, everyone else as `role`. Unlinked,
+         *     only direct members remain. Refused (409 `vault_needs_a_manager`) when it
+         *     would leave nobody who can manage the vault.
+         */
+        readonly put: operations["set_agent_vault_link"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -21000,6 +21072,60 @@ export interface components {
             readonly wraps: readonly components["schemas"]["ZkWrapIn"][];
             /** Values */
             readonly values?: readonly components["schemas"]["ZkValueIn"][];
+        };
+        /** VaultAgentLinkOut */
+        readonly VaultAgentLinkOut: {
+            /** Linked */
+            readonly linked: boolean;
+            /** Role */
+            readonly role: string;
+        };
+        /** VaultMemberOut */
+        readonly VaultMemberOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Role */
+            readonly role: string;
+            /** Sources */
+            readonly sources: readonly string[];
+            /** Has Vault Key */
+            readonly has_vault_key: boolean;
+        };
+        /** VaultMembersOut */
+        readonly VaultMembersOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Kind */
+            readonly kind: string;
+            /** Name */
+            readonly name: string;
+            readonly agent_link: components["schemas"]["VaultAgentLinkOut"];
+            /** Members */
+            readonly members: readonly components["schemas"]["VaultMemberOut"][];
+            /** You */
+            readonly you: string | null;
+        };
+        /** VaultMemberIn */
+        readonly VaultMemberIn: {
+            /** Email */
+            readonly email: string;
+            /**
+             * Role
+             * @default use
+             */
+            readonly role: string;
+        };
+        /** VaultAgentLinkIn */
+        readonly VaultAgentLinkIn: {
+            /** Linked */
+            readonly linked: boolean;
+            /**
+             * Role
+             * @default use
+             */
+            readonly role: string;
         };
         /**
          * SecretRequestOut
@@ -38476,6 +38602,103 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_vault_members: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultMembersOut"];
+                };
+            };
+        };
+    };
+    readonly add_agent_vault_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultMemberIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultMembersOut"];
+                };
+            };
+        };
+    };
+    readonly remove_agent_vault_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultMembersOut"];
+                };
+            };
+        };
+    };
+    readonly set_agent_vault_link: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultAgentLinkIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultMembersOut"];
                 };
             };
         };

@@ -7,8 +7,11 @@ anything. It checks SHAPES — the algorithm tag, base64url lengths, the `zk1:`
 prefix — and enforces WHO may hold a wrap:
 
 * a `device` wrap goes to an ACTIVE RunnerDeviceKey that has an ECDH key, on a
-  runner this agent's resolve accepts proofs from (`runner_serves_agent`);
-* a `member` wrap goes to a current agent admin (`Agent.is_admin`) who has a
+  runner this agent's resolve accepts proofs from (`runner_serves_agent`), whose
+  PERSON (`vault_members.person_of_device`) is a member of the agent's vault —
+  the machine layer never grants on its own;
+* a `member` wrap goes to a member of the agent's vault (`vault_members`: direct,
+  or linked — by default everyone with full access to the agent) who has a
   UserVaultKeyset;
 * exactly one `recovery` wrap per vault-key version, set at enable/rotate.
 
@@ -26,6 +29,7 @@ import uuid
 from dataclasses import dataclass
 
 from django.db import transaction
+from django.db.models import Q
 
 from apps.harness import device_keys
 from apps.harness.models import RunnerDeviceKey
@@ -33,7 +37,7 @@ from apps.passkeys.models import Passkey, UserVaultKeyset
 
 from .. import services
 from ..models import Agent, AgentCredential, AgentVaultWrap
-from . import vault_alerts
+from . import vault_alerts, vault_members
 
 ZK_PREFIX = "zk1:"
 NONCE_LEN, TAG_LEN, KEY_LEN, SALT_LEN, POINT_LEN = 12, 16, 32, 16, 65
@@ -161,9 +165,11 @@ def eligible_device_keys(agent) -> list:
 def eligible_device_keys_qs(agent):
     """`eligible_device_keys` as a queryset, for a caller that only asks whether any exist."""
 
+    ids = vault_members.agent_member_ids(agent)
     return (device_keys.keys_for_agent(agent)
             .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
-            .exclude(ecdh_jkt=""))
+            .exclude(ecdh_jkt="")
+            .filter(Q(runner__owner_id__in=ids) | Q(runner__owner__isnull=True, approved_by_id__in=ids)))
 
 
 def device_waits(agent, key) -> bool:
@@ -185,9 +191,10 @@ def device_waits(agent, key) -> bool:
 
 
 def eligible_members(agent) -> list:
-    """Every current agent admin with a vault keyset, as UserVaultKeyset rows."""
+    """Every member of the agent's vault with a vault keyset, as UserVaultKeyset rows."""
 
-    return list(UserVaultKeyset.objects.select_related("user").filter(user_id__in=agent.admin_user_ids()))
+    return list(UserVaultKeyset.objects.filter(user_id__in=vault_members.agent_member_ids(agent))
+                .select_related("user"))
 
 
 @dataclass
@@ -231,14 +238,15 @@ def _parse_wraps(agent, kv: int, wraps: list, *, allow_recovery: bool) -> list:
             if key is None:
                 raise ZkError(422, "zk_invalid_target",
                               f"{what}: device key {key_id} is not an active device key with an ECDH "
-                              f"key on a runner {agent.slug} routes to")
+                              f"key on a runner {agent.slug} routes to, working for a member of "
+                              f"{agent.slug}'s vault")
             row = AgentVaultWrap(agent=agent, kv=kv, kind=kind, device_key=key,
                                  wrap=check_ecdh_wrap(wrap, what))
         elif kind == "member":
             ks = members.get(str(target))
             if ks is None:
                 raise ZkError(422, "zk_invalid_target",
-                              f"{what}: user {target} is not a current admin of {agent.slug} "
+                              f"{what}: user {target} is not a member of {agent.slug}'s vault "
                               "with a vault key (Settings → Vault key)")
             row = AgentVaultWrap(agent=agent, kv=kv, kind=kind, user=ks.user,
                                  wrap=check_ecdh_wrap(wrap, what))

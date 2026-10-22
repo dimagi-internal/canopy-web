@@ -765,6 +765,106 @@ class AgentVaultEndorsement(models.Model):
         return f"{self.agent_id}:{self.kind}:{self.target} by {self.endorser_id}"
 
 
+class Vault(models.Model):
+    """A vault: a named set of secrets with its OWN membership (spec
+    2026-10-22-vault-access-follows-canopy-access-design.md).
+
+    Membership is first-class: who may open a vault is its `VaultMember` rows
+    (people added by name) plus its `VaultLink` rows (rules that stand for a set
+    of people canopy already knows, such as everyone with full access to an
+    agent), resolved by `credentials.vault_members.members`. An agent's vault
+    starts linked to its agent, so giving someone the agent gives them its vault;
+    a manager can add people directly, link more, or drop the link.
+
+    An AGENT vault's secrets and wraps are still stored on the agent
+    (`AgentCredential`, `AgentVaultWrap`); this row holds who may open them."""
+
+    AGENT, WORKSPACE = "agent", "workspace"
+    KIND_CHOICES = [(AGENT, "Agent vault"), (WORKSPACE, "Workspace vault")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="vaults")
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES)
+    name = models.CharField(max_length=120)
+    agent = models.OneToOneField(Agent, on_delete=models.CASCADE, null=True, blank=True, related_name="vault")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["workspace_id", "kind", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "name"], name="one_workspace_vault_per_name",
+                                    condition=models.Q(kind="workspace")),
+            models.CheckConstraint(condition=(models.Q(kind="agent", agent__isnull=False)
+                                              | models.Q(kind="workspace", agent__isnull=True)),
+                                   name="vault_agent_iff_agent_kind"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.kind}:{self.name}"
+
+
+class VaultMember(models.Model):
+    """A person added to a vault by name — a direct membership, kept until a
+    manager removes it, whatever happens to any agent the vault is linked to."""
+
+    MANAGE, USE = "manage", "use"
+    ROLE_CHOICES = [(MANAGE, "Manage"), (USE, "Use")]
+
+    vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="members")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="vault_memberships")
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default=USE)
+    added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name="+")
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["vault_id", "added_at"]
+        constraints = [models.UniqueConstraint(fields=["vault", "user"], name="one_vault_member_row")]
+
+    def __str__(self) -> str:
+        return f"{self.vault_id}:{self.user_id} ({self.role})"
+
+
+class VaultLink(models.Model):
+    """A rule that makes a set of people members of a vault, re-read on every
+    question so it follows the set as it changes:
+
+    * `agent` — everyone with FULL access to `agent` (`access.roster`): its owner
+      and admins as `manage`, everyone else as `role`;
+    * `workspace_owners` / `workspace_admins` — the owners (or the admins and
+      owners) of `workspace`, inherited down the tree as those roles are."""
+
+    AGENT, WORKSPACE_OWNERS, WORKSPACE_ADMINS = "agent", "workspace_owners", "workspace_admins"
+    KIND_CHOICES = [(AGENT, "Full access to an agent"), (WORKSPACE_OWNERS, "Owners of a workspace"),
+                    (WORKSPACE_ADMINS, "Admins of a workspace")]
+
+    vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="links")
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True, related_name="vault_links")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, null=True, blank=True,
+                                  related_name="vault_links")
+    role = models.CharField(max_length=10, choices=VaultMember.ROLE_CHOICES, default=VaultMember.USE)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["vault_id", "created_at"]
+        constraints = [
+            models.CheckConstraint(condition=(models.Q(kind="agent", agent__isnull=False, workspace__isnull=True)
+                                              | (~models.Q(kind="agent") & models.Q(agent__isnull=True,
+                                                                                    workspace__isnull=False))),
+                                   name="vault_link_target_matches_kind"),
+            models.UniqueConstraint(fields=["vault", "kind", "agent"], name="one_agent_link_per_vault",
+                                    condition=models.Q(kind="agent")),
+            models.UniqueConstraint(fields=["vault", "kind", "workspace"], name="one_workspace_link_per_vault",
+                                    condition=~models.Q(kind="agent")),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.vault_id}:{self.kind}"
+
+
 class AgentSecretRequest(models.Model):
     """An agent asking for one of its declared secrets (spec
     2026-10-19-give-an-agent-a-secret-design.md). A request carries NO value,

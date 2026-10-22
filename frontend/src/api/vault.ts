@@ -99,3 +99,28 @@ export async function fulfilSecretRequest(slug: string, id: string, body: { kv: 
   return need<SecretRequestOut>(await apiV2.PUT('/api/agents/{slug}/secret-requests/{request_id}/value', {
     params: { path: { slug, request_id: id } }, body }), 'Could not store the value')
 }
+
+// ---- vault membership (spec 2026-10-22-vault-access-follows-canopy-access-design.md) ----
+
+export type VaultMembersOut = Schemas['VaultMembersOut']
+export type VaultMemberOut = Schemas['VaultMemberOut']
+
+export async function getVaultMembers(slug: string): Promise<VaultMembersOut> {
+  return need<VaultMembersOut>(await apiV2.GET('/api/agents/{slug}/vault/members', { params: { path: { slug } } }),
+    'Could not load who can open this vault')
+}
+
+export async function addVaultMember(slug: string, email: string, role: 'manage' | 'use'): Promise<VaultMembersOut> {
+  return need<VaultMembersOut>(await apiV2.POST('/api/agents/{slug}/vault/members', {
+    params: { path: { slug } }, body: { email, role } }), 'Could not add them to the vault')
+}
+
+export async function removeVaultMember(slug: string, userId: number): Promise<VaultMembersOut> {
+  return need<VaultMembersOut>(await apiV2.DELETE('/api/agents/{slug}/vault/members/{user_id}', {
+    params: { path: { slug, user_id: userId } } }), 'Could not remove them from the vault')
+}
+
+export async function setVaultAgentLink(slug: string, linked: boolean): Promise<VaultMembersOut> {
+  return need<VaultMembersOut>(await apiV2.PUT('/api/agents/{slug}/vault/agent-link', {
+    params: { path: { slug } }, body: { linked, role: 'use' } }), 'Could not change the vault’s link to this agent')
+}

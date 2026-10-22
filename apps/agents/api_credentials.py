@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from django.contrib.auth import get_user_model
 from django.http import HttpRequest, HttpResponse
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -26,9 +27,19 @@ from apps.harness.channels.email import address_holder
 from apps.harness.runners import may_trust_device_keys
 from apps.harness.schemas import RunnerDeviceKeyOut
 from apps.passkeys import stepup
+from apps.passkeys.models import UserVaultKeyset
 
 from . import services
-from .credentials import credential_resolve, delegations, pat_rotation, secret_requests, vault_alerts, zk, zk_endorse
+from .credentials import (
+    credential_resolve,
+    delegations,
+    pat_rotation,
+    secret_requests,
+    vault_alerts,
+    vault_members,
+    zk,
+    zk_endorse,
+)
 from .credentials.zk import ZkError
 from .gates import (
     agent_for_admin,
@@ -63,6 +74,9 @@ from .schemas import (
     SecretRequestValueIn,
     SenderTrustIn,
     SenderTrustOut,
+    VaultAgentLinkIn,
+    VaultMemberIn,
+    VaultMembersOut,
     ZkEnableIn,
     ZkEndorsementsIn,
     ZkEndorsementsOut,
@@ -323,8 +337,9 @@ def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) ->
 @gate("agent-admin", setting=True)  # browser: + step-up; token allowed
 def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> ZkStateOut:
     """`{kv, wraps: [{kind: device|member, target, wrap}]}`. A device target is
-    an ACTIVE key with an ECDH key on a runner this agent routes to; a member
-    target is a current agent admin with a vault key. Replaces that target's
+    an ACTIVE key with an ECDH key on a runner this agent routes to, working for
+    a member of the agent's vault; a member target is a member of the agent's
+    vault with a vault key. Replaces that target's
     wrap at this kv. The recovery wrap is set only by enable and rotate."""
 
     agent = _zk_admin(request, slug)
@@ -341,7 +356,7 @@ def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> Z
 def rotate_agent_zk(request: HttpRequest, slug: str, payload: ZkRotateIn) -> ZkStateOut:
     """`{new_kv: kv + 1, wraps, values}`. Every target holding a wrap now that
     still qualifies must get one at `new_kv` (422 `zk_rewrap_required`
-    otherwise); a revoked device or removed admin is simply left out. A fresh
+    otherwise); a revoked device or a removed member is simply left out. A fresh
     recovery wrap and a wrap the caller can open are required, and `values`
     must cover every stored credential."""
 
@@ -353,6 +368,107 @@ def rotate_agent_zk(request: HttpRequest, slug: str, payload: ZkRotateIn) -> ZkS
         raise zk_problem(exc) from exc
     agent.refresh_from_db()
     return _zk_state(agent)
+
+
+# ---- vault membership (spec 2026-10-22-vault-access-follows-canopy-access-design.md) ------
+# Membership is the vault's own (direct members + links); writes are for its
+# managers, and from a browser need a passkey step-up like every vault write.
+
+
+def _vault_out(vault, user) -> VaultMembersOut:
+    ms = vault_members.members(vault)
+    keyed = set(UserVaultKeyset.objects.filter(user_id__in=list(ms)).values_list("user_id", flat=True))
+    link = vault.links.filter(kind="agent", agent=vault.agent).first() if vault.agent_id else None
+    rank = {"manage": 0, "use": 1}
+    rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
+    return VaultMembersOut(
+        vault_id=str(vault.pk), kind=vault.kind, name=vault.name,
+        agent_link={"linked": link is not None, "role": link.role if link else "use"},
+        members=[{"user_id": m.user.pk, "email": m.user.email or "", "role": m.role, "sources": m.sources,
+                  "has_vault_key": m.user.pk in keyed} for m in rows],
+        you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None))
+
+
+def _agent_vault(request: HttpRequest, slug: str, *, manage: bool):
+    agent = agent_for_read(request, slug)
+    vault = vault_members.vault_for_agent(agent)
+    if vault is None:
+        raise ProblemError(404, "No vault", detail="This agent is in no workspace, so it has no vault.",
+                           type_=TYPE_NOT_FOUND)
+    if manage:
+        if vault_members.role_of(vault, request.user) != vault_members.MANAGE:
+            raise HttpError(403, "this action requires someone who manages this vault")
+        if stepup.is_browser(request):
+            stepup.require_recent_step_up(request)
+    return agent, vault
+
+
+def _membership_problem(exc: vault_members.VaultMembershipError) -> ProblemError:
+    return ProblemError(exc.status, "Vault membership", detail=exc.detail,
+                        type_=TYPE_CONFLICT if exc.status == 409 else TYPE_VALIDATION, members={"error": exc.code})
+
+
+@router.get("/{slug}/vault/members", response=VaultMembersOut,
+            summary="Who may open the agent's vault, and why")
+@gate("member")
+def get_agent_vault_members(request: HttpRequest, slug: str) -> VaultMembersOut:
+    """Every member of the agent's vault with their role (`manage` or `use`) and
+    every source of their membership: `direct` (added by name) or a link
+    (`agent:<slug>` — full access to the agent). `you` is the caller's role."""
+
+    _, vault = _agent_vault(request, slug, manage=False)
+    return _vault_out(vault, request.user)
+
+
+@router.post("/{slug}/vault/members", response=VaultMembersOut,
+             summary="Add a person to the agent's vault by name")
+@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMemberIn) -> VaultMembersOut:
+    """`{email, role}` — a direct membership, kept whatever happens to the
+    agent's access list. The person must be a member of the agent's workspace."""
+
+    _, vault = _agent_vault(request, slug, manage=True)
+    user = get_user_model().objects.filter(email__iexact=payload.email.strip()).first()
+    if user is None:
+        raise ProblemError(422, "Vault membership", detail=f"No canopy user has the address {payload.email}.",
+                           type_=TYPE_VALIDATION, members={"error": "vault_no_such_user"})
+    try:
+        vault_members.add_member(vault, user, role=payload.role, by=request.user)
+    except vault_members.VaultMembershipError as exc:
+        raise _membership_problem(exc) from exc
+    return _vault_out(vault, request.user)
+
+
+@router.delete("/{slug}/vault/members/{user_id}", response=VaultMembersOut,
+               summary="Remove a person's direct membership of the agent's vault")
+@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+def remove_agent_vault_member(request: HttpRequest, slug: str, user_id: int) -> VaultMembersOut:
+    """Removes only the DIRECT membership. Membership through a link stays until
+    the person leaves the linked set (e.g. loses full access to the agent)."""
+
+    _, vault = _agent_vault(request, slug, manage=True)
+    try:
+        vault_members.remove_member(vault, user_id)
+    except vault_members.VaultMembershipError as exc:
+        raise _membership_problem(exc) from exc
+    return _vault_out(vault, request.user)
+
+
+@router.put("/{slug}/vault/agent-link", response=VaultMembersOut,
+            summary="Link the agent's vault to the agent's access list, or unlink it")
+@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+def set_agent_vault_link(request: HttpRequest, slug: str, payload: VaultAgentLinkIn) -> VaultMembersOut:
+    """`{linked, role}`. Linked, everyone with full access to the agent is a
+    member: its owner and admins as `manage`, everyone else as `role`. Unlinked,
+    only direct members remain. Refused (409 `vault_needs_a_manager`) when it
+    would leave nobody who can manage the vault."""
+
+    agent, vault = _agent_vault(request, slug, manage=True)
+    try:
+        vault_members.set_agent_link(vault, agent, linked=payload.linked, role=payload.role, by=request.user)
+    except vault_members.VaultMembershipError as exc:
+        raise _membership_problem(exc) from exc
+    return _vault_out(vault, request.user)
 
 
 # ---- give an agent a secret: requests, recipients, endorsements ---------------------

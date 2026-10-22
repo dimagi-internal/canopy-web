@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from apps.passkeys.models import UserVaultKeyset
 
-from . import zk
+from . import vault_members, zk
 from .zk import MAX_VALUE_ZK_LEN, NONCE_LEN, TAG_LEN, ZkError, _keys, _shape, b64u_bytes
 
 SEALED_PREFIX = "zks1:"
@@ -98,11 +98,11 @@ def has_recipients(agent) -> bool:
     """Would `recipients_for(agent)` name anyone? Asked per agent by the setup checklist
     (and so by the workspace health page, for every agent in a tree), so it never loads
     every vault keyset in the system: one exists() for the devices, then one for the
-    keysets of the agent's admins (`Agent.admin_user_ids`)."""
+    keysets of the members of the agent's vault (`vault_members.agent_member_ids`)."""
 
     if zk.eligible_device_keys_qs(agent).exists():
         return True
-    return UserVaultKeyset.objects.filter(user_id__in=agent.admin_user_ids()).exists()
+    return UserVaultKeyset.objects.filter(user_id__in=vault_members.agent_member_ids(agent)).exists()
 
 
 def sealed_targets(value: str) -> set[tuple[str, str]]:
