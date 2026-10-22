@@ -141,6 +141,8 @@ def token(request: HttpRequest) -> JsonResponse:
     jwt-bearer grant (RFC 7523 + private_key_jwt + DPoP). Never logs the form."""
     from canopy_sdk import contract
 
+    from apps.common import oauth_core
+
     from . import mcp_oauth, self_host
     from .views_mcp_oauth import cors, preflight
 
@@ -151,7 +153,7 @@ def token(request: HttpRequest) -> JsonResponse:
     if grant_type in (mcp_oauth.AUTHORIZATION_CODE, mcp_oauth.REFRESH_TOKEN):
         try:
             status, body = 200, mcp_oauth.token_request(request.POST)
-        except mcp_oauth.OAuthError as e:
+        except oauth_core.OAuthError as e:
             status, body = e.status, e.body()
     elif grant_type == contract.JWT_BEARER_GRANT:
         status, body, headers = self_host.handle_token_request(

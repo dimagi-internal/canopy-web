@@ -19,7 +19,7 @@ self-audit against the spec is `hcp-conformance.md`.
 |---|---|
 | A person's own instance, with or without a workspace | `PersonFact.workspace` NULL = a **personal** entry (`contacts/0020`); `/people/me` |
 | Client registry (admins) | `HcpClient`; `/api/hcp-admin/clients` (`hcp_clients_api.py`); page `/hcp-clients` |
-| Authorization server | `hcp_oauth.py`, `hcp_oauth_views.py`; issuer `<origin>/api/hcp` |
+| Authorization server | `hcp_oauth.py`, `hcp_oauth_views.py`; issuer `<origin>/api/hcp`; PKCE, token-endpoint redirect_uri and one-time redemption shared with the MCP sign-in in `apps/common/oauth_core.py` |
 | Consent screen | `templates/contacts/hcp_consent.html` (act 1), `hcp_keep.html` (act 2) |
 | Tokens | `HcpToken` (access 1 h; refresh rotates), `HcpAuthorizationCode` (10 min, single use) |
 | Bearer access | `apps/tokens/middleware.py` → `request.hcp_access`; `hcp_api._principal` |

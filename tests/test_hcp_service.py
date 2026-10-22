@@ -95,9 +95,9 @@ def _params(client_id, challenge, scope=READ, **kw):
             "code_challenge_method": "S256", **kw}
 
 
-def _consent(c, client_id, *, scope=READ, keep="no", workspaces=(), expiry="4h"):
+def _consent(c, client_id, *, scope=READ, keep="no", workspaces=(), expiry="4h", pkce=None):
     """Walk both acts; return (verifier, code)."""
-    verifier, challenge = _pkce()
+    verifier, challenge = pkce or _pkce()
     p = _params(client_id, challenge, scope=scope)
     r = c.get("/api/hcp/oauth/authorize", p)
     assert r.status_code == 200, r.content
@@ -509,3 +509,23 @@ def test_a_client_is_rate_limited_with_retry_after(lili, client_id, monkeypatch)
     assert codes[:2] == [200, 200] and codes[2] == 429
     r = _search(access)
     assert r["Retry-After"] and r.json()["type"].endswith("rate-limited")
+
+
+# -- the rules shared with the MCP sign-in (apps/common/oauth_core.py) -----------------
+
+
+def test_a_verifier_outside_rfc7636s_format_is_refused_even_when_it_hashes(lili, client_id):
+    """RFC 7636 §4.1: 43–128 unreserved characters. A short verifier is guessable,
+    so matching the challenge is not enough."""
+    short = "abc"
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(short.encode()).digest()).decode().rstrip("=")
+    verifier, code = _consent(_as(lili), client_id, pkce=(short, challenge))
+    r = _token(client_id, verifier, code)
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+
+
+def test_a_token_request_without_the_redirect_uri_is_refused(lili, client_id):
+    verifier, code = _consent(_as(lili), client_id)
+    r = _token(client_id, verifier, code, redirect="")
+    assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+    assert r["Cache-Control"] == "no-store"

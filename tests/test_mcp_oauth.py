@@ -357,3 +357,44 @@ def test_nobody_else_can_disconnect_your_app(browser):
     other.force_login(User.objects.create_user("sam", "sam@dimagi.com", "pw"))
     assert other.delete(f"/api/tokens/connected-apps/{grant_id}").status_code == 404
     assert OAuthGrant.objects.get().revoked_at is None
+
+
+# -- the rules shared with the HCP service (apps/common/oauth_core.py) -----------------
+
+
+def test_the_redirect_uri_named_at_authorization_is_required_at_the_token_endpoint(browser):
+    """RFC 6749 §4.1.3: named in the authorization request ⇒ required, and identical."""
+    client_id = _client_id()
+    verifier, challenge = _pkce()
+    query, _ = _approve(browser, client_id, challenge)
+    resp = _exchange(client_id, query["code"][0], verifier, redirect_uri="")
+    assert resp.status_code == 400 and resp.json()["error"] == "invalid_grant"
+
+
+def test_a_redirect_uri_left_out_of_both_requests_is_not_required(browser):
+    """A client with one registered redirect may leave it out of the authorization
+    request; then the token request need not name it either."""
+    client_id = _client_id()
+    verifier, challenge = _pkce()
+    params = _authorize_params(client_id, challenge)
+    del params["redirect_uri"]
+    resp = browser.post("/oauth/authorize", {**params, "decision": "approve"})
+    assert resp.status_code == 302, resp.content
+    code = parse_qs(urlsplit(resp["Location"]).query)["code"][0]
+    resp = _exchange(client_id, code, verifier, redirect_uri="")
+    assert resp.status_code == 200, resp.content
+
+
+def test_a_challenge_that_is_not_an_s256_digest_is_refused(browser):
+    client_id = _client_id()
+    resp = browser.get("/oauth/authorize", _authorize_params(client_id, "too-short"))
+    assert resp.status_code == 302
+    assert parse_qs(urlsplit(resp["Location"]).query)["error"] == ["invalid_request"]
+
+
+def test_a_missing_verifier_is_an_invalid_request(browser):
+    client_id = _client_id()
+    _, challenge = _pkce()
+    query, _ = _approve(browser, client_id, challenge)
+    resp = _exchange(client_id, query["code"][0], "")
+    assert resp.status_code == 400 and resp.json()["error"] == "invalid_request"

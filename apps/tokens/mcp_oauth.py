@@ -26,16 +26,16 @@ revoked — the RFC 6819 / OAuth 2.1 reuse detection.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
 import re
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from django.db import transaction
 from django.utils import timezone
+
+from apps.common import oauth_core
+from apps.common.oauth_core import OAuthError
 
 from .models import OAuthAuthorizationCode, OAuthClient, OAuthGrant, PersonalToken, hash_secret
 
@@ -50,24 +50,10 @@ REFRESH_TOKEN = "refresh_token"
 #: in the app. Any requested scope is recorded, and this is what is granted.
 USER_SCOPE = "canopy"
 
-_PKCE_VERIFIER = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.\-]*$")
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 #: Schemes a redirect may never use — each either runs in the page or reads the machine.
 _FORBIDDEN_SCHEMES = {"javascript", "data", "file", "vbscript", "about", "blob"}
-
-
-class OAuthError(Exception):
-    """An RFC 6749 error: `code` is the wire value, `status` the HTTP status."""
-
-    def __init__(self, code: str, description: str, status: int = 400):
-        super().__init__(description)
-        self.code = code
-        self.description = description
-        self.status = status
-
-    def body(self) -> dict:
-        return {"error": self.code, "error_description": self.description}
 
 
 # --- endpoints and metadata ---------------------------------------------------
@@ -183,6 +169,10 @@ class AuthorizeRequest:
     state: str
     code_challenge: str
     scope: str
+    #: Whether the request itself named `redirect_uri` (it may be left out when
+    #: the client registered exactly one). If it did, the token request must
+    #: name it again (RFC 6749 §4.1.3).
+    redirect_uri_presented: bool = True
 
     def redirect(self, **params) -> str:
         """`redirect_uri` with `params` (and the client's `state`) added to its query."""
@@ -217,6 +207,7 @@ def parse_authorize(params, *, resource: str) -> AuthorizeRequest:
     if client is None:
         raise InvalidClientOrRedirect("This client is not registered with canopy.")
     redirect_uri = params.get("redirect_uri") or ""
+    presented = bool(redirect_uri)
     if not redirect_uri and len(client.redirect_uris) == 1:
         redirect_uri = client.redirect_uris[0]
     if not any(_redirect_matches(r, redirect_uri) for r in client.redirect_uris):
@@ -224,13 +215,15 @@ def parse_authorize(params, *, resource: str) -> AuthorizeRequest:
     req = AuthorizeRequest(client=client, redirect_uri=redirect_uri,
                            state=params.get("state") or "",
                            code_challenge=params.get("code_challenge") or "",
-                           scope=(params.get("scope") or "")[:500])
+                           scope=(params.get("scope") or "")[:500],
+                           redirect_uri_presented=presented)
     if params.get("response_type") != "code":
         raise AuthorizeError(req, "unsupported_response_type", "Only response_type=code is served.")
-    if params.get("code_challenge_method") != "S256" or not req.code_challenge:
-        raise AuthorizeError(req, "invalid_request", "PKCE with code_challenge_method=S256 is required.")
-    presented = params.get("resource")
-    if presented and presented.rstrip("/") != resource.rstrip("/"):
+    pkce_problem = oauth_core.check_challenge(req.code_challenge, params.get("code_challenge_method") or "")
+    if pkce_problem:
+        raise AuthorizeError(req, "invalid_request", pkce_problem)
+    target = params.get("resource")
+    if target and target.rstrip("/") != resource.rstrip("/"):
         raise AuthorizeError(req, "invalid_target", f"This server issues tokens for {resource} only.")
     return req
 
@@ -238,7 +231,9 @@ def parse_authorize(params, *, resource: str) -> AuthorizeRequest:
 def issue_code(req: AuthorizeRequest, user) -> str:
     raw = secrets.token_urlsafe(32)
     OAuthAuthorizationCode.objects.create(
-        code_hash=hash_secret(raw), client=req.client, user=user, redirect_uri=req.redirect_uri,
+        code_hash=hash_secret(raw), client=req.client, user=user,
+        # What the token request is held to: "" when the request named none.
+        redirect_uri=req.redirect_uri if req.redirect_uri_presented else "",
         code_challenge=req.code_challenge, scope=req.scope,
         expires_at=timezone.now() + CODE_TTL,
     )
@@ -246,14 +241,6 @@ def issue_code(req: AuthorizeRequest, user) -> str:
 
 
 # --- the token endpoint -------------------------------------------------------
-
-def _pkce_ok(verifier: str, challenge: str) -> bool:
-    if not _PKCE_VERIFIER.match(verifier or ""):
-        return False
-    digest = hashlib.sha256(verifier.encode()).digest()
-    expected = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    return secrets.compare_digest(expected, challenge)
-
 
 def _mint(grant: OAuthGrant) -> dict:
     """A fresh access token and a rotated refresh token for `grant`."""
@@ -287,29 +274,10 @@ def _client(form) -> OAuthClient:
 
 def exchange_code(form) -> dict:
     client = _client(form)
-    raw = form.get("code") or ""
-    code = (OAuthAuthorizationCode.objects.select_related("grant")
-            .filter(code_hash=hash_secret(raw)).first())
-    if code is None or code.client_id != client.pk:
-        raise OAuthError("invalid_grant", "The code is not valid for this client.")
-    if code.used_at is not None:
-        # A code presented twice: whoever has it now may not be the client, so
-        # revoke what the first exchange produced (RFC 6749 §4.1.2). Outside any
-        # transaction, so the raise below cannot roll the revocation back.
-        if code.grant is not None:
-            code.grant.revoke()
-        raise OAuthError("invalid_grant", "The code has already been used.")
-    with transaction.atomic():
-        code = (OAuthAuthorizationCode.objects.select_for_update()
-                .select_related("user").get(pk=code.pk))
-        if code.used_at is not None:  # lost a race with a concurrent exchange
-            raise OAuthError("invalid_grant", "The code has already been used.")
-        if code.expires_at <= timezone.now():
-            raise OAuthError("invalid_grant", "The code has expired.")
-        if (form.get("redirect_uri") or code.redirect_uri) != code.redirect_uri:
-            raise OAuthError("invalid_grant", "redirect_uri does not match the authorization request.")
-        if not _pkce_ok(form.get("code_verifier") or "", code.code_challenge):
-            raise OAuthError("invalid_grant", "The PKCE code_verifier does not match.")
+
+    def use(code: OAuthAuthorizationCode) -> dict:
+        oauth_core.check_redirect_uri(form.get("redirect_uri") or "", code.redirect_uri)
+        oauth_core.verify_pkce(form.get("code_verifier") or "", code.code_challenge)
         if not code.user.is_active:
             raise OAuthError("invalid_grant", "The account that approved this is inactive.")
         grant = OAuthGrant.objects.create(client=client, user=code.user, scope=code.scope)
@@ -318,34 +286,43 @@ def exchange_code(form) -> dict:
         code.save(update_fields=["used_at", "grant"])
         return _mint(grant)
 
+    def revoke(code: OAuthAuthorizationCode) -> None:
+        if code.grant_id is not None:
+            _revoke(OAuthGrant.objects.get(pk=code.grant_id))
+
+    return oauth_core.redeem_once(
+        form.get("code") or "", client_pk=client.pk, what="authorization code",
+        find=lambda raw: OAuthAuthorizationCode.objects.filter(code_hash=hash_secret(raw)).first(),
+        is_spent=lambda code: code.used_at is not None,
+        expires_at=lambda code: code.expires_at, use=use, revoke=revoke)
+
+
+def _revoke(grant: OAuthGrant) -> None:
+    if grant.revoked_at is None:
+        grant.revoke()
+
 
 def refresh(form) -> dict:
     client = _client(form)
     presented = hash_secret(form.get("refresh_token") or "")
-    grant = OAuthGrant.objects.filter(refresh_token_hash=presented).first()
-    if grant is None:
-        replayed = OAuthGrant.objects.filter(previous_refresh_hash=presented,
-                                             revoked_at__isnull=True).first()
-        # A retired refresh token presented again: two parties hold this grant.
-        # Revoked outside any transaction, so the raise cannot undo it.
-        if replayed is not None:
-            replayed.revoke()
-        raise OAuthError("invalid_grant", "The refresh token is not valid.")
-    with transaction.atomic():
-        grant = (OAuthGrant.objects.select_for_update().select_related("user", "client")
-                 .filter(pk=grant.pk, refresh_token_hash=presented).first())
-        if grant is None:  # lost a race with a concurrent refresh
-            raise OAuthError("invalid_grant", "The refresh token is not valid.")
-        if grant.client_id != client.pk:
-            raise OAuthError("invalid_grant", "The refresh token belongs to another client.")
+
+    def find(raw: str) -> OAuthGrant | None:
+        # The grant's current refresh token — or the one it replaced, presented again.
+        return (OAuthGrant.objects.filter(refresh_token_hash=presented).first()
+                or OAuthGrant.objects.filter(previous_refresh_hash=presented).first())
+
+    def use(grant: OAuthGrant) -> dict:
         if grant.revoked_at is not None or not grant.user.is_active:
             raise OAuthError("invalid_grant", "This connection was revoked.")
-        if grant.refresh_expires_at and grant.refresh_expires_at <= timezone.now():
-            raise OAuthError("invalid_grant", "The refresh token has expired; sign in again.")
         # The previous access token is superseded; revoke it rather than let
         # hourly refreshes pile up live tokens.
         grant.access_tokens.filter(revoked_at__isnull=True).update(revoked_at=timezone.now())
-        return _mint(grant)
+        return _mint(grant)  # rotates: the presented token becomes the previous one
+
+    return oauth_core.redeem_once(
+        form.get("refresh_token") or "", client_pk=client.pk, what="refresh token",
+        find=find, is_spent=lambda grant: grant.refresh_token_hash != presented,
+        expires_at=lambda grant: grant.refresh_expires_at, use=use, revoke=_revoke)
 
 
 def token_request(form) -> dict:
