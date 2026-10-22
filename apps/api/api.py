@@ -214,7 +214,6 @@ from apps.storyboards.api import router as storyboards_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.huddles.api import router as huddles_router  # noqa: E402
 from apps.attention.api import router as attention_router  # noqa: E402
-from apps.huddles.checkins_api import legacy_router as huddle_groups_legacy_router  # noqa: E402
 from apps.huddles.checkins_api import project_router as checkins_project_router  # noqa: E402
 from apps.huddles.checkins_api import router as checkins_router  # noqa: E402
 from apps.threads.api import router as threads_router  # noqa: E402
@@ -228,6 +227,7 @@ from apps.harness.api_runner_invitations import pair_router as runner_pair_by_ro
 from apps.harness.api_runner_invitations import router as runner_invitations_router  # noqa: E402
 from apps.harness.api_runner_pairings import router as runner_pairings_router  # noqa: E402
 from apps.harness.api_runner_releases import router as runner_releases_router  # noqa: E402
+from apps.harness.api_turn_agent_token import router as turn_agent_token_router  # noqa: E402
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.agents.engagement_api import router as engagement_router  # noqa: E402
 from apps.agents.proposals_api import router as proposals_router  # noqa: E402
@@ -314,6 +314,8 @@ api.add_router("/harness/runners/pair-by-role", runner_pair_by_role_router)
 # 2026-10-19-runner-installers).
 api.add_router("/harness/runner-pairings", runner_pairings_router)
 api.add_router("/harness/runner-releases", runner_releases_router)
+# A turn-scoped agent login (spec 2026-10-21-turn-scoped-agent-token).
+api.add_router("/harness/runners", turn_agent_token_router)
 
 # Local use (canopy-web#1704): a person's private runner and the turns its sessions open.
 api.add_router("/harness/local-turns", local_turns_router)
@@ -331,7 +333,6 @@ api.add_router("/engagement", engagement_router)  # what people do with projects
 # Project check-ins across projects, and their runs (apps/huddles/checkins.py).
 api.add_router("/checkins", checkins_router)
 # The two work-group run routes an un-updated engine still calls — one release only.
-api.add_router("/huddle-groups", huddle_groups_legacy_router)
 api.add_router("/threads", threads_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)

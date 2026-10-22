@@ -296,10 +296,10 @@ class RunnerOut(Schema):
         # 2026-10-03). So it is answered here, from the rows, on every read.
         from apps.agents import delegations
 
-        from .services import agents_served_by
+        from .services import agents_routed_to
 
         checks = {n: c for n, c in checks.items() if n != "github" and not n.startswith("github.")}
-        for agent in agents_served_by(obj):
+        for agent in agents_routed_to(obj):
             status, detail = delegations.readiness(agent)
             checks[f"github.{agent.slug}"] = HealthCheck(
                 name=f"github.{agent.slug}", status=status, detail=detail)
@@ -1475,6 +1475,18 @@ class RunnerCredentialStatusOut(Schema):
     updated_at: dt.datetime | None = None
 
 
+class TurnAgentTokenOut(Schema):
+    """An agent login for ONE turn this runner holds: a token for the turn's
+    `Agent.user`, revoked when the turn stops executing here, expiring at
+    `expires_at` at the latest. For that turn's environment only."""
+
+    token: str
+    expires_at: dt.datetime
+    #: The agent it signs in as — a client checks it is the agent it runs.
+    agent_slug: str
+    turn_id: str
+
+
 class TurnGitHubTokenOut(Schema):
     """One turn's GitHub credential: its agent OWNER's token for that agent
     (`AgentDelegation`), and the identity to commit with. Handed to the runner
@@ -2114,7 +2126,8 @@ class PrivateRunnerOut(Schema):
     id: uuid.UUID
     name: str
     host: str
-    # The Runner this machine also is (canopy-web#1705), else None.
+    # The Runner holding this machine's device keys: its runner app when linked,
+    # else its own `computer` runner. None only on a retired registration.
     runner_id: uuid.UUID | None = None
     created_at: dt.datetime
     last_seen_at: dt.datetime | None = None

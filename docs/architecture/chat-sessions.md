@@ -167,10 +167,15 @@ an emdash task name alone is not an identity.
   unclaimable report says "no runner order in <ws>, and <person> administers no box
   with <repo>" (`runners.md` → "Project chats"). A chat with neither an agent nor a
   repo follows the same order-or-your-box rule.
-- **Picking a box** for a project chat (the "Run on" picker's `runner_id`, a send's
-  `placement`, the banner's `/place`, a move to a cloud box) needs you to administer
-  it (`canopy_sessions.services.may_place_project_chat`); the picker offers only
-  those. For a chat with an agent it is `agents.access.may_pin_runner`.
+- **Picking a box** for a chat is one rule, `canopy_sessions.services.may_place`,
+  asked by every door that chooses: the "Run on" picker's `runner_id`, a send's
+  `placement`, the banner's `/place`, a move of queued turns (`move_queued_turns`,
+  Slack's move-to-cloud) and the cloud-box offer. For a chat with an agent it is
+  `agents.access.may_pin_runner` (an agent admin, or a runner admin of that box);
+  for a project chat, administering the box — the picker offers only those. Nobody
+  anonymous chooses a box. Slack's move-to-cloud additionally requires the clicker
+  to administer the cloud box, even when they are an agent admin: a Slack identity
+  is a weaker principal than a browser session (`apps/slack/services.py::_move_to_cloud`).
 - **A directed-only box** (`capabilities.directed`, a test box from `up.sh --test`)
   is still offered, labelled "directed only": a chat started on it binds to it, and
   it takes nothing else.

@@ -83,13 +83,13 @@ def list_contacts(
     offset, limit = clamp_offset(offset), clamp_limit(limit)
     qs = Contact.objects.filter(
         workspace_id__in=_visible_workspace_ids(request)
-    ).select_related("user")
+    ).select_related("user", "app")
     if q:
         from django.db.models import Q
 
         qs = qs.filter(Q(email__icontains=q) | Q(display_name__icontains=q))
-    return paginate([ContactOut.model_validate(_serialize(c)) for c in qs],
-                    offset=offset, limit=limit)
+    return paginate(qs.order_by("-last_seen_at", "-pk"), offset=offset, limit=limit,
+                    map=lambda c: ContactOut.model_validate(_serialize(c)))
 
 
 @router.get("/{contact_id}/", response=ContactOut, summary="One person")

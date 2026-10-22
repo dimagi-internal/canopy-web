@@ -723,3 +723,79 @@ async def test_a_chat_turn_claimed_over_ws_carries_its_chats_key():
 
     assert (await _resolves(claimed["chat_key"])) == session
     await comm.disconnect()
+
+
+# --- parity with the REST runner protocol (apps/harness/runner_protocol.py) ---
+async def test_ws_heartbeat_keeps_a_degraded_box_degraded_with_its_note():
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "heartbeat", "active_turn_ids": [], "degraded": True,
+                             "note": "emdash CDP unhealthy", "host": "jj-mbp.local",
+                             "projects": ["dimagi/canopy-web"],
+                             "mailboxes_readable": ["Echo@Dimagi-AI.com"]})
+    assert (await comm.receive_json_from(timeout=2))["type"] == "heartbeat.ack"
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.status == Runner.DEGRADED and fresh.status_note == "emdash CDP unhealthy"
+    assert fresh.host == "jj-mbp.local"
+    assert fresh.capabilities["projects"] == ["dimagi/canopy-web"]
+    assert fresh.mailboxes_readable == ["echo@dimagi-ai.com"]
+
+    # A beat that does not report projects / mailboxes leaves them alone.
+    await comm.send_json_to({"action": "heartbeat", "active_turn_ids": []})
+    await comm.receive_json_from(timeout=2)
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.status == Runner.ONLINE and fresh.status_note == ""
+    assert fresh.capabilities["projects"] == ["dimagi/canopy-web"]
+    assert fresh.mailboxes_readable == ["echo@dimagi-ai.com"]
+    await comm.disconnect()
+
+
+async def test_ws_finish_refuses_an_invalid_status_and_keeps_the_socket():
+    user, ws, agent, runner = await database_sync_to_async(_setup)()
+
+    @database_sync_to_async
+    def _enqueue():
+        services.enqueue_turn(initiator=_BY_CANOPY, agent=agent, origin=Turn.ORIGIN_API,
+                              idempotency_key="bad-finish", prompt="go")
+
+    await _enqueue()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "claim"})
+    tid = (await comm.receive_json_from(timeout=2))["turn"]["id"]
+    for bad in ("missed", "bogus"):
+        await comm.send_json_to({"action": "finish", "turn_id": tid, "status": bad})
+        ack = await comm.receive_json_from(timeout=2)
+        assert ack["type"] == "finish.ack" and ack["ok"] is False and ack["error"]
+    t = await database_sync_to_async(Turn.objects.get)(pk=tid)
+    assert t.status not in Turn.TERMINAL
+
+    # Still connected, and a valid finish records the session like REST does.
+    await comm.send_json_to({"action": "finish", "turn_id": tid, "status": "done",
+                             "session_key": "sess-123"})
+    assert (await comm.receive_json_from(timeout=2)) == {"type": "finish.ack", "ok": True}
+    t = await database_sync_to_async(Turn.objects.get)(pk=tid)
+    assert t.status == Turn.DONE and t.session_key == "sess-123"
+    await comm.disconnect()
+
+
+async def test_ownerless_runner_cannot_connect():
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+
+    @database_sync_to_async
+    def _orphan():
+        Runner.objects.filter(pk=runner.pk).update(owner=None)
+
+    await _orphan()
+    comm = await _connect(runner.id, user)
+    connected, code = await comm.connect()
+    assert connected is False and code == 4003
+
+
+def test_supervisor_snapshot_leaves_out_ownerless_runners():
+    from apps.realtime.snapshot import supervisor_snapshot
+
+    user, _ws, _a, runner = _setup()
+    Runner.objects.filter(pk=runner.pk).update(owner=None)
+    assert supervisor_snapshot(user)["runners"] == []

@@ -1,6 +1,7 @@
 import { useState, type JSX, type MouseEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { setAgentTurnMode, type AgentOut, type TurnMode } from '@/api/agents'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // The turn-mode chip — readable at a glance, tappable to flip. This is the
 // phone-reachable control: the installed PWA opens at /supervisor, so the
@@ -82,7 +83,7 @@ function TurnModeChip({ slug, mode }: { slug: string; mode: TurnMode }): JSX.Ele
 // tenant-scoped link directly; only a pre-tenancy agent (workspace null) falls
 // back to the flat /agents/<slug> route.
 export function AgentKpiCard({ agent, waiting }: { agent: AgentOut; waiting: number }): JSX.Element {
-  const href = agent.workspace ? `/w/${agent.workspace}/agents/${agent.slug}` : `/agents/${agent.slug}`
+  const href = agent.workspace ? scopedPath(agent.workspace, `/agents/${agent.slug}`) : `/agents/${agent.slug}`
   return (
     <Link
       to={href}

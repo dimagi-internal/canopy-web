@@ -3282,12 +3282,12 @@ export interface paths {
          *     *rehearsing* the onboarding path impossible: you could not walk a new
          *     operator's steps end to end without leaving a fake agent behind forever.
          *
-         *     Gated at the same reshaping tier as everything else `_agent_for_write`
+         *     Gated at the same reshaping tier as everything else `agent_for_work`
          *     covers (Phase 0 of the agent-instances-and-ACL design closed the old gap
          *     where deletion was the ONLY gated write on this surface — everything else,
          *     including the credential/vault writers, was membership-or-nothing): a
-         *     viewer cannot destroy a fleet member's board. `_agent_for_write` resolves
-         *     the agent via `_get_agent_or_404` first, so a non-member gets 404 (no
+         *     viewer cannot destroy a fleet member's board. `agent_for_work` resolves
+         *     the agent via `agent_for_read` first, so a non-member gets 404 (no
          *     existence leak) rather than 403.
          *
          *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
@@ -3530,30 +3530,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/runner-preference": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        /**
-         * Set an agent's ordered runner-kind preference
-         * @description DEPRECATED: superseded by PUT /api/agents/{slug}/runners; removed next release.
-         *
-         *     Update just the ordered runner-kind preference (cloud/emdash/remote), no
-         *     clobber of the agent's other fields. Honored at claim time — see
-         *     harness.services.claim_next_turn.
-         */
-        readonly patch: operations["set_runner_preference"];
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/turn-mode": {
         readonly parameters: {
             readonly query?: never;
@@ -3597,7 +3573,7 @@ export interface paths {
          *     the one field the setup checklist's first step asks for, without the create
          *     wizard. A github.com URL in any spelling; stored as `https://github.com/owner/repo`.
          *
-         *     The agent's owner or an admin (`_agent_for_admin`): the repo is what a box
+         *     The agent's owner or an admin (`agent_for_admin`): the repo is what a box
          *     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
          *     cloud boxes that take its turns are asked to re-run their bootstrap, as a
          *     repo change through the upsert does.
@@ -3624,7 +3600,7 @@ export interface paths {
          *     (canopy#850). `1password`: through `op`, with the agent's vault key.
          *     `canopy-web`: the AgentCredential values, via GET /credentials/resolve.
          *
-         *     The agent's owner or an admin only (`_agent_for_admin`), like the
+         *     The agent's owner or an admin only (`agent_for_admin`), like the
          *     credentials and the vault pointer themselves: choosing where an agent's
          *     secrets come from is part of controlling them. Absent from AgentIn, so the
          *     repo's self-publish upsert cannot move it. From a browser it needs a fresh
@@ -4283,8 +4259,8 @@ export interface paths {
          *     service-account token (`op_sa_token` is ""): its values come from here, so
          *     the box has no reason to hold a key to its vault.
          *
-         *     **Device proof.** With `require_device_binding` on and `credential_source`
-         *     `canopy-web`, the request must also carry a `DPoP` header: an RFC 9449
+         *     **Device proof.** With `credential_source` `canopy-web` and either
+         *     `require_device_binding` or zero-knowledge on, the request must also carry a `DPoP` header: an RFC 9449
          *     proof (`typ: dpop+jwt`, `alg: ES256`, public `jwk` in the header; claims
          *     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
          *     an ACTIVE runner device key on a runner this agent routes to or one its
@@ -4788,8 +4764,8 @@ export interface paths {
          * Runner device keys that could prove themselves for this agent
          * @description Every device key on a runner this agent routes to or its owner owns —
          *     the keys `require_device_binding` would accept once active. `can_manage`
-         *     says whether the caller may approve or revoke each (the runner's owner or
-         *     an admin of it).
+         *     says whether the caller may approve each (the runner's owner or an admin of
+         *     it; on a private runner, its owner alone).
          */
         readonly get: operations["agent_device_keys"];
         readonly put?: never;
@@ -7546,6 +7522,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/agent-token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A login as the turn's agent, for one turn this runner holds
+         * @description A canopy login as the turn's agent, for ONE turn this runner is executing:
+         *     expires within 12 hours and is revoked when the turn stops executing here.
+         *     Only with this runner's own runner token — a personal or OAuth token is
+         *     refused, its owner's included. 404 unless this runner holds the turn and may
+         *     hold its agent; 409 with the reason for a local turn, a caller's (confined)
+         *     turn, or an agent with no active login. Each issue is logged with the
+         *     agent's credential reads.
+         */
+        readonly post: operations["turn_agent_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/local-turns/": {
         readonly parameters: {
             readonly query?: never;
@@ -7605,6 +7607,10 @@ export interface paths {
          * @description Idempotent per (you, name): registering the same machine again returns it
          *     (and brings back a retired one). A private runner is yours, not an agent's or a
          *     workspace's — one serves every agent you use locally. It never claims turns.
+         *
+         *     `runner_id` is the runner that holds this machine's device keys: the runner app
+         *     you link (`runner`), else a `computer` runner made for it — enrol a key on it
+         *     (`POST /api/runner-device-keys/`) to read a zero-knowledge agent's vault here.
          */
         readonly post: operations["register_private_runner"];
         readonly delete?: never;
@@ -7645,7 +7651,12 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Retire one of your private runners */
+        /**
+         * Retire one of your private runners
+         * @description Its local sessions stop opening, a runner app linked to it goes back to
+         *     being shared, and the runner that held its keys when it has no runner app
+         *     retires with it.
+         */
         readonly post: operations["retire_private_runner"];
         readonly delete?: never;
         readonly options?: never;
@@ -9843,48 +9854,6 @@ export interface paths {
          *     thread pointing at the result — the content stays in canopy.
          */
         readonly post: operations["finish_checkin_run"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/huddle-groups/runs/{run_id}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Deprecated: GET /api/checkins/runs/{id}
-         * @description Kept for one release so an engine that still says `--group-run` reads its
-         *     run. Use `GET /api/checkins/runs/{id}`.
-         */
-        readonly get: operations["get_huddle_group_run"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/huddle-groups/runs/{run_id}/finished": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Deprecated: POST /api/checkins/runs/{id}/finished
-         * @description Kept for one release so an engine that still says `--group-run` finishes
-         *     its run. Use `POST /api/checkins/runs/{id}/finished`.
-         */
-        readonly post: operations["finish_huddle_group_run"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -18746,14 +18715,6 @@ export interface components {
             readonly note: string;
         };
         /**
-         * RunnerPreferenceIn
-         * @description Set an agent's ordered runner-kind preference (the runner-order UI).
-         */
-        readonly RunnerPreferenceIn: {
-            /** Runner Preference */
-            readonly runner_preference?: readonly string[];
-        };
-        /**
          * TurnModeIn
          * @description Flip an agent's turn mode — a human decision, made from the board.
          *
@@ -21629,6 +21590,11 @@ export interface components {
              * @default []
              */
             readonly links: readonly components["schemas"]["SetupLinkOut"][];
+            /**
+             * Only To Run On Its Own
+             * @default false
+             */
+            readonly only_to_run_on_its_own: boolean;
         };
         /** SetupLinkOut */
         readonly SetupLinkOut: {
@@ -24629,6 +24595,11 @@ export interface components {
              * @default []
              */
             readonly links: readonly components["schemas"]["HealthStepLinkOut"][];
+            /**
+             * Only To Run On Its Own
+             * @default false
+             */
+            readonly only_to_run_on_its_own: boolean;
         };
         /** HealthTotalsOut */
         readonly HealthTotalsOut: {
@@ -26305,6 +26276,25 @@ export interface components {
             readonly sha: string;
             /** Downloads */
             readonly downloads: readonly components["schemas"]["RunnerDownloadOut"][];
+        };
+        /**
+         * TurnAgentTokenOut
+         * @description An agent login for ONE turn this runner holds: a token for the turn's
+         *     `Agent.user`, revoked when the turn stops executing here, expiring at
+         *     `expires_at` at the latest. For that turn's environment only.
+         */
+        readonly TurnAgentTokenOut: {
+            /** Token */
+            readonly token: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Turn Id */
+            readonly turn_id: string;
         };
         /** LocalTurnOut */
         readonly LocalTurnOut: {
@@ -29061,139 +29051,6 @@ export interface components {
             readonly summary: string;
             /** Tasks Proposed */
             readonly tasks_proposed?: number | null;
-        };
-        /**
-         * LegacyGroupRunOut
-         * @description `/api/huddle-groups/runs/{id}` — kept for one release so an engine that
-         *     has not moved to check-ins still reads and finishes its run.
-         */
-        readonly LegacyGroupRunOut: {
-            /** Id */
-            readonly id: number;
-            /** Checkin */
-            readonly checkin?: number | null;
-            /**
-             * Checkin Name
-             * @default
-             */
-            readonly checkin_name: string;
-            readonly project: components["schemas"]["CheckinProjectOut"];
-            /** Workspace */
-            readonly workspace: string;
-            /**
-             * Slot
-             * Format: date-time
-             */
-            readonly slot: string;
-            /**
-             * Manual
-             * @default false
-             */
-            readonly manual: boolean;
-            /** Status */
-            readonly status: string;
-            /**
-             * Note
-             * @default
-             */
-            readonly note: string;
-            readonly participants: components["schemas"]["CheckinParticipantsOut"];
-            /**
-             * Channel Id
-             * @default
-             */
-            readonly channel_id: string;
-            /**
-             * Channel Name
-             * @default
-             */
-            readonly channel_name: string;
-            /**
-             * Announce Ts
-             * @default
-             */
-            readonly announce_ts: string;
-            /**
-             * Slack Url
-             * @default
-             */
-            readonly slack_url: string;
-            /**
-             * Confirmed By Email
-             * @default
-             */
-            readonly confirmed_by_email: string;
-            /** Confirmed At */
-            readonly confirmed_at?: string | null;
-            /**
-             * Read Messages
-             * @default 0
-             */
-            readonly read_messages: number;
-            /**
-             * Read First Ts
-             * @default
-             */
-            readonly read_first_ts: string;
-            /**
-             * Read Last Ts
-             * @default
-             */
-            readonly read_last_ts: string;
-            /** Read Since */
-            readonly read_since?: string | null;
-            /**
-             * Material
-             * @default
-             */
-            readonly material: string;
-            /**
-             * Turn Id
-             * @default
-             */
-            readonly turn_id: string;
-            /**
-             * Huddle Id
-             * @default
-             */
-            readonly huddle_id: string;
-            /**
-             * Huddle Url
-             * @default
-             */
-            readonly huddle_url: string;
-            /**
-             * Result Url
-             * @default
-             */
-            readonly result_url: string;
-            /**
-             * Summary
-             * @default
-             */
-            readonly summary: string;
-            /**
-             * Tasks Proposed
-             * @default 0
-             */
-            readonly tasks_proposed: number;
-            /** Finished At */
-            readonly finished_at?: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /**
-             * Group
-             * @default
-             */
-            readonly group: string;
-            /**
-             * Group Name
-             * @default
-             */
-            readonly group_name: string;
         };
         /** ThreadMessageOut */
         readonly ThreadMessageOut: {
@@ -36814,32 +36671,6 @@ export interface operations {
             };
         };
     };
-    readonly set_runner_preference: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["RunnerPreferenceIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentDetailOut"];
-                };
-            };
-        };
-    };
     readonly set_turn_mode: {
         readonly parameters: {
             readonly query?: never;
@@ -42085,6 +41916,29 @@ export interface operations {
             };
         };
     };
+    readonly turn_agent_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnAgentTokenOut"];
+                };
+            };
+        };
+    };
     readonly open_local_turn: {
         readonly parameters: {
             readonly query?: never;
@@ -44646,54 +44500,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CheckinRunOut"];
-                };
-            };
-        };
-    };
-    readonly get_huddle_group_run: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly run_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["LegacyGroupRunOut"];
-                };
-            };
-        };
-    };
-    readonly finish_huddle_group_run: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly run_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["CheckinRunFinishIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["LegacyGroupRunOut"];
                 };
             };
         };

@@ -16,7 +16,7 @@ import { NarrativeDiff } from './NarrativeDiff'
 import { pairNarrationScenes } from './narrativeScenePairing'
 import { useScopedPath } from '@/lib/scopedLinks'
 
-function fmtDate(iso: string | null): string {
+function fmtDate(iso: string | null | undefined): string {
   if (!iso) return ''
   try {
     return new Date(iso).toLocaleDateString(undefined, {
@@ -206,7 +206,7 @@ function VersionBlock({
           )}
           <span className="truncate text-sm text-foreground-secondary">{version.title || ''}</span>
           {changedScenes != null && changedScenes > 0 && (
-            <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-500">
+            <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-[10px] text-warning">
               {changedScenes} scene{changedScenes === 1 ? '' : 's'} changed
             </span>
           )}

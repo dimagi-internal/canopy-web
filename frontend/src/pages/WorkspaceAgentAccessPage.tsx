@@ -12,6 +12,7 @@ import {
 } from '@/api/workspaces'
 import { edgeKey, explainEdge, grantable, indexEdges } from './agentTopology'
 import { TopologyViews } from './topology/TopologyViews'
+import { scopedPath } from '../lib/scopedLinks'
 
 // THE AGENT TOPOLOGY: which agent can make which other agent do what.
 //
@@ -157,7 +158,7 @@ function AgentAccess({ slug }: { slug: string }): JSX.Element {
                   <th className="py-1.5 pr-3 text-left font-medium text-muted-foreground">sends ↓ · receives →</th>
                   {list.map((dst) => (
                     <th key={dst.slug} className="px-2 py-1.5 text-center font-medium text-foreground">
-                      <Link to={`/w/${dst.workspace}/agents/${dst.slug}/settings`} className="hover:underline">
+                      <Link to={scopedPath(dst.workspace, `/agents/${dst.slug}/settings`)} className="hover:underline">
                         {dst.name}
                       </Link>
                       <div className="font-normal text-muted-foreground">{dst.workspace}</div>
@@ -248,7 +249,7 @@ function EdgeDetail({
       </h3>
       <p className="mt-1 text-[13px] text-foreground-secondary">{explainEdge(edge, src, dst)}</p>
       {edge.basis === 'not-member' && (
-        <Link to={`/w/${dst.workspace}/settings/members`} className="mt-2 inline-block text-[12px] text-primary hover:underline">
+        <Link to={scopedPath(dst.workspace, '/settings/members')} className="mt-2 inline-block text-[12px] text-primary hover:underline">
           {dst.workspace} members →
         </Link>
       )}

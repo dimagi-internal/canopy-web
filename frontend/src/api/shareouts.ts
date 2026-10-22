@@ -1,5 +1,6 @@
 import { apiV2 } from "./client.v2";
 import type { components } from "./generated";
+import { unwrap } from "./problem";
 
 export type Shareout = components["schemas"]["ShareoutOut"];
 export type ShareoutLink = components["schemas"]["ShareoutLink"];
@@ -53,7 +54,7 @@ export function groupByPeriod(shareouts: Shareout[]): ShareoutPeriod[] {
 
 export const shareoutsApi = {
   list: async (params: ShareoutListParams = {}): Promise<Shareout[]> => {
-    const { data, error } = await apiV2.GET("/api/shareouts/", {
+    const res = await apiV2.GET("/api/shareouts/", {
       params: {
         query: {
           ...(params.date_from ? { date_from: params.date_from } : {}),
@@ -63,7 +64,7 @@ export const shareoutsApi = {
         },
       },
     });
-    if (error) throw new Error("Failed to load shareouts");
+    const data = unwrap(res, "Failed to load shareouts");
     return data.items as Shareout[];
   },
 };

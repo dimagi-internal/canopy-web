@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type JSX } from 'react'
 import { Link, useOutletContext, useParams } from 'react-router-dom'
 
 import { AgentApiError, getProject, patchProject, type ProjectDetailOut, type TaskOut } from '@/api/agents'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { ProposalCard } from '@/components/projects/ProposalCard'
 import { useEngagementView } from '@/components/projects/useEngagementView'
 import { nestTasks, TaskCard } from '@/components/TasksBoard'
@@ -14,6 +14,7 @@ import { Section } from '@/pages/agents/sectionLayout'
 import { ProjectMcpInstall, WorkspaceProjectLine } from '@/pages/projects/WorkspaceProjects'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // ONE PROJECT'S PAGE — the one page for everyone, teammate or editor, always
 // in the same order: what it is, where it stands, the ideas, the people
@@ -111,7 +112,7 @@ export function AgentProjectPage(): JSX.Element {
   const nested = nestTasks(tasks)
   const turns = detail.recent_turns ?? []
   const pageHref = (personId: number) =>
-    `/w/${workspace}/agents/${agent.slug}/projects/${encodeURIComponent(detail.ext_id)}/people/${personId}`
+    scopedPath(workspace, `/agents/${agent.slug}/projects/${encodeURIComponent(detail.ext_id)}/people/${personId}`)
 
   // The project's own fields, for whoever runs it; a teammate sees them read-only.
   const details = (
@@ -320,7 +321,7 @@ export function AgentProjectPage(): JSX.Element {
                         {turn.prompt_preview || '(no prompt)'}
                       </span>
                       <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {relativeTime(turn.created_at, new Date())}
+                        {relativeAge(turn.created_at, new Date(), { seconds: false })}
                       </span>
                     </Link>
                   </li>

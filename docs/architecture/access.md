@@ -178,9 +178,10 @@ Asked in this order; the first row that matches decides.
 * A **project chat** (no agent, only a repo) has no agent admins, so choosing its
   box — `runner_id` at creation, a placement on send, `/place`, a move — is for a
   **runner admin** of that box only
-  (`canopy_sessions.services.may_place_project_chat`). Unplaced, it runs on a box
+  (`canopy_sessions.services.may_place`, the one placement rule). Unplaced, it runs on a box
   its workspace's runner order shares or one its sender administers
   (`runners.md` → "Project chats"), never on a teammate's box by default.
+  It acts as the person who asked (see "Projects run as the person who asked").
 
 ## System accounts
 
@@ -287,12 +288,20 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   local sessions on it. Its device key is what those sessions prove themselves
   with, and it may read an agent's secrets while its owner holds an active license
   (`device_keys.private_runner_licensed`), for that owner's own turns only.
+* A machine **without** the runner app still gets its own key for reading the
+  agent's vault: registering it (`POST /api/private-runners/`) gives it a
+  `computer` runner (`Runner.COMPUTER`, `local.ensure_computer_runner`, returned as
+  `runner_id`) to enrol a device key on. The key is owner-approved like a private
+  runner's and serves exactly the agents its owner administers or holds an active
+  license for; its token reaches only the owner's local turns and license reads
+  (`runner_auth._COMPUTER_RULES`), and the computer appears in no fleet runner list.
 * **Acting as a lower role.** `acts_as` (`editor` or `viewer`) is a property of
   ONE turn or of one client's requests — never a setting left on a machine:
   - a turn started with it (`TurnIn.acts_as`, `canopy agent dispatch --as editor`;
     `LocalTurnIn.acts_as` for a local session) is judged at that role from start to
     finish — whether it may start at all, its mode (`auto` becomes `manual`), its
-    envelope, and every read made during it (`X-Canopy-Turn-Id` by its initiator).
+    envelope, and every read made during it (`X-Canopy-Turn-Id` by its initiator,
+    or the turn of the caller token it calls MCP with — REST and MCP alike).
     The server stamps `origin_ref.acts_as`; a client's own `origin_ref` cannot.
   - a client puts ITSELF in a lower mode with `X-Canopy-Acts-As` on each request —
     the canopy CLI and the runner send it when started with `CANOPY_ACTS_AS`. A
@@ -305,10 +314,13 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   with no proof. It is how anyone, an agent included, runs the non-admin path for real.
 * **No PAT on a private runner.** The owner's local sessions there sign in with the
   box's own device key (its runner token), which on a private runner also reaches the
-  local-turn routes and `/api/private-runners` (`runner_auth._PRIVATE_RULES`), and
-  reads credentials under the owner's license. Such a turn's initiator assurance is
-  `private-runner-key` (verified, like a PAT). A shared runner's token opens no local
-  session, and a private runner's opens only its own registration.
+  local-turn routes (`runner_auth._PRIVATE_RULES`) — never `/api/private-runners`,
+  which takes the person's own token — and reads credentials under the owner's
+  license. Such a turn's initiator assurance is `private-runner-key` (verified, like
+  a PAT). A shared runner's token opens no local session and reports on none, and a
+  private runner's reaches only its local-turn routes, for its own registration.
+  Only the owner registers or approves a device key on a private runner
+  (`runners.may_trust_device_keys`); its runner admins still see and may revoke them.
 * A **local turn** (`Turn.origin = local`) is one session there with one agent,
   opened by the canopy plugin's SessionStart hook
   (`POST /api/harness/local-turns/`). It is a real turn: the person is its
@@ -341,7 +353,11 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
   read) AND one of the caller's OWN live turns on that agent named in
   `X-Canopy-Turn-Id`: their running local turn, or — on their private runner's
-  token — a turn of theirs that runner claimed. No turn, no secrets. Each read is logged with `via=license`,
+  token — a turn of theirs that runner claimed. No turn, no secrets. A license read
+  never gets the agent's canopy login, the owner's GitHub delegation, lent or shared
+  credentials, or the agent's 1Password service-account key (`op_sa_token`), which
+  reads the whole vault, canopy login included (`LICENSE_WITHHELD_EXTRAS`) — so a
+  non-admin using a 1Password-backed agent locally gets no secrets from it. Each read is logged with `via=license`,
   the turn and the license. Brokering every call through canopy-web so secrets
   never leave the server is future work (canopy-web#1704).
 * **Reporting.** Only its initiator may renew, finish or append its transcript —
@@ -599,6 +615,19 @@ tool; and beside every delivered prompt — the runner leaves
   `canopy-web-mcp-headers.js` sends it and never falls back to a PAT once it has
   one; a write failure refuses the turn. A scoped token does not serve a
   confined turn's conversation, and a confined token does not serve a full turn's.
+* **Projects run as the person who asked.** Agents and projects are both first
+  class, and both act FOR the person who asked; they differ only in WHO the
+  session is. An agent's turn acts as the agent, bounded by the asker (the rule
+  above). A project turn or project chat (a repo, no agent) has no agent to act
+  as, so it acts as its asker: a verified, active human initiator gets the same
+  scoped caller token (`caller_tokens._project_asker`), so its session reads
+  canopy with exactly that person's access — nothing more, and never the box's.
+  The token follows the conversation's current asker and voids when a later turn
+  has none verified. A project turn with no person behind it (a schedule, a
+  drill) gets no token and no canopy identity. GitHub is the one thing a project
+  borrows from an agent: its repo's `RepoIdentity` agent, for project dispatches
+  and project chats alike (`delegations.turn_agent`; `runners.md` → "The GitHub
+  identity a turn gets"). The cloud runner deletes the token when the turn ends.
 * **Known limit.** On a laptop every session is the same OS user and emdash
   spawns it, so the runner cannot strip its environment; on any box, credential
   FILES (agent `.env`s, gog's keyring, ace's Drive key) stay readable to an

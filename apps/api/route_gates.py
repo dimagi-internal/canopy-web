@@ -56,6 +56,9 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``runner-admin`` — ``can_administer_runner``.
 * ``runner-holds-agent`` — ``services.caller_runs_agent`` /
   ``runner_may_hold_agent``.
+* ``license`` — an ACTIVE ``AgentLicense`` (``apps/agents/licenses.py``) and the
+  caller's own live turn on that agent named in ``X-Canopy-Turn-Id``
+  (``licenses.credential_principal``).
 * ``contact`` — the ``/api/contact/`` surface, for contact principals.
 * ``device-proof`` — no session or token: a proof from an ACTIVE runner device key
   (DPoP, or an EC2 instance role's signed STS call) bound to this request is the
@@ -104,7 +107,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "members.manage", "integrations", "runners.route", "retention.manage",
     "admission.manage", "projects.decide", "own",
     "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
-    "runner", "runner-admin", "runner-holds-agent",
+    "runner", "runner-admin", "runner-holds-agent", "license",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
     "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "paired-key", "page-viewer",
     "secret-request",
@@ -138,13 +141,12 @@ GATES: dict[str, tuple[str, ...]] = {
     "grant_admin": ("agent-owner",),
     "revoke_admin": ("agent-owner",),
     "delete_agent": ("agent.work",),
-    "set_runner_preference": ("agent.work",),
     "set_turn_mode": ("agent.work",),
     "set_credential_source": ("agent-admin",),
     "set_repository": ("agent-admin",),  # what its boxes run: a DEFINITION_FIELDS change
     "set_device_binding": ("agent-admin",),
     "agent_credential_reads": ("agent-admin",),  # the read log; never a value
-    "agent_device_keys": ("agent-admin",),  # can_manage per key = runner-admin
+    "agent_device_keys": ("agent-admin",),  # can_manage per key = runners.may_trust_device_keys
     "agent_credential_alerts": ("agent-admin",),  # read-anomaly alerts; never a value
     "get_pat_rotation": ("agent-admin",),
     "set_pat_rotation": ("agent-admin",),  # turning it on also asks mint_agent_canopy_token's guard
@@ -229,7 +231,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_agent_credentials": ("agent-admin",),
     "agent_credential_status": ("member",),
     "agent_credential_access": ("member",),  # no values; reports the resolve gate for the caller
-    "resolve_agent_credentials": ("runner-holds-agent", "agent-admin"),  # bearer only
+    "resolve_agent_credentials": ("runner-holds-agent", "agent-admin", "license"),  # bearer only
     "reveal_agent_credential": ("agent-admin",),  # browser session + passkey step-up only (apps/passkeys)
     "get_agent_vault": ("member",),
     "set_agent_vault": ("agent-admin",),
@@ -272,11 +274,11 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_runner_credential_status": ("runner-admin",),
     "get_runner_credential": ("runner",),  # plaintext to the owner's token
     # --- apps/harness/api_device_keys.py (Canopy Vault device keys)
-    "register_runner_device_key": ("runner-admin",),  # lands pending; approval is separate
+    "register_runner_device_key": ("runner-admin",),  # lands pending; on a private runner, owner only
     "create_runner_session": ("device-proof",),  # anonymous door; an ACTIVE key's proof is the authority
     "request_runner_device_key": ("owner-token-and-key",),  # stranded box: lands pending, owner told
     "list_runner_device_keys": ("runner-admin",),
-    "approve_runner_device_key": ("runner-admin",),  # browser session only (+ passkey step-up)
+    "approve_runner_device_key": ("runner-admin",),  # browser + passkey step-up; private runner: owner only
     "revoke_runner_device_key": ("runner-admin",),
     # --- apps/harness/api_runner_invitations.py (a new cloud box pairs by invitation)
     "create_runner_invitation": ("agent.work",),  # member (else 404) with agent.work in the named workspace
@@ -304,6 +306,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "current_runner_release": ("authenticated",),  # a person, or a runner's own token (runner_auth)
     "runner_downloads": ("authenticated",),
     "turn_github_token": ("runner", "runner-holds-agent"),  # turn must be claimed by this box
+    # only the box's own runner token (a PAT is 403), turn claimed by it and executing
+    "turn_agent_token": ("runner", "runner-holds-agent"),
     "turn_attachment_content": ("runner", "runner-holds-agent"),  # an attachment of the chat a turn this box holds belongs to
     "runner_github_readiness": ("runner",),
     "runner_agents": ("runner",),
@@ -392,9 +396,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_checkins": ("member",),
     "get_checkin_run": ("member", "agent-login"),  # material included: members, and the project agent's login
     "finish_checkin_run": ("agent-login",),  # the project agent's own login only
-    # the two work-group run routes, kept one release as aliases of the two above
-    "get_huddle_group_run": ("member", "agent-login"),
-    "finish_huddle_group_run": ("agent-login",),
     # --- apps/threads/api.py: bounded agent->agent conversations; messages are tagged turns
     "open_thread": ("agent.work",),  # editor in the moderator agent's workspace
     "list_threads": ("member",),  # threads in the caller's workspaces; no message content
@@ -933,7 +934,7 @@ SETTINGS: frozenset[str] = frozenset({
     "set_agent_github", "delete_agent_github", "set_agent_salesforce", "delete_agent_salesforce",
     "set_slack_enabled", "set_turn_mode", "set_sender_trust", "delete_sender_trust",
     # agents: routing (handlers report before/after — apps/harness/routing_audit.py)
-    "set_runner_preference", "replace_agent_runners", "replace_agent_runner_rules",
+    "replace_agent_runners", "replace_agent_runner_rules",
     "set_agent_runner_rule", "delete_agent_runner_rule",
     "set_agent_actor_route", "delete_agent_actor_route",
     # agents: schedules
@@ -1087,7 +1088,6 @@ NOT_SETTINGS: dict[str, str] = {
     "open_local_turn": "turn", "renew_local_turn": "turn",
     "fire_schedule_route": "turn",
     "finish_checkin_run": "turn",  # the project agent's turn reporting its check-in run done
-    "finish_huddle_group_run": "turn",  # the same, through the one-release alias
     # runner-protocol
     "post_bootstrap_report": "runner-protocol", "update_runner_capabilities": "runner-protocol",
     "claim_admission_notices": "runner-protocol", "report_admission_notice": "runner-protocol",
@@ -1100,6 +1100,7 @@ NOT_SETTINGS: dict[str, str] = {
     "post_session_stream": "runner-protocol", "report_sessions": "runner-protocol",
     "post_runner_usage": "runner-protocol", "request_usage_scan": "action", "send_up_missing_sessions": "action",
     "post_sign_in_request": "runner-protocol", "turn_github_token": "runner-protocol",
+    "turn_agent_token": "runner-protocol",
     "post_sign_in_request_result": "runner-protocol",
     "report_drill": "runner-protocol",
     # action

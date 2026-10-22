@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { closeSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
 import { listMyAgents, type AgentOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { sessionTargetLabel } from './sessionTargetLabel'
 import { sessionDisplayTitle } from './sessionDisplayTitle'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
@@ -15,6 +15,7 @@ import { TurnModeBadge } from './TurnModeBadge'
 import { TransferSessionMenu } from './TransferSessionMenu'
 import type { TransferResult } from '@/api/chat'
 import { WorkspaceBadge } from '@/components/WorkspaceBadge'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /** An independent on/off filter — deliberately shaped unlike the sort segments
  *  beside it, so the row does not read as four options where you pick one. */
@@ -347,7 +348,7 @@ export function ChatSessionsPanel({
                     invalid HTML and the anchor eats the click. */}
                 <div className="flex items-stretch">
                   <Link
-                    to={`/w/${s.workspace}/chat/${s.id}`}
+                    to={scopedPath(s.workspace, `/chat/${s.id}`)}
                     data-testid={parkedWhy ? `session-parked-${s.id}` : undefined}
                     className={`flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted${
                       parkedWhy || s.id in pendingClose ? ' opacity-60' : ''
@@ -402,7 +403,7 @@ export function ChatSessionsPanel({
                           question it was answering. Status always; age alongside. */}
                       <span className="flex items-center gap-1 text-muted-foreground">
                         <TurnModeBadge mode={s.turn_mode} testId={`session-mode-${s.id}`} />
-                        {relativeTime(s.last_activity_at, now)}
+                        {relativeAge(s.last_activity_at, now, { seconds: false })}
                       </span>
                       {s.runner_name && (
                         <span className="text-muted-foreground">

@@ -23,7 +23,6 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-from django.contrib.auth.models import User
 from django.utils import timezone
 
 from apps.agents import engagement, proposals
@@ -36,27 +35,17 @@ from apps.agents.models import (
 )
 from apps.contacts import services as contacts
 from apps.harness.models import Turn
-from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.test_people_brain import _agent, _client, _member
+from tests.fixtures.people_brain import _client
 
 pytestmark = pytest.mark.django_db
 
-AGENTS = "/api/w/connect/agents"
-HUDDLE = "https://canopy.test/w/connect/huddles/work-ai-20261016"
-
 
 @pytest.fixture()
-def world():
-    owner = User.objects.create_user("jj", "jj@dimagi.com", "pw", first_name="Jonathan")
-    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
-    WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
-    editor = _member(ws, "ed", role=WorkspaceMembership.EDITOR, first_name="Ed")
-    viewer = _member(ws, "sophie", role=WorkspaceMembership.VIEWER, first_name="Sophie")
-    ada, eva, echo = (_agent(ws, s, owner) for s in ("ada", "eva", "echo"))
-    for u in (owner, editor, viewer):
-        contacts.person_for(user=u)
-    return {"owner": owner, "ws": ws, "editor": editor, "viewer": viewer,
-            "ada": ada, "eva": eva, "echo": echo}
+def world(proposals_world):
+    return proposals_world
+
+AGENTS = "/api/w/connect/agents"
+HUDDLE = "https://canopy.test/w/connect/huddles/work-ai-20261016"
 
 
 def _propose(world, **kw):

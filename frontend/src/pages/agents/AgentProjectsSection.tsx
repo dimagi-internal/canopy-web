@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type JSX } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 
 import { listProjects, type ProjectOut } from '@/api/agents'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { NewProject, StatusChip } from '@/pages/agents/projectParts'
 import { WorkbenchSkeleton, WorkbenchSubHeader } from 'canopy-ui'
@@ -104,7 +104,7 @@ function ProjectRow({ project: p }: { project: ProjectOut }): JSX.Element {
   const meta = [
     p.owner_email || p.owner_note,
     `${p.open_task_count} open · ${p.waiting_task_count} waiting`,
-    relativeTime(p.updated_at, new Date()),
+    relativeAge(p.updated_at, new Date(), { seconds: false }),
   ].filter(Boolean)
 
   return (

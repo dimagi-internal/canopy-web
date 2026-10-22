@@ -10,6 +10,42 @@ handed, and the runner's own readiness. Who may *edit* each of these is in
 status, the unclaimable report and the topology all ask the same functions, so
 they cannot disagree).
 
+## Two ways an agent runs
+
+1. **Use it yourself in Claude Code — no runner needed.** A person with the canopy
+   plugin runs `canopy agent use <slug>` once on their computer: it installs the
+   agent's plugin, enrols this computer's key so it can read the agent's secrets
+   from canopy vault, and records their sessions as **local turns** on the agent's
+   page. Who may: the agent's owner and admins, a `full:` rule, workspace editors —
+   whom `access.decide` gives the whole agent (`apps/agents/licenses.py`). The people
+   doing it are listed under the agent's Settings → How it runs and → People → Local
+   use. A computer without the runner app gets its own key for reading the agent's
+   vault (a `computer` runner made when it registers, which is no fleet runner).
+   Detail: [`access.md`](access.md) → "Local use of an agent".
+2. **Let it run on its own — needs a runner.** Either your own Mac running the
+   runner app (set **Private**, it does only your work), or a fleet cloud box.
+   Schedules, mail and dispatches start these turns; the rest of this doc is how
+   one reaches a box. Schedules fire from canopy-web itself (see "Scheduled
+   turns"), so no laptop has to be awake for them.
+
+An agent used only the first way is complete without a runner; the setup checklist
+says so (`apps/agents/setup.py`, the `runner` step).
+
+### Private runners
+
+**Private** is a setting on a runner app (`PUT /api/harness/runners/{id}/private`,
+owner only): the box takes no fleet work — no routed turn, no workspace order, no
+source rule (`Runner.directed_only`) — only what its owner pins or binds to it, plus
+the owner's own Claude Code sessions on that computer (local turns). Those sessions
+prove themselves with the box's device key, which may read an agent's secrets while
+its owner holds an active licence. Internally the computer is a `PrivateRunner`
+registration linked to the `Runner` (`PrivateRunner.runner`); the UI calls these
+"your computers (used in Claude Code)", not a separate kind of runner. A computer
+with no runner app is linked instead to a `computer` runner made for it, which only
+holds its device keys: it never claims or heartbeats and is left out of every fleet
+list, routing picker and health report. See [`access.md`](access.md) → "Local use
+of an agent".
+
 ## Which workspaces a runner serves (the tenant gate)
 
 `routing.runner_tenant_slugs(runner)` is THE answer, and every runner-scoped
@@ -69,8 +105,6 @@ The topology lists a box's units together (`machine`, `unit` on each runner row)
 Tests: `tests/test_runner_units.py`.
 
 ### Units on the box (`RunnerUnits`)
-
-Spec: `docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md`.
 
 - **Units.** The stack parameter `RunnerUnits` (`tree:dimagi,tree:marshellis,agent:eva`;
   empty = one unit `tree:<RunnerWorkspace>`) lists them; `cloud_runner.parse_units` names
@@ -207,9 +241,9 @@ box and agent pair:
 
 | Reader | Uses |
 |---|---|
-| **The vault**: a resolve's device proof (`device_keys.runner_serves_agent`) | the rule, OR the box holds a live turn of the agent (a pinned dispatch, a bound chat), OR it is the agent owner's own LAPTOP working by hand. An owner's cloud box reads only what it runs. |
+| **The vault**: a resolve's device proof (`device_keys.runner_serves_agent`) | the rule, OR the box holds a live turn of the agent (a pinned dispatch, a bound chat), OR it is the agent owner's own LAPTOP working by hand, OR a private runner whose owner holds an active licence. An owner's cloud box reads only what it runs. A `computer` runner (no runner app) is asked only: does its owner administer the agent, or hold an active licence for it. |
 | **The box's refresh**: `GET /runners/{id}/agents`, read by `bootstrap_agents.sh` | exactly the rule. A box prepares the agents it runs, not every agent its token can list. An answer is final, an empty one included (a new box prepares nothing); only no answer (not paired, an error, not a list) falls back to the registry. |
-| **Readiness and the fleet view** (`agents_served_by`) | exactly the rule. |
+| **Readiness and the fleet view** (`agents_routed_to`) | exactly the rule. |
 
 A resolve refused because an APPROVED box does not run the agent is routing, not
 a misused token. The 401 says `reason: not_routed`, and it is recorded as an
@@ -354,7 +388,7 @@ predicates without the clock. A turn no box will take reads
 `project_session_waits_why`: "no runner order in <ws>, and <person> administers no
 box with <repo>". Choosing a box for a project chat — `runner_id` at creation, a
 placement on send, `/place`, a move — needs you to administer it
-(`canopy_sessions.services.may_place_project_chat`).
+(`canopy_sessions.services.may_place`, the one placement rule).
 
 The topology screens and `GET /api/workspaces/{slug}/runner-topology`
 (`apps/harness/topology.py`) are computed from these same predicates. A
@@ -396,13 +430,21 @@ runs manual — a forged `From:` may pick a box, never drive an unreviewed agent
 ## Scheduled turns
 
 The scheduler is a producer of turns, not an execution engine (no celery/beat).
-`AgentSchedule` (`apps/harness/models.py`) holds the cron server-side; the RUNNER
-evaluates it (`runner/canopy_runner/canopy_runner/schedules.py`) and POSTs a due
-slot; `schedule_turns.fire_schedule` enqueues it.
+`AgentSchedule` (`apps/harness/models.py`) holds the cron server-side, and
+**canopy-web fires it itself**: `apps/harness/schedule_clock.py`, an asyncio loop in
+the web process's ASGI lifespan (like `pat_rotation_scheduler`), evaluates every
+enabled schedule each `CANOPY_SCHEDULE_TICK_S` (60 s; a cache key keeps N web tasks
+to about one tick) and calls `schedule_turns.fire_schedule` for each due slot. So a
+workspace whose agents run only on cloud boxes, or whose laptop is shut, still fires
+its schedules. A laptop runner still evaluates them too
+(`runner/canopy_runner/canopy_runner/schedules.py`, `POST …/schedules/{id}/fire`);
+both reach the same slot key, so whichever fires second collapses onto the first's
+turn. Firing only queues a turn — which box runs it is decided on the claim.
 
-- **Anchor on `fire_after`, never `last_slot`.** `ScheduleOut.fire_after`
-  (`schedule_services`: `last_slot or created_at`, pinned just before a one-off's
-  instant) is what the runner passes to `due_slot(after=...)`; `last_slot` is NULL
+- **Anchor on `fire_after`, never `last_slot`.** `schedule_turns.fire_after_of`
+  (`last_slot or created_at`, pinned just before a one-off's instant; served to
+  runners as `ScheduleOut.fire_after`) is what the server clock and the runner pass
+  to `due_slot(after=...)`; `last_slot` is NULL
   until the first fire, and an unbounded backward look fires a slot that predates
   the schedule.
 - **Concurrent fires are safe:** the slot-derived `idempotency_key`
@@ -457,11 +499,18 @@ workspace's shared vault: a person lending their identity to one agent
   email) and `requested_by` for a `Requested-by:` trailer — the caller is recorded,
   never the principal. Stopping bad writes is the agent's own gating, not the token
   layer's. Each issue is an `agent.github.issued` event.
-- **Agentless repo turns** (`Turn.project` = repo name) run as no one and are
+- **Agentless repo turns and project chats** (`Turn.project`, or the chat
+  session's `project`, = repo name) run as no one on GitHub and are
   refused the same way, unless the repo has an `agents.RepoIdentity` row
   (`repo_slug` unique → agent; edited in Django admin, listed as
   `identity_for_repos` on `GET /api/agents/{slug}/github`), in which case the turn
   runs as that agent under the same rule.
+- **canopy-web's MCP sign-in is per turn.** Claude Code remembers a 401 from an
+  MCP server in `mcp-needs-auth-cache.json` and skips it for ~15 minutes in every
+  session sharing that file — on a box, every login's copy is a symlink to the
+  one in `~/.claude`. The cloud runner removes the canopy-web entry before each
+  turn (`_clear_canopy_needs_auth`), so one session with no credential cannot
+  take canopy's tools away from the turns after it.
 - Readiness: a box calls `GET /api/harness/runners/{rid}/github-readiness` at boot
   (checked live per agent it serves), and the readiness drill covers it — a missing
   or expired token is a red health check, not a mid-turn 403.
@@ -469,6 +518,30 @@ workspace's shared vault: a person lending their identity to one agent
 Spec: `docs/superpowers/specs/2026-09-24-agent-github-delegation-design.md`
 (`tests/test_agent_delegations.py`). Salesforce uses the same model with an agent
 as lender (`delegations.set_salesforce`).
+
+### The canopy login a turn gets (turn-scoped agent token)
+
+A runner turn acts as its agent with a login canopy-web issues for THAT turn, in place
+of the agent's stored, never-expiring `canopy-pat` (phase 1: clients prefer it and fall
+back to the stored PAT; phase 2 removes the PAT).
+
+- `POST /api/harness/runners/{rid}/turns/{tid}/agent-token`
+  (`apps/harness/api_turn_agent_token.py`, `turn_agent_tokens.py`): only with runner
+  `rid`'s own runner token (a PAT is 403), for a turn it is executing, re-checking
+  `runner_may_hold_agent`; 409 for a local turn, a confined (caller) turn, or an
+  agent with no active `Agent.user`. Mints a `PersonalToken` for `Agent.user` (12 h),
+  recorded as a `TurnAgentToken`; logged as an `AgentCredentialRead`
+  (`turn-agent-token`, `via=turn`) and an `agent.canopy_token.issued` event.
+- Revoked when the turn stops executing on that runner: `finish_turn` (every exit,
+  requeues included), every terminal transition (`harness.closing.close_turn`: the
+  lease sweep, a stop, an admission refusal, a moved turn), and `revoke_stale` on
+  every sweep tick.
+- Cloud runner: `CANOPY_WEB_PAT` in the turn env + `~/.canopy/agent-token/turn/<tid>.token`
+  for the MCP headers helper. Laptop: the canopy CLI asks on demand with the box's
+  runner token and the session's turn id.
+
+Spec: `docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md`
+(`tests/test_turn_agent_token.py`).
 
 ### The per-user GitHub App (`apps/tokens/github_app.py`)
 
@@ -622,6 +695,7 @@ once per (runner, alert) per UTC day, linking to the runner on `/supervisor`
 ## How a runner signs in (keyless)
 
 - A paired box signs in **as itself**: it trades a fresh proof of its APPROVED device key (an EC2 box's instance role; a laptop's Secure Enclave/TPM key) for an hour-long `RunnerAccessToken` at `POST /api/runner-sessions/`, renews it before it runs out, and uses it for REST and its `ws/runner/<id>/` socket. Nothing long-lived lives on the box, and nothing in Settings → Tokens can cut a runner off.
+- **One protocol, two channels.** The `ws/runner/<id>/` socket's `heartbeat` and `finish` frames are read and applied by the same functions as `POST …/runners/{id}/heartbeat` and `POST …/turns/{id}/finish` (`apps/harness/runner_protocol.py`, over `HeartbeatIn` / `TurnFinishIn`): a WS beat carries `degraded`/`note`, `host`, `projects` and `mailboxes_readable` with the REST rules (absent leaves a list alone; a malformed field costs that field, never the beat), and a WS finish takes only `done`/`failed`/`cancelled` and records `session_key` (a refused frame acks `ok: false` with an `error`). Who may act as a runner is `runner_protocol.acting_runner_q` — its owner; a runner with no owner connects for nobody and is in nobody's `/supervisor` snapshot.
 - The token opens the runner protocol only (`apps/harness/runner_auth.py`) and authenticates as `Runner.owner`, so every owner-scoped runner gate is unchanged. Revoking the device key (Settings → Security) stops the box at once — the socket re-checks its credential on every frame (`channels_auth.still_signed_in`).
 - **A laptop installed from a download pairs in the browser and holds no PAT** (`apps/harness/api_runner_pairings.py`, `runner/canopy_runner/canopy_runner/browser_pair.py`). The box makes its device key, then `POST /api/harness/runner-pairings/` with the public key and a DPoP proof of it, the loopback port it listens on, its hostname, account and whether emdash is present; it shows the returned code and opens `/pair/<code>`. The person signs in, checks the code, picks a workspace where they hold `agent.work` and a name, and approves behind a passkey step-up (a token is refused). The approval's one-time secret comes back only as a redirect to `http://127.0.0.1:<port>/paired` on the machine whose browser approved, so an approve link sent to someone else gives the sender nothing. The box claims (`…/{id}/claim`, DPoP of the same key plus the secret) and gets a `Runner` (`kind=emdash`, runtime `claude-cli` when there is no emdash) whose device key is already ACTIVE, ECDH key approved with it; the approver must still hold `agent.work` there. A key canopy-web already has ACTIVE on a live runner re-attaches instead; any other known key, an expired, declined or used pairing, or a wrong secret or proof is one uniform 401. Pairings last 15 minutes, one live per key. `runner.json` then has no token, and `~/.canopy/device-key/status.json` is written as canopy's CLI writes it so `canopy vault` shares the key.
 - A developer laptop (`install-runner.sh`) pairs with its person's PAT (`CANOPY_TOKEN`), which also registers its key. A **cloud box pairs by invitation and holds no PAT** (below). A box paired by invitation, and every isolation unit, has **no PAT fallback**: without a token it reports itself unauthenticated. Only a cloud box from an older stack that still has `CANOPY_TOKEN` (and never paired by invitation) falls back to it while no approved key can get a token (`runner/ec2/cloud_runner.py::_bearer`). An agent turn never inherits the box's credential — it acts with its own `CANOPY_WEB_PAT`.

@@ -1,7 +1,7 @@
 """The /supervisor connect snapshot — current runner status + per-agent waiting
 counts for a user, built request-free (a socket has no HttpRequest and is not
 tenant-pinned, so it uses the same 'unpinned' visibility branch the REST
-_visible_agent_workspace_ids / _runner_visibility_q use)."""
+apps.agents.gates.visible_agent_workspaces / _runner_visibility_q use)."""
 from __future__ import annotations
 
 from django.db.models import Q
@@ -9,6 +9,7 @@ from django.db.models import Q
 from apps.agents import services as agent_services
 from apps.agents.models import AgentTask
 from apps.harness.models import Runner
+from apps.harness.runner_protocol import acting_runner_q
 from apps.workspaces import services as wsvc
 
 
@@ -41,9 +42,12 @@ def supervisor_snapshot(user) -> dict:
         a.slug: AgentTask.objects.filter(waiting_q(), agent=a).count() for a in agents
     }
 
+    # A computer's key holder (`Runner.COMPUTER`) is no fleet runner.
+    # Your own runners in your workspaces (`acting_runner_q`): a runner nobody
+    # owns is shown to nobody — a NULL owner fails closed, as over REST.
     runners = Runner.objects.exclude(status=Runner.RETIRED).filter(
         (Q(workspace_id__in=slugs) | Q(workspace_id__isnull=True))
-        & (Q(owner=user) | Q(owner__isnull=True))
+        & acting_runner_q(user)
     )
 
     return {

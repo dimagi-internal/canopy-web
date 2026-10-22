@@ -37,6 +37,7 @@ import { setBadge } from '@/pwa/usePush'
 import { Skeleton } from 'canopy-ui'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { roleAllows } from '@/lib/workspaceRoles'
+import { scopedPath } from '../lib/scopedLinks'
 
 function BandError({ message }: { message: string }): JSX.Element {
   return (
@@ -235,7 +236,7 @@ export default function SupervisorPage(): JSX.Element {
   const mapHrefFor = (r: RunnerOut): string | undefined => {
     const role = workspaces.find((w) => w.slug === r.workspace)?.role
     return r.workspace && roleAllows(role, 'logs.read')
-      ? `/w/${r.workspace}/settings/topology?runner=${r.id}`
+      ? scopedPath(r.workspace, `/settings/topology?runner=${r.id}`)
       : undefined
   }
   // Dispatch / done need the agent's editor role (`agent.work` in its workspace);

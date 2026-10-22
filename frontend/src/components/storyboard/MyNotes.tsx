@@ -2,7 +2,7 @@ import type { RoundNote, RoundPayload } from '@/api/storyboards'
 
 /** The server marks a signed-in author's notes; a guest is known only by the
  *  name they typed, which NoteComposer remembers on this device. */
-export function mineOf(notes: RoundNote[], viewerName: string): RoundNote[] {
+export function mineOf(notes: readonly RoundNote[], viewerName: string): RoundNote[] {
   const name = viewerName.trim().toLowerCase()
   return notes.filter((n) => n.mine || (name !== '' && n.author_name.trim().toLowerCase() === name))
 }

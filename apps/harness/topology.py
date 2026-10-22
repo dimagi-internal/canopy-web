@@ -103,7 +103,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
     )
     home_runners = list(
         Runner.objects.filter(workspace_id__in=slugs)
-        .exclude(status=Runner.RETIRED)
+        .exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
         .select_related("owner")
         .prefetch_related("declared_flags")
     )

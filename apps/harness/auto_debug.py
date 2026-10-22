@@ -194,6 +194,13 @@ def _on_turn_failed(turn: Turn) -> None:
         return
     if RunnerDrill.objects.filter(turn=turn).exists():
         return
+    from . import runner_requirements as rr
+
+    if rr.requirements_of(turn):
+        # A conversation that must stay on ZDR runners: its note can quote what the
+        # turn read, and the debugger runs wherever ada does. Never re-processed
+        # (spec 2026-10-22-phi-agents-on-zdr-runners).
+        return
     note = _note_for(turn)
     if _HUMAN_NOTES.search(note):
         return
@@ -497,4 +504,4 @@ def can_handle(user, workspace_slug: str) -> bool:
         return False
     if wsvc.member_role(user, workspace_slug) is None:
         return False
-    return (debugger.user_id is not None and debugger.user_id == user.pk) or debugger.is_admin(user)
+    return debugger.is_own_login(user) or debugger.is_admin(user)

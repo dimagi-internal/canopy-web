@@ -8,10 +8,7 @@ store in the middle — and pin each endpoint's rules.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
-import json
 import os
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -39,24 +36,13 @@ from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.vault_zk import VECTORS, ref
 
 pytestmark = pytest.mark.django_db
 
-ZK_DIR = Path(__file__).resolve().parent.parent / "docs" / "vault" / "zk-v1"
 RESOLVE = "/api/agents/eva/credentials/resolve"
 HTU = f"http://testserver{RESOLVE}"
 ZK = "/api/agents/eva/vault/zk"
-
-
-def _load_reference():
-    spec = importlib.util.spec_from_file_location("zk_v1_reference", ZK_DIR / "zk_v1_reference.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-ref = _load_reference()
-VECTORS = json.loads((ZK_DIR / "zk_v1_vectors.json").read_text())
 
 
 @pytest.fixture(autouse=True)
@@ -472,8 +458,6 @@ def test_reveal_refuses_and_a_plaintext_write_is_sealed_on_a_zk_agent(fleet):
                                  fleet.member_priv) == "x"
 
 
-
-
 # ---- resolve ---------------------------------------------------------------------------------
 
 def test_zk_resolve_hands_out_ciphertext_and_the_devices_wrap(fleet):
@@ -741,7 +725,6 @@ def test_enrollment_refuses_a_bad_ecdh_key(fleet):
 
 # ==== server-minted values sealed to recipients (zks1, §6), born-ZK (kv 0), the
 # settle compare-and-swap, and approve = wrap ==========================================
-
 
 
 def _agent(f) -> Agent:

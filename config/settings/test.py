@@ -43,3 +43,4 @@ CAPABILITY_SWEEP_INTERVAL_S = 0
 SLACK_INGEST_TICK_S = 0
 # Likewise the canopy-pat rotation: tests call `pat_rotation.tick()` / `rotate()`.
 CANOPY_PAT_ROTATION_TICK_S = 0
+CANOPY_SCHEDULE_TICK_S = 0

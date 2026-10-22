@@ -27,7 +27,6 @@ from .models import (
     FleetHold,
     Runner,
     RunnerAssignment,
-    RunnerDrill,
     Turn,
     WorkspaceRunnerOrder,
 )
@@ -59,7 +58,9 @@ from .routing import (
     runner_tenant_slugs,
     turn_unit_refusal,
 )
+from .closing import close_turn
 from .drills import expire_stale_drills
+from .turn_agent_tokens import revoke_stale
 from .schedule_turns import release_stale_occurrence_turns_all, skip_late_scheduled_turns
 
 DEFAULT_LEASE_SECONDS = 900
@@ -81,50 +82,20 @@ def sweep_expired_leases() -> int:
         # stop, not to lose the turn.
         requested = turn.events.filter(kind="cancel_requested").exists()
         status = Turn.CANCELLED if requested else Turn.LOST
-        updated = Turn.objects.filter(pk=turn.pk, lease_expires_at__lt=now).exclude(
-            status__in=Turn.TERMINAL
-        ).update(status=status, finished_at=now)
-        if updated:
-            append_events(turn, [{"kind": "status", "payload": {"status": status, "reason": "lease_expired"}}])
+        summary = (
+            "drill turn cancelled (lease expired after cancel was requested)"
+            if status == Turn.CANCELLED
+            else "runner lost the turn (lease expired mid-drill)"
+        )
+        # The result note is left as it was: nothing reported one. Riders are
+        # not ended with it — each holds its own lease and is swept on its own.
+        if close_turn(turn, status, from_states=Turn.NON_TERMINAL,
+                      where={"lease_expires_at__lt": now}, now=now,
+                      event={"reason": "lease_expired"}, riders=False,
+                      drill_summary=summary):
             count += 1
-            from apps.events import activity
-
-            turn.status = status
-            activity.for_turn(activity.TURN_FINISHED, turn, at=now)
-            if turn.chat_session_id:
-                # The box that held this turn's ask open is gone, and nothing
-                # else would ever retract the dialog it left (finish_turn's hook,
-                # mirrored because this update bypasses it).
-                from .services import end_turns_ask
-
-                end_turns_ask(turn)
-            # A LOST/CANCELLED turn is marked via a queryset update, bypassing
-            # finish_turn — so the FAILED-drill hook there never fires and a
-            # drill's RunnerDrill would otherwise strand as pending forever.
-            # Mirror that hook here for both sweep outcomes (finding M2): a
-            # cancel-requested drill whose runner then disappears is just as
-            # stranded as a plain lost one without this.
-            # A drill turn is identified by its RunnerDrill FK, not by its origin
-            # (drills are ordinary `api` turns that name a runner). The filter
-            # below no-ops for a non-drill turn.
-            if status in (Turn.LOST, Turn.CANCELLED):
-                summary = (
-                    "drill turn cancelled (lease expired after cancel was requested)"
-                    if status == Turn.CANCELLED
-                    else "runner lost the turn (lease expired mid-drill)"
-                )
-                RunnerDrill.objects.filter(
-                    turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
-                ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=summary, finished_at=now)
-            # finish_turn's auto-debug hook, mirrored for the same reason as the
-            # drill hook above: this update bypasses finish_turn. It acts on LOST
-            # only when CANOPY_AUTO_DEBUG_LOST is on (default off — a laptop that
-            # slept mid-turn is the commonest LOST and is not a bug). Never raises.
-            if status == Turn.LOST:
-                from . import auto_debug
-
-                turn.refresh_from_db()
-                auto_debug.on_turn_failed(turn)
+    # The catch-all: a turn requeued or ended by any other queryset update.
+    revoke_stale()
     return count
 
 
@@ -362,8 +333,8 @@ def turn_reach(turn: Turn) -> Reach:
     else:
         ws = turn.workspace_id
     runners = [
-        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("owner")
-        .prefetch_related("declared_flags").order_by("name")
+        r for r in Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
+        .select_related("owner").prefetch_related("declared_flags").order_by("name")
         if ws in runner_tenant_slugs(r)
     ]
     prime_machine_units(runners)
@@ -513,8 +484,8 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     # claim_next_turn (`runner_tenant_slugs`, owner-derived, NULL-fails-closed)
     # so this warning can't disagree with what claiming actually does.
     runners = [
-        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("owner")
-        .prefetch_related("declared_flags")
+        r for r in Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
+        .select_related("owner").prefetch_related("declared_flags")
         if runner_tenant_slugs(r) & ws_slugs
     ]
     prime_machine_units(runners)
@@ -681,6 +652,10 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # no Claude desktop CLI still runs turns in emdash — so only this one gates.
     # Above the pin, like the pause: a pin cannot make a signed-out box work.
     if runner.signed_out:
+        return None
+    # A computer used in plain Claude Code has no runner app to run a claimed turn;
+    # it never heartbeats, so the guard above already stops it — this says so.
+    if runner.kind == Runner.COMPUTER:
         return None
     # The FLEET-WIDE hold (FleetHold): nothing is claimed, ridden or pinned anywhere
     # while it is on, and queued turns wait — visible, with their trigger — for the

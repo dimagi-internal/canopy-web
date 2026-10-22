@@ -126,7 +126,7 @@ def list_issues(
         qs = qs.filter(initiative=initiative)
     if repo:
         qs = qs.filter(repo=repo)
-    return paginate([_out(o) for o in qs], offset=offset, limit=limit)
+    return paginate(qs.order_by("-updated_at", "-pk"), offset=offset, limit=limit, map=_out)
 
 
 @router.get("/{repo_slug}/{number}/", response=OriginIssueOut, summary="Get an origin record")

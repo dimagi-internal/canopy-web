@@ -104,8 +104,9 @@ def _on_turn_enqueued(sender, instance: Turn, created, **kwargs):
 
 @receiver(post_save, sender=Runner, dispatch_uid="realtime_runner")
 def _on_runner_saved(sender, instance: Runner, **kwargs):
-    # A runner with no owner has no user to notify (and no derivable tenant).
-    if not instance.owner_id:
+    # A runner with no owner has no user to notify (and no derivable tenant). A
+    # computer's key holder is no fleet runner, and the supervisor never lists it.
+    if not instance.owner_id or instance.kind == Runner.COMPUTER:
         return
     frame = {
         "type": "supervisor.runner",

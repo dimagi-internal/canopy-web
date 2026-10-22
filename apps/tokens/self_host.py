@@ -139,7 +139,7 @@ def probe_endpoint() -> str:
 #:
 #: `list_fleet_tasks` (tasks across the fleet, `tasks:read`, page `agent.tasks`):
 #: cheap, every argument is optional (it passes `limit: 1`), and it is
-#: scoped by the caller's workspace memberships (`_visible_agent_workspace_ids`),
+#: scoped by the caller's workspace memberships (`apps.agents.gates.listed_agent_workspaces`),
 #: so for the membershipless probe user it is a real query that returns
 #: nothing. It was `list_items` until items became tasks (2026-10), and
 #: `list_insights` before the Insights feed was retired.

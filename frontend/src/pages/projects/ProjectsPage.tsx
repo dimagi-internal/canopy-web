@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type JSX } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { listFleetProjects, listWorkspaceProjects, type ProjectOut } from '@/api/agents'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // EVERY project in the workspace, across its agents — the list the header's
 // Projects ▸ All projects opens. A project's one page is on its agent's board
@@ -130,7 +131,7 @@ export function ProjectsPage(): JSX.Element {
                       // A steward may live in a parent workspace: its board is the project's link.
                       <span className="text-foreground-secondary">{p.steward_slug || p.agent_slug}</span>
                     ) : (
-                      <Link to={`/w/${workspace}/agents/${p.agent_slug}`} className="text-foreground-secondary hover:text-primary">
+                      <Link to={scopedPath(workspace, `/agents/${p.agent_slug}`)} className="text-foreground-secondary hover:text-primary">
                         {p.agent_slug}
                       </Link>
                     )}
@@ -141,7 +142,7 @@ export function ProjectsPage(): JSX.Element {
                     {p.waiting_task_count}
                   </td>
                   <td className="px-3 py-2 text-foreground-secondary">{p.owner_email ?? '—'}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{relativeTime(p.updated_at, new Date())}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{relativeAge(p.updated_at, new Date(), { seconds: false })}</td>
                 </tr>
               ))}
             </tbody>

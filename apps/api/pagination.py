@@ -5,9 +5,10 @@ the OpenAPI schema knows the item type.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Generic, TypeVar
+from collections.abc import Callable, Sequence
+from typing import Any, Generic, TypeVar
 
+from django.db.models import QuerySet
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")
@@ -51,7 +52,29 @@ def clamp_offset(offset: int) -> int:
     return max(0, offset)
 
 
-def paginate(items: Sequence[T], *, offset: int, limit: int) -> Page[T]:
-    total = len(items)
+def paginate(
+    items: QuerySet | Sequence[Any],
+    *,
+    offset: int,
+    limit: int,
+    map: Callable[[Any], T] | None = None,  # noqa: A002 - reads as the keyword it is
+) -> Page[T]:
+    """One page of ``items``, with ``map`` applied to the page's rows only.
+
+    A QuerySet is counted (``COUNT(*)``) and sliced in SQL (``LIMIT/OFFSET``), so
+    only ``limit`` rows are loaded and serialized. It must be ordered — a page of
+    an unordered query is not stable — and the order should end in a unique
+    column so ties cannot swap rows between pages. An in-memory sequence (a list
+    a route filtered or merged in Python) is sliced as is; ``map`` still runs on
+    the page only.
+    """
+    if isinstance(items, QuerySet):
+        if not items.ordered:
+            raise ValueError("paginate() needs an ordered QuerySet; call .order_by() first")
+        total = items.count()
+    else:
+        total = len(items)
     sliced = list(items[offset : offset + limit])
+    if map is not None:
+        sliced = [map(row) for row in sliced]
     return Page(items=sliced, total=total, offset=offset, limit=limit)

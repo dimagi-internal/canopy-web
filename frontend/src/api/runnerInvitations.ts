@@ -3,24 +3,13 @@
 // so the approve page can be tested without ./harness.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
+import { ApiError, unwrap } from './problem'
 
 export type RunnerInvitationOut = components['schemas']['RunnerInvitationOut']
 
-export class RunnerInvitationError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
+/** The shared `ApiError` under its old name (callers branch on `.status`). */
+export { ApiError as RunnerInvitationError }
 
-function unwrap<T>(res: { data?: T; error?: unknown; response: Response }, what: string): T {
-  if (res.error !== undefined || res.data === undefined) {
-    const detail = (res.error as { detail?: unknown } | undefined)?.detail
-    throw new RunnerInvitationError(res.response.status, typeof detail === 'string' ? detail : `${what} failed`)
-  }
-  return res.data
-}
 
 export async function getRunnerInvitation(id: string): Promise<RunnerInvitationOut> {
   const res = await apiV2.GET('/api/harness/runner-invitations/{invitation_id}', {

@@ -56,6 +56,7 @@ def test_the_flags_api_and_known_flags_follow_the_contract(extra_flag, owner, ws
                                    workspace=ws)
     c = Client()
     c.force_login(owner)
+    _stepped_up(c, owner)  # declaring a flag needs a fresh passkey confirmation
     r = c.put(f"/api/harness/runners/{runner.id}/flags", json.dumps({"flags": [EXTRA]}),
               content_type="application/json")
     assert r.status_code == 200, r.content
@@ -81,3 +82,13 @@ def test_arrival_accepts_a_flag_the_contract_lists(extra_flag, owner, ws):
                       content_type="application/json")
     assert r.status_code == 200, r.content
     assert ContactToken.objects.get().runner_requirements == [EXTRA]
+
+
+def _stepped_up(c, user):
+    import time
+
+    from apps.passkeys import stepup
+
+    s = c.session
+    s[stepup.SESSION_KEY] = {"user": user.pk, "until": time.time() + 60}
+    s.save()

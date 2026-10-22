@@ -46,12 +46,9 @@ class FakeS3:
         return f"https://s3.test/{Params['Key']}?signed"
 
     def get_paginator(self, op):
-        objects = self.objects
-
-        class Pages:
-            def paginate(self, Bucket, Prefix):
-                return [{"Contents": [{"Key": k} for k in objects if k.startswith(Prefix)]}]
-        return Pages()
+        # The task role may not list the bucket (no s3:ListBucket in its policy): a
+        # listing is a 500 in production, so it is an error here.
+        raise AssertionError(f"canopy-web may not list the bucket ({op})")
 
     def head_object(self, Bucket, Key):
         if Key not in self.objects:
@@ -199,7 +196,7 @@ def test_an_original_upload_signs_its_checksum(world, monkeypatch):
 
     for k, v in {"AWS_ACCESS_KEY_ID": "AKIAEXAMPLE", "AWS_SECRET_ACCESS_KEY": "x", "AWS_DEFAULT_REGION": "us-east-1"}.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.setattr(kb_store, "_stored_originals", lambda project: set())
+    monkeypatch.setattr(kb_store, "_stored_originals", lambda project, shas: set())
     with override_settings(CANOPY_KB_BUCKET="kb-bucket"):
         [up] = kb_store.originals_upload(world["project"], [{"sha256": "a" * 64, "bytes": 1}])["uploads"]
     q = parse_qs(urlparse(up["url"]).query)

@@ -33,10 +33,10 @@ def scope(runner) -> list[str]:
     """The repos canopy knows for this box — the only ones it scans: the projects
     it declares, and the agents it serves (by slug and by repo name)."""
     from apps.agents.delegations import agent_repo
-    from apps.harness.routing import agents_served_by
+    from apps.harness.routing import agents_routed_to
 
     names = set(runner.project_names())
-    for agent in agents_served_by(runner):
+    for agent in agents_routed_to(runner):
         names.add(agent.slug)
         repo = agent_repo(agent)
         if repo:

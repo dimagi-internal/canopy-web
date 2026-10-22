@@ -5,6 +5,7 @@ import { getAgentDefaultOrder, putAgentRunners, type AgentDefaultOrderOut } from
 import type { RunnerOut } from '@/api/harness'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
 import { RepoSetupDialog } from '@/components/agents/RepoSetupDialog'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // The "Everything else" row's runners: the agent's OWN ordered list, or — when it
 // has none — the default order of its workspace (or the nearest one above it),
@@ -60,7 +61,7 @@ export function AgentDefaultRunners({
     )
   }
 
-  const orderHref = (ws: string) => `/w/${ws}/settings/topology?order=${ws}`
+  const orderHref = (ws: string) => scopedPath(ws, `/settings/topology?order=${ws}`)
 
   if (state.own) {
     return (

@@ -4,6 +4,7 @@ import { CheckCircle2 } from 'lucide-react'
 
 import { AgentAccessRoster } from '@/components/agents/AgentAccessRoster'
 import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
+import { AgentHowItRuns } from '@/components/agents/AgentHowItRuns'
 import { AgentLicenses } from '@/components/agents/AgentLicenses'
 import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
 import { AgentRepositoryControl } from '@/components/agents/AgentRepositoryControl'
@@ -34,7 +35,8 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 // Grouped by the QUESTION each answers, not by which API serves it:
 //   People and roles  — owner, and everyone's role here (admins granted inline)
 //   Who can reach it  — callers, Slack
-//   How it runs       — routing: which runner, and which mode, per kind of work
+//   How it runs       — the two ways (in your own Claude Code / on its own, on a
+//                       runner), then routing: which runner, and which mode
 //   Credentials       — the keys, and the vault they are read from
 export function AgentSettingsSection() {
   const { agent } = useOutletContext<AgentOutletContext>()
@@ -157,7 +159,7 @@ export function AgentSettingsSection() {
             title="Local use"
             who={admins}
             canEdit={isAdmin}
-            description={`Who runs ${agent.name} in their own Claude Code, on which private runners, and when they last did.`}
+            description={`Who runs ${agent.name} in their own Claude Code, on which computers, and when they last did.`}
           >
             <AgentLicenses agentSlug={agent.slug} canEdit={isAdmin} />
           </Setting>
@@ -203,17 +205,22 @@ export function AgentSettingsSection() {
 
       <Section id="running" title="How it runs">
         <div className="rounded-lg border border-border bg-card">
+          {/* The two ways an agent runs, side by side — a summary that links to
+              the settings below (docs/architecture/runners.md). */}
+          <AgentHowItRuns slug={agent.slug} name={agent.name} isAdmin={isAdmin} />
           {/* Turn mode and runners were two settings; a routing rule can now set
               both ("Beth's email → cloud, auto"), so they are one table whose
               last row is the agent's own defaults (spec 2026-09-23). */}
-          <Setting
-            title="Routing"
-            who="workspace editors and above"
-            canEdit={canRoute}
-            description="Which runner takes each kind of work, and whether it may act without approval."
-          >
-            <AgentRouting agentSlug={agent.slug} agentName={agent.name} initialTurnMode={agent.turn_mode} />
-          </Setting>
+          <div id="routing" className="scroll-mt-6 border-t border-border">
+            <Setting
+              title="Routing"
+              who="workspace editors and above"
+              canEdit={canRoute}
+              description="Which runner takes each kind of work, and whether it may act without approval."
+            >
+              <AgentRouting agentSlug={agent.slug} agentName={agent.name} initialTurnMode={agent.turn_mode} />
+            </Setting>
+          </div>
           {/* The checklist's "Give it a repository" lands here (#repository). */}
           <div id="repository" className="scroll-mt-6 border-t border-border">
             <Setting title="Repository" who={admins} canEdit={isAdmin}

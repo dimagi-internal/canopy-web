@@ -135,13 +135,11 @@ def test_an_unknown_kind_is_refused_and_a_tenantless_fact_dropped(tree):
 def test_activity_has_one_writer():
     """Every fact goes through `activity.emit`, so every producer stamps the same
     who/where/what/when."""
-    import pathlib
+    from tests._source import iter_app_sources
 
-    root = pathlib.Path(__file__).resolve().parents[3] / "apps"
-    offenders = [str(p) for p in root.rglob("*.py")
-                 if "tests" not in p.parts and "migrations" not in p.parts
-                 and p.name != "activity.py"
-                 and ("Activity.objects.create" in p.read_text() or "Activity.objects.bulk_create" in p.read_text())]
+    offenders = [src.rel for src in iter_app_sources(("apps",))
+                 if not src.rel.endswith("/activity.py")
+                 and ("Activity.objects.create" in src.text or "Activity.objects.bulk_create" in src.text)]
     assert offenders == []
 
 

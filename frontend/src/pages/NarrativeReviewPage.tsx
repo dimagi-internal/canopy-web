@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams, Link } from 'react-router-dom'
-import { apiUrl } from '@/api/base'
+import { ApiError } from '@/api/problem'
 import { useScopedPath } from '@/lib/scopedLinks'
-import { leaveFeedback, type Capability } from '@/api/storyboards'
+import { getBoardNarrative, leaveFeedback, type BoardNarrative } from '@/api/storyboards'
 import { NoteComposer } from '@/components/storyboard/NoteComposer'
 import { PublicHeader } from '@/components/PublicHeader'
 import { pairNarrationScenes } from '@/components/ddd/narrativeScenePairing'
-import type { DddNarration } from '@/api/ddd'
 
 /**
  * One narrative, scene by scene, for someone who does not care how it was made.
@@ -26,18 +25,7 @@ import type { DddNarration } from '@/api/ddd'
  * only on the scenes that actually changed.
  */
 
-interface NarrativeRead {
-  narrative_slug: string
-  title: string
-  story: string
-  version: number | null
-  previous_version: number | null
-  narration: DddNarration[]
-  previous_narration: DddNarration[]
-  storyboard_slug: string
-  storyboard_title: string
-  capability: Capability
-}
+type NarrativeRead = BoardNarrative
 
 type LoadState =
   | { kind: 'loading' }
@@ -60,23 +48,13 @@ export default function NarrativeReviewPage() {
     }
     setState({ kind: 'loading' })
     // `ws`: the workspace this page's URL names — a board elsewhere 404s.
-    const qp = new URLSearchParams()
-    if (token) qp.set('t', token)
-    if (workspace) qp.set('ws', workspace)
-    const q = qp.toString() ? `?${qp}` : ''
-    fetch(
-      apiUrl(
-        `/api/storyboards/${encodeURIComponent(board)}/narratives/${encodeURIComponent(slug)}${q}`,
-      ),
-      { credentials: 'same-origin' },
-    )
-      .then(async (r) => {
+    getBoardNarrative(board, slug, token, workspace)
+      .then((data) => live && setState({ kind: 'ready', data }))
+      .catch((e: unknown) => {
         if (!live) return
-        if (r.status === 404) return setState({ kind: 'not_found' })
-        if (!r.ok) return setState({ kind: 'error', message: `Request failed (${r.status})` })
-        setState({ kind: 'ready', data: await r.json() })
+        if (e instanceof ApiError && e.status === 404) return setState({ kind: 'not_found' })
+        setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) })
       })
-      .catch((e: Error) => live && setState({ kind: 'error', message: e.message }))
     return () => {
       live = false
     }

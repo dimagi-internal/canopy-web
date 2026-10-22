@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom'
 import type { HuddleSummary } from '@/api/huddles'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { MemberAvatar } from './MemberAvatar'
 import { memberHue, roundName, roundsToShow } from './huddleModel'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /** The huddles index, one card per huddle — shared by /w/:ws/huddles and an
  * agent's Huddles section. */
@@ -18,7 +19,7 @@ export function HuddleList({ workspace, huddles, now = new Date() }: {
         return (
           <li key={h.id}>
             <Link
-              to={`/w/${workspace}/huddles/${encodeURIComponent(h.id)}`}
+              to={scopedPath(workspace, `/huddles/${encodeURIComponent(h.id)}`)}
               className="group grid gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-primary/40 sm:grid-cols-[1fr_auto]"
             >
               <div className="min-w-0">
@@ -37,7 +38,7 @@ export function HuddleList({ workspace, huddles, now = new Date() }: {
                 </div>
                 <p className="mt-1 text-[12px] text-muted-foreground">
                   {h.type || 'huddle'} · team {h.team || '—'} · led by <span className="text-foreground-secondary">{h.leader}</span>
-                  {' · '}{relativeTime(h.created_at, now)}
+                  {' · '}{relativeAge(h.created_at, now, { seconds: false })}
                 </p>
                 <div className="mt-3 flex items-center gap-1" aria-label={`${h.members.length} members`}>
                   {h.members.map((m, i) => (

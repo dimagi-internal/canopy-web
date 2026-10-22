@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Button, Input } from 'canopy-ui/ui'
 
 import { deleteAgent } from '@/api/agents'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /** Delete an agent — what makes trying the New agent page safe: a test agent can
  *  be removed again. Typing the slug confirms it, because it cannot be undone and
@@ -17,7 +18,7 @@ export function DeleteAgentControl({ slug, name, workspace }: { slug: string; na
     setError('')
     try {
       await deleteAgent(slug)
-      navigate(`/w/${workspace}/agents`)
+      navigate(scopedPath(workspace, '/agents'))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)

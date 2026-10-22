@@ -16,7 +16,7 @@ const intent = (e: StagedEdit, recommended: Record<string, string>) => {
 
 /** Rows where people staged different edits — the closer must pick one each. */
 export function conflictsOf(
-  staged: StagedEdit[],
+  staged: readonly StagedEdit[],
   recommended: Record<string, string> = {},
 ): Record<string, StagedEdit[]> {
   const byKey: Record<string, StagedEdit[]> = {}

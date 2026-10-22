@@ -13,7 +13,9 @@ The contract, which canopy's CLI/runner half builds against (canopy#946):
 * `DELETE /api/runner-device-keys/{id}` → `revoked`, immediately.
 
 Who: the runner's owner or an explicit runner admin (`can_administer_runner`)
-for every route. A key belongs to a box, and the box is administered by them.
+for every route. A key belongs to a box, and the box is administered by them —
+except that on a PRIVATE runner only its owner registers or approves a key
+(`may_trust_device_keys`): that box's token signs in as its owner.
 """
 from __future__ import annotations
 
@@ -33,7 +35,7 @@ from apps.passkeys import stepup
 
 from . import device_key_notify, device_keys
 from .models import Runner, RunnerAdmin, RunnerDeviceKey
-from .runners import can_administer_runner, set_runner_machine
+from .runners import can_administer_runner, may_trust_device_keys, set_runner_machine
 from .schemas import DeviceKeyAgentOut, RunnerDeviceKeyCreatedOut, RunnerDeviceKeyIn, RunnerDeviceKeyOut
 
 router = Router(auth=session_auth, tags=["harness"])
@@ -52,6 +54,12 @@ def _key_or_404(request: HttpRequest, key_id: uuid.UUID) -> RunnerDeviceKey:
     if key is None or not can_administer_runner(request.user, key.runner):
         raise HttpError(404, "device key not found")
     return key
+
+
+def _may_trust_or_403(request: HttpRequest, runner: Runner) -> None:
+    if not may_trust_device_keys(request.user, runner):
+        raise HttpError(403, f"{runner.name} is its owner's private runner; only its owner "
+                             "may register or approve a device key on it")
 
 
 def approve_url(key: RunnerDeviceKey) -> str:
@@ -100,6 +108,7 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
     Re-posting the same key returns the existing row (200) whatever its status —
     a revoked key stays revoked."""
     runner = _administered_runner_or_404(request, payload.runner)
+    _may_trust_or_403(request, runner)
     role_arn = ""
     if payload.kind == RunnerDeviceKey.AWS_IAM:
         role_arn, jkt = _verified_role(request, payload)
@@ -237,7 +246,7 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
     agents = vault_agents_of(request.user)
     out = []
     for k in qs:
-        row = key_out(k, can_manage=True)
+        row = key_out(k, can_manage=may_trust_device_keys(request.user, k.runner))
         row.can_open = agents_key_opens(k, agents)
         # What it waits on a vault-key wrap for: for a key not yet approved, what
         # approving it will leave waiting, so the browser approves AND wraps in one
@@ -257,6 +266,10 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     if not _is_browser_session(request):
         raise HttpError(403, "approving a device key needs a browser session, not a token")
     key = _key_or_404(request, key_id)
+    # Asked at approval, not only at registration: a key a runner admin registered
+    # while the box was shared stays pending once it is made private, and must not
+    # then be approved by them.
+    _may_trust_or_403(request, key.runner)
     # A fresh passkey confirmation (canopy-web#1538): an active key unlocks an
     # agent's secrets for that box, so a stolen session cookie must not suffice.
     # 403 `step_up_required` → the SPA prompts for the passkey and retries.
@@ -340,4 +353,4 @@ def revoke_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
         key.save(update_fields=["status", "revoked_by", "revoked_at"])
     audit.note_change(scope=f"runner-device-key:{key.runner.name}/{key.jkt[:12]}",
                       before=before, after=key.status)
-    return key_out(key, can_manage=True)
+    return key_out(key, can_manage=may_trust_device_keys(request.user, key.runner))

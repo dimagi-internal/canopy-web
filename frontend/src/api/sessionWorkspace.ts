@@ -8,6 +8,7 @@
  * See apps/canopy_sessions/filing.py.
  */
 import { apiV2 } from './client.v2'
+import { unwrap } from './problem'
 
 export type SessionWorkspaceChoice = { slug: string; display_name: string }
 
@@ -33,8 +34,8 @@ function normalize(data: {
 }
 
 export async function getSessionWorkspacePreference(): Promise<SessionWorkspacePreference> {
-  const { data, error } = await apiV2.GET('/api/me/session-workspace/')
-  if (error || !data) throw new Error('could not load your session workspace')
+  const res = await apiV2.GET('/api/me/session-workspace/')
+  const data = unwrap(res, 'could not load your session workspace')
   return normalize(data as unknown as Parameters<typeof normalize>[0])
 }
 
@@ -42,12 +43,9 @@ export async function getSessionWorkspacePreference(): Promise<SessionWorkspaceP
 export async function setSessionWorkspacePreference(
   workspace: string | null,
 ): Promise<SessionWorkspacePreference> {
-  const { data, error } = await apiV2.PATCH('/api/me/session-workspace/', {
+  const res = await apiV2.PATCH('/api/me/session-workspace/', {
     body: { workspace },
   })
-  if (error || !data) {
-    const detail = (error as { detail?: string } | undefined)?.detail
-    throw new Error(detail || 'could not save your session workspace')
-  }
+  const data = unwrap(res, 'could not save your session workspace')
   return normalize(data as unknown as Parameters<typeof normalize>[0])
 }

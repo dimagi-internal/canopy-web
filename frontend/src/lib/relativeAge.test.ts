@@ -9,7 +9,7 @@ const D = 24 * H
 
 describe('relativeAge', () => {
   it('keeps second granularity, because a heartbeat is meant to be seconds fresh', () => {
-    // turnLog's relativeTime floors this whole range to "just now", which cannot
+    // The list reading (seconds: false) floors this whole range to "just now", which cannot
     // tell a runner that reported 2s ago from one that reported 59s ago.
     expect(relativeAge(ago(2), NOW)).toBe('2s ago')
     expect(relativeAge(ago(59), NOW)).toBe('59s ago')
@@ -53,5 +53,40 @@ describe('relativeAge', () => {
   it('treats a slightly fast clock as fresh rather than negative', () => {
     expect(relativeAge(ago(-5), NOW)).toBe('0s ago')
     expect(relativeAge(ago(-3600), NOW)).toBe('in the future')
+  })
+
+  it('reads "just now" under a minute for a list (seconds: false)', () => {
+    const LIST = { seconds: false }
+    expect(relativeAge(ago(30), NOW, LIST)).toBe('just now')
+    expect(relativeAge(ago(15 * 60), NOW, LIST)).toBe('15m ago')
+    expect(relativeAge(ago(2 * D), NOW, LIST)).toBe('2d ago')
+    // The ladder still climbs: a list never reads "45d ago".
+    expect(relativeAge(ago(45 * D), NOW, LIST)).toBe('2mo ago')
+  })
+
+  it('reads a time ahead as "in ..." when asked (a schedule\'s next run)', () => {
+    const NEXT = { future: true, seconds: false }
+    expect(relativeAge(ago(-(2 * D + H)), NOW, NEXT)).toBe('in 2d')
+    expect(relativeAge(ago(3 * H), NOW, NEXT)).toBe('3h ago')
+    expect(relativeAge(ago(-10 * 60), NOW, NEXT)).toBe('in 10m')
+    expect(relativeAge(ago(-20), NOW, NEXT)).toBe('in a moment')
+  })
+
+  it('switches to the date from dateAfterDays on', () => {
+    expect(relativeAge(ago(6 * D), NOW, { dateAfterDays: 7 })).toBe('6d ago')
+    expect(relativeAge(ago(10 * D), NOW, { dateAfterDays: 7 })).toBe(
+      new Date(NOW.getTime() - 10 * D * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' }),
+    )
+  })
+
+  it('reads in plain words when asked', () => {
+    const WORDS = { words: true, future: true, seconds: false }
+    expect(relativeAge(ago(30), NOW, WORDS)).toBe('just now')
+    expect(relativeAge(ago(3 * 60), NOW, WORDS)).toBe('3 min ago')
+    expect(relativeAge(ago(-5 * H), NOW, WORDS)).toBe('in 5 h')
+    expect(relativeAge(ago(30 * H), NOW, WORDS)).toBe('yesterday')
+    expect(relativeAge(ago(-30 * H), NOW, WORDS)).toBe('tomorrow')
+    expect(relativeAge(ago(3 * D), NOW, WORDS)).toBe('3 days ago')
+    expect(relativeAge(ago(7 * D), NOW, WORDS)).toBe('1 week ago')
   })
 })

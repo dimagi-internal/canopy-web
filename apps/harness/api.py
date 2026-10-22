@@ -15,6 +15,7 @@ from ninja import Router, Status
 from canopy_sdk import contract
 from ninja.errors import HttpError
 
+from apps.agents.gates import agent_for_read, agent_for_work
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
@@ -162,64 +163,21 @@ ALLOWED_EVENT_KINDS = {
 TRANSCRIPT_APPEND_MAX_BYTES = 1 * 1024 * 1024
 
 
-def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
-    """Resolve an agent, gated by workspace membership. A non-member gets the
-    same 404 as a missing agent (no existence leak). A domain user who has not
-    been let into the agent's workspace (an invite, or an approved access
-    request) is a non-member and gets exactly that 404 — nothing joins
-    automatically.
-
-    Harness-local twin of agents.api._get_agent_or_404 — deliberately duplicated
-    rather than imported: api modules must not depend on each other, and the
-    harness is framework-tier.
-
-    Fails CLOSED on a workspace-less agent (security review 2026-07-26, F1):
-    `agent.workspace_id` falsy must not short-circuit to "ungated" — that would
-    hand ANY authenticated user (not just a workspace member) full read/write on
-    a null-workspace agent's turns, including this app's own raw transcripts.
-    Latent today (production has zero agents with workspace_id IS NULL), but a
-    fail-open tenancy gate is a bug regardless of whether anything currently
-    exploits it. A pre-migration agent with no workspace is simply not
-    resolvable via this API until it's backfilled a workspace — it does not
-    fall back to "visible to everyone."
-    """
-    agent = Agent.objects.filter(slug=slug).first()
-    if agent is None:
-        raise HttpError(404, f"agent '{slug}' not found")
-    ws = getattr(request, "workspace_slug", None)
-    if ws and agent.workspace_id != ws:
-        raise HttpError(404, f"agent '{slug}' not found")  # wrong tenant
-    if not agent.workspace_id or not wsvc.is_member(request.user, agent.workspace_id):
-        raise HttpError(404, f"agent '{slug}' not found")
-    return agent
-
-
-def _agent_for_write_or_404(request: HttpRequest, slug: str) -> Agent:
-    """An agent whose EXECUTION the caller may drive. Editor or owner.
-
-    Harness-local twin of `apps.agents.api._agent_for_write`, duplicated for
-    the same reason `_agent_or_404` is: api modules must not depend on each
-    other, and the harness is framework-tier. Both read the role through the
-    one shared reader (`wsvc.member_role`), so the duplication is of the CALL,
-    not of what "editor" means.
-
-    Enqueuing a turn is the executing half of the author tier — it is arbitrary
-    prompt text run as the agent, holding the agent's resolved credentials, and
-    bare membership let a `viewer` do it. Resolve-then-authorize: a non-member
-    gets `_agent_or_404`'s 404 and never a 403.
-    """
-    agent = _agent_or_404(request, slug)
-    if not perms.can(request.user, agent.workspace_id, perms.AGENT_WORK):
-        raise HttpError(403, "running a turn for this agent requires the editor or owner role")
-    return agent
-
-
 def _runner_owned_q(request: HttpRequest) -> Q:
     """Ownership: the caller owns it. A runner NOBODY owns is acted on by
     nobody — it used to be acted on by everyone (heartbeat, claim, retire, and
     its plaintext credential bundle), the NULL-means-allow shape this repo has
     removed everywhere else. Every live runner on labs has a owner (2026-10-02)."""
-    return Q(owner=request.user)
+    from .runner_protocol import owned_runner_q
+
+    return owned_runner_q(request.user)
+
+
+#: Fleet runners only: a computer's key holder (`Runner.COMPUTER` — a person's
+#: computer in plain Claude Code, no runner app) is not a box anyone lists, pins,
+#: heartbeats, claims as or administers; its keys are reached through
+#: `/api/runner-device-keys/` and its machine through `/api/private-runners/`.
+_FLEET_Q = ~Q(kind=Runner.COMPUTER)
 
 
 def _runner_read_q(request: HttpRequest) -> Q:
@@ -262,13 +220,13 @@ def _runner_read_q(request: HttpRequest) -> Q:
         # here, not ungated (the property
         # test_pinned_null_workspace_runner_is_neither_listed_nor_actionable
         # pins). WorkspaceResolveMiddleware has already gated membership of `ws`.
-        return Q(workspace_id=ws) | _runners_serving_q({ws})
+        return (Q(workspace_id=ws) | _runners_serving_q({ws})) & _FLEET_Q
     slugs = wsvc.user_workspace_slugs(request.user)
     return (
         Q(workspace_id__in=slugs)
         | _runners_serving_q(slugs)
         | (Q(workspace_id__isnull=True) & _runner_owned_q(request))
-    )
+    ) & _FLEET_Q
 
 
 def _runners_serving_q(slugs) -> Q:
@@ -287,7 +245,7 @@ def _runners_serving_q(slugs) -> Q:
     slugs = set(slugs)
     if not slugs:
         return Q(pk__in=[])
-    candidates = (Runner.objects.exclude(status=Runner.RETIRED)
+    candidates = (Runner.objects.exclude(status=Runner.RETIRED).filter(_FLEET_Q)
                   .filter(owner__isnull=False, workspace__isnull=False)
                   .select_related("owner").prefetch_related("enrollments"))
     return Q(pk__in=[r.pk for r in candidates if services.runner_tenant_slugs(r) & slugs])
@@ -323,7 +281,7 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
         wq = Q(workspace_id__in=[ws, *(here.ancestor_slugs() if here else [])])
     else:
         wq = Q(workspace_id__in=wsvc.user_workspace_slugs(request.user)) | Q(workspace_id__isnull=True)
-    return wq & _runner_owned_q(request)
+    return wq & _runner_owned_q(request) & _FLEET_Q
 
 
 def _runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
@@ -446,6 +404,17 @@ def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     # acting for a visitor: a site never reports as a runner.
     from apps.tokens import delegation
 
+    rtok = getattr(request, "runner_token", None)
+    if rtok is not None and rtok.runner.kind == Runner.COMPUTER:
+        # A computer (no runner app) claims nothing: its token reports only on the
+        # local turns opened on it — never on a turn its owner's other boxes hold.
+        turn = Turn.objects.filter(pk=turn_id, origin=Turn.ORIGIN_LOCAL).select_related(
+            "private_runner").first()
+        from . import local
+
+        if turn is None or not local.may_report(turn, request):
+            raise HttpError(404, "turn not found")
+        return turn
     if delegation.offered_for(request) is None:
         mine = (Turn.objects.select_related("claimed_by")
                 .filter(pk=turn_id, claimed_by__owner_id=request.user.pk).first())
@@ -454,10 +423,11 @@ def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     turn = _turn_or_404(request, turn_id)
     if turn.origin == Turn.ORIGIN_LOCAL:
         # A local turn has no box: the person whose session it is reports on it
-        # (apps/harness/local.py), and nobody else — not even an editor.
+        # (apps/harness/local.py), and nobody else — not even an editor, nor their
+        # shared runner's token.
         from . import local
 
-        if not local.is_initiator(turn, request.user):
+        if not local.may_report(turn, request):
             raise HttpError(404, "turn not found")
         return turn
     if turn.claimed_by_id is not None:
@@ -497,7 +467,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
     Every rejection here raises the SAME uniform `HttpError(404, "turn not
     found")` — including the agent-turn branch, which delegates to
-    `_agent_or_404` (security review 2026-07-26, F4): that helper's own 404
+    `agent_for_read` (security review 2026-07-26, F4): that helper's own 404
     names the agent (`"agent 'ada' not found"`), and the shared error handler
     copies an HttpError's message into both `title` and `detail`. Left
     un-caught, a caller holding a stale/guessed turn UUID would learn not just
@@ -514,7 +484,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
         raise HttpError(404, "turn not found")
     if turn.agent_id:
         try:
-            _agent_or_404(request, turn.agent.slug)  # raises on wrong tenant
+            agent_for_read(request, turn.agent.slug)  # raises on wrong tenant
         except HttpError:
             raise HttpError(404, "turn not found") from None
         return turn
@@ -536,7 +506,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
             raise HttpError(404, "turn not found")
         return turn
 
-    # Project turn: gate on its own workspace, mirroring _agent_or_404's checks.
+    # Project turn: gate on its own workspace, mirroring agent_for_read's checks.
     if ws and turn.workspace_id != ws:
         raise HttpError(404, "turn not found")  # wrong tenant
     # Fails CLOSED on a workspace-less project turn (security review
@@ -833,7 +803,7 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
 
     runner = _runner_or_404(request, runner_id)
     out = []
-    for agent in services.agents_served_by(runner):
+    for agent in services.agents_routed_to(runner):
         delegations.check_github(agent)
         status, detail = delegations.readiness(agent)
         st = delegations.status(agent)
@@ -1153,6 +1123,13 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
     visitors hold, and those conversations then run only on runners declaring it.
     """
     runner = _runner_admin_or_404(request, runner_id)
+    # A person vouching for a box, never a token: not a PAT, not an MCP call, and
+    # not the box's own RunnerAccessToken (which runner_auth lets reach every route
+    # under its own runner). 403 `step_up_required` -> the SPA asks for the passkey
+    # and retries; a token gets a plain 403 it cannot answer.
+    from apps.passkeys import stepup
+
+    stepup.require_recent_step_up(request)
     try:
         wanted = set(contract.parse_runner_requirements(payload.flags))
     except ValueError as exc:
@@ -1200,14 +1177,17 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
     if runner.private:
         # The box IS its owner's private runner: link the registration here, so the
         # runner writes it on its next heartbeat and no one runs `canopy private-runner
-        # register` on the machine.
+        # register` on the machine. Its OWN registration — never another machine's
+        # that shares its name (`local.private_runner_for_runner`).
         from . import local
 
-        if not PrivateRunner.objects.filter(runner=runner, retired_at__isnull=True).exists():
-            local.register_private_runner(request.user, name=runner.name,
-                                          host=runner.host, runner=runner)
-        audit.note_change(scope=f"runner-private:{runner.name}", before=before, after=after,
-                          workspace=runner.workspace)
+        local.private_runner_for_runner(runner)
+    else:
+        # Shared again: the registration stops naming a box whose token now speaks
+        # for the fleet. Making it private again links (or makes) one afresh.
+        PrivateRunner.objects.filter(runner=runner).update(runner=None)
+    audit.note_change(scope=f"runner-private:{runner.name}", before=before, after=after,
+                      workspace=runner.workspace)
     out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
     out.can_manage = True
     out.can_administer = services.can_administer_runner(request.user, out)
@@ -1609,31 +1589,11 @@ def release_fleet_hold(request: HttpRequest):
 
 @router.post("/runners/{runner_id}/heartbeat", response=RunnerOut)
 def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: HeartbeatIn):
-    runner = _runner_or_404(request, runner_id)
-    if payload.host and payload.host != runner.host:
-        runner.host = payload.host
-        runner.save(update_fields=["host"])
+    from . import runner_protocol
     from .api_device_keys import waiting_approval_url
 
-    beat = services.heartbeat(
-        runner,
-        active_turn_ids=payload.active_turn_ids,
-        degraded=payload.degraded,
-        note=payload.note,
-        ready=payload.ready,
-        ready_note=payload.ready_note,
-        code_branch=payload.code_branch,
-        code_version=payload.code_version,
-        code_sha=payload.code_sha,
-        code_committed_at=payload.code_committed_at,
-        projects=payload.projects,
-        profiles=payload.profiles,
-        envelope=payload.envelope,
-        midturn=payload.midturn,
-        health=payload.health.model_dump() if payload.health is not None else None,
-        mailboxes_readable=payload.mailboxes_readable,
-        agents_unprepared=payload.agents_unprepared,
-    )
+    runner = _runner_or_404(request, runner_id)
+    beat = runner_protocol.heartbeat(runner, payload)
     beat.key_waiting_url = waiting_approval_url(runner)
     return beat
 
@@ -1746,7 +1706,7 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
 
 
 def _project_workspace_or_404(request: HttpRequest, ws_slug: str):
-    """Tenant-gate a project session's workspace, mirroring _agent_or_404 for the
+    """Tenant-gate a project session's workspace, mirroring agent_for_read for the
     agent case. A project link has no agent to derive tenancy from, so without
     this any runner could read another user's rolling `summary` by guessing
     thread_key.
@@ -1777,7 +1737,7 @@ def resolve_session(request: HttpRequest, runner_id: uuid.UUID, payload: Resolve
             None, payload.thread_key, runner, project=payload.project, workspace=ws,
             turn_id=payload.turn_id,
         )
-    agent = _agent_or_404(request, payload.agent_slug)
+    agent = agent_for_read(request, payload.agent_slug)
     return services.resolve_session(agent, payload.thread_key, runner, turn_id=payload.turn_id)
 
 
@@ -1825,7 +1785,7 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
         return services.resolve_session(
             None, payload.thread_key, runner, project=payload.project, workspace=ws
         )
-    agent = _agent_or_404(request, payload.agent_slug)
+    agent = agent_for_read(request, payload.agent_slug)
     title = payload.title
     if turn is not None:
         # The server names the session from the turn when it knows it: the email's
@@ -2340,7 +2300,8 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         # session turns are deliberately NOT gated the same way — a session turn
         # is what a chat send produces, and talking to an agent is exactly what
         # the interaction tier is for.
-        agent = _agent_for_write_or_404(request, payload.agent_slug)
+        agent = agent_for_work(request, payload.agent_slug,
+                                   forbidden="running a turn for this agent requires the editor or owner role")
     else:
         # A project turn carries its own tenant.
         ws_slug = getattr(request, "workspace_slug", None)
@@ -2348,7 +2309,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
             # current_workspace gates membership on an explicit slug, so a
             # non-member's enqueue cannot land in someone else's workspace. 404
             # rather than 403: the harness must not leak which tenants exist
-            # (same rule as _agent_or_404).
+            # (same rule as agent_for_read).
             try:
                 workspace = wsvc.current_workspace(request.user, ws_slug)
             except ValueError:
@@ -2471,7 +2432,11 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         # What the caller was running inside (overrides X-Canopy-Parent-*).
         parent=payload.parent,
     )
-    return Status(201 if created else 200, turn)
+    from . import turn_access
+
+    # Through the same content gate the get/list routes use: a replay hands back
+    # an existing row, and the caller sees of it only what they may read.
+    return Status(201 if created else 200, turn_access.redact([turn], request.user)[0])
 
 
 #: Credentials that establish the person on THIS request — a signed-in browser
@@ -2565,7 +2530,7 @@ def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
     # `Q(agent__workspace_id__in=slugs) | Q(agent__workspace_id__isnull=True)`,
     # with two independent problems. (1) The isnull leg left an unhomed
     # agent's turns (TurnOut: prompt, origin_ref, session_id) visible to ANY
-    # authenticated caller — more permissive than `_agent_or_404`'s fail-closed
+    # authenticated caller — more permissive than `agent_for_read`'s fail-closed
     # gate, recreating the exact list-vs-gate drift `_runner_visibility_q`'s
     # docstring warns about (a turn the list shows, then 404s on every
     # action). (2) `agent__workspace_id` traverses a nullable FK: for a
@@ -2619,8 +2584,8 @@ def list_turns(
         # first, which already 404s.)
         #
         # 404 rather than 403, and the same 404 for a typo, so the endpoint cannot
-        # be used to enumerate which tenants' agents exist (see _agent_or_404).
-        target = _agent_or_404(request, agent)
+        # be used to enumerate which tenants' agents exist (see agent_for_read).
+        target = agent_for_read(request, agent)
         if qs is None:
             qs = visible_turns_qs(
                 request, slugs=wsvc.tree_scope(request.user, target.workspace_id))
@@ -2795,31 +2760,15 @@ def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
 
 @router.post("/turns/{turn_id}/finish", response=TurnOut)
 def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn):
+    from . import runner_protocol
+
     turn = _reporting_turn_or_404(request, turn_id)
-    if payload.status not in (Turn.DONE, Turn.FAILED, Turn.CANCELLED):
-        raise HttpError(422, "finish status must be done|failed|cancelled")
-    # Record the session BEFORE the terminal check: a re-reported finish is otherwise
-    # a no-op, and this is the only moment the runner tells us which emdash session
-    # the turn drove. Never blank an existing value — the first report wins.
-    if payload.session_key and not turn.session_key:
-        turn.session_key = payload.session_key[:200]
-        turn.save(update_fields=["session_key"])
-    if turn.status in Turn.TERMINAL:
-        return turn  # idempotent finish
-    # Read the state BEFORE finishing: a non-terminal result is now ambiguous. It
-    # means either "you tried to finish a turn you never claimed" (the 409 this guard
-    # was written for) or "your sessionless failure was put back on the queue"
-    # (services.finish_turn's requeue — a SUCCESSFUL finish that legitimately lands on
-    # QUEUED). Only the executing case can produce the second, so that is what tells
-    # them apart; keying on the result status alone would 409 every retry.
-    was_executing = turn.status in services.EXECUTING
-    result = services.finish_turn(turn, status=payload.status, result_note=payload.result_note)
-    if result.status not in Turn.TERMINAL and not was_executing:
-        # services.finish_turn only transitions claimed/running/needs_human — a
-        # queued turn is a silent no-op there. Surface that as a 409 instead of
-        # returning a turn that looks unchanged.
-        raise ProblemError(409, "Turn not finishable", detail=f"status={result.status}")
-    return result
+    try:
+        return runner_protocol.finish(turn, payload)
+    except runner_protocol.ProtocolError as exc:
+        if exc.status == 422:
+            raise HttpError(422, exc.detail) from exc
+        raise ProblemError(exc.status, exc.title, detail=exc.detail) from exc
 
 
 def _cancel_refusal(user, turn: Turn) -> str:
@@ -2864,7 +2813,7 @@ def cancel_turn(request: HttpRequest, turn_id: uuid.UUID):
     """
     turn = _turn_or_404(request, turn_id)
     if turn.agent_id:
-        _agent_or_404(request, turn.agent.slug)  # a non-member gets a 404, never a 403
+        agent_for_read(request, turn.agent.slug)  # a non-member gets a 404, never a 403
     if refusal := _cancel_refusal(request.user, turn):
         raise HttpError(403, refusal)
     if turn.status in Turn.TERMINAL:
@@ -2946,8 +2895,8 @@ def sync_schedules(request: HttpRequest, runner_id: uuid.UUID, limit: int = 200)
     — a fresh daemon would have to sync before its first heartbeat.
     """
     runner = _runner_or_404(request, runner_id)
-    items = [ScheduleOut(**serialize_schedule(s)) for s in _runner_schedule_qs(runner)]
-    return paginate(items, offset=0, limit=clamp_limit(limit))
+    return paginate(_runner_schedule_qs(runner).order_by("name", "pk"), offset=0,
+                    limit=clamp_limit(limit), map=lambda s: ScheduleOut(**serialize_schedule(s)))
 
 
 @router.post("/schedules/{schedule_id}/fire", response={201: TurnOut, 202: ScheduleAnnouncedOut},

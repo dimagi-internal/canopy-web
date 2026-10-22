@@ -4,11 +4,12 @@ import { clsx } from 'clsx'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
 import { getWorkspaceHealth, type AgentHealthOut, type TopologyRunnerOut, type WorkspaceHealthOut } from '@/api/workspaces'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { SetupSteps, StatusIcon } from '@/components/agents/AgentSetupChecklist'
 import { AdminOnly, HealthViews } from './HealthViews'
 import { RunnersTable } from '@/components/runners/RunnersTable'
 import { useTreeRead } from './useTreeRead'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // WORKSPACE HEALTH: what is not set up right, across this workspace and every one
 // below it. It renders; it never decides. Each agent's steps are its own setup
@@ -87,12 +88,12 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
             {health.workspaces.map((w) => (
               <tr key={w.slug}>
                 <td className="py-1.5" style={{ paddingLeft: `${w.depth * 16}px` }}>
-                  <Link to={`/w/${w.slug}/health`} className="text-foreground hover:underline">{w.name}</Link>
+                  <Link to={scopedPath(w.slug, '/health')} className="text-foreground hover:underline">{w.name}</Link>
                   <span className="ml-1 font-mono text-muted-foreground">{w.slug}</span>
                 </td>
-                <td className="tabular-nums"><CountLink n={w.agents} to={`/w/${w.slug}/agents`} label="agents" /></td>
+                <td className="tabular-nums"><CountLink n={w.agents} to={scopedPath(w.slug, '/agents')} label="agents" /></td>
                 <td className="text-foreground-secondary">
-                  <Link to={`/w/${w.slug}/settings/secrets`} className="hover:underline">
+                  <Link to={scopedPath(w.slug, '/settings/secrets')} className="hover:underline">
                   {w.shared_vault.vault
                     ? <>{w.shared_vault.vault}{w.shared_vault.key_set ? '' : ' · no key stored'}
                       {w.shared_vault.inherited_from && <span className="text-muted-foreground"> · from {w.shared_vault.inherited_from}</span>}</>
@@ -172,16 +173,16 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                         <span className="ml-1 whitespace-nowrap tabular-nums text-muted-foreground">{a.left ? `${a.left} left` : 'done'}</span>
                       </span>
                     </td>
-                    <td><CellLink to={`/w/${a.workspace}/agents/${a.slug}/settings#credentials`}><VaultBadge agent={a} /></CellLink></td>
+                    <td><CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#credentials`)}><VaultBadge agent={a} /></CellLink></td>
                     <td className="text-foreground-secondary">
                       {a.owner_email ? <a href={`mailto:${a.owner_email}`} onClick={stop} className="hover:underline">{a.owner_email}</a> : '—'}
                     </td>
-                    <td className="font-mono text-foreground-secondary"><CellLink to={`/w/${a.workspace}/health`}>{a.workspace}</CellLink></td>
+                    <td className="font-mono text-foreground-secondary"><CellLink to={scopedPath(a.workspace, '/health')}>{a.workspace}</CellLink></td>
                     <td className="text-foreground-secondary">
-                      {a.last_turn_at ? <CellLink to={`/w/${a.workspace}/agents/${a.slug}/turns`}>{relativeTime(a.last_turn_at, now)}</CellLink> : 'never'}
+                      {a.last_turn_at ? <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/turns`)}>{relativeAge(a.last_turn_at, now, { seconds: false })}</CellLink> : 'never'}
                     </td>
                     <td className="whitespace-nowrap text-right tabular-nums">
-                      <CountLink n={a.turns_30d} to={`/w/${a.workspace}/agents/${a.slug}/turns`} label="turns" />
+                      <CountLink n={a.turns_30d} to={scopedPath(a.workspace, `/agents/${a.slug}/turns`)} label="turns" />
                       {a.failed_30d > 0 && <span className="text-destructive"> · {a.failed_30d} failed</span>}
                     </td>
                     <td className="text-right tabular-nums text-foreground-secondary">{a.people_30d || '—'}</td>
@@ -194,25 +195,25 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                     </td>
                     <td className="whitespace-nowrap text-foreground-secondary" title="Open the row for its latest sessions">
                       {a.active_sessions ? <span className="text-foreground">{a.active_sessions} open</span> : '0 open'}
-                      {a.last_session_at && <span className="text-muted-foreground"> · {relativeTime(a.last_session_at, now)}</span>}
+                      {a.last_session_at && <span className="text-muted-foreground"> · {relativeAge(a.last_session_at, now, { seconds: false })}</span>}
                     </td>
                     <td className="text-right tabular-nums">
-                      <CountLink n={a.projects} to={`/w/${a.workspace}/agents/${a.slug}/projects`} label="projects" />
+                      <CountLink n={a.projects} to={scopedPath(a.workspace, `/agents/${a.slug}/projects`)} label="projects" />
                     </td>
                     <td className="text-right tabular-nums">
-                      <CountLink n={a.open_tasks} to={`/w/${a.workspace}/agents/${a.slug}/tasks`} label="open tasks" />
+                      <CountLink n={a.open_tasks} to={scopedPath(a.workspace, `/agents/${a.slug}/tasks`)} label="open tasks" />
                     </td>
                     <td className="text-right tabular-nums">
-                      <CountLink n={a.waiting_tasks} to={`/w/${a.workspace}/agents/${a.slug}/tasks`} label="tasks waiting on people" />
+                      <CountLink n={a.waiting_tasks} to={scopedPath(a.workspace, `/agents/${a.slug}/tasks`)} label="tasks waiting on people" />
                     </td>
-                    <td className="text-right tabular-nums"><CountLink n={a.skills} to={`/w/${a.workspace}/agents/${a.slug}/skills`} label="skills" /></td>
-                    <td className="text-right tabular-nums"><CountLink n={a.schedules} to={`/w/${a.workspace}/agents/${a.slug}/schedules`} label="schedules" /></td>
+                    <td className="text-right tabular-nums"><CountLink n={a.skills} to={scopedPath(a.workspace, `/agents/${a.slug}/skills`)} label="skills" /></td>
+                    <td className="text-right tabular-nums"><CountLink n={a.schedules} to={scopedPath(a.workspace, `/agents/${a.slug}/schedules`)} label="schedules" /></td>
                     <td className="whitespace-nowrap text-foreground-secondary"
                         title={a.full_access.length ? `Whole agent for: ${a.full_access.join(', ')}` : undefined}>
-                      <CellLink to={`/w/${a.workspace}/agents/${a.slug}/settings#reach`}>{whoCanUse(a)}</CellLink>
+                      <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#reach`)}>{whoCanUse(a)}</CellLink>
                     </td>
                     <td className="whitespace-nowrap text-foreground-secondary">
-                      <CellLink to={`/w/${a.workspace}/agents/${a.slug}/settings#running`}>
+                      <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#running`)}>
                         {a.turn_mode === 'manual' ? 'Manual · asks first' : a.turn_mode === 'auto' ? 'Auto' : a.turn_mode}
                       </CellLink>
                     </td>
@@ -260,7 +261,7 @@ function Runners({ runners, workspace }: { runners: readonly RunnerRow[]; worksp
     <section aria-label="Runners" id="health-runners" className="scroll-mt-4">
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <h2 className="text-[13px] font-semibold text-foreground">Runners</h2>
-        <Link to={`/w/${workspace}/settings/topology/runners`} className="text-[12px] text-primary hover:underline">
+        <Link to={scopedPath(workspace, '/settings/topology/runners')} className="text-[12px] text-primary hover:underline">
           Routing and drills
         </Link>
       </div>
@@ -326,7 +327,7 @@ function AgentDetail({ agent }: { agent: AgentHealthOut }): JSX.Element {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2 text-[12px]">
           <span className="text-muted-foreground">
             <span className="font-semibold text-foreground">Setup</span> — the same steps as its{' '}
-            <Link to={`/w/${agent.workspace}/agents/${agent.slug}/settings`} className="text-primary hover:underline">Settings page</Link>.
+            <Link to={scopedPath(agent.workspace, `/agents/${agent.slug}/settings`)} className="text-primary hover:underline">Settings page</Link>.
           </span>
           {!agent.can_fix && agent.left > 0 && (
             agent.owner_email
@@ -377,11 +378,11 @@ function RecentSessions({ agent }: { agent: AgentHealthOut }): JSX.Element {
           <ul className="space-y-1">
             {agent.recent_sessions.map((s) => (
               <li key={s.id} className="flex items-baseline justify-between gap-2">
-                <Link to={`/w/${s.workspace}/chat/${s.id}`} className="min-w-0 truncate text-primary hover:underline">
+                <Link to={scopedPath(s.workspace, `/chat/${s.id}`)} className="min-w-0 truncate text-primary hover:underline">
                   {s.title || 'Untitled session'}
                 </Link>
                 <span className="shrink-0 text-muted-foreground">
-                  {s.active && <span className="mr-1 text-success">open ·</span>}{relativeTime(s.at, now)}
+                  {s.active && <span className="mr-1 text-success">open ·</span>}{relativeAge(s.at, now, { seconds: false })}
                 </span>
               </li>
             ))}

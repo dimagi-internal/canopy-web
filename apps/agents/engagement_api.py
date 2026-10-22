@@ -16,7 +16,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 
 from . import engagement
-from .api import _listed_agent_workspace_ids, _visible_agent_workspace_ids
+from .gates import listed_agent_workspaces, visible_agent_workspaces
 from .models import AgentProject
 from .schemas import EngagementSummaryOut, EngagementViewIn, EngagementViewOut
 
@@ -50,7 +50,7 @@ def record_engagement_view(request: HttpRequest, payload: EngagementViewIn) -> d
     if payload.project is not None:
         project = (AgentProject.objects.select_related("agent")
                    .filter(pk=payload.project,
-                           agent__workspace_id__in=_visible_agent_workspace_ids(request)).first())
+                           agent__workspace_id__in=visible_agent_workspaces(request)).first())
         if project is None:
             raise HttpError(404, f"project {payload.project} not found")
         row = engagement.record("viewed", workspace=project.agent.workspace_id, surface=surface,
@@ -72,4 +72,4 @@ def engagement_summary(request: HttpRequest, days: int = 14, checkin: str = "", 
     for proposed projects and for the tasks check-ins proposed; and check-in runs
     announced vs confirmed vs skipped vs expired, with the median time to
     confirm. `checkin` (a check-in's id, or its name) and `agent` narrow it."""
-    return engagement.summary(_listed_agent_workspace_ids(request), days=days, checkin=checkin, agent=agent)
+    return engagement.summary(listed_agent_workspaces(request), days=days, checkin=checkin, agent=agent)

@@ -233,7 +233,7 @@ def allow(*, workspace, agent, channel: str, follow: bool, note: str, by) -> Sla
     the agent still asks (`request`), with a purpose, and the channel is told."""
     if agent.workspace_id != workspace.slug:
         raise IngestError(f"{agent.slug} is not an agent of '{workspace.slug}'", 404)
-    if agent.user_id is not None and getattr(by, "pk", None) == agent.user_id:
+    if agent.is_own_login(by):
         raise IngestError(f"{agent.slug} can't allow-list a channel for itself", 403)
     link = link_for(workspace.slug)
     if link is None:
@@ -347,7 +347,7 @@ def _clicker(installation: SlackInstallation, slack_user_id: str):
 def may_approve(ingest: SlackChannelIngest, *, slack_user_id: str, user) -> str:
     """"" if this person may approve this ingest, else why not (said to them)."""
     agent = ingest.agent
-    if user is not None and agent.user_id is not None and user.pk == agent.user_id:
+    if agent.is_own_login(user):
         return f"{agent.slug} can't approve its own request."
     token = ingest.installation.bot_token
     if not client.is_channel_member(token, ingest.channel_id, slack_user_id):
@@ -369,7 +369,7 @@ def decide(installation: SlackInstallation, *, ingest_id: str, slack_user_id: st
         return "That request is no longer open."
     user = _clicker(installation, slack_user_id)
     agent = ingest.agent
-    if user is not None and agent.user_id is not None and user.pk == agent.user_id:
+    if agent.is_own_login(user):
         why = f"{agent.slug} can't answer its own request."
     elif approve:
         why = may_approve(ingest, slack_user_id=slack_user_id, user=user)

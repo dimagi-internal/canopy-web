@@ -328,16 +328,15 @@ def reject(turn, rule: AdmissionRule, *, runner=None, detail: str = "",
     turn would start a debugger turn (`harness.auto_debug`). Guarded on the
     status so a turn another runner claimed in the meantime is left alone.
     """
+    from apps.harness.closing import close_turn
     from apps.harness.models import Turn
 
     note = result_note(rule, detail)
-    now = timezone.now()
-    updated = Turn.objects.filter(pk=turn.pk, status=Turn.QUEUED).update(
-        status=Turn.CANCELLED, finished_at=now, result_note=note,
-    )
-    if not updated:
+    # `ledger=False`: `_fire` writes the status line (naming the rule and the
+    # stage), as it does for a refusal written already cancelled.
+    if not close_turn(turn, Turn.CANCELLED, note, from_states=[Turn.QUEUED], ledger=False,
+                      drill_summary=f"drill turn refused: {note}"):
         return False
-    turn.refresh_from_db()
     if stage is None:
         stage = ({"runner": runner.name, "runner_kind": runner.kind} if runner is not None
                  else {"at": "enqueue"})

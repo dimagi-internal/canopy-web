@@ -9,25 +9,17 @@ features for members, and every one of them is keyed on a user id a contact
 does not have — so the smallest correct thing is also the one they need.
 """
 
-import datetime as dt
-import uuid
 
-import jwt
 import pytest
 from channels.testing import WebsocketCommunicator
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519
-from django.contrib.auth.models import AnonymousUser, User
+from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
 from django.test import Client
 
-from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.contacts.models import Contact
-from apps.tokens import assertions
-from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.canopy_sessions.consumers import SessionConsumer
-from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.contact_websocket import _contact_token, _world
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.asyncio]
 
@@ -37,46 +29,6 @@ def _clean_cache():
     cache.clear()
     yield
     cache.clear()
-
-
-def _keypair():
-    priv = ed25519.Ed25519PrivateKey.generate()
-    return (
-        priv.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        ).decode(),
-        priv.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo,
-        ).decode(),
-    )
-
-
-def _world():
-    owner = User.objects.create_user("boss", "boss@dimagi.com", "pw")
-    ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=owner)
-    WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
-    agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
-    priv, pub = _keypair()
-    app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
-    app.workspace = ws
-    app.public_keys = [pub]
-    app.save(update_fields=["workspace", "public_keys"])
-    AppCredentialAgent.objects.create(app=app, agent=agent)
-    return owner, ws, app, priv
-
-
-def _contact_token(priv, sub="u-42"):
-    now = int(dt.datetime.now(dt.timezone.utc).timestamp())
-    assertion = jwt.encode(
-        {"iss": "connect-labs", "sub": sub, "aud": assertions.audience(),
-         "iat": now, "exp": now + 60, "jti": str(uuid.uuid4())},
-        priv, algorithm="EdDSA",
-    )
-    return Client().post("/api/auth/contact-token", data={"assertion": assertion},
-                         content_type="application/json").json()["token"]
 
 
 def _start_session(token, agent_slug="echo"):

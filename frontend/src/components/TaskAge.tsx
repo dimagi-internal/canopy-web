@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 
 // How old a task is — read from ONE place by every surface that renders a
 // TaskCard (the agent board, the fleet "Waiting on you" queue, a project page),
@@ -10,13 +10,13 @@ import { relativeTime } from '@/components/activity/turnLog'
 // and I should close." Age IS the question, so the relative form leads. The absolute
 // timestamp goes on hover, for when the exact day is what matters.
 
-/** Parse to a printable age, or null if the value isn't a usable date. Guarding here
- *  matters: relativeTime() on an unparseable string yields a cheerful "NaNd ago". */
+/** Parse to a printable age, or null if the value isn't a usable date — a card with no
+ *  usable date shows no age at all rather than relativeAge's "never". */
 function age(iso: string | null | undefined, now: Date): string | null {
   if (!iso) return null
   const t = new Date(iso)
   if (Number.isNaN(t.getTime())) return null
-  return relativeTime(iso, now)
+  return relativeAge(iso, now, { seconds: false })
 }
 
 /** Absolute form for the tooltip — local time, unambiguous month. */

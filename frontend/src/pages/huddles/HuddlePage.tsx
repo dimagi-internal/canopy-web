@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { getHuddle, type Huddle } from '@/api/huddles'
 import { getHuddleThreads } from '@/api/threads'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { ProposalCard } from '@/components/projects/ProposalCard'
 import { useEngagementView } from '@/components/projects/useEngagementView'
 import { HuddleConversation } from './HuddleConversation'
@@ -14,6 +14,7 @@ import { PrioritiesBrief } from './HuddleBrief'
 import { BriefContext } from './briefContext'
 import { agreementThreads, columns, countdown, roundName, roundsToShow } from './huddleModel'
 import { andList, huddleExplainer, who } from './plainWords'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /**
  * One huddle, for a person seeing it cold: a one-line explainer of what a
@@ -193,7 +194,7 @@ export function HuddlePage() {
   if (!huddle) {
     return (
       <div className="mx-auto max-w-7xl p-6">
-        <Link to={`/w/${workspace}/huddles`} className="text-[12px] text-muted-foreground hover:text-primary">← Huddles</Link>
+        <Link to={scopedPath(workspace, '/huddles')} className="text-[12px] text-muted-foreground hover:text-primary">← Huddles</Link>
         {error ? <p className="mt-4 text-sm text-destructive">Couldn’t load this huddle: {error}</p> : <div className="mt-4"><WorkbenchSkeleton /></div>}
       </div>
     )
@@ -208,7 +209,7 @@ export function HuddlePage() {
     // button, which otherwise covers the bottom-right member card.
     <BriefContext.Provider value={huddle.priorities_brief ?? ''}>
       <div className="pb-28">
-        <Link to={`/w/${workspace}/huddles`} className="text-[12px] text-muted-foreground hover:text-primary">← Huddles</Link>
+        <Link to={scopedPath(workspace, '/huddles')} className="text-[12px] text-muted-foreground hover:text-primary">← Huddles</Link>
 
         <header className="mt-3 mb-6 rounded-2xl border border-border bg-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -234,7 +235,7 @@ export function HuddlePage() {
                 <span className="text-muted-foreground">·</span>
                 <span>with {andList(columns(huddle))}</span>
                 <span className="text-muted-foreground">·</span>
-                <span>started {relativeTime(huddle.created_at, now)}</span>
+                <span>started {relativeAge(huddle.created_at, now, { seconds: false })}</span>
                 {!huddle.finished && huddle.deadline_at && (
                   <>
                     <span className="text-muted-foreground">·</span>

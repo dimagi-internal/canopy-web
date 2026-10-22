@@ -165,8 +165,6 @@ EXCLUDED: dict[str, str] = {
     "app_view_read": _BROWSER,
     "app_view_context": _BROWSER,
     "app_view_message": _BROWSER,
-    # Deprecated.
-    "set_runner_preference": "deprecated; superseded by replace_agent_runners",
 }
 
 def excluded_reason(path: str, method: str, operation: dict) -> str | None:
@@ -343,11 +341,14 @@ def _client() -> httpx2.AsyncClient:
 # -- the tool --------------------------------------------------------------
 
 #: Headers of the MCP client's HTTP request carried into the in-process call:
-#: provenance only (apps/common/request_context.py) — never a credential.
+#: provenance (apps/common/request_context.py) and the acting cap the client put
+#: itself in (`x-canopy-acts-as`, `x-canopy-turn-id` — apps/workspaces/role_cap.py,
+#: which only ever lowers) — never a credential.
 FORWARDED_HEADERS = (
     "user-agent", "x-canopy-client", "x-request-id", "x-forwarded-for",
     "x-canopy-parent-turn", "x-canopy-parent-session", "x-canopy-parent-task",
     "x-canopy-parent-host", "x-canopy-claude-session",
+    "x-canopy-acts-as", "x-canopy-turn-id",
 )
 
 

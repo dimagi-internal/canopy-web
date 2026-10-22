@@ -109,7 +109,7 @@ def test_every_frame_the_consumer_emits_is_in_the_round_trip_fixture():
     for every entry -- so every frame a client can receive has to be IN it.
     This is the test the old allowlist should have been.
     """
-    from tests.test_agui_projection import ROUND_TRIP_FRAMES
+    from tests.fixtures.agui import ROUND_TRIP_FRAMES
 
     covered = {frame["event"] for frame in ROUND_TRIP_FRAMES}
     missing = _frames_the_consumer_can_emit() - covered

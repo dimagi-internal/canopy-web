@@ -1,36 +1,17 @@
 /**
  * API client for the /api/timeline surface (team-wide activity aggregator).
- *
- * Not in the generated OpenAPI types yet — raw fetch with the same credential
- * conventions as api/ddd.ts. Run `npm run gen:api` to migrate to openapi-fetch.
+ * On `apiV2`, so a tenant page's read is pinned to /api/w/<ws>/timeline/.
  */
 
-import { apiUrl } from './base'
+import { apiV2 } from './client.v2'
+import type { components } from './generated'
+import { unwrap } from './problem'
 
-export interface TimelineEvent {
-  subsystem: string
-  kind: string
-  at: string
-  title: string
-  summary: string | null
-  project_slug: string | null
-  actor: string | null
-  href: string
-  external: boolean
-  icon: string | null
-  id: string
-}
+type Schemas = components['schemas']
 
-export interface TimelineSubsystem {
-  key: string
-  label: string
-}
-
-export interface TimelineResponse {
-  events: TimelineEvent[]
-  subsystems: TimelineSubsystem[]
-  next_before: string | null
-}
+export type TimelineEvent = Schemas['ActivityEventOut']
+export type TimelineSubsystem = Schemas['SubsystemOut']
+export type TimelineResponse = Schemas['TimelineOut']
 
 export interface ListTimelineParams {
   subsystem?: string
@@ -38,25 +19,15 @@ export interface ListTimelineParams {
   before?: string
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const resp = await fetch(apiUrl(url), { credentials: 'same-origin' })
-  if (!resp.ok) {
-    let detail = ''
-    try {
-      detail = (await resp.json())?.detail ?? ''
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `Request failed (${resp.status})`)
-  }
-  return resp.json() as Promise<T>
-}
-
-export function listTimeline(params: ListTimelineParams = {}): Promise<TimelineResponse> {
-  const q = new URLSearchParams()
-  if (params.subsystem) q.set('subsystem', params.subsystem)
-  if (params.limit) q.set('limit', String(params.limit))
-  if (params.before) q.set('before', params.before)
-  const suffix = q.toString() ? `?${q.toString()}` : ''
-  return getJson(`/api/timeline/${suffix}`)
+export async function listTimeline(params: ListTimelineParams = {}): Promise<TimelineResponse> {
+  const res = await apiV2.GET('/api/timeline/', {
+    params: {
+      query: {
+        ...(params.subsystem ? { subsystem: params.subsystem } : {}),
+        ...(params.limit ? { limit: params.limit } : {}),
+        ...(params.before ? { before: params.before } : {}),
+      },
+    },
+  })
+  return unwrap(res, 'listTimeline') as unknown as TimelineResponse
 }

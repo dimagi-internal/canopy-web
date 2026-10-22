@@ -148,10 +148,23 @@ def test_an_empty_repo_gets_exactly_the_factorys_scaffold(editor):
     assert json.loads(files[".claude-plugin/plugin.json"])["name"] == "scout"
     # The creator, not the factory's default author, is on the scaffold.
     assert "Olive Owner" in files[".claude-plugin/plugin.json"]
+    # Runners install the agent's plugin only from its marketplace manifest.
+    assert json.loads(files[".claude-plugin/marketplace.json"])["plugins"][0]["source"] == "./"
     modes = fake.repos[REPO]["modes"]
-    assert modes["hooks/gating_guard.py"] == "100755"
+    assert modes["scripts/bump-plugin-version.py"] == "100755"
     assert modes["bin/scout-email"] == "100755"
     assert modes["persona.md"] == "100644"
+
+
+def test_a_google_account_is_stamped_into_the_repos_agent_json(editor):
+    fake = FakeGitHub(**{REPO: {}})
+    with _github(fake):
+        resp = _scaffold(_client(editor), mailbox="scout@dimagi.ai",
+                         google_account="scout@dimagi-ai.com")
+    assert resp.status_code == 201, resp.content
+    agent_json = json.loads(fake.repos[REPO]["files"]["config/agent.json"])
+    assert agent_json["email"] == "scout@dimagi.ai"
+    assert agent_json["google_account"] == "scout@dimagi-ai.com"
 
 
 def test_running_it_again_adopts_the_scaffold_it_already_pushed(editor):
@@ -222,7 +235,8 @@ def test_an_earlier_attempt_is_completed_and_nothing_it_wrote_is_overwritten(edi
     files = fake.repos[REPO]["files"]
     for path, text in earlier.items():
         assert files[path] == text  # kept exactly
-    assert "hooks/gating_guard.py" in files and fake.repos[REPO]["modes"]["hooks/gating_guard.py"] == "100755"
+    assert ".claude-plugin/marketplace.json" in files
+    assert fake.repos[REPO]["modes"]["bin/scout-email"] == "100755"
 
 
 def test_another_agents_repo_is_refused_and_names_its_slug(editor):
@@ -377,6 +391,12 @@ def test_the_scaffolds_own_skills_are_not_a_job(editor, ws):
     assert _status(agent)["job"] == "done"
 
 
+def test_the_job_command_names_a_step_the_create_agent_skill_has(editor, ws):
+    agent = _agent(ws, editor)
+    job = next(s for s in setup_steps(agent) if s["key"] == "job")
+    assert "Step 4's `job` step" in job["command"] and "Make it real" not in job["command"]
+
+
 def test_the_runner_step_follows_routing_and_who_may_hold_the_agent(editor, ws):
     agent = _agent(ws, editor)
     box = enrolled(Runner.objects.create(name="olive-cloud", kind=Runner.CLOUD, owner=editor,
@@ -520,3 +540,23 @@ def test_an_agent_that_is_not_zero_knowledge_keeps_google_before_its_vault(edito
     agent = _agent(ws, editor, credential_source=Agent.CANOPY_WEB)
     keys = [s["key"] for s in setup_steps(agent)]
     assert keys.index("mailbox") < keys.index("vault")
+
+
+def test_the_runner_step_is_only_for_running_on_its_own(editor, ws):
+    """Two ways an agent runs: used in your own Claude Code it needs no runner, so the
+    runner step says so and is marked `only_to_run_on_its_own`. Its `status` is
+    unchanged (still `todo` with no runner) — canopy's agent_doctor counts statuses."""
+    agent = _agent(ws, editor)
+    steps = _client(editor).get("/api/agents/scout/setup").json()
+    runner = next(s for s in steps if s["key"] == "runner")
+    assert runner["status"] == "todo"
+    assert runner["only_to_run_on_its_own"] is True
+    assert "canopy agent use scout" in runner["detail"]
+    assert not any(s["only_to_run_on_its_own"] for s in steps if s["key"] != "runner")
+
+    box = enrolled(Runner.objects.create(name="olive-cloud", kind=Runner.CLOUD, owner=editor,
+                                         status=Runner.ONLINE, last_heartbeat_at=timezone.now()), ws)
+    RunnerAssignment.objects.create(agent=agent, runner=box, rank=0)
+    AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud")
+    done = next(s for s in setup_steps(agent) if s["key"] == "runner")
+    assert done["status"] == "done" and "canopy agent use" not in done["detail"]

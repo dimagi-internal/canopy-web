@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { NavLink, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /** The three views of one fleet: the map, and the two tables it is drawn from. */
 const VIEWS = [
@@ -11,7 +12,7 @@ const VIEWS = [
 
 export function TopologyViews(): JSX.Element {
   const { workspace = '' } = useParams()
-  const base = `/w/${workspace}/settings/topology`
+  const base = scopedPath(workspace, '/settings/topology')
   return (
     <nav aria-label="Topology views" className="mb-4 inline-flex gap-0.5 rounded-lg border border-border bg-card p-0.5">
       {VIEWS.map((v) => (

@@ -10,6 +10,7 @@ import {
 } from '@/api/agents'
 import { Markdown } from '@/components/Markdown'
 import { TaskAge } from '@/components/TaskAge'
+import { scopedPath } from '../lib/scopedLinks'
 
 // ── "Who has the ball" model ───────────────────────────────────────────────
 // The board is organized by whose court the next action sits in, not by equal
@@ -209,7 +210,7 @@ function TaskLinkChip({ label, url }: { label: string; url: string }): JSX.Eleme
 // `/agents/*` resolves the active workspace (TenantRedirect).
 export function projectHref(task: TaskOut, workspace?: string): string {
   const tail = `agents/${task.agent_slug}/projects/${task.project_ext_id}`
-  return workspace ? `/w/${workspace}/${tail}` : `/${tail}`
+  return workspace ? scopedPath(workspace, `/${tail}`) : `/${tail}`
 }
 
 const PILL =
@@ -576,7 +577,7 @@ function TaskActions({
             }}
             // `basis-full` gives the field the whole row on a phone and pushes the
             // buttons below; from `sm` up they share a line.
-            className="min-h-11 w-full min-w-0 basis-full rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground disabled:opacity-50 sm:min-h-0 sm:w-auto sm:flex-1 sm:basis-auto dark:placeholder:text-foreground-secondary"
+            className="min-h-11 w-full min-w-0 basis-full rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-placeholder disabled:opacity-50 sm:min-h-0 sm:w-auto sm:flex-1 sm:basis-auto"
             data-testid={`task-reply-${task.ext_id}`}
           />
           <button

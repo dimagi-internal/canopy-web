@@ -1,140 +1,70 @@
 /**
  * Client for the shared-session surface (/api/sessions + /api/share).
  *
- * Deliberately uses plain fetch rather than the generated openapi-fetch
- * client: the public /share/{token} read must work for anonymous visitors
- * (no login bounce), and these routes don't need the typed-paths machinery.
- * CSRF is attached for mutating calls, matching client.v2.ts.
+ * On `apiV2` like every other module. The public /share/{token} read still
+ * works for anonymous visitors: its page (/w/<ws>/share/<token>) is a scoped
+ * viewer path, which apiV2 neither rewrites onto /api/w/<ws>/ nor bounces to
+ * login on a 401 (see client.v2's isPublicLinkRoute).
  */
 
-import { apiUrl, getCsrfToken } from "./base";
+import { apiV2 } from "./client.v2";
+import type { components } from "./generated";
+import { ApiError, ensureOk, unwrap } from "./problem";
 import { withBase } from "../lib/basePath";
 import { scopedPath } from "../lib/scopedLinks";
 
-export type SessionVisibility = "private" | "link";
-export type MessageRole =
-  | "user"
-  | "assistant"
-  | "system"
-  | "tool_use"
-  | "tool_result";
+type Schemas = components["schemas"];
 
-export interface SessionMessage {
-  turn_index: number;
-  role: MessageRole;
-  content: Record<string, unknown>;
-  plaintext: string;
-}
-
-export interface SessionListItem {
-  slug: string;
-  title: string;
-  project_slug: string | null;
-  visibility: SessionVisibility;
-  owner_email: string;
-  message_count: number;
-  redaction_count: number;
-  share_token: string | null;
-  is_owner: boolean;
-  /** The workspace it is shared from — its page is /w/<workspace>/share/<token>. */
-  workspace?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
+export type SessionVisibility = Schemas["SessionListItemOut"]["visibility"];
+export type MessageRole = Schemas["SessionMessageOut"]["role"];
+export type SessionMessage = Schemas["SessionMessageOut"];
+export type SessionListItem = Schemas["SessionListItemOut"];
 /** One arc section in the public view — a member session's turn-synthesis. */
-export interface SharedSection {
-  heading: string;
-  redaction_count: number;
-  turn_count: number;
-  started_at: string | null;
-  ended_at: string | null;
-  active_seconds: number | null;
-  messages: SessionMessage[];
-}
-
+export type SharedSection = Schemas["SharedSectionOut"];
 /**
  * Public read-only payload for /api/share/{token}. Discriminated by `kind`:
  * a single `session` (messages populated) or an `arc` (sections populated).
- * `started_at`/`ended_at`/`turn_count` describe the session, or span the arc.
+ * `workspace` is where it is shared from — its page is /w/<workspace>/share/<token>.
  */
-export interface SharedView {
-  kind: "session" | "arc";
-  title: string;
-  redaction_count: number;
-  turn_count: number;
-  started_at: string | null;
-  ended_at: string | null;
-  active_seconds: number | null;
-  messages: SessionMessage[]; // session kind
-  sections: SharedSection[]; // arc kind
-  /** The workspace it is shared from — its page is /w/<workspace>/share/<token>. */
-  workspace?: string | null;
-}
+export type SharedView = Schemas["SharedViewOut"];
 
-export class ApiError extends Error {
-  code: string;
-  status: number;
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
-
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const method = (init.method ?? "GET").toUpperCase();
-  const headers = new Headers(init.headers);
-  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-    const token = getCsrfToken();
-    if (token) headers.set("X-CSRFToken", token);
-  }
-  const resp = await fetch(apiUrl(path), {
-    ...init,
-    method,
-    headers,
-    credentials: "same-origin",
-  });
-  if (resp.status === 204) return undefined as T;
-  const body = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    // RFC 7807 problem+json: derive a stable code from the type URI tail.
-    const type = typeof body.type === "string" ? body.type : "";
-    const code = type.split("/").pop() || "error";
-    throw new ApiError(resp.status, code, body.detail || body.title || "Request failed");
-  }
-  return body as T;
-}
+/** The shared `ApiError` (./problem); callers branch on `.code` ("not-found"). */
+export { ApiError };
 
 /** Public, read-only — works for anonymous visitors with a valid token.
  * Resolves either a single shared session or a multi-session arc. */
-export function getShared(token: string, ws?: string | null): Promise<SharedView> {
+export async function getShared(token: string, ws?: string | null): Promise<SharedView> {
   // `ws` is the workspace the page's URL names: a share from another one 404s.
-  const q = ws ? `?ws=${encodeURIComponent(ws)}` : "";
-  return request<SharedView>(`/api/share/${encodeURIComponent(token)}${q}`);
+  const res = await apiV2.GET("/api/share/{token}", {
+    params: { path: { token }, ...(ws ? { query: { ws } } : {}) },
+  });
+  return unwrap(res, "getShared") as unknown as SharedView;
 }
 
-export function listMySessions(): Promise<SessionListItem[]> {
-  return request<SessionListItem[]>("/api/sessions/");
+export async function listMySessions(): Promise<SessionListItem[]> {
+  const res = await apiV2.GET("/api/sessions/");
+  return unwrap(res, "listMySessions") as unknown as SessionListItem[];
 }
 
-export function rotateSessionToken(slug: string): Promise<{ share_token: string }> {
-  return request(`/api/sessions/${slug}/rotate-token`, { method: "POST" });
+export async function rotateSessionToken(slug: string): Promise<{ share_token: string }> {
+  const res = await apiV2.POST("/api/sessions/{slug}/rotate-token", { params: { path: { slug } } });
+  return unwrap(res, "rotateSessionToken");
 }
 
-export function setSessionVisibility(
+export async function setSessionVisibility(
   slug: string,
   visibility: SessionVisibility,
 ): Promise<SessionListItem> {
-  return request<SessionListItem>(`/api/sessions/${slug}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ visibility }),
+  const res = await apiV2.PATCH("/api/sessions/{slug}", {
+    params: { path: { slug } },
+    body: { visibility },
   });
+  return unwrap(res, "setSessionVisibility") as unknown as SessionListItem;
 }
 
-export function deleteSession(slug: string): Promise<void> {
-  return request<void>(`/api/sessions/${slug}`, { method: "DELETE" });
+export async function deleteSession(slug: string): Promise<void> {
+  const res = await apiV2.DELETE("/api/sessions/{slug}", { params: { path: { slug } } });
+  ensureOk(res, "deleteSession");
 }
 
 /** The page to send — under the workspace it was shared from. A share with no

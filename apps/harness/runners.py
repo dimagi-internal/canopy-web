@@ -281,6 +281,20 @@ def can_administer_runner(user, runner) -> bool:
     return RunnerAdmin.objects.filter(runner=runner, user=user).exists()
 
 
+def may_trust_device_keys(user, runner) -> bool:
+    """May this person put a device key on this box, or approve one?
+
+    On a shared box, whoever administers it. On a PRIVATE runner, its owner alone:
+    that box's token signs its owner's own sessions in AS the owner, opens their
+    local turns and reads secrets under their license, so a runner admin who could
+    trust a key there could act as the owner. Admins still see the keys, and may
+    revoke one — taking trust away is never the risk."""
+    if runner.private:
+        return (getattr(user, "is_authenticated", False) and runner.owner_id is not None
+                and runner.owner_id == user.id)
+    return can_administer_runner(user, runner)
+
+
 def grant_runner_admin(runner, user, *, granted_by=None):
     """Idempotent: re-granting returns the existing row rather than a second one
     that a later revoke would only half-remove."""
@@ -362,8 +376,11 @@ def enroll_runner(runner, workspace_slug: str, *, by=None):
     """
     from apps.workspaces import permissions as perms
 
-    from .models import RunnerEnrollment
+    from .models import Runner, RunnerEnrollment
 
+    if runner.kind == Runner.COMPUTER:
+        # A computer in plain Claude Code (no runner app) serves no workspace's work.
+        raise EnrollmentRefused(f"{runner.name} is a computer without the runner app; it serves no workspace")
     if not runner.owner_id or not perms.can(runner.owner, workspace_slug, perms.AGENT_WORK):
         raise EnrollmentRefused(
             f"this runner's owner is not an editor (or above) in '{workspace_slug}', "

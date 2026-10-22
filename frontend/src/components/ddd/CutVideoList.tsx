@@ -10,7 +10,7 @@ export interface CutVideo {
   cut_id: string
   title: string
   /** Narration item (scene) ids the cut plays, in order. */
-  scene_ids: string[]
+  scene_ids: readonly string[]
   /** Null when the reader may not play it (a private video, a guest). */
   video_url: string | null
   video_viewer_url?: string | null
@@ -69,7 +69,7 @@ type Row =
 /** Every cut in narration order: the uploaded ones, plus any cut the narration
  *  names (by its scene-title prefix) that no upload covers yet — so a cut that
  *  was never rendered reads "not rendered yet" instead of silently missing. */
-export function cutRows(cuts: CutVideo[], scenes: CutScene[]): Row[] {
+export function cutRows(cuts: readonly CutVideo[], scenes: CutScene[]): Row[] {
   const pos = new Map(scenes.map((s, i) => [s.id, i]))
   const byId = new Map(scenes.map((s) => [s.id, s]))
   const covered = new Set(cuts.flatMap((c) => c.scene_ids))
@@ -102,7 +102,7 @@ export function CutVideoList({
   scenes,
   meta = {},
 }: {
-  cuts: CutVideo[]
+  cuts: readonly CutVideo[]
   scenes: CutScene[]
   /** Optional per-cut words from the publisher, keyed by cut id. */
   meta?: Record<string, CutMeta>

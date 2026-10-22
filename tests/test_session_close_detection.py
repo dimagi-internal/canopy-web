@@ -18,11 +18,9 @@ from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import Runner, Turn
 from apps.harness.services import replace_reported_sessions
 from apps.slack import share
-from tests.test_slack import (  # noqa: F401
-    alice, configured, installation, linked, mention, slack, ws,
-)
+from tests.fixtures.slack import mention
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 POSTED_TS = "1700000999.000100"
 
 

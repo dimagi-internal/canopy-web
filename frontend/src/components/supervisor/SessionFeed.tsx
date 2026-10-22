@@ -4,7 +4,7 @@ import { Button, Textarea } from 'canopy-ui/ui'
 import { closeSession, listSessions, sendMessage, type ChatSession } from '@/api/chat'
 import type { AgentOut } from '@/api/agents'
 import { Markdown } from '@/components/Markdown'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { CLOSE_POLL_MS, closeFailure, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { CloseFailedNote } from '@/components/chat/CloseFailedNote'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
@@ -14,6 +14,7 @@ import {
   CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, parkedByRunner, sourceKey,
   type ParkedGroup, type ParkedRunnerInfo,
 } from './feedRules'
+import { scopedPath } from '../../lib/scopedLinks'
 
 const POLL_MS = 20_000
 // Per-viewer and best-effort: storage can be missing or throw (private window).
@@ -235,7 +236,7 @@ export function SessionFeed({
             source={sourceLabel(s)}
             sourceKind={s.agent_slug ? 'agent' : 'project'}
             workspace={multiWorkspace ? s.workspace : null}
-            age={relativeTime(s.last_activity_at, now)}
+            age={relativeAge(s.last_activity_at, now, { seconds: false })}
             compact={compact}
             closing={s.id in closing}
             stuck={stuck.has(s.id)}
@@ -330,7 +331,7 @@ function FeedCard({
   const [busy, setBusy] = useState<'send' | 'clear' | 'done' | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
-  const chatHref = `/w/${s.workspace}/chat/${s.id}`
+  const chatHref = scopedPath(s.workspace, `/chat/${s.id}`)
   const reply = (s.last_reply ?? '').trim()
   // Long replies are clamped so one essay does not push every other card off
   // the screen; "Show more" opens it in place. In a long feed (compact) every
@@ -492,7 +493,7 @@ function FeedCard({
           disabled={busy !== null}
           // The repo's readable-placeholder pair (e2e/mobile-a11y.spec.ts gates
           // 3:1): muted alone reaches only ~2.1 on a dark input.
-          className="text-[13px] placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary"
+          className="text-[13px] placeholder:text-placeholder"
         />
         {err && <p className="text-[12px] text-destructive">{err}</p>}
         {closeFailed && !closing ? (

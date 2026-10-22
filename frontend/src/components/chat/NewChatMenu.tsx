@@ -14,6 +14,7 @@ import { createSession, type ChatSession } from '@/api/chat'
 import { getAgentDefaultOrder, getAgentRunners, type AgentOut, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { onlineSessionCapableRunners, repoChoices, reportedRepos, runnerOptionLabel, type RepoChoice } from './runnerEligibility'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // The "Run on" picker's pending target — set when the user picks an agent or
 // project from the menu, before they've confirmed a runner + Start.
@@ -88,7 +89,7 @@ export function NewChatMenu({
             setSelectedRunnerId('')
             onCreated(s)
           } else {
-            navigate(`/w/${s.workspace}/chat/${s.id}`)
+            navigate(scopedPath(s.workspace, `/chat/${s.id}`))
           }
         })
         .catch((err: unknown) => {

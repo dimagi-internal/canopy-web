@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 
 import { getAgentVault, setAgentVault } from '@/api/agents'
 import type { CredStatus } from '@/pages/agents/agentCredentials'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // The 1Password half of the credentials screen.
 //
@@ -96,7 +97,7 @@ export function AgentVaultSection({
         {workspace ? (
           <>
             {' '}(
-            <Link to={`/w/${workspace}/settings/secrets`} className="text-primary" data-testid="shared-vault-link">
+            <Link to={scopedPath(workspace, '/settings/secrets')} className="text-primary" data-testid="shared-vault-link">
               Settings → Secrets
             </Link>
             ).

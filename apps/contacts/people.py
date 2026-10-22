@@ -321,7 +321,7 @@ def may_retract(user, fact: PersonFact) -> bool:
         return True
     if fact.asserted_by_user_id and fact.asserted_by_user_id == user.pk:
         return True
-    if fact.asserted_by_agent_id and fact.asserted_by_agent.user_id == user.pk:
+    if fact.asserted_by_agent_id and fact.asserted_by_agent.is_own_login(user):
         return True
     return perms.can(user, fact.workspace_id, perms.MEMBERS_MANAGE)
 

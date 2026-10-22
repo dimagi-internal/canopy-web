@@ -35,10 +35,35 @@ def requirements_of_grant(grant) -> frozenset[str]:
     return _parse_stored(getattr(grant, "runner_requirements", None))
 
 
+#: How far up a chain of parent turns requirements are inherited. A chain longer
+#: than this is unclaimable rather than unrestricted.
+MAX_ANCESTORS = 25
+
+
 def requirements_of(turn) -> frozenset[str]:
-    if not turn.chat_session_id:
-        return frozenset()
-    return requirements_of_session(turn.chat_session)
+    """What the runner a turn runs on must satisfy: the union of its own conversation,
+    the conversation it was started from (`parent_session`) and every ancestor turn's.
+
+    Requirements only grow down a chain: a turn a ZDR conversation started (a dispatch,
+    a re-ask, a transfer) carries the conversation's data with it, so it is held to the
+    same runners even though it has no chat session of its own.
+    """
+    reqs: set[str] = set()
+    seen: set = set()
+    node = turn
+    for _ in range(MAX_ANCESTORS + 1):
+        if node is None:
+            return frozenset(reqs)
+        key = getattr(node, "pk", None) or id(node)
+        if key in seen:
+            return frozenset(reqs)
+        seen.add(key)
+        if node.chat_session_id:
+            reqs |= requirements_of_session(node.chat_session)
+        if getattr(node, "parent_session_id", None):
+            reqs |= requirements_of_session(node.parent_session)
+        node = node.parent_turn if getattr(node, "parent_turn_id", None) else None
+    return frozenset(reqs | {UNSATISFIABLE})
 
 
 def satisfies(flags: frozenset[str], reqs: frozenset[str]) -> bool:

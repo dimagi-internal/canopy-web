@@ -3,7 +3,7 @@
 // Nothing here reads a channel — a run is read only when its lead presses
 // Confirm on the announcement in Slack; Run now only announces.
 import { apiV2, WORKSPACE_HEADER } from './client.v2'
-import { problemMessage } from './problem'
+import { ensureOk } from './problem'
 import type { components } from './generated'
 
 export type Checkin = components['schemas']['CheckinOut']
@@ -27,7 +27,7 @@ export async function listProjectCheckins(p: ProjectKey): Promise<Checkin[]> {
     params: { path: path(p) },
     ...pin(p.workspace),
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to load check-ins'))
+  ensureOk(res, 'Failed to load check-ins')
   return Array.from(res.data ?? []) as unknown as Checkin[]
 }
 
@@ -37,7 +37,7 @@ export async function createProjectCheckin(p: ProjectKey, body: CheckinIn): Prom
     ...pin(p.workspace),
     body,
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Could not add the check-in'))
+  ensureOk(res, 'Could not add the check-in')
   return res.data as unknown as Checkin
 }
 
@@ -47,7 +47,7 @@ export async function updateProjectCheckin(p: ProjectKey, name: string, body: Ch
     ...pin(p.workspace),
     body,
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Could not save the check-in'))
+  ensureOk(res, 'Could not save the check-in')
   return res.data as unknown as Checkin
 }
 
@@ -56,7 +56,7 @@ export async function deleteProjectCheckin(p: ProjectKey, name: string): Promise
     params: { path: { ...path(p), name } },
     ...pin(p.workspace),
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Could not delete the check-in'))
+  ensureOk(res, 'Could not delete the check-in')
 }
 
 /** Announces it now (or, with no channel, queues the agent's turn) — never reads. */
@@ -65,7 +65,7 @@ export async function runProjectCheckinNow(p: ProjectKey, name: string): Promise
     params: { path: { ...path(p), name } },
     ...pin(p.workspace),
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Could not run the check-in'))
+  ensureOk(res, 'Could not run the check-in')
   return res.data as unknown as CheckinRun
 }
 
@@ -75,13 +75,13 @@ export async function listProjectCheckinRuns(p: ProjectKey): Promise<CheckinTime
     params: { path: path(p) },
     ...pin(p.workspace),
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to load the timeline'))
+  ensureOk(res, 'Failed to load the timeline')
   return Array.from(res.data ?? []) as unknown as CheckinTimelineRun[]
 }
 
 /** Every check-in on a project in your workspaces — a navigation view. */
 export async function listCheckins(): Promise<Checkin[]> {
   const res = await apiV2.GET('/api/checkins/')
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to load check-ins'))
+  ensureOk(res, 'Failed to load check-ins')
   return Array.from(res.data ?? []) as unknown as Checkin[]
 }

@@ -1,6 +1,6 @@
 // A workspace's Slack connection, and canopy managing the app's slash commands.
 import { apiV2 } from './client.v2'
-import { problemMessage } from './problem'
+import { ensureOk } from './problem'
 import type { components } from './generated'
 
 export type SlackConfigOut = components['schemas']['SlackConfigOut']
@@ -8,7 +8,7 @@ export type SlackSyncOut = components['schemas']['SlackSyncOut']
 
 export async function getSlackConfig(workspace: string): Promise<SlackConfigOut> {
   const res = await apiV2.GET('/api/slack-config/{workspace}', { params: { path: { workspace } } })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to load the Slack connection'))
+  ensureOk(res, 'Failed to load the Slack connection')
   return res.data as SlackConfigOut
 }
 
@@ -17,7 +17,7 @@ export async function setSlackConfigToken(workspace: string, refreshToken: strin
     params: { path: { workspace } },
     body: { refresh_token: refreshToken },
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Slack refused that token'))
+  ensureOk(res, 'Slack refused that token')
   return res.data as SlackSyncOut
 }
 
@@ -25,7 +25,7 @@ export async function clearSlackConfigToken(workspace: string): Promise<SlackCon
   const res = await apiV2.DELETE('/api/slack-config/{workspace}/config-token', {
     params: { path: { workspace } },
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to disconnect'))
+  ensureOk(res, 'Failed to disconnect')
   return res.data as SlackConfigOut
 }
 
@@ -40,7 +40,7 @@ export async function setSlackHistory(
     params: { path: { workspace } },
     body: { enabled, max_minutes: maxMinutes },
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to save the history setting'))
+  ensureOk(res, 'Failed to save the history setting')
   return res.data as SlackConfigOut
 }
 
@@ -51,7 +51,7 @@ export async function setSlackChannelIngest(workspace: string, enabled: boolean)
     params: { path: { workspace } },
     body: { enabled },
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to save the channel-read setting'))
+  ensureOk(res, 'Failed to save the channel-read setting')
   return res.data as SlackConfigOut
 }
 
@@ -65,7 +65,7 @@ export async function allowSlackChannel(
     params: { path: { workspace } },
     body,
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to allow-list that channel'))
+  ensureOk(res, 'Failed to allow-list that channel')
   return res.data as SlackConfigOut
 }
 
@@ -74,13 +74,13 @@ export async function disallowSlackChannel(workspace: string, allowId: string): 
   const res = await apiV2.DELETE('/api/slack-config/{workspace}/channel-ingest/allowed/{allow_id}', {
     params: { path: { workspace, allow_id: allowId } },
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to remove that channel'))
+  ensureOk(res, 'Failed to remove that channel')
   return res.data as SlackConfigOut
 }
 
 export async function syncSlackCommands(workspace: string): Promise<SlackSyncOut> {
   const res = await apiV2.POST('/api/slack-config/{workspace}/sync', { params: { path: { workspace } } })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Sync failed'))
+  ensureOk(res, 'Sync failed')
   return res.data as SlackSyncOut
 }
 

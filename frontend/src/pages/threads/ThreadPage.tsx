@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { getThread, type AgentThread, type ThreadMessage } from '@/api/threads'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { IdeaView } from '../huddles/BlockView'
 import { MemberAvatar } from '../huddles/MemberAvatar'
 import { memberHue } from '../huddles/huddleModel'
@@ -11,6 +11,7 @@ import {
   audienceOf, budgetWords, messageState, participantsOf, PENDING_WORDS, POSITION_WORDS, resultOf, said, statusWords,
   type Position,
 } from './threadModel'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /**
  * One agent thread, for a person seeing it cold: what the conversation is for and
@@ -144,8 +145,8 @@ export function ThreadView({ thread: t, now = new Date() }: { thread: AgentThrea
   return (
     <div className="pb-28">
       {huddle
-        ? <Link to={`/w/${workspace}/huddles/${huddle}`} className="text-[12px] text-muted-foreground hover:text-primary">← The huddle</Link>
-        : <Link to={`/w/${workspace}/agents`} className="text-[12px] text-muted-foreground hover:text-primary">← Agents</Link>}
+        ? <Link to={scopedPath(workspace, `/huddles/${huddle}`)} className="text-[12px] text-muted-foreground hover:text-primary">← The huddle</Link>
+        : <Link to={scopedPath(workspace, '/agents')} className="text-[12px] text-muted-foreground hover:text-primary">← Agents</Link>}
 
       <header className="mt-3 mb-6 rounded-2xl border border-border bg-card p-5">
         <div className="flex flex-wrap items-center gap-2">
@@ -166,7 +167,7 @@ export function ThreadView({ thread: t, now = new Date() }: { thread: AgentThrea
           ))}
         </div>
         <p className="mt-2 text-[12px] text-muted-foreground">
-          started {relativeTime(t.created_at, now)} · {budgetWords(t)}
+          started {relativeAge(t.created_at, now, { seconds: false })} · {budgetWords(t)}
           {t.status === 'open' && <> · {left} left · {new Date(t.deadline_at) > now ? `ends by ${clock(t.deadline_at)}` : 'past its time limit'}</>}
         </p>
       </header>
@@ -244,7 +245,7 @@ export function ThreadPage() {
   if (!thread) {
     return (
       <div className="mx-auto max-w-7xl p-6">
-        <Link to={`/w/${workspace}/agents`} className="text-[12px] text-muted-foreground hover:text-primary">← Agents</Link>
+        <Link to={scopedPath(workspace, '/agents')} className="text-[12px] text-muted-foreground hover:text-primary">← Agents</Link>
         {error ? <p className="mt-4 text-sm text-destructive">Couldn’t load this conversation: {error}</p> : <div className="mt-4"><WorkbenchSkeleton /></div>}
       </div>
     )

@@ -12,36 +12,14 @@ import uuid
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
-from django.db.models import Q
 
+from apps.harness import runner_protocol
 from apps.harness import services as harness_services
 from apps.harness.models import Runner, Turn
 from apps.workspaces.services import user_workspace_slugs
 
 from . import groups
 from .channels_auth import still_signed_in
-
-
-def _valid_health(raw):
-    """The heartbeat's `health` block, validated the way the REST route validates
-    it, or None. Like provenance, health is decoration on a liveness call: a
-    malformed block costs the report, never the beat."""
-    if raw is None:
-        return None
-    from apps.harness.schemas import RunnerHealthIn
-
-    try:
-        return RunnerHealthIn.model_validate(raw).model_dump()
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _str_list(raw):
-    """A list of non-empty strings off a heartbeat frame, or None (not reported,
-    or malformed — which costs the report, never the beat)."""
-    if not isinstance(raw, list) or len(raw) > 500:
-        return None
-    return [s for s in raw if isinstance(s, str) and s.strip()]
 
 
 class TurnConsumer(AsyncJsonWebsocketConsumer):
@@ -158,13 +136,14 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
     """A runner's persistent control channel (RC1).
 
     PAT-authed via the handshake (channels_auth sets scope["user"]); the runner may
-    connect only to a runner it owns (owner == user, or null — legacy-ungated,
-    matching the REST _runner_visibility_q). Joins the per-runner group + its
+    connect only to a runner it owns (`runner_protocol.acting_runner_q` — a runner
+    nobody owns is reachable by nobody, as over REST). Joins the per-runner group + its
     workspaces' runnable groups, so:
       - server → runner: a `wake` frame when a turn becomes claimable (enqueue
         publishes to runnable.{ws}); the runner responds by claiming.
-      - runner → server: `claim` / `heartbeat` frames that call the SAME harness
-        services the REST routes call, so the two surfaces can't drift.
+      - runner → server: `claim` / `heartbeat` / `finish` frames, read and applied
+        by the SAME functions the REST routes use (`apps/harness/runner_protocol.py`,
+        over `HeartbeatIn` / `TurnFinishIn`), so the two surfaces can't drift.
 
     REST claim/heartbeat stay fully working alongside — this ADDS a real-time
     channel, it does not replace the durable claim/lease path (Postgres remains the
@@ -311,7 +290,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
                                      acts_as=str(content.get("acts_as") or ""))
             await self.send_json({"type": "claim.result", "turn": turn})
         elif action == "heartbeat":
-            refresh, cancel_ids, pause = await self._heartbeat(content.get("active_turn_ids") or [], content)
+            refresh, cancel_ids, pause = await self._heartbeat(content)
             # The ack carries the durable refresh request back, the same thing the
             # REST reply's RunnerOut.refresh_pending says — this is the cloud
             # runner's primary beat, so it is the path that has to answer.
@@ -330,12 +309,8 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             n = await self._append(content.get("turn_id"), content.get("events") or [])
             await self.send_json({"type": "event.ack", "count": n})
         elif action == "finish":
-            ok = await self._finish(
-                content.get("turn_id"),
-                content.get("status") or Turn.DONE,
-                content.get("result_note") or "",
-            )
-            await self.send_json({"type": "finish.ack", "ok": ok})
+            ok, error = await self._finish(content)
+            await self.send_json({"type": "finish.ack", "ok": ok, **({"error": error} if error else {})})
         else:
             await self.send_json({"type": "error", "detail": f"unknown action {action!r}"})
 
@@ -349,7 +324,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         return (
             Runner.objects.exclude(status=Runner.RETIRED)
             .filter(pk=rid)
-            .filter(Q(owner=user) | Q(owner__isnull=True))
+            .filter(runner_protocol.acting_runner_q(user))
             .first()
         )
 
@@ -376,62 +351,22 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         return claim_payload(turn)
 
     @database_sync_to_async
-    def _heartbeat(self, active_turn_ids, frame=None):
-        """Provenance rides this frame, and it HAS to.
+    def _heartbeat(self, frame):
+        """THE heartbeat the REST route records (`runner_protocol.heartbeat`), read
+        off the frame field by field (`parse_heartbeat_frame`).
 
-        `services.heartbeat` assigns code_branch/code_version/code_sha/
-        code_committed_at unconditionally, so a call that omits them RESETS them.
-        This path is the cloud runner's primary heartbeat (every 20s), so without
-        the pass-through anything it reports over REST — at pairing, or from a
-        lease-renewal beat — is erased moments later, and `code_sha` reads empty
-        forever while looking exactly like a runner that never reported one.
-
-        Same failure the laptop's `provenance.py` docstring records from the other
-        side: six call sites, four silently clearing the field. The fix there was
-        one stamping point; here it is not dropping what the stamp sent.
-
-        A runner too old to send these simply sends nothing, which resets to empty
-        — i.e. UNKNOWN, which is what an unknown-provenance runner should report,
-        and what this path already did for everyone.
+        This is the cloud runner's primary beat (every 20s), and
+        `services.heartbeat` writes several fields every beat with absent =
+        default (`degraded`/`note`, the code provenance, `profiles`/`envelope`,
+        `ready`). A frame that a socket-side reader dropped a field from reset it
+        every 20s: a degraded box read ONLINE, `code_sha` read empty, a confining
+        box went 0/0. So the socket honours exactly the REST schema, and a
+        malformed field costs that field, never the beat.
         """
-        frame = frame or {}
-        try:
-            committed_at = int(frame.get("code_committed_at") or 0)
-        except (TypeError, ValueError):
-            # Provenance is decoration on a liveness call. A malformed value must
-            # cost the runner its timestamp, never its heartbeat — losing the beat
-            # would take it offline and stop it claiming.
-            committed_at = 0
-        # `profiles`/`envelope` are written every beat with absent = 0, so dropping
-        # them here reset a confining box to 0/0 every 20s — and at 0/0 `profile_q`
-        # refuses it every caller's turn (cloud-ec2-1, 2026-10-05). Same rule as
-        # the timestamp: garbage costs the capability, never the beat.
-        caps = {}
-        for key in ("profiles", "envelope", "midturn"):
-            try:
-                caps[key] = int(frame.get(key) or 0)
-            except (TypeError, ValueError):
-                caps[key] = 0
         runner = Runner.objects.filter(pk=self._runner_pk).first()
         if runner is None:
             return False, [], {}
-        # `ready` rides this frame as it rides the REST beat: a box that proved
-        # none of its Claude credentials answers says so, and dropping it here
-        # would reset it to ready every 20s. Absent (an older box) = ready.
-        ready = frame.get("ready", True) is not False
-        harness_services.heartbeat(
-            runner,
-            active_turn_ids=active_turn_ids,
-            ready=ready,
-            ready_note=str(frame.get("ready_note") or "")[:200] if not ready else "",
-            code_branch=str(frame.get("code_branch") or ""),
-            code_version=str(frame.get("code_version") or ""),
-            code_sha=str(frame.get("code_sha") or ""),
-            code_committed_at=committed_at,
-            health=_valid_health(frame.get("health")),
-            agents_unprepared=_str_list(frame.get("agents_unprepared")),
-            **caps,
-        )
+        runner_protocol.heartbeat(runner, runner_protocol.parse_heartbeat_frame(frame or {}))
         return (runner.refresh_pending(), list(getattr(runner, "cancel_turn_ids", None) or []),
                 {"paused": bool(runner.paused), "paused_note": runner.paused_note or ""})
 
@@ -464,9 +399,15 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         return harness_services.append_events(turn, events)
 
     @database_sync_to_async
-    def _finish(self, turn_id, status, result_note):
-        turn = self._turn_owned_sync(turn_id)
+    def _finish(self, frame):
+        """The REST finish (`runner_protocol.finish`): the same status check and
+        session record. A refused frame answers `ok: false` with why; the socket
+        stays up."""
+        turn = self._turn_owned_sync(frame.get("turn_id"))
         if turn is None:
-            return False
-        harness_services.finish_turn(turn, status=status, result_note=result_note)
-        return True
+            return False, ""
+        try:
+            runner_protocol.finish(turn, runner_protocol.parse_finish_frame(frame))
+        except runner_protocol.ProtocolError as exc:
+            return False, exc.detail or exc.title
+        return True, ""

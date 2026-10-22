@@ -17,15 +17,8 @@ from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
 from apps.workspaces import services as wsvc
 
 from . import services
-from .api import (
-    _agent_for_write,
-    _listed_agent_workspace_ids,
-    _require_workspace_editor,
-    _visible_agent_workspace_ids,
-    apply_project_patch,
-    list_agents,
-    project_detail,
-)
+from .api import apply_project_patch, list_agents, project_detail, require_workspace_editor
+from .gates import agent_for_work, listed_agent_workspaces, visible_agent_workspaces
 from .models import Agent, AgentProject, AgentTask
 from .schemas import (
     AgentOut,
@@ -62,7 +55,7 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
     # Scope FIRST: `filter_tasks(waiting="me")` adds unrouted open asks from
     # whatever queryset it is handed, so an unscoped one would leak other
     # tenants' asks into the inbox.
-    qs = AgentTask.objects.filter(agent__workspace_id__in=_listed_agent_workspace_ids(request))
+    qs = AgentTask.objects.filter(agent__workspace_id__in=listed_agent_workspaces(request))
     if agent:
         qs = qs.filter(agent__slug=agent)
     qs = services.filter_tasks(qs.select_related("agent", "project", "waiting_on_user", "parent")
@@ -100,7 +93,7 @@ def list_fleet_projects(request: HttpRequest, status: str = "active",
                         repo_slug: str = "", scope: str = "") -> list[AgentProjectOut]:
     """Active by default; `status=` (empty for all), `repo_slug=` and `scope=`
     (`agent` or `workspace`) narrow it."""
-    qs = AgentProject.objects.filter(agent__workspace_id__in=_listed_agent_workspace_ids(request))
+    qs = AgentProject.objects.filter(agent__workspace_id__in=listed_agent_workspaces(request))
     if scope:
         qs = qs.filter(scope=scope)
     if repo_slug:
@@ -115,7 +108,7 @@ def list_my_projects(request: HttpRequest, status: str = "active") -> list[Agent
     (`each_organisation`) and every row carries its workspace. Active by
     default; `status=` (empty for all)."""
     return wsvc.each_organisation(request, lambda: _project_rows(
-        AgentProject.objects.filter(agent__workspace_id__in=_listed_agent_workspace_ids(request),
+        AgentProject.objects.filter(agent__workspace_id__in=listed_agent_workspaces(request),
                                     owner_user=request.user),
         status=status,
     ))
@@ -153,7 +146,7 @@ def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
 
     from .health import _counts
 
-    visible = _listed_agent_workspace_ids(request)
+    visible = listed_agent_workspaces(request)
     agents = list(Agent.objects.filter(workspace_id__in=visible).select_related("owner").order_by("name"))
     counts = _counts(agents)
     since = timezone.now() - dt.timedelta(days=7)
@@ -190,8 +183,8 @@ def _workspace_project_or_404(request: HttpRequest, workspace: str, handle: str)
     # Readable from its workspace, and from its steward's (a dimagi agent keeping
     # connect's project reads it as the dimagi member it is).
     project = services.get_workspace_project(workspace, handle)
-    if project is None or (workspace not in set(_listed_agent_workspace_ids(request))
-                           and project.agent.workspace_id not in _visible_agent_workspace_ids(request)):
+    if project is None or (workspace not in set(listed_agent_workspaces(request))
+                           and project.agent.workspace_id not in visible_agent_workspaces(request)):
         raise HttpError(404, f"workspace project {workspace}/{handle} not found")
     return project
 
@@ -201,7 +194,7 @@ def _workspace_project_or_404(request: HttpRequest, workspace: str, handle: str)
 def list_workspace_projects(request: HttpRequest, status: str = "") -> list[AgentProjectOut]:
     """Owned by a workspace rather than one agent, each with a steward agent that
     keeps it current. `status=` narrows; default all."""
-    listed = _listed_agent_workspace_ids(request)
+    listed = listed_agent_workspaces(request)
     projects = services.workspace_projects(listed, status=status, steward_workspaces=listed)
     counts = {r["project_id"]: r for r in AgentTask.objects.filter(project__in=projects)
               .values("project_id").annotate(n=Count("id"),
@@ -224,7 +217,7 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
     from apps.tokens.views_mcp_oauth import issuer
     from apps.workspaces.models import Workspace
 
-    listed = _listed_agent_workspace_ids(request)
+    listed = listed_agent_workspaces(request)
     projects = [p for p in services.workspace_projects(listed, steward_workspaces=listed)
                 if p.mcp_path and p.status != AgentProject.ARCHIVED]
     names = dict(Workspace.objects.filter(slug__in={p.owner_workspace_id for p in projects})
@@ -246,8 +239,8 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
 @router.post("/workspace-projects/", response={201: AgentProjectOut},
              summary="Create a workspace project, owned by the steward's workspace")
 def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
-    steward = _agent_for_write(request, payload.steward.strip())
-    _require_workspace_editor(request, payload.workspace.strip(), steward)
+    steward = agent_for_work(request, payload.steward.strip())
+    require_workspace_editor(request, payload.workspace.strip(), steward)
     try:
         with transaction.atomic():
             project = services.create_project(steward, payload)
@@ -270,7 +263,7 @@ def get_workspace_project(request: HttpRequest, workspace: str, handle: str) -> 
 def patch_workspace_project(request: HttpRequest, workspace: str, handle: str,
                             payload: AgentProjectPatch) -> AgentProjectOut:
     project = _workspace_project_or_404(request, workspace, handle)
-    _agent_for_write(request, project.agent.slug)  # the steward's write gate
+    agent_for_work(request, project.agent.slug)  # the steward's write gate
     data = payload.model_dump(exclude_unset=True)
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump() for link in data["links"]]
@@ -299,7 +292,7 @@ def kb_upload_target(request: HttpRequest, workspace: str, handle: str) -> KbUpl
     from . import kb_store
 
     project = _workspace_project_or_404(request, workspace, handle)
-    _agent_for_write(request, project.agent.slug)
+    agent_for_work(request, project.agent.slug)
     return KbUploadOut(**_kb_call(lambda: kb_store.upload_target(project)))
 
 
@@ -313,7 +306,7 @@ def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, paylo
     from . import kb_store
 
     project = _workspace_project_or_404(request, workspace, handle)
-    _agent_for_write(request, project.agent.slug)
+    agent_for_work(request, project.agent.slug)
     files = [f.model_dump() for f in payload.files]
     return KbOriginalsOut(**_kb_call(lambda: kb_store.originals_upload(project, files)))
 
@@ -326,7 +319,7 @@ def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPub
     from . import kb_store
 
     project = _workspace_project_or_404(request, workspace, handle)
-    _agent_for_write(request, project.agent.slug)
+    agent_for_work(request, project.agent.slug)
     project = _kb_call(lambda: kb_store.publish(project, payload.key, payload.sha256))
     # Dormant: a no-op while KB_VECTORS is off (kb_vectors.py). When on, it brings
     # the vectors in step with the new file off the request.

@@ -11,7 +11,6 @@ connection made a private conversation permanently yours.
 from __future__ import annotations
 
 import ast
-import pathlib
 
 import pytest
 from asgiref.sync import async_to_sync
@@ -26,10 +25,10 @@ from apps.canopy_sessions.consumers import SessionConsumer
 from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests._source import iter_app_sources
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _user(name):
@@ -193,12 +192,9 @@ ALLOWED_GRANTERS = {
 
 def test_only_explicit_acts_grant_participation():
     offenders = []
-    for path in (ROOT / "apps").rglob("*.py"):
-        rel = path.relative_to(ROOT).as_posix()
-        if "/migrations/" in rel or "/tests/" in rel or rel in ALLOWED_GRANTERS:
-            continue
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
+    for src in iter_app_sources(("apps",), exclude=ALLOWED_GRANTERS):
+        rel = src.rel
+        for node in ast.walk(src.tree):
             if not isinstance(node, ast.Call):
                 continue
             f = node.func

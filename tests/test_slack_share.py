@@ -25,11 +25,9 @@ from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_user, a_workspace
 
 # Slack's own fixtures, reused so this file cannot drift from how Slack is set up.
-from tests.test_slack import (  # noqa: F401
-    ALICE, BOB, TEAM, alice, configured, hal, installation, linked, mention, slack, ws,
-)
+from tests.fixtures.slack import ALICE, BOB, TEAM, mention
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 
 POSTED_TS = "1700000999.000100"   # what FakeSlack answers chat.postMessage with
 
@@ -363,7 +361,7 @@ def test_a_bound_session_relays_laptop_replies_but_not_its_life_before_the_bind(
 # ---- detach ------------------------------------------------------------------
 
 def _thread_reply(text, *, ts="1700001000.000100", thread_ts=POSTED_TS):
-    from tests.test_slack import event
+    from tests.fixtures.slack import event
 
     return event({"type": "message", "channel_type": "channel", "user": ALICE, "text": text,
                   "ts": ts, "thread_ts": thread_ts, "channel": "C1"})
@@ -450,7 +448,7 @@ def test_rebinding_after_detach_starts_a_fresh_thread(slack, linked, alice, repo
 
 
 def test_a_slack_born_agent_thread_can_be_detached(slack, linked, alice, hal):
-    from tests.test_slack import thread_reply
+    from tests.fixtures.slack import thread_reply
 
     mention("hal first")
     session = Session.objects.get()

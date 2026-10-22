@@ -22,6 +22,10 @@
     --font-sans: 'Geist Variable', sans-serif;
     --animate-pulse-slow: pulse-slow 3s ease-in-out infinite;
     --color-brand: var(--brand);  /* the mark only — never a UI accent; that is --primary */
+    /* Placeholder text on an input surface (`placeholder:text-placeholder`). No one
+       value clears 3:1 on BOTH themes' --input, so it is its own token rather than
+       a `dark:` variant — guarded by e2e 'no invisible placeholders'. */
+    --color-placeholder: var(--placeholder);
 }
 
 :root {
@@ -44,6 +48,7 @@
     --muted: oklch(0.970 0.001 106.42);           /* ~stone-100 */
     --muted-foreground: oklch(0.553 0.013 58.07); /* ~stone-500 */
     --foreground-secondary: oklch(0.374 0.01 67.56); /* ~stone-700 — secondary text */
+    --placeholder: var(--muted-foreground);       /* 3.21:1 on light --input */
     --foreground-subtle: oklch(0.709 0.01 56.26);    /* ~stone-400 — faint text */
     --accent: oklch(0.970 0.001 106.42);
     --accent-foreground: oklch(0.216 0.006 56.04);
@@ -99,6 +104,7 @@
        (--foreground-subtle, 0.374) is unchanged, so the ladder keeps its steps. */
     --muted-foreground: oklch(0.62 0.013 58.07); /* ~stone-450 */
     --foreground-secondary: oklch(0.809 0.005 56.0); /* ~stone-300 — secondary text */
+    --placeholder: var(--foreground-secondary);  /* 5.68:1 on dark --input */
     /* NOTE: identical to --input below. Faint text placed ON an input is therefore
        INVISIBLE in dark mode (contrast 1.00) — use --muted-foreground for anything
        sitting on an input surface, e.g. placeholders. Guarded by the

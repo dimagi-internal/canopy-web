@@ -125,9 +125,9 @@ class Agent(models.Model):
     # Ordered runner-KIND preference, e.g. ["cloud", "emdash"]. As of the
     # directed-runner-routing cascade (spec 2026-07-24), agent-turn claim
     # eligibility is decided by RunnerAssignment rank instead — this field is no
-    # longer read by harness.services.claim_next_turn. Retained only for the
-    # deprecated PATCH /api/agents/{slug}/runner-preference/ endpoint and
-    # AgentIn during the deprecation window.
+    # longer read by harness.services.claim_next_turn. Retained for AgentIn and
+    # the one-time bridge in harness.routing that turns it into RunnerAssignment
+    # rows; dropped with its own migration once nothing reads it.
     runner_preference = models.JSONField(default=list, blank=True)
     # WHERE each declared secret's value comes from, mirrored from the agent
     # repo's runtime.yaml: {"<ref-name>": {"op": "op://..."} | {"value": "..."}}.
@@ -154,16 +154,18 @@ class Agent(models.Model):
         help_text="1Password vault holding this agent's secrets, e.g. Agent-Ace.",
     )
     op_sa_token_enc = models.TextField(blank=True, default="")
-    # Which backend `canopy cred` resolves this agent's secrets from (canopy#850,
-    # design revision 2026-10-09). Both are first-class: canopy-web already
-    # custodies the agent's 1Password service-account key, so keeping values off
-    # canopy-web buys no real security. `1password` = the runner/human resolves
-    # through `op` with that key; `canopy-web` = values come from AgentCredential
-    # via GET /credentials/resolve. Set only by the agent's owner or an admin
-    # (PATCH /credential-source) — never by the repo's self-publish upsert.
+    # Which backend `canopy cred` resolves this agent's secrets from (canopy#850).
+    # `canopy-web` (canopy vault, zero-knowledge) is where every agent's secrets
+    # live (Jonathan, 2026-10-21); `1password` is LEGACY, kept only for an agent
+    # still holding a 1Password vault until an admin runs `canopy vault import
+    # --zk --switch` — the runner/human then resolves through `op` with the
+    # vault's key. Set only by the agent's owner or an admin
+    # (PATCH /credential-source) — never by the repo's self-publish upsert. The
+    # field default is only the bare model's: every created agent is born on canopy
+    # vault (`services.born_zk_fields`).
     ONEPASSWORD, CANOPY_WEB = "1password", "canopy-web"
-    CREDENTIAL_SOURCE_CHOICES = [(ONEPASSWORD, "1Password (op, via the agent's vault key)"),
-                                 (CANOPY_WEB, "canopy-web (AgentCredential values)")]
+    CREDENTIAL_SOURCE_CHOICES = [(ONEPASSWORD, "1Password (legacy: op, via the agent's vault key)"),
+                                 (CANOPY_WEB, "canopy vault (canopy-web)")]
     credential_source = models.CharField(
         max_length=16, choices=CREDENTIAL_SOURCE_CHOICES, default=ONEPASSWORD,
     )
@@ -221,6 +223,15 @@ class Agent(models.Model):
         from . import mailbox
 
         return self.email.strip().lower() if mailbox.describe(self)["kind"] == "google" else ""
+
+    def is_own_login(self, user) -> bool:
+        """Is `user` this agent's OWN canopy login (`Agent.user`)?
+
+        The one spelling of the check. An agent with no login matches nobody —
+        `user_id is None` must never equal an anonymous caller's `pk` (also
+        None), which a bare `agent.user_id == user.pk` lets through."""
+        pk = getattr(user, "pk", None)
+        return self.user_id is not None and pk is not None and self.user_id == pk
 
     def is_admin(self, user) -> bool:
         """The agent's owner, a WORKSPACE owner, or an explicit admin who is

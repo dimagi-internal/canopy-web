@@ -364,7 +364,7 @@ def reach_and_cloud(turn: Turn):
     reach = harness.turn_reach(turn)
     # The offer is checked against the turn's SENDER, not whoever is looking: a
     # status is derived once and broadcast to every viewer (no viewer here). The
-    # click re-checks the clicker (`may_place_project_chat`).
+    # click re-checks the clicker (`services.may_place`).
     cloud = None
     if reach.kind != harness.LIVE and turn.chat_session_id:
         cloud = session_services.available_cloud_runner(turn.chat_session, user=turn.enqueued_by)

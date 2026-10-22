@@ -250,7 +250,8 @@ def _reconnect_for(pairing: RunnerPairing, user):
     """The runner this pairing reconnects, when `user` owns it and it is live — else
     None (a fresh pairing). The box only NAMES a runner; owning it is what counts."""
     runner = pairing.reconnect_runner
-    if runner is None or user is None or runner.owner_id != user.pk or runner.status == Runner.RETIRED:
+    if (runner is None or user is None or runner.owner_id != user.pk or runner.status == Runner.RETIRED
+            or runner.kind == Runner.COMPUTER):
         return None
     return runner
 
@@ -321,8 +322,9 @@ def approve_runner_pairing(request: HttpRequest, user_code: str, payload: Runner
     if not perms.can(request.user, slug, perms.AGENT_WORK):
         raise HttpError(403, "pairing a runner into a workspace needs permission to run work there")
     _refuse_finished(pairing)
+    # A computer's key holder shares its machine's name and is no runner app.
     if reconnect is None and (Runner.objects.filter(owner=request.user, name=name)
-                              .exclude(status=Runner.RETIRED).exists()):
+                              .exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER).exists()):
         raise HttpError(409, f"you already have a runner named '{name}'; choose another name")
     raw = secrets.token_urlsafe(32)
     now = timezone.now()

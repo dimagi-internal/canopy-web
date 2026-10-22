@@ -104,8 +104,9 @@ class AgentScaffoldIn(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     mandate: str = Field(min_length=1, max_length=500)
     mailbox: str = Field(default="", max_length=254)
-    # The agent's Google account, when it differs from `mailbox`. Not stamped into the
-    # repo: it is the instance's, set by the `upsert_agent` that follows.
+    # The agent's Google account, when it differs from `mailbox`. Stamped into the repo's
+    # config/agent.json `google_account` (as `canopy create-agent --google-account` does) and
+    # set on the instance by the `upsert_agent` that follows.
     google_account: str = Field(default="", max_length=254)
     stakeholders: str = Field(default="", max_length=300)
     # `owner/name`, or its github.com URL. The person creates it, empty; canopy only pushes.
@@ -170,12 +171,9 @@ class AgentSetupStepOut(StrictModel):
     # Further choices beside `href`, each a link with its own label — the runner
     # step's "Pair your laptop" / "Stand up a cloud box" for someone who could pair one.
     links: list[SetupLinkOut] = []
-
-
-class RunnerPreferenceIn(StrictModel):
-    """Set an agent's ordered runner-kind preference (the runner-order UI)."""
-
-    runner_preference: list[str] = Field(default_factory=list)
+    # Needed only for the agent to run on its own (a runner), not to use it in your
+    # own Claude Code: an agent used that way alone is complete without this step.
+    only_to_run_on_its_own: bool = False
 
 
 class TurnModeIn(StrictModel):

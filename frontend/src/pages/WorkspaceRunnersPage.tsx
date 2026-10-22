@@ -15,6 +15,7 @@ import { RunnersTable } from '@/components/runners/RunnersTable'
 import { relativeAge } from '@/lib/relativeAge'
 import { TopologyViews } from './topology/TopologyViews'
 import { agentHealth, defaultRoutes, dependsSolelyOn, ruleRoutes, statusTone } from './runnerTopology'
+import { scopedPath } from '../lib/scopedLinks'
 
 // THE RUNNER TOPOLOGY of this workspace and every workspace below it: which box
 // each agent's turns land on, and what stops if a box goes dark.
@@ -154,7 +155,7 @@ function Topology({ slug }: { slug: string }): JSX.Element {
                     >
                       <td className="py-1.5 pr-3" style={{ paddingLeft: `${ws.depth * 16 + 16}px` }}>
                         <Link
-                          to={`/w/${ws.slug}/agents/${a.slug}/settings`}
+                          to={scopedPath(ws.slug, `/agents/${a.slug}/settings`)}
                           className={clsx('hover:underline', sole ? 'font-semibold text-destructive' : 'text-foreground')}
                         >
                           {a.name}
@@ -257,9 +258,12 @@ function RouteChips({
 
 // People's OWN machines (canopy-web#1704): a session there runs an agent in that
 // person's Claude Code and is recorded as a local turn. Listed beside the runners
-// because "where does this agent's work happen" now has a second answer, but they
-// are not runners — they claim nothing and nothing routes to them, so there is no
-// status and no route chip. Hidden until someone has used one.
+// because "where does this agent's work happen" now has a second answer. A private
+// runner works only for its owner: their local sessions, and — when the machine
+// also runs the runner app — only what they pin or bind to it. Nothing of the
+// fleet routes to it, so there is no route chip. Hidden until someone has used one.
+// Labelled "your computers (used in Claude Code)", not "private runners": the
+// registration is internal; "Private" is only a setting on a runner app.
 function PrivateRunners({ slug }: { slug: string }): JSX.Element | null {
   const [rows, setRows] = useState<PrivateRunnerUseOut[] | null>(null)
 
@@ -275,14 +279,14 @@ function PrivateRunners({ slug }: { slug: string }): JSX.Element | null {
   return (
     <section data-testid="private-runners">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Private runners · people running agents in their own Claude Code
+        Your computers (used in Claude Code) · people running agents in their own Claude Code
       </h3>
       <table className="w-full text-[12px]">
         <tbody className="divide-y divide-border">
           {rows.map((w) => (
             <tr key={w.id} className={clsx(w.retired && 'opacity-60')}>
               <td className="py-1.5 pr-3 text-foreground">
-                {w.name} <span className="text-muted-foreground">— private runner, {w.owner_name}</span>
+                {w.name} <span className="text-muted-foreground">— {w.owner_name}&rsquo;s computer</span>
               </td>
               <td className="py-1.5 pr-3">{w.agents.join(', ')}</td>
               <td className="py-1.5 pr-3 text-right tabular-nums text-muted-foreground">

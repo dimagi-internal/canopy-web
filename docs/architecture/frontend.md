@@ -6,6 +6,12 @@ How the React SPA (`frontend/`) is styled and how it is served so a deploy is ne
 
 App UI is **dense and readable: tables, not cards.**
 
+## API clients and errors
+
+- Every `src/api/*` module calls the server through `apiV2` (`src/api/client.v2.ts`), so it gets the `/api/w/{ws}` rewrite, the 401 login bounce and the passkey step-up retry. Response types alias `components['schemas'][...]` from `generated.ts`; only free-form JSON fields (a review's `request_json`, a narrative's `narration`) are written out by hand. `chat.ts` still uses raw `fetch` because some of its routes (session secrets, MCP Apps View plumbing) are not in the schema.
+- A failed call throws the one `ApiError` (`src/api/problem.ts`). It carries `status`, `code` (a top-level `error` member, or else the tail of the problem `type`), `title`, `detail`, `extras` and the raw `body`, and its `message` is the server's `detail` when there is one. Use `unwrap(res, what)` for a call that returns data and `ensureOk(res, what)` for a 204. Branch on `e instanceof ApiError && e.status === …`. The old names (`AgentApiError`, `WorkspaceApiError`, `ChatApiError`, …) are re-exports of the same class.
+- Token-gated public viewers (`/w/<ws>/review|storyboard|narrative|ddd-release|share|walkthrough/…`) are scoped viewer paths. `apiV2` does not rewrite them and does not bounce their 401s to login, and `shareQuery(token, {ws})` passes the undeclared `?t=` token.
+
 ## Shared kit: `canopy-ui`
 
 - The two-pane shell (left rail + scrolling main) used by the DDD and Agent workspaces, plus the design-system primitives, live in `frontend/packages/canopy-ui`, imported as `canopy-ui` with subpath exports `/ui`, `/lib`, `/chat`, `/presence`, `/shell`, `/tokens` (see its `package.json` `exports`). Surfaces consume it instead of re-implementing chrome.
@@ -21,7 +27,9 @@ The whole authenticated app styles off semantic tokens. `frontend/src/index.css`
 - **Brand:** `bg-primary` / `text-primary` / `border-primary`; `hover:bg-primary/90` for the button-hover darken.
 - **Text emphasis ladder** (brightest → dimmest): `text-foreground` (headings) → `text-foreground-secondary` (body) → `text-muted-foreground` (meta/captions) → `text-foreground-subtle` (faint).
 - **Status / categorical accents:** `success` (opportunity), `warning` (ship-gap), `info` (alignment), `special` (pattern), `destructive` (errors). Each has a `-foreground` for solid fills; tinted badges use `bg-<token>/10 text-<token> border-<token>/30`.
-- **The one exception:** the public share viewer `/w/:workspace/share/:token` (`frontend/src/pages/SessionSharePage.tsx` + `frontend/src/components/transcript/`) is a deliberately light-themed page mounted outside the app shell (`bg-white`) and uses neutral literals.
+- **Placeholders:** `placeholder:text-placeholder` on an input surface (the `--placeholder` token: no one value clears 3:1 on both themes' `--input`, so it differs per theme instead of a `dark:` variant).
+- **The one exception:** the public share viewer `/w/:workspace/share/:token` (`frontend/src/pages/SessionSharePage.tsx` + `frontend/src/components/transcript/` + `frontend/src/components/ShareRouteErrorBoundary.tsx`) is a deliberately light-themed page mounted outside the app shell (`bg-white`) and uses neutral literals.
+- **Enforced** by `frontend/src/designTokens.test.ts`, which scans `src/` and `packages/canopy-ui/src/` for palette literals and `dark:` variants. Its allowlist is the share viewer above plus, in the published `canopy-ui` package, the stock shadcn `ui/{badge,button,input,textarea}.tsx` `dark:` variants and the categorical per-person hues (`chat/personColor.ts`, `presence/avatar.ts`). A colour no token covers gets a token in `index.css`, not an allowlist entry.
 
 ## Light and dark themes
 

@@ -113,26 +113,3 @@ def test_reupsert_without_runtime_fields_does_not_clobber(client, workspace):
     assert body["repo_url"] == "https://github.com/dimagi/echo"  # preserved
     assert body["engine"] == "cloud_p"
     assert body["secret_refs"] == ["canopy-pat"]
-
-
-def test_set_runner_preference(client, workspace):
-    Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
-    resp = client.patch(
-        "/api/agents/echo/runner-preference",
-        data={"runner_preference": ["cloud", "emdash"]},
-        content_type="application/json",
-    )
-    assert resp.status_code == 200, resp.content
-    assert resp.json()["runner_preference"] == ["cloud", "emdash"]
-    Agent.objects.get(slug="echo").runner_preference == ["cloud", "emdash"]
-
-
-def test_set_runner_preference_rejects_unknown_kind(client, workspace):
-    Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
-    resp = client.patch(
-        "/api/agents/echo/runner-preference",
-        data={"runner_preference": ["cloud", "banana"]},
-        content_type="application/json",
-    )
-    assert resp.status_code == 422
-    assert Agent.objects.get(slug="echo").runner_preference == []  # unchanged

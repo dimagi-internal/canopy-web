@@ -370,11 +370,11 @@ requires-dist = [{ name = "canopy-transcript", editable = "packages/canopy_trans
 
 [[package]]
 name = "canopy-agent-factory"
-version = "1.0.0"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e8/fd/27f0e2bea84b45342b980bdbe404d9d114f678128f8a1c0fabbec139d840/canopy_agent_factory-1.0.0.tar.gz", hash = "sha256:64d092a03da9359e77ea87e0e74e261fcfa8f3241263381fcf1705be1cfe2f4f", size = 22852, upload-time = "2026-09-13T04:21:06.672Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/62/0a4e42f17f2114dc85b35195946fb5f074973fa5b0c1bd48d5f37c6d0129/canopy_agent_factory-1.2.0.tar.gz", hash = "sha256:e5663ab5f77283565e76d62036da3d63180f210cf572e47c0febfa630b206437", size = 26226, upload-time = "2026-10-22T03:48:51.593Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/31/3d/d4f479f03a7cea657f8bd1b5a539c22be4fde875a7d7f9952d8b4973d831/canopy_agent_factory-1.0.0-py3-none-any.whl", hash = "sha256:96473cecaff3f1dfd72428629b7ecbb630f295343b73a2f1b8ea130e16426b5e", size = 17509, upload-time = "2026-09-13T04:21:05.529Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/fa/4fa99d82e17ff9ff1e52bae7a99459c9a32320da5990275b63fad83802e0/canopy_agent_factory-1.2.0-py3-none-any.whl", hash = "sha256:0e470410848f6f588446284c976c87db7e4186c40787e8b5bd135c8a3ae03abe", size = 20459, upload-time = "2026-10-22T03:48:50.56Z" },
 ]
 
 [[package]]
@@ -522,7 +522,7 @@ dev = [
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=1.0,<2.0" },
     { name = "boto3", specifier = ">=1.34,<2.0" },
-    { name = "canopy-agent-factory", specifier = ">=1,<2" },
+    { name = "canopy-agent-factory", specifier = ">=1.2,<2" },
     { name = "canopy-agent-runs", editable = "packages/canopy_agent_runs" },
     { name = "canopy-cron", editable = "packages/canopy_cron" },
     { name = "canopy-kb", editable = "packages/canopy_kb" },

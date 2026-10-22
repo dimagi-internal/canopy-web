@@ -250,6 +250,13 @@ describe("directed-only boxes", () => {
     expect(isDirectedOnly(runner({ capabilities: { directed: "yes" } as never }))).toBe(false);
   });
 
+  it("treats a private runner as directed only — it takes no routed work", () => {
+    expect(isDirectedOnly(runner({ private: true, capabilities: { sessions: true } }))).toBe(true);
+    expect(isDirectedOnly(runner({ private: false, capabilities: { sessions: true } }))).toBe(false);
+    expect(runnerOptionLabel(runner({ name: "jj-mbp", private: true, capabilities: { sessions: true } })))
+      .toBe("jj-mbp · directed only");
+  });
+
   it("is still offered for a chat — a chat started on it binds to it", () => {
     const box = runner({ id: "t", capabilities: { sessions: true, directed: true } });
     expect(onlineSessionCapableRunners([box]).map((r) => r.id)).toEqual(["t"]);

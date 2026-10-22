@@ -2,6 +2,7 @@ import { useState, type JSX } from 'react'
 import { Link } from 'react-router-dom'
 import { refreshRunner, type RunnerOut } from '@/api/harness'
 import { relativeAge } from '@/lib/relativeAge'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // What the box reports about its own features — one row per check, straight
 // from its heartbeat (Runner.health). Exists because "online + ready" said
@@ -30,7 +31,7 @@ export function fixHref(checkName: string, agentWorkspace: (slug: string) => str
   const m = /^github\.(.+)$/.exec(checkName)
   if (!m) return null
   const ws = agentWorkspace(m[1])
-  return ws ? `/w/${ws}/agents/${m[1]}/settings#credentials` : null
+  return ws ? scopedPath(ws, `/agents/${m[1]}/settings#credentials`) : null
 }
 
 export function RunnerHealth({

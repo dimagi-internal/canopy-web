@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.db import transaction
 from django.http import HttpRequest
 from django.utils import timezone
 from ninja import Router, Status
@@ -22,7 +23,7 @@ from apps.api.auth import session_auth
 from apps.workspaces import services as wsvc
 
 from . import local
-from .models import Turn, PrivateRunner
+from .models import PrivateRunner, Runner, Turn
 from .schemas import (
     LocalTurnIn,
     LocalTurnOut,
@@ -41,13 +42,15 @@ local_turns_router = Router(auth=session_auth, tags=["harness"])
 def register_private_runner(request: HttpRequest, payload: PrivateRunnerIn):
     """Idempotent per (you, name): registering the same machine again returns it
     (and brings back a retired one). A private runner is yours, not an agent's or a
-    workspace's — one serves every agent you use locally. It never claims turns."""
+    workspace's — one serves every agent you use locally. It never claims turns.
+
+    `runner_id` is the runner that holds this machine's device keys: the runner app
+    you link (`runner`), else a `computer` runner made for it — enrol a key on it
+    (`POST /api/runner-device-keys/`) to read a zero-knowledge agent's vault here."""
     runner = None
     if payload.runner is not None:
-        from .models import Runner
-
         runner = Runner.objects.filter(pk=payload.runner, owner=request.user).exclude(
-            status=Runner.RETIRED).first()
+            status=Runner.RETIRED).exclude(kind=Runner.COMPUTER).first()
         if runner is None:
             raise HttpError(422, "no live runner of yours with that id")
     try:
@@ -102,17 +105,35 @@ def list_workspace_private_runners(request: HttpRequest, workspace: str):
 @private_runners_router.post("/{private_runner_id}/retire", response=PrivateRunnerOut,
                           summary="Retire one of your private runners")
 def retire_private_runner(request: HttpRequest, private_runner_id: uuid.UUID):
+    """Its local sessions stop opening, a runner app linked to it goes back to
+    being shared, and the runner that held its keys when it has no runner app
+    retires with it."""
+    # Unlinked and shared rather than left private: a private runner with no live
+    # registration still takes no fleet work, and its token opens nothing.
+    from apps.events import audit
+
     ws = local.private_runner_of(request.user, private_runner_id)
     if ws is None:
         raise HttpError(404, "private runner not found")
-    ws.retired_at = timezone.now()
-    ws.save(update_fields=["retired_at"])
+    with transaction.atomic():
+        ws.retired_at = timezone.now()
+        box, ws.runner = ws.runner, None
+        ws.save(update_fields=["retired_at", "runner"])
+        if box is not None and box.kind == Runner.COMPUTER:
+            # The computer's own key holder goes with it: its keys and tokens stop.
+            local.retire_computer_runner(box)
+        elif box is not None and box.private:
+            box.private = False
+            box.save(update_fields=["private"])
+            audit.note_change(scope=f"runner-private:{box.name}", before={"private": True},
+                              after={"private": False}, workspace=box.workspace)
     return ws
 
 
 def _local_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
-    turn = Turn.objects.filter(pk=turn_id, origin=Turn.ORIGIN_LOCAL).select_related("agent").first()
-    if turn is None or not local.is_initiator(turn, request.user):
+    turn = (Turn.objects.filter(pk=turn_id, origin=Turn.ORIGIN_LOCAL)
+            .select_related("agent", "private_runner").first())
+    if turn is None or not local.may_report(turn, request):
         raise HttpError(404, "turn not found")
     return turn
 

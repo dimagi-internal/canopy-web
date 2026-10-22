@@ -64,26 +64,49 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
 #: instead of a PAT, so they open, renew and close their local turns and read their
 #: agent's secrets under the owner's license (credentials/resolve, above). Only on a
 #: private runner — the owner's own machine — never on
-#: a shared box, whose token speaks for the fleet, not a person.
+#: a shared box, whose token speaks for the fleet, not a person. Not
+#: `/api/private-runners`: registering or relinking one is the person's, with their
+#: own token, and a box's token has no reason to.
 _PRIVATE_RULES: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"POST"}), r"/api/harness/local-turns(/.*)?"),
-    (frozenset({"GET", "POST"}), r"/api/private-runners"),
 )
 
 
-def reaches(method: str, path: str, runner_id, *, private: bool = False) -> bool:
+#: ALL a COMPUTER's token reaches (`Runner.COMPUTER`: a person's computer used in
+#: plain Claude Code, no runner app). Not the runner protocol — it has no program to
+#: heartbeat or claim — only what its owner's sessions there do: open, renew and
+#: report their local turns (`api._reporting_turn_or_404` holds it to local turns
+#: opened on this computer), and read an agent's secrets under the owner's license
+#: during one (`apps/agents/api._credential_access` never makes it a `runner`).
+_COMPUTER_RULES: tuple[tuple[frozenset[str], str], ...] = _PRIVATE_RULES + (
+    (frozenset({"POST"}), r"/api/harness/turns/[^/]+/(events|transcript|finish)"),
+    (frozenset({"GET"}), rf"/api/agents/{_SLUG}/credentials/resolve"),
+    (frozenset({"GET"}), rf"/api/agents/{_SLUG}/credentials/access"),
+)
+
+
+def reaches(method: str, path: str, runner_id, *, private: bool = False,
+            computer: bool = False) -> bool:
     """May a runner token for `runner_id` make this request? `private`: the runner is
-    its owner's private runner, which also opens its owner's local sessions."""
+    its owner's private runner, which also opens its owner's local sessions.
+    `computer`: the runner is a computer with no runner app — only its local
+    sessions and their license reads (`_COMPUTER_RULES`), never the protocol."""
     flat = _strip_to_flat(path)
     rid = re.escape(str(runner_id))
-    rules = _RULES + (_PRIVATE_RULES if private else ())
+    if computer:
+        rules = _COMPUTER_RULES
+    else:
+        rules = _RULES + (_PRIVATE_RULES if private else ())
     for methods, pattern in rules:
         if method.upper() in methods and re.fullmatch(pattern.replace("{runner}", rid), flat):
             return True
     return False
 
 
-def reaches_ws(path: str, runner_id) -> bool:
-    """A runner token opens its own runner's control channel and nothing else."""
+def reaches_ws(path: str, runner_id, *, computer: bool = False) -> bool:
+    """A runner token opens its own runner's control channel and nothing else — and
+    a computer's (no runner app, no channel) opens none."""
+    if computer:
+        return False
     return bool(re.fullmatch(rf"/?ws/runner/{re.escape(str(runner_id))}/?", path or ""))
 

@@ -24,7 +24,16 @@ class Runner(models.Model):
     """A paired executor (laptop emdash daemon, cloud container, remote box)."""
 
     EMDASH, CLOUD, REMOTE = "emdash", "cloud", "remote"
-    KIND_CHOICES = [(EMDASH, "Emdash"), (CLOUD, "Cloud"), (REMOTE, "Remote")]
+    # A person's COMPUTER used in plain Claude Code, with no runner app: the
+    # lightweight runner a `PrivateRunner` gets when it is registered without one,
+    # so the machine can hold a device key — sign its owner's local sessions in and
+    # read a zero-knowledge agent's vault under their license. It has no program
+    # behind it: it never heartbeats, claims or takes a pin, and it is not a fleet
+    # runner, so every fleet list (supervisor, routing pickers, workspace order,
+    # health, topology, drills) leaves it out. Always `private`, never enrolled.
+    COMPUTER = "computer"
+    KIND_CHOICES = [(EMDASH, "Emdash"), (CLOUD, "Cloud"), (REMOTE, "Remote"),
+                    (COMPUTER, "Computer (Claude Code, no runner app)")]
 
     # Environment (first-class; the persistence tier derives from `location`).
     LOCAL = "local"
@@ -350,7 +359,7 @@ class Runner(models.Model):
         and laptop emdash runners both set it (`canopy-runner pair` declares it since
         2026-10-02); a box without it never receives a chat/Slack turn. Like the
         other capabilities, a hint gated by tenant."""
-        return bool(self.capabilities.get("sessions", False))
+        return self.kind != Runner.COMPUTER and bool(self.capabilities.get("sessions", False))
 
     def directed_only(self) -> bool:
         """Whether this box takes only what is PUT on it: turns pinned to it and
@@ -995,9 +1004,10 @@ class AgentSchedule(models.Model):
     """A recurring turn declaration — "Echo's weekly manager report, Fridays 9am ET".
 
     Config lives here (server-side, so it is visible and editable in the Agent
-    UI); the *firing* is done by the runner, which syncs these rows, evaluates
-    the cron locally, and POSTs back a slot. The server then materializes a
-    normal harness Turn via services.enqueue_turn — the scheduler is a producer
+    UI); canopy-web fires it itself (schedule_clock.py, a loop in the web
+    process), and a laptop runner may too (it syncs these rows, evaluates the
+    cron locally, and POSTs back a slot) — both collapse on the slot key. Either
+    way the server materializes a normal harness Turn via services.enqueue_turn — the scheduler is a producer
     of turns, not a second execution engine.
 
     The Turn IS the occurrence (origin=cron, origin_ref={schedule_id, slot},
@@ -2044,3 +2054,26 @@ class PrivateRunner(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"private_runner:{self.name}"
+
+
+class TurnAgentToken(models.Model):
+    """An agent login a runner was given for ONE turn it holds (turn-scoped agent token).
+
+    `POST /api/harness/runners/{rid}/turns/{tid}/agent-token` mints a `PersonalToken`
+    for the turn's `Agent.user` and records it here, so every token of a turn can be
+    revoked when the turn stops executing on that runner (`turn_agent_tokens`). It
+    replaces the agent's stored, never-expiring `canopy-pat` for runner turns.
+    Spec: docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md.
+    """
+
+    turn = models.ForeignKey(Turn, on_delete=models.CASCADE, related_name="agent_tokens")
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="+")
+    token = models.OneToOneField("tokens.PersonalToken", on_delete=models.CASCADE,
+                                 related_name="turn_grant")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"turn-agent-token:{self.turn_id}"

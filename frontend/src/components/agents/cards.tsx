@@ -15,6 +15,7 @@ import { EventLedger } from '@/components/activity/EventLedger'
 import { TurnTranscript } from '@/components/activity/TurnTranscript'
 import { statusToken } from '@/components/activity/turnLog'
 import { promptHasMore, turnBody, turnDuration, turnHeadline, turnTrigger } from './turnText'
+import { scopedPath } from '../../lib/scopedLinks'
 
 export function formatDate(s: string): string {
   return new Date(s).toLocaleDateString(undefined, {
@@ -135,7 +136,7 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
   // that has no chat, its retained transcript, shown inline when opened.
   const { workspace } = useParams<{ workspace: string }>()
   const chatHref =
-    turn.chat_session_id && workspace ? `/w/${workspace}/chat/${turn.chat_session_id}` : ''
+    turn.chat_session_id && workspace ? scopedPath(workspace, `/chat/${turn.chat_session_id}`) : ''
   const showTranscript = !turn.chat_session_id && !!turn.has_transcript
   const body = turnBody(turn)
   const duration = turnDuration(turn)

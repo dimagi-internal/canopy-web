@@ -488,7 +488,7 @@ def list_person_conversations(request: HttpRequest, person_id: int, agent: str,
     target = Agent.objects.filter(slug=agent).select_related("workspace").first()
     if target is None or not target.workspace_id or not wsvc.is_member(request.user, target.workspace_id):
         raise _not_found("Agent not found")
-    own_login = target.user_id is not None and target.user_id == request.user.pk
+    own_login = target.is_own_login(request.user)
     if not (own_login or target.is_admin(request.user)):
         raise ProblemError(403, "Only this agent's own login, or its admins, may read "
                                 "its conversations", type_=TYPE_FORBIDDEN)

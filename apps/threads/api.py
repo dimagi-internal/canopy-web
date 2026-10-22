@@ -15,7 +15,7 @@ from django.utils import timezone
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.agents.models import Agent
+from apps.agents.gates import agent_for_read, agent_for_work
 from apps.harness import provenance
 from apps.harness.api import visible_turns_qs
 from apps.workspaces import permissions as perms
@@ -54,15 +54,6 @@ def _thread_or_404(request: HttpRequest, thread_id: str) -> AgentThread:
     return t
 
 
-def _agent_visible(request: HttpRequest, slug: str, *, pinned: bool) -> Agent:
-    agent = Agent.objects.filter(slug=slug).first()
-    ws = getattr(request, "workspace_slug", None) if pinned else None
-    if (agent is None or not agent.workspace_id or (ws and agent.workspace_id != ws)
-            or not wsvc.is_member(request.user, agent.workspace_id)):
-        raise HttpError(404, f"agent '{slug}' not found")
-    return agent
-
-
 def _parent_is_thread_message() -> bool:
     """Depth limit 1 (v1): the turn the caller is running inside — its
     X-Canopy-Parent-Turn header, or a caller token's turn — is a thread message."""
@@ -89,11 +80,12 @@ def open_thread(request: HttpRequest, payload: ThreadIn):
         raise HttpError(422, "a thread's participants are distinct agents")
     if _parent_is_thread_message():
         raise HttpError(422, "a thread cannot be opened from inside a thread message")
-    moderator = _agent_visible(request, payload.moderator, pinned=True)
-    if not perms.can(request.user, moderator.workspace_id, perms.AGENT_WORK):
-        raise HttpError(403, "opening a thread requires the editor role or above")
+    moderator = agent_for_work(request, payload.moderator,
+                               forbidden="opening a thread requires the editor role or above")
     for slug in agents:
-        _agent_visible(request, slug, pinned=False)
+        # A participant may live in any workspace of the caller's; the pin names
+        # the thread's home (the moderator's), not each participant's.
+        agent_for_read(request, slug, honor_pin=False)
 
     with transaction.atomic():
         for t in (AgentThread.objects.select_for_update()

@@ -3,7 +3,7 @@ import type { SessionMessage } from "../../api/sessions";
 import { MessageItem } from "./MessageItem";
 
 interface Props {
-  messages: SessionMessage[];
+  messages: readonly SessionMessage[];
 }
 
 export function MessageList({ messages }: Props) {

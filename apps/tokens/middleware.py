@@ -72,7 +72,8 @@ class BearerTokenAuthMiddleware:
                 return JsonResponse({"detail": "runner token is not valid (expired, or its "
                                      "device key was revoked)"}, status=401)
             if not runner_auth.reaches(request.method, request.path_info, rtok.runner_id,
-                                       private=rtok.runner.private):
+                                       private=rtok.runner.private,
+                                       computer=rtok.runner.kind == rtok.runner.COMPUTER):
                 detail = "a runner token opens the runner protocol only"
                 return JsonResponse(
                     {"type": "about:blank", "title": detail, "status": 403, "detail": detail},
@@ -237,6 +238,17 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool:
     request.via_mcp = True
     request.mcp_tool = principal.get("mcp_tool") or ""
     request._dont_enforce_csrf_checks = True
+    # The same acting cap as the caller's REST call: the client's own
+    # `X-Canopy-Acts-As` / `X-Canopy-Turn-Id` (forwarded by the MCP server), and a
+    # caller token's own turn — so a capped turn cannot shed its cap through MCP.
+    _apply_acting_cap(request)
+    if cred and cred.get("turn_id") and getattr(request, "user", None) is not None:
+        try:
+            from apps.workspaces import role_cap
+
+            role_cap.apply(request.user, role_cap.turn_cap(cred["turn_id"], request.user))
+        except Exception:  # noqa: BLE001 — a cap only narrows; never deny on a hiccup
+            logger.exception("acting cap lookup failed")
     return True
 
 

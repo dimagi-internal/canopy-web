@@ -20,7 +20,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.api.pagination import Page, clamp_limit, paginate
+from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
 from apps.workspaces import services as wsvc
 
 from . import auto_debug
@@ -56,7 +56,7 @@ def list_failure_investigations(request: HttpRequest, status: InvestigationStatu
     qs = FailureInvestigation.objects.filter(workspace_id__in=_visible_slugs(request, listing=True))
     if status:
         qs = qs.filter(status=status)
-    return paginate(qs.order_by("-last_seen", "-id"), offset=max(0, offset), limit=clamp_limit(limit))
+    return paginate(qs.order_by("-last_seen", "-id"), offset=clamp_offset(offset), limit=clamp_limit(limit))
 
 
 @router.get("/{investigation_id}", response=FailureInvestigationOut,

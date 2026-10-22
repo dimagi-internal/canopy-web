@@ -6,16 +6,15 @@
  */
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
-import { problemMessage } from './problem'
+import { ensureOk, unwrap } from './problem'
 import { credentialToJSON, toCreationOptions, toRequestOptions } from '../auth/webauthn'
 
 type Schemas = components['schemas']
 export type PasskeyOut = Schemas['PasskeyOut']
 export type StepUpStatusOut = Schemas['StepUpStatusOut']
 
-function need<T>(res: { data?: T; error?: unknown }, fallback: string): T {
-  if (res.error !== undefined || res.data === undefined) throw new Error(problemMessage(res.error, fallback))
-  return res.data
+function need<T>(res: { data?: T; error?: unknown; response: Response }, fallback: string): T {
+  return unwrap(res, fallback)
 }
 
 export async function listPasskeys(): Promise<PasskeyOut[]> {
@@ -23,10 +22,10 @@ export async function listPasskeys(): Promise<PasskeyOut[]> {
 }
 
 export async function deletePasskey(id: number): Promise<void> {
-  const { error, response } = await apiV2.DELETE('/api/passkeys/{passkey_id}', {
+  const res = await apiV2.DELETE('/api/passkeys/{passkey_id}', {
     params: { path: { passkey_id: id } },
   })
-  if (error !== undefined || !response.ok) throw new Error(problemMessage(error, 'Could not delete the passkey'))
+  ensureOk(res, 'Could not delete the passkey')
 }
 
 export async function getStepUpStatus(): Promise<StepUpStatusOut> {

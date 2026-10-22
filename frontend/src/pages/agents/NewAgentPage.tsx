@@ -16,6 +16,7 @@ import { GitHubTokenSteps } from '@/components/agents/GitHubTokenSteps'
 import { mailboxHint, useHostedDomains } from '@/components/agents/hostedMail'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /**
  * Create an agent — the web half of `/canopy:create-agent`.
@@ -71,7 +72,7 @@ export function NewAgentPage(): JSX.Element {
       setCheck(await checkScaffoldRepo(workspace, effectiveSlug, repo, token.trim()))
     } catch (e) {
       setCheck(null)
-      setCheckError(e instanceof CreationError ? e : new CreationError(String(e)))
+      setCheckError(e instanceof CreationError ? e : new CreationError(0, String(e)))
     } finally {
       setChecking(false)
     }
@@ -95,6 +96,9 @@ export function NewAgentPage(): JSX.Element {
 
   const [creating, setCreating] = useState('')
   const [createError, setCreateError] = useState<CreationError | null>(null)
+  // Set when the agent exists but a later, non-fatal step was refused: the page
+  // stays to say so, with a way on to the agent's setup.
+  const [created, setCreated] = useState('')
   // `update`: an earlier attempt (or GitHub's README) is there; only missing files are added.
   const ready = check?.state === 'ready' || check?.state === 'update' || check?.state === 'adopt'
   const aboutDone = Boolean(name.trim() && effectiveSlug && mandate.trim())
@@ -114,6 +118,7 @@ export function NewAgentPage(): JSX.Element {
       repo, token: token.trim(),
     }
     setCreateError(null)
+    setCreated('')
     try {
       setCreating(
         check?.state === 'adopt' ? 'Adopting the repository…'
@@ -123,12 +128,23 @@ export function NewAgentPage(): JSX.Element {
       setCreating('Registering the agent…')
       await registerAgent(agent, pushed)
       setCreating('Saving the token as its GitHub identity…')
+      const setup = scopedPath(workspace, `/agents/${agent.slug}/settings?created=${encodeURIComponent(pushed.repo)}#setup`)
       // Not fatal: the agent exists now, and its setup checklist shows the GitHub
-      // step as still to do, with the same control, if this is refused.
-      await setAgentGitHub(agent.slug, agent.token).catch(() => undefined)
-      navigate(`/w/${workspace}/agents/${agent.slug}/settings?created=${encodeURIComponent(pushed.repo)}#setup`)
+      // step as still to do, with the same control. But say it was refused, and why.
+      try {
+        await setAgentGitHub(agent.slug, agent.token)
+      } catch (e) {
+        const why = e instanceof Error ? e.message : String(e)
+        setCreateError(new CreationError(0,
+          `${agent.name} was created, but saving the token as its GitHub identity failed: ${why} ` +
+            'Retry it from the GitHub step of its setup checklist.',
+        ))
+        setCreated(setup)
+        return
+      }
+      navigate(setup)
     } catch (e) {
-      setCreateError(e instanceof CreationError ? e : new CreationError(String(e)))
+      setCreateError(e instanceof CreationError ? e : new CreationError(0, String(e)))
     } finally {
       setCreating('')
     }
@@ -247,6 +263,11 @@ export function NewAgentPage(): JSX.Element {
           <p className="text-[12px] text-muted-foreground">Still needed: {missing.join(', ')}.</p>
         )}
         {createError && <Problem error={createError} />}
+        {created && (
+          <Button className="mt-2" size="sm" variant="outline" onClick={() => navigate(created)}>
+            Open its setup
+          </Button>
+        )}
       </Step>
     </div>
   )

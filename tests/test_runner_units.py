@@ -320,6 +320,13 @@ def test_every_runner_route_stamps_roots_for_its_caller(box):
     WorkspaceMembership.objects.create(workspace=connect, user=ada, role=WorkspaceMembership.EDITOR)
     RunnerAdmin.objects.create(runner=laptop, user=ada, granted_by=jj)
     c = _client(ada)
+    import time
+
+    from apps.passkeys import stepup
+
+    s = c.session  # declaring a flag needs a fresh passkey confirmation
+    s[stepup.SESSION_KEY] = {"user": ada.pk, "until": time.time() + 60}
+    s.save()
 
     flags = c.put(f"/api/harness/runners/{laptop.pk}/flags", {"flags": []},
                   content_type="application/json")
@@ -328,8 +335,12 @@ def test_every_runner_route_stamps_roots_for_its_caller(box):
     assert flags.json()["roots"] == ["dimagi"] and flags.json()["spans_trees"] is True
     listed = {r["name"]: r for r in c.get("/api/harness/runners/").json()}
     assert listed["jj-mbp"]["roots"] == ["dimagi"]
-    own = _client(jj).put(f"/api/harness/runners/{laptop.pk}/flags", {"flags": []},
-                          content_type="application/json").json()
+    owner = _client(jj)
+    s = owner.session
+    s[stepup.SESSION_KEY] = {"user": jj.pk, "until": time.time() + 60}
+    s.save()
+    own = owner.put(f"/api/harness/runners/{laptop.pk}/flags", {"flags": []},
+                    content_type="application/json").json()
     assert own["roots"] == ["dimagi", "marshellis"]
 
 
