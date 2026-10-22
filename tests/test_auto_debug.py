@@ -368,3 +368,23 @@ def test_an_ordinary_editor_cannot_see_investigations(ada, ws, runner):
     assert c.get(f"/api/harness/failure-investigations/{inv.pk}").status_code == 404
     assert c.post(f"/api/harness/failure-investigations/{inv.pk}/resolve",
                   data={"note": "x"}, content_type="application/json").status_code == 404
+
+
+def test_a_turn_that_must_stay_on_zdr_runners_is_never_re_processed(ada, ws, runner):
+    # Its note can quote what the turn read, and the debugger runs wherever ada does
+    # (spec 2026-10-22-phi-agents-on-zdr-runners §4).
+    from apps.canopy_sessions.models import Session
+
+    ace = _agent(ws, "ace")
+    s = Session.objects.create(agent=ace, workspace=ws, title="chat",
+                               metadata={"runner_requirements": ["zdr"]})
+    n = next(_seq)
+    turn = Turn.objects.create(
+        origin="canopy_web_chat", idempotency_key=f"t-{n}-{uuid.uuid4()}",
+        status=Turn.RUNNING, claimed_by=runner, claimed_at=timezone.now(),
+        session_key=f"c-ace-{n}", chat_session=s,
+    )
+    services.finish_turn(turn, status=Turn.FAILED, result_note=NOT_RECEIVED.format(task="x"))
+
+    assert not FailureInvestigation.objects.exists()
+    assert not _debug_turns().exists()
