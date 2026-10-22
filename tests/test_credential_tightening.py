@@ -16,11 +16,10 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client, RequestFactory
 
+from apps.oauth_server.models import OAuthClient, OAuthGrant
 from apps.tokens.models import (
     AppCredential,
     DelegatedToken,
-    OAuthClient,
-    OAuthGrant,
     PersonalToken,
 )
 from tests.site_tenant import host_workspace

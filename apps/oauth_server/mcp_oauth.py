@@ -37,7 +37,9 @@ from django.utils import timezone
 from apps.common import oauth_core
 from apps.common.oauth_core import OAuthError
 
-from .models import OAuthAuthorizationCode, OAuthClient, OAuthGrant, PersonalToken, hash_secret
+from apps.tokens.models import PersonalToken, hash_secret
+
+from .models import OAuthAuthorizationCode, OAuthClient, OAuthGrant
 
 ACCESS_TOKEN_TTL = timedelta(hours=1)
 REFRESH_TOKEN_TTL = timedelta(days=30)

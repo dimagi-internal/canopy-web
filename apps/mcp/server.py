@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 def _verifier() -> CanopyPATVerifier:
     """The verifier, told the MCP's public URL so a 401 carries
     `WWW-Authenticate: Bearer resource_metadata="…"` — how an MCP client finds
-    where to sign in (RFC 9728 §5.1; `apps/tokens/mcp_oauth.py`). Without a
+    where to sign in (RFC 9728 §5.1; `apps/oauth_server/mcp_oauth.py`). Without a
     public base URL (dev) the challenge is a bare `Bearer`, as before."""
     from apps.tokens.client_identity import public_base
 

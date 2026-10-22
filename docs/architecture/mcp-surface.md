@@ -109,7 +109,7 @@ caller via `get_access_token()`.
   last 30 days and rotate on every use; a retired one presented again revokes
   the grant, as does replaying a code. Settings → **Connected apps** lists the
   grants (`GET /api/tokens/connected-apps`) and disconnects them at once. Code:
-  `apps/tokens/mcp_oauth.py` (the authorization server; the protocol rules it
+  `apps/oauth_server/mcp_oauth.py` (the authorization server; the protocol rules it
   shares with the HCP service — PKCE, redirect_uri at the token endpoint,
   one-time redemption with replay → revoke — are `apps/common/oauth_core.py`),
   `views_mcp_oauth.py` (register + consent), `views_oauth.token` (one token

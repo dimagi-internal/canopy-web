@@ -15,7 +15,8 @@ from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
 from apps.github_connect.views import github_connect_callback, github_connect_start
 from apps.tokens.views_embed import embed_chat, embed_widget_js
 from apps.contacts import hcp_oauth_views
-from apps.tokens import views_mcp_oauth, views_oauth
+from apps.oauth_server import views as views_mcp_oauth
+from apps.tokens import views_oauth
 from apps.tokens.views_oauth import client_metadata as oauth_client_metadata
 from apps.tokens.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
@@ -53,7 +54,7 @@ urlpatterns = [
     # RFC 8414 / RFC 9728 documents. All 503 until CANOPY_HOST_SIGNING_KEY and
     # the client keys are set. Public, like the two above.
     path("oauth/token", views_oauth.token, name="oauth-token"),
-    # Signing a person's MCP client in (apps/tokens/mcp_oauth.py).
+    # Signing a person's MCP client in (apps/oauth_server/mcp_oauth.py).
     path("oauth/register", views_mcp_oauth.register, name="oauth-register"),
     path("oauth/authorize", views_mcp_oauth.authorize, name="oauth-authorize"),
     path("oauth/probe", views_oauth.probe, name="oauth-probe"),

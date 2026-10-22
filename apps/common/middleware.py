@@ -60,12 +60,12 @@ PUBLIC_PATH_PREFIXES = (
     # self-enforces every grant it serves: canopy's own jwt-bearer grant
     # (private_key_jwt + DPoP + a signed grant, one allowed client —
     # apps/tokens/self_host.py) and a person's MCP login (a one-time code plus
-    # its PKCE verifier, or a refresh token — apps/tokens/mcp_oauth.py). The
+    # its PKCE verifier, or a refresh token — apps/oauth_server/mcp_oauth.py). The
     # host key's PUBLIC half sits here too. Nothing here can sign or read
     # tenant data without one of those.
     "/oauth/token",
     # An MCP client registers itself before anyone signs in; registering grants
-    # nothing (apps/tokens/mcp_oauth.py). `/oauth/authorize` is deliberately NOT
+    # nothing (apps/oauth_server/mcp_oauth.py). `/oauth/authorize` is deliberately NOT
     # here: the consent page needs a signed-in person, so this middleware sends
     # an anonymous visitor to sign in and back.
     "/oauth/register",

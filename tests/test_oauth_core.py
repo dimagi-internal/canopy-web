@@ -14,7 +14,8 @@ from django.utils import timezone
 
 from apps.common import oauth_core
 from apps.common.oauth_core import OAuthError
-from apps.tokens.models import OAuthAuthorizationCode, OAuthClient, hash_secret
+from apps.oauth_server.models import OAuthAuthorizationCode, OAuthClient
+from apps.tokens.models import hash_secret
 
 pytestmark = pytest.mark.django_db
 

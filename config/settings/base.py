@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     "apps.walkthroughs",
     "apps.tokens",
     "apps.github_connect",
+    "apps.oauth_server",
     "apps.reviews",
     "apps.runs",
     "apps.shareouts",

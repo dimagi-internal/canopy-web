@@ -101,8 +101,10 @@ def authorization_server_metadata(request: HttpRequest, rest: str = "") -> JsonR
     (authorization_code + PKCE, `mcp_oauth.py`) — always served — and canopy's
     own jwt-bearer grant for embedded pages (`self_host.py`), folded in when
     this deployment is configured as a host."""
-    from . import mcp_oauth, self_host
-    from .views_mcp_oauth import cors, issuer, preflight
+    from apps.oauth_server import mcp_oauth
+    from apps.oauth_server.views import cors, issuer, preflight
+
+    from . import self_host
 
     if request.method == "OPTIONS":
         return preflight()
@@ -115,8 +117,10 @@ def authorization_server_metadata(request: HttpRequest, rest: str = "") -> JsonR
 @require_http_methods(["GET", "OPTIONS"])
 def protected_resource_metadata(request: HttpRequest, rest: str = "") -> JsonResponse:
     """RFC 9728 for `/api/mcp/` — where an MCP client learns whom to sign in with."""
-    from . import mcp_oauth, self_host
-    from .views_mcp_oauth import cors, issuer, mcp_resource, preflight
+    from apps.oauth_server import mcp_oauth
+    from apps.oauth_server.views import cors, issuer, mcp_resource, preflight
+
+    from . import self_host
 
     if request.method == "OPTIONS":
         return preflight()
@@ -143,8 +147,10 @@ def token(request: HttpRequest) -> JsonResponse:
 
     from apps.common import oauth_core
 
-    from . import mcp_oauth, self_host
-    from .views_mcp_oauth import cors, preflight
+    from apps.oauth_server import mcp_oauth
+    from apps.oauth_server.views import cors, preflight
+
+    from . import self_host
 
     if request.method == "OPTIONS":
         return preflight()
