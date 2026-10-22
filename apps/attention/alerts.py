@@ -111,7 +111,11 @@ class ActionNotOffered(Exception):  # noqa: N818 — the name the alert API and 
 def source_for(kind: str):
     """The registered source module whose `KIND` is `kind`."""
     for path in SOURCES:
-        mod = import_module(path)
+        try:
+            mod = import_module(path)
+        except ImportError:  # one unimportable source must not hide the others
+            logger.exception("alert source %s cannot be imported", path)
+            continue
         if mod.KIND == kind:
             return mod
     raise LookupError(f"no alert source registered for kind {kind!r}")
