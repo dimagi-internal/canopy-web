@@ -387,6 +387,24 @@ def test_ui_message_is_a_message_from_the_viewer_that_starts_a_turn(w):
                                   plaintext__startswith="Sent").exists()
 
 
+def test_ui_message_through_a_zdr_site_stamps_the_sites_requirements(w):
+    # The session was started without the site's floor (in canopy itself, or
+    # before the site required ZDR). A member's `ui/message` arriving through
+    # the site's delegated token is a send under that token like any other: it
+    # must route under the site's requirements, as the REST send does.
+    from apps.harness import runner_requirements as rr
+    from apps.tokens.models import DelegatedToken
+
+    assert not rr.requirements_of_session(w["session"])
+    raw, _tok = DelegatedToken.issue(app=w["app"], user=w["editor"], ttl_seconds=600,
+                                     runner_requirements=["zdr"])
+    c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    r = post(c, base(w) + "/message", {"text": "Sent", "client_id": "z1"})
+    assert r.status_code == 200, r.content
+    w["session"].refresh_from_db()
+    assert rr.requirements_of_session(w["session"]) == {"zdr"}
+
+
 # --- the contact path (the embed panel) ---------------------------------------------------
 
 

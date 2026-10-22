@@ -115,6 +115,10 @@ def app_view_message(request: HttpRequest, session_id: uuid.UUID, tool_call_id: 
     message, turn = doors.send_from(
         "app_view", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id,
+        # A View's clicks arrive with the delegated token the site minted for
+        # its visitor; that token's runner requirements (ZDR) bind this send
+        # exactly as they bind the REST send.
+        runner_requirements=getattr(request, "runner_requirements", ()),
         initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
     )
     return {"turn_id": str(turn.id) if turn else None, "message_id": str(message.id)}
