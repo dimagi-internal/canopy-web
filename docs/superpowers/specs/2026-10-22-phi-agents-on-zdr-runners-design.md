@@ -10,7 +10,8 @@
 ## The problem
 
 connect-labs wants an agent on a workflow's page that a person can ask about the
-workflow, its pipelines and the visit data under them (`labsdata`, §7). On a
+workflow, its pipelines and the visit data under them, and have it change the workflow
+and its pipelines in Labs (`labsdata`, §7). On a
 production opportunity that data carries PII and PHI. The person who owns the data (the
 host) needs to be able to say **"over real data, only an agent whose author vouches it
 handles PHI safely, executing only on boxes whose model calls retain nothing"** — and
@@ -271,12 +272,17 @@ no-uservisit-data PAT. Real data is reachable only as a visitor, through the gat
 ## 7. `labsdata` — the data agent
 
 A new, minimal agent, slug **`labsdata`** — a utility, not a persona — scaffolded with
-`canopy:create-agent`. It recreates the Scout data-agent experience inside Connect Labs:
-a person looking at (or naming) a workflow asks data questions, and the agent reads the
-real production data down to row level and raw form JSON, plus the pipelines, semantic
-layer and workflow definition behind it, to confirm the workflow does what was intended.
+`canopy:create-agent`. It recreates the Scout data-agent experience inside Connect Labs
+and goes further: a person looking at (or naming) a workflow asks about it, and the
+agent reads the real production data down to row level and raw form JSON, plus the
+pipelines, semantic layer and workflow definition behind it, **and changes them** —
+fixes a pipeline's SQL, adds an indicator, rewrites the render code — in Labs.
 Not ACE: ACE's `connect` capability carries Write, Skill and Drive writes, and its
 owner/admin turns ran unconfined — neither can honestly be declared PHI-safe.
+
+**The line is where the data goes, not whether the agent writes** (Jonathan,
+2026-10-22): full understanding and editability of the workflow and its pipelines
+inside Labs; the data goes nowhere else.
 
 ```yaml
 capabilities:
@@ -288,17 +294,42 @@ capabilities:
             "mcp__*canopy-web__current_page", "mcp__*canopy-web__who_is_asking"]
 ```
 
-- **Read-only.** Its only tools are the gateway's site tools (added by `sites:`),
-  `current_page`, `who_is_asking` and read-only local tools. No Bash, Write, Edit, Drive,
-  email, memory, Slack or the web — the §5 structural check refuses a declaration that
-  holds any. Writes are out of scope for this agent; a person who wants to change a
-  workflow does it in labs, or with an agent that is not declared PHI-safe over synthetic
-  data.
-- **Scope.** Labs gives it a new page scope, `data:read`, bound to the opportunities and
-  the workflow on screen — carried in the ID-JAG as RFC 9396 `authorization_details`,
-  so a token minted on one workflow cannot read another's rows: SQL over its visits
-  (including `form_json`), and reads of its pipelines, semantic layer and workflow
-  definition. No write scope is granted, so `PREVIEWED_WRITE_SCOPES` never applies.
+- **Every write lands in Labs.** The agent's tools are the gateway's site tools (added
+  by `sites:`), `current_page`, `who_is_asking` and read-only local tools. No Bash,
+  Write, Edit, Drive, email, memory, Slack or the web — the §5 structural check refuses
+  a declaration that holds any. Its edits are site calls, so they are Labs writes, made
+  as the visitor, recorded by Labs (`MCPAuditLog`, the definition's version history)
+  with the agent, SHA and runner of §6. canopy-web keeps an edit's metadata only (§4:
+  argument names, never the SQL or code).
+- **Scope.** Labs gives it two page scopes, both bound to the opportunities and the
+  workflow on screen — carried in the ID-JAG as RFC 9396 `authorization_details`, so a
+  token minted on one workflow cannot read or change another:
+  - `data:read` (built): SQL over its visits (including `form_json`), and reads of its
+    pipelines, semantic layer and workflow definition.
+  - `workflow:edit` (new): change that workflow's definition and render code, its
+    pipelines' SQL and schema, add or remove its pipeline sources (pipelines on the
+    bound opportunities only), and its semantic registry; validate and preview before
+    saving; rebuild its history. Each tool refuses a target outside the binding.
+- **What `workflow:edit` leaves out — the exits.** Nothing in it moves a row, or a
+  definition built from rows, to anywhere other people or other systems read it:
+  sharing a pipeline (`pipeline_set_shared`), creating, publishing, exporting or
+  sharing a template, cloning or handing a workflow down, changing which opportunities
+  a workflow reads (that widens the binding), synthetic-data and clone tools (they copy
+  real data's shape out), alert subscriptions, and deletes. Running a workflow's own
+  action stays `workflow:act`: previewed, and a coaching send is the person's click.
+- **Render code runs sandboxed, or is not edited.** Render code is JavaScript that runs
+  in every viewer's browser. Unsandboxed, it runs on Labs' own origin under a
+  report-only CSP whose `connect-src` allows any `https:` host — an edit there could
+  post the rows it renders anywhere. So a render-code edit is accepted only on a
+  workflow that runs in the page sandbox (connect-labs `workflow/sandbox.py`: opaque
+  origin, enforced `connect-src` with no Labs origin and no wildcard), and the edit
+  passes `sandbox_scan` first. A workflow not yet sandboxed has its render code edited
+  by a person, or is moved into the sandbox (`config.sandbox: true`) first.
+- **Edits are confirmed.** Labs' rule for a write scope (`PREVIEWED_WRITE_SCOPES`): the
+  call that saves carries the single-use token its preview issued, bound to the person
+  and exactly what was previewed. For an edit the preview is the diff (definition,
+  SQL, render code) and, for a pipeline, its validation over the bound data; the
+  person confirms it in the panel. `workflow:edit` joins that list and its test.
 - **Results.** Rows reach the person through labs' MCP Apps results View (table, chart,
   CSV), which fetches them as the viewer through an app-only tool (§4: the stored tool
   result keeps no rows).
@@ -323,12 +354,17 @@ Each step ships on its own and fails closed until the next lands.
    `canopy_sdk.host.verify_execution` / `Execution.phi_clearance` (dimagi-canopy 0.12.0).
    The statement is also bound to the access token (`ath`), and the runner reports
    `pins` (it checks out `agent_sha`) before it is given a declared turn.
-7. **`labsdata` and `data:read`** (§7). Then connect-labs sets
+7. **`labsdata`, `data:read` and `workflow:edit`** (§7). `data:read` is built in
+   connect-labs; `workflow:edit` and the sandbox rule for render-code edits are next.
+   Then connect-labs sets
    `CANOPY_RUNNER_REQUIREMENTS=zdr` and `CANOPY_PHI_AGENTS=labsdata`.
 8. **Red team, end to end:** a scripted run on a real opportunity that tries each exit —
    Bash, a file write, WebFetch, a subagent, a non-ZDR runner, a self-declared flag, a
    fork, a share link, Slack, export, auto-debug, an undeclared SHA, the agent's own PAT,
-   the OWNER's own turn asking for Bash or a write (§5: confined for everyone), and a
+   the OWNER's own turn asking for Bash or a file write (§5: confined for everyone), an
+   edit outside the bound workflow, a pipeline share, a template publish, a render-code
+   edit on an unsandboxed workflow and one that fetches another host, an edit saved
+   without its preview, and a
    stored `TOOL_RESULT` / `tool_end` / receipt holding a row (§4) — and asserts each is
    refused or empty.
 
