@@ -3,16 +3,11 @@
 // the agent surface is product tier (see ARCHITECTURE.md).
 import { apiV2, WORKSPACE_HEADER } from './client.v2'
 import type { components } from './generated'
+import { ensureOk, unwrap } from './problem'
 
 export type RunnerOut = components['schemas']['RunnerOut']
 export type TurnOut = components['schemas']['TurnOut']
 
-function unwrap<T>(res: { data?: T; error?: unknown }, what: string): T {
-  if (res.error !== undefined || res.data === undefined) {
-    throw new Error(`${what} failed: ${JSON.stringify(res.error ?? 'no data')}`)
-  }
-  return res.data
-}
 
 // openapi-fetch's Readable<T> helper degrades `readonly Foo[]` into an
 // ArrayLike-shaped object (numeric index + length, no Symbol.iterator) — see
@@ -33,10 +28,10 @@ export async function listRunners(): Promise<RunnerOut[]> {
 // Retire a runner — permanent (re-pairing mints a fresh row). The supervisor's
 // in-place resolve for a decommissioned runner stuck on a non-main branch.
 export async function retireRunner(runnerId: string): Promise<void> {
-  const { error } = await apiV2.POST('/api/harness/runners/{runner_id}/retire', {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/retire', {
     params: { path: { runner_id: runnerId } },
   })
-  if (error) throw new Error(`retireRunner failed: ${JSON.stringify(error)}`)
+  ensureOk(res, 'retireRunner')
 }
 
 // Park a runner without decommissioning it — the remote half of the box's local
@@ -297,10 +292,10 @@ export async function grantRunnerAdmin(runnerId: string, email: string): Promise
 }
 
 export async function revokeRunnerAdmin(runnerId: string, userId: number): Promise<void> {
-  const { error } = await apiV2.DELETE('/api/harness/runners/{runner_id}/admins/{user_id}', {
+  const res = await apiV2.DELETE('/api/harness/runners/{runner_id}/admins/{user_id}', {
     params: { path: { runner_id: runnerId, user_id: userId } },
   })
-  if (error) throw new Error(`revokeRunnerAdmin failed: ${JSON.stringify(error)}`)
+  ensureOk(res, 'revokeRunnerAdmin')
 }
 
 // Which workspaces a box SERVES. A runner takes a workspace's work only when it is
@@ -328,10 +323,10 @@ export async function enrollRunnerWorkspace(runnerId: string, workspace: string)
 }
 
 export async function unenrollRunnerWorkspace(runnerId: string, workspace: string): Promise<void> {
-  const { error } = await apiV2.DELETE('/api/harness/runners/{runner_id}/workspaces/{workspace}', {
+  const res = await apiV2.DELETE('/api/harness/runners/{runner_id}/workspaces/{workspace}', {
     params: { path: { runner_id: runnerId, workspace } },
   })
-  if (error) throw new Error(`unenrollRunnerWorkspace failed: ${JSON.stringify(error)}`)
+  ensureOk(res, 'unenrollRunnerWorkspace')
 }
 
 // Whether a box takes SESSION work — Slack threads and web chat. Without it a runner

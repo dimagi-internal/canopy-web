@@ -5,15 +5,10 @@
 // (the runner registry) to keep the drill surface distinct and easy to find.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
+import { unwrap } from './problem'
 
 export type RunnerDrillOut = components['schemas']['RunnerDrillOut']
 
-function unwrap<T>(res: { data?: T; error?: unknown }, what: string): T {
-  if (res.error !== undefined || res.data === undefined) {
-    throw new Error(`${what} failed: ${JSON.stringify(res.error ?? 'no data')}`)
-  }
-  return res.data
-}
 
 // Fan out a readiness drill for this runner. Default (omitted/empty `agents`)
 // drills every agent assigned to the runner; the server returns one

@@ -6,7 +6,7 @@
 // `/settings?github=…`. A fetch would be blocked by CORS and, more to the
 // point, would hide the consent screen the user is meant to read.
 import { apiV2 } from './client.v2'
-import { problemMessage } from './problem'
+import { ensureOk, unwrap } from './problem'
 import type { components } from './generated'
 
 export type GitHubConnectionOut = components['schemas']['GitHubConnectionOut']
@@ -17,17 +17,12 @@ export async function getGitHubConnection(): Promise<GitHubConnectionOut> {
   // `res.error` narrows to `never` on a route that declares only success
   // responses, so branch on the response itself — the repo's standing rule for
   // openapi-fetch calls.
-  if (!res.response.ok || !res.data) {
-    throw new Error(problemMessage(res.error, 'Could not read the GitHub connection.'))
-  }
-  return res.data
+  return unwrap(res, 'Could not read the GitHub connection.')
 }
 
 export async function disconnectGitHub(): Promise<void> {
   const res = await apiV2.DELETE('/api/tokens/github', {})
-  if (!res.response.ok) {
-    throw new Error(problemMessage(res.error, 'Could not disconnect GitHub.'))
-  }
+  ensureOk(res, 'Could not disconnect GitHub.')
 }
 
 /**
@@ -41,9 +36,7 @@ export async function disconnectGitHub(): Promise<void> {
  */
 export async function listGitHubInstallations(): Promise<GitHubInstallationOut[]> {
   const res = await apiV2.GET('/api/tokens/github/installations', {})
-  if (!res.response.ok || !res.data) {
-    throw new Error(problemMessage(res.error, 'Could not list your GitHub installations.'))
-  }
+  unwrap(res, 'Could not list your GitHub installations.')
   // The `--immutable` codegen types an array response as a deeply-readonly
   // object that is not even iterable, so it cannot be spread or mapped. Cast
   // through `unknown`, the idiom already used by `listRequestableWorkspaces` in

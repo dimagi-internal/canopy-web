@@ -39,11 +39,10 @@ function ageFor(d: RunnerDrillOut, now: Date): string {
   return relativeAge(d.finished_at ?? d.started_at, now, { seconds: false })
 }
 
-// Best-effort extraction of a readable message from the generic Error thrown
-// by drills.ts's `unwrap()` — its message embeds the raw problem+json body
-// (see apps/api/errors.py) as a JSON blob after "<what> failed: ". Falls
-// back to the raw message (or a generic string) when it isn't JSON, so a
-// non-JSON failure (a proxy error, a network drop) still shows *something*.
+// A readable message for a failed drill call. drills.ts throws the shared
+// ApiError, whose message is already the server's `detail`; an error whose
+// message embeds a problem+json blob after "<what> failed: " (older callers)
+// is still unpacked. Anything else shows its raw message.
 function errorText(e: unknown): string {
   if (!(e instanceof Error)) return 'Readiness check failed'
   const idx = e.message.indexOf('{')

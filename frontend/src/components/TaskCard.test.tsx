@@ -185,7 +185,7 @@ describe('TaskCard', () => {
   })
 
   it('a 409 (ask already closed) renders inline and refetches', async () => {
-    actOnTask.mockRejectedValue(new AgentApiError('actOnTask failed', 409, 'This ask is already closed.'))
+    actOnTask.mockRejectedValue(new AgentApiError(409, 'This ask is already closed.', { detail: 'This ask is already closed.' }))
     const onChanged = vi.fn()
     render(<TaskCard task={task({ ask_kind: 'review' })} onChanged={onChanged} canEdit={false} />)
     fireEvent.click(screen.getByRole('button', { name: /^Approve/ }))
@@ -195,7 +195,7 @@ describe('TaskCard', () => {
   })
 
   it('a 422 renders inline without refetching', async () => {
-    actOnTask.mockRejectedValue(new AgentApiError('actOnTask failed', 422, 'A reply needs text.'))
+    actOnTask.mockRejectedValue(new AgentApiError(422, 'A reply needs text.', { detail: 'A reply needs text.' }))
     const onChanged = vi.fn()
     render(<TaskCard task={task()} onChanged={onChanged} canEdit={false} />)
     fireEvent.change(screen.getByTestId('task-reply-T2'), { target: { value: ' x ' } })

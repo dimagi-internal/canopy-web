@@ -16,7 +16,7 @@ import { NarrativeDiff } from './NarrativeDiff'
 import { pairNarrationScenes } from './narrativeScenePairing'
 import { useScopedPath } from '@/lib/scopedLinks'
 
-function fmtDate(iso: string | null): string {
+function fmtDate(iso: string | null | undefined): string {
   if (!iso) return ''
   try {
     return new Date(iso).toLocaleDateString(undefined, {

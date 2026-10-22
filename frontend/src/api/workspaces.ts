@@ -2,7 +2,7 @@
 // plus the members/invites admin surface (Task 4) and the pre-auth invite
 // preview + accept calls the /invite/:token page drives (Task 5).
 import { apiV2 } from './client.v2'
-import { problemMessage } from './problem'
+import { ApiError, ensureOk } from './problem'
 import type { components } from './generated'
 
 export type WorkspaceOut = components['schemas']['WorkspaceOut']
@@ -31,13 +31,8 @@ export type AdmissionRulePatch = components['schemas']['AdmissionRulePatch']
 // InviteAcceptPage's mismatch state). Mirrors the `ApiError` shape already used
 // by `api/sessions.ts` / `api/chat.ts`, just built on top of openapi-fetch's
 // typed responses instead of a hand-rolled fetch.
-export class WorkspaceApiError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
+// `WorkspaceApiError` is the shared `ApiError` (./problem) under its old name.
+export { ApiError as WorkspaceApiError }
 
 // None of these operations declares an error response in the OpenAPI schema
 // (django-ninja's HttpError raises are exceptions, not declared response
@@ -53,9 +48,7 @@ export async function listMembers(slug: string): Promise<MemberOut[]> {
   const res = await apiV2.GET('/api/workspaces/{slug}/members/', {
     params: { path: { slug } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load members'))
-  }
+  ensureOk(res, 'Failed to load members')
   return res.data as unknown as MemberOut[]
 }
 
@@ -85,9 +78,7 @@ export async function requestWorkspaceAccess(slug: string, note: string): Promis
     params: { path: { slug } },
     body: { note },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Could not send the request'))
-  }
+  ensureOk(res, 'Could not send the request')
   return res.data as unknown as AccessRequestOut
 }
 
@@ -95,9 +86,7 @@ export async function listAccessRequests(slug: string): Promise<AccessRequestOut
   const res = await apiV2.GET('/api/workspaces/{slug}/access-requests', {
     params: { path: { slug } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load access requests'))
-  }
+  ensureOk(res, 'Failed to load access requests')
   return Array.from(res.data as unknown as AccessRequestOut[])
 }
 
@@ -105,9 +94,7 @@ export async function getAccessRequest(slug: string, requestId: number): Promise
   const res = await apiV2.GET('/api/workspaces/{slug}/access-requests/{request_id}', {
     params: { path: { slug, request_id: requestId } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load the request'))
-  }
+  ensureOk(res, 'Failed to load the request')
   return res.data as unknown as AccessRequestOut
 }
 
@@ -118,9 +105,7 @@ export async function approveAccessRequest(
     params: { path: { slug, request_id: requestId } },
     body: { role },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to approve'))
-  }
+  ensureOk(res, 'Failed to approve')
   return res.data as unknown as AccessRequestOut
 }
 
@@ -129,9 +114,7 @@ export async function denyAccessRequest(slug: string, requestId: number, reason:
     params: { path: { slug, request_id: requestId } },
     body: { reason },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to deny'))
-  }
+  ensureOk(res, 'Failed to deny')
   return res.data as unknown as AccessRequestOut
 }
 
@@ -141,9 +124,7 @@ export async function setAccessSettings(slug: string, autoApproveRole: AutoAppro
     params: { path: { slug } },
     body: { auto_approve_role: autoApproveRole },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to save'))
-  }
+  ensureOk(res, 'Failed to save')
   return res.data as unknown as WorkspaceOut
 }
 
@@ -151,9 +132,7 @@ export async function removeMember(slug: string, userId: number): Promise<void> 
   const res = await apiV2.DELETE('/api/workspaces/{slug}/members/{user_id}/', {
     params: { path: { slug, user_id: userId } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to remove member'))
-  }
+  ensureOk(res, 'Failed to remove member')
 }
 
 export async function setMemberRole(slug: string, userId: number, role: MemberRole): Promise<MemberOut> {
@@ -161,9 +140,7 @@ export async function setMemberRole(slug: string, userId: number, role: MemberRo
     params: { path: { slug, user_id: userId } },
     body: { role },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to change role'))
-  }
+  ensureOk(res, 'Failed to change role')
   return res.data as unknown as MemberOut
 }
 
@@ -171,9 +148,7 @@ export async function listInvites(slug: string): Promise<InviteOut[]> {
   const res = await apiV2.GET('/api/workspaces/{slug}/invites/', {
     params: { path: { slug } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load invites'))
-  }
+  ensureOk(res, 'Failed to load invites')
   return res.data as unknown as InviteOut[]
 }
 
@@ -182,9 +157,7 @@ export async function createInvite(slug: string, email: string, role: InviteRole
     params: { path: { slug } },
     body: { email, role },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to create invite'))
-  }
+  ensureOk(res, 'Failed to create invite')
   return res.data as InviteOut
 }
 
@@ -192,9 +165,7 @@ export async function revokeInvite(slug: string, inviteId: number): Promise<void
   const res = await apiV2.POST('/api/workspaces/{slug}/invites/{invite_id}/revoke', {
     params: { path: { slug, invite_id: inviteId } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to revoke invite'))
-  }
+  ensureOk(res, 'Failed to revoke invite')
 }
 
 // Rotates the token, resets the expiry and emails the new link: the returned
@@ -204,9 +175,7 @@ export async function reissueInvite(slug: string, inviteId: number): Promise<Inv
   const res = await apiV2.POST('/api/workspaces/{slug}/invites/{invite_id}/reissue', {
     params: { path: { slug, invite_id: inviteId } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to resend the invite'))
-  }
+  ensureOk(res, 'Failed to resend the invite')
   return res.data as InviteOut
 }
 
@@ -214,9 +183,7 @@ export async function previewInvite(token: string): Promise<InvitePreviewOut> {
   const res = await apiV2.GET('/api/workspaces/invites/{token}/preview', {
     params: { path: { token } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load invite'))
-  }
+  ensureOk(res, 'Failed to load invite')
   return res.data as InvitePreviewOut
 }
 
@@ -224,9 +191,7 @@ export async function acceptInvite(token: string): Promise<WorkspaceOut> {
   const res = await apiV2.POST('/api/workspaces/invites/{token}/accept', {
     params: { path: { token } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to accept invite'))
-  }
+  ensureOk(res, 'Failed to accept invite')
   return res.data as unknown as WorkspaceOut
 }
 
@@ -268,10 +233,7 @@ export async function getSharedVault(slug: string): Promise<SharedVaultOut> {
   const res = await apiV2.GET('/api/workspaces/{slug}/shared-vault', {
     params: { path: { slug } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(
-      res.response.status, problemMessage(res.error, 'Failed to load the shared vault'))
-  }
+  ensureOk(res, 'Failed to load the shared vault')
   return res.data as unknown as SharedVaultOut
 }
 
@@ -282,10 +244,7 @@ export async function setSharedVault(
     params: { path: { slug } },
     body,
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(
-      res.response.status, problemMessage(res.error, 'Failed to save the shared vault'))
-  }
+  ensureOk(res, 'Failed to save the shared vault')
   return res.data as unknown as SharedVaultOut
 }
 
@@ -298,10 +257,7 @@ export async function getRunnerTopology(slug: string): Promise<RunnerTopologyOut
   const res = await apiV2.GET('/api/workspaces/{slug}/runner-topology', {
     params: { path: { slug } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(
-      res.response.status, problemMessage(res.error, 'Failed to load the runner topology'))
-  }
+  ensureOk(res, 'Failed to load the runner topology')
   return res.data as unknown as RunnerTopologyOut
 }
 
@@ -311,10 +267,7 @@ export type PrivateRunnerUseOut = components['schemas']['PrivateRunnerUseOut']
 // (canopy-web#1704). Listed beside the runners; a private runner never claims work.
 export async function listWorkspacePrivateRunners(slug: string): Promise<PrivateRunnerUseOut[]> {
   const res = await apiV2.GET('/api/private-runners/used', { params: { query: { workspace: slug } } })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(
-      res.response.status, problemMessage(res.error, 'Failed to load private runners'))
-  }
+  ensureOk(res, 'Failed to load private runners')
   return res.data as unknown as PrivateRunnerUseOut[]
 }
 
@@ -326,10 +279,7 @@ export async function getAgentTopology(slug: string): Promise<AgentTopologyOut> 
   const res = await apiV2.GET('/api/workspaces/{slug}/agent-topology', {
     params: { path: { slug } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(
-      res.response.status, problemMessage(res.error, 'Failed to load the agent topology'))
-  }
+  ensureOk(res, 'Failed to load the agent topology')
   return res.data as unknown as AgentTopologyOut
 }
 
@@ -339,9 +289,7 @@ export type RunnerOrderRowOut = components['schemas']['RunnerOrderRowOut']
  *  a workspace below without its own) that has no order of its own. */
 export async function getRunnerOrder(slug: string): Promise<RunnerOrderRowOut[]> {
   const res = await apiV2.GET('/api/workspaces/{slug}/runner-order', { params: { path: { slug } } })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load the runner order'))
-  }
+  ensureOk(res, 'Failed to load the runner order')
   return Array.from(res.data as unknown as RunnerOrderRowOut[])
 }
 
@@ -354,9 +302,7 @@ export async function setRunnerOrder(
     params: { path: { slug } },
     body: { runners: rows.map((r) => ({ runner_id: r.runnerId, enabled: r.enabled })) },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to save the runner order'))
-  }
+  ensureOk(res, 'Failed to save the runner order')
   return Array.from(res.data as unknown as RunnerOrderRowOut[])
 }
 
@@ -364,17 +310,13 @@ export async function setRunnerOrder(
 
 export async function getRetention(slug: string): Promise<RetentionOut> {
   const res = await apiV2.GET('/api/workspaces/{slug}/retention', { params: { path: { slug } } })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load retention rules'))
-  }
+  ensureOk(res, 'Failed to load retention rules')
   return res.data as unknown as RetentionOut
 }
 
 export async function previewRetention(slug: string): Promise<RetentionPreviewOut> {
   const res = await apiV2.GET('/api/workspaces/{slug}/retention/preview', { params: { path: { slug } } })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to preview retention'))
-  }
+  ensureOk(res, 'Failed to preview retention')
   return res.data as unknown as RetentionPreviewOut
 }
 
@@ -386,9 +328,7 @@ export async function saveRetentionRule(
     : await apiV2.PUT('/api/workspaces/{slug}/retention/rules/{rule_id}', {
       params: { path: { slug, rule_id: ruleId } }, body,
     })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to save the rule'))
-  }
+  ensureOk(res, 'Failed to save the rule')
   return res.data as unknown as RetentionRuleOut
 }
 
@@ -396,26 +336,20 @@ export async function deleteRetentionRule(slug: string, ruleId: number): Promise
   const res = await apiV2.DELETE('/api/workspaces/{slug}/retention/rules/{rule_id}', {
     params: { path: { slug, rule_id: ruleId } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to delete the rule'))
-  }
+  ensureOk(res, 'Failed to delete the rule')
 }
 
 // --- Admission rules (Settings → Admission rules) ---
 
 export async function getAdmissionRules(slug: string): Promise<AdmissionRulesOut> {
   const res = await apiV2.GET('/api/workspaces/{slug}/admission-rules', { params: { path: { slug } } })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load admission rules'))
-  }
+  ensureOk(res, 'Failed to load admission rules')
   return res.data as unknown as AdmissionRulesOut
 }
 
 export async function createAdmissionRule(slug: string, body: AdmissionRuleIn): Promise<AdmissionRuleOut> {
   const res = await apiV2.POST('/api/workspaces/{slug}/admission-rules', { params: { path: { slug } }, body })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to add the rule'))
-  }
+  ensureOk(res, 'Failed to add the rule')
   return res.data as unknown as AdmissionRuleOut
 }
 
@@ -425,9 +359,7 @@ export async function updateAdmissionRule(
   const res = await apiV2.PATCH('/api/workspaces/{slug}/admission-rules/{rule_id}', {
     params: { path: { slug, rule_id: ruleId } }, body,
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to save the rule'))
-  }
+  ensureOk(res, 'Failed to save the rule')
   return res.data as unknown as AdmissionRuleOut
 }
 
@@ -435,10 +367,7 @@ export async function setAdmissionSenderNotices(slug: string, enabled: boolean):
   const res = await apiV2.PUT('/api/workspaces/{slug}/admission-settings', {
     params: { path: { slug } }, body: { sender_notices_enabled: enabled },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status,
-      problemMessage(res.error, 'Failed to switch automatic replies'))
-  }
+  ensureOk(res, 'Failed to switch automatic replies')
   return Boolean(res.data?.sender_notices_enabled)
 }
 
@@ -446,9 +375,7 @@ export async function deleteAdmissionRule(slug: string, ruleId: number): Promise
   const res = await apiV2.DELETE('/api/workspaces/{slug}/admission-rules/{rule_id}', {
     params: { path: { slug, rule_id: ruleId } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to delete the rule'))
-  }
+  ensureOk(res, 'Failed to delete the rule')
 }
 
 // ---- system accounts (apps/workspaces/system_accounts.py) ----
@@ -464,9 +391,7 @@ export async function listSystemAccounts(slug: string): Promise<SystemAccountOut
   const res = await apiV2.GET('/api/workspaces/{slug}/system-accounts/', {
     params: { path: { slug } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load system accounts'))
-  }
+  ensureOk(res, 'Failed to load system accounts')
   return res.data as unknown as SystemAccountOut[]
 }
 
@@ -475,9 +400,7 @@ export async function createSystemAccount(slug: string, body: SystemAccountCreat
     params: { path: { slug } },
     body,
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to create system account'))
-  }
+  ensureOk(res, 'Failed to create system account')
   return res.data as unknown as SystemAccountOut
 }
 
@@ -490,9 +413,7 @@ export async function updateSystemAccount(
     params: { path: { slug, account_id: accountId } },
     body,
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to update system account'))
-  }
+  ensureOk(res, 'Failed to update system account')
   return res.data as unknown as SystemAccountOut
 }
 
@@ -500,9 +421,7 @@ export async function deleteSystemAccount(slug: string, accountId: number): Prom
   const res = await apiV2.DELETE('/api/workspaces/{slug}/system-accounts/{account_id}/', {
     params: { path: { slug, account_id: accountId } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to delete system account'))
-  }
+  ensureOk(res, 'Failed to delete system account')
 }
 
 export async function addSystemSender(
@@ -515,9 +434,7 @@ export async function addSystemSender(
     params: { path: { slug, account_id: accountId } },
     body: { address, subject_pattern: subjectPattern },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to add sender'))
-  }
+  ensureOk(res, 'Failed to add sender')
   return res.data as unknown as SystemSenderOut
 }
 
@@ -525,9 +442,7 @@ export async function removeSystemSender(slug: string, accountId: number, sender
   const res = await apiV2.DELETE('/api/workspaces/{slug}/system-accounts/{account_id}/senders/{sender_id}/', {
     params: { path: { slug, account_id: accountId, sender_id: senderId } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to remove sender'))
-  }
+  ensureOk(res, 'Failed to remove sender')
 }
 
 export type WorkspaceHealthOut = components['schemas']['WorkspaceHealthOut']
@@ -538,10 +453,7 @@ export async function getWorkspaceHealth(slug: string): Promise<WorkspaceHealthO
   const res = await apiV2.GET('/api/workspaces/{slug}/health', {
     params: { path: { slug } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(
-      res.response.status, problemMessage(res.error, 'Failed to load workspace health'))
-  }
+  ensureOk(res, 'Failed to load workspace health')
   return res.data as unknown as WorkspaceHealthOut
 }
 
@@ -555,10 +467,7 @@ export async function getWorkspaceNetwork(
   const res = await apiV2.GET('/api/workspaces/{slug}/network', {
     params: { path: { slug }, query: { days: opts.days, tree: opts.tree } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(
-      res.response.status, problemMessage(res.error, 'Failed to load the network'))
-  }
+  ensureOk(res, 'Failed to load the network')
   return res.data as unknown as WorkspaceNetworkOut
 }
 
@@ -571,9 +480,6 @@ export async function getWorkspaceAnalytics(
   const res = await apiV2.GET('/api/workspaces/{slug}/analytics', {
     params: { path: { slug }, query: { days: opts.days, tree: opts.tree } },
   })
-  if (!res.response.ok) {
-    throw new WorkspaceApiError(
-      res.response.status, problemMessage(res.error, 'Failed to load analytics'))
-  }
+  ensureOk(res, 'Failed to load analytics')
   return res.data as unknown as WorkspaceAnalyticsOut
 }

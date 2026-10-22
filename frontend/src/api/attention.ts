@@ -1,5 +1,6 @@
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
+import { unwrap } from './problem'
 
 type AttentionRowWire = components['schemas']['AttentionRowOut']
 /** The wire item with its defaults filled in (openapi-fetch degrades readonly
@@ -18,12 +19,6 @@ export type Attention = { now: AttentionRow[]; quiet: AttentionRow[]; hidden: At
 /** What an item asks of you — branch on this, never on `reason` (display text). */
 export type AttentionState = AttentionRow['state']
 
-function unwrap<T>(res: { data?: T; error?: unknown; response?: { status: number } }, what: string): T {
-  if (res.error !== undefined || res.data === undefined) {
-    throw new Error(`${what} failed (${res.response?.status ?? '?'})`)
-  }
-  return res.data
-}
 
 /** Everything waiting on you across every workspace you are in, newest first:
  *  one user-level read (`/api/me/attention/`) — the server reads each

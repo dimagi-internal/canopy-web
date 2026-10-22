@@ -69,7 +69,7 @@ describe('WorkspaceProjectRedirect', () => {
   })
 
   it('says so when there is no such project', async () => {
-    getWorkspaceProject.mockRejectedValue(new AgentApiError('not found', 404, 'not found'))
+    getWorkspaceProject.mockRejectedValue(new AgentApiError(404, 'not found', { detail: 'not found' }))
     at('/w/dimagi/projects/nope')
     expect(await screen.findByText('No workspace project dimagi/nope.')).toBeTruthy()
   })

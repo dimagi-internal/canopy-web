@@ -1,5 +1,5 @@
 import { apiV2 } from "./client.v2";
-import { problemMessage } from "./problem";
+import { unwrap } from "./problem";
 import type { components } from "./generated";
 import type { Turn } from "@/components/activity/turnLog";
 
@@ -8,10 +8,10 @@ export type TurnEvent = components["schemas"]["TurnEventOut"];
 /** Last N turns across the current scope (all my workspaces on /activity, one
  * tenant on /w/:ws/activity — the api client picks scope from the URL). */
 export async function listTurns(limit = 20): Promise<Turn[]> {
-  const { data, error } = await apiV2.GET("/api/harness/turns/", {
+  const res = await apiV2.GET("/api/harness/turns/", {
     params: { query: { limit } },
   });
-  if (error) throw new Error(problemMessage(error, "Failed to load activity"));
+  const data = unwrap(res, "Failed to load activity");
   // Newest first, and only `limit` of them. The server already orders it that
   // way, but a caller in several organisations is answered one workspace at a
   // time on a root page (../api/workspaceRetry), and that merge concatenates.
@@ -22,10 +22,10 @@ export async function listTurns(limit = 20): Promise<Turn[]> {
 
 /** The append-only event ledger for one turn (drill-down). */
 export async function listTurnEvents(turnId: string): Promise<TurnEvent[]> {
-  const { data, error } = await apiV2.GET("/api/harness/turns/{turn_id}/events", {
+  const res = await apiV2.GET("/api/harness/turns/{turn_id}/events", {
     params: { path: { turn_id: turnId } },
   });
-  if (error) throw new Error(problemMessage(error, "Failed to load turn events"));
+  const data = unwrap(res, "Failed to load turn events");
   return data.events as TurnEvent[];
 }
 
@@ -35,9 +35,9 @@ export type TurnMessages = components["schemas"]["TurnMessagesOut"];
  * cloud-runner turn did, since it has no chat. Bounded server-side; `truncated`
  * says the view stopped early. */
 export async function listTurnMessages(turnId: string): Promise<TurnMessages> {
-  const { data, error } = await apiV2.GET("/api/harness/turns/{turn_id}/messages", {
+  const res = await apiV2.GET("/api/harness/turns/{turn_id}/messages", {
     params: { path: { turn_id: turnId } },
   });
-  if (error) throw new Error(problemMessage(error, "Failed to load the transcript"));
+  const data = unwrap(res, "Failed to load the transcript");
   return { ...data, messages: Array.from(data.messages) };
 }

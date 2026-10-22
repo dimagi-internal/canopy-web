@@ -136,6 +136,20 @@ const WS_SCOPED_API_PREFIXES = [
   "/api/engagement",
 ];
 
+/**
+ * The query for a token-gated public read or write: the page's share token as
+ * `?t=` plus any declared params (`ws`). The views read `t` off the raw query, so
+ * the schema does not declare it — the result is typed `never` so it fits any
+ * operation's `params.query` without each caller inventing its own cast. Absent
+ * values are omitted; with nothing to send it is `undefined` (no `?`).
+ */
+export function shareQuery(token?: string | null, extra: Record<string, string | null | undefined> = {}): never {
+  const q: Record<string, string> = {}
+  if (token) q.t = token
+  for (const [k, v] of Object.entries(extra)) if (v) q[k] = v
+  return (Object.keys(q).length ? q : undefined) as never
+}
+
 // A request header a caller sets to pin the tenant explicitly when the page it
 // dispatches from is not itself workspace-scoped. Never leaves the browser — the
 // onRequest middleware consumes it and rewrites the path to /api/w/:ws/…. Exported

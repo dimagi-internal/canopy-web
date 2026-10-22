@@ -3,23 +3,28 @@
  *
  * Every read threads `?t=<share_token>` so a token-holding viewer with no
  * Dimagi login is served; the backend self-enforces (member OR matching token)
- * and 404s on a wrong one, so there is nothing to branch on here.
+ * and 404s on a wrong one, so there is nothing to branch on here. On `apiV2`:
+ * a viewer's page (/w/<ws>/storyboard/…, /w/<ws>/narrative/…) is a scoped viewer
+ * path, so a 401 there never bounces to login.
+ *
+ * `Storyboard` / `StoryboardAct` / `StoryboardEntry` stay hand-written: the
+ * generated `StoryboardOut.acts` resolves to an unrelated `ActOut` (a schema
+ * name collision with the task-act route), so it does not describe the board.
  */
 
-import { apiUrl, getCsrfToken } from './base'
+import { apiV2, shareQuery } from './client.v2'
+import type { components } from './generated'
+import { unwrap } from './problem'
+import type { DddNarration } from './ddd'
+
+type Schemas = components['schemas']
 
 export type Capability = 'read' | 'comment' | 'suggest'
 export type Layout = 'review' | 'reel'
 export type FeedbackKind = 'comment' | 'suggestion'
 
 /** A place where what the script says and what the data shows disagree. */
-export interface Divergence {
-  script: string
-  data: string
-  resolution: string
-  /** Set when it belongs to one narrative rather than the whole set. */
-  narrative_slug: string
-}
+export type Divergence = Schemas['Divergence']
 
 /** One recorded cut of an entry, with what a reviewer needs to judge it. */
 export interface EntryCut {
@@ -119,48 +124,12 @@ export interface Decision {
 }
 
 /** One note in a feedback round — names only, never an email. */
-export interface RoundNote {
-  id: number
-  kind: FeedbackKind | string
-  body: string
-  suggested_text: string
-  author_name: string
-  anchor_id: string
-  target_kind: string
-  target_ref: string
-  target_version: number | null
-  state: string
-  disposition_note: string
-  resolved_in_version: number | null
-  created_at: string
-  /** True for the signed-in viewer's own notes. */
-  mine: boolean
-}
+export type RoundNote = Schemas['RoundNoteOut']
 
 /** A decision edit held until the round closes. */
-export interface StagedEdit {
-  edit_id: string
-  key: string
-  action: string
-  value: string
-  reasoning: string
-  by_name: string
-  at: string
-}
+export type StagedEdit = Schemas['StagedEditOut']
 
-export interface RoundPayload {
-  number: number
-  state: string
-  opened_at: string
-  opened_by: string
-  closed_at: string | null
-  close_note: string
-  pinned_versions: Record<string, number>
-  note_count: number
-  people_count: number
-  notes: RoundNote[]
-  staged_edits: StagedEdit[]
-}
+export type RoundPayload = Schemas['RoundPayloadOut']
 
 export type RoundSummary = Omit<RoundPayload, 'notes' | 'staged_edits'>
 
@@ -194,20 +163,7 @@ export interface Storyboard {
   previous_round?: RoundPayload | null
 }
 
-export interface Note {
-  id: number
-  kind: FeedbackKind
-  body: string
-  suggested_text: string
-  author_name: string
-  channel: string
-  state: string
-  target_kind: string
-  target_ref: string
-  target_version: number | null
-  anchor_id: string
-  created_at: string
-}
+export type Note = Omit<Schemas['NoteOut'], 'kind'> & { kind: FeedbackKind }
 
 export interface LeaveFeedbackIn {
   narrative_slug?: string
@@ -220,60 +176,26 @@ export interface LeaveFeedbackIn {
   author_email?: string
 }
 
-/** `url` with the share token and the workspace the page's URL names. The API
- * 404s a board that does not live in `ws` (canopy-web#1337). */
-function withToken(url: string, token?: string | null, ws?: string | null): string {
-  const q = new URLSearchParams()
-  if (token) q.set('t', token)
-  if (ws) q.set('ws', ws)
-  const qs = q.toString()
-  return qs ? `${url}?${qs}` : url
-}
+// Bodies: the server fills every field the caller leaves out (its pydantic
+// defaults), which the generated `*In` types mark required — hence the casts.
 
-async function getJson<T>(url: string): Promise<T> {
-  const resp = await fetch(apiUrl(url), { credentials: 'same-origin' })
-  if (!resp.ok) {
-    let detail = ''
-    try {
-      detail = (await resp.json())?.detail ?? ''
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `Request failed (${resp.status})`)
-  }
-  return resp.json() as Promise<T>
-}
-
-async function postJson<T>(url: string, body: unknown, fallback: string): Promise<T> {
-  const resp = await fetch(apiUrl(url), {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() ?? '' },
-    body: JSON.stringify(body),
-  })
-  if (!resp.ok) {
-    let detail = ''
-    try {
-      detail = (await resp.json())?.detail ?? ''
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `${fallback} (${resp.status})`)
-  }
-  return resp.json() as Promise<T>
-}
-
-export function getStoryboard(
+export async function getStoryboard(
   slug: string,
   token?: string | null,
   ws?: string | null,
 ): Promise<Storyboard> {
-  return getJson(withToken(`/api/storyboards/${encodeURIComponent(slug)}`, token, ws))
+  // `ws`: the workspace the page's URL names — the API 404s a board that does
+  // not live there (canopy-web#1337).
+  const res = await apiV2.GET('/api/storyboards/{slug}', {
+    params: { path: { slug }, query: shareQuery(token, { ws }) },
+  })
+  return unwrap(res, 'getStoryboard') as unknown as Storyboard
 }
 
 /** What came back. Members only — a 401/404 here just means "not yours". */
-export function getStoryboardNotes(slug: string): Promise<{ items: Note[] }> {
-  return getJson(`/api/storyboards/${encodeURIComponent(slug)}/notes`)
+export async function getStoryboardNotes(slug: string): Promise<{ items: Note[] }> {
+  const res = await apiV2.GET('/api/storyboards/{slug}/notes', { params: { path: { slug } } })
+  return unwrap(res, 'getStoryboardNotes') as unknown as { items: Note[] }
 }
 
 /** Leave a note. Returns the ingest summary; throws with a readable message on 403. */
@@ -283,66 +205,80 @@ export async function leaveFeedback(
   token?: string | null,
   ws?: string | null,
 ): Promise<{ created: number }> {
-  return postJson(
-    withToken(`/api/storyboards/${encodeURIComponent(slug)}/feedback`, token, ws),
-    payload,
-    'Couldn’t save that note',
-  )
+  const res = await apiV2.POST('/api/storyboards/{slug}/feedback', {
+    params: { path: { slug }, query: shareQuery(token, { ws }) },
+    body: payload as Schemas['AnonFeedbackIn'],
+  })
+  return unwrap(res, 'Couldn’t save that note') as unknown as { created: number }
 }
 
 /** Confirm, pick, write in or undo one decision. Members only; returns the updated row. */
-export function editDecision(
+export async function editDecision(
   slug: string,
   key: string,
   body: DecisionEdit,
   token?: string | null,
   ws?: string | null,
 ): Promise<Decision> {
-  return postJson(
-    withToken(
-      `/api/storyboards/${encodeURIComponent(slug)}/decisions/${encodeURIComponent(key)}/edit`,
-      token,
-      ws,
-    ),
-    body,
-    'That did not save',
-  )
+  const res = await apiV2.POST('/api/storyboards/{slug}/decisions/{key}/edit', {
+    params: { path: { slug, key }, query: shareQuery(token, { ws }) },
+    body: body as Schemas['DecisionEditIn'],
+  })
+  return unwrap(res, 'That did not save') as unknown as Decision
 }
 
-export function openRound(slug: string, ws?: string | null): Promise<RoundSummary> {
-  return postJson(
-    withToken(`/api/storyboards/${encodeURIComponent(slug)}/rounds`, null, ws),
-    {},
-    'Couldn’t open the round',
-  )
+export async function openRound(slug: string, ws?: string | null): Promise<RoundSummary> {
+  const res = await apiV2.POST('/api/storyboards/{slug}/rounds', {
+    params: { path: { slug }, query: shareQuery(null, { ws }) },
+  })
+  return unwrap(res, 'Couldn’t open the round') as unknown as RoundSummary
 }
 
-export function closeRound(
+export async function closeRound(
   slug: string,
   number: number,
   body: { close_note?: string; picks?: Record<string, string> },
   ws?: string | null,
 ): Promise<RoundSummary> {
-  return postJson(
-    withToken(`/api/storyboards/${encodeURIComponent(slug)}/rounds/${number}/close`, null, ws),
-    body,
-    'Couldn’t close the round',
-  )
+  const res = await apiV2.POST('/api/storyboards/{slug}/rounds/{number}/close', {
+    params: { path: { slug, number }, query: shareQuery(null, { ws }) },
+    body: body as Schemas['RoundCloseIn'],
+  })
+  return unwrap(res, 'Couldn’t close the round') as unknown as RoundSummary
+}
+
+/** One narrative of a board, as its own page (/w/<ws>/narrative/<slug>?b=). */
+export type BoardNarrative = Omit<
+  Schemas['NarrativeReadOut'],
+  'narration' | 'previous_narration' | 'capability'
+> & {
+  narration: DddNarration[]
+  previous_narration: DddNarration[]
+  capability: Capability
+}
+
+/** Read one narrative of a board. Token-gated like the board itself. */
+export async function getBoardNarrative(
+  board: string,
+  slug: string,
+  token?: string | null,
+  ws?: string | null,
+): Promise<BoardNarrative> {
+  const res = await apiV2.GET('/api/storyboards/{slug}/narratives/{narrative_slug}', {
+    params: { path: { slug: board, narrative_slug: slug }, query: shareQuery(token, { ws }) },
+  })
+  return unwrap(res, 'getBoardNarrative') as unknown as BoardNarrative
 }
 
 /** One row of the index — what a member sees before opening a board. */
-export interface StoryboardListItem {
-  slug: string
-  title: string
-  lede: string
+// `share_url`: absolute, token-bearing link. Members only — this is the thing you send.
+export type StoryboardListItem = Omit<Schemas['StoryboardListItemOut'], 'capability' | 'layout'> & {
   capability: Capability
   layout: Layout
-  act_count: number
-  /** Absolute, token-bearing link. Members only — this is the thing you send. */
-  share_url: string | null
 }
 
 /** Every board in a workspace the caller belongs to. Members only. */
-export function listStoryboards(): Promise<{ items: StoryboardListItem[] }> {
-  return getJson('/api/storyboards/')
+export async function listStoryboards(): Promise<{ items: StoryboardListItem[] }> {
+  const res = await apiV2.GET('/api/storyboards/')
+  return unwrap(res, 'listStoryboards') as unknown as { items: StoryboardListItem[] }
 }

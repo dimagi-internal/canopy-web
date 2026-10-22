@@ -8,7 +8,7 @@ function humanize(slug: string): string {
   return slug.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-function fmtDate(iso: string | null): string {
+function fmtDate(iso: string | null | undefined): string {
   if (!iso) return ''
   try {
     return new Date(iso).toLocaleDateString(undefined, {

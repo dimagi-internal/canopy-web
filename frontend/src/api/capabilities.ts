@@ -3,7 +3,7 @@
 // (`integrations`, a workspace admin) and that a grant may only LOWER the
 // manifest's limits; these wrappers surface its refusal text verbatim.
 import { apiV2 } from './client.v2'
-import { problemMessage } from './problem'
+import { ensureOk } from './problem'
 import type { components } from './generated'
 
 export type AgentCapabilitiesOut = components['schemas']['AgentCapabilitiesOut']
@@ -13,7 +13,7 @@ export type CapabilityLeaseOut = components['schemas']['CapabilityLeaseOut']
 
 export async function getAgentCapabilities(slug: string): Promise<AgentCapabilitiesOut> {
   const res = await apiV2.GET('/api/agents/{slug}/capabilities', { params: { path: { slug } } })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to load capabilities'))
+  ensureOk(res, 'Failed to load capabilities')
   return res.data as AgentCapabilitiesOut
 }
 
@@ -33,7 +33,7 @@ export async function setCapabilityGrant(
   const res = await apiV2.PUT('/api/capabilities/grants', {
     body: { agent, capability, max_concurrent: limits.max_concurrent, max_lease_s: limits.max_lease_s },
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'The grant was refused'))
+  ensureOk(res, 'The grant was refused')
   return res.data as CapabilityGrantOut
 }
 
@@ -42,5 +42,5 @@ export async function revokeCapabilityGrant(grantId: number): Promise<void> {
   const res = await apiV2.DELETE('/api/capabilities/grants/{grant_id}', {
     params: { path: { grant_id: grantId } },
   })
-  if (!res.response.ok) throw new Error(problemMessage(res.error, 'The revoke was refused'))
+  ensureOk(res, 'The revoke was refused')
 }

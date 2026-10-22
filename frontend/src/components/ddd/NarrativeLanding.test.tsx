@@ -33,6 +33,7 @@ const cut = (over: Record<string, unknown>) => ({
   video_url: '/walkthrough/w1/content?t=a',
   video_viewer_url: '/walkthrough/w1?t=a',
   duration_sec: 34,
+  app_links: [],
   ...over,
 })
 
@@ -48,6 +49,8 @@ function version(over: Partial<DddNarrativeVersion>): DddNarrativeVersion {
     status: 'pending',
     video_url: '/walkthrough/w1/content?t=a',
     video_viewer_url: '/walkthrough/w1?t=a',
+    cuts: [],
+    sources: [],
     runs: [],
     ...over,
   }
@@ -58,10 +61,13 @@ function show(v: DddNarrativeVersion) {
     slug: 'chlorine',
     title: 'Chlorine',
     story: v.story,
+    comment_count: 0,
+    commenter_count: 0,
+    viewer_count: 0,
     phase: null,
     project_slug: null,
     visibility: 'public',
-    current_version: { review_id: 'r3', version: 3, title: 'Chlorine', story: v.story, video_url: v.video_url, video_viewer_url: v.video_viewer_url },
+    current_version: { review_id: 'r3', version: 3, title: 'Chlorine', story: v.story, video_url: v.video_url, video_viewer_url: v.video_viewer_url, cuts: v.cuts },
     versions: [v],
   } satisfies DddNarrativeDetail
   return render(

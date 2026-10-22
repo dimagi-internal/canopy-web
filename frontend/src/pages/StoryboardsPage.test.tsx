@@ -20,6 +20,9 @@ function item(over: Partial<api.StoryboardListItem> = {}): api.StoryboardListIte
     capability: 'suggest',
     layout: 'review',
     act_count: 5,
+    comment_count: 0,
+    commenter_count: 0,
+    viewer_count: 0,
     share_url: 'https://labs.example/canopy/storyboard/oes-supply?t=abc',
     ...over,
   }

@@ -3,27 +3,16 @@
 // download buttons can be tested without ./harness.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
+import { ApiError, unwrap } from './problem'
 
 export type RunnerPairingOut = components['schemas']['RunnerPairingOut']
 export type RunnerPairingApprovedOut = components['schemas']['RunnerPairingApprovedOut']
 export type RunnerDownloadsOut = components['schemas']['RunnerDownloadsOut']
 export type RunnerDownloadOut = components['schemas']['RunnerDownloadOut']
 
-export class RunnerPairingError extends Error {
-  status: number
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
+/** The shared `ApiError` under its old name (callers branch on `.status`). */
+export { ApiError as RunnerPairingError }
 
-function unwrap<T>(res: { data?: T; error?: unknown; response: Response }, what: string): T {
-  if (res.error !== undefined || res.data === undefined) {
-    const detail = (res.error as { detail?: unknown } | undefined)?.detail
-    throw new RunnerPairingError(res.response.status, typeof detail === 'string' ? detail : `${what} failed`)
-  }
-  return res.data
-}
 
 export async function getRunnerPairing(code: string): Promise<RunnerPairingOut> {
   const res = await apiV2.GET('/api/harness/runner-pairings/{user_code}', {

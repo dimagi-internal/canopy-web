@@ -1,5 +1,6 @@
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
+import { unwrap } from './problem'
 
 export type RunnerAppPage = components['schemas']['RunnerAppPreferenceOut']['opens_on']
 
@@ -18,13 +19,13 @@ function normalize(data: {
 }
 
 export async function getRunnerAppPreference(): Promise<RunnerAppPreference> {
-  const { data, error } = await apiV2.GET('/api/me/runner-app/')
-  if (error) throw new Error('Failed to load the runner app setting')
+  const res = await apiV2.GET('/api/me/runner-app/')
+  const data = unwrap(res, 'Failed to load the runner app setting')
   return normalize(data as unknown as Parameters<typeof normalize>[0])
 }
 
 export async function setRunnerAppPreference(opensOn: RunnerAppPage): Promise<RunnerAppPreference> {
-  const { data, error } = await apiV2.PATCH('/api/me/runner-app/', { body: { opens_on: opensOn } })
-  if (error) throw new Error('Failed to save the runner app setting')
+  const res = await apiV2.PATCH('/api/me/runner-app/', { body: { opens_on: opensOn } })
+  const data = unwrap(res, 'Failed to save the runner app setting')
   return normalize(data as unknown as Parameters<typeof normalize>[0])
 }

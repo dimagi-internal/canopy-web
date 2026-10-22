@@ -4,6 +4,7 @@
 // middleware (see WS_SCOPED_API_PREFIXES in ./client.v2), not here.
 import { apiV2, WORKSPACE_HEADER } from './client.v2'
 import type { components } from './generated'
+import { ApiError, ensureOk, unwrap } from './problem'
 
 type Schemas = components['schemas']
 
@@ -56,42 +57,15 @@ export interface ListAgentsParams {
   limit?: number
 }
 
-// openapi-fetch returns { data, error }. Every call here is a read or a command
-// post whose failure is a bug, not a user-facing state — so unwrap and throw. A
-// 401 never reaches here: apiV2's middleware redirects to login first.
+// openapi-fetch returns { data, error }; `unwrap` (./problem) returns the data
+// or throws an `ApiError` carrying the HTTP status and the server's `detail`. A
+// 401 never reaches here: apiV2's middleware redirects to login first. A few
+// failures ARE user-facing on a task card: acting on an already-closed ask (409
+// — the card refetches) and an empty reply (422).
 //
-// The thrown error carries the HTTP status and the server's `detail`, because a
-// few failures ARE user-facing on a task card: acting on an already-closed ask
-// (409 — the card refetches) and an empty reply (422).
-export class AgentApiError extends Error {
-  status: number
-  detail: string
-  constructor(message: string, status: number, detail: string) {
-    super(message)
-    this.status = status
-    this.detail = detail
-  }
-}
-
-function unwrap<T>(
-  res: { data?: T; error?: unknown; response?: { status: number } },
-  what: string,
-): T {
-  if (res.error !== undefined || res.data === undefined) {
-    const err = res.error as { detail?: unknown } | undefined
-    // Ninja sends a string detail for HttpError, and a list of
-    // `{loc, msg, type}` for a schema validation 422 — show the first `msg`.
-    const raw = err?.detail
-    const first = Array.isArray(raw) ? (raw[0] as { msg?: unknown } | undefined)?.msg : raw
-    const detail = typeof first === 'string' ? first : ''
-    throw new AgentApiError(
-      `${what} failed: ${JSON.stringify(res.error ?? 'no data')}`,
-      res.response?.status ?? 0,
-      detail,
-    )
-  }
-  return res.data
-}
+// `AgentApiError` is the shared `ApiError` under its old name, so existing
+// `instanceof AgentApiError` checks keep working.
+export { ApiError as AgentApiError }
 
 // Generated shapes are readonly (--immutable); Page<T> is mutable. Copy across
 // the boundary rather than casting, so the compiler keeps checking us.
@@ -502,12 +476,7 @@ export async function linkAgentCanopyUser(slug: string, userId: number | null): 
     params: { path: { slug } },
     body: { user_id: userId },
   })
-  const out = res as unknown as { data?: AgentDetailOut; error?: { detail?: unknown } }
-  if (out.error !== undefined || out.data === undefined) {
-    const detail = out.error?.detail
-    throw new Error(typeof detail === 'string' && detail ? detail : 'Could not change the canopy user')
-  }
-  return out.data
+  return unwrap(res, 'Could not change the canopy user') as unknown as AgentDetailOut
 }
 
 export type SlackEnabledOut = Schemas['SlackEnabledOut']
@@ -631,11 +600,7 @@ function toGitHub(w: AgentGitHubWire): AgentGitHub {
  *  token (wrong resource owner, repo not selected, no pull-request permission),
  *  and that sentence is the most useful thing the screen can show. */
 function githubResult(res: GitHubRes, what: string): AgentGitHub {
-  if (res.error !== undefined || res.data === undefined) {
-    const detail = (res.error as { detail?: unknown } | undefined)?.detail
-    throw new Error(typeof detail === 'string' && detail ? detail : `${what} failed`)
-  }
-  return toGitHub(res.data)
+  return toGitHub(unwrap(res, `${what} failed`))
 }
 
 export async function getAgentGitHub(slug: string): Promise<AgentGitHub> {
@@ -672,11 +637,8 @@ type AgentSalesforceWire = Omit<AgentSalesforce, 'lent_to'> & { lent_to?: ArrayL
 type SalesforceRes = { data?: AgentSalesforceWire; error?: unknown }
 
 function salesforceResult(res: SalesforceRes, what: string): AgentSalesforce {
-  if (res.error !== undefined || res.data === undefined) {
-    const detail = (res.error as { detail?: unknown } | undefined)?.detail
-    throw new Error(typeof detail === 'string' && detail ? detail : `${what} failed`)
-  }
-  return { ...res.data, lent_to: Array.from(res.data.lent_to ?? []) }
+  const data = unwrap(res, `${what} failed`)
+  return { ...data, lent_to: Array.from(data.lent_to ?? []) }
 }
 
 export async function getAgentSalesforce(slug: string): Promise<AgentSalesforce> {
@@ -859,10 +821,7 @@ export async function unpublishAgentInterface(slug: string): Promise<AgentInterf
  *  repository is not touched. */
 export async function deleteAgent(slug: string): Promise<void> {
   const res = await apiV2.DELETE('/api/agents/{slug}/', { params: { path: { slug } } })
-  if (!res.response.ok) {
-    const detail = (res.error as { detail?: unknown } | undefined)?.detail
-    throw new Error(typeof detail === 'string' && detail ? detail : 'Deleting the agent failed')
-  }
+  ensureOk(res, 'Deleting the agent failed')
 }
 
 // ---- proposed projects: the decision card, backings, the view beacon ----------
