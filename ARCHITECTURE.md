@@ -102,3 +102,35 @@ waiting for a new file of that name).
 Adding a new app? Put it in `FRAMEWORK` or `PRODUCT` in both this doc and that
 test. Need framework code to touch product? Don't — move the code to a product
 app, or (rarely) add a justified carve-out here and in the test.
+
+## Layers inside the framework
+
+The tiers say framework never imports product. Inside the framework the apps are
+layered too, and an import may only point down (or sideways, within a layer):
+
+| Layer | Apps | What belongs here |
+|---|---|---|
+| L0 kit | `common`, `events`, `workspaces`, `api` (the kit: `auth`, `errors`, `pagination`, `etag`, `renderers`, `route_gates`, `tenancy`) | Infrastructure every app may use. Knows no agent, turn or session. |
+| L1 core | `agents`, `harness`, `canopy_sessions`, `tokens`, `contacts`, `admission`, `retention`, `realtime`, `push`, `passkeys`, `embedding`, `mcp_apps_host`, `attention` | The agent/turn/session substrate and who may reach it. |
+| L2 features | `agent_runs`, `capabilities`, `feedback`, `github_connect`, `host_grants`, `huddles`, `inbound`, `issues`, `mcp`, `oauth_server`, `plugins`, `session_sharing`, `slack`, `system`, `timeline`, `threads` | Framework surfaces built on the core. Nothing below names them. |
+| L3 product | the product tier above | canopy's own features. |
+| L4 root | `apps/api/api.py` | The composition root, wired in by `config/urls.py`; an app importing it is an upward import like any other. |
+
+`tests/test_layered_app_imports.py` enforces it (pure `ast`, test files and
+migrations excluded). An import inside a function counts the same as one at the
+top of the module: a lazy import hides a cycle from Python, not the dependency.
+
+The upward imports that exist today are frozen in its `FROZEN` table as
+`(src, dst): count`, one count per import statement. It is a **ratchet**:
+
+- **A new upward edge, or a higher count, fails.** Remove the import — move the
+  code down a layer, pass a callback, emit a signal, or register by string (as
+  `timeline` and `attention` do). If the map itself is wrong, move the app between
+  layers in the test and in this table, in a reviewed PR.
+- **A lower count, or an edge gone, also fails** — with the line to change or
+  delete, so the table shrinks as imports are fixed and never hides slack.
+- **After a rebase**, other PRs may have moved imports; regenerate the table with
+  `uv run python -m tests.test_layered_app_imports --write` and check the diff raises
+  nothing your PR did not mean to.
+
+A new app gets a layer in both places; the test fails until it has one.
