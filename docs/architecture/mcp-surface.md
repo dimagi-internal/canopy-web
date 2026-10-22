@@ -53,8 +53,11 @@ the callers who DO reach it through canopy (web chat, Slack, email, embedded
 sites).
 
 A handful of **hand-written** tools cover what is not a REST route
-(caller envelope, site gateway, page tools, /ide close review, Slack share,
-session-noise audit). The implementation lives in `apps/mcp/`.
+(caller envelope, site gateway, page tools, /ide close review). A plain write is
+never one of them: it is a route, so it gets the route gate, the settings audit
+and the acting cap (`share_session_to_slack`, `audit_session_noise` and
+`purge_session_noise` are routes under `/api/canopy-sessions/`, keeping their
+tool names). The implementation lives in `apps/mcp/`.
 
 ## Module layout (`apps/mcp/`)
 
@@ -63,7 +66,7 @@ session-noise audit). The implementation lives in `apps/mcp/`.
 | `auth.py` | `CanopyPATVerifier` — the server's one FastMCP `TokenVerifier`: resolves a bearer (PAT, OAuth access token, caller token, or a DPoP-proved host-grant token) to a Django user (mirrors `apps.tokens.middleware`). |
 | `server.py` | The `FastMCP("canopy-web", auth=CanopyPATVerifier(...))` instance, its middleware (`TurnScopeMiddleware`, `DelegatedScopeMiddleware`) and providers (page actions, generated API tools), and `build_http_app()` for the ASGI mount. Importing `apps.mcp.tools` registers the static tools. |
 | `api_tools.py` | The generated API tools: `CanopyAPIProvider` (one tool per REST route), the in-process transport, `EXCLUDED` / `EXCLUDED_PREFIXES`. |
-| `tools/` | Hand-written static tools: `caller.py`, `site.py`, `page.py`, `close_review.py`, `slack.py`, `sessions.py`. |
+| `tools/` | Hand-written static tools: `caller.py`, `site.py`, `page.py`, `close_review.py` — each declares its gate in `apps/api/route_gates.py::HAND_TOOL_GATES` (`tests/test_every_route_declares_its_gate.py` fails one that does not). |
 | `page_tools.py` | `PageActionProvider` — each open page's declared actions as per-caller tools. |
 | `turn_scope.py` | `TurnScopeMiddleware` — a caller token sees only its capability's canopy tools. |
 | `chat_scope.py` | `current_chat_session()` — the chat an `X-Canopy-Chat-Key` header names, which narrows page tools to that one chat. |
@@ -192,8 +195,6 @@ server token — every tool must run as a person.
 | `current_page` | read | The page(s) the caller is looking at (`apps/mcp/tools/page.py`), narrowed to one chat when the request carries an `X-Canopy-Chat-Key`. Its siblings `read_page_state` / `list_page_actions` / `invoke_page_action` are generated routes. |
 | `page_<action>` | write, **dynamic** | Each open page's declared actions (`registerAction` in the host page) as tools, computed per caller by `PageActionProvider` (`apps/mcp/page_tools.py`); executed by the browser tab through `apps/canopy_sessions/page_actions.py`. Static tools take precedence, so a page cannot capture a canopy tool. |
 | `propose_session_closes` / `close_proposed_sessions` | read / write (app-only, rate-limited) | /ide close review (`apps/mcp/tools/close_review.py`, rule in `apps/canopy_sessions/close_review.py`). The agent proposes `[{session_id, quote, why}]`; the result carries the MCP Apps View `ui://canopy/ide/close-review`, which re-reads the rows as the viewer and whose Close button calls `close_proposed_sessions` — app-only, and refused to every credential but a person's host grant, so only a click closes. Closing is `services.close_session`, per session, after re-checking it is not running or waiting. |
-| `audit_session_noise` / `purge_session_noise` | read / write | Find and purge noise rows in the caller's chat sessions (`apps/mcp/tools/sessions.py`). |
-| `share_session_to_slack` | write (rate-limited) | Post a session-written summary into a Slack channel: `broadcast` (one post) or `bind` (the thread becomes the session's own, exactly as if Slack had started it). Sharing an already-bound session posts an update into its thread instead; `channel` is then optional. Resolves "this session" by `claude_session_id` → `RunnerBinding.transcript_id`, else emdash task + project, else `session_id`, always inside what the caller can see. Backs the canopy plugin's `/canopy:share-to-slack`; rules live in `apps/slack/share.py`. An agent names its own conversation with `turn_id` (its live turn — `access.own_turn_session`) and may then only update it or re-bind it in its own channel. Its undo, `detach_session_from_slack`, and the one-step move `start_new_slack_thread` are NOT hand-written: they are the generated tools of `POST /api/canopy-sessions/slack/detach` and `/slack/new-thread`. |
 
 ## Mount + lifespan (`config/asgi.py`)
 

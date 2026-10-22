@@ -173,37 +173,39 @@ def test_another_agents_login_gets_nothing(named, linked, hal_bot, ws):
 
 # ---- share / detach with turn_id ---------------------------------------------
 
-def test_the_share_tool_updates_the_turns_thread_as_the_agent(named, linked, hal_bot):
-    from apps.mcp.tools.slack import _share_sync
+SHARE = "/api/canopy-sessions/slack/share"
 
+
+def test_the_share_tool_updates_the_turns_thread_as_the_agent(named, linked, hal_bot):
     mention("hal hi")
     turn = _slack_turn()
-    out = _share_sync(hal_bot.pk, "", "Halfway there.", "broadcast", "", "", "", "", "", str(turn.pk))
+    r = _post(hal_bot, SHARE, {"summary": "Halfway there.", "turn_id": str(turn.pk)})
+    assert r.status_code == 200, r.content
+    out = r.json()
     assert out["status"] == share.UPDATED
     post = named.said("chat.postMessage")[-1]
     assert post["thread_ts"] == ROOT_TS and post["text"].startswith("*Update* from *Hal*")
 
 
 def test_the_share_tool_without_a_live_turn_still_cannot_reach_it(named, linked, hal_bot):
-    from apps.mcp.tools.slack import _share_sync
-
     mention("hal hi")
     turn = _slack_turn(Turn.DONE)
-    with pytest.raises(ValueError):
-        _share_sync(hal_bot.pk, "", "Halfway there.", "broadcast", "", "", "", "", "", str(turn.pk))
+    r = _post(hal_bot, SHARE, {"summary": "Halfway there.", "turn_id": str(turn.pk)})
+    assert r.status_code == 404
 
 
 def test_an_agent_may_rebind_only_into_its_conversations_channel(named, linked, hal_bot):
-    from apps.mcp.tools.slack import _share_sync
-
     mention("hal hi")
     turn = _slack_turn()
     session = turn.chat_session
     share.detach_session(hal_bot, session)
-    with pytest.raises(ValueError, match="channel"):
-        _share_sync(hal_bot.pk, "C9", "elsewhere", "bind", "", "", "", "", "", str(turn.pk))
+    r = _post(hal_bot, SHARE, {"summary": "elsewhere", "channel": "C9", "mode": "bind",
+                               "turn_id": str(turn.pk)})
+    assert r.status_code in (409, 422) and "channel" in r.content.decode()
     named.ts_seq = [NEW_TS]
-    out = _share_sync(hal_bot.pk, "", "Fresh start.", "bind", "", "", "", "", "", str(turn.pk))
+    r = _post(hal_bot, SHARE, {"summary": "Fresh start.", "mode": "bind", "turn_id": str(turn.pk)})
+    assert r.status_code == 200, r.content
+    out = r.json()
     assert out["channel"] == "C1" and out["ts"] == NEW_TS
 
 
