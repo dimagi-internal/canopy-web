@@ -27,6 +27,7 @@ from django.db import transaction
 from django.db.models import Q
 
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import SystemAccount
 
 from .. import access
 from ..models import (
@@ -129,8 +130,19 @@ class _UserRef:
     email: str
 
 
+def not_a_person(user_ids) -> set[int]:
+    """Of `user_ids`, the logins that are not people: an agent's own canopy login
+    (`Agent.user`) and a workspace's system account (alarm mail, CI). Neither is ever a
+    vault member — they hold no vault key, and an agent able to change its own vault's
+    membership could hand its key to anyone (a prompt-injected agent adding a reader)."""
+    ids = set(user_ids)
+    return (set(Agent.objects.filter(user_id__in=ids).values_list("user_id", flat=True))
+            | set(SystemAccount.objects.filter(user_id__in=ids).values_list("user_id", flat=True)))
+
+
 def members(vault: Vault | None) -> dict[int, Membership]:
-    """Every member of `vault`, by user id, with their role and every source."""
+    """Every member of `vault`, by user id, with their role and every source. People
+    only (`not_a_person`): an agent's login or a system account is never one."""
 
     out: dict[int, Membership] = {}
     if vault is None:
@@ -139,6 +151,8 @@ def members(vault: Vault | None) -> dict[int, Membership]:
         _add(out, row.user, row.role, "direct")
     for link in VaultLink.objects.filter(vault=vault).select_related("agent__workspace", "workspace", "vault"):
         _linked(link, out)
+    for uid in not_a_person(out):
+        out.pop(uid, None)
     return out
 
 
@@ -197,6 +211,9 @@ def add_member(vault: Vault, user, *, role: str, by) -> VaultMember:
     """Add `user` by name (or change their direct role). They must be a member
     of the vault's workspace: a vault cannot reach past its tenant."""
     _check_role(role)
+    if not_a_person([user.pk]):
+        raise VaultMembershipError(422, "vault_not_a_person",
+                                   f"{user.email} is an agent's login or a system account, not a person")
     if wsvc.membership(user, vault.workspace) is None:
         raise VaultMembershipError(422, "vault_not_in_workspace",
                                    f"{user.email} is not a member of {vault.workspace.slug}")

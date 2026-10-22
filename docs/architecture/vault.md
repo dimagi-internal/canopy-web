@@ -13,6 +13,8 @@ Who may open a vault is `credentials.vault_members.members(vault)`, the union of
   - `agent`: everyone with full access to the agent (`access.roster`), plus everyone with an active license to use it locally (`AgentLicense`). The agent's owner and admins come in as `manage`, everyone else as the link's role;
   - `workspace_owners` / `workspace_admins`: the owners (or admins) of a workspace, inherited down the tree as those roles are.
 
+Members are **people only**: an agent's own canopy login (`Agent.user`) and a workspace's system account are never members by any source, and cannot be added (`vault_members.not_a_person`). They hold no vault key, and an agent that could change its own vault's membership could hand its key to anyone.
+
 A person's role is the highest any source gives them: `manage` (see and edit values, change membership) or `use`. Every member carries their sources, so the vault's page says why each person is in it. A new agent vault starts with one `agent` link, so giving someone the agent gives them its vault.
 
 A change that would leave the vault with no one who can manage it is refused (409 `vault_needs_a_manager`). Membership routes: `GET|POST /api/agents/{slug}/vault/members`, `DELETE …/members/{user_id}`, `PUT …/vault/agent-link`; writes are gated `vault-manage`.
