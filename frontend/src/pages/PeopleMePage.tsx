@@ -1,33 +1,18 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { AlertTriangle, BookOpen, Check, ChevronDown, Download, Eye, Pencil, Trash2, X } from 'lucide-react'
+import { useState, type FormEvent, type ReactNode } from 'react'
+import { AlertTriangle, BookOpen, ChevronDown, Download, Eye, X } from 'lucide-react'
 
 import { useParams } from 'react-router-dom'
 import { IconButton, Segmented } from 'canopy-ui/ui'
 
-import {
-  MY_CATEGORIES,
-  addMyEntry,
-  correctMyEntry,
-  exportMine,
-  getMyPerson,
-  getPersonPage,
-  listMyAudit,
-  listMyCollections,
-  listMyGrants,
-  listPersonPageAudit,
-  listPersonPageSearches,
-  retractFact,
-  revokeMyGrant,
-  setMyAgentMemory,
-} from '../api/people'
-import type { HcpAuditEvent, HcpGrant, MemoryCollections, MemoryViewers, PersonFactDetail, PersonMe } from '../api/people'
-import { listWorkspaces } from '../api/workspaces'
+import { MY_CATEGORIES, exportMine, listPersonPageSearches } from '../api/people'
+import type { MemoryViewers, PersonFactDetail } from '../api/people'
 import type { WorkspaceOut } from '../api/workspaces'
 import { AgentReadsPicker, CollectionsPanel } from './memory/Collections'
+import { FactRow, sourceOf, type FactEdit } from './memory/FactRow'
 import { PageViewers } from './memory/PageViewers'
 import { SearchHistory, SearchPreview } from './memory/SearchHistory'
+import { usePersonFacts } from './memory/usePersonFacts'
 import {
-  activeAccess,
   agentName,
   byProject,
   dayLabel,
@@ -63,15 +48,6 @@ const MEMORY_SWITCHES = [
 
 type Source = 'all' | 'you' | 'agents'
 
-/** Where an entry came from, as a short chip: "You" or "ACE · Oct 7". */
-function sourceOf(f: PersonFactDetail): { mine: boolean; text: string } {
-  const when = f.created_at ? new Date(f.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''
-  const site = (f.provenance_site as { name?: string } | undefined)?.name
-  if (f.learned_by) return { mine: false, text: `${f.learned_by}${site ? ` on ${site}` : ''}${when ? ` · ${when}` : ''}` }
-  if (!f.workspace || f.basis === 'declared') return { mine: true, text: `You${when ? ` · ${when}` : ''}` }
-  return { mine: false, text: `${f.asserted_by || 'an agent'}${when ? ` · ${when}` : ''}` }
-}
-
 /** "Someone's page, as they let you see it" — /people/:personId/page, the href
  *  canopy hands an agent a person let in (apps/contacts/viewers.py). The same page,
  *  read-only, fed by the viewer routes. */
@@ -90,21 +66,30 @@ export function PersonPageView() {
  *  read-only. Fleet brain v1 (canopy#804), on HCP v1 (hcp_api.py). */
 export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
   const readOnly = viewing !== undefined
-  const [me, setMe] = useState<PersonMe | null>(null)
+  const facts = usePersonFacts(viewing)
+  const {
+    me,
+    audit,
+    nextCursor,
+    collections,
+    workspaces,
+    fatal,
+    error,
+    setError,
+    busy,
+    busyGrant,
+    busyMemory,
+    busyCollections,
+    names,
+    access,
+    changes,
+    past,
+    actOnCollections,
+  } = facts
   const [viewers, setViewers] = useState<MemoryViewers | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [grants, setGrants] = useState<HcpGrant[]>([])
-  const [audit, setAudit] = useState<HcpAuditEvent[]>([])
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  // `fatal`: your own record didn't load, so there is no page. `error`: anything
-  // else failed (a section, or an action) and shows as a banner above the page.
-  const [fatal, setFatal] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState<number | null>(null)
-  const [busyGrant, setBusyGrant] = useState<string | null>(null)
-  const [busyMemory, setBusyMemory] = useState<string | null>(null)
   const [source, setSource] = useState<Source>('all')
-  const [editing, setEditing] = useState<{ id: number; text: string } | null>(null)
+  const [editing, setEditing] = useState<FactEdit | null>(null)
   const [showPast, setShowPast] = useState(false)
   const [activityShown, setActivityShown] = useState(12)
   // The agent whose view you are looking through: hovering its card (or pinning it
@@ -112,135 +97,17 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
   const [hovered, setHovered] = useState<AgentAccess | null>(null)
   const [pinned, setPinned] = useState<AgentAccess | null>(null)
   const lens = hovered ?? pinned
-  const [collections, setCollections] = useState<MemoryCollections | null>(null)
-  const [workspaces, setWorkspaces] = useState<WorkspaceOut[]>([])
-  const [busyCollections, setBusyCollections] = useState(false)
 
-  const load = useCallback(() => {
-    if (viewing !== undefined) {
-      getPersonPage(viewing)
-        .then((page) => {
-          setMe(page.me)
-          setGrants(page.grants as unknown as HcpGrant[])
-          setCollections(page.collections)
-        })
-        .catch((e: Error) => setFatal(e.message))
-      listPersonPageAudit(viewing)
-        .then((page) => {
-          setAudit(page.events)
-          setNextCursor(page.nextCursor)
-        })
-        .catch((e: Error) => setError(`Couldn't load what happened: ${e.message}`))
-      return
-    }
-    // Collections and your workspaces only feed controls; if either fails the
-    // rest of the page still stands.
-    listMyCollections()
-      .then(setCollections)
-      .catch(() => setCollections(null))
-    listWorkspaces()
-      .then(setWorkspaces)
-      .catch(() => setWorkspaces([]))
-    getMyPerson()
-      .then(setMe)
-      .catch((e: Error) => setFatal(e.message))
-    listMyGrants()
-      .then(setGrants)
-      .catch((e: Error) => setError(`Couldn't load which agents can read your memory: ${e.message}`))
-    listMyAudit()
-      .then((page) => {
-        setAudit(page.events)
-        setNextCursor(page.nextCursor)
-      })
-      .catch((e: Error) => setError(`Couldn't load what happened: ${e.message}`))
-  }, [viewing])
-
-  useEffect(load, [load])
-
-  // agent slug → the name you know it by, from your grants ("ace" → "ACE").
-  const names = useMemo(() => {
-    const m = new Map<string, string>()
-    for (const g of grants) if (g.canopy.agent) m.set(g.canopy.agent, agentName(g))
-    return m
-  }, [grants])
-  const access = useMemo(() => activeAccess(grants), [grants])
-  // Reads are shown per conversation above; this log keeps what changed and who looked.
-  const changes = useMemo(() => audit.filter((e) => e.eventType !== 'preference.read'), [audit])
-  const past = useMemo(() => grants.filter((g) => g.status !== 'active'), [grants])
-
-  const run = async (key: (v: string | number | null) => void, id: string | number, work: () => Promise<unknown>) => {
-    key(id)
-    try {
-      await work()
-      load()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      key(null)
-    }
-  }
-
-  const onRevoke = (a: AgentAccess) => {
-    if (!confirm(`Take back ${a.name}'s access? It stops being told anything about you right away, and won't be again unless you allow it.`)) return
-    void run(
-      (v) => setBusyGrant(v as string | null),
-      a.key,
-      () => Promise.all(a.grants.map((g) => revokeMyGrant(g.grantId))),
-    )
-  }
-
-  const onToggleAvailable = (which: 'record' | 'use') => {
-    if (!me) return
-    const next = !me.agent_memory[which].available
-    const offWarning =
-      which === 'record'
-        ? 'Stop agents learning from you, in every conversation? Nothing already remembered is deleted.'
-        : 'Stop agents using your memory, in every conversation? Nothing is deleted.'
-    if (!next && !confirm(offWarning)) return
-    void run((v) => setBusyMemory(v as string | null), `${which}:available`, () =>
-      setMyAgentMemory({ [which]: { available: next } }),
-    )
-  }
-
-  const onToggleDefault = (which: 'record' | 'use') => {
-    if (!me) return
-    void run((v) => setBusyMemory(v as string | null), `${which}:default`, () =>
-      setMyAgentMemory({ [which]: { default: !me.agent_memory[which].default } }),
-    )
-  }
-
-  const onRetract = (fact: PersonFactDetail) => {
-    if (!me) return
-    if (!confirm(`Forget "${fact.statement}"? Agents stop being told it.`)) return
-    void run((v) => setBusy(v as number | null), fact.id, () => retractFact(me.id, fact.id))
-  }
+  const onRevoke = facts.revoke
+  const onToggleAvailable = facts.toggleAvailable
+  const onToggleDefault = facts.toggleDefault
+  const onRetract = facts.retract
+  const onAdd = facts.add
 
   const onSaveEdit = (fact: PersonFactDetail) => {
     if (!editing || !fact.entry_id) return
-    const text = editing.text.trim()
     setEditing(null)
-    if (!text || text === fact.statement) return
-    void run((v) => setBusy(v as number | null), fact.id, () => correctMyEntry(fact.entry_id as string, text))
-  }
-
-  // A collection change re-reads grants too: a grant's reach follows its collection.
-  const actOnCollections = (work: () => Promise<unknown>) => {
-    setBusyCollections(true)
-    work()
-      .then(load)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusyCollections(false))
-  }
-
-  const onAdd = async (category: string, text: string, workspace: string | null) => {
-    try {
-      await addMyEntry(category, text, workspace)
-      load()
-      return true
-    } catch (err) {
-      setError((err as Error).message)
-      return false
-    }
+    facts.correct(fact, editing.text)
   }
 
   const moreActivity = async () => {
@@ -248,15 +115,7 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
       setActivityShown((n) => n + 20)
       return
     }
-    if (!nextCursor) return
-    try {
-      const page = viewing !== undefined ? await listPersonPageAudit(viewing, nextCursor) : await listMyAudit(nextCursor)
-      setAudit((prev) => [...prev, ...page.events])
-      setNextCursor(page.nextCursor)
-      setActivityShown((n) => n + 20)
-    } catch (e) {
-      setError((e as Error).message)
-    }
+    if (await facts.loadMoreAudit()) setActivityShown((n) => n + 20)
   }
 
   const onExport = async () => {
@@ -302,82 +161,21 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
   const firstName = me.display_name.split(' ')[0] || me.display_name
   const lookers = viewers?.viewers.map((v) => v.name) ?? []
 
-  const factRow = (f: PersonFactDetail) => {
-    const src = sourceOf(f)
-    const u = f.used
-    const isEditing = editing?.id === f.id
-    const hidden = lens !== null && !reads(lens, f.workspace ?? null)
-    return (
-      <li key={f.id} className={`group relative py-2.5 transition-opacity ${hidden ? 'opacity-25' : ''}`}>
-        {isEditing ? (
-          <form
-            className="flex items-start gap-2"
-            onSubmit={(e) => {
-              e.preventDefault()
-              onSaveEdit(f)
-            }}
-          >
-            <textarea
-              autoFocus
-              aria-label="Correct this"
-              value={editing.text}
-              onChange={(e) => setEditing({ id: f.id, text: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') setEditing(null)
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  onSaveEdit(f)
-                }
-              }}
-              rows={2}
-              maxLength={500}
-              className="min-w-0 flex-1 resize-none rounded-md border border-primary/50 bg-background px-2 py-1 text-sm text-foreground outline-none"
-            />
-            <IconButton label="Save" onClick={() => onSaveEdit(f)}>
-              <Check className="h-4 w-4" />
-            </IconButton>
-            <IconButton label="Cancel" onClick={() => setEditing(null)}>
-              <X className="h-4 w-4" />
-            </IconButton>
-          </form>
-        ) : (
-          <div className="flex items-start gap-2">
-            <p className={`min-w-0 flex-1 text-sm text-foreground ${busy === f.id ? 'opacity-50' : ''}`}>{f.statement}</p>
-            {!readOnly && (
-              <div className="flex shrink-0 gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">
-                {enabled && f.entry_id && (
-                  <IconButton label="Correct" onClick={() => setEditing({ id: f.id, text: f.statement })} disabled={busy === f.id}>
-                    <Pencil className="h-3.5 w-3.5" />
-                  </IconButton>
-                )}
-                <IconButton label="Forget" danger onClick={() => onRetract(f)} disabled={busy === f.id}>
-                  <Trash2 className="h-3.5 w-3.5" />
-                </IconButton>
-              </div>
-            )}
-          </div>
-        )}
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <span
-            className={`rounded-full px-1.5 py-px ${src.mine ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}
-            title={src.mine ? 'You said this' : f.confidence ? `An agent concluded this (${f.confidence} confidence)` : 'An agent recorded this'}
-          >
-            {src.mine ? '' : 'learned by '}
-            {src.text}
-          </span>
-          {u && u.conversations > 0 && u.last_at ? (
-            <span className="inline-flex items-center gap-1" title={`Last given to an agent ${new Date(u.last_at).toLocaleString()}`}>
-              <Eye className="h-3 w-3" />
-              Given to {(u.by ?? []).map((s) => names.get(s) ?? s.toUpperCase()).join(', ')} in{' '}
-              {u.conversations === 1 ? '1 conversation' : `${u.conversations} conversations`} · last {relativeAge(u.last_at, new Date(), IN_WORDS)}
-            </span>
-          ) : (
-            <span>Not used yet</span>
-          )}
-        </div>
-      </li>
-    )
-  }
+  const factRow = (f: PersonFactDetail) => (
+    <FactRow
+      key={f.id}
+      fact={f}
+      editing={editing}
+      onEdit={setEditing}
+      onSave={onSaveEdit}
+      onForget={onRetract}
+      busy={busy}
+      readOnly={readOnly}
+      enabled={enabled}
+      names={names}
+      lens={lens}
+    />
+  )
 
   return (
     <div className="mx-auto max-w-4xl space-y-10 px-4 py-8">

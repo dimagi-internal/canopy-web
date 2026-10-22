@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
-import { StateDot as SharedStateDot } from '@/components/sessions/StateDot'
 import { ChevronDown, Menu, MoreHorizontal } from 'lucide-react'
 import { WorkbenchRail, WorkbenchShell } from 'canopy-ui'
 import {
@@ -21,41 +20,30 @@ import { setAppBarHidden, useAppBarHidden } from '@/components/AppLayout/appBarS
 import {
   archiveSession,
   closeSession,
-  listSessions,
-  setSessionTitle,
   stopSession,
   transferSession,
   unarchiveSession,
   type ChatSession,
 } from '@/api/chat'
-import { listRunners, type RunnerOut } from '@/api/harness'
-import { listMyAgents, type AgentOut } from '@/api/agents'
 import { NewChatMenu, type NewChatTarget } from '@/components/chat/NewChatMenu'
 import { repoChoices } from '@/components/chat/runnerEligibility'
 import { copyText } from 'canopy-ui/lib'
-import { usePolled } from '@/hooks/usePolled'
-import { useReconnectingSocket } from '@/hooks/useReconnectingSocket'
-import { wsUrl } from '@/lib/wsUrl'
 import { ChatPage } from '@/pages/ChatPage'
-import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
-import { closeResultMessage, settleClosing } from '@/components/chat/closeAction'
-import { TitleInput } from '@/components/chat/TitleInput'
+import { closeResultMessage } from '@/components/chat/closeAction'
 import { SessionContextMenu, type IdeAction } from './SessionContextMenu'
 import { scopedPath } from '@/lib/scopedLinks'
 import { SessionInfoPanel } from '@/components/chat/SessionInfoPanel'
 import { useCloseReview } from './useCloseReview'
+import { IdeTree, MODE_LABEL, STATE_LABEL, StateDot, sessionLabel } from './SessionTree'
+import { LIST_LIMIT, POLL_MS, useIdeData } from './useIdeData'
+import { RAIL_DEFAULT, clampRail, useIdePrefs } from './useIdePrefs'
 import {
   DEFAULT_FILTERS,
   NO_RUNNER,
   buildTree,
   childLinks,
   deleteConsequence,
-  linkKind,
   runnerKey,
-  sessionMode,
-  sessionState,
-  shortAge,
-  type IdeFilters,
   type IdeMode,
   type IdeState,
 } from './ideTree'
@@ -69,98 +57,7 @@ import {
  * reported field, and nothing ranks one session above another.
  */
 
-const PREFS_KEY = 'canopy.ide.v1'
-const POLL_MS = 15_000
-// The list endpoint's ceiling (no paging). Asked for in full so archived
-// sessions are not silently cut at the default 200; hitting it is said aloud.
-const LIST_LIMIT = 500
-// A runner reports every ~10s per box, and each report rings the doorbell; one
-// refetch per window is plenty.
-const DOORBELL_MIN_MS = 3_000
-// Rail width, dragged by its right edge; double-click the edge to reset.
-const RAIL_DEFAULT = 400
-const RAIL_MIN = 260
-const RAIL_MAX = 900
-const clampRail = (w: number) => Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, w)))
-
-type Prefs = {
-  filters: Omit<IdeFilters, 'query'>
-  collapsed: string[]
-  /** Sessions whose links (the sessions started from them) are folded away. */
-  collapsedLinks: string[]
-  railWidth: number
-  railHidden: boolean
-}
-
-function loadPrefs(): Prefs {
-  const fallback: Prefs = {
-    filters: { ...DEFAULT_FILTERS },
-    collapsed: [],
-    collapsedLinks: [],
-    railWidth: RAIL_DEFAULT,
-    railHidden: false,
-  }
-  try {
-    const raw = window.localStorage.getItem(PREFS_KEY)
-    if (!raw) return fallback
-    const p = JSON.parse(raw) as Partial<Prefs>
-    return {
-      filters: {
-        ...DEFAULT_FILTERS,
-        ...p.filters,
-        states: { ...DEFAULT_FILTERS.states, ...p.filters?.states },
-        modes: { ...DEFAULT_FILTERS.modes, ...p.filters?.modes },
-      },
-      collapsed: Array.isArray(p.collapsed) ? p.collapsed : [],
-      collapsedLinks: Array.isArray(p.collapsedLinks) ? p.collapsedLinks : [],
-      railWidth: typeof p.railWidth === 'number' ? clampRail(p.railWidth) : RAIL_DEFAULT,
-      railHidden: p.railHidden === true,
-    }
-  } catch {
-    return fallback
-  }
-}
-
-function savePrefs(p: Prefs) {
-  try {
-    window.localStorage.setItem(PREFS_KEY, JSON.stringify(p))
-  } catch {
-    // storage disabled — prefs last for this tab only
-  }
-}
-
-/** Refetch whenever a runner reports (ws/supervisor/ frames), so a session
- *  changing state shows within seconds; the poll is the fallback. */
-function useDoorbell(ring: () => void): boolean {
-  return useReconnectingSocket(wsUrl('ws/supervisor/'), ring, { onBadFrame: ring }).connected
-}
-
 type RunnerChip = { key: string; name: string; status: string | null; host: string; count: number }
-
-const UNCONFIRMED_DELETE = 'A delete was not confirmed by its runner — try again, or delete it in emdash.'
-
-const STATE_LABEL: Record<IdeState, string> = { running: 'running', input: 'input', idle: 'idle' }
-const MODE_LABEL: Record<IdeMode, string> = { manual: 'manual', auto: 'auto', none: 'no turn' }
-
-function StateDot({ state }: { state: IdeState }) {
-  return <SharedStateDot tone={state === 'input' ? 'asking' : state} />
-}
-
-function ModeTag({ mode }: { mode: IdeMode }) {
-  return (
-    <span
-      title={mode === 'none' ? 'No canopy turn has been claimed for this session' : `${mode} mode`}
-      className={clsx(
-        'w-4 shrink-0 rounded text-center text-[11px] font-semibold leading-4',
-        mode === 'manual' && 'bg-muted text-foreground',
-        mode === 'auto' && 'bg-primary/10 text-primary',
-        mode === 'none' && 'text-muted-foreground',
-      )}
-    >
-      {mode === 'manual' ? 'M' : mode === 'auto' ? 'A' : '–'}
-    </span>
-  )
-}
 
 function runnerOnline(status: string | null): boolean {
   return status === 'online'
@@ -169,94 +66,36 @@ function runnerOnline(status: string | null): boolean {
 export function IdePage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const [initial] = useState(loadPrefs)
-  const [filters, setFilters] = useState<IdeFilters>({ ...initial.filters, query: '' })
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initial.collapsed))
-  const [collapsedLinks, setCollapsedLinks] = useState<Set<string>>(() => new Set(initial.collapsedLinks))
-  const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [runners, setRunners] = useState<RunnerOut[]>([])
-  const [agents, setAgents] = useState<AgentOut[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [now, setNow] = useState(() => new Date())
-  const lastFetch = useRef(0)
-  const pending = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [railWidth, setRailWidth] = useState(initial.railWidth)
-  const [railHidden, setRailHidden] = useState(initial.railHidden)
+  const {
+    filters,
+    setFilters,
+    collapsed,
+    setCollapsed,
+    collapsedLinks,
+    setCollapsedLinks,
+    railWidth,
+    setRailWidth,
+    railHidden,
+    setRailHidden,
+  } = useIdePrefs()
+  const state = filters.archived ? 'all' : 'active'
+  const {
+    sessions,
+    runners,
+    agents,
+    loading,
+    error,
+    now,
+    note,
+    setNote,
+    closing,
+    setClosing,
+    refresh,
+    live,
+  } = useIdeData(state)
   const appBarHidden = useAppBarHidden()
   const searchRef = useRef<HTMLInputElement>(null)
   const [menu, setMenu] = useState<{ session: ChatSession; x: number; y: number } | null>(null)
-  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null)
-  // Closes relayed to a runner, by session id → when asked. The row stays,
-  // marked, until the runner's report retires it (see settleClosing).
-  const [closing, setClosing] = useState<Record<string, number>>({})
-  const closingRef = useRef(closing)
-  useEffect(() => {
-    closingRef.current = closing
-  }, [closing])
-  // Deletes the list has called unconfirmed, still watched: one that lands
-  // after all takes its error back rather than leaving it standing.
-  const unconfirmed = useRef<Set<string>>(new Set())
-
-  useEffect(() => {
-    const { hiddenRunners, states, modes, archived } = filters
-    savePrefs({
-      filters: { hiddenRunners, states, modes, archived },
-      collapsed: [...collapsed],
-      collapsedLinks: [...collapsedLinks],
-      railWidth,
-      railHidden,
-    })
-  }, [filters, collapsed, collapsedLinks, railWidth, railHidden])
-
-  const state = filters.archived ? 'all' : 'active'
-  const refresh = useCallback(() => {
-    lastFetch.current = Date.now()
-    return Promise.allSettled([listSessions(state, { limit: LIST_LIMIT }), listRunners()]).then(([s, r]) => {
-      if (s.status === 'fulfilled') {
-        setSessions(s.value)
-        setError(null)
-        if (Object.keys(closingRef.current).length) {
-          const settled = settleClosing(closingRef.current, s.value, Date.now())
-          setClosing(settled.pending)
-          if (settled.stuck.length || settled.failed.length) {
-            for (const sid of [...settled.stuck, ...settled.failed]) unconfirmed.current.add(sid)
-            setNote({ text: UNCONFIRMED_DELETE, error: true })
-          }
-        }
-        if (unconfirmed.current.size) {
-          const active = new Set(s.value.filter((x) => x.status === 'active').map((x) => x.id))
-          if ([...unconfirmed.current].every((sid) => !active.has(sid))) {
-            unconfirmed.current.clear()
-            setNote((n) => (n?.text === UNCONFIRMED_DELETE ? { text: 'Deleted', error: false } : n))
-          }
-        }
-      } else {
-        setError(s.reason instanceof Error ? s.reason.message : 'failed to load sessions')
-      }
-      if (r.status === 'fulfilled') setRunners(r.value ?? [])
-      setNow(new Date())
-      setLoading(false)
-    })
-  }, [state])
-
-  usePolled(refresh, { ms: POLL_MS, deps: [refresh], refreshOnFocus: true })
-
-  // The agents "New session" offers; repos come from the runners' reports.
-  useEffect(() => {
-    let live = true
-    listMyAgents({ limit: 100 })
-      .then((page) => { if (live) setAgents(page.items) })
-      .catch(() => { /* repos alone still make a usable menu */ })
-    return () => {
-      live = false
-    }
-  }, [])
-
-  useEffect(() => {
-    const t = window.setInterval(() => setNow(new Date()), 30_000)
-    return () => window.clearInterval(t)
-  }, [])
 
   // ⌘B / Ctrl-B hides the rail; "/" jumps to the filter box (not while typing).
   useEffect(() => {
@@ -276,17 +115,7 @@ export function IdePage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  const ring = useCallback(() => {
-    if (pending.current) return
-    const wait = Math.max(0, lastFetch.current + DOORBELL_MIN_MS - Date.now())
-    pending.current = setTimeout(() => {
-      pending.current = null
-      void refresh()
-    }, wait)
-  }, [refresh])
-  const live = useDoorbell(ring)
+  }, [setRailHidden])
 
   // Every runner you can see, plus any a visible session is bound to (a
   // teammate's box you cannot list), plus "no runner" for web chats.
@@ -428,7 +257,7 @@ export function IdePage() {
   }
 
   const dismissMenu = useCallback(() => setMenu(null), [])
-  const label = (s: ChatSession) => sessionDisplayTitle(s.title) || '(untitled)'
+  const label = sessionLabel
   const failed = (e: unknown, fallback: string) =>
     setNote({ text: e instanceof Error ? e.message : fallback, error: true })
 
@@ -695,193 +524,33 @@ export function IdePage() {
       {!railHidden && (
       <div className="relative flex min-h-0 shrink-0" style={{ width: railWidth }} data-testid="ide-rail">
       <WorkbenchRail width="md:w-full" className="min-w-0 flex-1" header={header}>
-        <div className="py-1 text-[13px]" onKeyDown={onTreeKey} data-testid="ide-tree">
-          {loading && sessions.length === 0 && <p className="px-3 py-2 text-muted-foreground">Loading…</p>}
-          {error && <p className="px-3 py-2 text-destructive">{error}</p>}
-          {!loading && tree.length === 0 && !error && (
-            <p className="px-3 py-2 text-muted-foreground">No sessions match these filters.</p>
-          )}
-          {tree.map((folder) => {
-            const open = !collapsed.has(folder.key)
-            const target = folderTarget(folder.key, folder.isAgent)
-            return (
-              <div key={folder.key || '(none)'}>
-                <div className="flex items-center pr-2 hover:bg-muted">
-                <button
-                  type="button"
-                  onClick={() => toggleFolder(folder.key)}
-                  aria-expanded={open}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-2 text-left font-semibold text-foreground-secondary"
-                >
-                  <span className="w-3 text-muted-foreground">{open ? '▾' : '▸'}</span>
-                  <span className="truncate">{folder.key || 'No project'}</span>
-                  {folder.isAgent && <span className="font-normal text-muted-foreground">agent</span>}
-                  <span className="ml-auto flex shrink-0 items-center gap-2 font-normal text-[11px] text-muted-foreground">
-                    {folder.counts.running > 0 && (
-                      <span className="flex items-center gap-1" title="running">
-                        <StateDot state="running" />
-                        {folder.counts.running}
-                      </span>
-                    )}
-                    {folder.counts.input > 0 && (
-                      <span className="flex items-center gap-1" title="waiting for input">
-                        <StateDot state="input" />
-                        {folder.counts.input}
-                      </span>
-                    )}
-                    <span title="sessions shown">{folder.sessions.length}</span>
-                  </span>
-                </button>
-                {target && (
-                  <NewChatMenu
-                    agents={agents}
-                    runners={runners}
-                    target={target}
-                    label=""
-                    title={`New session with ${folder.key}`}
-                    className="ml-1.5 h-5 w-5 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-                    onError={(message) => setNote({ text: message, error: true })}
-                    onCreated={onCreated}
-                  />
-                )}
-                </div>
-                {open &&
-                  folder.sessions.map((s) => {
-                    const st = sessionState(s)
-                    const title = label(s)
-                    const deleting = s.id in closing
-                    const parent = s.parent_session_id ? sessions.find((p) => p.id === s.parent_session_id) : undefined
-                    const kids = links.get(s.id) ?? []
-                    const kidsOpen = !collapsedLinks.has(s.id)
-                    return (
-                      <div key={s.id} className="relative">
-                      {kids.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => toggleLinks(s.id)}
-                          aria-expanded={kidsOpen}
-                          aria-label={kidsOpen ? 'Hide the sessions started from this one' : 'Show the sessions started from this one'}
-                          title={`${kids.length} ${kids.length === 1 ? 'session' : 'sessions'} started from this one`}
-                          data-testid={`ide-links-toggle-${s.id}`}
-                          className="absolute left-2 top-0 z-[1] flex h-[26px] w-4 items-center justify-center text-[11px] text-muted-foreground hover:text-foreground"
-                        >
-                          {kidsOpen ? '▾' : '▸'}
-                        </button>
-                      )}
-                      <Link
-                        to={`/ide/${s.id}`}
-                        data-testid={`ide-row-${s.id}`}
-                        aria-current={s.id === id ? 'page' : undefined}
-                        onContextMenu={(e) => {
-                          e.preventDefault()
-                          setMenu({ session: s, x: e.clientX, y: e.clientY })
-                        }}
-                        onDoubleClick={(e) => {
-                          e.preventDefault()
-                          setRenamingId(s.id)
-                        }}
-                        title={[
-                          s.title,
-                          parent ? `${linkKind(s) === 'fork' ? 'forked' : 'started'} from ${label(parent)}` : '',
-                          `${STATE_LABEL[st]} · ${MODE_LABEL[sessionMode(s)]}`,
-                          s.runner_name ? `runner ${s.runner_name}${s.runner_host ? ` (${s.runner_host})` : ''}` : 'no runner',
-                          s.runner_signed_out ? `Claude isn't signed in on ${s.runner_name}` : '',
-                          `workspace ${s.workspace}`,
-                          `last activity ${new Date(s.last_activity_at).toLocaleString()}`,
-                          s.status === 'archived' ? 'archived' : '',
-                        ]
-                          .filter(Boolean)
-                          .join('\n')}
-                        className={clsx(
-                          'grid grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem] items-center gap-2 py-1 pr-2',
-                          s.id === id ? 'bg-primary/10 text-foreground' : 'text-foreground-secondary hover:bg-muted',
-                          (s.status === 'archived' || deleting) && 'opacity-60',
-                          menu?.session.id === s.id && 'ring-1 ring-inset ring-primary/50',
-                        )}
-                        style={{ paddingLeft: '1.75rem' }}
-                      >
-                        <StateDot state={st} />
-                        {renamingId === s.id ? (
-                          <TitleInput
-                            initial={s.title ?? ''}
-                            onSave={async (next) => {
-                              await setSessionTitle(s.id, next)
-                              setRenamingId(null)
-                              void refresh()
-                            }}
-                            onCancel={() => setRenamingId(null)}
-                            className="h-5 text-[13px]"
-                          />
-                        ) : (
-                          <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
-                        )}
-                        <span
-                          className={clsx(
-                            'max-w-[140px] truncate rounded border px-1 text-[11px]',
-                            s.runner_signed_out ? 'border-warning/40 text-warning' : 'border-border text-muted-foreground',
-                          )}
-                          title={s.runner_signed_out ? `Claude isn't signed in on ${s.runner_name}: it runs nothing until someone signs in there` : undefined}
-                          data-testid={s.runner_signed_out ? `ide-runner-signed-out-${s.id}` : undefined}
-                        >
-                          {s.runner_signed_out && '⚠ '}
-                          {s.runner_name ?? 'web'}
-                        </span>
-                        <ModeTag mode={sessionMode(s)} />
-                        <span
-                          className={clsx(
-                            'text-right text-[11px] tabular-nums',
-                            st === 'running' ? 'text-success' : 'text-muted-foreground',
-                          )}
-                        >
-                          {deleting ? '…' : st === 'running' ? 'live' : shortAge(s.last_activity_at, now)}
-                        </span>
-                      </Link>
-                      {kidsOpen &&
-                        kids.map((k) => {
-                          const kst = sessionState(k)
-                          return (
-                            // A reference to the real session, wherever it sits: opening it is
-                            // opening that row, which the reveal above then highlights.
-                            <Link
-                              key={k.id}
-                              to={`/ide/${k.id}`}
-                              data-testid={`ide-link-${s.id}-${k.id}`}
-                              title={`${linkKind(k) === 'fork' ? 'Forked' : 'Started'} from this session · opens ${label(k)} where it lives`}
-                              className={clsx(
-                                'grid grid-cols-[minmax(0,1fr)_auto_2.25rem] items-center gap-2 py-0.5 pr-2 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground-secondary',
-                                k.id === id && 'bg-primary/5',
-                              )}
-                              style={{ paddingLeft: '2.75rem' }}
-                            >
-                              <span className="truncate">
-                                ↳ {linkKind(k) === 'fork' && <span className="text-muted-foreground/80">fork · </span>}
-                                {label(k)}
-                              </span>
-                              <span className="flex items-center gap-1 text-[11px]">
-                                <StateDot state={kst} />
-                                {STATE_LABEL[kst]}
-                              </span>
-                              <span className="text-right text-[11px] tabular-nums">
-                                {kst === 'running' ? 'live' : shortAge(k.last_activity_at, now)}
-                              </span>
-                            </Link>
-                          )
-                        })}
-                      </div>
-                    )
-                  })}
-              </div>
-            )
-          })}
-          {filteredOut > 0 && (
-            <p className="px-3 py-2 text-[11px] text-muted-foreground" data-testid="ide-filtered-out">
-              {filteredOut} {filteredOut === 1 ? 'session' : 'sessions'} hidden by filters ·{' '}
-              <button type="button" onClick={showAll} className="underline hover:text-foreground" data-testid="ide-show-all">
-                Show all
-              </button>
-            </p>
-          )}
-        </div>
+        <IdeTree
+          id={id}
+          tree={tree}
+          sessions={sessions}
+          loading={loading}
+          error={error}
+          now={now}
+          collapsed={collapsed}
+          toggleFolder={toggleFolder}
+          folderTarget={folderTarget}
+          agents={agents}
+          runners={runners}
+          onCreated={onCreated}
+          onError={(message) => setNote({ text: message, error: true })}
+          closing={closing}
+          links={links}
+          collapsedLinks={collapsedLinks}
+          toggleLinks={toggleLinks}
+          menuSessionId={menu?.session.id}
+          onRowMenu={(session, x, y) => setMenu({ session, x, y })}
+          renamingId={renamingId}
+          onRename={setRenamingId}
+          onChanged={() => void refresh()}
+          filteredOut={filteredOut}
+          showAll={showAll}
+          onKeyDown={onTreeKey}
+        />
       </WorkbenchRail>
       <div
         role="separator"
