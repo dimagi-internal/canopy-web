@@ -5,8 +5,9 @@ Usage:
 
 The credential identifies the SITE. What it can then do — vouch for a visitor
 with a signed assertion, frame the embed shell, offer an agent — is granted
-separately, from the workspace's Connected sites page or the `grant_app_*`
-commands, so registering one hands out nothing on its own.
+separately, on the workspace's Connected sites page (or its route,
+`PATCH /api/workspaces/<ws>/connected-apps/<id>`, MCP `update_connected_app`), which
+validates and audits every change — so registering one hands out nothing on its own.
 
 It used to take `--domains` (and `--workspace`/`--role`), which granted the
 power to mint a token for any address in those domains and create the user as a
