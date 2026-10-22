@@ -95,7 +95,8 @@ describe('RunnerReauth', () => {
       api.getRunnerMint.mockResolvedValue(mint({ status: 'requested' }))
       render(<RunnerReauth runnerId="r1" />)
       await act(async () => { await Promise.resolve() })
-      await act(async () => { vi.advanceTimersByTime(95_000) })
+      // The poll chains each tick on the settled fetch, so advance async.
+      await act(async () => { await vi.advanceTimersByTimeAsync(95_000) })
       expect(screen.getByTestId('reauth-stalled')).toBeTruthy()
     } finally {
       vi.useRealTimers()
@@ -115,12 +116,12 @@ describe('RunnerReauth', () => {
       await startHere()
       api.getRunnerMint.mockResolvedValue(mint({ status: 'completing' }))
 
-      await act(async () => { vi.advanceTimersByTime(95_000) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(95_000) })
       const callsAfterLimit = api.getRunnerMint.mock.calls.length
 
       api.getRunnerMint.mockResolvedValue(
         mint({ status: 'failed', detail: 'the code was rejected' }))
-      await act(async () => { vi.advanceTimersByTime(30_000) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
 
       expect(api.getRunnerMint.mock.calls.length).toBeGreaterThan(callsAfterLimit)
       expect(screen.getByTestId('reauth-failed').textContent).toContain('the code was rejected')

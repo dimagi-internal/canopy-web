@@ -12,6 +12,11 @@ App UI is **dense and readable: tables, not cards.**
 - A failed call throws the one `ApiError` (`src/api/problem.ts`). It carries `status`, `code` (a top-level `error` member, or else the tail of the problem `type`), `title`, `detail`, `extras` and the raw `body`, and its `message` is the server's `detail` when there is one. Use `unwrap(res, what)` for a call that returns data and `ensureOk(res, what)` for a 204. Branch on `e instanceof ApiError && e.status === …`. The old names (`AgentApiError`, `WorkspaceApiError`, `ChatApiError`, …) are re-exports of the same class.
 - Token-gated public viewers (`/w/<ws>/review|storyboard|narrative|ddd-release|share|walkthrough/…`) are scoped viewer paths. `apiV2` does not rewrite them and does not bounce their 401s to login, and `shareQuery(token, {ws})` passes the undeclared `?t=` token.
 
+## Polling and live sockets
+
+- **Poll with `usePolled(fn, {ms, deps})`** (`src/hooks/usePolled.ts`), never a hand-rolled `setInterval`. It drops results that land after unmount or a `deps` change, chains each tick on the settled fetch, and **stops while `document.visibilityState === 'hidden'`**, refetching at once on return — /supervisor is a phone PWA. `ms` may be a function of the last result (poll an open thread, stop once closed). Returns `{data, error, loading, refresh, setData}`.
+- **A live WebSocket is `useReconnectingSocket(url, onFrame, opts)`** (`src/hooks/useReconnectingSocket.ts`): JSON frames, reconnect on the 1/2/5/10s ladder, `connectUrl` to resume from a cursor. The published `canopy-ui` chat and presence sockets keep their own loops (heartbeats, send receipts).
+
 ## Shared kit: `canopy-ui`
 
 - The two-pane shell (left rail + scrolling main) used by the DDD and Agent workspaces, plus the design-system primitives, live in `frontend/packages/canopy-ui`, imported as `canopy-ui` with subpath exports `/ui`, `/lib`, `/chat`, `/presence`, `/shell`, `/tokens` (see its `package.json` `exports`). Surfaces consume it instead of re-implementing chrome.

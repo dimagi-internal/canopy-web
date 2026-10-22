@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { closeSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
+import { closeSession, listSessions, type ChatSession } from '@/api/chat'
 import { listMyAgents, type AgentOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { relativeAge } from '@/lib/relativeAge'
+import { usePolled } from '@/hooks/usePolled'
 import { sessionTargetLabel } from './sessionTargetLabel'
 import { sessionDisplayTitle } from './sessionDisplayTitle'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
@@ -115,15 +116,11 @@ export function ChatSessionsPanel({
 
   // A slow REST refresh keeps the unified list current (the live push into the
   // list is a deferred follow-up; per-row liveness is live inside ChatPanel).
-  useEffect(() => {
-    const state: SessionState = showArchived ? 'all' : 'active'
-    const id = window.setInterval(() => {
-      listSessions(state)
-        .then(setSessions)
-        .catch(() => { /* keep last-good; the mount fetch owns first-error surfacing */ })
-    }, 20_000)
-    return () => window.clearInterval(id)
-  }, [showArchived])
+  // A failed refresh keeps last-good; the mount fetch owns first-error surfacing.
+  usePolled(
+    () => listSessions(showArchived ? 'all' : 'active').then(setSessions).catch(() => {}),
+    { ms: 20_000, deps: [showArchived], immediate: false },
+  )
 
   const repos = useMemo(() => repoChoices(runners ?? []), [runners])
 
@@ -190,11 +187,9 @@ export function ChatSessionsPanel({
   // Watch the relayed closes through to the end, quickly, rather than leaving
   // them to the 20s refresh.
   const waitingOnCloses = Object.keys(pendingClose).length > 0
-  useEffect(() => {
-    if (!waitingOnCloses) return
-    const state: SessionState = showArchived ? 'all' : 'active'
-    const tick = window.setInterval(() => {
-      listSessions(state)
+  usePolled(
+    () =>
+      listSessions(showArchived ? 'all' : 'active')
         .then((listed) => {
           setSessions(listed)
           setPendingClose((prev) => {
@@ -208,10 +203,9 @@ export function ChatSessionsPanel({
             return pending
           })
         })
-        .catch(() => { /* keep waiting; the next tick retries */ })
-    }, 2_000)
-    return () => window.clearInterval(tick)
-  }, [waitingOnCloses, showArchived])
+        .catch(() => { /* keep waiting; the next tick retries */ }),
+    { ms: 2_000, deps: [showArchived], enabled: waitingOnCloses, immediate: false },
+  )
 
 
   const now = new Date()

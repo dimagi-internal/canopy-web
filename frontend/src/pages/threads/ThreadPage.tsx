@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { getThread, type AgentThread, type ThreadMessage } from '@/api/threads'
+import { usePolled } from '@/hooks/usePolled'
 import { relativeAge } from '@/lib/relativeAge'
 import { IdeaView } from '../huddles/BlockView'
 import { MemberAvatar } from '../huddles/MemberAvatar'
@@ -217,30 +218,27 @@ export function ThreadPage() {
   const [error, setError] = useState('')
   const [now, setNow] = useState(() => new Date())
 
-  useEffect(() => {
-    let alive = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const load = () => {
-      getThread(id)
-        .then((t) => {
-          if (!alive) return
+  // Poll while the thread is open; back off after a failure.
+  usePolled(
+    (signal) =>
+      getThread(id).then(
+        (t) => {
+          if (signal.aborted) return t
           setThread(t)
           setError('')
           setNow(new Date())
-          if (t.status === 'open') timer = setTimeout(load, POLL_MS)
-        })
-        .catch((e: unknown) => {
-          if (!alive) return
-          setError(e instanceof Error ? e.message : String(e))
-          timer = setTimeout(load, POLL_MS * 2)
-        })
-    }
-    load()
-    return () => {
-      alive = false
-      if (timer) clearTimeout(timer)
-    }
-  }, [id])
+          return t
+        },
+        (e: unknown) => {
+          if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
+          throw e
+        },
+      ),
+    {
+      ms: ({ data, error }) => (error ? POLL_MS * 2 : data?.status === 'open' ? POLL_MS : null),
+      deps: [id],
+    },
+  )
 
   if (!thread) {
     return (

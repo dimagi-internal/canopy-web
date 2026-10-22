@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { getHuddle, type Huddle } from '@/api/huddles'
 import { getHuddleThreads } from '@/api/threads'
+import { usePolled } from '@/hooks/usePolled'
 import { relativeAge } from '@/lib/relativeAge'
 import { ProposalCard } from '@/components/projects/ProposalCard'
 import { useEngagementView } from '@/components/projects/useEngagementView'
@@ -163,33 +164,32 @@ export function HuddlePage() {
   // The Story ends with the full result, so above it the summary stays short.
   const story = readView(params.get('view')) === 'story'
 
-  useEffect(() => {
-    let alive = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const load = () => {
-      // The agreement threads hanging off the huddle ride along; a failure to load
-      // them leaves the huddle readable as relayed (no direct conversations).
-      Promise.all([getHuddle(id), getHuddleThreads(id).catch(() => undefined)])
-        .then(([h, threads]) => {
+  // Poll while the huddle or one of its threads is still going; back off after
+  // a failure. The agreement threads hanging off the huddle ride along; a
+  // failure to load them leaves the huddle readable as relayed (no direct
+  // conversations).
+  usePolled(
+    (signal) =>
+      Promise.all([getHuddle(id), getHuddleThreads(id).catch(() => undefined)]).then(
+        ([h, threads]) => {
           if (threads) h = { ...h, threads }
-          if (!alive) return
+          if (signal.aborted) return h
           setHuddle(h)
           setError('')
           setNow(new Date())
-          if (!h.finished || h.threads?.some((t) => t.status === 'open')) timer = setTimeout(load, POLL_MS)
-        })
-        .catch((e: unknown) => {
-          if (!alive) return
-          setError(e instanceof Error ? e.message : String(e))
-          timer = setTimeout(load, POLL_MS * 2)
-        })
-    }
-    load()
-    return () => {
-      alive = false
-      if (timer) clearTimeout(timer)
-    }
-  }, [id, version])
+          return h
+        },
+        (e: unknown) => {
+          if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
+          throw e
+        },
+      ),
+    {
+      ms: ({ data: h, error }) =>
+        error ? POLL_MS * 2 : h && (!h.finished || h.threads?.some((t) => t.status === 'open')) ? POLL_MS : null,
+      deps: [id, version],
+    },
+  )
 
   if (!huddle) {
     return (
