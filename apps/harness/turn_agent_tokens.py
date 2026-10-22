@@ -100,23 +100,27 @@ def issue(turn: Turn, runner) -> dict:
 
 
 def live_session(turn: Turn, runner):
-    """The session `turn` opened, if it is still active and bound to `runner` under the
-    turn's own session key — the laptop case, where a finished turn's work goes on. A
-    chat turn names its session; an agent turn (mail, a schedule, a dispatch) is found by
-    the binding it made: this runner, this session key, this agent. None otherwise."""
+    """The session `turn` belongs to, if it is still active, is its agent's, and is bound to
+    `runner` — the laptop case, where a finished turn's work goes on. Found by the turn's own
+    session (`chat_session`, or the chat a chat turn names in `origin_ref.chat_session_id`;
+    a laptop chat turn records no session key), else by the binding its session key names
+    (an agent turn: mail, a schedule, a dispatch). None otherwise."""
     # emdash only: a `computer` runner runs a person's own local sessions (they act as the
     # person), and a cloud turn ends with its process.
-    if runner.kind != runner.EMDASH or not turn.session_key or turn.claimed_by_id != runner.pk:
+    if runner.kind != runner.EMDASH or turn.claimed_by_id != runner.pk:
+        return None
+    agent = turn_agent(turn)
+    if agent is None:
         return None
     qs = (RunnerBinding.objects.select_related("session")
-          .filter(runner=runner, session_key=turn.session_key, session__status=Session.ACTIVE))
-    if turn.chat_session_id:
-        qs = qs.filter(session_id=turn.chat_session_id)
+          .filter(runner=runner, session__status=Session.ACTIVE, session__agent=agent))
+    named = turn.chat_session_id or str((turn.origin_ref or {}).get("chat_session_id") or "")
+    if named:
+        qs = qs.filter(session_id=named)
+    elif turn.session_key:
+        qs = qs.filter(session_key=turn.session_key)
     else:
-        agent = turn_agent(turn)
-        if agent is None:
-            return None
-        qs = qs.filter(session__agent=agent)
+        return None
     b = qs.first()
     return b.session if b is not None else None
 
@@ -197,10 +201,9 @@ def revoke_stale() -> int:
         held = (Q(session__isnull=True) & Q(turn__status__in=EXECUTING)
                 & Q(turn__claimed_by_id=F("runner_id")))
         # A session-scoped login: held while its session is active and still bound to the
-        # runner it was issued to, under the session key of the turn that opened it.
+        # runner it was issued to.
         held |= (Q(session__isnull=False) & Q(session__status=Session.ACTIVE)
-                 & Q(session__runner_binding__runner_id=F("runner_id"))
-                 & Q(session__runner_binding__session_key=F("turn__session_key")))
+                 & Q(session__runner_binding__runner_id=F("runner_id")))
         live = TurnAgentToken.objects.filter(token__expires_at__gt=timezone.now())
         return _revoke(live.exclude(held))
     except Exception:  # noqa: BLE001
