@@ -86,7 +86,7 @@ def interrupt_session(session: Session) -> str:
     cancel and silently does nothing.
 
     But the work is not turn-shaped, it is SESSION-shaped, and canopy already knows
-    the session: `harness.services.record_session` gives every agent/project/phone
+    the session: `harness.session_sync.record_session` gives every agent/project/phone
     thread a durable Session plus a RunnerBinding carrying `session_key` — the very
     same binding `answer_menu` above uses to press a key into that terminal. So
     stopping is addressed exactly like answering: name the session, let the runner
@@ -286,7 +286,7 @@ def close_session(*, session: Session) -> str:
     session.save(update_fields=["status", "updated_at"])
     # The REPORTED branch announces itself when the runner's report retires the
     # row; this one never gets a report, so it says so here.
-    from apps.harness.services import fire_sessions_closed
+    from apps.harness.session_sync import fire_sessions_closed
 
     transaction.on_commit(lambda: fire_sessions_closed([session.pk]))
     return "closed"

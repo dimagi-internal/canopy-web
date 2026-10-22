@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.canopy_sessions import services as chat
-from apps.harness.services import _title_is_derived
+from apps.harness.session_sync import _title_is_derived
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db

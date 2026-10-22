@@ -14,9 +14,9 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness.models import Runner, Turn
-from apps.harness.services import readable_title
+from apps.harness.session_sync import readable_title
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -65,4 +65,4 @@ def test_with_nothing_readable_it_is_the_agents_turn():
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=u)
     turn = Turn.objects.create(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="a1",
                                prompt="/ace:turn --thread 1a0f")
-    assert services.turn_session_title(turn, "/ace:turn --thread 1a0f") == "ACE turn"
+    assert session_sync.turn_session_title(turn, "/ace:turn --thread 1a0f") == "ACE turn"

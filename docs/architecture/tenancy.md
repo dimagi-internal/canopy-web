@@ -88,7 +88,7 @@ the rule, its claim/schedule parity test and the routing hint:
   → [runners.md § Units on the box](runners.md#units-on-the-box-runnerunits)
 - **Sessions a runner reports are filed inside its tenant.** A new agent-less
   session names its agent only among agents in `runner_tenant_slugs(runner)`
-  (`harness.services._agent_for_project`: `Agent.slug` is global). A session whose
+  (`harness.session_sync._agent_for_project`: `Agent.slug` is global). A session whose
   project names an agent OUTSIDE that tenant is filed nowhere — not in the agent's
   tree, and not in the runner's as a plain project (`session_home` → None; the
   report's `skipped` counts it, missing-sessions omits it) — and the owner's default session
@@ -197,7 +197,7 @@ failure again.
   absent one fails closed. `dmarc=pass` proves the domain, not the human.
 - Grades are a high-water mark (a forwarded message must not downgrade a correspondent), with
   the latest grade kept beside it so a drop stays visible.
-- Recorded best-effort from `enqueue_turn`'s email branch (`apps/harness/services.py`) — mail
+- Recorded best-effort from the email door (`apps/harness/channels/email.py`) — mail
   is answered even when the bookkeeping fails.
 - What agents learn about a person (`PersonFact`, HCP): `access.md` → "What agents know about
   a person".
@@ -265,7 +265,7 @@ with use (an installed PWA would otherwise log out every fortnight). Consequence
 - **Any view that catches `IntegrityError` must wrap the failing write in its own
   `transaction.atomic()` savepoint**, or `SessionMiddleware`'s write on the way out hits a
   poisoned transaction instead of the intended 409/handled error. Pattern: the
-  idempotency-key creates in `apps/harness/services.py` (`enqueue_turn` and the blocked-contact
+  idempotency-key creates in `apps/harness/services.py` (`enqueue_turn`) and `channels/email.py` (the blocked-contact
   turn write).
 
 ## Content retention (`apps/retention`)

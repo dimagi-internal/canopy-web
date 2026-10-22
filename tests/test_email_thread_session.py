@@ -18,6 +18,7 @@ import pytest
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import session_sync
 from apps.harness.models import Turn
 
 pytestmark = pytest.mark.django_db
@@ -130,7 +131,7 @@ def test_an_email_turn_with_no_thread_id_still_runs(agent):
 
 
 def test_a_session_failure_does_not_lose_the_turn(agent, monkeypatch):
-    monkeypatch.setattr(services, "email_thread_session",
+    monkeypatch.setattr(session_sync, "email_thread_session",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db sad")))
     turn, _ = _email_turn(agent, "thread-E")
     assert turn.pk is not None, "the mail still has to be handled"
@@ -141,12 +142,12 @@ def test_the_session_homes_in_the_agents_own_workspace_never_a_default(agent):
     """No `ensure_default_workspace()` fallback: Agent.workspace is NOT NULL, so
     the email session lives where the agent lives (here `connect`, not the org
     default) — and a session with no agent at all fails loudly, not guessed."""
-    session = services.email_thread_session(agent, "thread-home", "subj")
+    session = session_sync.email_thread_session(agent, "thread-home", "subj")
     assert session.workspace_id == agent.workspace_id == "connect"
     with pytest.raises(ValueError):
-        services.email_thread_session(None, "thread-orphan")
+        session_sync.email_thread_session(None, "thread-orphan")
 
 
 def test_a_thread_session_with_neither_agent_nor_workspace_fails_loudly():
     with pytest.raises(ValueError):
-        services._thread_session(None, "repo", None, "some-thread", runner=None)
+        session_sync._thread_session(None, "repo", None, "some-thread", runner=None)

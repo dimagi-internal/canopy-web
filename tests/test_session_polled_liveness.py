@@ -24,7 +24,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.canopy_sessions.staleness import SESSION_LIVE_WINDOW
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness import claim
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -70,9 +70,9 @@ def test_a_session_that_fell_off_the_report_keeps_its_runner():
     session must still know which box it belonged to — nulling the FK is what
     produced 47 runner-less rows on labs."""
     _user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
 
-    services.replace_reported_sessions(runner, ws, [_Reported("live")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("live")])
 
     gone = RunnerBinding.objects.get(session_key="ddd")
     assert gone.runner_id == runner.id, "identity must survive absence from a report"
@@ -82,9 +82,9 @@ def test_an_explicit_archive_also_keeps_the_runner():
     """The written closing signal retires the SESSION; it does not erase which box
     the session lived on."""
     _user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
 
-    services.replace_reported_sessions(runner, ws, [_Reported("live")], archived=["ddd"])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("live")], archived=["ddd"])
 
     gone = RunnerBinding.objects.get(session_key="ddd")
     assert gone.session.status == Session.ARCHIVED
@@ -104,8 +104,8 @@ def test_active_drops_a_session_once_it_stops_being_reported():
     """No `archived` signal involved — emdash never sends one. Falling out of the
     report for longer than the window IS the retirement."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
-    services.replace_reported_sessions(runner, ws, [_Reported("live")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("live")])
     _age_binding("ddd", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
 
     ids = {r["title"] for r in _client(user).get("/api/canopy-sessions/").json()}
@@ -116,7 +116,7 @@ def test_a_session_just_inside_the_window_survives():
     """A brief report gap (a runner restart, a swallowed POST) must not retire
     anything — the window is many multiples of the 10s report cadence."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
     _age_binding("ddd", SESSION_LIVE_WINDOW - dt.timedelta(seconds=30))
 
     ids = {r["title"] for r in _client(user).get("/api/canopy-sessions/").json()}
@@ -127,11 +127,11 @@ def test_a_re_reported_session_comes_back_by_itself():
     """Derived, never written: the runner comes back and the row un-retires with no
     repair step. This is the property that makes polling safe."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
     _age_binding("ddd", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
     assert _client(user).get("/api/canopy-sessions/").json() == []
 
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
 
     ids = {r["title"] for r in _client(user).get("/api/canopy-sessions/").json()}
     assert ids == {"ddd"}
@@ -140,7 +140,7 @@ def test_a_re_reported_session_comes_back_by_itself():
 def test_every_active_session_reports_its_runner():
     """The user-visible contract: no row in the list is missing its runner."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("a"), _Reported("b")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("a"), _Reported("b")])
 
     rows = _client(user).get("/api/canopy-sessions/").json()
     assert rows and all(r["runner_name"] == "jj-air" for r in rows)
@@ -151,7 +151,7 @@ def test_an_offline_runners_sessions_leave_the_active_list():
     """The whole point: a box that is not reporting cannot take a message, so its
     sessions must not be offered. Nothing is deleted — they return when it does."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
     # The box goes away: it stops reporting AND stops heartbeating.
     _age_binding("ddd", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
     Runner.objects.filter(pk=runner.pk).update(
@@ -171,20 +171,20 @@ def test_list_visible_sessions_drops_an_archived_session_immediately():
     """An explicit archive must not wait out the window — it is a decision, not a
     staleness observation. (This is what the nulled runner FK used to enforce.)"""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
-    assert {r.emdash_task for r in services.list_visible_sessions(user)} == {"ddd", "live"}
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
+    assert {r.emdash_task for r in session_sync.list_visible_sessions(user)} == {"ddd", "live"}
 
-    services.replace_reported_sessions(runner, ws, [_Reported("live")], archived=["ddd"])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("live")], archived=["ddd"])
 
-    assert {r.emdash_task for r in services.list_visible_sessions(user)} == {"live"}
+    assert {r.emdash_task for r in session_sync.list_visible_sessions(user)} == {"live"}
 
 
 def test_list_visible_sessions_drops_a_session_past_the_window():
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd"), _Reported("live")])
     _age_binding("ddd", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
 
-    assert {r.emdash_task for r in services.list_visible_sessions(user)} == {"live"}
+    assert {r.emdash_task for r in session_sync.list_visible_sessions(user)} == {"live"}
 
 
 # --- claim routing: a stale binding must not wedge the session ---------------
@@ -209,7 +209,7 @@ def test_stickiness_survives_the_liveness_change():
     defect was the banner never appearing, not the routing.
     """
     user, ws, holder = _ctx()
-    services.replace_reported_sessions(holder, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(holder, ws, [_Reported("ddd")])
     _age_binding("ddd", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
     session = RunnerBinding.objects.get(session_key="ddd").session
     _session_turn(ws, session, user)
@@ -231,7 +231,7 @@ def test_a_wholesale_report_marks_the_runner_as_an_observer():
     user, ws, runner = _ctx()
     assert runner.sessions_reported_at is None, "unreported until it reports"
 
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
     runner.refresh_from_db()
     assert runner.sessions_reported_at is not None
 
@@ -242,10 +242,10 @@ def test_an_empty_report_still_marks_the_runner_as_an_observer():
     that if it counts as having reported. Stamping only on a non-empty list would mean a
     laptop whose last task closed could never retire it."""
     user, ws, runner = _ctx()
-    services.replace_reported_sessions(runner, ws, [_Reported("ddd")])
+    session_sync.replace_reported_sessions(runner, ws, [_Reported("ddd")])
     _age_binding("ddd", SESSION_LIVE_WINDOW + dt.timedelta(minutes=1))
     Runner.objects.filter(pk=runner.pk).update(sessions_reported_at=None)
 
-    services.replace_reported_sessions(runner, ws, [])
+    session_sync.replace_reported_sessions(runner, ws, [])
     runner.refresh_from_db()
     assert runner.sessions_reported_at is not None

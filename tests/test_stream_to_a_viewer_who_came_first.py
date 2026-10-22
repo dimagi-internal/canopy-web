@@ -17,7 +17,7 @@ from django.core.cache import cache
 from apps.agents.models import Agent
 from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -48,7 +48,7 @@ def test_a_viewer_who_attached_before_the_binding_is_streamed_to():
     chat_transcript_ingest.attach_session(chat)          # the widget's socket, first
     assert not RunnerBinding.objects.filter(session=chat).exists()
 
-    services.record_session(agent, str(chat.id), runner=runner,  # the runner, a moment later
+    session_sync.record_session(agent, str(chat.id), runner=runner,  # the runner, a moment later
                             session_key="ace-task-1")
 
     assert RunnerBinding.objects.get(session=chat).stream_desired is True
@@ -57,7 +57,7 @@ def test_a_viewer_who_attached_before_the_binding_is_streamed_to():
 def test_nobody_watching_still_means_nothing_is_pushed():
     agent, runner, chat = _world()
 
-    services.record_session(agent, str(chat.id), runner=runner, session_key="ace-task-1")
+    session_sync.record_session(agent, str(chat.id), runner=runner, session_key="ace-task-1")
 
     assert RunnerBinding.objects.get(session=chat).stream_desired is False
 
@@ -67,6 +67,6 @@ def test_a_viewer_who_left_before_the_binding_is_not_streamed_to():
     chat_transcript_ingest.attach_session(chat)
     chat_transcript_ingest.detach_session(chat)
 
-    services.record_session(agent, str(chat.id), runner=runner, session_key="ace-task-1")
+    session_sync.record_session(agent, str(chat.id), runner=runner, session_key="ace-task-1")
 
     assert RunnerBinding.objects.get(session=chat).stream_desired is False

@@ -752,7 +752,7 @@ async def test_a_dialog_appearing_reaches_a_chat_already_open():
     this goes over a real socket rather than asserting on the publish call."""
     from types import SimpleNamespace
 
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
     from apps.harness.models import Runner
 
     owner, _teammate, session = await database_sync_to_async(_seed)()
@@ -779,7 +779,7 @@ async def test_a_dialog_appearing_reaches_a_chat_already_open():
     await _recv_match(comm, lambda f: f.get("event") == "session.state")
 
     def _report(question):
-        harness_services.replace_reported_sessions(
+        session_sync.replace_reported_sessions(
             runner, session.workspace,
             [SimpleNamespace(emdash_task="spark", project="ace", status="",
                              last_interacted_at=None, recent_messages=[],
@@ -803,7 +803,7 @@ async def test_an_unchanged_dialog_is_not_republished_every_report():
     re-render the buttons under a thumb that is reaching for one."""
     from types import SimpleNamespace
 
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
     from apps.harness.models import Runner
 
     owner, _teammate, session = await database_sync_to_async(_seed)()
@@ -823,7 +823,7 @@ async def test_an_unchanged_dialog_is_not_republished_every_report():
     await _recv_match(comm, lambda f: f.get("event") == "session.state")
 
     def _report():
-        harness_services.replace_reported_sessions(
+        session_sync.replace_reported_sessions(
             runner, session.workspace,
             [SimpleNamespace(emdash_task="spark", project="ace", status="",
                              last_interacted_at=None, recent_messages=[],

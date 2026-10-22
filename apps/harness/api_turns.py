@@ -20,6 +20,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import claim, ledger, services, turn_gates
+from . import session_sync
 
 # The one harness router and the helpers every harness route shares; api.py
 # imports this module after defining them.
@@ -242,7 +243,7 @@ def list_sessions(request: HttpRequest):
     only, newest-first. Drives the phone's Open Sessions list."""
     from apps.embedding import delegation
 
-    rows = services.list_visible_sessions(request.user, wsvc.request_workspace_slugs(request))
+    rows = session_sync.list_visible_sessions(request.user, wsvc.request_workspace_slugs(request))
     offered = delegation.offered_for(request)
     if offered is None:
         return rows

@@ -14,7 +14,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.canopy_sessions import filing
 from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness import runners
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership as M
@@ -76,7 +76,7 @@ def _client(user):
 
 
 def _report(runner, *tasks, project="canopy-web"):
-    services.replace_reported_sessions(
+    session_sync.replace_reported_sessions(
         runner, runner.workspace, [_Reported(t, project) for t in tasks], complete=True)
 
 
@@ -130,15 +130,15 @@ def test_session_named_after_another_trees_agent_is_not_filed_there(jj, dimagi, 
 
 
 def test_session_home_reads_the_tenant_once_per_runner(jj, dimagi, family, django_assert_num_queries):
-    from apps.harness import services as hs
+    from apps.harness import session_sync
 
     box = Runner.objects.create(name="cloud-ec2-2-marshellis", kind=Runner.CLOUD, host="ec2",
                                 owner=jj, workspace=family)
-    hs.session_home(box, "canopy-web")
+    session_sync.session_home(box, "canopy-web")
     # Warm: the tenant is cached on the runner, so a second session costs only
     # its agent lookup and the owner's default.
     with django_assert_num_queries(2):
-        hs.session_home(box, "other-repo")
+        session_sync.session_home(box, "other-repo")
 
 
 def test_missing_sessions_skip_another_trees_agent(jj, dimagi, family):

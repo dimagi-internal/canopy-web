@@ -1,6 +1,6 @@
 """A Slack message becomes a turn on a chat session.
 
-The shape is the email path's (``harness.services.email_thread_session``): a
+The shape is the email path's (``harness.session_sync.email_thread_session``): a
 Slack thread is a conversation, so it maps to one ``canopy_sessions.Session``
 and every message in it is a ``send_message`` on that session. That buys the
 whole existing machinery for free — runner routing (``origin="slack"`` is

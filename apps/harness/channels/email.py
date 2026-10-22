@@ -22,6 +22,7 @@ from apps.contacts.models import Contact
 from apps.workspaces import services as wsvc
 
 from .. import initiator as who
+from .. import session_sync
 from ..ledger import append_events
 from ..models import Turn
 
@@ -44,8 +45,6 @@ class EmailArrival:
 def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
            origin: str, idempotency_key: str, prompt: str, routing: str) -> EmailArrival:
     """Resolve an email turn's asker and conversation before it is enqueued."""
-    from .. import services as harness  # cycle: services calls arrive(); email_thread_session lives there
-
     # Record WHO wrote in, before the turn is bound to a session and the
     # agent reference is handed over below. Best-effort and deliberately
     # non-fatal: a contact is a convenience for later turns and for routing,
@@ -96,7 +95,7 @@ def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
         thread_id = str((origin_ref or {}).get("thread_id") or "")
         if thread_id:
             try:
-                session = harness.email_thread_session(
+                session = session_sync.email_thread_session(
                     agent, thread_id, str((origin_ref or {}).get("subject") or ""))
                 agent = None          # the session now carries the agent
             except Exception:  # noqa: BLE001

@@ -17,6 +17,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
 from apps.harness import services
+from apps.harness import session_sync
 from apps.harness import claim
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -47,9 +48,9 @@ def _ctx():
 
 def _report_queries(runner, ws, n):
     sessions = [_Reported(f"task-{i}") for i in range(n)]
-    services.replace_reported_sessions(runner, ws, sessions, complete=True)  # creates
+    session_sync.replace_reported_sessions(runner, ws, sessions, complete=True)  # creates
     with CaptureQueriesContext(connection) as q:
-        services.replace_reported_sessions(runner, ws, sessions, complete=True)  # the steady state
+        session_sync.replace_reported_sessions(runner, ws, sessions, complete=True)  # the steady state
     return len(q)
 
 

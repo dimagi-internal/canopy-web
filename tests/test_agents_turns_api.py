@@ -204,11 +204,11 @@ def test_a_cloud_agent_turn_links_to_the_session_the_runner_recorded(
         authed_client, authed_user, workspace):
     from django.utils import timezone
 
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
 
     agent = _echo(workspace)
     turn = _turn(agent, "cloud-1", status="running")
-    harness_services.record_session(
+    session_sync.record_session(
         agent, f"echo:{turn.id}", runner=_cloud_runner(authed_user), session_key="cli-1")
     turn.status, turn.session_key, turn.finished_at = "done", "cli-1", timezone.now()
     turn.save()
@@ -251,10 +251,10 @@ def test_a_laptop_close_out_still_joins_on_its_emdash_task(authed_client, worksp
 
 
 def test_a_cloud_session_is_named_by_the_runners_title_not_its_uuid(authed_user, workspace):
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
 
     agent = _echo(workspace)
-    binding = harness_services.record_session(
+    binding = session_sync.record_session(
         agent, "echo:t-1", runner=_cloud_runner(authed_user),
         session_key="6b1f9c2e-cli-uuid", title="Daily turn")
     binding.session.refresh_from_db()
@@ -262,10 +262,10 @@ def test_a_cloud_session_is_named_by_the_runners_title_not_its_uuid(authed_user,
 
 
 def test_a_laptop_session_is_still_named_after_its_emdash_task(authed_user, workspace):
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
 
     agent = _echo(workspace)
-    binding = harness_services.record_session(
+    binding = session_sync.record_session(
         agent, "echo:t-2", runner=_cloud_runner(authed_user), session_key="c-daily-turn-ad53")
     binding.session.refresh_from_db()
     assert binding.session.title == "c-daily-turn-ad53"
@@ -278,14 +278,14 @@ def test_a_laptop_session_is_still_named_after_its_emdash_task(authed_user, work
 
 def test_record_session_keys_the_running_turn_so_an_early_close_out_joins(
         authed_client, authed_user, workspace):
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
 
     agent = _echo(workspace)
     runner = _cloud_runner(authed_user)
     turn = _turn(agent, "early-1", status="running", claimed_by=runner)
-    harness_services.record_session(agent, f"echo:{turn.id}", runner=runner,
+    session_sync.record_session(agent, f"echo:{turn.id}", runner=runner,
                                     session_key="27629448-cli")
-    assert harness_services.stamp_turn_session(turn.id, runner, "27629448-cli") is True
+    assert session_sync.stamp_turn_session(turn.id, runner, "27629448-cli") is True
 
     authed_client.post(
         "/api/agents/echo/turns/",
@@ -298,35 +298,35 @@ def test_record_session_keys_the_running_turn_so_an_early_close_out_joins(
 
 
 def test_only_the_claiming_runner_keys_a_turn_and_only_once(authed_user, workspace):
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
     from apps.harness.models import Runner
 
     agent = _echo(workspace)
     runner = _cloud_runner(authed_user)
     other = Runner.objects.create(name="other", kind="cloud", capabilities={}, owner=authed_user)
     turn = _turn(agent, "early-2", status="running", claimed_by=runner)
-    assert harness_services.stamp_turn_session(turn.id, other, "x") is False
-    assert harness_services.stamp_turn_session(turn.id, runner, "first") is True
-    assert harness_services.stamp_turn_session(turn.id, runner, "second") is False
+    assert session_sync.stamp_turn_session(turn.id, other, "x") is False
+    assert session_sync.stamp_turn_session(turn.id, runner, "first") is True
+    assert session_sync.stamp_turn_session(turn.id, runner, "second") is False
     turn.refresh_from_db()
     assert turn.session_key == "first"
 
 
 def test_a_finished_turn_is_not_rekeyed(authed_user, workspace):
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
 
     agent = _echo(workspace)
     runner = _cloud_runner(authed_user)
     turn = _turn(agent, "early-3", status="done", claimed_by=runner)
-    assert harness_services.stamp_turn_session(turn.id, runner, "late") is False
+    assert session_sync.stamp_turn_session(turn.id, runner, "late") is False
 
 
 def test_a_cloud_sessions_own_title_shows_instead_of_its_uuid_key(authed_client, authed_user,
                                                                    workspace):
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
 
     agent = _echo(workspace)
-    binding = harness_services.record_session(
+    binding = session_sync.record_session(
         agent, "echo:t-9", runner=_cloud_runner(authed_user),
         session_key="27629448-069c-4d71-9d34-f331ad4cd2c2", title="Daily turn")
     body = authed_client.get(f"/api/canopy-sessions/{binding.session_id}").json()
@@ -335,10 +335,10 @@ def test_a_cloud_sessions_own_title_shows_instead_of_its_uuid_key(authed_client,
 
 def test_a_runner_session_still_hides_its_thread_key_fallback(authed_client, authed_user,
                                                                workspace):
-    from apps.harness import services as harness_services
+    from apps.harness import session_sync
 
     agent = _echo(workspace)
-    binding = harness_services.record_session(
+    binding = session_sync.record_session(
         agent, "19f91250349ec91b", runner=_cloud_runner(authed_user), session_key="")
     binding.session_key = "c-real-task-name"
     binding.save(update_fields=["session_key"])

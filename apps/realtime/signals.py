@@ -154,7 +154,7 @@ def _on_sessions_reported(sender, runner, **kwargs):
     # Local imports keep this module import-cycle-free and the serialization co-located
     # with where the GET /sessions endpoint reads the same rows.
     from apps.harness.schemas import EmdashSessionOut
-    from apps.harness.services import list_visible_sessions
+    from apps.harness.session_sync import list_visible_sessions
 
     sessions = list_visible_sessions(runner.owner)
     frame = {

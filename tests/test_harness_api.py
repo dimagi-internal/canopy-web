@@ -533,7 +533,7 @@ def test_the_new_name_wins_when_both_arrive(client, agent):
 def test_record_session_failure_logs_its_inputs(client, agent, caplog, monkeypatch):
     """Failure investigation 3 (2026-10-15, turn 282f825e): a record-session 500 left
     only the generic problem body. The raise must name the thread and runner."""
-    from apps.harness import services
+    from apps.harness import session_sync
 
     rid = client.post("/api/harness/runners/",
                       {"name": "rA", "kind": "emdash", "capabilities": {"agents": ["echo"]},
@@ -542,7 +542,7 @@ def test_record_session_failure_logs_its_inputs(client, agent, caplog, monkeypat
     def boom(*a, **k):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(services, "record_session", boom)
+    monkeypatch.setattr(session_sync, "record_session", boom)
     client.raise_request_exception = False
     with caplog.at_level("ERROR"):
         r = client.post(f"/api/harness/runners/{rid}/record-session",

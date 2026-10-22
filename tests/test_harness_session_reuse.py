@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from apps.harness import services
+from apps.harness import session_sync
 from apps.harness.models import Runner
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.workspaces.models import Workspace
@@ -40,7 +40,7 @@ def test_resolve_new_thread_when_no_binding():
     ws = _ws("w1")
     a = _agent(ws)
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
-    plan = services.resolve_session(a, "phone:jj:echo", r)
+    plan = session_sync.resolve_session(a, "phone:jj:echo", r)
     assert plan["new_thread"] is True
     assert plan["reuse"] is False
     assert plan["link_id"] is None
@@ -50,10 +50,10 @@ def test_record_then_resolve_reuses_for_same_runner_host():
     ws = _ws("w1")
     a = _agent(ws)
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
-    services.record_session(a, "phone:jj:echo", runner=r,
+    session_sync.record_session(a, "phone:jj:echo", runner=r,
                             session_key="echo-1234", summary="rolling ctx",
                             agent_task_ext_id="T-9")
-    plan = services.resolve_session(a, "phone:jj:echo", r)
+    plan = session_sync.resolve_session(a, "phone:jj:echo", r)
     assert plan["reuse"] is True
     assert plan["session_key"] == "echo-1234"
     assert plan["summary"] == "rolling ctx"
@@ -66,8 +66,8 @@ def test_record_is_idempotent_per_thread():
     ws = _ws("w1")
     a = _agent(ws)
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
-    services.record_session(a, "phone:jj:echo", runner=r, session_key="echo-1")
-    services.record_session(a, "phone:jj:echo", runner=r, session_key="echo-2")
+    session_sync.record_session(a, "phone:jj:echo", runner=r, session_key="echo-1")
+    session_sync.record_session(a, "phone:jj:echo", runner=r, session_key="echo-2")
     assert Session.objects.filter(agent=a).count() == 1
     b = RunnerBinding.objects.get(thread_key="phone:jj:echo")
     assert b.session_key == "echo-2"  # re-pointed at the newest live task
@@ -88,7 +88,7 @@ def test_record_binds_existing_chat_session_by_uuid_thread_key():
     a = _agent(ws)
     r = _owned_runner(ws)
     chat = Session.objects.create(workspace=ws, agent=a, origin=Session.ORIGIN_WEB, title="web chat")
-    services.record_session(a, str(chat.id), runner=r, session_key="echo-9")
+    session_sync.record_session(a, str(chat.id), runner=r, session_key="echo-9")
     # binds the EXISTING web session, does not fork a new runner session
     assert Session.objects.filter(agent=a).count() == 1
     b = RunnerBinding.objects.get(session=chat)
@@ -103,7 +103,7 @@ def test_a_cloud_session_uuid_is_not_written_as_the_chat_title():
     a = _agent(ws)
     r = _owned_runner(ws)
     chat = Session.objects.create(workspace=ws, agent=a, origin=Session.ORIGIN_WEB, title="")
-    services.record_session(a, str(chat.id), runner=r,
+    session_sync.record_session(a, str(chat.id), runner=r,
                             session_key="1fb14aa8-7289-4e43-827a-e989df77a07a")
     chat.refresh_from_db()
     assert chat.title == ""
@@ -113,9 +113,9 @@ def test_reuse_denied_for_different_host():
     ws = _ws("w1")
     a = _agent(ws)
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
-    services.record_session(a, "phone:jj:echo", runner=r, session_key="echo-1")
+    session_sync.record_session(a, "phone:jj:echo", runner=r, session_key="echo-1")
     r.host = "jj@studio"  # other macOS account claims the same runner id
-    plan = services.resolve_session(a, "phone:jj:echo", r)
+    plan = session_sync.resolve_session(a, "phone:jj:echo", r)
     assert plan["reuse"] is False
     assert plan["session_key"] == "echo-1"  # hint still returned for rehydration context
 
@@ -124,12 +124,12 @@ def test_project_reuse_is_workspace_scoped():
     ws = _ws("w1")
     ws2 = _ws("w2")
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
-    services.record_session(None, "phone:jj:canopy-web", runner=r, project="canopy-web",
+    session_sync.record_session(None, "phone:jj:canopy-web", runner=r, project="canopy-web",
                             workspace=ws, session_key="cw-1")
     # a guessed thread_key from another workspace must NOT hijack the link
-    other = services.resolve_session(None, "phone:jj:canopy-web", r, project="canopy-web", workspace=ws2)
+    other = session_sync.resolve_session(None, "phone:jj:canopy-web", r, project="canopy-web", workspace=ws2)
     assert other["new_thread"] is True
-    same = services.resolve_session(None, "phone:jj:canopy-web", r, project="canopy-web", workspace=ws)
+    same = session_sync.resolve_session(None, "phone:jj:canopy-web", r, project="canopy-web", workspace=ws)
     assert same["reuse"] is True
 
 
@@ -152,7 +152,7 @@ def test_report_does_not_clobber_agent_thread_reuse():
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
 
     # The agent chat/phone thread's binding is created first by record_session.
-    services.record_session(a, "phone:jj:echo", runner=r, session_key="echo-1234")
+    session_sync.record_session(a, "phone:jj:echo", runner=r, session_key="echo-1234")
 
     # The runner's ambient sweep then reports the SAME emdash task (no agent/
     # project filter) as part of its ordinary open-session report.
@@ -160,9 +160,9 @@ def test_report_does_not_clobber_agent_thread_reuse():
         emdash_task="echo-1234", project="echo", status="in_progress",
         last_interacted_at=None, recent_messages=[],
     )
-    services.replace_reported_sessions(r, ws, [reported])
+    session_sync.replace_reported_sessions(r, ws, [reported])
 
-    plan = services.resolve_session(a, "phone:jj:echo", r)
+    plan = session_sync.resolve_session(a, "phone:jj:echo", r)
     assert plan["reuse"] is True
     assert plan["new_thread"] is False
     assert plan["session_key"] == "echo-1234"
@@ -180,8 +180,8 @@ def test_record_refuses_another_agents_session_by_uuid():
     echo, hal = _agent(ws, "echo"), _agent(ws, "hal")
     r = _owned_runner(ws)
     hals_chat = Session.objects.create(workspace=ws, agent=hal, origin=Session.ORIGIN_WEB, title="hal")
-    with pytest.raises(services.ThreadSessionNotFound):
-        services.record_session(echo, str(hals_chat.id), runner=r, session_key="echo-9")
+    with pytest.raises(session_sync.ThreadSessionNotFound):
+        session_sync.record_session(echo, str(hals_chat.id), runner=r, session_key="echo-9")
     assert not RunnerBinding.objects.filter(session=hals_chat).exists()
 
 
@@ -190,8 +190,8 @@ def test_record_refuses_a_session_in_a_tenant_the_runner_owner_is_not_in():
     a = _agent(other, "echo")
     r = _owned_runner(home)          # owner is a member of w1 only
     chat = Session.objects.create(workspace=other, agent=a, origin=Session.ORIGIN_WEB, title="x")
-    with pytest.raises(services.ThreadSessionNotFound):
-        services.record_session(a, str(chat.id), runner=r, session_key="echo-9")
+    with pytest.raises(session_sync.ThreadSessionNotFound):
+        session_sync.record_session(a, str(chat.id), runner=r, session_key="echo-9")
     assert not RunnerBinding.objects.filter(session=chat).exists()
 
 
@@ -200,8 +200,8 @@ def test_record_refuses_an_unowned_runner_binding_a_session_by_uuid():
     a = _agent(ws)
     r = Runner.objects.create(name="stray", workspace=ws, host="h", location=Runner.LOCAL)
     chat = Session.objects.create(workspace=ws, agent=a, origin=Session.ORIGIN_WEB, title="x")
-    with pytest.raises(services.ThreadSessionNotFound):
-        services.record_session(a, str(chat.id), runner=r, session_key="echo-9")
+    with pytest.raises(session_sync.ThreadSessionNotFound):
+        session_sync.record_session(a, str(chat.id), runner=r, session_key="echo-9")
 
 
 def test_record_refuses_a_project_thread_naming_an_agent_or_other_repo_session():
@@ -212,8 +212,8 @@ def test_record_refuses_a_project_thread_naming_an_agent_or_other_repo_session()
     other_repo = Session.objects.create(workspace=ws, project="ace", origin=Session.ORIGIN_WEB,
                                         title="ace")
     for chat in (agent_chat, other_repo):
-        with pytest.raises(services.ThreadSessionNotFound):
-            services.record_session(None, str(chat.id), runner=r, project="canopy-web",
+        with pytest.raises(session_sync.ThreadSessionNotFound):
+            session_sync.record_session(None, str(chat.id), runner=r, project="canopy-web",
                                     workspace=ws, session_key="t-1")
         assert not RunnerBinding.objects.filter(session=chat).exists()
 
@@ -223,7 +223,7 @@ def test_record_binds_its_own_project_session_by_uuid():
     r = _owned_runner(ws)
     chat = Session.objects.create(workspace=ws, project="canopy-web", origin=Session.ORIGIN_WEB,
                                   title="repo chat")
-    services.record_session(None, str(chat.id), runner=r, project="canopy-web", workspace=ws,
+    session_sync.record_session(None, str(chat.id), runner=r, project="canopy-web", workspace=ws,
                             session_key="t-1")
     assert RunnerBinding.objects.get(session=chat).session_key == "t-1"
 
@@ -249,9 +249,9 @@ def test_an_idle_session_is_still_reused_by_a_named_turn():
     ws = _ws("w1")
     a = _agent(ws)
     r = _live_runner(ws)
-    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    session_sync.record_session(a, "thr", runner=r, session_key="echo-1")
     me = _claimed(r, agent=a)
-    plan = services.resolve_session(a, "thr", r, turn_id=me.pk)
+    plan = session_sync.resolve_session(a, "thr", r, turn_id=me.pk)
     assert plan["reuse"] is True and plan["busy"] == ""
 
 
@@ -260,11 +260,11 @@ def test_a_session_another_turn_is_executing_in_is_not_reused():
     session; the second must not type into the first's live turn."""
     ws = _ws("w1")
     r = _live_runner(ws)
-    services.record_session(None, "thr", runner=r, project="canopy-web", workspace=ws,
+    session_sync.record_session(None, "thr", runner=r, project="canopy-web", workspace=ws,
                             session_key="cw-1")
     _claimed(r, project="canopy-web", session_key="cw-1")  # already working in it
     me = _claimed(r, project="canopy-web")
-    plan = services.resolve_session(None, "thr", r, project="canopy-web", workspace=ws,
+    plan = session_sync.resolve_session(None, "thr", r, project="canopy-web", workspace=ws,
                                     turn_id=me.pk)
     assert plan["reuse"] is False
     assert "executing" in plan["busy"]
@@ -275,25 +275,25 @@ def test_a_chat_turn_on_the_session_makes_it_busy_for_an_agent_turn():
     ws = _ws("w1")
     a = _agent(ws)
     r = _live_runner(ws)
-    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    session_sync.record_session(a, "thr", runner=r, session_key="echo-1")
     session = RunnerBinding.objects.get(thread_key="thr").session
     _claimed(r, chat_session=session)
     me = _claimed(r, agent=a)
-    assert services.resolve_session(a, "thr", r, turn_id=me.pk)["reuse"] is False
+    assert session_sync.resolve_session(a, "thr", r, turn_id=me.pk)["reuse"] is False
 
 
 def test_the_engine_reporting_working_makes_it_busy():
     ws = _ws("w1")
     a = _agent(ws)
     r = _live_runner(ws)
-    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    session_sync.record_session(a, "thr", runner=r, session_key="echo-1")
     RunnerBinding.objects.filter(thread_key="thr").update(agent_status="working")
     me = _claimed(r, agent=a)
-    plan = services.resolve_session(a, "thr", r, turn_id=me.pk)
+    plan = session_sync.resolve_session(a, "thr", r, turn_id=me.pk)
     assert plan["reuse"] is False and "working" in plan["busy"]
     # Finished (awaiting input) is idle again.
     RunnerBinding.objects.filter(thread_key="thr").update(agent_status="awaiting-input")
-    assert services.resolve_session(a, "thr", r, turn_id=me.pk)["reuse"] is True
+    assert session_sync.resolve_session(a, "thr", r, turn_id=me.pk)["reuse"] is True
 
 
 def test_the_asking_turn_does_not_count_as_busy_itself():
@@ -301,9 +301,9 @@ def test_the_asking_turn_does_not_count_as_busy_itself():
     ws = _ws("w1")
     a = _agent(ws)
     r = _live_runner(ws)
-    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    session_sync.record_session(a, "thr", runner=r, session_key="echo-1")
     me = _claimed(r, agent=a, session_key="echo-1")
-    assert services.resolve_session(a, "thr", r, turn_id=me.pk)["reuse"] is True
+    assert session_sync.resolve_session(a, "thr", r, turn_id=me.pk)["reuse"] is True
 
 
 def test_a_chat_turn_and_an_unnamed_caller_keep_the_old_answer():
@@ -312,9 +312,9 @@ def test_a_chat_turn_and_an_unnamed_caller_keep_the_old_answer():
     ws = _ws("w1")
     a = _agent(ws)
     r = _live_runner(ws)
-    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    session_sync.record_session(a, "thr", runner=r, session_key="echo-1")
     RunnerBinding.objects.filter(thread_key="thr").update(agent_status="working")
     session = RunnerBinding.objects.get(thread_key="thr").session
     chat = _claimed(r, chat_session=session)
-    assert services.resolve_session(a, "thr", r, turn_id=chat.pk)["reuse"] is True
-    assert services.resolve_session(a, "thr", r)["reuse"] is True
+    assert session_sync.resolve_session(a, "thr", r, turn_id=chat.pk)["reuse"] is True
+    assert session_sync.resolve_session(a, "thr", r)["reuse"] is True

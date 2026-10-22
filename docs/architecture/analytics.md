@@ -66,7 +66,7 @@ only the box's admins see it (Health → Runners → Missing sessions,
 `GET /runners/{id}/missing-sessions`). **Check for missing sessions** asks the box
 for a full rescan (`usage_scan_requested_at`, read off `usage-scope`); **Send up**
 files the chosen ones where the report sweep files that box's sessions
-(`harness.services.session_home`) with a binding keyed `claude:<uuid>`
+(`harness.session_sync.session_home`) with a binding keyed `claude:<uuid>`
 (`canopy_transcript.transcript_for_key`, both runners) and requests the ordinary
 backfill; their usage is matched at once.
 

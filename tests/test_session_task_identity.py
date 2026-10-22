@@ -17,7 +17,7 @@ import pytest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.canopy_sessions.transcript_ingest import TASK_UID_KEY
 from apps.harness.models import Runner
-from apps.harness.services import replace_reported_sessions
+from apps.harness.session_sync import replace_reported_sessions
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db

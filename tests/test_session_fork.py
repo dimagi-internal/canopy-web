@@ -15,6 +15,7 @@ from apps.canopy_sessions import services as chat
 from apps.canopy_sessions import placement as session_placement
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.harness import services as harness_services
+from apps.harness import session_sync
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from canopy_transcript import BLOCK_STRIDE as S
@@ -93,7 +94,7 @@ def test_resolve_session_hands_the_cut_to_the_runner_until_the_fork_has_its_own(
     s = _session(ws, runner, user)
     fork = Session.objects.get(pk=_fork(c, s, 0).json()["id"])
 
-    plan = harness_services.resolve_session(None, str(fork.id), runner, project="canopy-web",
+    plan = session_sync.resolve_session(None, str(fork.id), runner, project="canopy-web",
                                             workspace=ws)
     assert plan["fork"] == {"session_key": "src-sid", "records": 4}
     assert plan["reuse"] is False
@@ -102,14 +103,14 @@ def test_resolve_session_hands_the_cut_to_the_runner_until_the_fork_has_its_own(
     RunnerBinding.objects.create(session=fork, runner=runner, session_key="fork-sid",
                                  emdash_project="canopy-web", host=runner.host,
                                  thread_key=str(fork.id))
-    plan = harness_services.resolve_session(None, str(fork.id), runner, project="canopy-web",
+    plan = session_sync.resolve_session(None, str(fork.id), runner, project="canopy-web",
                                             workspace=ws)
     assert plan["fork"] is None
     assert plan["reuse"] is True and plan["session_key"] == "fork-sid"
     # Every later turn still runs in the source's directory on a cloud runner.
     assert plan["worktree_of"] == str(s.id)
     # An ordinary chat never carries one.
-    plain = harness_services.resolve_session(None, str(s.id), runner, project="canopy-web",
+    plain = session_sync.resolve_session(None, str(s.id), runner, project="canopy-web",
                                              workspace=ws)
     assert plain["fork"] is None and plain["worktree_of"] == ""
 
