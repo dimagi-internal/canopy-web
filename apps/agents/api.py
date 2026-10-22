@@ -26,21 +26,30 @@ from apps.api.errors import (
     ProblemError,
 )
 from apps.api.pagination import Page, clamp_limit, paginate
-from apps.harness import closeout
+from apps.canopy_sessions.services import close_agent_sessions
+from apps.events import audit
+from apps.harness import closeout, turn_access
+from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.passkeys import stepup
 from apps.plugins import services as plugin_services
+from apps.slack import commands as slack_commands
 from apps.slack.models import SlackInstallation
+from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import delegations, services
+from . import access, creation, delegations, mailbox, services
+from . import move as agent_move
+from .creation import repo_url
+from .credentials import licenses, zk
 from .gates import (
     agent_for_admin,
     agent_for_read,
     agent_for_work,
     listed_agent_workspaces,
 )
+from .interface import InterfaceError, domain_warnings, parse
 from .models import (
     AgentAdmin,
     AgentCredentialRead,
@@ -81,6 +90,7 @@ from .schemas import (
     SlackEnabledOut,
     TurnModeIn,
 )
+from .setup import request_setup
 
 router = Router(auth=session_auth, tags=["agents"])
 
@@ -204,7 +214,6 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     if existing is None or (payload.repo_url is not None and payload.repo_url != existing.repo_url):
         # A cloud box only learns of an agent (or its new repo) by re-running its
         # bootstrap; ask the ones that will take its turns to do that now.
-        from .setup import request_setup
 
         request_setup(agent)
     if explicit and agent.workspace_id != explicit:
@@ -220,7 +229,6 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         # An address on one of the workspace's canopy-hosted domains needs no sign-in:
         # give it its mailbox route now, so mail to it is the agent's turn from the first
         # message. Anything else (a Google address) is signed in later, as before.
-        from . import mailbox
 
         mailbox.ensure_route(agent, by=request.user)
     # No `ensure_member` here any more, and it is not an omission: since the
@@ -236,9 +244,6 @@ def _move(request: HttpRequest, agent, workspace: str, *, dry_run: bool = False)
     """Gate, then dry-run or carry out a move (apps/agents/move.py), reporting the
     change to the settings audit. A dry run notes an unchanged value, so the audit
     records nothing for it."""
-    from apps.events import audit
-
-    from . import move as agent_move
 
     try:
         dest = agent_move.check(agent, workspace, by=request.user)
@@ -289,8 +294,6 @@ def _scaffold_slug(request: HttpRequest, workspace: str, raw_slug: str, repo: st
     is taken is refused unless it is THIS caller's agent on THIS repo — a retry."""
     from canopy_agent_factory import AgentFactoryError, normalize_slug
 
-    from .creation import repo_url
-
     if not wsvc.is_member(request.user, workspace):
         raise ProblemError(404, f"workspace '{workspace}' not found", type_=TYPE_NOT_FOUND)
     if not _can(request, workspace, perms.AGENT_WORK):
@@ -316,7 +319,6 @@ def _scaffold_slug(request: HttpRequest, workspace: str, raw_slug: str, repo: st
 
 def _scaffold_target(request: HttpRequest, workspace: str, raw_slug: str, raw_repo: str):
     """(slug, owner/name) after the create gate, or a 4xx problem."""
-    from . import creation
 
     try:
         full = creation.parse_repo(raw_repo)
@@ -327,7 +329,6 @@ def _scaffold_target(request: HttpRequest, workspace: str, raw_slug: str, raw_re
 
 def _inspect(token: str, full: str, slug: str):
     """Who the token is and what the repo looks like through it, or a problem."""
-    from . import creation
 
     try:
         who = delegations.inspect_github(token)
@@ -350,7 +351,6 @@ def check_scaffold_repo(request: HttpRequest, payload: RepoCheckIn) -> RepoCheck
     is overwritten; `adopt` means nothing is missing; `name_mismatch` means it is a
     different agent (`suggested_slug`); `missing` means the token cannot see it;
     `not_empty` means it is not an agent repository. `token_url` is GitHub's token form."""
-    from . import creation
 
     slug, full = _scaffold_target(request, payload.workspace, payload.slug, payload.repo)
     owner, name = full.split("/", 1)
@@ -375,8 +375,6 @@ def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
     then `PUT /api/agents/{slug}/github` with the same token so its turns use it too.
     Safe to repeat — a repository that already holds this scaffold is adopted."""
     from canopy_agent_factory import AgentSpec
-
-    from . import creation
 
     slug, full = _scaffold_target(request, payload.workspace, payload.slug, payload.repo)
     token = payload.token.strip()
@@ -460,7 +458,6 @@ def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanop
     """For the agent's own login, creating it when the agent has none. See
     `services.mint_agent_canopy_token` for who may, and why it never adopts an
     existing account."""
-    from apps.tokens.middleware import minting_refusal
 
     agent = agent_for_admin(request, slug)
     refused = minting_refusal(request)
@@ -486,7 +483,6 @@ def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanop
     for an agent on the Canopy vault (409 otherwise, or when nobody could open the
     stored token yet). Changes a secret, so a browser needs a fresh passkey step-up.
     The owner or an admin."""
-    from apps.tokens.middleware import minting_refusal
 
     agent = agent_for_admin(request, slug)
     refused = minting_refusal(request)
@@ -552,7 +548,6 @@ def _admin_rows(agent) -> list[dict]:
 
 
 def _interface_out(agent) -> dict:
-    from .interface import domain_warnings
 
     by = agent.interface_published_by
     iface = agent.interface or {}
@@ -577,8 +572,6 @@ def get_interface(request: HttpRequest, slug: str):
 def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
     import yaml
     from django.utils import timezone
-
-    from .interface import InterfaceError, parse
 
     agent = agent_for_admin(request, slug)
     if (payload.source is None) == (payload.interface is None):
@@ -630,7 +623,6 @@ def agent_access(request: HttpRequest, slug: str):
     the whole agent, the capabilities its published interface lists for them,
     or nothing. `outsiders` lists the interface rules that reach people outside
     the workspace. Readable by any member, like the admin list."""
-    from . import access
 
     agent = agent_for_read(request, slug)
     iface = agent.interface or {}
@@ -698,9 +690,6 @@ def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
     """Per person, without editing the caller list: they may not open a local turn
     or read the agent's credentials again until an admin approves them. A revoked
     license is never re-issued automatically."""
-    from apps.events import audit
-
-    from .credentials import licenses
 
     agent, target = _license_target(request, slug, user_id)
     before = AgentLicense.objects.filter(agent=agent, user=target).values_list("status", flat=True).first()
@@ -715,9 +704,6 @@ def revoke_agent_license(request: HttpRequest, slug: str, user_id: int,
 def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
     """Re-asks the caller list: refused (409) unless it gives them the whole agent —
     make them an editor or add a `full:` rule first."""
-    from apps.events import audit
-
-    from .credentials import licenses
 
     agent, target = _license_target(request, slug, user_id)
     before = AgentLicense.objects.filter(agent=agent, user=target).values_list("status", flat=True).first()
@@ -791,7 +777,6 @@ def delete_agent(request: HttpRequest, slug: str):
     One thing blocks it: a workspace project the agent stewards (409). Its open chat sessions are closed first: the runner
     deletes each emdash task, and an offline runner does so when it is back.
     """
-    from apps.canopy_sessions.services import close_agent_sessions
 
     agent = agent_for_work(request, slug)
     # A workspace project it stewards is the workspace's, not the agent's: the
@@ -835,10 +820,6 @@ def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> Ag
     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
     cloud boxes that take its turns are asked to re-run their bootstrap, as a
     repo change through the upsert does."""
-    from apps.events import audit
-
-    from . import delegations
-    from .setup import request_setup
 
     agent = agent_for_admin(request, slug)
     full = delegations.repo_full_name(payload.repo_url.strip())
@@ -877,7 +858,6 @@ def set_credential_source(request: HttpRequest, slug: str,
         # 2026-10-17): moving here seals every stored value to the agent's
         # readers and wipes the custodial copies, or refuses when nobody could
         # read them yet.
-        from .credentials import zk
 
         try:
             services.make_zero_knowledge(agent)
@@ -911,7 +891,6 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
     the agent's `/<slug>` command in the Slack app when canopy manages it."""
     # Owner, not editor: editor is what anyone who self-joined already holds,
     # and this opens the agent to everyone in a Slack workspace.
-    from apps.slack import commands as slack_commands
 
     agent = agent_for_admin(request, slug)
     agent.slack_enabled = payload.slack_enabled
@@ -984,7 +963,6 @@ def delete_sync(request: HttpRequest, slug: str, sync_id: int) -> Status:
 def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentTurnOut]:
     limit = clamp_limit(limit)
     agent = agent_for_read(request, slug)
-    from apps.harness import turn_access
 
     # Everyone sees what the agent did; a turn's prompt and transcript link are
     # a log (turn_access).
@@ -998,7 +976,6 @@ def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentT
              summary="Package a turn (idempotent per cli_session_id)",)
 def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status:
     agent = agent_for_work(request, slug)
-    from apps.harness import initiator as who
 
     # A report-only row (no dispatch matched) is a turn someone ran by hand; the
     # caller posting its close-out is the best account of who that was.

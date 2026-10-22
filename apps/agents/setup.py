@@ -19,10 +19,16 @@ rights), so the step carries the one command that does it.
 from __future__ import annotations
 
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
+from apps.harness.routing import inherited_orders, runner_tenant_slugs
+from apps.harness.runners import request_refresh
 
-from . import delegations
+from . import delegations, mailbox
+from .credentials import zk_seal
 from .credentials.oauth_api import GOG_TOKEN_REF
+from .credentials.pat_rotation import CANOPY_PAT_REF
+from .credentials.vault_health import vault_health
 from .models import Agent, AgentBootstrapReport, AgentCredential
+from .services import bootstrap_reports, runner_may_hold_agent
 
 DONE, TODO, WAITING, OPTIONAL = "done", "todo", "waiting", "optional"
 
@@ -83,7 +89,6 @@ def _mailbox(agent: Agent, settings: str) -> dict:
     if not agent.email:
         return _step("mailbox", "Connect its mailbox", OPTIONAL,
                      "No mailbox set. Email is optional; add one later if it should send or read mail.")
-    from . import mailbox
 
     box = mailbox.describe(agent)
     if box["kind"] == "hosted":
@@ -112,7 +117,6 @@ def _mailbox(agent: Agent, settings: str) -> dict:
     # (The token-OR-proved rule itself is right for tokens minted by a laptop
     # `gog login`, which live in the vault rather than here — ada/hal/eva/echo read
     # "todo" under a token-only rule while cloud-ec2-2 had them working, 2026-10-15.)
-    from .services import bootstrap_reports
 
     reports = bootstrap_reports(agent)
     proved = next((r.runner_name for r in reports if r.turn_ready), "")
@@ -149,7 +153,6 @@ def _vault(agent: Agent, settings: str) -> dict:
     step and the workspace health dashboard cannot disagree. An agent resolving from
     the canopy-web vault is judged by that vault (every declared secret stored, every
     machine let in); one resolving from 1Password by its 1Password vault and key."""
-    from .credentials.vault_health import vault_health
 
     if agent.credential_source == Agent.CANOPY_WEB:
         return _canopy_vault(agent, settings, vault_health(agent))
@@ -162,7 +165,6 @@ def _canopy_login(agent: Agent, settings: str) -> dict | None:
     1Password agent's login comes from its vault like every other secret."""
     if agent.credential_source != Agent.CANOPY_WEB:
         return None
-    from .credentials.pat_rotation import CANOPY_PAT_REF
 
     has = AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).exists()
     return _step(
@@ -175,11 +177,9 @@ def _canopy_login(agent: Agent, settings: str) -> dict | None:
 
 
 def _canopy_vault(agent: Agent, settings: str, vh: dict) -> dict:
-    from .credentials.pat_rotation import CANOPY_PAT_REF
 
     title = "Give it a vault"
     if agent.zk_enabled:
-        from .credentials import zk_seal
 
         if not zk_seal.has_recipients(agent):
             # Every value is sealed to the vault's readers (its approved runners'
@@ -262,9 +262,6 @@ def runner_takers(agent: Agent):
     the claim's own predicates (tenant, `runner_may_hold_agent`) — and the
     inherited order, for why a listed box was dropped. Shared by the checklist and
     by registration, which asks these boxes to set a new agent up."""
-    from apps.harness.routing import inherited_orders, runner_tenant_slugs
-
-    from .services import runner_may_hold_agent
 
     own = [a.runner for a in RunnerAssignment.objects.filter(agent=agent, source="", enabled=True)
            .select_related("runner", "runner__owner")]
@@ -283,7 +280,6 @@ def request_setup(agent: Agent) -> list[str]:
     Durable (`request_refresh` sets a row the box reads off its heartbeat) and acted
     on at the box's next idle moment. Laptops are not asked: their checkout is a
     person's to make (`repoSetup.ts`)."""
-    from apps.harness.runners import request_refresh
 
     asked = []
     for r in runner_takers(agent)[0]:

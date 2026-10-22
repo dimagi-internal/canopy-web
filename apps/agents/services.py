@@ -8,12 +8,23 @@ import re
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.agents.credentials import vault_import
+from apps.agents.schemas import AgentVaultOut
 from apps.common.encryption import decrypt_secret, encrypt_secret
+from apps.contacts import people
 from apps.contacts.models import Person
+from apps.events import services as events
+from apps.harness.dispatch import dispatch, enqueue_task_turn
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
+from apps.harness.routing import inherited_orders
 from apps.tokens.models import PersonalToken
+from apps.workspaces import permissions as perms
+from apps.workspaces import role_cap
+from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import participants
+from .definition import definition_key, siblings
 from .models import (
     MAX_TASK_DEPTH,
     Agent,
@@ -108,7 +119,7 @@ def make_zero_knowledge(agent) -> int:
     the number of values sealed; a no-op on an agent already zero-knowledge."""
     from django.db import transaction
 
-    from .credentials import zk, zk_seal
+    from .credentials import zk, zk_seal  # cycle: agents.credentials.zk -> agents.services
 
     with transaction.atomic():
         agent = zk._locked(agent)
@@ -142,7 +153,6 @@ def _definition_summary(agent: Agent) -> dict:
     enough for that to matter, the fix is a stored normalised column — not a
     raw-URL match, which would silently under-report.
     """
-    from .definition import definition_key, siblings
 
     return {
         "key": definition_key(agent.repo_url, agent.repo_ref),
@@ -191,8 +201,6 @@ def link_canopy_user(agent: Agent, user_id: int | None) -> Agent:
     """
     from django.contrib.auth import get_user_model
 
-    from apps.workspaces import services as wsvc
-
     if user_id is None:
         agent.user = None
         agent.save(update_fields=["user", "updated_at"])
@@ -239,9 +247,8 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
 
     Non-expiring, like the agent's vault key: nothing watches either for expiry, and a
     lapsed one fails every turn silently."""
-    from apps.workspaces import permissions as perms
 
-    from .agent_login import AgentLoginRefused, create_agent_login
+    from .agent_login import AgentLoginRefused, create_agent_login  # cycle: agents.agent_login -> agents.services
 
     created = False
     user = agent.user
@@ -277,7 +284,7 @@ def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
     with nowhere to go."""
     from django.db import transaction
 
-    from .credentials import pat_rotation, zk_seal
+    from .credentials import pat_rotation, zk_seal  # cycle: agents.credentials.pat_rotation -> agents.services
 
     if agent.credential_source != Agent.CANOPY_WEB:
         raise AgentTokenRefused(
@@ -650,7 +657,6 @@ def set_task_project(task, project) -> None:
 def _link_participants(task) -> None:
     """A task in a project raised by a human's turn makes them a participant
     (fleet brain v1.1). Best-effort: never fails the task write."""
-    from . import participants
 
     participants.on_task(task)
 
@@ -752,7 +758,6 @@ def _resolve_who(agent: Agent, who: dict):
     cannot be used to learn that canopy knows someone another tenant deals
     with. An email canopy does not know is kept as text: the quote still says
     who. A `person_id` that is not known here is refused — it was explicit."""
-    from apps.contacts import people
 
     pid = who.get("person_id")
     email = (who.get("email") or "").strip().lower()
@@ -954,8 +959,6 @@ def _workspace_member(agent: Agent, email: str, *, instead: str):
         return None
     from django.contrib.auth import get_user_model
 
-    from apps.workspaces import services as wsvc
-
     user = get_user_model().objects.filter(email__iexact=email).first()
     if user is None or not wsvc.is_member(user, agent.workspace_id):
         raise UnknownPersonError(
@@ -1081,9 +1084,8 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     stale copies and dispatch the work twice; locked, the second one waits,
     then sees the ask closed and gets `ClosedAskError`.
     """
-    from apps.harness.dispatch import dispatch, enqueue_task_turn
 
-    from . import proposals
+    from . import proposals  # cycle: agents.proposals -> agents.services
 
     if action not in _EFFECT:
         raise ValueError(f"action must be one of {'|'.join(_EFFECT)}, got {action!r}")
@@ -1290,7 +1292,7 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
     if agent.zk_enabled:
         from django.db import transaction
 
-        from .credentials import zk, zk_seal
+        from .credentials import zk, zk_seal  # cycle: agents.credentials.zk -> agents.services
 
         # Under the agent row lock, like every ZK write: a settle's
         # compare-and-swap (`expect`) must see this write or come after it.
@@ -1426,7 +1428,6 @@ def reveal_agent_credential(agent, name: str, *, user) -> str | None:
     resolve (which must not be starved of secrets by an audit hiccup), a human
     reveal that cannot be recorded does not happen.
     """
-    from apps.events import services as events
 
     cred = AgentCredential.objects.filter(agent=agent, name=name).select_related("agent").first()
     if cred is None:
@@ -1468,7 +1469,6 @@ def caller_runs_agent(user, agent) -> bool:
     credential fetch, whose trust boundary is "the caller who can claim turns as
     this runner".
     """
-    from apps.workspaces import role_cap
 
     if role_cap.cap_of(user):
         return False  # acting as a lower role: reads go through its license instead
@@ -1503,7 +1503,6 @@ def caller_runs_agent(user, agent) -> bool:
         return True
     # An agent with no order of its own follows its workspace's: a box of this
     # user's in that order is one the agent's work is directed at.
-    from apps.harness.routing import inherited_orders
 
     inh = inherited_orders([agent.id]).get(agent.id)
     return bool(inh) and any(r.owner_id == user.pk for r in inh.runners)
@@ -1568,8 +1567,6 @@ def agent_vault_status(agent):
     difference between "the import found nothing" and "this deployment was never
     told where anything lives" — the same failure with two completely different
     fixes."""
-    from apps.agents.credentials import vault_import
-    from apps.agents.schemas import AgentVaultOut
 
     declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
     plan = vault_import.plan_import(declared, agent.runtime_sources or {})

@@ -19,8 +19,10 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 
 from .. import services
+from ..gates import agent_for_admin
 from ..schemas import GoogleMintStartOut
 from . import google_oauth
+from .zk import ZkError
 
 router = Router(auth=session_auth, tags=["agents"])
 
@@ -35,7 +37,6 @@ def _agent_for_mint(request: HttpRequest, slug: str):
     an admin, the same tier as `PUT /{slug}/credentials`. The mint writes the
     `gog-token` credential, so membership alone let a viewer attach their own
     Google account as the agent's mailbox."""
-    from ..gates import agent_for_admin
 
     return agent_for_admin(request, slug)
 
@@ -143,8 +144,6 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
         granted_scopes=tokens.get("scope", "").split(),
     )
     import json as _json
-
-    from .zk import ZkError
 
     try:
         # Minted here: a zero-knowledge agent gets it sealed to its devices and

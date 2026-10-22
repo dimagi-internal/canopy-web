@@ -27,10 +27,13 @@ from dataclasses import dataclass
 
 from django.db import transaction
 
+from apps.harness import device_keys
 from apps.harness.models import RunnerDeviceKey
 from apps.passkeys.models import Passkey, UserVaultKeyset
 
+from .. import services
 from ..models import Agent, AgentCredential, AgentVaultWrap
+from . import vault_alerts
 
 ZK_PREFIX = "zk1:"
 NONCE_LEN, TAG_LEN, KEY_LEN, SALT_LEN, POINT_LEN = 12, 16, 32, 16, 65
@@ -157,7 +160,6 @@ def eligible_device_keys(agent) -> list:
 
 def eligible_device_keys_qs(agent):
     """`eligible_device_keys` as a queryset, for a caller that only asks whether any exist."""
-    from apps.harness import device_keys
 
     return (device_keys.keys_for_agent(agent)
             .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
@@ -559,7 +561,6 @@ def resolve_payload(agent, device_key, wanted: set[str] | None) -> tuple[dict, d
     under the vault key, or `zks1` sealed to recipients — scoped by `?refs=`
     like a custodial resolve) and that device's wrap at the current kv, or None
     when it has none."""
-    from .. import services
 
     qs = AgentCredential.objects.filter(agent=agent).exclude(value_zk="")
     if wanted is not None:
@@ -573,8 +574,6 @@ def resolve_payload(agent, device_key, wanted: set[str] | None) -> tuple[dict, d
 def device_wrap_missing(agent, request, device_key) -> None:
     """Tell the owner a box that should read this agent holds no wrap (409)."""
     import logging
-
-    from . import vault_alerts
 
     try:
         vault_alerts.raise_alert(
@@ -594,7 +593,6 @@ def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
     """Create or extend the caller's keyset. Changing the PUBLIC key is a new
     identity: it needs `replace`, and drops every member wrap to the old one
     (those agents then list the person as pending)."""
-    from apps.harness import device_keys
 
     try:
         jwk = device_keys.normalize_public_jwk(public_jwk)

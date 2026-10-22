@@ -45,6 +45,7 @@ from django.db import DatabaseError, close_old_connections, connection, transact
 
 from apps.contacts import embeddings
 
+from . import kb_store
 from .models import AgentProject, KbPassage
 
 logger = logging.getLogger(__name__)
@@ -219,7 +220,6 @@ def sync(project, *, max_embed: int | None = None, workers: int | None = None,
     `max_embed`). Raises RuntimeError when the provider is not verified to keep
     nothing, or when a whole batch fails (the service is down; stop, don't burn
     through the file)."""
-    from . import kb_store
 
     model_id = model()
     if not model_id:

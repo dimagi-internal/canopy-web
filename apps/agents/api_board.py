@@ -11,16 +11,19 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
+from apps.contacts import services as contacts
+from apps.harness import turn_access
 from apps.harness.models import Turn, agent_turns_q
 from apps.workspaces import permissions as perms
 
-from . import services
+from . import engagement, ideas, participants, proposals, services
 from .gates import (
     agent_for_read,
     agent_for_work,
     project_or_404,
     visible_agent_workspaces,
 )
+from .proposals_api import resolve_task_ref
 from .schemas import (
     ActionAppliedIn,
     ActOut,
@@ -112,7 +115,6 @@ def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetail
 
 def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
     """One project's page — shared by the agent route and the workspace-project route."""
-    from apps.harness import turn_access
 
     live_first = Case(When(status__in=services.LIVE_STATUSES, then=0), default=1,
                       output_field=IntegerField())
@@ -133,7 +135,6 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
                    reverse=True)[:_PROJECT_RECENT_TURNS]
     turns = turn_access.redact(found, request.user)
     # Built from the plain project shape: `project.tasks` is a manager, not a list.
-    from . import participants, proposals
 
     return AgentProjectDetailOut(
         **AgentProjectOut.model_validate(project).model_dump(),
@@ -175,7 +176,6 @@ def apply_project_patch(request: HttpRequest, project, data: dict):
     it to a workspace project; `steward` hands a workspace project on — and the
     caller must be able to write the new steward too."""
     if "spawned_from" in data:
-        from .proposals_api import resolve_task_ref
 
         ref_ = (data.pop("spawned_from") or "").strip()
         project.spawned_from = resolve_task_ref(request, ref_) if ref_ else None
@@ -286,9 +286,6 @@ def _engaged_with_project_task(request: HttpRequest, task, action: str) -> None:
     """Record what a person just did to one of a project's tasks (`EngagementEvent`),
     and make a person who replied a participant of the project. Never fails the
     action: both writes are best-effort."""
-    from apps.contacts import services as contacts
-
-    from . import engagement, participants
 
     kind = _ENGAGEMENT_OF_ACTION.get(action)
     if kind is None:
@@ -320,7 +317,6 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
     agent = agent_for_read(request, slug)
     task = _get_task_or_404(agent, ref)
     if payload.action in _EDITOR_ACTIONS:
-        from . import ideas
 
         # The person whose idea it is may call it shipped, as its owner may (hal T82).
         if not (payload.action == "done" and ideas.is_ideas_person(task, request.user)):

@@ -28,7 +28,8 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from apps.passkeys.models import UserVaultKeyset
 
-from .zk import NONCE_LEN, TAG_LEN, ZkError, _keys, _shape, b64u_bytes
+from . import zk
+from .zk import MAX_VALUE_ZK_LEN, NONCE_LEN, TAG_LEN, ZkError, _keys, _shape, b64u_bytes
 
 SEALED_PREFIX = "zks1:"
 #: A value is sealed to at most this many principals (devices + members).
@@ -87,7 +88,6 @@ def seal_to(plaintext: str, *, agent_id, name: str, kv: int, recipients: list[tu
 def recipients_for(agent) -> list[tuple[str, str, dict]]:
     """Every principal that may read `agent` now: each eligible device (target =
     its ECDH key's thumbprint) and each member with a vault key (target = user id)."""
-    from . import zk
 
     out = [("device", k.ecdh_jkt, k.ecdh_public_jwk) for k in zk.eligible_device_keys(agent)]
     out += [("member", str(ks.user_id), ks.public_jwk) for ks in zk.eligible_members(agent)]
@@ -99,8 +99,6 @@ def has_recipients(agent) -> bool:
     (and so by the workspace health page, for every agent in a tree), so it never loads
     every vault keyset in the system: one exists() for the devices, then one for the
     keysets of the agent's admins (`Agent.admin_user_ids`)."""
-
-    from . import zk
 
     if zk.eligible_device_keys_qs(agent).exists():
         return True
@@ -128,7 +126,6 @@ def seal_for_agent(agent, name: str, plaintext: str) -> str:
 def check_sealed_value(value, name: str = "value") -> str:
     """Shape only: `zks1:` + b64u(JSON {"kv", "r": [{kind, target, epk (P-256 JWK),
     ct (b64u nonce12 || ciphertext+tag)}]})."""
-    from .zk import MAX_VALUE_ZK_LEN
 
     if not isinstance(value, str) or not value.startswith(SEALED_PREFIX):
         raise _shape(f"{name}: a sealed value must start with {SEALED_PREFIX!r}")

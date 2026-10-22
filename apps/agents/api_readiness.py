@@ -7,6 +7,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.harness.device_keys import runner_serves_agent
 
 from . import services
 from .gates import (
@@ -17,6 +18,7 @@ from .schemas import (
     BootstrapReportIn,
     BootstrapReportOut,
 )
+from .setup import setup_steps
 
 router = Router(auth=session_auth, tags=["agents"])
 
@@ -56,7 +58,6 @@ def agent_setup(request: HttpRequest, slug: str) -> list[AgentSetupStepOut]:
     """The setup checklist, in order: repository, GitHub identity, mailbox, vault (the
     vault before the mailbox for a zero-knowledge agent), runner, its first real skill (done in Claude Code — `command` starts that session), first
     turn. Each step reads the same check the system runs for that thing."""
-    from .setup import setup_steps
 
     agent = agent_for_read(request, slug)
     return [AgentSetupStepOut(**s) for s in setup_steps(agent, viewer_is_admin=agent.is_admin(request.user))]
@@ -85,7 +86,6 @@ def post_bootstrap_report(request: HttpRequest, slug: str,
     # serves, never for the owner's other agents (same rule as credentials).
     rtok = getattr(request, "runner_token", None)
     if rtok is not None:
-        from apps.harness.device_keys import runner_serves_agent
 
         if not runner_serves_agent(rtok.runner, agent):
             raise HttpError(403, f"{rtok.runner.name} does not run {agent.slug}")

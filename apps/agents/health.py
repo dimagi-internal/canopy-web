@@ -17,13 +17,18 @@ from collections.abc import Callable
 
 from django.db.models import Count
 
+from apps.canopy_sessions import access, staleness
+from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import Session
+from apps.events import analytics
+from apps.harness import topology
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from . import interface as iface_mod
 from .credentials.vault_health import vault_health
 from .models import Agent, AgentProject, AgentTask
+from .services import waiting_q
 from .setup import DONE, OPTIONAL, setup_steps
 from .tree import agents_in_tree
 
@@ -82,8 +87,6 @@ def _counts(agents: list[Agent]) -> dict[int, dict]:
     (`services.waiting_q`) — the definitions the agent's own pages count with."""
     from django.db.models import Q
 
-    from .services import waiting_q
-
     rows = (Agent.objects.filter(pk__in=[a.pk for a in agents]).order_by()
             .annotate(skills_n=Count("skills", distinct=True),
                       schedules_n=Count("schedules", distinct=True),
@@ -105,8 +108,6 @@ def _sessions(agents: list[Agent], viewer) -> dict[int, dict]:
     the list's rule) — both over ALL its sessions, as counts — and its latest
     sessions, only those the viewer may open (`access.readable_sessions`): showing
     a title is showing the chat, and opening one is never a grant."""
-    from apps.canopy_sessions import access, staleness
-    from apps.canopy_sessions import services as chat
 
     ids = [a.pk for a in agents]
     out: dict[int, dict] = {i: {"active": 0, "last_at": None, "recent": []} for i in ids}
@@ -132,7 +133,6 @@ def _sessions(agents: list[Agent], viewer) -> dict[int, dict]:
 def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True) -> dict:
     tree = wsvc.subtree(root, visible)
     agents = agents_in_tree(tree, "owner", "workspace")
-    from apps.events import analytics
 
     last_turns, counts = analytics.agent_turns([a.slug for a in agents], days=30), _counts(agents)
     sessions = _sessions(agents, viewer)
@@ -141,7 +141,6 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
     for r in rows:
         per_ws[r["workspace"]] = per_ws.get(r["workspace"], 0) + 1
     states = [r["vault"]["state"] for r in rows]
-    from apps.harness import topology
 
     runners = topology.build(root, visible, viewer)["runners"]
     return {

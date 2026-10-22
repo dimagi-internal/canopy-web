@@ -36,6 +36,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from apps.contacts.models import Contact
+from apps.harness import actors, routing
+from apps.harness import caller_context as cc
+from apps.harness import initiator as initiator_mod
+from apps.harness.caller_context import is_verified
+from apps.harness.runners import can_administer_runner
+from apps.workspaces import permissions as perms
+from apps.workspaces import services as wsvc
 
 from . import interface as iface_mod
 from .models import AgentAdmin
@@ -76,7 +83,6 @@ class Decision:
 
 def _is_editor(user, agent) -> bool:
     """Workspace editor or above: may reshape the agent and dispatch to it."""
-    from apps.workspaces import permissions as perms
 
     return bool(user is not None and getattr(user, "is_authenticated", False)
                 and perms.can(user, agent.workspace_id, perms.AGENT_WORK))
@@ -122,8 +128,6 @@ def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str
     (canopy itself, another agent), the conversation it continues
     (`session_writer`) and the page or site it is held on (which door applies).
     """
-    from apps.harness import caller_context as cc
-    from apps.harness import initiator as initiator_mod
 
     iface = getattr(agent, "interface", None) or {}
     user = None
@@ -190,7 +194,6 @@ def _classes_for(rel: str, who, verified: bool) -> set[str]:
 
 def decide_for_turn(turn, agent, requested: str | None = None) -> Decision:
     """`decide` for a turn already written, from its own initiator."""
-    from apps.harness.caller_context import is_verified
 
     who = turn.initiator_user or turn.initiator_contact
     return decide(agent, who, verified=is_verified(turn), origin=turn.origin,
@@ -208,7 +211,6 @@ def may_pin_runner(user, agent, runner) -> bool:
         return True
     if agent.is_own_login(user) and _routed_to(agent, runner):
         return True
-    from apps.harness.runners import can_administer_runner
 
     return can_administer_runner(user, runner)
 
@@ -222,7 +224,6 @@ def _routed_to(agent, runner) -> bool:
     (hal handing off acedimagi → haldimagi, 2026-10-19) is a choice among boxes
     its admins chose, while a box outside the order, or one a strict rule keeps
     its work off, stays the admins' or the box's administrators' to pick."""
-    from apps.harness import actors, routing
 
     defaults, rules = routing.load_assignment_rows([agent.pk])
     if runner.pk not in {r.pk for _rank, r in defaults.get(agent.pk, [])}:
@@ -246,8 +247,6 @@ def roster(agent) -> list[dict]:
     rows = []
     # Everyone in the workspace as the authorizer sees them — owners of an
     # ancestor workspace included, since they are owners (and so admins) here.
-    from apps.workspaces import permissions as perms
-    from apps.workspaces import services as wsvc
 
     for m in wsvc.effective_memberships(agent.workspace_id):
         user = m.user

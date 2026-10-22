@@ -33,8 +33,14 @@ import datetime as dt
 from django.db import transaction
 from django.utils import timezone
 
+from apps.contacts import people
+from apps.contacts import services as contacts
 from apps.huddles.models import ProjectCheckin
+from apps.huddles.services import _huddle_of_url
+from apps.workspaces import links as wslinks
+from apps.workspaces import permissions as perms
 
+from . import engagement, participants, services
 from .models import Agent, AgentProject, AgentTask, AgentTaskAction, ProjectBacking, ProjectParticipant
 
 #: A proposed project nobody starts or declines within this is archived as "not taken up".
@@ -72,7 +78,6 @@ def page_path(project: AgentProject) -> str:
 
 
 def page_url(project: AgentProject) -> str:
-    from apps.workspaces import links as wslinks
 
     return wslinks.scoped_url(project.agent.workspace_id, page_path(project))
 
@@ -101,7 +106,6 @@ def partner_tasks(project: AgentProject):
 
 def may_decide(user, project: AgentProject) -> bool:
     """Decision 4(b): the workspace's owners and admins, or the project's own owner."""
-    from apps.workspaces import permissions as perms
 
     if not getattr(user, "is_authenticated", False):
         return False
@@ -125,7 +129,6 @@ def _card_body(why: str, outcome: str) -> str:
 def _sync_plan(agent: Agent, project: AgentProject, plan: list[str]) -> None:
     """The project's plan steps become exactly `plan`, in order. A step already
     being worked on (or finished) is kept as it is: only suggestions are rewritten."""
-    from . import services
 
     steps = plan_steps(project)
     for i, title in enumerate(plan):
@@ -146,7 +149,6 @@ def _sync_plan(agent: Agent, project: AgentProject, plan: list[str]) -> None:
 def _sync_partners(project: AgentProject, partners: list[Agent]) -> None:
     """One linked `suggested` task on each partner's board; a partner dropped by a
     revision has its still-suggested task declined."""
-    from . import services
 
     have = {t.agent_id: t for t in partner_tasks(project)}
     title = f"[{project.agent.slug} {project.ext_id}] {project.name}"
@@ -184,7 +186,6 @@ def propose(agent: Agent, *, name: str, outcome: str, why: str, plan: list[str],
     `new_evidence`, as a new project whose why carries it; otherwise
     `DeclinedBefore`. One that merely expired may come back freely.
     """
-    from . import services
 
     name, outcome, why = name.strip(), outcome.strip(), why.strip()
     plan = [s.strip() for s in plan if s and s.strip()]
@@ -315,7 +316,6 @@ def expire_stale(now: dt.datetime | None = None) -> int:
     up" (by `EXPIRY_BY`), and an `expired` event is recorded. Returns how many.
     Safe to run from every web process at once: `services.act` locks the card,
     and a card someone else just closed is skipped."""
-    from . import engagement, services
 
     cutoff = (now or timezone.now()) - EXPIRES_AFTER
     done = 0
@@ -340,7 +340,6 @@ def expire_stale(now: dt.datetime | None = None) -> int:
 def expire_stale_tasks(now: dt.datetime | None = None) -> int:
     """Decline every proposed task nobody started or declined within
     `EXPIRES_AFTER` of its last proposal, "not taken up" (by `EXPIRY_BY`)."""
-    from . import engagement, services
 
     cutoff = (now or timezone.now()) - EXPIRES_AFTER
     done = 0
@@ -369,7 +368,6 @@ def back(project: AgentProject | None, *, stance: str, line: str = "", person=No
     proposed task (pass `project=None`) — replacing what they said before;
     rewriting clears `stale`. A person who backs becomes a participant (of the
     task's project, for a task)."""
-    from . import participants
 
     if (person is None) == (agent is None):
         raise ProposalError("a backing is a person's or an agent's, never both")
@@ -400,7 +398,6 @@ def unback(project: AgentProject | None, person, *, task: AgentTask | None = Non
 
 
 def _backer(row: ProjectBacking) -> dict:
-    from apps.contacts import people
 
     if row.agent_id:
         return {"kind": "agent", "agent": row.agent.slug, "person_id": None,
@@ -435,8 +432,6 @@ def card(project: AgentProject, user) -> dict:
     """A proposed (or once-proposed) project as the project page and the huddle
     page both render it (`ProposedProjectCard`): what it is, the decision and who
     may make it, where people stand, what they said, and its partners."""
-    from apps.contacts import services as contacts
-    from apps.workspaces import links as wslinks
 
     decision = decision_card(project)
     me = contacts.person_for(user=user) if getattr(user, "is_authenticated", False) else None
@@ -521,7 +516,6 @@ def _checkin_leads(task: AgentTask) -> set[int]:
 
 def may_decide_task(user, task: AgentTask) -> bool:
     """The project's owner, the check-in's lead, or anyone with `projects.decide`."""
-    from apps.workspaces import permissions as perms
 
     if not getattr(user, "is_authenticated", False) or task.project_id is None:
         return False
@@ -535,7 +529,6 @@ def _task_declined_by_a_person(task: AgentTask) -> bool:
 
 
 def _huddle_of(source_url: str) -> str:
-    from apps.huddles.services import _huddle_of_url
 
     return _huddle_of_url(source_url)
 
@@ -543,7 +536,6 @@ def _huddle_of(source_url: str) -> str:
 def _sync_task_plan(task: AgentTask, plan: list[str]) -> None:
     """The task's plan steps (its child tasks) become exactly `plan`, in order; a
     step already being worked on is kept as it is."""
-    from . import services
 
     steps = task_plan_steps(task)
     for i, title in enumerate(plan):
@@ -565,7 +557,6 @@ def _sync_task_plan(task: AgentTask, plan: list[str]) -> None:
 def _sync_task_partners(task: AgentTask, partners: list[Agent]) -> None:
     """One linked `suggested` task on each partner's board; a partner dropped by a
     revision has its still-suggested task declined."""
-    from . import services
 
     project = task.project
     have = {t.agent_id: t for t in task_partner_tasks(task)}
@@ -600,7 +591,6 @@ def propose_task(project: AgentProject, *, title: str, why: str, done_when: str,
     title a person DECLINED comes back only with `new_evidence`, else
     `DeclinedBefore`. `run` is the CheckinRun it came from (it must be this
     project's)."""
-    from . import services
 
     title, why, done_when = title.strip(), why.strip(), done_when.strip()
     plan = [s.strip() for s in plan if s and s.strip()]
@@ -663,7 +653,6 @@ def _task_comments(task: AgentTask) -> list[dict]:
 
 def spawned_of(task: AgentTask) -> list[dict]:
     """The projects this task grew into ("spawned → P9")."""
-    from apps.workspaces import links as wslinks
 
     return [{"agent": p.agent.slug, "ref": p.ext_id, "name": p.name, "status": p.status,
              "url": wslinks.scoped_path(p.agent.workspace_id, page_path(p))}
@@ -675,8 +664,6 @@ def task_card(task: AgentTask, user) -> dict:
     (`ProposalCard`): what it is, the decision and whether the reader may make
     it, where people stand, what they said, its partners, and any project it
     spawned."""
-    from apps.contacts import services as contacts
-    from apps.workspaces import links as wslinks
 
     project = task.project
     ref = _ref_of(task)

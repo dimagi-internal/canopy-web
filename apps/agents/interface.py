@@ -111,7 +111,9 @@ from __future__ import annotations
 import re
 
 from apps.canopy_sessions.models import SessionParticipant
+from apps.contacts.domain_proof import proof
 from apps.harness import initiator as who
+from apps.harness.caller_context import is_verified
 
 VERSION = 1
 
@@ -355,7 +357,6 @@ def _classes(value, where: str) -> list[str]:
 def caller_classes(turn, relationship: str) -> set[str]:
     """The classes this turn's asker falls in: the base, the base at their
     address's domain, and the `:verified` form of each when THIS message is."""
-    from apps.harness.caller_context import is_verified
 
     kind = turn.initiator_kind
     if kind == who.CONTACT:
@@ -419,8 +420,6 @@ def domain_warnings(iface: dict, workspace_id) -> list[str]:
     interface is saved whatever this says. A domain whose DNS could not be asked
     is not warned about — see apps/contacts/domain_proof.py."""
     import time
-
-    from apps.contacts.domain_proof import proof
 
     warnings: list[str] = []
     try:

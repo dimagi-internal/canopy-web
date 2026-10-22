@@ -23,10 +23,17 @@ from __future__ import annotations
 import logging
 import re
 
+from apps.contacts import people
+from apps.contacts import services as contacts
 from apps.contacts.models import Person
+from apps.harness import initiator as who
+from apps.harness import services as harness
 from apps.harness.models import Turn
+from apps.workspaces import permissions as perms
 
+from . import services
 from .models import AgentProject, AgentTask, ProjectParticipant
+from .services import LIVE_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +56,6 @@ class IdeaError(ValueError):
 def may_edit_project(project: AgentProject, user) -> bool:
     """The project's owner, an editor of the agent's workspace, the agent's
     admins, or the agent itself — the people the work board is for."""
-    from apps.workspaces import permissions as perms
 
     agent = project.agent
     if not getattr(user, "is_authenticated", False):
@@ -75,9 +81,6 @@ def add_own_idea(project: AgentProject, *, quote: str, title: str, user) -> Agen
     project with them as its human-why. Recording SOMEONE ELSE's words is the
     task API's (`POST /tasks/` with `kind: "idea"` and `human_why`), which is
     the editor/agent tier."""
-    from apps.contacts import services as contacts
-
-    from . import services
 
     quote = (quote or "").strip()
     if not quote:
@@ -105,7 +108,6 @@ def _title_from(quote: str) -> str:
 
 def _who(task: AgentTask, names: dict):
     """(who, their quote row) — the first human-why that names a person, else the first."""
-    from apps.contacts import people
 
     whys = list(task.human_whys.all())
     first = next((w for w in whys if w.person_id is not None), whys[0] if whys else None)
@@ -170,8 +172,6 @@ def notify(task: AgentTask, *, by_user) -> list[str]:
     who_name = by_user.get_full_name() or by_user.email or "someone"
     quote = next((w.quote for w in task.human_whys.all()), "")
     try:
-        from apps.harness import initiator as who
-        from apps.harness import services as harness
 
         prompt = (
             f"{who_name} added an idea to {project.ext_id} {project.name} on its team view "
@@ -239,7 +239,6 @@ def waiting_on_people(project: AgentProject) -> list[dict]:
     `kind: "decision"` — several open questions one task is carrying, each
     with its issue. Waiting on: the link's or task's named person, else the
     project's owner."""
-    from .services import LIVE_STATUSES
 
     owner = owner_name(project)
     agent = project.agent
@@ -267,7 +266,6 @@ def contributors(project: AgentProject, ideas: list[dict], *, page_visible) -> l
 
     Participant rows, plus anyone an idea's words name. `page_visible(row)` says
     whether the reader may see that row's contributor page."""
-    from apps.contacts import people
 
     rows = list(ProjectParticipant.objects.filter(project=project)
                 .select_related("person", "person__user").order_by("-created_at", "-pk"))
@@ -301,9 +299,8 @@ def team(project: AgentProject, user) -> dict:
     """Everything the team view shows, in its order: what it is, where it
     stands, the ideas, the people. Nothing of the agent's own process — no
     task cards, rationale, notes or review logs."""
-    from apps.contacts import services as contacts
 
-    from .contributors import may_see_summary, reader_of
+    from .contributors import may_see_summary, reader_of  # cycle: agents.contributors -> agents.ideas
 
     reader = reader_of(user)
     ideas = of_project(project)

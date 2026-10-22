@@ -23,6 +23,8 @@ import logging
 import random
 
 from asgiref.sync import sync_to_async
+from . import pat_rotation
+from .. import proposals
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,7 @@ logger = logging.getLogger(__name__)
 def _tick(interval_s: float) -> None:
     from django.db import close_old_connections
 
-    from . import pat_rotation
 
-    from .. import proposals
 
     close_old_connections()
     try:
@@ -63,7 +63,6 @@ async def run_forever(interval_s: float) -> None:
 @contextlib.asynccontextmanager
 async def running():
     """Run the loop for as long as the context is open. CANOPY_PAT_ROTATION_TICK_S <= 0 turns it off."""
-    from . import pat_rotation
 
     interval = pat_rotation.interval_s()
     if interval <= 0:
