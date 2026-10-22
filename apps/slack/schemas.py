@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import uuid
+
+from ninja import Schema
 from pydantic import Field
 
 from apps.common.schemas import StrictModel
@@ -160,3 +163,94 @@ class SlackDeclareAgentOut(StrictModel):
     changed: list[str] = []
     reinstall_required: bool = False
     install_url: str = ""
+
+
+# ---- a session's Slack thread: share, detach, new thread (session_api.py) ----
+
+
+class SlackDetachIn(Schema):
+    """Which session to disconnect — the same identifiers `share_session_to_slack`
+    takes, tried in this order: canopy's `session_id`, the Claude Code session id
+    (`$CLAUDE_CODE_SESSION_ID`), the emdash task + project. An agent names its
+    own conversation with `turn_id` instead (its caller envelope's `turn_id`)."""
+    session_id: str = ""
+    claude_session_id: str = ""
+    emdash_task: str = ""
+    emdash_project: str = ""
+    #: A live turn of the caller's own: the agent's own login acting on the
+    #: conversation it is having (`access.own_turn_session`). Tried first.
+    turn_id: str = ""
+
+
+class SlackShareIn(Schema):
+    """What to post, where, and which session it is about."""
+    #: Markdown: what we are doing, why, and where it stands.
+    summary: str
+    #: A channel name (`#dev`) or id; the canopy app must be in it. Optional when
+    #: the session is already bound (the update goes into its own thread).
+    channel: str = ""
+    #: `broadcast` (one post) or `bind` (the thread becomes the session's own).
+    mode: str = "broadcast"
+    claude_session_id: str = ""
+    emdash_task: str = ""
+    emdash_project: str = ""
+    session_id: str = ""
+    #: Needed only when you belong to several workspaces with Slack connected
+    #: and no session is named.
+    workspace: str = ""
+    #: An agent's own live turn (the caller envelope's `turn_id`) — tried first.
+    turn_id: str = ""
+
+
+class SlackShareOut(Schema):
+    #: "shared", or "updated" when a bound session's thread got the summary.
+    status: str
+    message: str
+    mode: str
+    channel: str = ""
+    ts: str = ""
+    permalink: str = ""
+    session_id: uuid.UUID | None = None
+
+
+class SlackNewThreadIn(Schema):
+    """Which conversation to move, and what the new thread opens with."""
+    #: Markdown: what the new thread is for. Required — it is the thread's first post.
+    summary: str
+    #: An agent's own live turn (the caller envelope's `turn_id`) — tried first.
+    turn_id: str = ""
+    session_id: str = ""
+    claude_session_id: str = ""
+
+
+class SlackPlaceOut(Schema):
+    channel: str
+    thread_ts: str
+    permalink: str = ""
+
+
+class SlackNewThreadOut(Schema):
+    #: "moved".
+    status: str
+    message: str
+    session_id: uuid.UUID
+    channel: str
+    #: The channel's name when canopy knows it (needs Slack's channels:read); "" otherwise.
+    channel_name: str = ""
+    thread_ts: str
+    permalink: str = ""
+    #: The thread the conversation left (it was told where it went).
+    previous: SlackPlaceOut
+
+
+class SlackDetachOut(Schema):
+    #: "detached", or "not_bound" when there was no thread to disconnect (also
+    #: what a second detach answers — the call is idempotent).
+    status: str
+    message: str
+    session_id: uuid.UUID
+    channel: str = ""
+    thread_ts: str = ""
+    #: Whether the "no longer connected" note reached the thread (best-effort).
+    notice_posted: bool = False
+

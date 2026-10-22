@@ -21,3 +21,12 @@ class SlackConfig(AppConfig):
         from . import ingest_scheduler
 
         ingest_scheduler.register()
+
+        # Every session row says which Slack thread it is bound to, read from
+        # session metadata only (no Slack call) — registered here so
+        # canopy_sessions needs no Slack import.
+        from apps.canopy_sessions import channel_bindings
+
+        from .share import binding_of
+
+        channel_bindings.register("slack", binding_of)

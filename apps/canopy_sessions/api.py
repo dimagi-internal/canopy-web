@@ -32,6 +32,7 @@ from apps.workspaces import services as wsvc
 from . import (
     access,
     attachment_storage,
+    channel_bindings,
     doors,
     feed,
     filing,
@@ -54,8 +55,6 @@ from .schemas import (
     NoisePurgeIn,
     NoisePurgeOut,
     NoiseReportOut,
-    SlackShareIn,
-    SlackShareOut,
     SessionExportOut,
     AttachmentOut,
     BackfillStateOut,
@@ -91,10 +90,6 @@ from .schemas import (
     SessionSearchPageOut,
     SessionSecretIn,
     SessionSecretOut,
-    SlackDetachIn,
-    SlackNewThreadIn,
-    SlackNewThreadOut,
-    SlackDetachOut,
     StreamStateOut,
     TransferDecisionIn,
     TransferRequestOut,
@@ -240,15 +235,10 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "parent_task": session.parent_task,
         "parent_claude_session": session.parent_claude_session,
         "activity": session_activity.public(session.activity),
-        "slack": _slack_binding(session),
+        # Where else the conversation is had (a Slack thread), from each channel's
+        # own reader — canopy_sessions knows no channel (channel_bindings.py).
+        **channel_bindings.of(session),
     }
-
-
-def _slack_binding(session: Session) -> dict | None:
-    # Read from metadata only — no Slack call — so it is cheap on every list row.
-    from apps.slack.share import binding_of
-
-    return binding_of(session)
 
 
 def _visible_slugs(request: HttpRequest, *, listing: bool = False, bulk_write: bool = False) -> set[str]:
@@ -274,13 +264,20 @@ def _site_scoped(request: HttpRequest, qs):
     return qs if offered is None else qs.filter(agent_id__in=offered)
 
 
+def readable_sessions(request: HttpRequest):
+    """The sessions a by-id request may name: `access.readable_sessions` over the
+    caller's tenants, narrowed to the acting site's agents. Every route that
+    takes a session by id reads this — the Slack routes too (apps/slack/session_api.py)."""
+    return _site_scoped(request, access.readable_sessions(request.user,
+                                                          workspace_slugs=_visible_slugs(request)))
+
+
 def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool = False) -> Session:
     # One authority (`access`): the tenant, then who within it — the same rule
     # the list, the chat socket and attachments apply. `write=True` also needs
     # an owner/editor role; a viewer gets 403, since they can already see it.
     session = get_object_or_404(
-        _site_scoped(request, access.readable_sessions(request.user,
-                                                       workspace_slugs=_visible_slugs(request)))
+        readable_sessions(request)
         .select_related("agent", "created_by", "runner_binding", "runner_binding__runner")
         .annotate(_last_msg_at=Max("messages__created_at")),
         pk=session_id,
@@ -678,172 +675,6 @@ def purge_session_noise(request: HttpRequest, payload: NoisePurgeIn):
             else _visible_slugs(request, listing=True)
     return maintenance.purge_noise(workspace_slugs=slugs, session_id=payload.session_id,
                                    sample=payload.sample, apply=payload.apply, user=request.user)
-
-
-@router.post("/slack/share", response=SlackShareOut, summary="Post a session's summary to Slack")
-def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
-    """Post a summary of the current session into a Slack channel.
-
-    `channel` is a channel name (`#dev`) or id; the canopy app must be in it.
-    `summary` is Markdown — what we are doing, why, and where it stands.
-
-    `mode`: `broadcast` (default) — one post; replies in Slack stay between
-    people. `bind` — the post starts a thread bound to this session from now
-    on, exactly as if the session had been started from Slack: its replies
-    appear in the thread and teammates' replies reach the session.
-
-    Sharing a session that is ALREADY bound posts `summary` as an update in its
-    thread instead (mode and channel are then ignored). `channel` is required
-    otherwise.
-
-    Identify the session with `claude_session_id` ($CLAUDE_CODE_SESSION_ID),
-    else `emdash_task` + `emdash_project`, else `session_id`. A broadcast works
-    without one; a bind does not. `workspace` is needed only when you belong to
-    several workspaces with Slack connected and no session is given.
-
-    An AGENT answering a turn names its conversation with `turn_id`: its own
-    login may act on the conversation of a turn it is running, while that turn
-    is in flight — post an update, or (after `detach_session_from_slack`) bind
-    again, only in the conversation's own channel. To move the conversation to
-    a fresh thread in one step, use `start_new_slack_thread`.
-    """
-    from apps.slack import share
-
-    visible = _site_scoped(request, access.readable_sessions(
-        request.user, workspace_slugs=_visible_slugs(request)))
-    own = False
-    if payload.turn_id:
-        session, own = share.resolve_turn_session(request.user, payload.turn_id, visible=visible)
-        if session is None:
-            raise HttpError(404, "no conversation of a live turn of yours matches that turn_id "
-                                 "(a turn reaches its conversation only while it is claimed or running)")
-    else:
-        try:
-            session = share.resolve_session(
-                request.user, session_id=payload.session_id,
-                claude_session_id=payload.claude_session_id,
-                emdash_task=payload.emdash_task, emdash_project=payload.emdash_project,
-                visible=visible)
-        except share.Ambiguous:
-            raise HttpError(409, "more than one session matches that emdash task; pass "
-                                 "claude_session_id or session_id") from None
-    result = share.share_session(request.user, channel=payload.channel, summary=payload.summary,
-                                 mode=payload.mode, session=session, workspace=payload.workspace,
-                                 own_turn=own)
-    if result.status == share.SENSITIVE:
-        raise HttpError(403, result.message)
-    if not result.ok:
-        raise HttpError(422 if result.status == share.BAD_REQUEST else 409, result.message)
-    return {"status": result.status, "message": result.message, "mode": payload.mode,
-            "channel": result.channel_id, "ts": result.ts, "permalink": result.permalink,
-            "session_id": result.session.pk if result.session else None}
-
-
-@router.post("/slack/detach", response=SlackDetachOut,
-             summary="Disconnect a session from its Slack thread")
-def detach_session_from_slack(request: HttpRequest, payload: SlackDetachIn):
-    """Disconnect a session from the Slack thread it is bound to — the undo of
-    sharing it with `bind` (`share_session_to_slack`), and works as well on a
-    session Slack itself started.
-
-    From then on the session's replies are no longer posted into the thread, and
-    replies in the thread no longer reach the session (they are ignored). The
-    thread gets one last note saying it is no longer connected (best-effort; a
-    Slack failure does not undo the detach). Nothing already posted is deleted,
-    and the binding is kept on the session as history.
-
-    Name the session with `session_id`, else `claude_session_id`
-    ($CLAUDE_CODE_SESSION_ID), else `emdash_task` + `emdash_project`. Needs
-    owner or editor access to the session. An agent names the conversation it
-    is having with `turn_id` instead: its own login may act on the conversation
-    of a turn it is running, while that turn is in flight. Idempotent: a session
-    with no thread answers `status: not_bound`. To connect it again, share it
-    with `bind`, which starts a fresh thread.
-    """
-    from apps.slack import share
-
-    session = _slack_session_for(request, turn_id=payload.turn_id, session_id=payload.session_id,
-                                 claude_session_id=payload.claude_session_id,
-                                 emdash_task=payload.emdash_task, emdash_project=payload.emdash_project)
-    result = share.detach_session(request.user, session)
-    return {"status": result.status, "message": result.message, "session_id": session.pk,
-            "channel": result.channel_id, "thread_ts": result.thread_ts,
-            "notice_posted": result.notice_posted}
-
-
-def _slack_session_for(request: HttpRequest, *, turn_id: str = "", session_id: str = "",
-                       claude_session_id: str = "", emdash_task: str = "", emdash_project: str = ""):
-    """The session a Slack-thread write names, with write access proven — or an HttpError.
-
-    `turn_id` first: the agent's own live turn (`access.own_turn_session`) is
-    write access to that one conversation and nothing else. Otherwise the
-    ordinary rule: a session the caller can open, and write in."""
-    from apps.slack import share
-
-    visible = _site_scoped(request, access.readable_sessions(request.user,
-                                                             workspace_slugs=_visible_slugs(request)))
-    if not (turn_id or session_id or claude_session_id or emdash_task):
-        raise HttpError(422, "name the session: turn_id, session_id, claude_session_id or emdash_task")
-    if turn_id:
-        session, own = share.resolve_turn_session(request.user, turn_id, visible=visible)
-        if session is None:
-            raise HttpError(404, "no conversation of a live turn of yours, or a session you can "
-                                 "open, matches that turn")
-        if own:
-            return session
-    else:
-        try:
-            session = share.resolve_session(
-                request.user, session_id=session_id, claude_session_id=claude_session_id,
-                emdash_task=emdash_task, emdash_project=emdash_project, visible=visible)
-        except share.Ambiguous:
-            raise HttpError(409, "more than one session matches that emdash task; pass "
-                                 "claude_session_id or session_id") from None
-    if session is None:
-        raise HttpError(404, "no session you can open matches that")
-    if not access.can_write(request.user, session):
-        raise HttpError(403, "you can read this session but not act in it")
-    return session
-
-
-@router.post("/slack/new-thread", response=SlackNewThreadOut,
-             summary="Move a session's conversation to a new Slack thread in the same channel")
-def start_new_slack_thread(request: HttpRequest, payload: SlackNewThreadIn):
-    """Start a new thread in the channel this conversation is in, and move the
-    conversation there.
-
-    Posts `summary` (Markdown) as a new top-level message in the conversation's
-    own Slack channel, binds the session to that message's thread — replies
-    there reach the session, the session's replies post there — and tells the
-    old thread where it went. Replies in the old thread no longer reach the
-    session. The channel is always the conversation's own; to post elsewhere,
-    share instead.
-
-    An agent names the conversation it is having with `turn_id` (its caller
-    envelope's `turn_id`): its own login may move the conversation of a turn it
-    is running, while that turn is in flight, and no other. Anyone else names
-    it with `session_id` or `claude_session_id` and needs owner or editor
-    access. 409 when the session holds no thread or is a direct message.
-    """
-    from apps.slack import share
-
-    session = _slack_session_for(request, turn_id=payload.turn_id, session_id=payload.session_id,
-                                 claude_session_id=payload.claude_session_id)
-    if not (payload.summary or "").strip():
-        raise HttpError(422, "a summary is required: it is what the new thread opens with")
-    result = share.start_new_thread(request.user, session, payload.summary)
-    if result.status == share.SENSITIVE:
-        raise HttpError(403, result.message)
-    if result.status in (share.NOT_BOUND_THREAD, share.IS_DM):
-        raise HttpError(409, result.message)
-    if not result.ok:
-        raise HttpError(422 if result.status == share.BAD_REQUEST else 409, result.message)
-    prev = result.previous or {}
-    return {"status": result.status, "message": result.message, "session_id": session.pk,
-            "channel": result.channel_id, "channel_name": result.channel_name,
-            "thread_ts": result.ts, "permalink": result.permalink,
-            "previous": {"channel": prev.get("channel") or "", "thread_ts": prev.get("thread_ts") or "",
-                         "permalink": prev.get("permalink") or ""}}
 
 
 # ---- transfer requests: a move onto someone else's runner, awaiting their yes ----

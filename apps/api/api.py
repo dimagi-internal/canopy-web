@@ -258,6 +258,7 @@ from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import me_router as my_sessions_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
 from apps.canopy_sessions.app_views_api import router as app_views_router  # noqa: E402
+from apps.slack.session_api import router as slack_session_router  # noqa: E402
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
 from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
@@ -369,6 +370,9 @@ api.add_router("/checkins", checkins_router)
 # The two work-group run routes an un-updated engine still calls — one release only.
 api.add_router("/threads", threads_router)
 api.add_router("/push", push_router)
+# A session's Slack thread (share / detach / new-thread) — Slack's own routes, at
+# the session paths they always had. Mounted first: fixed `/slack/...` paths.
+api.add_router("/canopy-sessions", slack_session_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
 api.add_router("/me", my_sessions_router)
 # MCP Apps: a rendered View's browser plumbing (apps/tokens/mcp_apps_views.py).
