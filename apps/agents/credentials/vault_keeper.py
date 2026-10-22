@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from apps.harness.models import RunnerDeviceKey
 
-from ..models import Agent, AgentVaultWrap
-from . import zk, zk_endorse
+from ..models import Agent, AgentVaultWrap, Vault, VaultKeyWrap
+from . import vault_members, workspace_vaults, zk, zk_endorse
 
 
 def _held(runner) -> list[AgentVaultWrap]:
@@ -45,8 +45,46 @@ def work(runner) -> list[dict]:
             continue
         out.append({"agent": agent.slug, "agent_id": str(agent.pk), "kv": agent.zk_kv,
                     "device_key": str(w.device_key_id), "wrap": w.wrap, "pending": pending,
-                    "endorsements": zk_endorse.endorsements(agent)})
+                    "endorsements": [{**e, "agent_id": str(agent.pk)} for e in zk_endorse.endorsements(agent)],
+                    "grant_path": f"/api/harness/runners/{runner.pk}/vault-keeper/{agent.slug}/wraps"})
+    for w in _held_workspace(runner):
+        v = w.vault
+        pending = workspace_vaults.pending_targets(v)
+        if not pending:
+            continue
+        # A workspace vault has no endorsements of its own: a machine is vouched for by
+        # the endorsement its approver made for an agent this vault serves, verified
+        # against THAT agent's id (each row carries it).
+        ends = [{**e, "agent_id": str(a.pk)} for a in vault_members.attached_agents(v)
+                for e in zk_endorse.endorsements(a)]
+        out.append({"agent": v.name, "agent_id": workspace_vaults.binding_id(v), "kv": v.kv,
+                    "device_key": str(w.device_key_id), "wrap": w.wrap, "pending": pending,
+                    "endorsements": ends, "vault_id": str(v.pk),
+                    "grant_path": f"/api/harness/runners/{runner.pk}/vault-keeper/vaults/{v.pk}/wraps"})
     return out
+
+
+def _held_workspace(runner) -> list[VaultKeyWrap]:
+    """This box's device wraps at each workspace vault's current kv."""
+    return [w for w in (VaultKeyWrap.objects
+                        .filter(kind="device", device_key__runner=runner,
+                                device_key__status=RunnerDeviceKey.ACTIVE, vault__kv__gt=0)
+                        .select_related("vault", "device_key"))
+            if w.kv == w.vault.kv]
+
+
+def grant_workspace(runner, vault_id, *, kv: int, wraps: list) -> int:
+    """`grant`, for a workspace vault this box holds the current key of."""
+    v = Vault.objects.filter(pk=vault_id, kind=Vault.WORKSPACE).first()
+    if v is None or not any(w.vault_id == v.pk for w in _held_workspace(runner)):
+        raise zk.ZkError(403, "zk_not_a_holder", "this runner holds no copy of that vault's current key")
+    pending = {(t["kind"], t["target"]) for t in workspace_vaults.pending_targets(v)}
+    for i, item in enumerate(wraps):
+        if (item.kind, str(item.target)) not in pending:
+            raise zk.ZkError(409, "zk_not_pending",
+                             f"wraps[{i}]: {item.kind} {item.target} is not waiting for a copy — a "
+                             "keeper only adds copies, never replaces one")
+    return workspace_vaults.add_wraps(v, kv=kv, wraps=wraps, user=runner.owner)
 
 
 def grant(runner, slug: str, *, kv: int, wraps: list) -> int:

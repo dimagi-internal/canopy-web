@@ -22,6 +22,7 @@ class AgentsConfig(AppConfig):
 
         ticks.register("agents.zk_notify", _zk_notify, 60)
         ticks.register("agents.vault_reconcile", _vault_reconcile, 60)
+        ticks.register("agents.workspace_vault_reconcile", _workspace_vault_reconcile, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
 
 
@@ -39,6 +40,13 @@ def _vault_reconcile() -> None:
     from .credentials import vault_members  # noqa: PLC0415 — a tick: runs once the app is ready
 
     vault_members.reconcile_all()
+
+
+def _workspace_vault_reconcile() -> None:
+    """A workspace vault's key copies follow its membership, within a minute."""
+    from .credentials import workspace_vaults  # noqa: PLC0415 — a tick: runs once the app is ready
+
+    workspace_vaults.reconcile_all()
 
 
 def _zk_notify() -> None:

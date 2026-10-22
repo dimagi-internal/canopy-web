@@ -7754,6 +7754,227 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/vaults": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This workspace's vaults, with their members and what they serve
+         * @description Names, members (with why each is one), attachments and secret NAMES — never a value.
+         */
+        readonly get: operations["list_workspace_vaults"];
+        readonly put?: never;
+        /**
+         * Make a workspace vault
+         * @description `{name}`. Starts with no key (kv 0) and two links: the workspace's owners
+         *     manage it, and everyone with full access to an agent it is attached to uses it.
+         */
+        readonly post: operations["create_workspace_vault"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One workspace vault
+         * @description Its members (and why), what it serves, and the names of its secrets.
+         */
+        readonly get: operations["get_workspace_vault"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/members": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add a person to a vault by name
+         * @description `{email, role}` — a direct membership. The person must be in the vault's workspace.
+         */
+        readonly post: operations["add_workspace_vault_member"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/members/{user_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a person's direct membership of a vault
+         * @description Only the DIRECT membership; a person who is then no longer a member loses
+         *     their copies of the vault's key, and their machines theirs, at once.
+         */
+        readonly delete: operations["remove_workspace_vault_member"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/attachments": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Serve an agent, or every agent in a workspace and below, from a vault
+         * @description `{agent}` or `{workspace}` — the vault's own workspace or one below it.
+         */
+        readonly post: operations["attach_workspace_vault"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/attachments/{attachment_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Stop serving an agent or a workspace from a vault */
+        readonly delete: operations["detach_workspace_vault"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/zk": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A workspace vault's zero-knowledge state
+         * @description As `GET /api/agents/{slug}/vault/zk`: kv, wraps, pending targets, and with
+         *     `?values=true` the `zk1:` ciphertexts. `agent_id` is the vault's binding id.
+         */
+        readonly get: operations["get_workspace_vault_zk"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/zk/enable": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Make a workspace vault's first key
+         * @description `{kv: 1, wraps, values}` — a wrap the caller can open and a way back are required.
+         */
+        readonly post: operations["enable_workspace_vault_zk"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/zk/values": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set a workspace vault's values
+         * @description Non-clobbering upsert of `zk1:` ciphertext at the current kv.
+         */
+        readonly put: operations["set_workspace_vault_values"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/zk/wraps": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Grant copies of a workspace vault's key
+         * @description `{kv, wraps}` to pending members and machines (see the vault's `pending`).
+         */
+        readonly post: operations["add_workspace_vault_wraps"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/secrets/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Delete one secret from a workspace vault */
+        readonly delete: operations["delete_workspace_vault_secret"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/vault-keeper": {
         readonly parameters: {
             readonly query?: never;
@@ -7793,6 +8014,27 @@ export interface paths {
          *     waiting — a keeper only adds copies, never replaces one.
          */
         readonly post: operations["post_vault_keeper_wraps"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper/vaults/{vault_id}/wraps": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A keeper's copies of a workspace vault's key, for whoever was waiting
+         * @description As for an agent: refused unless this box holds the vault's current key, and
+         *     for any target that is not waiting.
+         */
+        readonly post: operations["post_vault_keeper_workspace_wraps"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -20822,6 +21064,29 @@ export interface components {
              * @default
              */
             readonly agent_id: string;
+            /** Vaults */
+            readonly vaults?: readonly components["schemas"]["ResolveVaultLayerOut"][];
+        };
+        /** ResolveVaultLayerOut */
+        readonly ResolveVaultLayerOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Binding Id */
+            readonly binding_id: string;
+            /** Kv */
+            readonly kv: number;
+            /** Wrap */
+            readonly wrap?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Values */
+            readonly values?: {
+                readonly [key: string]: string;
+            };
         };
         /**
          * DeviceProofRequiredOut
@@ -21267,6 +21532,11 @@ export interface components {
             } | null;
             /** Sig */
             readonly sig: string;
+            /**
+             * Agent Id
+             * @default
+             */
+            readonly agent_id: string;
         };
         /**
          * ZkRecipientOut
@@ -26723,6 +26993,46 @@ export interface components {
              */
             readonly retired: boolean;
         };
+        /** VaultAttachmentOut */
+        readonly VaultAttachmentOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent */
+            readonly agent?: string | null;
+            /** Workspace */
+            readonly workspace?: string | null;
+        };
+        /** WorkspaceVaultOut */
+        readonly WorkspaceVaultOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Name */
+            readonly name: string;
+            /** Kv */
+            readonly kv: number;
+            /** Secrets */
+            readonly secrets: readonly string[];
+            /** Attachments */
+            readonly attachments: readonly components["schemas"]["VaultAttachmentOut"][];
+            /** Members */
+            readonly members: readonly components["schemas"]["VaultMemberOut"][];
+            /** You */
+            readonly you: string | null;
+        };
+        /** VaultCreateIn */
+        readonly VaultCreateIn: {
+            /** Name */
+            readonly name: string;
+        };
+        /** VaultAttachIn */
+        readonly VaultAttachIn: {
+            /** Agent */
+            readonly agent?: string | null;
+            /** Workspace */
+            readonly workspace?: string | null;
+        };
         /** VaultKeeperAgentOut */
         readonly VaultKeeperAgentOut: {
             /** Agent */
@@ -26741,6 +27051,16 @@ export interface components {
             readonly pending: readonly components["schemas"]["ZkTargetOut"][];
             /** Endorsements */
             readonly endorsements: readonly components["schemas"]["ZkEndorsementOut"][];
+            /**
+             * Grant Path
+             * @default
+             */
+            readonly grant_path: string;
+            /**
+             * Vault Id
+             * @default
+             */
+            readonly vault_id: string;
         };
         /** VaultKeeperOut */
         readonly VaultKeeperOut: {
@@ -42964,6 +43284,299 @@ export interface operations {
             };
         };
     };
+    readonly list_workspace_vaults: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["WorkspaceVaultOut"][];
+                };
+            };
+        };
+    };
+    readonly create_workspace_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultCreateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceVaultOut"];
+                };
+            };
+        };
+    };
+    readonly get_workspace_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceVaultOut"];
+                };
+            };
+        };
+    };
+    readonly add_workspace_vault_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultMemberIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceVaultOut"];
+                };
+            };
+        };
+    };
+    readonly remove_workspace_vault_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceVaultOut"];
+                };
+            };
+        };
+    };
+    readonly attach_workspace_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultAttachIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceVaultOut"];
+                };
+            };
+        };
+    };
+    readonly detach_workspace_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+                readonly attachment_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceVaultOut"];
+                };
+            };
+        };
+    };
+    readonly get_workspace_vault_zk: {
+        readonly parameters: {
+            readonly query?: {
+                readonly values?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly enable_workspace_vault_zk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkEnableIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly set_workspace_vault_values: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkValuesIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkValuesOut"];
+                };
+            };
+        };
+    };
+    readonly add_workspace_vault_wraps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkWrapsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly delete_workspace_vault_secret: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceVaultOut"];
+                };
+            };
+        };
+    };
     readonly get_vault_keeper_work: {
         readonly parameters: {
             readonly query?: never;
@@ -42993,6 +43606,33 @@ export interface operations {
             readonly path: {
                 readonly runner_id: string;
                 readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkWrapsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultKeeperGrantOut"];
+                };
+            };
+        };
+    };
+    readonly post_vault_keeper_workspace_wraps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly vault_id: string;
             };
             readonly cookie?: never;
         };

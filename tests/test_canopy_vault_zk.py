@@ -1248,3 +1248,110 @@ def test_removing_a_direct_member_drops_their_copies_at_once(fleet):
     res = fleet.client.delete(f"/api/agents/eva/vault/members/{other.pk}")
     assert res.status_code == 200
     assert not AgentVaultWrap.objects.filter(agent=fleet.agent, kind="member", user=other).exists()
+
+
+# ---- workspace vaults (spec 2026-10-22-vault-access-follows-canopy-access-design.md §4) ------
+
+def _ws_vault(fleet, name="Shared"):
+    res = fleet.client.post("/api/workspaces/connect/vaults", data={"name": name}, content_type="application/json")
+    assert res.status_code == 200, res.content
+    return res.json()["vault_id"]
+
+
+def _ws_wraps(fleet, binding, vk, kv=1):
+    dev = {"kind": "device", "target": str(fleet.device.pk), "wrap": ref.wrap_ecdh_es(
+        vk, fleet.ecdh.public_key(), ref.device_info(binding, kv, fleet.device.ecdh_jkt),
+        ec.generate_private_key(ec.SECP256R1()), os.urandom(12))}
+    mem = {"kind": "member", "target": str(fleet.user.pk), "wrap": ref.wrap_ecdh_es(
+        vk, fleet.member_priv.public_key(), ref.member_info(binding, kv, str(fleet.user.pk)),
+        ec.generate_private_key(ec.SECP256R1()), os.urandom(12))}
+    rec = {"kind": "recovery", "target": None,
+           "wrap": ref.wrap_recovery(vk, binding, kv, os.urandom(32), os.urandom(16), os.urandom(12))}
+    return [mem, dev, rec]
+
+
+def _ws_enabled(fleet, plain, *, attach=True):
+    vid = _ws_vault(fleet)
+    if attach:
+        assert fleet.client.post(f"/api/vaults/{vid}/attachments", data={"agent": "eva"},
+                                 content_type="application/json").status_code == 200
+    state = fleet.client.get(f"/api/vaults/{vid}/zk").json()
+    binding, vk = state["agent_id"], os.urandom(32)
+    values = [{"name": n, "value_zk": ref.encrypt_value(vk, binding, n, 1, v, os.urandom(12))}
+              for n, v in plain.items()]
+    res = fleet.client.post(f"/api/vaults/{vid}/zk/enable", content_type="application/json",
+                            data={"kv": 1, "wraps": _ws_wraps(fleet, binding, vk), "values": values})
+    assert res.status_code == 200, res.content
+    return vid, binding, vk
+
+
+def test_a_workspace_vault_starts_with_its_owners_and_attached_users(fleet):
+    vid = _ws_vault(fleet)
+    body = fleet.client.get(f"/api/vaults/{vid}").json()
+    assert body["kv"] == 0 and body["you"] == "manage"
+    assert [(m["email"], m["role"], m["sources"]) for m in body["members"]] == [
+        ("jj@dimagi.com", "manage", ["workspace_owners:connect"])]
+    state = fleet.client.get(f"/api/vaults/{vid}/zk").json()
+    assert state["agent_id"] == f"vault:{vid}" and not state["enabled"]
+    # Attached to no agent yet: no machine serves it, so only the person is pending.
+    assert [p["kind"] for p in state["pending"]] == ["member"]
+    fleet.client.post(f"/api/vaults/{vid}/attachments", data={"agent": "eva"}, content_type="application/json")
+    kinds = sorted(p["kind"] for p in fleet.client.get(f"/api/vaults/{vid}/zk").json()["pending"])
+    assert kinds == ["device", "member"]
+
+
+def test_a_box_reads_a_workspace_vault_layered_under_its_agent(fleet):
+    assert _enable(fleet).status_code == 200
+    vid, binding, vk = _ws_enabled(fleet, {"gog-oauth-client": "client-json", "kindora": "shared-kin"})
+    body = _resolve(fleet).json()
+    [layer] = body["vaults"]
+    assert layer["vault_id"] == vid and layer["binding_id"] == binding and layer["kv"] == 1
+    got = ref.unwrap_ecdh_es(layer["wrap"], fleet.ecdh, ref.device_info(binding, 1, fleet.device.ecdh_jkt))
+    assert got == vk
+    assert ref.decrypt_value(vk, binding, "gog-oauth-client", 1, layer["values"]["gog-oauth-client"]) == "client-json"
+    # The agent's own values are still its own (the client lets them win a clash).
+    assert set(body["values"]) == set(PLAIN)
+    names = set(AgentCredentialRead.objects.filter(via__isnull=False).values_list("name", flat=True))
+    assert "Shared/gog-oauth-client" in names
+
+
+def test_a_workspace_vault_serves_only_what_it_is_attached_to(fleet):
+    assert _enable(fleet).status_code == 200
+    vid, _, _ = _ws_enabled(fleet, {"x": "y"})
+    [att] = fleet.client.get(f"/api/vaults/{vid}").json()["attachments"]
+    res = fleet.client.delete(f"/api/vaults/{vid}/attachments/{att['id']}")
+    assert res.status_code == 200
+    # Detached: the box serves no agent it is attached to, so its copy goes and it reads nothing.
+    from apps.agents.models import VaultKeyWrap
+
+    assert not VaultKeyWrap.objects.filter(kind="device").exists()
+    assert _resolve(fleet).json()["vaults"] == []
+
+
+def test_only_a_workspace_owner_makes_one_and_only_a_manager_changes_it(fleet):
+    other = get_user_model().objects.create_user(username="ed2", email="ed2@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.EDITOR)
+    vid = _ws_vault(fleet)
+    c = Client()
+    c.force_login(other)
+    grant_step_up(c)
+    assert c.post("/api/workspaces/connect/vaults", data={"name": "Mine"},
+                  content_type="application/json").status_code == 403
+    assert c.post(f"/api/vaults/{vid}/attachments", data={"agent": "eva"},
+                  content_type="application/json").status_code == 403
+    assert c.get(f"/api/vaults/{vid}").status_code == 200   # a member of the workspace may look
+
+
+def test_a_keeper_grants_a_workspace_vault_too(fleet):
+    assert _enable(fleet).status_code == 200
+    vid, binding, vk = _ws_enabled(fleet, {"x": "y"})
+    ed, ed_priv = _editor_with_a_key(fleet, name="ed3")   # full access to eva → attached user
+    work = fleet.client.get(_keeper_url(fleet)).json()["agents"]
+    row = next(w for w in work if w.get("vault_id") == vid)
+    assert row["agent_id"] == binding and [(p["kind"], p["target"]) for p in row["pending"]] == [
+        ("member", str(ed.pk))]
+    wrap = ref.wrap_ecdh_es(vk, ed_priv.public_key(), ref.member_info(binding, 1, str(ed.pk)),
+                            ec.generate_private_key(ec.SECP256R1()), os.urandom(12))
+    res = fleet.client.post(row["grant_path"], data={"kv": 1, "wraps": [
+        {"kind": "member", "target": str(ed.pk), "wrap": wrap}]}, content_type="application/json")
+    assert res.status_code == 200 and res.json() == {"granted": 1}

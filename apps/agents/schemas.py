@@ -1721,6 +1721,16 @@ class AgentCredentialAccessOut(StrictModel):
     reason: str = ""
 
 
+class ResolveVaultLayerOut(StrictModel):
+    vault_id: str
+    name: str
+    workspace: str
+    binding_id: str
+    kv: int
+    wrap: dict[str, Any] | None = None
+    values: dict[str, str] = Field(default_factory=dict)
+
+
 class AgentCredentialsResolveOut(StrictModel):
     """PLAINTEXT, for a runner. The one route that returns values.
 
@@ -1784,6 +1794,13 @@ class AgentCredentialsResolveOut(StrictModel):
     wrap: dict[str, Any] | None = None
     #: The Agent pk as a string — bound into every AAD and HKDF info ("" when not zk).
     agent_id: str = ""
+    #: The workspace vaults layered UNDER the agent's own values, in order (a later
+    #: layer wins a name clash; `values` above win over all of them) — spec
+    #: 2026-10-22-vault-access-follows-canopy-access-design.md §4. Each is `zk1:`
+    #: ciphertext under that vault's key, bound to its `binding_id`, with this
+    #: device's copy of the key — or `wrap: null` and no values when this device may
+    #: not open it. Only with a device proof.
+    vaults: list[ResolveVaultLayerOut] = Field(default_factory=list)
 
 
 class ZkWrapMissingOut(StrictModel):
@@ -1901,6 +1918,35 @@ class VaultMemberOut(StrictModel):
     has_vault_key: bool
 
 
+class VaultAttachmentOut(StrictModel):
+    id: int
+    #: Exactly one: the agent it serves, or the workspace whose agents (and those below) it serves.
+    agent: str | None = None
+    workspace: str | None = None
+
+
+class WorkspaceVaultOut(StrictModel):
+    vault_id: str
+    workspace: str
+    name: str
+    #: Its key version; 0 = no key yet.
+    kv: int
+    #: Names only — never a value.
+    secrets: list[str]
+    attachments: list[VaultAttachmentOut]
+    members: list[VaultMemberOut]
+    you: str | None
+
+
+class VaultCreateIn(StrictModel):
+    name: str
+
+
+class VaultAttachIn(StrictModel):
+    agent: str | None = None
+    workspace: str | None = None
+
+
 class VaultAgentLinkOut(StrictModel):
     linked: bool
     #: The role the link gives everyone with full access who is not an owner or admin.
@@ -1928,7 +1974,9 @@ class VaultAgentLinkIn(StrictModel):
 
 
 class VaultKeeperAgentOut(StrictModel):
+    #: The agent's slug, or a workspace vault's name.
     agent: str
+    #: What the key is bound to: the agent's id, or the workspace vault's binding id.
     agent_id: str
     kv: int
     #: This box's device key holding the wrap, and the wrap itself.
@@ -1936,6 +1984,10 @@ class VaultKeeperAgentOut(StrictModel):
     wrap: dict[str, Any]
     pending: list[ZkTargetOut]
     endorsements: list[ZkEndorsementOut]
+    #: Where the keeper posts its copies.
+    grant_path: str = ""
+    #: Set for a workspace vault.
+    vault_id: str = ""
 
 
 class VaultKeeperOut(StrictModel):
@@ -1992,6 +2044,9 @@ class ZkEndorsementOut(StrictModel):
     by_jkt: str
     by_public_jwk: dict[str, Any] | None = None
     sig: str
+    #: The agent the signature was made for, when it is not the one being read
+    #: (a keeper's workspace-vault work verifies an attached agent's endorsement).
+    agent_id: str = ""
 
 
 class ZkRecipientsOut(StrictModel):

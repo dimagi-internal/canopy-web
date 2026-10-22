@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { getSharedVault, setSharedVault, WorkspaceApiError } from '@/api/workspaces'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { scopedPath } from '../lib/scopedLinks'
+import { WorkspaceVaultsSection } from './WorkspaceVaultsSection'
 
 // THE TENANT HALF of the credential model, and the only screen that states the
 // model whole.
@@ -102,6 +103,8 @@ export function WorkspaceSecretsPage(): JSX.Element {
           it provisions an agent. canopy-web holds the keys, not the passwords.
         </p>
       </section>
+
+      <WorkspaceVaultsSection slug={slug} />
 
       <section className="rounded-lg border border-border bg-card p-3" data-testid="shared-vault">
         <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">

@@ -26,7 +26,7 @@ from apps.harness import aws_iam_proof, device_keys
 from apps.harness.models import Runner
 
 from .. import mailbox, services
-from . import delegations, licenses, vault_alerts, vault_members, zk
+from . import delegations, licenses, vault_alerts, vault_members, workspace_vaults, zk
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,7 @@ class Resolved:
     kv: int | None
     wrap: Any
     agent_id: str
+    vaults: list = field(default_factory=list)
     via: str = field(default="", compare=False)
 
     def response_fields(self) -> dict:
@@ -295,6 +296,11 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         # A license holder runs the agent's TOOLS, not the agent: never its own canopy
         # login (which grades as `system` — past the editor's manual cap) — canopy-web#1704.
         values = {k: v for k, v in values.items() if k not in LICENSE_WITHHELD_REFS}
+    # The workspace vaults layered under the agent's own (only a device can open them).
+    layers = workspace_vaults.layers_payload(agent, device_key, wanted) if device_key is not None else []
+    if via == "license":
+        for layer in layers:
+            layer["values"] = {k: v for k, v in layer["values"].items() if k not in LICENSE_WITHHELD_REFS}
     delegation = delegations.delegation_for(agent) if extra("github_token") else None
     out = Resolved(
         values=values, op_vault=vault,
@@ -308,8 +314,10 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         google_account=agent.google_identity(),
         zk=agent.zk_enabled, kv=agent.zk_kv if agent.zk_enabled else None, wrap=zk_wrap,
         agent_id=str(agent.pk) if agent.zk_enabled else "",
+        vaults=layers,
     )
-    read = list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)]
+    read = (list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)]
+            + [f"{layer['name']}/{n}" for layer in layers for n in layer["values"]])
     runner = device_key.runner if device_key is not None else caller_runner(request)
     out.via = via = _classify_read(request, via, runner=runner, device_key=device_key, rtok=rtok)
     _record_read(request, agent, via=via, runner=runner, wanted=wanted, values=values, read=read)

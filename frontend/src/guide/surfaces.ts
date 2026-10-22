@@ -280,8 +280,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/settings/secrets',
     title: 'Secrets',
     audience: 'Workspace owner',
-    what: "Where this workspace's secrets live, stated whole: 1Password holds the secrets, a service account opens a vault, and canopy-web stores the service account so a runner can fetch it. This page owns the SHARED vault every agent here reads (the Google OAuth clients, the GitHub token); an agent's own vault is on that agent, under Settings → Credentials, and a box's own login is on the runner.",
-    actions: ["Name the workspace's shared vault", 'Store or rotate its service account', "Jump to an agent's own vault"],
+    what: "Where this workspace's secrets live, stated whole. Workspace vaults: any number of zero-knowledge vaults this workspace shares with its agents, each read under an agent's own secrets, with its own members (the owners manage it; everyone with full access to an agent it serves can use it) and why each is one. The 1Password shared vault every agent here still reads (the Google OAuth clients, the GitHub token) until it moves into a workspace vault. An agent's own vault is on that agent, under Settings → Credentials, and a box's own login is on the runner.",
+    actions: ['Make a workspace vault', 'Choose which agents or workspaces a vault serves', 'Add or remove a person from a vault', "Name the workspace's 1Password shared vault", "Jump to an agent's own vault"],
   },
   {
     path: '/w/:workspace/settings/retention',

@@ -33,3 +33,13 @@ The vault key is **not** changed on removal: as in 1Password, the server stops s
 ## Granting without a person
 
 Approving a machine signs its ECDH key with the approver's own vault key (an endorsement, `approveAndGrant`), even when the approver holds no copy of the agent's vault key, so a **keeper** (a canopy runner that holds it, `canopy vault zk keep`) can pass the key on. `zk_notify` emails the key holders only after `GRACE` (15 minutes), for what no machine could pass on.
+
+## Workspace vaults
+
+A workspace may keep any number of vaults (`Vault`, `kind=workspace`), always zero-knowledge, in the agent vault's formats with the vault's **binding id** (`vault:<uuid>`) where an agent's id goes in every AAD and HKDF info (`credentials/workspace_vaults.py`). Its secrets are `VaultSecret`, its key copies `VaultKeyWrap`.
+
+- **Members:** made with two links: the workspace's owners (`manage`) and `attached`, everyone with full access to an agent the vault serves (`use`). Direct members as for an agent vault.
+- **What it serves:** `VaultAttachment` rows, one agent or every agent in a workspace and below (the vault's own tree only). A moved agent keeps an attachment only inside that tree (`move._vault_attachments`).
+- **Who may hold its key:** a member with a vault key; a machine whose person is a member and which serves an attached agent. Reconcile (every minute, and on each change) drops any other copy.
+- **Reading:** credential resolve returns `vaults`, the workspace vaults layered under the agent's own values (root workspace first, then vaults attached to the agent; a later layer wins, and the agent's own values win over all), each with this device's copy of its key, or `wrap: null` when it may not open it. The client decrypts and merges.
+- **Routes:** `GET|POST /api/workspaces/{slug}/vaults` (making one needs `own`), `/api/vaults/{id}` with `members`, `attachments` and `secrets/{name}`, and `/api/vaults/{id}/zk` (`enable`, `values`, `wraps`) in the agent vault's shapes. The keeper grants them through `…/vault-keeper/vaults/{id}/wraps`. A machine is vouched for there by its approver's endorsement for an attached agent.

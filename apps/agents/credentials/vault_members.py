@@ -24,11 +24,21 @@ import logging
 from dataclasses import dataclass, field
 
 from django.db import transaction
+from django.db.models import Q
 
 from apps.workspaces import services as wsvc
 
 from .. import access
-from ..models import Agent, AgentLicense, AgentVaultEndorsement, AgentVaultWrap, Vault, VaultLink, VaultMember
+from ..models import (
+    Agent,
+    AgentLicense,
+    AgentVaultEndorsement,
+    AgentVaultWrap,
+    Vault,
+    VaultAttachment,
+    VaultLink,
+    VaultMember,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +96,30 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
         for lic in AgentLicense.objects.filter(agent=link.agent, status=AgentLicense.ACTIVE).select_related("user"):
             _add(out, lic.user, link.role, f"license:{link.agent.slug}")
         return
+    if link.kind == VaultLink.ATTACHED:
+        # Everyone with full access to an agent this workspace vault serves, as the
+        # link's role: an agent's admins run that agent, they do not manage the
+        # workspace's vault (its owners do, through their own link).
+        for agent in attached_agents(link.vault):
+            for row in access.roster(agent):
+                if row["access"] == access.FULL:
+                    _add(out, _UserRef(row["user_id"], row["email"]), link.role, f"attached:{agent.slug}")
+        return
     wanted = {"owner"} if link.kind == VaultLink.WORKSPACE_OWNERS else {"owner", "admin"}
     source = f"{link.kind}:{link.workspace.slug}"
     for m in wsvc.effective_memberships(link.workspace):
         if m.role in wanted:
             _add(out, m.user, link.role, source)
+
+
+def attached_agents(vault: Vault) -> list[Agent]:
+    """Every agent a WORKSPACE vault serves: its direct attachments, and every agent in
+    an attached workspace or below it."""
+    rows = list(VaultAttachment.objects.filter(vault=vault))
+    ids = {r.agent_id for r in rows if r.agent_id}
+    roots = {r.workspace_id for r in rows if r.workspace_id}
+    tree = roots | wsvc.descendant_slugs(roots) if roots else set()
+    return list(Agent.objects.filter(Q(pk__in=ids) | Q(workspace_id__in=tree)).select_related("workspace"))
 
 
 @dataclass(frozen=True)
@@ -108,7 +137,7 @@ def members(vault: Vault | None) -> dict[int, Membership]:
         return out
     for row in VaultMember.objects.filter(vault=vault).select_related("user"):
         _add(out, row.user, row.role, "direct")
-    for link in VaultLink.objects.filter(vault=vault).select_related("agent__workspace", "workspace"):
+    for link in VaultLink.objects.filter(vault=vault).select_related("agent__workspace", "workspace", "vault"):
         _linked(link, out)
     return out
 

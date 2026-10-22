@@ -777,7 +777,9 @@ class Vault(models.Model):
     a manager can add people directly, link more, or drop the link.
 
     An AGENT vault's secrets and wraps are still stored on the agent
-    (`AgentCredential`, `AgentVaultWrap`); this row holds who may open them."""
+    (`AgentCredential`, `AgentVaultWrap`); this row holds who may open them. A
+    WORKSPACE vault (any number per workspace) keeps its own: `VaultSecret`,
+    `VaultKeyWrap`, and the agents it serves are its `VaultAttachment` rows."""
 
     AGENT, WORKSPACE = "agent", "workspace"
     KIND_CHOICES = [(AGENT, "Agent vault"), (WORKSPACE, "Workspace vault")]
@@ -787,6 +789,11 @@ class Vault(models.Model):
     kind = models.CharField(max_length=10, choices=KIND_CHOICES)
     name = models.CharField(max_length=120)
     agent = models.OneToOneField(Agent, on_delete=models.CASCADE, null=True, blank=True, related_name="vault")
+    #: A WORKSPACE vault's own key version (always zero-knowledge; 0 = no key yet). An
+    #: agent vault's key version stays on the agent (`Agent.zk_kv`).
+    kv = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -801,6 +808,90 @@ class Vault(models.Model):
 
     def __str__(self) -> str:
         return f"{self.kind}:{self.name}"
+
+
+class VaultSecret(models.Model):
+    """One value in a WORKSPACE vault: `zk1:` ciphertext under the vault's key, never
+    anything canopy-web can read (formats: docs/vault/zk-v1/zk_v1_reference.py, bound to
+    `credentials.workspace_vaults.binding_id`)."""
+
+    vault = models.ForeignKey("Vault", on_delete=models.CASCADE, related_name="secrets")
+    name = models.CharField(max_length=200)
+    value_zk = models.TextField()
+    kv = models.PositiveIntegerField()
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["vault_id", "name"]
+        constraints = [models.UniqueConstraint(fields=["vault", "name"], name="one_vault_secret_per_name")]
+
+    def __str__(self) -> str:
+        return f"{self.vault_id}:{self.name}"
+
+
+class VaultKeyWrap(models.Model):
+    """A WORKSPACE vault's key at version `kv`, wrapped to one principal — the
+    workspace-vault twin of `AgentVaultWrap` (same kinds, same one-per-target rule)."""
+
+    DEVICE, MEMBER, RECOVERY = "device", "member", "recovery"
+
+    vault = models.ForeignKey("Vault", on_delete=models.CASCADE, related_name="wraps")
+    kv = models.PositiveIntegerField()
+    kind = models.CharField(max_length=10)
+    device_key = models.ForeignKey("harness.RunnerDeviceKey", on_delete=models.CASCADE, null=True, blank=True,
+                                   related_name="workspace_vault_wraps")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True,
+                             related_name="+")
+    wrap = models.JSONField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["vault_id", "kv", "kind", "created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["vault", "kv", "device_key"], name="one_device_vault_wrap_per_kv",
+                                    condition=models.Q(kind="device")),
+            models.UniqueConstraint(fields=["vault", "kv", "user"], name="one_member_vault_wrap_per_kv",
+                                    condition=models.Q(kind="member")),
+            models.UniqueConstraint(fields=["vault", "kv"], name="one_recovery_vault_wrap_per_kv",
+                                    condition=models.Q(kind="recovery")),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.vault_id}:kv{self.kv}:{self.kind}"
+
+
+class VaultAttachment(models.Model):
+    """Which agents a WORKSPACE vault serves: one agent, or every agent in a
+    workspace and below it (`workspace`, a subtree). A turn of an agent reads every
+    vault attached to it, layered under its own (`workspace_vaults.layered_for`)."""
+
+    vault = models.ForeignKey("Vault", on_delete=models.CASCADE, related_name="attachments")
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True,
+                              related_name="vault_attachments")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, null=True, blank=True,
+                                  related_name="vault_attachments")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["vault_id", "created_at"]
+        constraints = [
+            models.CheckConstraint(condition=(models.Q(agent__isnull=False, workspace__isnull=True)
+                                              | models.Q(agent__isnull=True, workspace__isnull=False)),
+                                   name="vault_attachment_one_target"),
+            models.UniqueConstraint(fields=["vault", "agent"], name="one_vault_attachment_per_agent",
+                                    condition=models.Q(agent__isnull=False)),
+            models.UniqueConstraint(fields=["vault", "workspace"], name="one_vault_attachment_per_subtree",
+                                    condition=models.Q(workspace__isnull=False)),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.vault_id} -> {self.agent_id or self.workspace_id}"
 
 
 class VaultMember(models.Model):
@@ -835,8 +926,10 @@ class VaultLink(models.Model):
       owners) of `workspace`, inherited down the tree as those roles are."""
 
     AGENT, WORKSPACE_OWNERS, WORKSPACE_ADMINS = "agent", "workspace_owners", "workspace_admins"
+    #: Everyone with full access to any agent this (workspace) vault is attached to.
+    ATTACHED = "attached"
     KIND_CHOICES = [(AGENT, "Full access to an agent"), (WORKSPACE_OWNERS, "Owners of a workspace"),
-                    (WORKSPACE_ADMINS, "Admins of a workspace")]
+                    (WORKSPACE_ADMINS, "Admins of a workspace"), (ATTACHED, "Full access to an attached agent")]
 
     vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="links")
     kind = models.CharField(max_length=20, choices=KIND_CHOICES)
@@ -852,13 +945,16 @@ class VaultLink(models.Model):
         ordering = ["vault_id", "created_at"]
         constraints = [
             models.CheckConstraint(condition=(models.Q(kind="agent", agent__isnull=False, workspace__isnull=True)
-                                              | (~models.Q(kind="agent") & models.Q(agent__isnull=True,
-                                                                                    workspace__isnull=False))),
+                                              | models.Q(kind="attached", agent__isnull=True, workspace__isnull=True)
+                                              | (~models.Q(kind__in=["agent", "attached"])
+                                                 & models.Q(agent__isnull=True, workspace__isnull=False))),
                                    name="vault_link_target_matches_kind"),
             models.UniqueConstraint(fields=["vault", "kind", "agent"], name="one_agent_link_per_vault",
                                     condition=models.Q(kind="agent")),
             models.UniqueConstraint(fields=["vault", "kind", "workspace"], name="one_workspace_link_per_vault",
-                                    condition=~models.Q(kind="agent")),
+                                    condition=~models.Q(kind__in=["agent", "attached"])),
+            models.UniqueConstraint(fields=["vault"], name="one_attached_link_per_vault",
+                                    condition=models.Q(kind="attached")),
         ]
 
     def __str__(self) -> str:
