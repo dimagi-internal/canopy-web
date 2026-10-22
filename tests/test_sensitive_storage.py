@@ -86,7 +86,7 @@ def test_no_transcript_is_kept(w):
 
 def test_the_runner_still_gets_success_for_a_transcript_batch(w):
     t = _turn(w["hot"], claimed_by=w["runner"], status=Turn.RUNNING)
-    with mock.patch("apps.harness.api._reporting_turn_or_404", return_value=t):
+    with mock.patch("apps.harness.api.reporting_turn_or_404", return_value=t):
         r = w["c"].post(f"/api/harness/turns/{t.pk}/transcript",
                         data={"lines": ['{"x":"' + ROW + '"}']}, content_type="application/json")
     assert r.status_code == 200, r.content

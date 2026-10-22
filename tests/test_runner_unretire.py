@@ -1,6 +1,6 @@
 """Retirement is reversible.
 
-It used to be a one-way door: `_runner_or_404` 404s a retired runner, so its daemon's
+It used to be a one-way door: `runner_or_404` 404s a retired runner, so its daemon's
 heartbeat/claim/report calls all fail forever, and `pair_runner` unconditionally
 CREATES a row — so the only recovery minted a NEW runner id and orphaned every
 RunnerBinding, assignment and session pointing at the old one. Retiring a laptop you

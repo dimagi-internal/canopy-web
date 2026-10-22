@@ -17,7 +17,7 @@ from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read, agent_for_work
 from apps.harness import provenance
-from apps.harness.api import visible_turns_qs
+from apps.harness.api_turns import visible_turns_qs
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 

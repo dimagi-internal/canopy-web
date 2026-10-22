@@ -14,7 +14,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.harness.api import visible_turns_qs
+from apps.harness.api_turns import visible_turns_qs
 from apps.huddles import services as huddles
 from apps.realtime.groups import turn_workspace_slug
 from apps.workspaces import services as wsvc

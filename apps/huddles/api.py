@@ -7,7 +7,7 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
-from apps.harness.api import visible_turns_qs
+from apps.harness.api_turns import visible_turns_qs
 from apps.realtime.groups import turn_workspace_slug
 from apps.workspaces import services as wsvc
 

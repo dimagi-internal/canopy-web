@@ -1,7 +1,7 @@
 """Task 2 (run-convergence, canopy side) — HTTP routes for the raw-transcript
 store: POST/GET /api/harness/turns/{turn_id}/transcript.
 
-Reuses `_turn_or_404` for tenancy exactly as every other turn route does — a
+Reuses `turn_or_404` for tenancy exactly as every other turn route does — a
 transcript is strictly more sensitive than a turn's status, so it gets no
 bespoke gate of its own (that's how the session-turn tenancy leak happened).
 
@@ -165,7 +165,7 @@ def test_stranger_gets_404_on_a_session_turn_transcript(owner, stranger_client, 
     """Regression twin of test_harness_session_turn_tenancy.py: a session turn
     derives tenancy from chat_session.workspace, not from agent — the exact
     fall-through the earlier leak exploited. Both transcript routes must gate
-    through the same _turn_or_404 the session-turn fix lives in."""
+    through the same turn_or_404 the session-turn fix lives in."""
     session = Session.objects.create(workspace=workspace, created_by=owner, title="t")
     turn = Turn.objects.create(chat_session=session, prompt="hi")
 
@@ -188,7 +188,7 @@ def test_stranger_gets_404_on_a_session_turn_transcript(owner, stranger_client, 
 
 
 def test_tenant_prefixed_form_404s_for_a_member_of_a_different_workspace(owner, agent):
-    """The two _turn_or_404 branches that only fire when request.workspace_slug
+    """The two turn_or_404 branches that only fire when request.workspace_slug
     is pinned (via /api/w/{ws}/...) were previously unexercised by any
     transcript test. A member of workspace B probing an agent-turn that lives
     in workspace A (`agent`/`workspace` fixtures) via B's own tenant-prefixed

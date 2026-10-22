@@ -1,6 +1,6 @@
 """The runner protocol's frames, read once for both channels.
 
-A runner speaks to canopy over REST (`apps/harness/api.py`) and over its
+A runner speaks to canopy over REST (`apps/harness/api_*.py`) and over its
 WebSocket (`apps/realtime/consumers.py::RunnerConsumer`). Both channels read a
 heartbeat and a turn finish through these functions, with the same Pydantic
 schemas (`HeartbeatIn`, `TurnFinishIn`), so a field the REST route honours

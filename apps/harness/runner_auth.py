@@ -75,7 +75,7 @@ _PRIVATE_RULES: tuple[tuple[frozenset[str], str], ...] = (
 #: ALL a COMPUTER's token reaches (`Runner.COMPUTER`: a person's computer used in
 #: plain Claude Code, no runner app). Not the runner protocol — it has no program to
 #: heartbeat or claim — only what its owner's sessions there do: open, renew and
-#: report their local turns (`api._reporting_turn_or_404` holds it to local turns
+#: report their local turns (`api.reporting_turn_or_404` holds it to local turns
 #: opened on this computer), and read an agent's secrets under the owner's license
 #: during one (`apps/agents/credential_resolve.credential_access` never makes it a `runner`).
 _COMPUTER_RULES: tuple[tuple[frozenset[str], str], ...] = _PRIVATE_RULES + (

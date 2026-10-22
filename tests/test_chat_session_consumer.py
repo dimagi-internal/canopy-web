@@ -967,7 +967,7 @@ async def test_a_ledger_sourced_send_reaches_the_peer_as_chat_user_message():
     persists the sender's Message directly and, before this fix, published
     nothing beyond `draft.committed` to the SENDER'S OWN tabs. B never saw A's
     line without a reload. A transcript-sourced session gets this for free
-    (`apps.harness.api.post_session_stream` fans out every "user" ledger row
+    (`apps.harness.api_session_sync.post_session_stream` fans out every "user" ledger row
     live); `services._publish_user_message` + `consumers.chat_user_message` is
     the ledger-path equivalent."""
     owner, teammate, session = await database_sync_to_async(_seed)()

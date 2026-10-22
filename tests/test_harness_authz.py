@@ -79,7 +79,7 @@ def test_stranger_cannot_read_someone_elses_turn(owner_client, stranger_client, 
     # Security review 2026-07-26, F4: status-code-only assertions here are
     # exactly what let the agent-turn branch leak the agent's slug via
     # _agent_or_404's own 404 message (copied into detail by the shared
-    # HttpError handler) go undetected. _turn_or_404 now catches
+    # HttpError handler) go undetected. turn_or_404 now catches
     # and re-raises a uniform message — pin the body, not just the code.
     body = resp.json()
     assert body["title"] == "Not Found"
@@ -137,7 +137,7 @@ def test_stranger_cannot_claim_victim_turn_via_own_untenanted_runner(
     owner_client, stranger_client, agent
 ):
     """The actual exploit (Critical): capabilities is caller-supplied and never
-    validated at pairing. A stranger pairs their OWN runner (so _runner_or_404
+    validated at pairing. A stranger pairs their OWN runner (so runner_or_404
     admits them forever — they own it), declares capabilities={"agents": ["echo"]}
     even though 'echo' belongs to the owner's workspace, heartbeats it online (the
     only precondition claim_next_turn enforces), then claims. This must return 204
@@ -386,13 +386,13 @@ def test_pair_runner_with_no_workspace_homes_to_the_callers_sole_membership(owne
     assert resp.json()["workspace"] == workspace.slug
 
 
-# --- list_runners / _runner_or_404 agreement under a tenant-pinned request ----
+# --- list_runners / runner_or_404 agreement under a tenant-pinned request ----
 #
 # The two must be built from the same predicate (_runner_visibility_q) so a
 # runner that is listed is always one you can act on. Before the fix, a
 # null-workspace runner was listed under a tenant-pinned request (list OR'd in
 # workspace_id__isnull=True unconditionally) but 404'd on every action
-# (_runner_or_404's first check treated null as wrong-tenant once a tenant was
+# (runner_or_404's first check treated null as wrong-tenant once a tenant was
 # pinned) — the supervisor would render a runner every action then 404'd on.
 
 

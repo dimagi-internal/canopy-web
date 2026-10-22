@@ -116,7 +116,7 @@ def test_a_capabilities_write_does_not_drop_the_reported_projects():
 
 
 def test_a_non_owner_cannot_touch_another_users_runner():
-    """404 not 403 — _runner_or_404 must not leak that the runner exists."""
+    """404 not 403 — runner_or_404 must not leak that the runner exists."""
     jj = _user("jj")
     ws = _ws("dimagi", jj)
     runner = _runner(jj, ws)

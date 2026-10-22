@@ -415,7 +415,7 @@ def test_retire_runner_removes_it_from_the_list(client, agent):
 
 
 def test_retiring_an_already_retired_runner_404s(client, agent):
-    """Idempotent by construction: _runner_or_404 excludes retired runners at
+    """Idempotent by construction: runner_or_404 excludes retired runners at
     lookup, so a second retire is a 404, not a no-op 204 — the existing
     lookup behaviour, not a special case added for this route."""
     rid = _pair(client)
