@@ -1,4 +1,4 @@
-import { useCallback, useState, type JSX } from 'react'
+import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 
@@ -63,16 +63,31 @@ export function AlertList({
   const [foldOpen, setFoldOpen] = useState(false)
   const [pending, setPending] = useState<Set<number>>(new Set())
   const [actError, setActError] = useState<string | null>(null)
+  // An action's error survives the refresh that action itself triggers, and
+  // clears on the next successful read after that.
+  const keepError = useRef(0)
+  const failAct = (message: string) => {
+    keepError.current = 1
+    setActError(message)
+  }
 
   const fetchLists = useCallback(async (): Promise<Lists> => {
     const [open, dismissed] = await Promise.all([
       loadAlerts(scope, 'open'),
       showDismissed ? loadAlerts(scope, 'dismissed') : Promise.resolve([] as Alert[]),
     ])
+    if (keepError.current > 0) keepError.current -= 1
+    else setActError(null)
     return { open, dismissed }
   }, [scope, showDismissed])
 
   const { data, error, refresh, setData } = usePolled(fetchLists, { ms: 30_000, deps: [fetchLists] })
+
+  // A severity filter whose last alert went away falls back to All, rather than
+  // leaving an empty list behind a chip that is no longer there.
+  useEffect(() => {
+    if (filter && !(data?.open ?? []).some((a) => a.severity === filter)) setFilter(null)
+  }, [data, filter])
 
   const busy = (id: number, on: boolean) =>
     setPending((prev) => {
@@ -90,7 +105,7 @@ export function AlertList({
     try {
       await actOnAlert(alert.id, action.id)
     } catch (e) {
-      setActError(
+      failAct(
         e instanceof ApiError && e.code === 'action-not-offered'
           ? `“${action.label}” is no longer yours to do on that alert.`
           : e instanceof Error
@@ -109,7 +124,7 @@ export function AlertList({
     try {
       await undismissAlert(alert.id)
     } catch (e) {
-      setActError(e instanceof Error ? e.message : 'Could not put it back')
+      failAct(e instanceof Error ? e.message : 'Could not put it back')
     } finally {
       busy(alert.id, false)
       void refresh()
@@ -161,7 +176,7 @@ export function AlertList({
       {showDismissed && dismissed.length > 0 && (
         <div>
           <button type="button" onClick={() => setFoldOpen((v) => !v)} aria-expanded={foldOpen}
-            className="text-[11px] text-muted-foreground hover:text-foreground">
+            className="min-h-6 text-[11px] text-muted-foreground hover:text-foreground">
             <span aria-hidden className="mr-1 inline-block w-2">{foldOpen ? '▾' : '▸'}</span>
             Dismissed ({dismissed.length})
           </button>
@@ -172,13 +187,15 @@ export function AlertList({
                   <Dot severity={a.severity} />
                   <SourceChip kind={a.kind} />
                   <span className="min-w-0 flex-1 truncate text-muted-foreground">{a.title}</span>
-                  <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline"
+                  {/* Who and when stay visible on a phone; the title gives way. */}
+                  <span className="max-w-[45%] shrink-0 truncate text-[11px] text-muted-foreground"
                     title={a.closed_at ? new Date(a.closed_at).toLocaleString() : undefined}>
                     {a.closed_by_email || 'someone'}
                     {a.closed_at ? ` · ${relativeAge(a.closed_at, new Date(), { seconds: false })}` : ''}
                   </span>
                   <button type="button" disabled={pending.has(a.id)} onClick={() => void undo(a)}
-                    className="shrink-0 text-[11px] font-medium text-primary hover:underline disabled:opacity-50">
+                    aria-label={`Undo dismiss: ${a.title}`}
+                    className="min-h-6 min-w-6 shrink-0 px-1 text-[11px] font-medium text-primary hover:underline disabled:opacity-50">
                     Undo
                   </button>
                 </div>
@@ -223,12 +240,14 @@ function AlertRow({ alert, busy, onAct }: { alert: Alert; busy: boolean; onAct: 
             </>
           )
           const cls =
-            'inline-flex items-center gap-1 rounded border border-border px-1.5 py-px text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50'
+            'inline-flex min-h-6 items-center gap-1 rounded border border-border px-1.5 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50'
           if (a.href) {
+            // Following a link is logged (fire-and-forget); navigation never waits on it.
+            const follow = () => void actOnAlert(alert.id, a.id).catch(() => {})
             return /^https?:\/\//.test(a.href) ? (
-              <a key={a.id} href={a.href} target="_blank" rel="noreferrer" className={cls}>{inner}</a>
+              <a key={a.id} href={a.href} target="_blank" rel="noreferrer" onClick={follow} className={cls}>{inner}</a>
             ) : (
-              <Link key={a.id} to={a.href} className={cls}>{inner}</Link>
+              <Link key={a.id} to={a.href} onClick={follow} className={cls}>{inner}</Link>
             )
           }
           return (
@@ -242,7 +261,7 @@ function AlertRow({ alert, busy, onAct }: { alert: Alert; busy: boolean; onAct: 
             onClick={() => onAct(dismiss)}
             aria-label="Dismiss for everyone"
             title="Dismiss for everyone. It is logged, and comes back only if something new happens."
-            className="rounded px-1 text-[14px] leading-none text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            className="inline-flex min-h-6 min-w-6 items-center justify-center rounded text-[14px] leading-none text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
           >
             ×
           </button>
@@ -277,7 +296,7 @@ function CountChip({ label, n, dot, on, onClick }: {
       onClick={onClick}
       aria-pressed={on}
       className={clsx(
-        'inline-flex items-center gap-1 rounded-full border px-2 py-px',
+        'inline-flex min-h-6 items-center gap-1 rounded-full border px-2',
         on ? 'border-primary/30 bg-primary/10 font-medium text-primary' : 'border-border text-muted-foreground hover:text-foreground',
       )}
     >

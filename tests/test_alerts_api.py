@@ -115,6 +115,24 @@ def test_scope_filter_and_ordering(world):
     assert _ids(world.ca.get("/api/me/alerts/?scope=agent:eva")) == [blocking_old.pk, act.pk, setup.pk]
 
 
+def test_workspace_scope_covers_the_subtree(world):
+    # A parent's Topology shows its divisions' problems; a sibling's does not.
+    child = Workspace.objects.create(slug="org-a-child", display_name="child", created_by=world.ann, parent=world.a)
+    grandchild = Workspace.objects.create(slug="org-a-gc", display_name="gc", created_by=world.ann, parent=child)
+    sibling = Workspace.objects.create(slug="org-a-sib", display_name="sib", created_by=world.ann, parent=world.a)
+    for ws in (child, grandchild, sibling):
+        WorkspaceMembership.objects.create(user=world.ann, workspace=ws, role=WorkspaceMembership.OWNER)
+    deep = _alert(grandchild, "deep")
+    near = _alert(child, "near")
+    world.source.offered = {world.ann.pk: [FIX]}
+    assert set(_ids(world.ca.get("/api/me/alerts/?scope=workspace:org-a"))) == {deep.pk, near.pk}
+    assert set(_ids(world.ca.get("/api/me/alerts/?scope=workspace:org-a-child"))) == {deep.pk, near.pk}
+    assert _ids(world.ca.get("/api/me/alerts/?scope=workspace:org-a-gc")) == [deep.pk]
+    assert _ids(world.ca.get("/api/me/alerts/?scope=workspace:org-a-sib")) == []
+    # other scope kinds stay exact
+    assert _ids(world.ca.get("/api/me/alerts/?scope=agent:org-a")) == []
+
+
 def test_act_dismiss_clears_for_everyone(world):
     al = _alert(world.a)
     world.source.offered = {world.ann.pk: [FIX, alerts.DISMISS], world.bob.pk: [alerts.DISMISS]}
@@ -152,10 +170,14 @@ def test_act_runs_handler_and_closes(world):
 def test_act_not_offered_409(world):
     al = _alert(world.a)
     world.source.offered = {world.ann.pk: [FIX, LINK]}
-    for action in ("nope", "open"):  # unknown, and a link (followed in the browser, not run)
-        resp = world.ca.post(f"/api/me/alerts/{al.pk}/act", {"action": action}, content_type="application/json")
-        assert resp.status_code == 409, resp.content
-        assert resp.json()["code"] == "action-not-offered"
+    resp = world.ca.post(f"/api/me/alerts/{al.pk}/act", {"action": "nope"}, content_type="application/json")
+    assert resp.status_code == 409, resp.content
+    assert resp.json()["code"] == "action-not-offered"
+    # a link is followed in the browser; acting on it only records that, and the alert stays open
+    resp = world.ca.post(f"/api/me/alerts/{al.pk}/act", {"action": "open"}, content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["status"] == "open" and world.source.performed == []
+    assert al.events.filter(kind=AlertEvent.ACTED, action_id="open").exists()
     # a viewer offered nothing cannot even see it
     resp = world.cb.post(f"/api/me/alerts/{al.pk}/act", {"action": "fix"}, content_type="application/json")
     assert resp.status_code == 404

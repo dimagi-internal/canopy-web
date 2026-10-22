@@ -108,14 +108,16 @@ describe('AlertList', () => {
       alert({ kind: 'agent_cant_run', severity: 'setup', title: 'muse has no runner it can use',
         actions: [{ id: 'route', label: 'Set up routing', closes: false, href: '/w/dimagi/agents/muse/settings' }] }),
     ])
+    actOnAlert.mockResolvedValue(alert({}))
     show(<AlertList />)
 
     const link = await screen.findByRole('link', { name: /Set up routing/ })
     expect(link.getAttribute('href')).toBe('/w/dimagi/agents/muse/settings')
     expect(within(link).getByText('stays open')).toBeTruthy()
     expect(screen.getByText('Agent routing')).toBeTruthy()
+    // Following it is logged (fire-and-forget), and the row stays: a link runs nothing.
     fireEvent.click(link)
-    expect(actOnAlert).not.toHaveBeenCalled()
+    expect(actOnAlert).toHaveBeenCalledWith(1, 'route')
   })
 
   it('hideEmpty renders nothing for no alerts', async () => {
@@ -156,7 +158,45 @@ describe('AlertList', () => {
     fireEvent.click(fold)
     expect(screen.getByText('Old news')).toBeTruthy()
     expect(screen.getByText(/ada@dimagi-ai\.com/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Undo dismiss: Old news' }))
     expect(undismissAlert).toHaveBeenCalledWith(9)
+  })
+
+  it('falls back to All when the filtered severity runs out', async () => {
+    const both = [alert({}), alert({ id: 2, severity: 'setup', kind: 'device_key_pending', title: 'A device key waits' })]
+    loadAlerts.mockResolvedValue(both)
+    actOnAlert.mockResolvedValue(alert({ id: 2, status: 'dismissed' }))
+    show(<AlertList showCounts />)
+
+    await screen.findAllByTestId('alert-row')
+    fireEvent.click(screen.getByRole('button', { name: /Setup\s*1/ }))
+    loadAlerts.mockResolvedValue([both[0]])
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss for everyone' }))
+    await waitFor(() => expect(screen.queryByText('A device key waits')).toBeNull())
+    // Not an empty list behind a vanished chip: the blocking alert shows again.
+    await waitFor(() => expect(screen.getAllByTestId('alert-row')).toHaveLength(1))
+    expect(screen.getByText('The "hal" token on cloud-ec2-2 is signed out')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Setup/ })).toBeNull()
+  })
+
+  it('keeps an action error through its own refresh and clears it on the next good read', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const { ApiError } = await import('@/api/problem')
+      loadAlerts.mockResolvedValue([alert({})])
+      actOnAlert.mockRejectedValue(new ApiError(409, 'gone', { type: 'x/action-not-offered' }))
+      show(<AlertList />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /Ask the owner/ }))
+      expect(await screen.findByRole('alert')).toBeTruthy()
+      await waitFor(() => expect(loadAlerts).toHaveBeenCalledTimes(2))
+      expect(screen.getByRole('alert').textContent).toContain('no longer yours')
+      // The next poll reads fine, and the error goes.
+      await vi.advanceTimersByTimeAsync(31_000)
+      await waitFor(() => expect(loadAlerts).toHaveBeenCalledTimes(3))
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

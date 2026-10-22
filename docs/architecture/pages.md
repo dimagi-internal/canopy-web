@@ -221,7 +221,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     order and arrows to every agent it can send work to; select a runner for
     who stops if it goes dark. With nothing selected, the side panel shows the
     workspace's alerts ("Alerts here", `workspace:<slug>`: an agent with no
-    runner it can use, or whose routed runners lack its repo, is an alert —
+    runner it can use, or none of whose routed runners declares its repo, is an alert —
     [`alerts.md`](alerts.md)) above two plain facts: agents held to some
     capabilities by another, and runners serving nobody. The side panel mounts the supervisor's
     `RunnerDetail` and the agent's `AgentRouting` — this is where runners are

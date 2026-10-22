@@ -325,10 +325,25 @@ def test_dismiss_action_is_handled_by_the_framework(source, ws, owner):
     assert _kinds(a) == [AlertEvent.RAISED, AlertEvent.ACTED, AlertEvent.DISMISSED]
 
 
-def test_link_action_is_not_acted_server_side(source, ws, owner):
+def test_link_action_is_logged_but_not_run(source, ws, owner):
+    # Following a link is audited like any action, but the server runs nothing:
+    # no perform, no resolve — even for a link that "closes" (the page it opens
+    # does the closing, and the source sees it on its next reconcile).
     alerts.apply_reconcile(KIND, [_raise(ws)], timezone.now())
     a = Alert.objects.get()
     source.offered[owner.pk] = [alerts.Action("open", "Open it", closes=True, href="/w/acme/x")]
+    out = alerts.act(a, owner, "open")
+    assert out.status == Alert.OPEN
+    assert source.performed == []
+    assert _kinds(a) == [AlertEvent.RAISED, AlertEvent.ACTED]
+    ev = a.events.get(kind=AlertEvent.ACTED)
+    assert ev.actor == owner and ev.action_id == "open"
+
+
+def test_link_action_not_offered_is_refused(source, ws, owner):
+    alerts.apply_reconcile(KIND, [_raise(ws)], timezone.now())
+    a = Alert.objects.get()
+    source.offered[owner.pk] = []
     with pytest.raises(alerts.ActionNotOffered):
         alerts.act(a, owner, "open")
     assert _kinds(a) == [AlertEvent.RAISED]

@@ -129,8 +129,15 @@ def list_alerts(request: HttpRequest, scope: str | None = None,
     """Open alerts you are offered an action on, in the workspaces you are in,
     most severe first (`blocking`, `action`, `setup`) then newest. `scope` keeps
     those whose `scopes` include it. `status=dismissed` lists what was dismissed
-    in the last 7 days that you could dismiss (so you can `undismiss` it)."""
+    in the last 7 days that you could dismiss (so you can `undismiss` it). A
+    `workspace:<slug>` scope also keeps alerts in any workspace below that one;
+    other scopes match exactly."""
     user = request.user
+    # A parent's screen (Topology) shows its divisions' problems too.
+    subtree: set[str] | None = None
+    if scope is not None and scope.startswith("workspace:"):
+        root = scope.removeprefix("workspace:")
+        subtree = {root} | wsvc.descendant_map({root}).get(root, set())
 
     def read() -> list[AlertOut]:
         slugs = wsvc.request_workspace_slugs(request)
@@ -140,7 +147,7 @@ def list_alerts(request: HttpRequest, scope: str | None = None,
         roots = wsvc.tree_roots({a.workspace_id for a in qs}) if slugs else {}
         out = []
         for a in qs:
-            if scope is not None and scope not in a.scopes:
+            if scope is not None and scope not in a.scopes and not (subtree and a.workspace_id in subtree):
                 continue
             if status == Alert.OPEN:
                 actions = _offered(a, user)
@@ -161,8 +168,8 @@ def list_alerts(request: HttpRequest, scope: str | None = None,
 @router.post("/{id}/act", response=AlertOut, summary="Do one of an alert's actions")
 @gate("self", kind="action")  # runs an action the alert's source offers THIS caller; re-checked on every call
 def act_on_alert(request: HttpRequest, id: int, payload: AlertActIn) -> AlertOut:
-    """Runs `action` if it is still offered to you (a link action is followed in
-    the browser, never run here). 404 if you cannot see the alert; 409
+    """Runs `action` if it is still offered to you. A link action is followed in
+    the browser; calling this for one only records that you followed it. 404 if you cannot see the alert; 409
     `action-not-offered` if the action is not (or no longer) yours to run."""
     alert = _visible(request, id)
     try:

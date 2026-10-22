@@ -317,23 +317,24 @@ def act(alert: Alert, user, action_id: str) -> Alert:
     email + push its people (the alert stays open); a handler → the source's
     `perform`, then, if the action closes, resolve (`reason=action`). A handler
     that raises leaves nothing behind — perform and its log share one
-    transaction. Link actions are never run here (`ActionNotOffered`).
+    transaction. A link action (`href`) is followed in the browser: here it is
+    only logged (`acted`) — no perform, no resolve, whatever `closes` says.
     """
     with transaction.atomic():
         row = _locked(alert)
         action = next((a for a in visible_actions(row, user) if a.id == action_id), None)
         if action is None:
             raise ActionNotOffered(f"{action_id!r} is not offered on alert {row.pk}")
-        if action.href:
-            raise ActionNotOffered(f"{action_id!r} is a link; follow {action.href}")
         _log(row, AlertEvent.ACTED, actor=user, action_id=action_id)
-        if action.id == DISMISS.id:
+        if action.href:
+            pass  # the browser follows the link; the audit row is all that happens here
+        elif action.id == DISMISS.id:
             dismiss(row, user)
         elif not action.notify:
             source_for(row.kind).perform(row, user, action_id)
             if action.closes:
                 resolve(row, reason=Alert.REASON_ACTION, by=user)
-    if action.notify:
+    if action.notify and not action.href:
         # Outside the transaction: mail and push are slow and must not hold the
         # row lock. `notify_users` logs its own `notified` row.
         notify_users(row, list(get_user_model().objects.filter(pk__in=action.notify)), by=user)

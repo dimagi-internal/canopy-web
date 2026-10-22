@@ -42,8 +42,10 @@ user)` (what this viewer may do — no actions, no alert) and `perform`.
 | `agent_cant_run` | `apps/harness/alerts_agent_routing.py` (configuration only: no routes, or no routed runner declares the repo — never liveness) | setup | Agent routing |
 
 Actions: a source returns `Action(id, label, closes, href)`. An `href` action is
-a link followed in the browser; others run through `POST
-/api/me/alerts/{id}/act`. `dismiss` is the framework's shared dismiss
+a link followed in the browser; the page also posts it to `POST
+/api/me/alerts/{id}/act` (fire-and-forget), which only logs `acted` — every
+action is audited, but a link runs nothing server-side. Others run through that
+route. `dismiss` is the framework's shared dismiss
 (`alerts.DISMISS`), which a source opts into.
 
 ## Rules against a wasteland
@@ -88,7 +90,7 @@ severity dot (blocking red, action orange, setup grey) · source chip · title
   "Dismissed (n)" fold with who dismissed each and when, and Undo. Absent when
   nothing is open or dismissed.
 - **Topology** (`/w/:ws/settings/topology`): the side panel's "Alerts here"
-  (`workspace:<slug>`) replaces the old can't-run list, badge and "lacks its
+  (`workspace:<slug>`, which also matches every workspace below it) replaces the old can't-run list, badge and "lacks its
   repo" line; "held to some capabilities" and "runners serving nobody" stay as
   plain facts.
 - **Agent page** (`/w/:ws/agents/:slug`): `agent:<slug>` above every section,
