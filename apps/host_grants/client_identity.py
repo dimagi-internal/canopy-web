@@ -201,6 +201,14 @@ def client_assertion(audience: str) -> str:
     return consumer.client_assertion(_client_key(), client_id(), audience)
 
 
+def execution_statement(audience: str, facts: dict, *, access_token: str | None = None) -> str:
+    """`Canopy-Execution` for ONE request to a host (`apps/tokens/execution.py`):
+    signed by the client key the host already trusts, bound to canopy's DPoP key
+    and to the access token it rides with, 60s, single-use."""
+    return consumer.execution_statement(_client_key(), client_id(), audience, facts,
+                                        jkt=dpop_jkt(), access_token=access_token)
+
+
 def credentials() -> consumer.ClientCredentials:
     """canopy's client identity as the SDK's `ClientCredentials` — for the
     conformance checks a Connected site's "Test connection" runs. Raises

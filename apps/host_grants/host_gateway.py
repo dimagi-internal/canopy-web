@@ -54,6 +54,10 @@ from datetime import timedelta
 from canopy_sdk import consumer, contract
 from django.utils import timezone
 
+from apps.agents import declarations
+
+from . import execution
+
 #: A grant this close to expiry is treated as expired: the call would race it.
 EXPIRY_MARGIN = timedelta(seconds=10)
 #: Header the host logs as the acting agent. Informational: not trusted for authz.
@@ -87,6 +91,9 @@ class SiteContext:
     #: The Connected site's row, so an audit line names the site unambiguously
     #: (a site NAME is unique only per tenant).
     app_id: int | None = None
+    #: What `Canopy-Execution` states for this turn (`execution.facts_for`), signed
+    #: afresh on every request. None for a call no agent turn makes (a View, a probe).
+    execution: dict | None = field(repr=False, default=None)
 
     def allows(self, tool: str) -> bool:
         return tool_allowed(tool, ceiling=self.ceiling)
@@ -200,11 +207,21 @@ def resolve(turn_id: str) -> SiteContext:
         raise GatewayRefusal(
             "runner_requirements",
             f"this conversation must run on a {rr.describe(effective)} runner, and this one is not")
+    # A ZDR conversation's data reaches only a capability its author declared
+    # PHI-safe AT THE COMMIT THAT IS RUNNING (spec 2026-10-22-phi-agents-on-zdr-
+    # runners §6). Withdrawn, re-declared at another SHA, or never declared: no call.
+    if "zdr" in effective and not declarations.covers(agent, turn.capability, turn.agent_sha):
+        raise GatewayRefusal(
+            "undeclared",
+            f"{site} gives its real data only to a capability declared PHI-safe at the commit "
+            "that is running, and this turn's is not; ask the agent's owner to declare it")
     return context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
-                             ceiling=list(cap.get("ceiling") or []))
+                             ceiling=list(cap.get("ceiling") or []),
+                             execution=execution.facts_for(turn, agent, session, effective))
 
 
-def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str]) -> SiteContext:
+def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str],
+                      execution: dict | None = None) -> SiteContext:
     """A `SiteContext` for ONE stored grant — or a refusal if the grant cannot
     be used: expired, for a resource the site no longer names, or bound to a
     DPoP key canopy no longer holds. `resolve` reaches it for a visitor's turn;
@@ -230,7 +247,7 @@ def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: lis
         turn_id=turn_id, agent_slug=agent_slug, site=app.name,
         resource=app.host_mcp_resource, scope=grant.scope, expires_at=grant.expires_at,
         ceiling=list(ceiling),
-        _token=decrypt_secret(grant.access_token_enc), app_id=app.pk,
+        _token=decrypt_secret(grant.access_token_enc), app_id=app.pk, execution=execution,
     )
 
 
@@ -279,12 +296,20 @@ def _auth(ctx: SiteContext, mode: str = "dpop"):
             elif mode == "dpop":
                 request.headers[contract.DPOP_HEADER] = client_identity.dpop_proof(
                     request.method, htu, access_token=token)
+                _state(request)
             response = yield request
             nonce = response.headers.get(contract.DPOP_NONCE_HEADER)
             if mode == "dpop" and response.status_code == 401 and nonce:
                 request.headers[contract.DPOP_HEADER] = client_identity.dpop_proof(
                     request.method, htu, access_token=token, nonce=nonce)
+                _state(request)  # a fresh jti: the first was spent, or may have been
                 yield request
+
+    def _state(request):
+        # canopy vouches for THIS request: a fresh, single-use statement each time.
+        if ctx.execution is not None:
+            request.headers[contract.EXECUTION_HEADER] = client_identity.execution_statement(
+                ctx.resource, ctx.execution, access_token=token)
 
     return _DPoP()
 

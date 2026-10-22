@@ -9,6 +9,10 @@
   its scopes, and the agent and runner requirements it chose.
 * ``GrantHandler`` — the token endpoint's jwt-bearer grant (§2).
 * ``ResourceVerifier`` + ``DPoPGate`` — the MCP side (§3).
+* ``verify_execution`` → ``Execution`` — canopy's signed ``Canopy-Execution``
+  statement about the call (agent, commit, PHI-safe declaration, runner, its flags
+  in force, requirements), and ``Execution.phi_clearance`` — whether to release
+  real data.
 * ``ProbeIdentity`` + ``ProbeHandler`` — canopy's live probe: a real ID-JAG for
   one fixed, low-privilege principal, so the whole chain is exercised on a
   schedule without a visitor.
@@ -19,6 +23,7 @@ Framework-free. ``canopy_sdk.django`` wires all of it into a Django project.
 from .asgi import DPoPGate, delegated_principal, presented_dpop_jkt
 from .client_keys import ClientKeyResolver, MetadataError
 from .config import HostConfig, HostNotConfigured, ProbeIdentity
+from .execution import Execution, ExecutionRefused, verify_execution
 from .grant import GrantHandler, GrantRefused, GrantResult
 from .metadata import authorization_server_metadata, protected_resource_metadata
 from .pages import Page, PageRegistry, PageTokens
@@ -27,10 +32,11 @@ from .resource import DelegatedPrincipal, DPoPRefused, ResourceVerifier
 from .signing import MintFailed, arrival_payload, issue_id_jag, mint_contact_token, sign_visitor_assertion
 
 __all__ = [
-    "ClientKeyResolver", "DPoPGate", "DPoPRefused", "DelegatedPrincipal", "GrantHandler",
+    "ClientKeyResolver", "DPoPGate", "DPoPRefused", "DelegatedPrincipal", "Execution",
+    "ExecutionRefused", "GrantHandler",
     "GrantRefused", "GrantResult", "HostConfig", "HostNotConfigured", "MetadataError", "MintFailed",
     "Page", "PageRegistry", "PageTokens", "ProbeDisabled", "ProbeHandler", "ProbeIdentity", "ProbeResult",
     "ResourceVerifier", "arrival_payload", "authorization_server_metadata",
     "delegated_principal", "issue_id_jag", "mint_contact_token", "presented_dpop_jkt",
-    "protected_resource_metadata", "sign_visitor_assertion",
+    "protected_resource_metadata", "sign_visitor_assertion", "verify_execution",
 ]

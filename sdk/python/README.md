@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.11.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.12.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.11.0/dimagi_canopy-0.11.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.12.0/dimagi_canopy-0.12.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -42,11 +42,11 @@ library, address-pinned.
 | Module | For | Key names |
 |---|---|---|
 | `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
-| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
-| `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
+| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`phi_clearance`), `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
+| `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
-| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `{% canopy_panel %}` |
+| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `execution.verify_execution(request)`, `{% canopy_panel %}` |
 | `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `EphemeralInstance`, `run_command`, `send_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
 
@@ -581,6 +581,48 @@ Host MUST: for a token carrying `cnf.jkt`, require and verify DPoP (replay cache
 proof `jti`, `iat` within ±60s); run the tool AS `sub`; allow only tools mapped to the
 token's scopes; audit `sub`, `act`, client, actor header. Tokens WITHOUT `cnf` (normal
 OAuth sign-ins, PATs) are unchanged — direct users of the host MCP see no difference.
+
+#### `Canopy-Execution` — what canopy vouches for, per request
+
+On an agent's turn every request carries `Canopy-Execution: <JWT>` (`typ:
+canopy-execution+jwt`), signed by canopy's **client key** (the JWKS its client
+metadata names, `kid` = thumbprint). Claims: `iss` = canopy's client_id, `aud` = your
+MCP resource, `iat`/`exp` (≤ 60s), single-use `jti`, `cnf.jkt` = the DPoP key proved
+on this request, `ath` = the access token's hash, and the facts:
+
+| claim | value |
+| --- | --- |
+| `agent` | the agent's slug |
+| `agent_sha` | the agent repo commit the turn is executing |
+| `capability` | the capability the turn runs in |
+| `declaration` | `{data: "phi", sha, capability, declared_by, declared_at}` — the author's PHI-safe declaration in force — or `null` |
+| `runner` | `{id, name, flags: [{flag, declared_by, declared_at}]}`, flags **in force** (declared by a person and matched by the box's own report) |
+| `runner_posture` | `{data_mode, config_hash}` from the box's latest heartbeat |
+| `requirements` | the conversation's runner requirements |
+| `turn`, `session` | ids |
+
+Verify it, then decide:
+
+```python
+from canopy_sdk.django.execution import ExecutionRefused, verify_execution  # Django
+# framework-free: canopy_sdk.host.verify_execution(request, config=..., client_keys=..., replay_store=...)
+
+try:
+    execution = verify_execution(request)        # jkt: the key DPoPGate proved; ath: Authorization
+except ExecutionRefused as exc:                  # no_statement, bad_signature, bad_audience,
+    ...                                          # bad_issuer, too_long, unbound, replayed, ...
+refusal = execution.phi_clearance(agents={"labsdata"})   # None, or the reason
+```
+
+`phi_clearance(agents=, require=("zdr",))` is the whole rule: the agent is on your
+allowlist, its declaration is `phi` at exactly `agent_sha`, the runner's flags in force
+and its reported `data_mode` include `zdr`, and the conversation requires `zdr`. Record
+`agent`, `agent_sha`, `runner` and the declarer on your audit log. A view call (a person
+clicking in an MCP Apps View) carries no statement: no agent is executing. canopy's
+gateway itself refuses to call you at all for a `zdr` conversation whose capability has
+no declaration covering the executing commit. The two attestations — that the box's
+model key is zero-data-retention, and that the agent behaves as declared — are a
+person's word, recorded; the statement says whose.
 
 ### Freshness
 Canopy re-obtains an ID-JAG whenever the widget re-mints its token (the widget
