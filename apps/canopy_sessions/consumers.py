@@ -496,7 +496,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json(frame)
 
     def _app_for_result(self, block):
-        from apps.tokens import mcp_apps_views
+        from apps.mcp_apps_host import mcp_apps_views
 
         try:
             return mcp_apps_views.app_for_result_block(self.session, block or {})
@@ -700,7 +700,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # REST and this snapshot MUST agree — see tests/test_transcript_parity.py.
         messages, _has_more, _oldest = chat_transcript_read.visible_transcript(self.session)
         from apps.agents.credentials import secret_requests
-        from apps.tokens import mcp_apps_views
+        from apps.mcp_apps_host import mcp_apps_views
 
         mcp_apps_views.annotate(self.session, messages)
         secret_requests.annotate(self.session, messages)

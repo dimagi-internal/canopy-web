@@ -312,7 +312,7 @@ THE predicate; every surface below asks it, one test each in
   `post_session_stream`). The `TOOL_USE` row is kept.
 - **MCP Apps:** a View gets `tool_result: null` and fetches its data as the viewer from
   `tool_input`; a receipt keeps no excerpt; `ui/update-model-context` is accepted and not
-  kept (`apps/tokens/mcp_apps_views.py`).
+  kept (`apps/mcp_apps_host/mcp_apps_views.py`).
 - **Never re-exposed:** share-link upload (403), Slack share / new thread (403) and
   mirroring (`slack.relay`), export (403), the usage scan's title.
 - **Never re-processed:** auto-debug starts nothing for a turn with any requirement; the

@@ -2,7 +2,7 @@
 
 `/api/canopy-sessions/{id}/apps/{tool_call_id}/…` (spec 2026-10-08 §5). A
 contact's twin lives under `/api/contact/` (`apps/contacts/contact_api.py`). The
-rule is `apps/tokens/mcp_apps_views.py`; these only resolve the session and the
+rule is `apps/mcp_apps_host/mcp_apps_views.py`; these only resolve the session and the
 person.
 
 **Never the agent's.** Every route here is excluded from MCP (`api_tools.EXCLUDED`,
@@ -20,7 +20,7 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.tokens import mcp_apps_views as views
+from apps.mcp_apps_host import mcp_apps_views as views
 
 router = Router(auth=session_auth, tags=["chat"])
 

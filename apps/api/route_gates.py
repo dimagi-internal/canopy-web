@@ -498,7 +498,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "canopy_sessions_declare_page_actions": ("session-acl",),  # write
     "list_page_actions": ("session-acl",),
     "canopy_sessions_declare_page_state": ("session-acl",),  # write
-    # MCP Apps View plumbing (apps/tokens/mcp_apps_views.py): a session reader may
+    # MCP Apps View plumbing (apps/mcp_apps_host/mcp_apps_views.py): a session reader may
     # load a View read-only; every act (call/read/context/message) needs a WRITE
     # role in the session and the viewer's OWN host grant, and a PAT is refused.
     "app_view_resource": ("session-acl",),

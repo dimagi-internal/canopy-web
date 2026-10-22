@@ -111,7 +111,7 @@ def record_tools(app_id: int, tools: list[tuple[str, dict]]) -> None:
     """
     from django.db import transaction
 
-    from .models import AppCredential
+    from apps.tokens.models import AppCredential
 
     now = timezone.now()
     with transaction.atomic():
@@ -168,7 +168,7 @@ def record_resource(app_id: int, uri: str, *, html: str, meta: dict) -> str:
 
     from django.db import transaction
 
-    from .models import AppCredential
+    from apps.tokens.models import AppCredential
 
     sha = hashlib.sha256(html.encode("utf-8")).hexdigest()
     with transaction.atomic():

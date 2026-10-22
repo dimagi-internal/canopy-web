@@ -378,7 +378,7 @@ api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", slack_session_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
 api.add_router("/me", my_sessions_router)
-# MCP Apps: a rendered View's browser plumbing (apps/tokens/mcp_apps_views.py).
+# MCP Apps: a rendered View's browser plumbing (apps/mcp_apps_host/mcp_apps_views.py).
 api.add_router("/canopy-sessions", app_views_router)
 api.add_router("/session-secrets", session_secrets_router)
 api.add_router("/contacts", contacts_router)

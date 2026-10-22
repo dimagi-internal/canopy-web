@@ -324,7 +324,7 @@ def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = Non
 def _UI_ADVERTISEMENT():
     from mcp.client.extension import advertise
 
-    from .mcp_apps import RESOURCE_MIME, UI_EXTENSION
+    from apps.mcp_apps_host.mcp_apps import RESOURCE_MIME, UI_EXTENSION
 
     return advertise(UI_EXTENSION, {"mimeTypes": [RESOURCE_MIME]})
 
@@ -347,7 +347,7 @@ async def _listing(ctx: SiteContext, client) -> list:
     folded into the site's MCP Apps index on the way past."""
     from asgiref.sync import sync_to_async
 
-    from . import mcp_apps
+    from apps.mcp_apps_host import mcp_apps
 
     tools = await client.list_tools()
     if ctx.app_id is not None:
@@ -367,7 +367,7 @@ async def list_tools(ctx: SiteContext) -> list[dict]:
     a tool the host marked app-only (MCP Apps §Visibility: "Host MUST NOT include
     tools in the agent's tool list when their visibility does not include
     "model""). Those exist for the host's own View, as the person looking at it."""
-    from . import mcp_apps
+    from apps.mcp_apps_host import mcp_apps
 
     await _check_target(ctx)
     try:
@@ -400,7 +400,7 @@ async def _model_may_call(ctx: SiteContext, name: str, client) -> bool:
     """
     from asgiref.sync import sync_to_async
 
-    from . import mcp_apps
+    from apps.mcp_apps_host import mcp_apps
     from .models import AppCredential
 
     app = (await sync_to_async(AppCredential.objects.filter(pk=ctx.app_id).first,
@@ -446,7 +446,7 @@ async def call_tool(ctx: SiteContext, tool: str, arguments: dict) -> dict:
 # --- MCP Apps: a View's own calls, as the VIEWER ---------------------------------
 #
 # These serve the browser routes behind a rendered View (spec 2026-10-08 §4-5,
-# `apps/tokens/mcp_apps_views.py`), never the agent. `ctx` comes from
+# `apps/mcp_apps_host/mcp_apps_views.py`), never the agent. `ctx` comes from
 # `mcp_apps_views.resolve_for_viewer`: the grant of whoever CLICKED, not the
 # turn's initiator. Results are returned whole (`content`, `structuredContent`,
 # `isError`) because the View, unlike the agent, renders `structuredContent`.

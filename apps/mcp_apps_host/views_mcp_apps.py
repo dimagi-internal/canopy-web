@@ -66,7 +66,7 @@ def frame_ancestors(request: HttpRequest) -> list[str]:
     """canopy's own origins, plus every live Connected site's frame origins —
     the embed panel nests four deep (site page → canopy embed → proxy → View),
     and `frame-ancestors` checks every ancestor, not just the parent."""
-    from .models import AppCredential
+    from apps.tokens.models import AppCredential
 
     out = host_origins(request)
     for app in AppCredential.objects.filter(revoked_at__isnull=True):

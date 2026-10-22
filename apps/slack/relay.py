@@ -175,7 +175,7 @@ def _app_view_line(row, turn=None) -> str:
     session in canopy, where the View renders. Never a button — Slack cannot
     present the viewer's own grant, so the click that acts happens in canopy
     (spec 2026-10-08 §9). Every other tool result stays out of the thread."""
-    from apps.tokens import mcp_apps_views
+    from apps.mcp_apps_host import mcp_apps_views
 
     from .services import session_url
 
