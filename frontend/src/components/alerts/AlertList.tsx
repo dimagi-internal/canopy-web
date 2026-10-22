@@ -10,7 +10,7 @@ import { relativeAge } from '@/lib/relativeAge'
 // ALERTS — the one component every screen shows alerts with (Home, Topology,
 // the agent page, a runner's detail). A screen never decides what to show: it
 // names a scope and gets the open alerts there that the viewer has an action on,
-// in the server's order (blocking, action, setup; newest first).
+// in the server's order (blocking, action, setup; most recently raised first).
 //
 // Compact on purpose: one line per alert — severity dot · source chip · title ·
 // its actions inline · ×. The × is the source's shared dismiss ("Dismiss for

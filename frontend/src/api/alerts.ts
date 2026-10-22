@@ -33,7 +33,8 @@ export async function loadAlerts(scope?: string, status: AlertStatus = 'open'): 
 }
 
 /** Run one of the alert's actions (dismiss included). The server re-checks the
- *  action is still yours: 409 `action-not-offered` when it is not. */
+ *  action is still yours: 409 `action-not-offered` when it is not, 409
+ *  `action-failed` (its message is the reason) when the handler refused. */
 export async function actOnAlert(id: number, action: string): Promise<Alert> {
   const res = await apiV2.POST('/api/me/alerts/{id}/act', { params: { path: { id } }, body: { action } })
   return normalize(unwrap(res, 'actOnAlert') as unknown as AlertWire)

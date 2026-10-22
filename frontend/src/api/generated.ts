@@ -10459,7 +10459,9 @@ export interface paths {
         /**
          * Alerts that need you
          * @description Open alerts you are offered an action on, in the workspaces you are in,
-         *     most severe first (`blocking`, `action`, `setup`) then newest. `scope` keeps
+         *     most severe first (`blocking`, `action`, `setup`), then most recently raised
+         *     (`first_seen_at`), then id — a stable order, since every reconciled alert
+         *     shares the tick's `last_seen_at`. `scope` keeps
          *     those whose `scopes` include it. `status=dismissed` lists what was dismissed
          *     in the last 7 days that you could dismiss (so you can `undismiss` it). A
          *     `workspace:<slug>` scope also keeps alerts in any workspace below that one;
@@ -10487,7 +10489,9 @@ export interface paths {
          * Do one of an alert's actions
          * @description Runs `action` if it is still offered to you. A link action is followed in
          *     the browser; calling this for one only records that you followed it. 404 if you cannot see the alert; 409
-         *     `action-not-offered` if the action is not (or no longer) yours to run.
+         *     `action-not-offered` if the action is not (or no longer) yours to run; 409
+         *     `action-failed` (with the reason) if its handler refused — nothing was
+         *     changed.
          */
         readonly post: operations["act_on_alert"];
         readonly delete?: never;
