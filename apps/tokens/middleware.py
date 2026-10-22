@@ -55,6 +55,16 @@ class BearerTokenAuthMiddleware:
         user = getattr(request, "user", None)
         already_signed_in = user is not None and getattr(user, "is_authenticated", False)
 
+        # One resolver for every door (apps/tokens/principal.py). A session that
+        # already signed this request in keeps its identity, so a PAT is not
+        # even looked up then; a delegated token still is (its site is stamped).
+        from apps.tokens import principal as P
+        from apps.tokens.models import client_label
+
+        kinds = P.ALL_KINDS - {P.PAT} if already_signed_in else P.ALL_KINDS
+        found = P.resolve_bearer(raw, accept=kinds, client=client_label(
+            request.META.get("HTTP_USER_AGENT", ""), request.META.get("HTTP_X_CANOPY_CLIENT", "")))
+
         # A runner's own credential (apps/harness/models.RunnerAccessToken), bought
         # with its device key: it signs in as the runner's owner but opens only the
         # runner protocol (apps/harness/runner_auth.reaches) — refused here, before
@@ -67,19 +77,19 @@ class BearerTokenAuthMiddleware:
             from apps.api.errors import problem_response
             from apps.harness import runner_auth
 
-            rtok = RunnerAccessToken.lookup(raw)
-            if rtok is None:
+            if found is None:
                 return problem_response(401, detail="runner token is not valid (expired, or its "
                                                     "device key was revoked)")
+            rtok = found.token
             if not runner_auth.reaches(request.method, request.path_info, rtok.runner_id,
                                        private=rtok.runner.private,
                                        computer=rtok.runner.kind == rtok.runner.COMPUTER):
                 return problem_response(403, detail="a runner token opens the runner protocol only")
             RunnerAccessToken.objects.filter(pk=rtok.pk).update(last_used_at=timezone.now())
-            request.user = rtok.runner.owner
+            request.user = found.user
             request.runner_token = rtok
-            request.auth_method = "runner-key"
-            request.auth_credential = _credential("runner-key", rtok.pk, rtok.runner.name)
+            request.auth_method = found.auth_method
+            request.auth_credential = found.credential
             request._dont_enforce_csrf_checks = True
             _apply_acting_cap(request)
             return None
@@ -93,68 +103,53 @@ class BearerTokenAuthMiddleware:
         if raw.startswith(hcp_oauth.ACCESS_PREFIX):
             from apps.api.errors import problem_response
 
-            tok = hcp_oauth.authenticate_access(raw)
-            if tok is None or not request.path_info.startswith("/api/hcp/v1/"):
-                detail = ("the access token is not valid" if tok is None
+            if found is None or not request.path_info.startswith("/api/hcp/v1/"):
+                detail = ("the access token is not valid" if found is None
                           else "an HCP access token opens /api/hcp/v1/ only")
                 resp = problem_response(
                     401, type="https://hcp.me/problems/invalid-token", title="invalid token",
                     detail=detail, instance=request.path_info, hcp_version="1.0")
                 resp["WWW-Authenticate"] = 'Bearer error="invalid_token"'
                 return resp
-            request.hcp_access = tok
-            request.auth_method = "hcp-oauth"
-            request.auth_credential = _credential("hcp-oauth", tok.pk, tok.client.name)
+            request.hcp_access = found.token
+            request.auth_method = found.auth_method
+            request.auth_credential = found.credential
             request._dont_enforce_csrf_checks = True
             return None
 
-        from apps.tokens.models import (
-            ContactToken,
-            DelegatedToken,
-            PersonalToken,
-            client_label,
-            note_used,
-        )
+        if found is None:
+            return None
 
-        if not already_signed_in:
-            token = PersonalToken.lookup(raw)
-            if token is not None:
-                note_used(token, client_label(request.META.get("HTTP_USER_AGENT", ""),
-                                              request.META.get("HTTP_X_CANOPY_CLIENT", "")))
-                request.user = token.user
-                # How this request authenticated — the assurance a turn's
-                # initiator records (apps/harness/initiator.py). Absent means
-                # canopy's own session did it.
-                request.auth_method = "pat"
-                # WHICH token — not just "a PAT". Without it a script on someone's
-                # PAT and the web UI recorded identical turns (2026-10-05).
-                request.auth_credential = _credential(
-                    "oauth" if token.oauth_grant_id else "pat", token.pk, token.label)
-                request._dont_enforce_csrf_checks = True
-                _apply_acting_cap(request)
-                return
+        if found.kind == P.PAT:
+            request.user = found.user
+            # How this request authenticated — the assurance a turn's initiator
+            # records (apps/harness/initiator.py). Absent means canopy's own
+            # session did it. And WHICH token — not just "a PAT": without it a
+            # script on someone's PAT and the web UI recorded identical turns.
+            request.auth_method = found.auth_method
+            request.auth_credential = found.credential
+            request._dont_enforce_csrf_checks = True
+            _apply_acting_cap(request)
+            return
 
-        # A CONTACT token first, because it is the one that must never be
-        # mistaken for a user. It resolves to no `request.user` at all, so
-        # `LoginRequiredMiddleware` refuses every path except the ones
-        # explicitly opened to contacts — the surface fails closed by default
-        # rather than by each view remembering to check.
-        ctok = ContactToken.lookup(raw)
-        if ctok is not None:
+        # A CONTACT token must never be mistaken for a user. It resolves to no
+        # `request.user` at all, so `LoginRequiredMiddleware` refuses every path
+        # except the ones explicitly opened to contacts — the surface fails
+        # closed by default rather than by each view remembering to check.
+        if found.kind == P.CONTACT:
+            ctok = found.token
             request.contact = ctok.contact
             request.contact_token = ctok
             request.delegated_app = ctok.app
             # The site's runner requirements (ZDR), from the token — never from
             # anything the request itself carries.
             request.runner_requirements = tuple(ctok.runner_requirements or ())
-            request.auth_method = "contact"
-            request.auth_credential = _credential("contact", ctok.pk, ctok.app.name)
+            request.auth_method = found.auth_method
+            request.auth_credential = found.credential
             request._dont_enforce_csrf_checks = True
             return
 
-        dtok = DelegatedToken.lookup(raw)
-        if dtok is None or not dtok.user.is_active:
-            return None
+        dtok = found.token
 
         # `site ∩ user` (apps/tokens/delegation.py): a site's token is not the
         # user's whole canopy. Refused HERE, before any view, and loudly — a
@@ -191,9 +186,9 @@ class BearerTokenAuthMiddleware:
         # where they somehow did not, the person at the browser is the safer
         # answer, and it is the one every other view on this request already saw.
         if not already_signed_in:
-            request.user = dtok.user
-            request.auth_method = dtok.assurance or "delegated"
-            request.auth_credential = _credential("delegated", dtok.pk, dtok.app.name)
+            request.user = found.user
+            request.auth_method = found.auth_method
+            request.auth_credential = found.credential
 
         # Safe with or without a session, and required with one: the frame
         # authenticates by header and holds no CSRF cookie for canopy, so its
@@ -268,13 +263,6 @@ def minting_refusal(request: HttpRequest) -> str | None:
             "personal access token."
         )
     return None
-
-
-def _credential(kind: str, pk, label: str) -> dict:
-    """`request.auth_credential`: which credential authenticated the request, for
-    provenance (apps/common/request_context.py). Never a secret — a row id and
-    its human label."""
-    return {"type": kind, "id": pk, "label": (label or "")[:200]}
 
 
 def _apply_acting_cap(request: HttpRequest) -> None:

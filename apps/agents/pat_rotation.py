@@ -34,7 +34,6 @@ like the capability sweep); `manage.py rotate_canopy_pats` runs one tick by hand
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import logging
 
 from django.conf import settings
@@ -42,6 +41,7 @@ from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
+from apps.common.token_hash import hash_token
 from apps.tokens.models import PersonalToken
 
 from .models import Agent, AgentCredential, AgentPatRotation
@@ -131,7 +131,7 @@ def _current_token(agent):
         raw = cred.plaintext()  # refuses a zero-knowledge value: "not a token we know"
     except Exception:  # noqa: BLE001 - an undecryptable value is just "not a token we know"
         return None
-    digest = hashlib.sha256(raw.encode()).hexdigest()
+    digest = hash_token(raw)
     return (PersonalToken.objects.filter(token_hash=digest, user_id=agent.user_id,
                                          revoked_at__isnull=True).first())
 

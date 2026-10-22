@@ -24,7 +24,6 @@ it — same runner, nothing new — so a dead PAT is fixed from the browser.
 """
 from __future__ import annotations
 
-import hashlib
 import hmac
 import logging
 import re
@@ -37,6 +36,7 @@ from django.utils import timezone
 from ninja import Router, Status
 from ninja.errors import HttpError
 
+from apps.common.token_hash import hash_token
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_AUTH, ProblemError
 from apps.events import activity
@@ -84,7 +84,7 @@ def _normalize_code(code: str) -> str:
 
 
 def _secret_hash(raw: str) -> str:
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return hash_token(raw)
 
 
 def verify_path(pairing: RunnerPairing) -> str:

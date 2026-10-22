@@ -24,7 +24,6 @@ active one stays active) and keeps at most `MAX_PENDING` pending keys per runner
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 from datetime import timedelta
 
@@ -33,6 +32,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 from ninja import Router
 
+from apps.common.token_hash import hash_token
 from apps.api.errors import TYPE_AUTH, ProblemError
 
 from . import device_keys
@@ -65,7 +65,7 @@ def _owner_token_ok(raw: str, runner: Runner) -> bool:
         return False
     since = timezone.now() - timedelta(days=STALE_TOKEN_DAYS)
     return (PersonalToken.objects
-            .filter(token_hash=hashlib.sha256(raw.encode()).hexdigest(), user_id=runner.owner_id,
+            .filter(token_hash=hash_token(raw), user_id=runner.owner_id,
                     user__is_active=True, user__system_account__isnull=True)
             .filter(Q(revoked_at__isnull=True) | Q(revoked_at__gte=since))
             .exists())

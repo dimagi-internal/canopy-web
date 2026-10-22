@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import secrets
 
 from django.utils import timezone
 
+from apps.common.token_hash import hash_token
 from .models import ChatKey, Session
 
 PREFIX = "chk_"
@@ -19,7 +19,7 @@ HEADER = "X-Canopy-Chat-Key"
 
 
 def _hash(raw: str) -> str:
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return hash_token(raw)
 
 
 def mint(session: Session) -> str:

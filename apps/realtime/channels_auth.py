@@ -1,12 +1,13 @@
 """WebSocket handshake auth: session cookie, then Bearer, then `?ticket=`.
 
 Ports ace-web's AceSessionAuthMiddleware. Reads settings.SESSION_COOKIE_NAME
-(sessionid_canopy on connectlabs, sessionid elsewhere) — never hardcoded. Bearer
-resolution reuses apps/tokens (PersonalToken.lookup, then DelegatedToken.lookup)
-so scripted clients authenticate over WS exactly as they do over REST.
+(sessionid_canopy on connectlabs, sessionid elsewhere) — never hardcoded. A
+bearer is resolved by `apps.tokens.principal.resolve_bearer`, the resolver REST
+and MCP use, so scripted clients authenticate over WS exactly as over REST —
+once per handshake, the principal carried through rather than looked up again.
 
-Resolution order: session cookie → `Authorization: Bearer` (PersonalToken, then
-DelegatedToken) → `?ticket=`. A browser cannot put a header on
+Resolution order: session cookie → `Authorization: Bearer` (a runner key, a PAT,
+then a delegated token) → `?ticket=` (a delegated token only). A browser cannot put a header on
 `new WebSocket()`, so a page holding a delegated or contact token trades it for
 a one-time ticket over REST (apps/tokens/ws_ticket.py) and opens the socket with
 that. A token is never read from the URL: `?token=` was accepted until
@@ -72,59 +73,56 @@ def _user_from_session(scope):
     return user
 
 
-@database_sync_to_async
-def _bearer_method(scope) -> str:
-    """`pat` or `delegated` for the bearer token `_user_from_bearer` accepted."""
+def _bearer_raw(scope) -> str:
     raw = _header(scope, b"authorization")
-    token_value = raw[7:].decode("latin1").strip() if raw else ""
-    from apps.harness.models import RunnerAccessToken
-    from apps.tokens.models import DelegatedToken, PersonalToken
+    if not raw or not raw.lower().startswith(b"bearer "):
+        return ""
+    return raw[7:].decode("latin1").strip()
 
-    if token_value.startswith(RunnerAccessToken.PREFIX):
-        return "runner-key"
-    if PersonalToken.lookup(token_value) is not None:
-        return "pat"
-    delegated = DelegatedToken.lookup(token_value)
-    return (delegated.assurance or "delegated") if delegated is not None else "delegated"
+
+def _principal_from_bearer_sync(scope, *, stamp: bool = True):
+    """The user principal the `Authorization: Bearer` header names, through the
+    one resolver every door uses (`apps/tokens/principal.py`) — or None.
+
+    A socket takes a PAT, a delegated token, or a runner's own key; a runner key
+    opens only its own runner's control channel (apps/harness/runner_auth.py),
+    any other socket is as if anonymous. A socket is a use too: a runner on its
+    WS channel made no REST call for long stretches and its token read as idle,
+    so a PAT is stamped — except on a re-check (`stamp=False`)."""
+    from apps.tokens import principal as P
+    from apps.tokens.models import client_label
+
+    value = _bearer_raw(scope)
+    if not value:
+        return None
+    client = client_label((_header(scope, b"user-agent") or b"").decode("latin1"),
+                          (_header(scope, b"x-canopy-client") or b"").decode("latin1"))
+    found = P.resolve_bearer(value, accept={P.RUNNER_KEY, P.PAT, P.DELEGATED},
+                             client=client if stamp else None)
+    if found is not None and found.kind == P.RUNNER_KEY:
+        from apps.harness import runner_auth
+
+        rtok = found.token
+        if not runner_auth.reaches_ws(scope.get("path", ""), rtok.runner_id,
+                                      computer=rtok.runner.kind == rtok.runner.COMPUTER):
+            return None
+    return found
+
+
+def _principal_from_ticket_sync(scope):
+    """`?ticket=`'s token as a user: DelegatedTokens ONLY. Browsers can't set an
+    Authorization header on `new WebSocket()`, so short-lived delegated tokens
+    ride a ticket; long-lived PATs are never accepted there, so they never land
+    in URLs or access logs."""
+    from apps.tokens import principal as P
+
+    return P.resolve_bearer(_ticket_token(scope), accept={P.DELEGATED})
 
 
 @database_sync_to_async
 def _user_from_bearer(scope):
-    raw = _header(scope, b"authorization")
-    if not raw or not raw.lower().startswith(b"bearer "):
-        return None
-    token_value = raw[7:].decode("latin1").strip()
-    if not token_value:
-        return None
-    from apps.harness.models import RunnerAccessToken
-    from apps.tokens.models import DelegatedToken, PersonalToken
-
-    if token_value.startswith(RunnerAccessToken.PREFIX):
-        # A runner's own credential opens its own runner's control channel only
-        # (apps/harness/runner_auth.py) — any other socket is as if anonymous.
-        from apps.harness import runner_auth
-
-        rtok = RunnerAccessToken.lookup(token_value)
-        if rtok is None or not runner_auth.reaches_ws(
-                scope.get("path", ""), rtok.runner_id,
-                computer=rtok.runner.kind == rtok.runner.COMPUTER):
-            return None
-        return rtok.runner.owner
-
-    token = PersonalToken.lookup(token_value)
-    if token is not None:
-        # A socket is a use too: a runner on its WS channel made no REST call
-        # for long stretches and its token read as idle.
-        from apps.tokens.models import client_label, note_used
-
-        note_used(token, client_label(
-            (_header(scope, b"user-agent") or b"").decode("latin1"),
-            (_header(scope, b"x-canopy-client") or b"").decode("latin1")))
-        return token.user
-    delegated = DelegatedToken.lookup(token_value)
-    if delegated is not None and delegated.user.is_active:
-        return delegated.user
-    return None
+    found = _principal_from_bearer_sync(scope)
+    return found.user if found is not None else None
 
 
 async def still_signed_in(scope) -> bool:
@@ -149,8 +147,14 @@ async def still_signed_in(scope) -> bool:
     if method == "session":
         again = await _user_from_session(scope)
     else:
-        again = await _user_from_bearer(scope) or await _user_from_query_token(scope)
+        again = await _recheck_user(scope)
     return again is not None and again.pk == user.pk
+
+
+@database_sync_to_async
+def _recheck_user(scope):
+    found = _principal_from_bearer_sync(scope, stamp=False) or _principal_from_ticket_sync(scope)
+    return found.user if found is not None else None
 
 
 @database_sync_to_async
@@ -162,60 +166,35 @@ def _contact_from_query_token(scope):
     every consumer in the app treats it as somebody with memberships — the same
     mistake `ContactToken` exists as its own model to prevent.
     """
-    from apps.tokens.models import ContactToken
+    from apps.tokens import principal as P
 
-    raw = _ticket_token(scope)
-    if not raw:
-        return None
-    token = ContactToken.lookup(raw)
-    return token.contact if token is not None else None
+    found = P.resolve_bearer(_ticket_token(scope), accept={P.CONTACT})
+    return found.token.contact if found is not None else None
 
 
 @database_sync_to_async
 def _user_from_query_token(scope):
-    """?token=<raw> on the WS URL — DelegatedTokens ONLY. Browsers can't set an
-    Authorization header on `new WebSocket()`, so short-lived delegated tokens
-    ride the query string; long-lived PATs are deliberately rejected here so
-    they never land in URLs or access logs."""
-    raw = _ticket_token(scope)
-    if not raw:
-        return None
-    from apps.tokens.models import DelegatedToken
-
-    token = DelegatedToken.lookup(raw)
-    if token is not None and token.user.is_active:
-        return token.user
-    return None
+    found = _principal_from_ticket_sync(scope)
+    return found.user if found is not None else None
 
 
-@database_sync_to_async
-def _query_token_method(scope) -> str:
-    """How the `?token=` user was established: `delegated`, or `host_signed` for
-    a visitor a connected site resolved to their existing account."""
-    from apps.tokens.models import DelegatedToken
-
-    raw = _ticket_token(scope)
-    token = DelegatedToken.lookup(raw) if raw else None
-    return (token.assurance or "delegated") if token is not None else "delegated"
-
-
-def _delegated_token_sync(scope):
+def _delegated_token_sync(scope, *, known=None):
     """The DELEGATED token on this socket, or None.
 
     Read from the same two places a delegated token can ride — the bearer
-    header and `?token=` — and never from anything else the client controls.
-    """
-    from apps.tokens.models import DelegatedToken
+    header and `?ticket=` — and never from anything else the client controls.
+    `known` is the principal the handshake already resolved, so its token is
+    not looked up twice."""
+    from apps.tokens import principal as P
 
-    raw = _header(scope, b"authorization")
-    candidates = []
-    if raw and raw.lower().startswith(b"bearer "):
-        candidates.append(raw[7:].decode("latin1").strip())
+    if known is not None and known.kind == P.DELEGATED:
+        return known.token
+    candidates = [] if known is not None else [_bearer_raw(scope)]
     candidates.append(_ticket_token(scope))
     for value in candidates:
-        token = DelegatedToken.lookup(value) if value else None
-        if token is not None:
-            return token
+        found = P.resolve_bearer(value, accept={P.DELEGATED}) if value else None
+        if found is not None:
+            return found.token
     return None
 
 
@@ -269,6 +248,17 @@ def _note_legacy_socket(scope):
     legacy_traffic.note(path=scope.get("path", ""), user=user, client=ua, protocol="ws")
 
 
+@database_sync_to_async
+def _resolve_principal(scope):
+    """Bearer, then `?ticket=` — the user principal that opens this socket."""
+    return _principal_from_bearer_sync(scope) or _principal_from_ticket_sync(scope)
+
+
+@database_sync_to_async
+def _delegated_token(scope, known):
+    return _delegated_token_sync(scope, known=known)
+
+
 class RealtimeAuthMiddleware:
     def __init__(self, app):
         self.app = app
@@ -281,22 +271,24 @@ class RealtimeAuthMiddleware:
         # same claim.
         method = "session"
         user = await _user_from_session(scope)
+        found = None
         if user is None:
-            user = await _user_from_bearer(scope)
-            method = await _bearer_method(scope) if user is not None else ""
-        if user is None:
-            user = await _user_from_query_token(scope)
-            method = await _query_token_method(scope) if user is not None else ""
+            found = await _resolve_principal(scope)
+            user, method = (found.user, found.auth_method) if found is not None else (None, "")
+        # The delegated token on this socket, if any — resolved once, and read
+        # even when a session cookie signed the socket in (`via_widget`, and the
+        # site's runner requirements, as the REST middleware does).
+        delegated = await _delegated_token(scope, found) if user is not None else None
         # `site ∩ user` (apps/tokens/delegation.py). When a site's delegated
         # token is the identity, it opens only its own chat's stream; any other
         # socket (presence, supervisor, turns, runner) is as if unauthenticated.
         # The acting site rides on the scope so the chat consumer can hold it to
         # the site's own agents, exactly as REST does.
         delegated_app = None
-        if user is not None and method not in ("session", "pat", "runner-key"):
+        if found is not None and found.kind == "delegated":
             from apps.tokens import delegation
 
-            delegated_app = await _delegated_app(scope)
+            delegated_app = found.token.app
             if not delegation.reaches_ws(scope.get("path", "")):
                 user, method = None, ""
         scope = dict(scope)
@@ -307,7 +299,7 @@ class RealtimeAuthMiddleware:
         # frames), and read even when a session cookie signed the socket in —
         # the same rule the REST middleware applies to `delegated_app`.
         scope["runner_requirements"] = (
-            await _delegated_runner_requirements(scope) if user is not None else ()
+            tuple(delegated.runner_requirements or ()) if user is not None and delegated else ()
         )
         # Only when nothing resolved a user. A contact and a user are never both
         # present, so a consumer cannot accidentally read the wrong one — and
@@ -321,10 +313,7 @@ class RealtimeAuthMiddleware:
         # signs the socket in and `delegated_app` is never resolved, yet it is
         # still a widget. What a widget may not receive (tool calls) is decided
         # from this, never from a query value the client chooses.
-        scope["via_widget"] = bool(
-            scope["contact"] is not None or delegated_app is not None
-            or (user is not None and await _delegated_app(scope) is not None)
-        )
+        scope["via_widget"] = bool(scope["contact"] is not None or delegated is not None)
         from config.asgi_prefix import SCOPE_KEY
 
         if scope.get(SCOPE_KEY):

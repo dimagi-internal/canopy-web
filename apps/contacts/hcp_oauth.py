@@ -51,6 +51,7 @@ from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
+from apps.common.token_hash import hash_token
 from apps.common import oauth_core
 from apps.common.oauth_core import OAuthError
 
@@ -291,7 +292,7 @@ def issue_code(pending: dict, grant: PersonGrant) -> str:
 
 
 def _hash(raw: str) -> str:
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return hash_token(raw)
 
 
 def _client_for(params) -> HcpClient:
