@@ -137,7 +137,10 @@ describe('runners on Health', () => {
     renderPage()
     const row = (await screen.findByText('laptop')).closest('tr')!
     expect(row.textContent).toContain('update pending')
-    expect(row.textContent).toContain('disk')
+    // Counted in the row, named on hover and in the detail.
+    const checks = within(row).getByTestId('runner-checks')
+    expect(checks.textContent).toBe('1 warning')
+    expect(checks.getAttribute('title')).toContain('disk')
   })
 
   it('opens a runner for why it is in its state, the fix, its checks and its agents', async () => {
