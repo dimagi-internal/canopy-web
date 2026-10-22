@@ -27,6 +27,40 @@ def test_paginate_defaults():
     assert page.total == 5
 
 
+def test_paginate_maps_only_the_page_of_a_list():
+    seen = []
+    page = paginate(list(range(10)), offset=2, limit=3, map=lambda n: seen.append(n) or n * 10)
+    assert page.items == [20, 30, 40]
+    assert seen == [2, 3, 4]
+    assert page.total == 10
+
+
+# ---- QuerySets: counted and sliced in SQL, mapped after the slice -------------
+
+
+@pytest.mark.django_db
+def test_paginate_queryset_loads_and_maps_only_the_page(django_assert_num_queries):
+    from apps.issues.models import OriginIssue
+
+    for n in range(30):
+        OriginIssue.objects.create(repo="o/r", number=n, title=f"t{n}")
+    qs = OriginIssue.objects.order_by("number")
+    seen = []
+    with django_assert_num_queries(2):  # one COUNT, one LIMIT/OFFSET select
+        page = paginate(qs, offset=10, limit=5, map=lambda o: seen.append(o.number) or o.number)
+    assert page.items == [10, 11, 12, 13, 14]
+    assert seen == [10, 11, 12, 13, 14]
+    assert page.total == 30
+
+
+@pytest.mark.django_db
+def test_paginate_refuses_an_unordered_queryset():
+    from django.contrib.auth.models import User
+
+    with pytest.raises(ValueError, match="ordered"):
+        paginate(User.objects.all(), offset=0, limit=5)
+
+
 # ---- clamps -----------------------------------------------------------------
 # These pin the *floor*, not just the cap. An unfloored `min(limit, cap)` lets 0
 # and negatives reach Page.limit (ge=1), where pydantic raises inside the

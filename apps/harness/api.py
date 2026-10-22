@@ -2968,8 +2968,8 @@ def sync_schedules(request: HttpRequest, runner_id: uuid.UUID, limit: int = 200)
     — a fresh daemon would have to sync before its first heartbeat.
     """
     runner = _runner_or_404(request, runner_id)
-    items = [ScheduleOut(**serialize_schedule(s)) for s in _runner_schedule_qs(runner)]
-    return paginate(items, offset=0, limit=clamp_limit(limit))
+    return paginate(_runner_schedule_qs(runner).order_by("name", "pk"), offset=0,
+                    limit=clamp_limit(limit), map=lambda s: ScheduleOut(**serialize_schedule(s)))
 
 
 @router.post("/schedules/{schedule_id}/fire", response={201: TurnOut, 202: ScheduleAnnouncedOut},
