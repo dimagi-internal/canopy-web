@@ -444,3 +444,19 @@ def test_the_mcp_tools_inherit_the_same_gate(viewer, agent):
             "cron": "0 9 * * 5", "timezone": "UTC",
         })
     assert not AgentSchedule.objects.exists()
+
+
+def test_pinned_parent_lists_a_child_workspace_agents_schedules(client, default_workspace):
+    """`/api/w/<parent>/agents/<slug>/schedules/` for an agent in a workspace
+    below the pin answers like the agent page under the same pin does (both
+    use `wsvc.member_scope`) — it used to 404 on an exact-pin match."""
+    owner = User.objects.get(username="jj")
+    child = Workspace.objects.create(
+        slug="child-ws", display_name="Child", parent=default_workspace, created_by=owner,
+        access_request_domains=[],
+    )
+    Agent.objects.create(slug="kid", name="Kid", workspace=child)
+    base = f"/api/w/{default_workspace.slug}/agents/kid"
+    assert client.get(f"{base}/").status_code == 200
+    r = client.get(f"{base}/schedules/")
+    assert r.status_code == 200, r.content

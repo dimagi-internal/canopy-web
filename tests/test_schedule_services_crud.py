@@ -208,3 +208,48 @@ def test_week_schedules_never_matches_on_a_null_workspace(agent):
     assert ss.week_schedules(set(), start) == []
     rows = ss.week_schedules({agent.workspace_id}, start)
     assert [r["schedule"]["name"] for r in rows] == ["Homed sched"]
+
+
+# ---- the pin covers the workspaces below it (gates.agent_for_read's rule) ----
+
+@pytest.fixture()
+def child(ws, owner):
+    return Workspace.objects.create(
+        slug="connect", display_name="Connect", parent=ws, created_by=owner, access_request_domains=[]
+    )
+
+
+def test_pin_reaches_an_agent_in_a_workspace_below_it(owner, child):
+    """Pinned to `dimagi`, the agent page resolves `connect`'s agent
+    (`wsvc.member_scope`), so its Schedules tab must too — an owner of the
+    parent is in the child by inheritance."""
+    Agent.objects.create(slug="hal", name="Hal", workspace=child)
+    assert ss._resolve_agent(owner, "hal", workspace_slug="dimagi").slug == "hal"
+    assert ss._resolve_agent(owner, "hal", workspace_slug="connect").slug == "hal"
+
+
+def test_pin_never_reaches_above_itself(owner, agent, child):
+    """`connect` does not cover `dimagi`: an agent above the pin is not found."""
+    with pytest.raises(ss.ScheduleNotFound):
+        ss._resolve_agent(owner, "eva", workspace_slug="connect")
+
+
+def test_pin_below_reaches_only_workspaces_the_caller_is_in(ws, child):
+    """An editor of the parent does not inherit into the child (only owners and
+    admins do), so the parent's pin does not reach the child's agent."""
+    Agent.objects.create(slug="hal", name="Hal", workspace=child)
+    editor = User.objects.create_user("ed", "ed@dimagi.com", "pw")
+    wsvc.ensure_member(ws, editor, WorkspaceMembership.EDITOR)
+    with pytest.raises(ss.ScheduleNotFound):
+        ss._resolve_agent(editor, "hal", workspace_slug="dimagi")
+    with pytest.raises(ss.ScheduleNotFound):
+        ss._resolve_agent(editor, "hal")
+
+
+def test_an_unvetted_pin_still_needs_membership(child):
+    """A pin no middleware checked (a request-free caller) reaches nothing the
+    caller is not in: the agent's workspace is checked directly too."""
+    Agent.objects.create(slug="hal", name="Hal", workspace=child)
+    stranger = User.objects.create_user("st", "st@evil.com", "pw")
+    with pytest.raises(ss.ScheduleNotFound):
+        ss._resolve_agent(stranger, "hal", workspace_slug="connect")
