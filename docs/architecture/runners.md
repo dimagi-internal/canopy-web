@@ -496,11 +496,18 @@ workspace's shared vault: a person lending their identity to one agent
   email) and `requested_by` for a `Requested-by:` trailer — the caller is recorded,
   never the principal. Stopping bad writes is the agent's own gating, not the token
   layer's. Each issue is an `agent.github.issued` event.
-- **Agentless repo turns** (`Turn.project` = repo name) run as no one and are
+- **Agentless repo turns and project chats** (`Turn.project`, or the chat
+  session's `project`, = repo name) run as no one on GitHub and are
   refused the same way, unless the repo has an `agents.RepoIdentity` row
   (`repo_slug` unique → agent; edited in Django admin, listed as
   `identity_for_repos` on `GET /api/agents/{slug}/github`), in which case the turn
   runs as that agent under the same rule.
+- **canopy-web's MCP sign-in is per turn.** Claude Code remembers a 401 from an
+  MCP server in `mcp-needs-auth-cache.json` and skips it for ~15 minutes in every
+  session sharing that file — on a box, every login's copy is a symlink to the
+  one in `~/.claude`. The cloud runner removes the canopy-web entry before each
+  turn (`_clear_canopy_needs_auth`), so one session with no credential cannot
+  take canopy's tools away from the turns after it.
 - Readiness: a box calls `GET /api/harness/runners/{rid}/github-readiness` at boot
   (checked live per agent it serves), and the readiness drill covers it — a missing
   or expired token is a red health check, not a mid-turn 403.
