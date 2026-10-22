@@ -140,6 +140,14 @@ failure again.
   visitor who has an account) resolves to a `User`; every surface applies that user's ACL.
   A token acts with exactly its person's role (`roles.md` → "A token can do whatever its
   person can").
+- **One resolver, and a prefix per kind.** REST, MCP and the WebSocket handshake all resolve a
+  bearer with `apps/tokens/principal.py::resolve_bearer`. Tokens name their kind: `cpat_`
+  (personal access, incl. MCP OAuth access tokens), `cdt_` (delegated), `ccon_` (contact),
+  `cct_` (caller), `crt_` (runner), `chk_` (chat key), `hcpat_`/`hcprt_` (HCP). A prefixed
+  token is looked up in its own table only, and refused by a door that does not take its
+  kind. Tokens minted before the `cpat_`/`cdt_`/`ccon_` prefixes are 43 bare characters and
+  still resolve by trying each kind. The prefixes are what `.gitleaks.toml` (`canopy-token`)
+  and the transcript scrubber (`apps/session_sharing/redact.py`) recognise.
 - `POST /api/debug/mint-session/` (`apps/common/views_debug.py`) trades a PAT for a
   short-lived browser session (the macOS menubar's web view). A minted session is still a
   machine (`views_debug.is_machine`), and the MCP OAuth consent page refuses it, so a token

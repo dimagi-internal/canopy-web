@@ -59,7 +59,7 @@ Every error is RFC 7807 `application/problem+json`: `{type, title, status, detai
 
 ### Personal Access Tokens (`apps/tokens`)
 - `GET /api/tokens/` — my tokens (no raw values; OAuth-minted tokens omitted), each with `last_used_at` and `last_used_client` (the User-Agent of its last REST call or socket — a runner sends its host). A revoked token also stops any socket it opened: `RunnerConsumer` re-checks the credential on every frame (`apps/realtime/channels_auth.py::still_signed_in`) and closes 4001. `POST /api/tokens/` — mint (raw returned once). `DELETE /api/tokens/{id}/` — revoke (mine only; another user's 404s).
-- Raw values are sha256-hashed at creation and never stored. Send `Authorization: Bearer <raw>`; `apps.tokens.middleware.BearerTokenAuthMiddleware` resolves it to `request.user`. Bootstrap: `uv run python manage.py create_token --email <email> --label "<label>" --create-user`.
+- Raw values are sha256-hashed at creation and never stored; a new one starts `cpat_` (older ones are 43 bare characters and still work — `tenancy.md` § Users). Send `Authorization: Bearer <raw>`; `apps.tokens.middleware.BearerTokenAuthMiddleware` resolves it to `request.user`. Bootstrap: `uv run python manage.py create_token --email <email> --label "<label>" --create-user`.
 - `GET /api/tokens/github` — my GitHub App connection (never calls GitHub). `DELETE /api/tokens/github` — forget my grant (canopy's copy only; idempotent 204). `GET /api/tokens/github/installations` — live list of accounts/orgs the app is installed on (the create-agent owner picker); 409 when the grant is unusable (reconnect).
 
 ### Passkeys + step-up (`apps/passkeys`, mounted at `/api/passkeys`)
