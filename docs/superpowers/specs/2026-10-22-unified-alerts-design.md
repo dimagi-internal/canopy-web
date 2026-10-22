@@ -147,8 +147,11 @@ Severities: `runner_credential`, `unclaimable_turns` and `device_key_pending` ar
    token" (link to the runner's credentials), "Dismiss"; owners of agents routed to
    the runner → "Ask <owner> to fix it" (notify). Resolves when the probe passes.
    Replaces the email in `credential_notify.py` for `claude_auth_required`.
-2. `turn_failure` (harness) — one per open/escalated/debugger_failed
-   `FailureInvestigation`. Actions: workspace log readers → "Open the investigation",
+2. `turn_failure` (harness) — one per `FailureInvestigation` that Ada could NOT
+   handle: `escalated` (her fix didn't hold), `debugger_failed` (her debug turn
+   failed) or `held` (the rate cap stopped her turn). An `open` investigation is
+   Ada's: the failure is still logged as an error, but it spawns no alert because
+   it is being handled (Jonathan, 2026-10-22). Actions: workspace log readers → "Open the investigation",
    "Mark resolved" (closes; same path as `resolve_failure_investigation`).
    Resolves when the investigation resolves.
 3. `unclaimable_turns` (harness) — queued turns no runner will claim, one alert per
