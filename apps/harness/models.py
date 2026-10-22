@@ -2098,7 +2098,9 @@ class TurnAgentToken(models.Model):
     `POST /api/harness/runners/{rid}/turns/{tid}/agent-token` mints a `PersonalToken`
     for the turn's `Agent.user` and records it here, so every token of a turn can be
     revoked when the turn stops executing on that runner (`turn_agent_tokens`). It
-    replaces the agent's stored, never-expiring `canopy-pat` for runner turns.
+    replaces the agent's stored, never-expiring `canopy-pat` for runner turns. A laptop
+    turn finishes as soon as its session exists, so there the login is SESSION-scoped
+    instead (`session`): it lives while that session is live on the runner.
     Spec: docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md.
     """
 
@@ -2106,6 +2108,11 @@ class TurnAgentToken(models.Model):
     runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="+")
     token = models.OneToOneField("tokens.PersonalToken", on_delete=models.CASCADE,
                                  related_name="turn_grant")
+    #: Set for a SESSION-scoped login (a laptop turn whose session outlives it): held
+    #: while this session stays active and bound to `runner`, not while the turn runs.
+    #: `turn` is then the turn that opened it — who started the work it acts in.
+    session = models.ForeignKey("canopy_sessions.Session", on_delete=models.CASCADE, null=True,
+                                blank=True, related_name="agent_tokens")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

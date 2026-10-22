@@ -1540,6 +1540,9 @@ class TurnAgentTokenOut(Schema):
     expires_at: dt.datetime
     #: The agent it signs in as — a client checks it is the agent it runs.
     agent_slug: str
+    #: Set when the login is SESSION-scoped (a laptop turn whose session outlives it):
+    #: it is held while this session stays live on the runner, not while the turn runs.
+    session_id: str = ""
     turn_id: str
 
 

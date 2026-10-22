@@ -565,9 +565,20 @@ back to the stored PAT; phase 2 removes the PAT).
   requeues included), every terminal transition (`harness.closing.close_turn`: the
   lease sweep, a stop, an admission refusal, a moved turn), and `revoke_stale` on
   every queue-sweep tick.
+- **Session-scoped on a laptop.** An emdash turn finishes as soon as its Claude session
+  exists, and the person goes on driving the session. So on an `emdash` runner a turn
+  whose session is still active and bound to that runner under the turn's session key
+  gets a login tied to the SESSION (`TurnAgentToken.session`; `via=session` in the read
+  log), held while that stays true and revoked by `revoke_stale` when the session leaves
+  the runner or is archived. `finish_turn` leaves it alone. `?scope=session` asks for that
+  login only (404 with no live session), for a client that outlives the turn. A chat
+  turn names its session; an agent turn's is found by its binding (runner, session key,
+  agent). Never for a cloud or `computer` runner. Every action it takes is tied to
+  `turn`, the turn that opened the session.
 - Cloud runner: `CANOPY_WEB_PAT` in the turn env + `~/.canopy/agent-token/turn/<tid>.token`
   for the MCP headers helper. Laptop: the canopy CLI asks on demand with the box's
-  runner token and the session's turn id.
+  runner token and the session's turn id, for session scope; the MCP headers helper asks
+  through `canopy agent session-token`.
 
 Spec: `docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md`
 (`tests/test_turn_agent_token.py`).

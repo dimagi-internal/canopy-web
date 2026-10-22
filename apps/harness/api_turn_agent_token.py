@@ -28,9 +28,14 @@ router = Router(tags=["harness"])
              summary="A login as the turn's agent, for one turn this runner holds")
 # only the box's own runner token (a PAT is 403), turn claimed by it and executing
 @gate("runner", "runner-holds-agent", kind="runner-protocol")
-def turn_agent_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID):
+def turn_agent_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID, scope: str = "turn"):
     """A canopy login as the turn's agent, for ONE turn this runner is executing:
-    expires within 12 hours and is revoked when the turn stops executing here.
+    expires within 12 hours and is revoked when the turn stops executing here. On a
+    laptop runner, where a turn finishes as soon as its session exists, a finished
+    turn whose session is still active and bound here gets a SESSION-scoped login
+    instead (`session_id` set), revoked when that session leaves this runner.
+    `?scope=session` asks for that session-scoped login only (404 when the turn's
+    session is not live here), for a client that outlives the turn.
     Only with this runner's own runner token — a personal or OAuth token is
     refused, its owner's included. 404 unless this runner holds the turn and may
     hold its agent; 409 with the reason for a local turn, a caller's (confined)
@@ -48,15 +53,24 @@ def turn_agent_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.U
     runner = rtok.runner
     # Only a turn this runner holds right now. A finished turn, or one another box
     # claimed, gets the same 404 as one that does not exist.
-    turn = (
-        Turn.objects.select_related("agent__user", "agent__workspace",
-                                    "chat_session__agent__user",
-                                    "chat_session__agent__workspace")
-        .filter(pk=turn_id, claimed_by=runner, status__in=EXECUTING)
-        .first()
-    )
-    if turn is None:
-        raise HttpError(404, "turn not found")
+    turns = Turn.objects.select_related("agent__user", "agent__workspace",
+                                        "chat_session__agent__user", "chat_session__agent__workspace")
+    turn = turns.filter(pk=turn_id, claimed_by=runner, status__in=EXECUTING).first()
+    session = None
+    if scope == "session":
+        # Asked for a login that lasts the SESSION (a laptop MCP connection outlives its
+        # turn): only that, never a turn login that dies at turn end.
+        turn = turns.filter(pk=turn_id, claimed_by=runner).first()
+        session = turn_agent_tokens.live_session(turn, runner) if turn is not None else None
+        if session is None:
+            raise HttpError(404, "no live session for this turn on this runner")
+    elif turn is None:
+        # A laptop turn finishes the moment its session exists: its login then follows
+        # that session while it stays live on this runner (session-scoped).
+        turn = turns.filter(pk=turn_id, claimed_by=runner).first()
+        session = turn_agent_tokens.live_session(turn, runner) if turn is not None else None
+        if session is None:
+            raise HttpError(404, "turn not found")
     from apps.agents.services import runner_may_hold_agent
 
     # A claim already requires this; re-asked because an owner can be demoted mid-turn.
@@ -64,6 +78,8 @@ def turn_agent_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.U
     if agent is not None and not runner_may_hold_agent(runner, agent):
         raise HttpError(404, "turn not found")
     try:
+        if session is not None:
+            return turn_agent_tokens.issue_for_session(turn, runner, session)
         return turn_agent_tokens.issue(turn, runner)
     except turn_agent_tokens.Refused as exc:
         raise ProblemError(409, "No agent login for this turn", detail=str(exc)) from exc
