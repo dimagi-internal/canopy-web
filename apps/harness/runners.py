@@ -373,18 +373,23 @@ def can_administer_runner(user, runner) -> bool:
     (too narrow — that IS the single point of failure) or every auto-joined
     member (far too wide for credentials).
     """
+    return runner.pk in administered_runner_ids(user, [runner])
+
+
+def administered_runner_ids(user, runners) -> set:
+    """`can_administer_runner` for many runners at once: the pks of those `user`
+    administers, in at most one query (none when they own every one)."""
     if not getattr(user, "is_authenticated", False):
-        return False
+        return set()
     # A runner with NO owner is administered by nobody — it used to be
     # administered by everyone, a NULL-means-allow leg like the six this repo
     # has already removed elsewhere.
-    if runner.owner_id is None:
-        return False
-    if runner.owner_id == user.id:
-        return True
-    if not getattr(user, "is_authenticated", False):
-        return False
-    return RunnerAdmin.objects.filter(runner=runner, user=user).exists()
+    runners = [r for r in runners if r.owner_id is not None]
+    out = {r.pk for r in runners if r.owner_id == user.id}
+    rest = [r.pk for r in runners if r.pk not in out]
+    if rest:
+        out |= set(RunnerAdmin.objects.filter(runner_id__in=rest, user=user).values_list("runner_id", flat=True))
+    return out
 
 
 def may_trust_device_keys(user, runner) -> bool:

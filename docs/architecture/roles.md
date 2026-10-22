@@ -294,12 +294,22 @@ the tree, so a loop over pairs is N² queries (the agent topology was 6,000+ for
   `wsvc.member_roles` read.
 - **Many people, their roles:** `wsvc.member_roles_of(users)`, then `perms.role_allows`.
 - **Many people × agents:** `access.Standings(users, agents)` (every role and every agent grant,
-  in a fixed number of queries), passed to `access.decide(…, standing=)`,
-  `Agent.is_admin(user, role=, granted=)` or `access.roster(…)`.
+  in a fixed number of queries), passed to `access.decide(…, standing=)`, `Standings.is_admin`,
+  `Agent.is_admin(user, role=, granted=)` or `access.roster(…)`. Everyone who administers one agent:
+  `Agent.admin_user_ids()`.
+- **Many runners:** `routing.runner_tenant_slugs_of(runners)` (the tenant rule — prefetch
+  `enrollments`), `runners.administered_runner_ids(user, runners)`.
+- **The tree:** `ancestor_chains({slug: parent})` and `wsvc.descendant_map(slugs)`, not
+  `ancestor_slugs()` / `descendant_slugs()` per workspace.
+
+Each single check is the bulk read of one (`runner_tenant_slugs(r)` is
+`runner_tenant_slugs_of([r])[r.pk]`, `can_administer_runner` likewise), so a rule has one
+implementation.
 
 The rule is still one function: a bulk read only supplies its inputs, read per request and dropped
 with it — nothing is cached. `tests/test_bulk_authz_parity.py` holds every bulk read to the
-one-at-a-time answer, and `test_agent_topology.py` to a query count that does not grow with agents.
+one-at-a-time answer; `test_agent_topology.py` and `tests/test_fleet_reads_do_not_grow.py` pin
+query counts that do not grow with agents or runners.
 
 ### A token can do whatever its person can
 

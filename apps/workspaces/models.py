@@ -168,19 +168,8 @@ class Workspace(models.Model):
         super().save(*args, **kwargs)
 
     def ancestor_slugs(self) -> list[str]:
-        """Slugs from the direct parent up to the root, nearest first.
-
-        Bounded by MAX_DEPTH so a cycle written around `save()` (a raw UPDATE)
-        degrades to a truncated walk instead of an infinite loop inside an
-        authorization check."""
-        out: list[str] = []
-        pid = self.parent_id
-        seen = {self.slug}
-        while pid and pid not in seen and len(out) < MAX_DEPTH:
-            out.append(pid)
-            seen.add(pid)
-            pid = Workspace.objects.filter(slug=pid).values_list("parent_id", flat=True).first()
-        return out
+        """Slugs from the direct parent up to the root, nearest first."""
+        return ancestor_chains({self.slug: self.parent_id})[self.slug]
 
     def shared_vault_source(self) -> "Workspace | None":
         """The workspace whose shared vault this one uses: itself when it has
@@ -486,3 +475,33 @@ class SystemSender(models.Model):
 
     def __str__(self) -> str:
         return f"{self.address} -> {self.account.name}"
+
+
+def ancestor_chains(parents: dict[str, str | None]) -> dict[str, list[str]]:
+    """`Workspace.ancestor_slugs` for many workspaces at once: {slug: [parent, …,
+    root]}, nearest first, from each one's parent (`{slug: parent_id}`, which a
+    caller holding the rows already has). One query per tree level for all of
+    them, not one per level per workspace.
+
+    Bounded by MAX_DEPTH so a cycle written around `save()` (a raw UPDATE)
+    degrades to a truncated walk instead of an infinite loop inside an
+    authorization check."""
+    known = dict(parents)
+    frontier = {p for p in known.values() if p and p not in known}
+    for _ in range(MAX_DEPTH):
+        if not frontier:
+            break
+        rows = dict(Workspace.objects.filter(slug__in=frontier).values_list("slug", "parent_id"))
+        known.update(rows)
+        known.update({s: None for s in frontier - set(rows)})
+        frontier = {p for p in rows.values() if p and p not in known}
+    out: dict[str, list[str]] = {}
+    for slug, pid in parents.items():
+        chain: list[str] = []
+        seen = {slug}
+        while pid and pid not in seen and len(chain) < MAX_DEPTH:
+            chain.append(pid)
+            seen.add(pid)
+            pid = known.get(pid)
+        out[slug] = chain
+    return out

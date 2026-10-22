@@ -19,7 +19,7 @@ rights), so the step carries the one command that does it.
 from __future__ import annotations
 
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
-from apps.harness.routing import inherited_orders, runner_tenant_slugs
+from apps.harness.routing import inherited_orders, runner_tenant_slugs_of
 from apps.harness.runners import request_refresh
 
 from . import mailbox
@@ -267,8 +267,9 @@ def runner_takers(agent: Agent):
            .select_related("runner", "runner__owner")]
     inherited = inherited_orders([agent.id]).get(agent.id)
     listed = own or (inherited.runners if inherited else [])
+    tenants = runner_tenant_slugs_of(listed)
     takers = [r for r in listed if r.status != Runner.RETIRED
-              and agent.workspace_id in runner_tenant_slugs(r) and runner_may_hold_agent(r, agent)]
+              and agent.workspace_id in tenants[r.pk] and runner_may_hold_agent(r, agent)]
     return takers, inherited
 
 

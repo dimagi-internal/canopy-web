@@ -164,7 +164,7 @@
 "apps/harness/models.py" = ["PLC0415"]  # 3
 "apps/harness/owner_ask.py" = ["PLC0415"]  # 1
 "apps/harness/provenance.py" = ["PLC0415"]  # 1
-"apps/harness/routing.py" = ["PLC0415"]  # 7
+"apps/harness/routing.py" = ["PLC0415"]  # 6
 "apps/harness/routing_audit.py" = ["PLC0415"]  # 1
 "apps/harness/runner_releases.py" = ["PLC0415"]  # 2
 "apps/harness/runners.py" = ["PLC0415"]  # 6

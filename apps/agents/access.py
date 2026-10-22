@@ -116,6 +116,11 @@ class Standings:
     def of(self, user, agent) -> Standing:
         return Standing(self._roles[user.pk].get(agent.workspace_id), user.pk in self.grants[agent.pk])
 
+    def is_admin(self, user, agent) -> bool:
+        """`agent.is_admin(user)`, from what was read."""
+        st = self.of(user, agent)
+        return agent.is_admin(user, role=st.role, granted=st.granted)
+
 
 def _is_editor(user, role: str | None) -> bool:
     """Workspace editor or above: may reshape the agent and dispatch to it."""

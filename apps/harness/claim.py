@@ -59,6 +59,7 @@ from .routing import (
     routed_slug,
     runner_target_q,
     runner_tenant_slugs,
+    runner_tenant_slugs_of,
     turn_unit_refusal,
 )
 from .turn_agent_tokens import revoke_stale
@@ -332,11 +333,10 @@ def turn_reach(turn: Turn) -> Reach:
         ws = turn.agent.workspace_id
     else:
         ws = turn.workspace_id
-    runners = [
-        r for r in Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
-        .select_related("owner").prefetch_related("declared_flags").order_by("name")
-        if ws in runner_tenant_slugs(r)
-    ]
+    candidates = list(Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
+                      .select_related("owner").prefetch_related("declared_flags", "enrollments").order_by("name"))
+    tenants = runner_tenant_slugs_of(candidates)
+    runners = [r for r in candidates if ws in tenants[r.pk]]
     prime_machine_units(runners)
     defaults, priorities = _assignment_rows_for_turns([turn])
     covering = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities).items() if pks]
@@ -482,11 +482,10 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     # say "no runner is assigned; fix your routing." Use the SAME tenancy rule as
     # claim_next_turn (`runner_tenant_slugs`, owner-derived, NULL-fails-closed)
     # so this warning can't disagree with what claiming actually does.
-    runners = [
-        r for r in Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
-        .select_related("owner").prefetch_related("declared_flags")
-        if runner_tenant_slugs(r) & ws_slugs
-    ]
+    candidates = list(Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
+                      .select_related("owner").prefetch_related("declared_flags", "enrollments"))
+    tenants = runner_tenant_slugs_of(candidates)
+    runners = [r for r in candidates if tenants[r.pk] & ws_slugs]
     prime_machine_units(runners)
     ids = {t.id for t in queued}
     defaults, priorities = _assignment_rows_for_turns(queued)
