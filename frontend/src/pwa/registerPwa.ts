@@ -1,4 +1,5 @@
 import { registerSW } from 'virtual:pwa-register'
+import { markUpdateReady } from './updateReady'
 
 // Adopt new service workers — but never underneath a page someone is looking at.
 //
@@ -53,7 +54,9 @@ export function registerPwa(): void {
     immediate: true,
     // Fired once a new SW is installed and waiting. Nothing has been swapped
     // yet — the running page keeps the precache it was built against.
+    // UpdateBanner offers the same switch to a page that stays visible.
     onNeedRefresh() {
+      markUpdateReady(() => void updateSW(true))
       applyWhenHidden(() => void updateSW(true))
     },
     onRegisteredSW(swUrl, registration) {
