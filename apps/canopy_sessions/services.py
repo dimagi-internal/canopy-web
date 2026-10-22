@@ -328,24 +328,3 @@ def reset_sessions(sessions, *, prune_ghosts: bool = False, dry_run: bool = Fals
         "pruned": pruned,
         "rows_dropped": sum(r["rows_dropped"] for r in results),
     }
-
-
-
-# TEMPORARY: apps/harness/services.py still imports these five from here, and that
-# file is mid-refactor in another change. Retarget it (placement.fork_plan,
-# transcript_read.is_session_running, transcript_ingest.*) and delete this. Lazy,
-# because those modules import this one.
-_MOVED_FOR_HARNESS = {
-    "fork_plan": "placement", "is_session_running": "transcript_read",
-    "REOPENED_KEY": "transcript_ingest", "fork_if_task_changed": "transcript_ingest",
-    "seed_stream_desired": "transcript_ingest",
-}
-
-
-def __getattr__(name):
-    mod = _MOVED_FOR_HARNESS.get(name)
-    if mod is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    import importlib
-
-    return getattr(importlib.import_module(f"{__package__}.{mod}"), name)

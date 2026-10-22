@@ -205,7 +205,7 @@ def _busy_reason(binding, turn_id) -> str:
     - the engine says it is working (`agent_status`, emdash's own flag, or the
       runner's `agent_status_stale` dissent): a person typing in it, or work that
       outlived its turn. A blank status (the runner could not answer) is not busy."""
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import transcript_read
 
     others = Turn.objects.filter(status__in=EXECUTING).exclude(pk=turn_id)
     holder_q = Q(chat_session_id=binding.session_id)
@@ -214,7 +214,7 @@ def _busy_reason(binding, turn_id) -> str:
     holder = others.filter(holder_q).values_list("pk", flat=True).first()
     if holder is not None:
         return f"turn {holder} is executing in it"
-    if binding.agent_status and session_services.is_session_running(binding):
+    if binding.agent_status and transcript_read.is_session_running(binding):
         return f"the engine reports it {binding.agent_status}"
     return ""
 
@@ -250,7 +250,7 @@ def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = ""
     `session_key`'s transcript (`canopy_sessions.services.fork_session`).
     `worktree_of` names, for every turn of a fork, the chat whose directory a cloud
     runner runs it in — the source's, so both share one worktree. "" otherwise."""
-    from apps.canopy_sessions.services import fork_plan
+    from apps.canopy_sessions.placement import fork_plan
 
     fork, worktree = fork_plan(thread_key)
     binding = _binding_for_thread(agent, project, workspace, thread_key)
@@ -409,7 +409,7 @@ def record_session(
             binding.summary = summary
         binding.save()
         # A widget can attach before this binding exists — see seed_stream_desired.
-        from apps.canopy_sessions.services import seed_stream_desired
+        from apps.canopy_sessions.transcript_ingest import seed_stream_desired
 
         seed_stream_desired(binding)
     return binding
@@ -747,7 +747,7 @@ def replace_reported_sessions(
                 # a name gets its own session here, and the old record keeps its rows
                 # (board task T74). getattr: lightweight session objects reach this
                 # service too, and an old runner sends no id — which forks nothing.
-                from apps.canopy_sessions.services import fork_if_task_changed
+                from apps.canopy_sessions.transcript_ingest import fork_if_task_changed
 
                 fork_if_task_changed(binding, str(getattr(s, "task_uid", "") or "")[:100])
                 # Correct a GENERATED title on an existing session. A brand-new
@@ -860,7 +860,7 @@ def replace_reported_sessions(
             binding.save()
             # The same race as record_session: a viewer may have attached before
             # this report created the binding.
-            from apps.canopy_sessions.services import seed_stream_desired
+            from apps.canopy_sessions.transcript_ingest import seed_stream_desired
 
             seed_stream_desired(binding)
             touched_ids.append(binding.pk)
@@ -873,7 +873,7 @@ def replace_reported_sessions(
     # from a new task that reused a closed one's name — only the transcript the
     # next ship carries can (canopy_sessions.services.fork_if_name_reused).
     if touched_ids:
-        from apps.canopy_sessions.services import REOPENED_KEY
+        from apps.canopy_sessions.transcript_ingest import REOPENED_KEY
 
         with transaction.atomic():
             for revived in Session.objects.select_for_update().filter(
