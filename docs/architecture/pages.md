@@ -17,7 +17,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   and the pre-tenancy `/w/<uuid>/…` are a plain server 404, reachable signed
   out, saying links now carry the workspace (`config/views.py::flat_artifact_gone`, matched by
   `FLAT_ARTIFACT_PATH` before the SPA catch-all). Build links with
-  `scoped_path` / `scoped_path_or_none` (`apps/workspaces/services.py`) or
+  `scoped_path` / `scoped_path_or_none` (`apps/workspaces/links.py`) or
   `scopedPath` / `useScopedPath` (`frontend/src/lib/scopedLinks.ts`; a hand-built
   `/w/${…}` fails `frontend/src/scopedPathLiterals.test.ts`); neither has a flat
   fallback — a row with no workspace has no address (`Unhomed`). Every URL

@@ -8,7 +8,7 @@ from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 from django.contrib.auth import get_user_model
 from django.shortcuts import render
 
-from apps.workspaces.services import email_admitted_outside_domain
+from apps.workspaces.login_gate import email_admitted_outside_domain
 
 from .auth_domains import allowed_email_domains, email_in_allowlist
 

@@ -32,6 +32,7 @@ from apps.runs.ddd import narrative_slug_from_run_id
 from apps.runs.aggregate import has_narrative_version
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 from . import storage
 from .drive_client import DriveNotConfigured
@@ -90,11 +91,11 @@ def _parse_links_field(raw: str) -> list[dict]:
 
 def _share_url(w: Walkthrough) -> str | None:
     """Absolute tokened public URL, under the walkthrough's workspace; None
-    unless public + minted. See `wsvc.scoped_url` for why it is not built from
+    unless public + minted. See `wslinks.scoped_url` for why it is not built from
     the request."""
     if w.visibility != Walkthrough.VISIBILITY_LINK or not w.share_token:
         return None
-    return wsvc.scoped_url_or_none(w.workspace_id, f"/walkthrough/{w.id}?t={w.share_token}")
+    return wslinks.scoped_url_or_none(w.workspace_id, f"/walkthrough/{w.id}?t={w.share_token}")
 
 
 def _signals(rows) -> dict[str, dict]:

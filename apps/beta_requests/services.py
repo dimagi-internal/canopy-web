@@ -115,13 +115,14 @@ def invite(req: BetaRequest, *, workspace, role: str, by) -> tuple[BetaRequest, 
     link. Returns the request and the invite email's status (`sent` |
     `throttled` | `not_configured` | `failed` — the invite exists either way).
     The caller has checked `by` may invite at `role` there."""
-    from apps.workspaces import services as ws_services
+    from apps.workspaces import invites as wsinvites
+    from apps.workspaces import notifications as wsnotify
 
     with transaction.atomic():
         locked = BetaRequest.objects.select_for_update().get(pk=req.pk)
         if locked.status != BetaRequest.PENDING:
             raise NotPending()
-        inv = ws_services.create_invite(workspace=workspace, email=locked.email, role=role, invited_by=by)
+        inv = wsinvites.create_invite(workspace=workspace, email=locked.email, role=role, invited_by=by)
         locked.status = BetaRequest.INVITED
         locked.workspace = workspace
         locked.role = role
@@ -131,7 +132,7 @@ def invite(req: BetaRequest, *, workspace, role: str, by) -> tuple[BetaRequest, 
         locked.save(update_fields=["status", "workspace", "role", "invite", "decided_by", "decided_at"])
     # After the commit: a mail failure must not undo the decision, and the
     # invite's link can still be copied from the workspace's Members page.
-    return locked, ws_services.email_invite(invite=inv)
+    return locked, wsnotify.email_invite(invite=inv)
 
 
 def decline(req: BetaRequest, *, by) -> BetaRequest:

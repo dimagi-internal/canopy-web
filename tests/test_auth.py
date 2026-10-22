@@ -291,7 +291,7 @@ def _make_invite(email, *, workspace_slug="acme", expired=False, revoked=False, 
     from django.utils import timezone
 
     from apps.workspaces.models import Workspace
-    from apps.workspaces.services import accept_invite, create_invite, revoke_invite
+    from apps.workspaces.invites import accept_invite, create_invite, revoke_invite
 
     User = get_user_model()
     owner = User.objects.create_user(username="owner@dimagi.com", email="owner@dimagi.com")
@@ -370,7 +370,7 @@ def test_adapter_admits_accepted_invitee_on_next_login(db):
     their very NEXT login (accepting clears `pending`) — the right check is
     member-OR-pending-invite. Confirm the login is admitted via the
     resulting WorkspaceMembership even though no pending invite remains."""
-    from apps.workspaces.services import pending_invite_for_email
+    from apps.workspaces.invites import pending_invite_for_email
 
     inv = _make_invite("guest@external.com", accepted=True)
     assert inv.accepted_at is not None

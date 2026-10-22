@@ -40,6 +40,7 @@ from apps.events import activity
 from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 from . import aws_iam_proof, device_key_notify, device_keys, unit_pairing
 from .api_device_keys import ECDH_STORES
@@ -62,7 +63,7 @@ def approve_path(invitation: RunnerInvitation) -> str:
 
 def approve_url(invitation: RunnerInvitation) -> str:
     """The approve page, under the invitation's workspace."""
-    return wsvc.scoped_url(invitation.workspace_id, approve_path(invitation))
+    return wslinks.scoped_url(invitation.workspace_id, approve_path(invitation))
 
 
 def invitation_out(invitation: RunnerInvitation) -> RunnerInvitationOut:

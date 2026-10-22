@@ -42,6 +42,7 @@ from apps.walkthroughs import pinned
 from apps.walkthroughs.models import Walkthrough
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 from .models import ReviewRequest
 from .schemas import (
@@ -150,7 +151,7 @@ def _pinned_video(w: Walkthrough, member_slugs: set[str]) -> dict:
     it is public (visibility=link), and no URL when it is private. The review's
     link never widens a private video: it only says the cut exists."""
     url = viewer = None
-    page = wsvc.scoped_path_or_none(w.workspace_id, f"/walkthrough/{w.id}")
+    page = wslinks.scoped_path_or_none(w.workspace_id, f"/walkthrough/{w.id}")
     if page is None:
         pass  # no workspace, no address
     elif w.workspace_id in member_slugs:
@@ -498,7 +499,7 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
             id=review.id,
             url=url,
             share_token=token,
-            share_url=wsvc.scoped_url(ws, f"/review/{review.pk}/" + (f"?t={token}" if token else "")),
+            share_url=wslinks.scoped_url(ws, f"/review/{review.pk}/" + (f"?t={token}" if token else "")),
             workspace=review.workspace_id,
         ),
     )

@@ -109,11 +109,11 @@ def test_an_editor_manages_no_one(adm):
 
 
 def test_an_admin_sees_invite_links_only_for_roles_below_them(adm):
-    from apps.workspaces import services
+    from apps.workspaces import invites
 
-    services.create_invite(workspace=adm["ws"], email="o@dimagi.com", role=M.OWNER,
+    invites.create_invite(workspace=adm["ws"], email="o@dimagi.com", role=M.OWNER,
                            invited_by=adm[M.OWNER])
-    services.create_invite(workspace=adm["ws"], email="e@dimagi.com", role=M.EDITOR,
+    invites.create_invite(workspace=adm["ws"], email="e@dimagi.com", role=M.EDITOR,
                            invited_by=adm[M.OWNER])
     rows = {i["email"]: i["token"] for i in _c(adm[M.ADMIN]).get(f"/api/workspaces/{WS}/invites/").json()}
     assert rows["e@dimagi.com"] and not rows["o@dimagi.com"]

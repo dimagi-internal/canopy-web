@@ -21,6 +21,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 from . import local
 from .models import PrivateRunner, Runner, Turn
@@ -176,7 +177,7 @@ def open_local_turn(request: HttpRequest, payload: LocalTurnIn):
         "turn_id": turn.pk, "created": created, "agent": agent.slug,
         "workspace": agent.workspace_id, "turn_mode": turn.turn_mode,
         "turn_mode_basis": turn.turn_mode_basis, "lease_expires_at": turn.lease_expires_at,
-        "url": wsvc.scoped_url(agent.workspace, f"/agents/{agent.slug}/turns?turn={turn.pk}"),
+        "url": wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/turns?turn={turn.pk}"),
         "envelope": build(turn, reader_user=request.user),
     })
 

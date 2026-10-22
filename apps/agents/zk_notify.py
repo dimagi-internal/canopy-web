@@ -91,9 +91,9 @@ def holders(agent) -> list:
 
 
 def _link(agent) -> str:
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
-    return wsvc.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings#cred-zk")
+    return wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings#cred-zk")
 
 
 def _notify(agent, notice) -> dict:

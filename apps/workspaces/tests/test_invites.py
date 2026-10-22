@@ -1,4 +1,4 @@
-"""Unit tests for the invite service layer (`apps/workspaces/services.py`).
+"""Unit tests for the invite service layer (`apps/workspaces/invites.py`).
 
 These exercise `create_invite` / `accept_invite` / `revoke_invite` /
 `pending_invite_for_email` directly (no HTTP), complementing the
@@ -14,7 +14,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.workspaces.models import Workspace, WorkspaceInvite, WorkspaceMembership
-from apps.workspaces.services import (
+from apps.workspaces.invites import (
     InviteError,
     accept_invite,
     create_invite,

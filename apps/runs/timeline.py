@@ -17,7 +17,7 @@ import datetime as dt
 
 from apps.reviews.models import ReviewRequest
 from apps.walkthroughs.models import Walkthrough
-from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 from . import aggregate as agg
 
@@ -90,7 +90,7 @@ def recent_events(
         project_slug = next((w.project_slug for w in run_wts if w.project_slug), None)
         # The run's page, under the workspace its artifacts live in.
         href = next(
-            (h for w in run_wts if (h := wsvc.scoped_path_or_none(w.workspace_id, f"/ddd/{narrative}/{run_id}"))),
+            (h for w in run_wts if (h := wslinks.scoped_path_or_none(w.workspace_id, f"/ddd/{narrative}/{run_id}"))),
             None,
         )
         if href is None:
@@ -126,7 +126,7 @@ def recent_events(
                 summary=f"{r.gate} · {r.status}",
                 project_slug=None,
                 actor=actor_name(r.owner),
-                href=wsvc.scoped_path(r.workspace_id, f"/review/{r.id}"),
+                href=wslinks.scoped_path(r.workspace_id, f"/review/{r.id}"),
                 id=f"review:{r.id}",
                 icon="narrative",
             )

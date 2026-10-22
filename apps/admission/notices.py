@@ -194,27 +194,27 @@ def _sender_notice(turn, rule, agent) -> None:
 
 
 def fix_links(turn, rule, agent) -> list[dict]:
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
     ws = agent.workspace_id
     links = [
         {"label": "The admission rule that fired",
-         "url": wsvc.scoped_url(ws, f"/settings/admission-rules?rule={rule.pk}")},
+         "url": wslinks.scoped_url(ws, f"/settings/admission-rules?rule={rule.pk}")},
         {"label": f"{agent.name}'s turn mode and runners",
-         "url": wsvc.scoped_url(ws, f"/agents/{agent.slug}/settings#running")},
+         "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/settings#running")},
         {"label": f"Who can reach {agent.name} (interface callers)",
-         "url": wsvc.scoped_url(ws, f"/agents/{agent.slug}/settings#reach")},
+         "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/settings#reach")},
         {"label": f"The rejected turn ({turn.pk})",
-         "url": wsvc.scoped_url(ws, f"/agents/{agent.slug}/turns")},
+         "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/turns")},
     ]
     if rule.reach:
         links.insert(1, {"label": "The runners (resume one, or check why it is down)",
-                         "url": wsvc.public_url("/supervisor?tab=runners")})
+                         "url": wslinks.public_url("/supervisor?tab=runners")})
     ref = turn.origin_ref or {}
     thread_id = str(ref.get("thread_id") or "")
     if thread_id and ref.get("backend") == "ses":
         links.append({"label": f"The email thread (in {agent.slug}'s mail)",
-                      "url": wsvc.scoped_url(ws, f"/agents/{agent.slug}/mail")})
+                      "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/mail")})
     elif thread_id:
         links.append({"label": f"The Gmail thread (in {agent.slug}'s mailbox)",
                       "url": f"https://mail.google.com/mail/u/0/#all/{thread_id}"})

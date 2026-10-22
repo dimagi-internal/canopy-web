@@ -320,7 +320,7 @@ class WorkspaceInvite(models.Model):
     accepted_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    # When canopy last emailed this invite's link (services.email_invite). Null
+    # When canopy last emailed this invite's link (notifications.email_invite). Null
     # = never: email was off, the send failed, or it predates invite email.
     last_emailed_at = models.DateTimeField(null=True, blank=True)
 
@@ -353,7 +353,7 @@ class WorkspaceAccessRequest(models.Model):
     the workspace's `access_request_domains` asks; every admin and owner is
     notified; an admin or owner approves at a role (no higher than their own
     may grant) or denies. Approval is what creates the membership
-    (`services.approve_access_request`). With the workspace's
+    (`access_requests.approve_access_request`). With the workspace's
     `auto_approve_role` set, the request is approved at creation at that role,
     `auto=True`, `decided_by=None`. See docs/architecture/access.md.
     """

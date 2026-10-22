@@ -23,6 +23,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 from . import redact
 from .models import (
@@ -67,7 +68,7 @@ def share_url(workspace_id: str | None, token: str | None) -> str | None:
     a share with no workspace: it has no address (there is no flat one)."""
     if not token:
         return None
-    return wsvc.scoped_url_or_none(workspace_id, f"/share/{token}")
+    return wslinks.scoped_url_or_none(workspace_id, f"/share/{token}")
 
 
 def _share_workspace(request: HttpRequest, what: str):

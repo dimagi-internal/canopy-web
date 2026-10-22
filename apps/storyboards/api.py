@@ -51,6 +51,7 @@ from apps.storyboards.schemas import (
 )
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 router = Router(tags=["storyboards"])
 
@@ -158,7 +159,7 @@ def _share_url(request: HttpRequest, board: Storyboard) -> str | None:
     """
     if not board.share_token:
         return None
-    return wsvc.scoped_url(board.workspace_id, f"/storyboard/{board.slug}?t={board.share_token}")
+    return wslinks.scoped_url(board.workspace_id, f"/storyboard/{board.slug}?t={board.share_token}")
 
 
 # ------------------------------------------------------------------- write ops

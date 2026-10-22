@@ -1,7 +1,7 @@
 """GET /api/me/ reports whether the caller may create a workspace.
 
 The first-run screen needs this to avoid offering a button that 403s. The gate
-itself is apps.workspaces.services.can_create_workspace (the F1 finding).
+itself is apps.workspaces.login_gate.can_create_workspace (the F1 finding).
 """
 import pytest
 from django.contrib.auth import get_user_model

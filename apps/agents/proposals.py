@@ -72,9 +72,9 @@ def page_path(project: AgentProject) -> str:
 
 
 def page_url(project: AgentProject) -> str:
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
-    return wsvc.scoped_url(project.agent.workspace_id, page_path(project))
+    return wslinks.scoped_url(project.agent.workspace_id, page_path(project))
 
 
 def _kind(task: AgentTask) -> str:
@@ -436,12 +436,12 @@ def card(project: AgentProject, user) -> dict:
     page both render it (`ProposedProjectCard`): what it is, the decision and who
     may make it, where people stand, what they said, and its partners."""
     from apps.contacts import services as contacts
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
     decision = decision_card(project)
     me = contacts.person_for(user=user) if getattr(user, "is_authenticated", False) else None
     partners = [{"agent": t.agent.slug, "ext_id": t.ext_id, "task_id": t.pk, "status": t.status,
-                 "url": wsvc.scoped_path(t.agent.workspace_id, f"/agents/{t.agent.slug}/tasks")}
+                 "url": wslinks.scoped_path(t.agent.workspace_id, f"/agents/{t.agent.slug}/tasks")}
                 for t in partner_tasks(project)]
     proposed_at = project.proposed_at
     return {
@@ -449,7 +449,7 @@ def card(project: AgentProject, user) -> dict:
         "ref": project.ext_id, "name": project.name, "status": project.status,
         "outcome": project.outcome, "why": decision.rationale if decision else "",
         "plan": [s.title for s in plan_steps(project)],
-        "url": wsvc.scoped_path(project.agent.workspace_id, page_path(project)),
+        "url": wslinks.scoped_path(project.agent.workspace_id, page_path(project)),
         "source_url": project.source_url, "proposed_at": proposed_at,
         "expires_at": (proposed_at + EXPIRES_AFTER
                        if proposed_at and project.status == AgentProject.PROPOSED else None),
@@ -663,10 +663,10 @@ def _task_comments(task: AgentTask) -> list[dict]:
 
 def spawned_of(task: AgentTask) -> list[dict]:
     """The projects this task grew into ("spawned → P9")."""
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
     return [{"agent": p.agent.slug, "ref": p.ext_id, "name": p.name, "status": p.status,
-             "url": wsvc.scoped_path(p.agent.workspace_id, page_path(p))}
+             "url": wslinks.scoped_path(p.agent.workspace_id, page_path(p))}
             for p in task.spawned_projects.select_related("agent").order_by("pk")]
 
 
@@ -676,14 +676,14 @@ def task_card(task: AgentTask, user) -> dict:
     it, where people stand, what they said, its partners, and any project it
     spawned."""
     from apps.contacts import services as contacts
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
     project = task.project
     ref = _ref_of(task)
     me = contacts.person_for(user=user) if getattr(user, "is_authenticated", False) else None
     proposed_at = _proposed_at(task) or task.created_at
     partners = [{"agent": t.agent.slug, "ext_id": t.ext_id, "task_id": t.pk, "status": t.status,
-                 "url": wsvc.scoped_path(t.agent.workspace_id, f"/agents/{t.agent.slug}/tasks")}
+                 "url": wslinks.scoped_path(t.agent.workspace_id, f"/agents/{t.agent.slug}/tasks")}
                 for t in task_partner_tasks(task)]
     return {
         "id": task.pk, "agent": task.agent.slug, "workspace": task.agent.workspace_id, "ref": task.ext_id,
@@ -691,8 +691,8 @@ def task_card(task: AgentTask, user) -> dict:
         "done_when": str(ref.get("done_when") or ""),
         "plan": [s.title for s in task_plan_steps(task)],
         "project_ref": project.ext_id if project else "", "project_name": project.name if project else "",
-        "project_url": wsvc.scoped_path(task.agent.workspace_id, page_path(project)) if project else "",
-        "url": wsvc.scoped_path(task.agent.workspace_id, page_path(project)) if project else "",
+        "project_url": wslinks.scoped_path(task.agent.workspace_id, page_path(project)) if project else "",
+        "url": wslinks.scoped_path(task.agent.workspace_id, page_path(project)) if project else "",
         "source_url": task.source_url, "checkin": ref.get("checkin") if str(ref.get("checkin") or "").isdigit()
         else None, "run": ref.get("run") if str(ref.get("run") or "").isdigit() else None,
         "huddle_id": str(ref.get("huddle_id") or ""), "proposed_at": proposed_at,

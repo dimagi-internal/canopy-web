@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 def review_path(review: ReviewRequest) -> str:
     """App-relative page URL, under the review's workspace."""
-    from apps.workspaces.services import scoped_path
+    from apps.workspaces.links import scoped_path
 
     return scoped_path(review.workspace_id, f"/review/{review.pk}/")
 
@@ -41,11 +41,12 @@ def notify_suggestion(
         if not to:
             result["emailed"] = "no_recipient"
         else:
-            from apps.workspaces.services import _base_url, _button
+            from apps.workspaces.links import base_url
+            from apps.workspaces.notifications import _button
 
             who = (name or "").strip() or submitter_email or "A guest reviewer"
             what = narrative_title(review.request_json, review.narrative_slug) or review.run_id
-            link = f"{_base_url()}{review_path(review)}"
+            link = f"{base_url()}{review_path(review)}"
             subject = f"{who} suggested edits to “{what}”"
             tail = f"{count} suggestion{'s' if count != 1 else ''} on this review so far."
             cc_note = (f"{submitter_email} is copied on this email." if cc else

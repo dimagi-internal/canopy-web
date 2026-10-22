@@ -25,6 +25,7 @@ from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import SessionParticipant
 from apps.harness.models import Runner, RunnerAdmin, RunnerAssignment
 from apps.workspaces import services as wsvc
+from apps.workspaces import invites as wsinvites
 from apps.workspaces.models import Workspace, WorkspaceInvite, WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
 
@@ -248,7 +249,7 @@ async def test_an_open_chat_socket_closes_when_its_person_is_removed():
 
 def test_a_non_owner_sees_invites_without_their_tokens(life):
     viewer = a_member(life["ws"], email="life-viewer@dimagi.com", role=M.VIEWER)
-    wsvc.create_invite(workspace=life["ws"], email="new@dimagi.com", role=M.OWNER,
+    wsinvites.create_invite(workspace=life["ws"], email="new@dimagi.com", role=M.OWNER,
                        invited_by=life["owner"])
     token = WorkspaceInvite.objects.get(email="new@dimagi.com").token
 

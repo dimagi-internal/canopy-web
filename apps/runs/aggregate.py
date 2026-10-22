@@ -24,6 +24,7 @@ from apps.reviews.titles import narrative_title, phase_words
 from apps.walkthroughs import pinned
 from apps.walkthroughs.models import Walkthrough
 from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 # ---------------------------------------------------------------------------
 # Workspace scoping
@@ -177,11 +178,11 @@ def _content_url(w: Walkthrough) -> str:
     with the URL — parity with the release page, and it keeps the DDD console's
     <iframe> embed readable even when the artifact's workspace differs from the
     viewer's active one."""
-    return _tok(wsvc.scoped_path(w.workspace_id, f"/walkthrough/{w.id}/content"), w)
+    return _tok(wslinks.scoped_path(w.workspace_id, f"/walkthrough/{w.id}/content"), w)
 
 
 def _viewer_url(w: Walkthrough) -> str:
-    return _tok(wsvc.scoped_path(w.workspace_id, f"/walkthrough/{w.id}"), w)
+    return _tok(wslinks.scoped_path(w.workspace_id, f"/walkthrough/{w.id}"), w)
 
 
 def _cut_payload(w: Walkthrough) -> dict:
@@ -414,7 +415,6 @@ def build_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | No
 def _is_member(w: Walkthrough, request) -> bool:
     """True iff the caller is a member of the walkthrough's workspace (the
     non-token half of Walkthrough.readable_by)."""
-    from apps.workspaces import services as wsvc
 
     # A null-workspace walkthrough has no members (see Walkthrough.readable_by).
     if w.workspace_id is None:
@@ -604,7 +604,7 @@ def build_release(run_id: str, request, ws: str = "") -> dict | None:
         # someone. Under the run's workspace like every artifact
         # (canopy-web#1337); the flat /ddd-release/ is a 404.
         "share_url": (
-            wsvc.scoped_url_or_none(
+            wslinks.scoped_url_or_none(
                 primary.workspace_id,
                 f"/ddd-release/{narrative_slug}/{run_id}?t={primary.share_token}",
             )
@@ -613,7 +613,7 @@ def build_release(run_id: str, request, ws: str = "") -> dict | None:
         ),
         # Internal-only link to the full operator console, under the run's
         # workspace. The clean page shows it only to members.
-        "build_url": wsvc.scoped_path_or_none(primary.workspace_id, f"/ddd/{narrative_slug}/{run_id}"),
+        "build_url": wslinks.scoped_path_or_none(primary.workspace_id, f"/ddd/{narrative_slug}/{run_id}"),
     }
 
 

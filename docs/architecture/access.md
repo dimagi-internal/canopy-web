@@ -68,7 +68,7 @@ fails on a fourth door, and `tests/test_no_implicit_enrolment.py` pins
   never fails the request — it is stored on the request (`notify_result`) and
   written to the event log (`source=workspaces.access`, `warn`).
 * **Creating a workspace** makes you its **owner** — subject to
-  `services.can_create_workspace`: an *invite-admitted* user holding no membership may
+  `login_gate.can_create_workspace`: an *invite-admitted* user holding no membership may
   not, or invite-admission would become transitively delegable (create a workspace, mint
   invites, and each invitee clears the login gate too). `/api/me/` reports
   `can_create_workspace` so the UI never offers a button that 403s.

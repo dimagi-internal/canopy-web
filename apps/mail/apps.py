@@ -16,9 +16,9 @@ class MailConfig(AppConfig):
         move.register(participant)
 
         # Hosted mailboxes for agents, and domain sign-in, through the framework's seams
-        # (apps/agents/mailbox.py, workspaces.services.register_verified_domain_owner).
+        # (apps/agents/mailbox.py, workspaces.login_gate.register_verified_domain_owner).
         from apps.agents import mailbox
-        from apps.workspaces import services as wsvc
+        from apps.workspaces import login_gate
 
         from . import domains
 
@@ -37,4 +37,4 @@ class MailConfig(AppConfig):
                           dispatch_uid="mail.agent_addresses.agent")
         post_save.connect(auto_addresses.on_workspace_saved, sender=Workspace,
                           dispatch_uid="mail.agent_addresses.workspace")
-        wsvc.register_verified_domain_owner(domains.verified_domain_owner)
+        login_gate.register_verified_domain_owner(domains.verified_domain_owner)

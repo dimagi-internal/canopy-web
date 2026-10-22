@@ -43,6 +43,7 @@ from apps.events import activity
 from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 from . import device_keys
 from .api_device_keys import ECDH_STORES
@@ -168,7 +169,7 @@ def create_runner_pairing(request: HttpRequest, payload: RunnerPairingIn):
     else:  # pragma: no cover — 31^8 codes
         raise HttpError(503, "could not allocate a pairing code; try again")
     return Status(201, RunnerPairingCreatedOut(
-        id=pairing.pk, user_code=pairing.user_code, verify_url=wsvc.public_url(verify_path(pairing)),
+        id=pairing.pk, user_code=pairing.user_code, verify_url=wslinks.public_url(verify_path(pairing)),
         expires_at=pairing.expires_at, interval=POLL_INTERVAL))
 
 

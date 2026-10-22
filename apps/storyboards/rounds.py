@@ -272,7 +272,7 @@ def _hand_to_agent(board, rnd, *, by_user, note: str, changed: int, skipped: lis
     (`apps.harness.dispatch.enqueue_task_turn`). Both are plain DB writes inside
     the caller's transaction, so a failure rolls them back with the round."""
     from apps.agents import services as agent_services
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
     project = board.agent_project
     notes = rnd.notes.count()
@@ -287,7 +287,7 @@ def _hand_to_agent(board, rnd, *, by_user, note: str, changed: int, skipped: lis
         "ask_kind": "review",
         "ask_body": body,
         "project": project.ext_id,
-        "source_url": wsvc.scoped_url(board.workspace_id, f"/storyboard/{board.slug}"),
+        "source_url": wslinks.scoped_url(board.workspace_id, f"/storyboard/{board.slug}"),
         "next_action": f"Run ddd-feedback-round for storyboard {board.slug} round {rnd.number}.",
         "plan": (f"1. Read the round: GET /api/storyboards/{board.slug}/rounds/{rnd.number}{where}\n"
                  "2. Answer every note: POST /api/feedback/<id>/resolve (answered or declined).\n"
@@ -388,14 +388,14 @@ def detail(board, rnd, *, viewer) -> dict:
     """What the agent reads: every note with its author's email, the staged
     edits, and the board's current decisions (rulings are binding)."""
     from apps.storyboards import services
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
     out = round_payload(board, rnd, viewer=viewer)
     emails = dict(rnd.notes.values_list("pk", "author_email"))
     for n in out["notes"]:
         n["author_email"] = emails.get(n["id"], "")
     out["decisions"] = services.board_decisions(board)
-    out["board_url"] = wsvc.scoped_url(board.workspace_id, f"/storyboard/{board.slug}")
+    out["board_url"] = wslinks.scoped_url(board.workspace_id, f"/storyboard/{board.slug}")
     return out
 
 
