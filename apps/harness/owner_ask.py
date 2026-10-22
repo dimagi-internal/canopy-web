@@ -28,6 +28,10 @@ def record(turn: Turn, text) -> bool:
     True if the note changed. Idempotent: the same line twice is one line."""
     if not turn.capability:
         return False
+    from . import sensitivity
+
+    if sensitivity.is_sensitive(turn):
+        return False  # a sensitive turn's words never come to rest in its note
     line = find(text)
     if not line:
         return False

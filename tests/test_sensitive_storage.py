@@ -105,8 +105,13 @@ def test_a_tool_end_event_keeps_the_call_and_status_never_the_result(
                                              "content": [{"type": "text", "text": ROW}]}},
         ])
     start, end = TurnEvent.objects.filter(turn=t).order_by("seq")
-    assert start.payload["input"] == {"tool": "data_query"}  # the question is kept
-    assert end.payload == {"tool_use_id": "tu1", "is_error": False, "withheld": True}
+    # Metadata only (Jonathan, 2026-10-22): which tool, the names of its arguments and
+    # the host tool reached are kept; the arguments are not.
+    assert "input" not in start.payload
+    assert start.payload["name"] == "mcp__canopy-web__site_call" and start.payload["input_tool"] == "data_query"
+    assert {k: end.payload[k] for k in ("tool_use_id", "is_error", "withheld")} == {
+        "tool_use_id": "tu1", "is_error": False, "withheld": True}
+    assert ROW not in str(end.payload)
     # ...and so is the TOOL_RESULT message projected from it.
     projected = Message.objects.get(session=w["hot"], role=Message.TOOL_RESULT)
     assert ROW not in str(projected.content) and ROW not in projected.plaintext
@@ -129,8 +134,12 @@ def test_a_runner_sessions_tool_result_row_keeps_no_result(w):
     assert rows[Message.TOOL_RESULT].plaintext == ""
     assert rows[Message.TOOL_RESULT].content == {"tool_use_id": "tu1", "is_error": False,
                                                  "withheld": True}
-    assert rows[Message.TOOL_USE].content["input"] == {"tool": "data_query"}
-    assert rows[Message.ASSISTANT].plaintext == "12 visits"  # the conversation is kept
+    # Metadata only (Jonathan, 2026-10-22): the rows record that each was said, never
+    # the words or a tool's arguments.
+    assert "input" not in rows[Message.TOOL_USE].content
+    assert rows[Message.TOOL_USE].content["input_tool"] == "data_query"
+    assert rows[Message.ASSISTANT].plaintext == "" and "12 visits" not in str(rows[Message.ASSISTANT].content)
+    assert rows[Message.USER].plaintext == "" and "how many" not in str(rows[Message.USER].content)
 
 
 def test_the_live_frame_carries_the_stripped_row(w, monkeypatch):

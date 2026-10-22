@@ -497,6 +497,10 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
             # every other row with it. See transcript_noise.scrub_nul.
             if withhold and role == Message.TOOL_RESULT:
                 text, content = "", sensitivity.strip_result(content)
+            elif withhold:
+                # Metadata only: the row records that something was said (a tool
+                # call's name, an id), never the words or the arguments.
+                text, content = "", sensitivity.redact_payload(content)
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
             prepared.append((index, role, text, content, author, turn_hex))
@@ -752,6 +756,9 @@ def project_events(turn: Turn, rows) -> int:
         return 0
     if services.transcript_sourced(turn.chat_session):
         return 0
+    from apps.harness import sensitivity
+
+    sensitive = sensitivity.is_sensitive(turn)
     created = 0
     with transaction.atomic():
         session = Session.objects.select_for_update().get(pk=turn.chat_session_id)
@@ -764,6 +771,10 @@ def project_events(turn: Turn, rows) -> int:
             if Message.objects.filter(turn=turn, content__source_seq=row.seq).exists():
                 continue
             payload = row.payload or {}
+            if sensitive:
+                # The signal's rows carry the live words; the stored row keeps
+                # metadata only (`sensitivity.redact_payload`).
+                payload = sensitivity.redact_payload(payload)
             Message.objects.create(
                 session=session, turn=turn, turn_index=index, role=role,
                 content={**payload, "source_seq": row.seq},

@@ -78,3 +78,69 @@ def claude_session_is_sensitive(claude_session: str) -> bool:
     turns = Turn.objects.filter(session_key=claude_session) | Turn.objects.filter(
         cli_session_id=claude_session)
     return any(is_sensitive(t) for t in turns.select_related("chat_session", "parent_session")[:20])
+
+
+# ── metadata, never content (Jonathan, 2026-10-22) ────────────────────────────
+# Beyond tool results: a sensitive conversation's STORED rows keep only what
+# troubleshooting needs. What the person types, what the agent says and a tool's
+# arguments can all carry PHI (a name typed into a question, a case read back), so
+# the stored event, the person's own Message, the prompt once the turn ends and the
+# result note keep metadata only. The live frame still carries the words to the
+# person watching (`ledger.append_events`), over the socket, and nothing writes them.
+
+import hashlib as _hashlib
+import json as _json
+
+#: What a redacted row says about itself, so a reader knows content was withheld on
+#: purpose rather than lost.
+REDACTED = "zdr"
+#: Payload keys that are metadata, never content. An allowlist: a key not named here
+#: is dropped, so a new field a runner starts sending is withheld until someone
+#: decides it is safe.
+METADATA_KEYS = frozenset({
+    "id", "tool_use_id", "name", "is_error", "status", "code", "exit_code",
+    "duration_ms", "model", "kind", "session_id", "stop_reason", "withheld",
+})
+MAX_META_STRING = 200
+WITHHELD_PREFIX = "[zdr] note withheld"
+
+
+def _size_and_hash(value) -> tuple[int, str]:
+    raw = _json.dumps(value, sort_keys=True, default=str).encode()
+    return len(raw), _hashlib.sha256(raw).hexdigest()[:16]
+
+
+def redact_payload(payload) -> dict:
+    """The metadata of an event payload: allowlisted scalar fields, the NAMES of a
+    tool's arguments (and the host tool a gateway call reaches), and the payload's
+    size and hash, so events can be matched up without being read."""
+    payload = payload if isinstance(payload, dict) else {}
+    out: dict = {"redacted": REDACTED}
+    for key in METADATA_KEYS:
+        value = payload.get(key)
+        if isinstance(value, (bool, int, float)):
+            out[key] = value
+        elif isinstance(value, str) and value:
+            out[key] = value[:MAX_META_STRING]
+    tool_input = payload.get("input")
+    if isinstance(tool_input, dict):
+        out["input_keys"] = sorted(str(k)[:MAX_META_STRING] for k in tool_input)[:50]
+        for key in ("tool", "site"):
+            if isinstance(tool_input.get(key), str):
+                out[f"input_{key}"] = tool_input[key][:MAX_META_STRING]
+    out["bytes"], out["sha256"] = _size_and_hash(payload)
+    return out
+
+
+def redact_text(text: str) -> dict:
+    """A string's metadata: its size and hash."""
+    size, digest = _size_and_hash(text or "")
+    return {"redacted": REDACTED, "bytes": size, "sha256": digest}
+
+
+def withheld_note(note: str) -> str:
+    """A sensitive turn's result note as canopy-web keeps it: that there was one, and
+    its size. An error message can quote what the turn read."""
+    if not note or note.startswith(WITHHELD_PREFIX):
+        return note or ""
+    return f"{WITHHELD_PREFIX} ({len(note.encode())} bytes)"

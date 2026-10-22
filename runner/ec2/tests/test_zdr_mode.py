@@ -173,3 +173,10 @@ def test_an_ordinary_box_forgets_nothing(ordinary, tmp_path, monkeypatch):
     (tmp_path / "t1.json").write_text("{}")
     ordinary._zdr_forget_turn("t1", None, "", confined=True)
     assert (tmp_path / "t1.json").exists()
+
+
+def test_a_zdr_box_sends_no_transcript(zdr, monkeypatch):
+    sent = []
+    monkeypatch.setattr(zdr, "_api", lambda *a, **k: sent.append(a) or (200, {}))
+    assert zdr._post_transcript_batch("t1", "a1", 1, ['{"text": "x"}']) is False
+    assert sent == []

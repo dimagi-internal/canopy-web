@@ -104,4 +104,9 @@ def on_turn_events(sender, turn, rows, **kwargs):
         return
     if not any(row.kind == "assistant" for row in rows):
         return
+    from apps.harness import sensitivity
+
+    if sensitivity.is_sensitive(turn):
+        # A title is the first sentence verbatim, and a person may type a name in it.
+        return
     maybe_autotitle(turn.chat_session_id)

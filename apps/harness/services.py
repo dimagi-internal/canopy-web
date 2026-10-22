@@ -621,6 +621,10 @@ def finish_turn(
     from .turn_agent_tokens import revoke_for_turn
 
     revoke_for_turn(turn.pk)
+    from . import sensitivity
+
+    if sensitivity.is_sensitive(turn):
+        result_note = sensitivity.withheld_note(result_note)  # every path below stores it
 
     # ---- a follow-up that could not be typed into the running turn waits instead ----
     #
@@ -1678,7 +1682,11 @@ def replace_reported_sessions(
             # on this, and it is only trustworthy because record_session leaves it
             # alone.
             binding.reported_at = binding.live_seen_at
-            binding.tail = list(s.recent_messages or [])
+            from . import sensitivity
+
+            # A sensitive conversation's screen never comes to rest here.
+            binding.tail = ([] if sensitivity.is_sensitive(binding.session)
+                            else list(s.recent_messages or []))
             # Written unconditionally, INCLUDING None. The report is a fresh
             # observation of the session's screen every ~10s, so "no dialog" has
             # to be able to clear one — otherwise a menu answered at the laptop

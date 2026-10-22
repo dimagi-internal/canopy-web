@@ -136,16 +136,26 @@ session (a schedule a ZDR conversation set up) stores them on the turn itself
 One predicate, `apps.harness.sensitivity.is_sensitive(session | turn)` — true when the
 requirements include `zdr` — read everywhere below, with one test per surface:
 
-- **Store less.** No `TurnTranscript`; `tool_end` events keep the tool name and
-  status, never the result; `Message` rows are kept (they are the conversation), under a
-  retention rule that is enforced for sensitive sessions whatever
-  `CANOPY_RETENTION_ENFORCE` says (default 30 days).
+- **Metadata, never content** (Jonathan, 2026-10-22). A stored event, and every
+  `Message` of the conversation (the person's, the agent's, a tool call's), keeps what
+  troubleshooting needs and none of the words: kind, a tool's name, the NAMES of its
+  arguments and the host tool a gateway call reaches, the ids that pair a call to its
+  result, error flags, and the payload's size and hash (`sensitivity.redact_payload`, an
+  allowlist). The turn's prompt, which the runner reads at claim, is wiped when the turn
+  ends (`closing.close_turn`); its result note is withheld (`[zdr] note withheld (N
+  bytes)`); no owner-ask line, no live tail, no title (a title is the first sentence
+  verbatim, and a person may type a name in it). The live frame still carries the words
+  to the person watching, over the socket, and nothing writes them, so **after a reload
+  the earlier words are gone**. Follow-up: history from the ZDR box itself while the
+  conversation is live. No `TurnTranscript` either (a ZDR box does not even send it).
+  What metadata there is stays under a retention rule enforced for sensitive sessions
+  whatever `CANOPY_RETENTION_ENFORCE` says (default 30 days).
 - **A tool result keeps no rows.** A `TOOL_RESULT` `Message` in a sensitive session is
   stored as `{tool_use_id, is_error}` with empty `plaintext` — the result body never
   reaches canopy-web's database, from the runner's transcript rows or from a live
   `tool_end` event, and the live frame carries the same stripped row, so a reload and a
-  live view agree. The `TOOL_USE` row (the call and its arguments) is kept: it is the
-  question, and a View needs it. An MCP Apps View (`apps/tokens/mcp_apps_views.py`)
+  live view agree. The `TOOL_USE` row keeps the call's metadata (above), not its
+  arguments. An MCP Apps View (`apps/tokens/mcp_apps_views.py`)
   therefore gets `tool_result: null` in a sensitive session and fetches its data **as
   the viewer**, through the host's app-only tool, from `tool_input` — the way connect-labs'
   coaching View already works (a View built on path D already has to, since the runner
@@ -157,8 +167,8 @@ requirements include `zdr` — read everywhere below, with one test per surface:
   (canopy-web, in memory, never written — MCP audit rows record the tool and the
   argument summary, not the answer) straight back to the box's session. A later turn of
   the same conversation resumes that Claude session on the box while the box keeps it;
-  once the box has deleted it (§1, "nothing kept"), the agent re-reads what it needs —
-  the conversation's `Message` rows tell it what was asked, not what came back.
+  once the box has deleted it (§1, "nothing kept"), the conversation starts again from
+  what the person asks next: canopy-web's rows say that something was asked, not what.
 - **Refuse re-exposure.** Share links, Slack share and mirroring, export, MCP Apps
   receipts beyond ids, and the usage scan's title.
 - **Refuse re-processing.** Auto-debug files the failure with its id and error class

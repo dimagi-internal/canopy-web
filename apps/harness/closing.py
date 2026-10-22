@@ -58,6 +58,14 @@ def close_turn(
     fields = {"status": status, "finished_at": now}
     if note is not None:
         fields["result_note"] = note
+    from . import sensitivity
+
+    if sensitivity.is_sensitive(turn):
+        # Metadata only (spec 2026-10-22 §4): the prompt was held only until the
+        # turn ended, and the note is withheld -- an error can quote what was read.
+        fields["prompt"] = ""
+        if note:
+            fields["result_note"] = sensitivity.withheld_note(note)
     updated = Turn.objects.filter(pk=turn.pk, status__in=list(from_states), **(where or {})) \
         .update(**fields)
     turn.refresh_from_db()

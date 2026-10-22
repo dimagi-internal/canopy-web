@@ -3060,6 +3060,10 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
     dedup treats a repeated batch_id as a lost-ack retry and silently no-ops
     it, which would drop the fresh attempt's transcript rather than the
     intended duplicate."""
+    if ZDR_MODE:
+        # A ZDR box keeps its transcripts to itself (spec 2026-10-22 §4): canopy-web
+        # drops a sensitive turn's anyway, and the bytes are better never sent.
+        return False
     if not lines:
         return True
     batch_id = f"{turn_id}:{attempt_id}:{seq}"
@@ -8172,6 +8176,10 @@ def _maybe_report_usage(runner_id: str) -> None:
         return
 
     def post(chunk, last):
+        if ZDR_MODE:
+            # A session's title is its first prompt: in ZDR mode the report carries
+            # what was spent, never words (canopy-web blanks it too).
+            chunk = [{**row, "title": ""} for row in chunk]
         code, _ = _api("POST", f"/runners/{runner_id}/usage", {"sessions": chunk, "full": last})
         if code != 200:
             raise RuntimeError(f"usage report refused: {code}")
