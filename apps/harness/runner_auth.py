@@ -40,7 +40,7 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
     # … and the two reads that tell `canopy agent prepare` what it is resolving:
     # where the agent's repo lives, and which backend its secrets come from. A
     # runner token answers both only for agents its own runner serves
-    # (`apps/agents/api._credential_access`).
+    # (`apps/agents/credential_resolve.credential_access`).
     (frozenset({"GET"}), rf"/api/agents/{_SLUG}/runtime"),
     (frozenset({"GET"}), rf"/api/agents/{_SLUG}/credentials/access"),
     # … and what it then reports back: the readiness `canopy agent prepare --runner`
@@ -77,7 +77,7 @@ _PRIVATE_RULES: tuple[tuple[frozenset[str], str], ...] = (
 #: heartbeat or claim — only what its owner's sessions there do: open, renew and
 #: report their local turns (`api._reporting_turn_or_404` holds it to local turns
 #: opened on this computer), and read an agent's secrets under the owner's license
-#: during one (`apps/agents/api._credential_access` never makes it a `runner`).
+#: during one (`apps/agents/credential_resolve.credential_access` never makes it a `runner`).
 _COMPUTER_RULES: tuple[tuple[frozenset[str], str], ...] = _PRIVATE_RULES + (
     (frozenset({"POST"}), r"/api/harness/turns/[^/]+/(events|transcript|finish)"),
     (frozenset({"GET"}), rf"/api/agents/{_SLUG}/credentials/resolve"),

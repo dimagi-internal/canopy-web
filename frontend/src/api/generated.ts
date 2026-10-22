@@ -4288,7 +4288,7 @@ export interface paths {
          *        what makes "the browser never sees plaintext" a property of the system
          *        rather than a habit of the UI — a future page cannot accidentally acquire
          *        the ability to render a secret.
-         *     2. **The caller must be one of three principals** (`_credential_access`):
+         *     2. **The caller must be one of three principals** (`credential_resolve.credential_access`):
          *        - `runner`: pairs a live runner this agent routes to. Mirrors the runner
          *          credential fetch, whose boundary is "the caller who can claim turns as
          *          this runner".
