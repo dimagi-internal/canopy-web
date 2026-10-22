@@ -14,6 +14,10 @@ from django.db import models
 from django.db.models.functions import Lower
 from pgvector.django import HalfVectorField
 
+#: An argument not passed, so read from the database. `None` is an answer (not
+#: a member), so it cannot also mean "not given".
+UNREAD = object()
+
 
 class Agent(models.Model):
     """A first-class AI agent that publishes its work into canopy-web."""
@@ -233,9 +237,13 @@ class Agent(models.Model):
         pk = getattr(user, "pk", None)
         return self.user_id is not None and pk is not None and self.user_id == pk
 
-    def is_admin(self, user) -> bool:
+    def is_admin(self, user, *, role=UNREAD, granted: bool | None = None) -> bool:
         """The agent's owner, a WORKSPACE owner, or an explicit admin who is
         still a member of the workspace.
+
+        `role` (their `member_role` in this workspace) and `granted` (they hold an
+        `AgentAdmin` row) are read when not passed; a caller judging many people
+        at once passes what it read in bulk (`access.Standings`).
 
         Workspace owners are admins implicitly, not by a seeded row: one can
         already make themselves any agent's owner (`transfer_owner`), so
@@ -257,7 +265,8 @@ class Agent(models.Model):
 
         if role_cap.cap_of(user):
             return False  # acting as an editor or viewer (a turn's acts_as)
-        role = wsvc.member_role(user, self.workspace_id)
+        if role is UNREAD:
+            role = wsvc.member_role(user, self.workspace_id)
         if role is None:
             return False
         if self.owner_id is not None and self.owner_id == user.pk:
@@ -269,7 +278,7 @@ class Agent(models.Model):
 
         if perms.role_allows(role, perms.OWN):
             return True
-        return self.admin_grants.filter(user=user).exists()
+        return granted if granted is not None else self.admin_grants.filter(user=user).exists()
 
     def admin_user_ids(self) -> set[int]:
         """Every user `is_admin` answers yes for, in a fixed number of queries: the

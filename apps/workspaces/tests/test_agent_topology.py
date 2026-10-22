@@ -103,3 +103,23 @@ def test_admin_but_not_owner_cannot_grant(fleet):
 
 def test_editor_refused(fleet):
     assert _get(fleet["ada_login"]).status_code == 403
+
+
+def test_queries_do_not_grow_with_the_agents(fleet):
+    # Every cell is decided from facts read once (`access.Standings`); a read per
+    # ordered pair made this N² queries — 6,000+ for 24 agents.
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    def count():
+        with CaptureQueriesContext(connection) as ctx:
+            assert _get(fleet["jj"]).status_code == 200
+        return len(ctx.captured_queries)
+
+    before = count()
+    for i in range(6):
+        login = _user(f"x{i}@dimagi-ai.com")
+        M.objects.create(workspace_id="connect" if i % 2 else "dimagi", user=login, role=M.EDITOR)
+        Agent.objects.create(slug=f"x{i}", name=f"X{i}", workspace_id="connect" if i % 2 else "dimagi",
+                             owner=fleet["jj"], user=login)
+    assert count() == before

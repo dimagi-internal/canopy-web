@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 
-from apps.agents.models import SenderTrust
+from apps.agents.models import UNREAD, SenderTrust
 from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.models import Contact
 
@@ -162,9 +162,9 @@ def _relationship_without_agent(turn, user) -> str:
     return MEMBER if access.can_write(user, session) else CONTACT
 
 
-def relationship_for_user(user, agent) -> str:
+def relationship_for_user(user, agent, *, role=UNREAD, granted: bool | None = None) -> str:
     """What a canopy USER is to the agent, with no turn in hand (e.g. listing
-    the MCP tools they may call)."""
+    the MCP tools they may call). `role` and `granted` as for `Agent.is_admin`."""
     if agent is None or not getattr(user, "is_authenticated", False):
         return CONTACT
     # Owner only while still in the tenant: an owner removed from the workspace
@@ -175,7 +175,9 @@ def relationship_for_user(user, agent) -> str:
 
     # Acting as an editor or viewer (the turn's acts_as): judged as a member.
     capped = bool(role_cap.cap_of(user))
-    if not capped and agent.owner_id == user.pk and wsvc.is_member(user, agent.workspace_id):
+    if role is UNREAD:
+        role = wsvc.member_role(user, agent.workspace_id)
+    if not capped and agent.owner_id == user.pk and role is not None:
         return OWNER
     # The agent's OWN canopy login (`Agent.user`, #983) is the agent itself —
     # confining it against itself is nonsense. Only its own: another agent's
@@ -185,9 +187,9 @@ def relationship_for_user(user, agent) -> str:
     if not capped and agent.is_own_login(user):
         return SYSTEM
     is_admin = getattr(agent, "is_admin", None)
-    if callable(is_admin) and is_admin(user):
+    if callable(is_admin) and is_admin(user, role=role, granted=granted):
         return ADMIN
-    return MEMBER if wsvc.is_member(user, agent.workspace_id) else CONTACT
+    return MEMBER if role is not None else CONTACT
 
 
 def _contact(contact) -> dict | None:
