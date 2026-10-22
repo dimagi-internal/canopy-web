@@ -300,9 +300,57 @@ def ensure_launcher(port: int, home: Path, *, run=subprocess.run,
     return f"{'updated' if existed else 'created'} ({app})"
 
 
-def cdp_up(port: int) -> bool:
+PIPE_LAUNCHER_NAME = "Emdash CDP Pipe.app"
+
+
+def pipe_launcher_script(port: int, runner_exe: str) -> list[str]:
+    """AppleScript for the opt-in PIPE launcher (cdp_pipe.py): quit emdash, then
+    relaunch it through `canopy-runner emdash-pipe`, which must be emdash's parent.
+
+    Like the port launcher it quits a running emdash first, and that kills every
+    Claude session inside it. The broker outlives the AppleScript (nohup) and logs
+    to ~/.canopy/emdash-pipe.log."""
+    log = "$HOME/.canopy/emdash-pipe.log"
+    return [
+        'tell application "Emdash" to if it is running then quit',
+        "delay 2",
+        f'do shell script "nohup \\"{runner_exe}\\" emdash-pipe --port {port} '
+        f'>> {log} 2>&1 &"',
+    ]
+
+
+def ensure_pipe_launcher(port: int, home: Path, *, runner_exe: str, run=subprocess.run,
+                         system: str | None = None) -> str:
+    """Build ~/Applications/Emdash CDP Pipe.app. Opt-in: nothing calls this but
+    `canopy-runner emdash-pipe --install-launcher`. Never raises."""
+    if (system or platform.system()) != "Darwin":
+        return "skipped (not macOS)"
+    if not shutil.which("osacompile"):
+        return "skipped (osacompile not found)"
+    app = home / "Applications" / PIPE_LAUNCHER_NAME
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2):
+        app.parent.mkdir(parents=True, exist_ok=True)
+        existed = app.exists()
+        if existed:
+            shutil.rmtree(app)
+        cmd = ["osacompile", "-o", str(app)]
+        for line in pipe_launcher_script(port, runner_exe):
+            cmd += ["-e", line]
+        res = run(cmd, capture_output=True, text=True, timeout=60)
+        if res.returncode != 0:
+            return f"FAILED ({(res.stderr or '').strip()[:200]})"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"FAILED ({exc})"
+    return f"{'updated' if existed else 'created'} ({app})"
+
+
+def cdp_up(port: int) -> bool:
+    from .cdp_pipe import auth_headers   # a pipe broker answers only its token
+
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/json/version",
+                                 headers=auth_headers(port))
+    try:
+        with urllib.request.urlopen(req, timeout=2):
             return True
     except Exception:  # noqa: BLE001 — any failure means "not reachable"
         return False

@@ -916,6 +916,19 @@ def _build_parser() -> argparse.ArgumentParser:
              "(idempotent; run after every `uv tool install` of this package)",
     )
 
+    pipe_parser = subparsers.add_parser(
+        "emdash-pipe",
+        help="launch emdash on the DevTools PIPE (no open debug port) and serve this "
+             "runner's cdp_port behind a token only this account can read (opt-in; "
+             "see cdp_pipe.py)",
+    )
+    pipe_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
+    pipe_parser.add_argument("--port", type=int, default=0,
+                             help="endpoint port (default: runner.json's cdp_port)")
+    pipe_parser.add_argument("--install-launcher", action="store_true",
+                             help="build ~/Applications/Emdash CDP Pipe.app, which quits "
+                                  "emdash and relaunches it through this command, and exit")
+
     verify_parser = subparsers.add_parser(
         "verify-emdash",
         help="read-only check that canopy's emdash assumptions still hold — DB "
@@ -1054,6 +1067,25 @@ def runtime_cmd(args) -> int:
     print(f"{row.get('name', cfg.runner_id)}: {row.get('engine', 'emdash')}")
     print(desktop.describe_app_features(desktop.app_features()))
     return 0
+
+
+def emdash_pipe_cmd(args) -> int:
+    """`canopy-runner emdash-pipe [--port N] [--install-launcher]`."""
+    import shutil
+
+    from . import cdp_pipe, pair
+
+    port = args.port
+    if not port:
+        try:
+            port = int(json.loads(Path(args.config).read_text()).get("cdp_port") or 9222)
+        except (OSError, ValueError):
+            port = 9222
+    if args.install_launcher:
+        exe = shutil.which("canopy-runner") or sys.argv[0]
+        print(pair.ensure_pipe_launcher(port, Path.home(), runner_exe=exe))
+        return 0
+    return cdp_pipe.run(port)
 
 
 def projects_cmd(args) -> int:
@@ -1380,6 +1412,9 @@ def main() -> None:
 
     if command == "close-sessions":
         raise SystemExit(close_sessions_cmd(args))
+
+    if command == "emdash-pipe":
+        raise SystemExit(emdash_pipe_cmd(args))
 
     if command == "verify-emdash":
         if not args.config:

@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from . import cdp_pipe
 from .platform_jobs import process_account
 
 SIDECAR = Path(__file__).parent / "cdp" / "emdash_control.mjs"
@@ -138,10 +139,15 @@ def cdp_healthy(*, port: int = 9222, timeout: float = 1.0) -> bool:
     hits — so a green probe means create/reuse will actually connect. Any failure
     (connection refused → emdash closed/crashed/rebooted, or launched without
     --remote-debugging-port; timeout; non-200) returns False. Never raises: this gates
-    the loop, so it must fail closed (skip the claim) rather than crash the tick."""
+    the loop, so it must fail closed (skip the claim) rather than crash the tick.
+
+    In pipe mode (`cdp_pipe`) the same probe reaches the broker, which answers only
+    with its token; `auth_headers` is empty in port mode, so this is unchanged there."""
     url = f"http://127.0.0.1:{port}/json/version"
+    headers = cdp_pipe.auth_headers(port)
+    req = urllib.request.Request(url, headers=headers) if headers else url
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return getattr(resp, "status", 200) == 200
     except (urllib.error.URLError, OSError, ValueError):
         # URLError (refused/timeout), OSError (socket), ValueError (odd url) — all mean

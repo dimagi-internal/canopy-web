@@ -1,5 +1,6 @@
 // emdash CDP control sidecar — drives the RUNNING emdash app over the Chrome
-// DevTools Protocol (emdash is Electron; launch it with --remote-debugging-port).
+// DevTools Protocol (emdash is Electron; launch it with --remote-debugging-port, or
+// on the DevTools pipe through `canopy-runner emdash-pipe` — see cdp_pipe.py).
 // This is the sanctioned path (no DB injection, no app patching): tasks created
 // here flow through emdash's own UI, so they appear live in the sidebar and run
 // interactive `claude` on the subscription. Commands (arg = JSON on argv[3]):
@@ -32,6 +33,7 @@
 import { chromium } from 'playwright-core';
 import { isSidebarLabel, pickInSection } from './sidebar_section.mjs';
 import { asTyped } from './typed_text.mjs';
+import { pipeHeaders } from './pipe_auth.mjs';
 
 
 // WHICH terminal is "the" terminal. Injected as source into page.evaluate calls
@@ -157,9 +159,12 @@ function fail(msg) { out({ ok: false, error: msg }); process.exit(1); }
 
 let browser;
 try {
-  browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  // Pipe mode: the broker on this port answers only its token (pipe_auth.mjs).
+  browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`,
+                                          { headers: pipeHeaders(port) });
 } catch {
-  fail(`cannot connect to emdash CDP on 127.0.0.1:${port} — launch emdash with --remote-debugging-port=${port}`);
+  fail(`cannot connect to emdash CDP on 127.0.0.1:${port} — launch emdash with ` +
+       `--remote-debugging-port=${port}, or through \`canopy-runner emdash-pipe\``);
 }
 const page = browser.contexts()[0]?.pages()[0];
 if (!page) fail('no emdash renderer page found over CDP');

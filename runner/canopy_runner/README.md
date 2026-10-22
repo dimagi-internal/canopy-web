@@ -164,6 +164,17 @@ runner is refused too — adopt it with `--runner-id <id>` or pick `--name`. Ove
 account's port. The installer says so when the port is not answering. The launcher
 **quits emdash first, which kills every session running inside it** — pick your moment.
 
+### Pipe mode (opt-in, experimental): no open debug port
+
+emdash's debug port is unauthenticated, so any process on the machine, under any
+macOS account, can read or type into every session in it. Pipe mode closes it:
+`canopy-runner emdash-pipe` launches emdash with `--remote-debugging-pipe` (no port)
+and serves the runner's usual `cdp_port` itself, answering only a token in
+`~/.canopy/cdp-pipe.json` (0600). The sidecar and the health checks send that token
+on their own; nothing else in `runner.json` changes. `canopy-runner emdash-pipe
+--install-launcher` builds `~/Applications/Emdash CDP Pipe.app`, which (like the port
+launcher) **quits emdash first**. macOS/Linux only. Design and limits: `cdp_pipe.py`.
+
 ### Doing it by hand
 
 What `pair` automates, for reference or a non-macOS box:
