@@ -2493,7 +2493,11 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         # What the caller was running inside (overrides X-Canopy-Parent-*).
         parent=payload.parent,
     )
-    return Status(201 if created else 200, turn)
+    from . import turn_access
+
+    # Through the same content gate the get/list routes use: a replay hands back
+    # an existing row, and the caller sees of it only what they may read.
+    return Status(201 if created else 200, turn_access.redact([turn], request.user)[0])
 
 
 #: Credentials that establish the person on THIS request — a signed-in browser

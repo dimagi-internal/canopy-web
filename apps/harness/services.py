@@ -24,6 +24,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from apps.api.errors import TYPE_CONFLICT, ProblemError
 from apps.canopy_sessions.staleness import stale_cutoff
 from apps.workspaces import services as wsvc
 
@@ -351,7 +352,7 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
 
     existing = Turn.objects.filter(idempotency_key=idempotency_key).first()
     if existing is not None:
-        return existing, False
+        return _replay_email(existing, agent), False
     reason = contact.blocked_reason or "no reason given"
     try:
         with transaction.atomic():
@@ -370,7 +371,7 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
     except IntegrityError:
         replay = Turn.objects.filter(idempotency_key=idempotency_key).first()
         if replay is not None:
-            return replay, False
+            return _replay_email(replay, agent), False
         raise
     logger.info("email turn %s refused: contact %s is blocked", turn.pk, contact.pk)
     # Refused whatever the rules say; the workspace's `blocked-sender` rule
@@ -379,6 +380,15 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
 
     admission.at_refusal(turn, sender="blocked")
     return turn, True
+
+
+def _replay_email(existing: Turn, agent) -> Turn:
+    # The same mail may have become a session turn before its sender was
+    # blocked, so the replay is honoured for any turn this agent acts in.
+    acting = existing.acting_agent
+    if acting is None or acting.pk != agent.pk:
+        raise IdempotencyConflict()
+    return existing
 
 
 def _apply_capability(turn: Turn, requested: str | None = None) -> None:
@@ -417,6 +427,37 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
         return
     turn.capability = cap
     turn.save(update_fields=["capability"])
+
+
+class IdempotencyConflict(ProblemError):
+    """The idempotency key already names a turn for a DIFFERENT target.
+
+    Keys are globally unique and many are guessable (`sched:<id>:<slot>`,
+    `task-<pk>-<i>`, `checkin-run:<pk>`), so a replay is honoured only for the
+    target the key was made for; anything else is a 409 that says nothing about
+    the turn holding the key."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            409, "Idempotency key in use", type_=TYPE_CONFLICT,
+            detail="this idempotency_key already names a different turn; use a fresh key",
+        )
+
+
+def _replay(existing: Turn, *, agent, project, session, workspace) -> Turn:
+    """The turn a retry with the same key returns — only when it targets exactly
+    what this request targets (same agent, same session, or same project in the
+    same workspace). Else IdempotencyConflict."""
+    if agent is not None:
+        same = existing.agent_id == agent.pk
+    elif session is not None:
+        same = existing.chat_session_id == session.pk
+    else:
+        same = (bool(existing.project) and existing.project == project
+                and workspace is not None and existing.workspace_id == workspace.pk)
+    if not same:
+        raise IdempotencyConflict()
+    return existing
 
 
 def enqueue_turn(
@@ -555,7 +596,8 @@ def enqueue_turn(
         raise ValueError("a project turn needs a workspace")
     existing = Turn.objects.filter(idempotency_key=idempotency_key).first()
     if existing is not None:
-        return existing, False
+        return _replay(existing, agent=agent, project=project, session=session,
+                       workspace=workspace), False
     if initiator is None:
         # A caller that says nothing gets `unknown`, not a guess from
         # `enqueued_by`: that field is the CALLER, which for a runner-posted turn
@@ -615,7 +657,8 @@ def enqueue_turn(
         # Only possible race: same idempotency key inserted concurrently.
         replay = Turn.objects.filter(idempotency_key=idempotency_key).first()
         if replay is not None:
-            return replay, False
+            return _replay(replay, agent=agent, project=project, session=session,
+                           workspace=workspace), False
         raise
     if origin == Turn.ORIGIN_EMAIL:
         _log_unproven_member(turn)
