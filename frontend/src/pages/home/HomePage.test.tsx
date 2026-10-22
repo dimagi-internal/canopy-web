@@ -13,6 +13,11 @@ vi.mock('@/api/attention', async (orig) => ({
   hide: (...a: unknown[]) => hide(...(a as [])),
   unhide: (...a: unknown[]) => unhide(...(a as [])),
 }))
+const loadAlerts = vi.fn<(scope?: string, status?: string) => Promise<unknown[]>>(async () => [])
+vi.mock('@/api/alerts', async (orig) => ({
+  ...(await orig<typeof import('@/api/alerts')>()),
+  loadAlerts: (scope?: string, status?: string) => loadAlerts(scope, status),
+}))
 const actOnTask = vi.fn(async () => ({}))
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
@@ -137,5 +142,32 @@ describe('HomePage', () => {
     expect(screen.queryByText('Old one')).toBeNull()
     fireEvent.click(screen.getByText('Hide all 2'))
     await waitFor(() => expect(hide).toHaveBeenCalledWith(['task:eva:T2', 'task:eva:T3'], undefined))
+  })
+
+  it('puts open alerts in their own section above the sessions, with no hide', async () => {
+    loadAttention.mockResolvedValue({ now: [chat({})], quiet: [], hidden: [], running: [] })
+    loadAlerts.mockImplementation(async (_scope, status) => status === 'open' ? [{
+      id: 1, kind: 'runner_credential', severity: 'blocking', title: 'The "hal" token on cloud-ec2-2 is signed out',
+      body: '', url: '', workspace: 'connect', organisation: 'connect', scopes: [], status: 'open',
+      first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), occurrences: 1,
+      closed_by_email: '', closed_at: null, last_notify: '',
+      actions: [{ id: 'dismiss', label: 'Dismiss', closes: true, href: '' }],
+    }] : [])
+    show()
+    const alertRow = await screen.findByTestId('alert-row')
+    expect(loadAlerts).toHaveBeenCalledWith(undefined, 'open')
+    expect(screen.getByText(/^Alerts/)).toBeTruthy()
+    const session = await screen.findByText('Fix the deploy')
+    // The alert comes first in the page, and its only way off is the shared dismiss.
+    expect(alertRow.compareDocumentPosition(session) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(alertRow.textContent).not.toContain('Hide')
+  })
+
+  it('shows no alerts section when nothing is open or dismissed', async () => {
+    loadAttention.mockResolvedValue({ now: [chat({})], quiet: [], hidden: [], running: [] })
+    loadAlerts.mockImplementation(async () => [])
+    show()
+    await screen.findByText('Fix the deploy')
+    expect(screen.queryByTestId('alert-list')).toBeNull()
   })
 })

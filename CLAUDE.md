@@ -145,6 +145,7 @@ Each is enforced or load-bearing across the codebase; the pointer says where.
 - Who changed which setting, through what (`SettingChange`, `@gate(..., setting=True)`, `audit.note_change`) → `docs/architecture/settings-audit.md`
 - Analytics facts (`Activity`, the one writer `events.activity.emit`), tokens per Claude session per day from each box's usage report (`SessionUsage`), missing-session reconcile, `backfill_activity`, the `/w/:ws/health` + `/analytics` dashboard → `docs/architecture/analytics.md`
 - Workspace email domains (`apps/mail`: SES receive/send, routes, forwarding, agent mail turns, the `canopy-web-mail` stack, rip-out list) → `docs/architecture/mail.md`; setup → `docs/runbooks/mail-domain-onboarding.md`
+- Alerts — system problems a person can fix (`Alert`/`AlertEvent` in `apps/attention`, sources `apps/harness/alerts_*.py`, the one `<AlertList>` every screen uses, the rules that keep Home from becoming a wasteland) → `docs/architecture/alerts.md`
 - Pages and what each does → `docs/architecture/pages.md`. Every API route → `docs/architecture/api-surface.md`. The plugin marketplace → `docs/architecture/plugin-marketplace.md`
 - Connecting a system (operator side) → `docs/runbooks/connecting-a-system.md`; Gmail push → `docs/runbooks/gmail-push-provisioning.md`; the mobile loop against real emdash → `docs/runbooks/mobile-loop-real-emdash.md`
 - Glossary (the nouns and the one rule) → `docs/architecture/access.md`; deferred work → `TODOS.md`

@@ -11,8 +11,13 @@ import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
 import { RunnerPrivate } from '@/components/supervisor/RunnerPrivate'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
+<<<<<<< HEAD
 import { RunnerPause } from '@/components/supervisor/RunnerPause'
 import { RunnerSessions } from '@/components/supervisor/RunnerSessions'
+=======
+import { AlertList } from '@/components/alerts/AlertList'
+import { isDirectedOnly } from '@/components/chat/runnerEligibility'
+>>>>>>> 81b6c43f (feat(alerts): AlertList on Home, Topology, agent and runner pages)
 
 // A runner's full state — the click-through from the Runners tab's runner list.
 // Leads with the signals that actually matter: is it AVAILABLE to fire a turn
@@ -162,6 +167,11 @@ export function RunnerDetail({
         {runner.code_branch && row('branch', runner.code_branch)}
         {row('status', runner.status ?? 'unknown')}
       </div>
+
+      {/* What to act on about this box (its credential, a waiting device key…),
+          named the way people named things; the health list below stays the
+          raw facts. Nothing when there is nothing to do. */}
+      <AlertList scope={`runner:${runner.id}`} hideEmpty />
 
       {/* What the box says about its own features, and the refresh control.
           Above pause because it answers the first question on opening a box —

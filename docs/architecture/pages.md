@@ -105,7 +105,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   An agent's Settings ends with **Delete** (editors and above, `DELETE /api/agents/{slug}/`):
   type the slug to confirm; it removes the agent from canopy and leaves its repo alone.
 - **`/agents/:slug`** — the agent workspace: full-bleed rail + scrolling main
-  on `canopy-ui`. Rail sections, in order:
+  on `canopy-ui`. Above every section, the open alerts about this agent
+  (`AlertList scope="agent:<slug>"`, nothing when there are none —
+  [`alerts.md`](alerts.md)). Rail sections, in order:
   - **Projects** (landing; index redirects here) — one row per project `P<N>`,
     active first, with outcome, owner, open and waiting-on-you counts;
     done/archived collapse below; "Add project" takes a name and its done
@@ -217,7 +219,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
     workspace and every one below as nested, collapsible boxes, a lane per
     owner with their runners and agents. Select an agent for its runners in
     order and arrows to every agent it can send work to; select a runner for
-    who stops if it goes dark. The side panel mounts the supervisor's
+    who stops if it goes dark. With nothing selected, the side panel shows the
+    workspace's alerts ("Alerts here", `workspace:<slug>`: an agent with no
+    runner it can use, or whose routed runners lack its repo, is an alert —
+    [`alerts.md`](alerts.md)) above two plain facts: agents held to some
+    capabilities by another, and runners serving nobody. The side panel mounts the supervisor's
     `RunnerDetail` and the agent's `AgentRouting` — this is where runners are
     configured on the web; each lane's "Add a runner" offers the Canopy Runner
     downloads (as on `/get-started#runner`), with the developer command
@@ -428,8 +434,13 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `http://127.0.0.1:<port>/paired?…` with the one-time secret; Decline refuses
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
-- **`/home`** — what is waiting on you across every workspace you are in
-  (`GET /api/me/attention/`, one user-level read): **Sessions**
+- **`/home`** — what is waiting on you across every workspace you are in.
+  At the top, in their own section, **Alerts** (`GET /api/me/alerts/`): system
+  problems you have an action on, one line each (severity dot, source chip,
+  title, actions inline, × to dismiss for everyone), severity count chips that
+  filter them, and a folded "Dismissed (n)" with who, when and Undo; no quiet
+  fold and no personal hide, absent when there are none
+  ([`alerts.md`](alerts.md)). Then (`GET /api/me/attention/`, one user-level read): **Sessions**
   waiting on your next message (the Supervisor feed's rule), held behind a
   paused or offline runner (an open dot, naming the box), and yours running
   now (green, "live"), first and open,
@@ -447,7 +458,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/supervisor`** — cross-fleet screens: Feed (home), **Waiting on you**
   (`GET /api/tasks/?waiting=me`, the same `TaskCard` tagged with its agent,
   actionable in place; `?tab=inbox` lands here), Sessions, Agents, Runners
-  (live status; links each runner to the topology map). Root because the fleet
+  (live status; links each runner to the topology map; a runner's detail leads
+  with its open alerts, `runner:<id>`, above the raw health list). Root because the fleet
   spans workspaces. Loaded by the phone PWA, desktop browsers and the menubar's
   WKWebView (unless you chose another page for it in `/settings` → Runner app); installable as a PWA; pushes only about the Feed
   (`apps/canopy_sessions/feed.py`).
