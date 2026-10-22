@@ -25,6 +25,7 @@ from apps.workspaces import services as wsvc
 
 from . import services
 from .models import AgentSchedule
+from .schedule_turns import fire_after_of
 
 
 class ScheduleNotFound(Exception):
@@ -189,16 +190,13 @@ def _resolve_schedule(
 
 def serialize_schedule(schedule: AgentSchedule) -> dict:
     """The single serialized shape. REST builds ScheduleOut(**this); the MCP
-    tools return it directly. fire_after = last_slot or created_at is the anchor
-    the runner passes to due_slot — last_slot is NULL until the first fire, and
-    an unbounded backward lookup would fire a slot predating the schedule."""
+    tools return it directly. fire_after (`schedule_turns.fire_after_of`) is the
+    anchor a runner passes to due_slot — the same one the server's own clock
+    (`schedule_clock`) uses, so both pick the same slot."""
     latest = services.latest_occurrence_turn(schedule)
     now = timezone.now()
-    fire_after = schedule.last_slot or schedule.created_at
+    fire_after = fire_after_of(schedule)
     if schedule.run_once_at:
-        # Pin the anchor just before the one instant, so the derived cron's
-        # earlier-year matches can never be due (see one_off_cron).
-        fire_after = max(fire_after, schedule.run_once_at - dt.timedelta(minutes=1))
         pending = schedule.enabled and schedule.run_once_at > now
         next_runs = [schedule.run_once_at] if pending else []
     else:

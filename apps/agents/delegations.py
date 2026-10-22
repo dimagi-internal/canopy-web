@@ -372,8 +372,8 @@ def readiness(agent: Agent) -> tuple[str, str]:
 
 def turn_agent(turn) -> Agent | None:
     """The agent a turn runs AS: its own for an agent turn, the session's for a
-    chat with an agent, a project turn's configured fallback if it has one,
-    else none (a repo chat, or a project with no default set). The same
+    chat with an agent, a project turn's or project chat's configured fallback
+    if its repo has one, else none (a project with no default set). The same
     decision the runner makes in `_turn_agent_slug`, made here from the rows —
     except the project fallback, which the runner cannot make: it would need
     to know the repo's configured agent (`RepoIdentity`), and only canopy-web
@@ -383,8 +383,12 @@ def turn_agent(turn) -> Agent | None:
     cs = getattr(turn, "chat_session", None)
     if cs is not None and cs.agent_id:
         return cs.agent
-    if turn.project:
-        row = RepoIdentity.objects.select_related("agent").filter(repo_slug=turn.project).first()
+    # A project chat's repo is on its SESSION: a chat turn's own `project` is
+    # always "" (`turn_targets_agent_xor_project_xor_session`), so reading
+    # `turn.project` alone refused every project chat a GitHub identity.
+    repo = turn.project or (cs.project if cs is not None else "")
+    if repo:
+        row = RepoIdentity.objects.select_related("agent").filter(repo_slug=repo).first()
         if row is not None:
             return row.agent
     return None

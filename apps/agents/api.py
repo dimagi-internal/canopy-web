@@ -639,7 +639,8 @@ def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
         user = request.user
         rendered = creation.render(AgentSpec(
             slug=slug, display_name=payload.name.strip(), mandate=payload.mandate.strip(),
-            mailbox=payload.mailbox.strip(), stakeholders=payload.stakeholders.strip(),
+            mailbox=payload.mailbox.strip(), google_account=payload.google_account.strip(),
+            stakeholders=payload.stakeholders.strip(),
             author_name=user.get_full_name() or user.email, author_email=user.email,
         ))
         try:

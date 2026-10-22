@@ -982,9 +982,10 @@ class AgentSchedule(models.Model):
     """A recurring turn declaration — "Echo's weekly manager report, Fridays 9am ET".
 
     Config lives here (server-side, so it is visible and editable in the Agent
-    UI); the *firing* is done by the runner, which syncs these rows, evaluates
-    the cron locally, and POSTs back a slot. The server then materializes a
-    normal harness Turn via services.enqueue_turn — the scheduler is a producer
+    UI); canopy-web fires it itself (schedule_clock.py, a loop in the web
+    process), and a laptop runner may too (it syncs these rows, evaluates the
+    cron locally, and POSTs back a slot) — both collapse on the slot key. Either
+    way the server materializes a normal harness Turn via services.enqueue_turn — the scheduler is a producer
     of turns, not a second execution engine.
 
     The Turn IS the occurrence (origin=cron, origin_ref={schedule_id, slot},

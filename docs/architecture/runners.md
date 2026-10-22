@@ -10,6 +10,37 @@ handed, and the runner's own readiness. Who may *edit* each of these is in
 status, the unclaimable report and the topology all ask the same functions, so
 they cannot disagree).
 
+## Two ways an agent runs
+
+1. **Use it yourself in Claude Code — no runner needed.** A person with the canopy
+   plugin runs `canopy agent use <slug>` once on their computer: it installs the
+   agent's plugin, enrols this computer's key so it can read the agent's secrets
+   from canopy vault, and records their sessions as **local turns** on the agent's
+   page. Who may: the agent's owner and admins, a `full:` rule, workspace editors —
+   whom `access.decide` gives the whole agent (`apps/agents/licenses.py`). The people
+   doing it are listed under the agent's Settings → How it runs and → People → Local
+   use. Detail: [`access.md`](access.md) → "Local use of an agent".
+2. **Let it run on its own — needs a runner.** Either your own Mac running the
+   runner app (set **Private**, it does only your work), or a fleet cloud box.
+   Schedules, mail and dispatches start these turns; the rest of this doc is how
+   one reaches a box. Schedules fire from canopy-web itself (see "Scheduled
+   turns"), so no laptop has to be awake for them.
+
+An agent used only the first way is complete without a runner; the setup checklist
+says so (`apps/agents/setup.py`, the `runner` step).
+
+### Private runners
+
+**Private** is a setting on a runner app (`PUT /api/harness/runners/{id}/private`,
+owner only): the box takes no fleet work — no routed turn, no workspace order, no
+source rule (`Runner.directed_only`) — only what its owner pins or binds to it, plus
+the owner's own Claude Code sessions on that computer (local turns). Those sessions
+prove themselves with the box's device key, which may read an agent's secrets while
+its owner holds an active licence. Internally the computer is a `PrivateRunner`
+registration linked to the `Runner` (`PrivateRunner.runner`); the UI calls these
+"your computers (used in Claude Code)", not a separate kind of runner. See
+[`access.md`](access.md) → "Local use of an agent".
+
 ## Which workspaces a runner serves (the tenant gate)
 
 `routing.runner_tenant_slugs(runner)` is THE answer, and every runner-scoped
@@ -396,13 +427,21 @@ runs manual — a forged `From:` may pick a box, never drive an unreviewed agent
 ## Scheduled turns
 
 The scheduler is a producer of turns, not an execution engine (no celery/beat).
-`AgentSchedule` (`apps/harness/models.py`) holds the cron server-side; the RUNNER
-evaluates it (`runner/canopy_runner/canopy_runner/schedules.py`) and POSTs a due
-slot; `schedule_turns.fire_schedule` enqueues it.
+`AgentSchedule` (`apps/harness/models.py`) holds the cron server-side, and
+**canopy-web fires it itself**: `apps/harness/schedule_clock.py`, an asyncio loop in
+the web process's ASGI lifespan (like `pat_rotation_scheduler`), evaluates every
+enabled schedule each `CANOPY_SCHEDULE_TICK_S` (60 s; a cache key keeps N web tasks
+to about one tick) and calls `schedule_turns.fire_schedule` for each due slot. So a
+workspace whose agents run only on cloud boxes, or whose laptop is shut, still fires
+its schedules. A laptop runner still evaluates them too
+(`runner/canopy_runner/canopy_runner/schedules.py`, `POST …/schedules/{id}/fire`);
+both reach the same slot key, so whichever fires second collapses onto the first's
+turn. Firing only queues a turn — which box runs it is decided on the claim.
 
-- **Anchor on `fire_after`, never `last_slot`.** `ScheduleOut.fire_after`
-  (`schedule_services`: `last_slot or created_at`, pinned just before a one-off's
-  instant) is what the runner passes to `due_slot(after=...)`; `last_slot` is NULL
+- **Anchor on `fire_after`, never `last_slot`.** `schedule_turns.fire_after_of`
+  (`last_slot or created_at`, pinned just before a one-off's instant; served to
+  runners as `ScheduleOut.fire_after`) is what the server clock and the runner pass
+  to `due_slot(after=...)`; `last_slot` is NULL
   until the first fire, and an unbounded backward look fires a slot that predates
   the schedule.
 - **Concurrent fires are safe:** the slot-derived `idempotency_key`
@@ -457,11 +496,18 @@ workspace's shared vault: a person lending their identity to one agent
   email) and `requested_by` for a `Requested-by:` trailer — the caller is recorded,
   never the principal. Stopping bad writes is the agent's own gating, not the token
   layer's. Each issue is an `agent.github.issued` event.
-- **Agentless repo turns** (`Turn.project` = repo name) run as no one and are
+- **Agentless repo turns and project chats** (`Turn.project`, or the chat
+  session's `project`, = repo name) run as no one on GitHub and are
   refused the same way, unless the repo has an `agents.RepoIdentity` row
   (`repo_slug` unique → agent; edited in Django admin, listed as
   `identity_for_repos` on `GET /api/agents/{slug}/github`), in which case the turn
   runs as that agent under the same rule.
+- **canopy-web's MCP sign-in is per turn.** Claude Code remembers a 401 from an
+  MCP server in `mcp-needs-auth-cache.json` and skips it for ~15 minutes in every
+  session sharing that file — on a box, every login's copy is a symlink to the
+  one in `~/.claude`. The cloud runner removes the canopy-web entry before each
+  turn (`_clear_canopy_needs_auth`), so one session with no credential cannot
+  take canopy's tools away from the turns after it.
 - Readiness: a box calls `GET /api/harness/runners/{rid}/github-readiness` at boot
   (checked live per agent it serves), and the readiness drill covers it — a missing
   or expired token is a red health check, not a mid-turn 403.

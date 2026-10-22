@@ -42,6 +42,34 @@ def mint(turn: Turn, *, scoped: bool = False) -> str:
 _OPERATORS = frozenset({"owner", "admin", "system"})
 
 
+def _project_repo(turn: Turn) -> str:
+    """The repo an agentless turn drives — a project dispatch's own, or a project
+    chat's (its session's) — else "" (an agent's turn, or a chat with neither)."""
+    if turn.acting_agent is not None:
+        return ""
+    if turn.project:
+        return turn.project
+    cs = turn.chat_session if turn.chat_session_id else None
+    return cs.project if cs is not None else ""
+
+
+def _project_asker(turn: Turn):
+    """The person a PROJECT turn acts as on canopy: its verified, active human
+    initiator — else None (a schedule, a drill, a contact, anyone unproven).
+
+    A project has no agent to act as, so its session acts as whoever asked,
+    exactly as a colleague's full turn does: what they can see is what it can see
+    (access.md → "Projects run as the person who asked")."""
+    from .caller_context import _verified
+
+    if not _project_repo(turn) or not turn.initiator_user_id:
+        return None
+    user = turn.initiator_user
+    if not user.is_active or not _verified(turn):
+        return None
+    return user
+
+
 def is_caller_scoped(turn: Turn) -> bool:
     """Whether this FULL-profile turn must reach canopy's MCP as its asker.
 
@@ -49,14 +77,15 @@ def is_caller_scoped(turn: Turn) -> bool:
     a caller token; a `full:` turn did not, so its session used the runner's
     PAT — and read across sessions as the runner's owner (2026-10-08, ACE
     answering a `full: [member]` colleague). A turn with no agent (a project
-    turn) has no access decision to scope, so it is not scoped."""
+    turn or project chat) has no agent to act as, so it acts as its verified
+    asker (`_project_asker`); with no such person it gets no token at all."""
     from apps.agents import access
 
     if turn.capability:
         return False            # confined: has its own token
     agent = turn.acting_agent
     if agent is None:
-        return False
+        return _project_asker(turn) is not None
     d = access.decide_for_turn(turn, agent)
     return d.access == access.FULL and d.basis not in _OPERATORS
 
@@ -118,7 +147,12 @@ def resolve(raw: str) -> Grant | None:
         return None
     agent = current.acting_agent
     if agent is None:
-        return None
+        # A project's session acts as its CURRENT asker, re-checked on every call
+        # (a later turn in the chat by someone unverified stands for no one).
+        user = _project_asker(current) if tok.scoped else None
+        if user is None:
+            return None
+        return Grant(turn=current, user=user, all_tools=True, turn_ids=turn_ids, token_id=tok.pk)
     user = current.initiator_user if current.initiator_user_id else None
     if user is not None and not user.is_active:
         return None

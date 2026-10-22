@@ -4091,6 +4091,49 @@ def _remove_agent_token(turn_id: str) -> None:
         pass
 
 
+def _remove_scoped_token(turn_id: str) -> None:
+    """The turn's canopy token ends with the turn: nothing it acted with stays on
+    the box after it (the week-long prune above only catches a crashed runner)."""
+    if not _CHAT_ID.match(turn_id or ""):
+        return
+    try:
+        (SCOPED_TOKEN_ROOT / "turn" / f"{turn_id}.token").unlink(missing_ok=True)
+    except OSError as exc:
+        _log(f"warn: could not remove turn {turn_id[:8]}'s canopy token: {exc}")
+
+
+#: The canopy plugin's MCP server, as Claude Code names it in its needs-auth cache.
+_CANOPY_MCP_SERVER = "plugin:canopy:canopy-web"
+
+
+def _clear_canopy_needs_auth() -> None:
+    """Forget a remembered "canopy-web needs auth" before a turn starts.
+
+    Claude Code remembers a server that answered 401 in
+    `<config>/mcp-needs-auth-cache.json` and, for ~15 minutes, skips connecting
+    to it in EVERY session that shares the file — and on a box every login's
+    copy is a symlink to the one in `~/.claude`. So a single session that had no
+    canopy credential (a project chat, before project turns acted as their asker)
+    marked canopy-web "needs auth" for every turn after it, agent turns holding a
+    valid PAT included (cloud-ec2-2, 2026-10-22). Each turn brings its own
+    credential, so each turn gets a fresh connect. Best effort: a cache we cannot
+    rewrite costs one turn its canopy tools, never the turn."""
+    path = _login_dir() / "mcp-needs-auth-cache.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict) or _CANOPY_MCP_SERVER not in data:
+        return
+    data.pop(_CANOPY_MCP_SERVER, None)
+    try:
+        tmp = path.resolve().with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, path.resolve())
+    except OSError as exc:
+        _log(f"warn: could not clear canopy-web from the MCP needs-auth cache: {exc}")
+
+
 def _write_private_text(path: pathlib.Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
@@ -8306,6 +8349,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
                         **_chat_key_env(turn), **_lineage_env(turn), **scoped_env,
                         **_agent_token_env(runner_id, turn), **ONE_SHOT_TURN_ENV}
+        _clear_canopy_needs_auth()
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         # The chat a person is watching, whose agent may ask them (run_acp). Not a
@@ -8495,6 +8539,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # The turn's secrets end with it — done, failed, raised, stopped or timed out.
         remove_turn_env(str(turn_id))
         _remove_agent_token(str(turn_id))
+        _remove_scoped_token(str(turn_id))
         with _TURNS_LOCK:
             _IN_FLIGHT.pop(turn_id, None)
         _clear_stop(turn_id)
