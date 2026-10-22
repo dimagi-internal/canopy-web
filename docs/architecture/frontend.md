@@ -20,6 +20,7 @@ App UI is **dense and readable: tables, not cards.**
 ## Shared kit: `canopy-ui`
 
 - The two-pane shell (left rail + scrolling main) used by the DDD and Agent workspaces, plus the design-system primitives, live in `frontend/packages/canopy-ui`, imported as `canopy-ui` with subpath exports `/ui`, `/lib`, `/chat`, `/presence`, `/shell`, `/tokens` (see its `package.json` `exports`). Surfaces consume it instead of re-implementing chrome.
+- **Use its primitives instead of re-implementing them:** `StatusBadge tone=` (a status pill), `Segmented` (one-of-N, a radiogroup), `CopyButton` (copy with a "Copied" moment), `IconButton` (icon-only, `label` required) from `canopy-ui/ui`; `toneClasses`/`toneText`/`toneDot(tone)` (a status → class map is a `Record<status, StatusTone>`, not hand-written classes) and `copyText`/`useCopy` (never a raw `navigator.clipboard.writeText`) from `canopy-ui/lib`.
 - It is published to public npm as the unscoped `canopy-ui`; naming, the version-bump CI check and release-on-merge: [embedding-internals.md § npm packages](embedding-internals.md#npm-packages).
 - Design: `docs/superpowers/specs/2026-06-17-shared-workbench-package-design.md`.
 

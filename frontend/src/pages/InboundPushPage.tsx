@@ -27,16 +27,17 @@ import {
   watchTone,
 } from './inboundSetup'
 import { roleAllows } from '@/lib/workspaceRoles'
+import { toneText, useCopy } from 'canopy-ui/lib'
 
 const TONE_CLASS: Record<string, string> = {
-  success: 'text-success',
-  warning: 'text-warning',
-  destructive: 'text-destructive',
-  muted: 'text-muted-foreground',
+  success: toneText('success'),
+  warning: toneText('warning'),
+  destructive: toneText('destructive'),
+  muted: toneText('neutral'),
 }
 
 function CopyField({ label, value }: { label: string; value: string }): JSX.Element {
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   return (
     <div className="space-y-1">
       <div className="text-xs text-muted-foreground">{label}</div>
@@ -54,11 +55,7 @@ function CopyField({ label, value }: { label: string; value: string }): JSX.Elem
         <Button
           type="button"
           variant="outline"
-          onClick={() => {
-            void navigator.clipboard?.writeText(value)
-            setCopied(true)
-            window.setTimeout(() => setCopied(false), 1500)
-          }}
+          onClick={() => void copy(value)}
         >
           {copied ? 'Copied' : 'Copy'}
         </Button>

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 
 import type { ContributorBriefOut, IdeaOut } from '@/api/agents'
 import { saidOn, STAGE_LABEL, tally, unwritten, type Stage } from '@/pages/agents/ideaStage'
+import { toneClasses } from 'canopy-ui/lib'
 
 // IDEAS (hal T82). An idea is a task with kind "idea": a person's want about
 // the product, in their words, with the work toward it as its subtasks. A task
@@ -10,10 +11,10 @@ import { saidOn, STAGE_LABEL, tally, unwritten, type Stage } from '@/pages/agent
 // page's overview and the contributor page.
 
 const STAGE_TONE: Record<Stage, string> = {
-  proposed: 'bg-info/10 text-info border-info/30',
-  started: 'bg-warning/10 text-warning border-warning/30',
-  shipped: 'bg-success/10 text-success border-success/30',
-  declined: 'bg-muted text-muted-foreground border-border',
+  proposed: toneClasses('info'),
+  started: toneClasses('warning'),
+  shipped: toneClasses('success'),
+  declined: toneClasses('neutral'),
 }
 
 export function StagePill({ stage }: { stage: Stage }): JSX.Element {

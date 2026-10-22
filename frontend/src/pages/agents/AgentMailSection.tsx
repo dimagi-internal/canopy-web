@@ -13,6 +13,7 @@ import { AgentAddressList } from '@/components/agents/AgentAddressList'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
+import { toneText } from 'canopy-ui/lib'
 
 // The email's own HTML is untrusted. sandbox="" blocks scripts, but <img>, CSS
 // url() and <link> would still fetch remotely (a tracking pixel reveals the
@@ -38,10 +39,10 @@ export function sandboxedSrcDoc(html: string): string {
 
 // Delivery states of an outbound message, in semantic tokens.
 const STATUS_CLASS: Record<string, string> = {
-  sent: 'text-muted-foreground',
-  delivered: 'text-success',
-  bounced: 'text-destructive',
-  complained: 'text-warning',
+  sent: toneText('neutral'),
+  delivered: toneText('success'),
+  bounced: toneText('destructive'),
+  complained: toneText('warning'),
 }
 
 function MessageView({ m }: { m: MailMessageOut }) {

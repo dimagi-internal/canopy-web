@@ -82,8 +82,8 @@ describe('the model', () => {
 describe('By agent (Full conversation)', () => {
   it("opens on the first member's thread and reads it top to bottom", async () => {
     const { container } = renderAt('?view=agent')
-    expect(screen.getByRole('button', { name: 'Full conversation' }).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: 'By agent' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Full conversation' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'By agent' }).getAttribute('aria-checked')).toBe('true')
     expect(screen.getByRole('button', { name: /^(A\s*)?Ace$/ }).getAttribute('aria-pressed')).toBe('true')
     expect(container.querySelector('[data-thread="ace"]')).toBeTruthy()
     for (const r of ["Step 1 · What everyone's working on", 'Step 2 · Ideas', "Step 3 · Agreement"]) {
@@ -148,7 +148,7 @@ describe('By agent (Full conversation)', () => {
 describe('By idea and the switcher', () => {
   it('pitch → critique → responses → outcome, per proposal', () => {
     renderAt('?view=proposal')
-    expect(screen.getByRole('button', { name: 'By idea' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'By idea' }).getAttribute('aria-checked')).toBe('true')
     const thread = document.querySelector('[data-proposal-thread="IDM talk: live demo from Ace, story slide from Echo"]') as HTMLElement
     const order = [...thread.querySelectorAll('[data-bubble]')].map((b) => b.getAttribute('data-bubble'))
     expect(order).toEqual(['pitch', 'critique', 'reply-ace', 'reply-echo'])
@@ -174,28 +174,28 @@ describe('By idea and the switcher', () => {
 
   it('opens on the Story; the switcher writes ?view= and back', async () => {
     const { container } = renderAt()
-    expect(screen.getByRole('button', { name: 'Story' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Story' }).getAttribute('aria-checked')).toBe('true')
     expect(container.querySelector('[data-story]')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Diagram' }))
     expect(screen.getByTestId('where').textContent).toContain('view=map')
-    expect(screen.getByRole('button', { name: 'Diagram' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Diagram' }).getAttribute('aria-checked')).toBe('true')
     expect(container.querySelector('[data-message="reply-eva-1"]')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Full conversation' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Full conversation' }))
     expect(screen.getByTestId('where').textContent).toContain('view=agent')
-    fireEvent.click(screen.getByRole('button', { name: 'By idea' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'By idea' }))
     expect(screen.getByTestId('where').textContent).toContain('view=proposal')
     // From the Diagram, Full conversation opens By agent; Story drops ?view= (the default).
-    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Full conversation' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Diagram' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Full conversation' }))
     expect(screen.getByTestId('where').textContent).toContain('view=agent')
-    fireEvent.click(screen.getByRole('button', { name: 'Story' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Story' }))
     expect(screen.getByTestId('where').textContent).not.toContain('view=')
     expect(container.querySelector('[data-story]')).toBeTruthy()
   })
 
   it('a ?view= link opens that view', () => {
     renderAt('?view=map')
-    expect(screen.getByRole('button', { name: 'Diagram' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Diagram' }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('the diagram is a sequence: who said what to whom, in the order it happened', () => {

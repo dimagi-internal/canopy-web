@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { disconnectApp, listConnectedApps, type ConnectedApps } from '@/api/tokens'
 import { CopyBlock } from '@/components/CopyBlock'
+import { copyText } from 'canopy-ui/lib'
 
 /**
  * Apps connected to canopy's MCP server by signing in, and how to connect one.
@@ -25,12 +26,7 @@ export function ConnectedAppsPanel() {
   }, [])
 
   async function copy(which: string, value: string) {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(which)
-    } catch {
-      // ignore
-    }
+    if (await copyText(value)) setCopied(which)
   }
 
   async function onDisconnect(id: number, name: string) {

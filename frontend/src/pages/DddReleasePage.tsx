@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
+import { CopyButton } from 'canopy-ui/ui'
 import { getRelease, type DddRunRelease, type DddLink } from '@/api/ddd'
 import { withBase } from '@/lib/basePath'
 import { PublicHeader } from '@/components/PublicHeader'
@@ -251,24 +252,16 @@ function LinkButton({ link }: { link: DddLink }) {
 }
 
 function CopyShare({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false)
   return (
-    <button
-      type="button"
-      onClick={() => {
-        navigator.clipboard?.writeText(url).then(
-          () => {
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-          },
-          () => {},
-        )
-      }}
-      className="rounded-md border border-border px-3 py-1 text-[11px] text-foreground-secondary transition-colors hover:border-input hover:text-primary"
+    <CopyButton
+      text={url}
+      variant="outline"
+      copiedLabel="Copied ✓"
+      className="rounded-md px-3 py-1 text-foreground-secondary transition-colors hover:border-input hover:bg-transparent hover:text-primary"
       title="Copy the public share link"
     >
-      {copied ? 'Copied ✓' : 'Copy share link'}
-    </button>
+      Copy share link
+    </CopyButton>
   )
 }
 

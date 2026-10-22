@@ -14,6 +14,7 @@
  * and then instructs the reviewer to have their AI agent retrieve + apply it.
  */
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { CopyButton } from 'canopy-ui/ui'
 import type {
   FindingsCluster,
   FindingsDecision,
@@ -579,13 +580,11 @@ export function ProductFindingsReview({
               <code className="flex-1 rounded border border-input bg-card px-3 py-2 text-xs text-foreground-secondary whitespace-pre-wrap">
                 {applyPrompt}
               </code>
-              <button
-                type="button"
-                onClick={() => void navigator.clipboard?.writeText(applyPrompt)}
-                className="shrink-0 rounded border border-input px-2 py-1 text-xs text-foreground-secondary hover:border-muted-foreground hover:text-foreground transition-colors"
-              >
-                Copy
-              </button>
+              <CopyButton
+                text={applyPrompt}
+                variant="outline"
+                className="shrink-0 border-input px-2 py-1 text-xs text-foreground-secondary hover:border-muted-foreground hover:bg-transparent hover:text-foreground transition-colors"
+              />
             </div>
             <p className="text-[11px] text-muted-foreground">
               It reads your implement / skip picks and per-finding comments from this review.

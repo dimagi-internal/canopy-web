@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useCopy } from 'canopy-ui/lib'
 import {
   deleteWalkthrough,
   getWalkthrough,
@@ -27,7 +28,7 @@ export function WalkthroughViewerPage() {
   const [w, setW] = useState<WalkthroughDetail | null>(null)
   const [error, setError] = useState<LoadError | null>(null)
   const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy(2000)
   const shareToken = new URLSearchParams(window.location.search).get('t')
 
   useEffect(() => {
@@ -68,9 +69,7 @@ export function WalkthroughViewerPage() {
   async function copyShareUrl() {
     if (!shareUrl) return
     try {
-      await navigator.clipboard.writeText(shareUrl)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      if (!(await copy(shareUrl))) throw new Error('The clipboard is not available here')
     } catch (e) {
       setError({ status: null, message: e instanceof Error ? e.message : String(e) })
     }

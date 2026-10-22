@@ -7,6 +7,7 @@ import {
   type RuleTurnMode,
   type TurnMode,
 } from '@/api/agents'
+import { Segmented } from 'canopy-ui/ui'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { AgentDefaultRunners } from '@/components/agents/AgentDefaultRunners'
 import { ZdrBadge, hasZdr } from '@/components/agents/ZdrBadge'
@@ -67,34 +68,6 @@ function Cell({ label, children, className = '' }: { label: string; children: Re
         {label}
       </span>
       <div className="min-w-0 flex-1">{children}</div>
-    </div>
-  )
-}
-
-function Segmented<T extends string>({
-  value, options, onChange, label,
-}: {
-  value: T
-  options: { value: T; label: string }[]
-  onChange: (v: T) => void
-  label: string
-}) {
-  return (
-    <div role="radiogroup" aria-label={label} className="inline-flex rounded-md border border-border bg-input p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          role="radio"
-          aria-checked={value === o.value}
-          onClick={() => value !== o.value && onChange(o.value)}
-          className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
-            value === o.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
     </div>
   )
 }
@@ -512,6 +485,7 @@ function RuleRowView({
 
         <Cell label="If all down">
           <Segmented
+            size="xs"
             label={`When the ${source} rule's runners are all down`}
             value={m.strict ? 'wait' : 'fall'}
             options={[

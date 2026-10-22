@@ -7,6 +7,7 @@ import {
   type AgentLicenseOut,
 } from '@/api/agents'
 import { relativeAge } from '@/lib/relativeAge'
+import { toneText } from 'canopy-ui/lib'
 
 // WHO USES THIS AGENT LOCALLY (canopy-web#1704).
 //
@@ -25,9 +26,9 @@ const STATUS_LABEL: Record<AgentLicenseOut['status'], string> = {
 }
 
 const STATUS_CLASS: Record<AgentLicenseOut['status'], string> = {
-  active: 'text-success',
-  requested: 'text-warning',
-  revoked: 'text-muted-foreground',
+  active: toneText('success'),
+  requested: toneText('warning'),
+  revoked: toneText('neutral'),
 }
 
 export function AgentLicenses({ agentSlug, canEdit }: { agentSlug: string; canEdit: boolean }) {

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
+import { StatusBadge } from 'canopy-ui/ui'
 import { getHuddle, type Huddle } from '@/api/huddles'
 import { getHuddleThreads } from '@/api/threads'
 import { usePolled } from '@/hooks/usePolled'
@@ -28,14 +29,6 @@ import { scopedPath } from '../../lib/scopedLinks'
  */
 
 const POLL_MS = 15_000
-
-function Pill({ className, children }: { className: string; children: React.ReactNode }) {
-  return (
-    <span className={`inline-flex h-5 items-center gap-1.5 rounded-full border px-2 text-[11px] font-medium ${className}`}>
-      {children}
-    </span>
-  )
-}
 
 function Stepper({ huddle }: { huddle: Huddle }) {
   // Settling changes in direct conversations is step 4 too (the Diagram's).
@@ -219,11 +212,9 @@ export function HuddlePage() {
                   {who(huddle.leader)}&apos;s huddle{when ? <span className="font-normal text-muted-foreground"> · {when}</span> : null}
                 </h1>
                 {huddle.finished ? (
-                  <Pill className="border-success/30 bg-success/10 text-success">finished</Pill>
+                  <StatusBadge tone="success">finished</StatusBadge>
                 ) : (
-                  <Pill className="border-info/30 bg-info/10 text-info">
-                    <span className="size-1.5 animate-pulse rounded-full bg-info" /> still going
-                  </Pill>
+                  <StatusBadge tone="info" pulse>still going</StatusBadge>
                 )}
               </div>
               <p className="mt-1.5 text-[14px] leading-relaxed text-foreground-secondary">{huddleExplainer(huddle.leader)}</p>

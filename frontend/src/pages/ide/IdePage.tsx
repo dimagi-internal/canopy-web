@@ -32,6 +32,7 @@ import { listRunners, type RunnerOut } from '@/api/harness'
 import { listMyAgents, type AgentOut } from '@/api/agents'
 import { NewChatMenu, type NewChatTarget } from '@/components/chat/NewChatMenu'
 import { repoChoices } from '@/components/chat/runnerEligibility'
+import { copyText } from 'canopy-ui/lib'
 import { usePolled } from '@/hooks/usePolled'
 import { useReconnectingSocket } from '@/hooks/useReconnectingSocket'
 import { wsUrl } from '@/lib/wsUrl'
@@ -439,8 +440,11 @@ export function IdePage() {
           window.open(url, '_blank', 'noopener')
           return
         case 'copy-link':
-          await navigator.clipboard.writeText(url)
-          setNote({ text: 'Link copied', error: false })
+          setNote(
+            (await copyText(url))
+              ? { text: 'Link copied', error: false }
+              : { text: 'Could not copy — the clipboard is blocked here', error: true },
+          )
           return
         case 'rename':
           setRenamingId(s.id)

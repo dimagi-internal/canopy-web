@@ -1,5 +1,6 @@
-import { useRef, useState, type JSX } from 'react'
+import { useRef, type JSX } from 'react'
 import { Check, Copy } from 'lucide-react'
+import { useCopy } from 'canopy-ui/lib'
 
 /** A command to paste into a terminal, with a Copy button. Shared by every place
  *  canopy hands a person something to run on their own machine.
@@ -8,7 +9,6 @@ import { Check, Copy } from 'lucide-react'
  *  browser that blocks it), the button selects the command instead, so the
  *  person can still copy it by hand. */
 export function CopyCommand({ command, testId }: { command: string; testId?: string }): JSX.Element {
-  const [copied, setCopied] = useState(false)
   const codeRef = useRef<HTMLElement>(null)
   const selectCommand = () => {
     const el = codeRef.current
@@ -19,16 +19,16 @@ export function CopyCommand({ command, testId }: { command: string; testId?: str
     selection.removeAllRanges()
     selection.addRange(range)
   }
+  const { copied, copy: copyNow } = useCopy()
   const copy = () => {
-    const write = navigator.clipboard?.writeText(command)
-    if (!write) {
+    // No clipboard at all: select at once, in the click, rather than after a tick.
+    if (!navigator.clipboard) {
       selectCommand()
       return
     }
-    void write.then(() => {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    }, selectCommand)
+    void copyNow(command).then((ok) => {
+      if (!ok) selectCommand()
+    })
   }
   return (
     <div className="mt-1 flex items-start gap-2 rounded-md border border-input bg-input p-2">

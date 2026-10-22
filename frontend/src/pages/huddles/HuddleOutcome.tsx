@@ -13,6 +13,7 @@ import { boardTally, headline, ideaState, yourMove, type IdeaState, type Output 
 import {
   boardLinkText, deJargon, nextStep, peopleWords, possessive, taskStatusPlain, VERDICT_WORDS, who,
 } from './plainWords'
+import { toneClasses } from 'canopy-ui/lib'
 
 /**
  * The huddle's outcome: what was decided and what is waiting on the reader.
@@ -24,19 +25,19 @@ import {
  */
 
 const TASK_TONE: Record<string, string> = {
-  suggested: 'bg-special/10 text-special border-special/30',
-  in_progress: 'bg-info/10 text-info border-info/30',
-  done: 'bg-success/10 text-success border-success/30',
-  declined: 'bg-muted text-muted-foreground border-border',
+  suggested: toneClasses('special'),
+  in_progress: toneClasses('info'),
+  done: toneClasses('success'),
+  declined: toneClasses('neutral'),
 }
 
 
 const STATE_TONE: Record<IdeaState['tone'], string> = {
   you: 'border-special/40 bg-special/10 text-special',
   stuck: 'border-warning/40 bg-warning/10 text-warning',
-  moving: 'border-info/30 bg-info/10 text-info',
-  done: 'border-success/30 bg-success/10 text-success',
-  no: 'border-border bg-muted text-muted-foreground',
+  moving: toneClasses('info'),
+  done: toneClasses('success'),
+  no: toneClasses('neutral'),
   parked: 'border-dashed border-border text-muted-foreground',
 }
 
@@ -79,7 +80,7 @@ export function TaskLine({ o, lead, agents, hueOf }: { o: Output; lead: string; 
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[13px]">
           <span className="font-medium text-foreground">{o.agent === lead ? `${who(o.agent)} leads` : `${who(o.agent)}'s part`}</span>
           <Link to={o.url} className="text-[12px] text-primary underline-offset-2 hover:underline">{boardLinkText(o.agent)} →</Link>
-          <span className={`inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-medium ${TASK_TONE[o.status] ?? 'border-border bg-muted text-muted-foreground'}`}>
+          <span className={`inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-medium ${TASK_TONE[o.status] ?? toneClasses('neutral')}`}>
             {taskStatusPlain(o.status)}
           </span>
         </div>

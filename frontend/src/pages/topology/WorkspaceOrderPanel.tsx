@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { clsx } from 'clsx'
 import { ArrowDown, ArrowUp, X } from 'lucide-react'
+import { IconButton } from 'canopy-ui/ui'
 
 import { enrollRunnerWorkspace, type RunnerOut } from '@/api/harness'
 import { getRunnerOrder, setRunnerOrder, type RunnerOrderRowOut } from '@/api/workspaces'
@@ -107,13 +108,13 @@ export function WorkspaceOrderPanel({
               <span className="text-[11px] text-muted-foreground">{r.kind}</span>
               {canEdit && (
                 <span className="flex items-center gap-0.5">
-                  <IconButton label={`Move ${r.runner_name} up`} disabled={i === 0} onClick={() => move(i, -1)}>
+                  <IconButton size="md" label={`Move ${r.runner_name} up`} disabled={i === 0} onClick={() => move(i, -1)}>
                     <ArrowUp className="h-3.5 w-3.5" />
                   </IconButton>
-                  <IconButton label={`Move ${r.runner_name} down`} disabled={i === rows.length - 1} onClick={() => move(i, 1)}>
+                  <IconButton size="md" label={`Move ${r.runner_name} down`} disabled={i === rows.length - 1} onClick={() => move(i, 1)}>
                     <ArrowDown className="h-3.5 w-3.5" />
                   </IconButton>
-                  <IconButton label={`Remove ${r.runner_name}`} onClick={() => save(asRows(rows).filter((x) => x.runnerId !== r.runner_id))}>
+                  <IconButton size="md" label={`Remove ${r.runner_name}`} onClick={() => save(asRows(rows).filter((x) => x.runnerId !== r.runner_id))}>
                     <X className="h-3.5 w-3.5" />
                   </IconButton>
                 </span>
@@ -207,31 +208,6 @@ export function WorkspaceOrderPanel({
         />
       )}
     </div>
-  )
-}
-
-function IconButton({
-  label,
-  disabled,
-  onClick,
-  children,
-}: {
-  label: string
-  disabled?: boolean
-  onClick: () => void
-  children: React.ReactNode
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="inline-flex h-8 w-8 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
-    >
-      {children}
-    </button>
   )
 }
 

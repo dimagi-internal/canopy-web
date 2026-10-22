@@ -28,6 +28,8 @@ import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { getCredentialAlerts, type AgentCredentialAlertOut } from '@/api/deviceKeys'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { getAgentMailbox, type AgentMailboxOut } from '@/api/mail'
+import { toneClasses } from 'canopy-ui/lib'
+import { CopyButton } from 'canopy-ui/ui'
 
 // "What is stopping this agent from running" — a question that on 2026-09-05
 // cost an SSH to a box and a `gog auth list`. ACE's mailbox had been dead since
@@ -51,10 +53,10 @@ import { getAgentMailbox, type AgentMailboxOut } from '@/api/mail'
 // find settings that sat one click away from each other).
 
 const TONE: Record<CredStatus['tone'], string> = {
-  success: 'bg-success/10 text-success border-success/30',
-  warning: 'bg-warning/10 text-warning border-warning/30',
-  destructive: 'bg-destructive/10 text-destructive border-destructive/30',
-  muted: 'bg-muted text-muted-foreground border-border',
+  success: toneClasses('success'),
+  warning: toneClasses('warning'),
+  destructive: toneClasses('destructive'),
+  muted: toneClasses('neutral'),
 }
 
 const MARK: Record<CredStatus['tone'], string> = { success: '✓', warning: '!', destructive: '✗', muted: '–' }
@@ -341,13 +343,11 @@ export function AgentCredentialsPanel({
           <code className="min-w-0 flex-1 select-all break-all rounded border border-warning/30 bg-warning/10 px-2 py-1 font-mono text-[12px] text-foreground">
             {revealed.value}
           </code>
-          <button
-            type="button"
-            onClick={() => void navigator.clipboard?.writeText(revealed.value)}
-            className="min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary sm:min-h-0"
-          >
-            Copy
-          </button>
+          <CopyButton
+            text={revealed.value}
+            variant="outline"
+            className="min-h-11 rounded-md border-input px-3 py-1 text-[12px] hover:border-primary hover:bg-transparent sm:min-h-0"
+          />
         </div>
       )}
     </div>

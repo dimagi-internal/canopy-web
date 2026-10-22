@@ -8,10 +8,10 @@
    canonical CSS-var NAMES (--primary, --muted-foreground, --border, --radius, …).
    The preset owns the NAMES; this app owns the VALUES — the :root / .dark
    palette below. ace-web imports this same preset with its own palette. Keep in
-   lockstep with packages/workbench/src/tokens/preset.css. */
+   lockstep with packages/canopy-ui/src/tokens/preset.css. */
 @import "canopy-ui/tokens/preset.css";
 
-@source "../packages/workbench/src";
+@source "../packages/canopy-ui/src";
 
 @custom-variant dark (&:is(.dark *));
 

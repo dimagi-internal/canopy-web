@@ -1,4 +1,5 @@
 import type { components } from "@/api/generated";
+import { toneClasses } from "canopy-ui/lib";
 
 export type Turn = components["schemas"]["TurnOut"];
 
@@ -46,14 +47,14 @@ export function matchesTurnFilters(turn: Turn, filters: TurnFilters): boolean {
 /** Status → tinted-badge className, built only from semantic tokens. Unknown
  * statuses fall back to the muted style. */
 export const STATUS_TOKEN: Record<string, string> = {
-  done: "bg-success/10 text-success border-success/30",
-  failed: "bg-destructive/10 text-destructive border-destructive/30",
-  missed: "bg-warning/10 text-warning border-warning/30",
-  running: "bg-info/10 text-info border-info/30",
-  claimed: "bg-muted text-muted-foreground border-border",
-  queued: "bg-muted text-muted-foreground border-border",
+  done: toneClasses("success"),
+  failed: toneClasses("destructive"),
+  missed: toneClasses("warning"),
+  running: toneClasses("info"),
+  claimed: toneClasses("neutral"),
+  queued: toneClasses("neutral"),
 };
 
 export function statusToken(status: string): string {
-  return STATUS_TOKEN[status] ?? "bg-muted text-muted-foreground border-border";
+  return STATUS_TOKEN[status] ?? toneClasses("neutral");
 }

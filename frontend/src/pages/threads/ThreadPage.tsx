@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
+import type { StatusTone } from 'canopy-ui/lib'
+import { StatusBadge } from 'canopy-ui/ui'
 import { getThread, type AgentThread, type ThreadMessage } from '@/api/threads'
 import { usePolled } from '@/hooks/usePolled'
 import { relativeAge } from '@/lib/relativeAge'
@@ -25,34 +27,24 @@ import { scopedPath } from '../../lib/scopedLinks'
 
 const POLL_MS = 15_000
 
-const POSITION_STYLE: Record<Position, string> = {
-  agree: 'border-success/40 bg-success/15 text-success',
-  counter: 'border-info/40 bg-info/15 text-info',
-  decline: 'border-destructive/40 bg-destructive/15 text-destructive',
-  question: 'border-warning/40 bg-warning/15 text-warning',
-}
-
-function Pill({ className, children }: { className: string; children: ReactNode }) {
-  return (
-    <span className={`inline-flex h-5 items-center gap-1.5 rounded-full border px-2 text-[11px] font-medium ${className}`}>
-      {children}
-    </span>
-  )
+const POSITION_TONE: Record<Position, StatusTone> = {
+  agree: 'success',
+  counter: 'info',
+  decline: 'destructive',
+  question: 'warning',
 }
 
 function StatusPill({ t }: { t: AgentThread }) {
   if (t.status === 'open') {
     return (
-      <Pill className="border-info/30 bg-info/10 text-info">
-        <span className="size-1.5 animate-pulse rounded-full bg-info" /> {statusWords(t).toLowerCase()}
-      </Pill>
+      <StatusBadge tone="info" pulse>{statusWords(t).toLowerCase()}</StatusBadge>
     )
   }
   const agreed = resultOf(t) === 'agreed'
   return (
-    <Pill className={agreed ? 'border-success/30 bg-success/10 text-success' : 'border-warning/30 bg-warning/10 text-warning'}>
+    <StatusBadge tone={agreed ? 'success' : 'warning'}>
       {agreed ? 'agreed' : t.status === 'cancelled' ? 'stopped' : 'not agreed'}
-    </Pill>
+    </StatusBadge>
   )
 }
 
@@ -88,7 +80,7 @@ function MessageRow({ t, m, hueOf }: { t: AgentThread; m: ThreadMessage; hueOf: 
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
           <span className="font-semibold text-foreground">{who(m.speaker)}</span>
           {to.length > 0 && <span className="text-muted-foreground">to {andList(to)}</span>}
-          {position && <Pill className={POSITION_STYLE[position]}>{POSITION_WORDS[position]}</Pill>}
+          {position && <StatusBadge tone={POSITION_TONE[position]}>{POSITION_WORDS[position]}</StatusBadge>}
           <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{clock(m.finished_at ?? m.created_at)}</span>
         </p>
         <div className="mt-1.5 rounded-xl rounded-tl-sm border border-border bg-card p-3 shadow-sm">

@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 import type { BackingStance, ProjectBackingOut } from '@/api/agents'
 
 import { STANCE_WORDS } from './stance'
+import { toneText } from 'canopy-ui/lib'
 
 // WHERE EVERYONE STANDS on a project, one short line each:
 // "Echo backs · Eva backs with changes: … · Shayoni passes: …". A row from an
@@ -10,9 +11,9 @@ import { STANCE_WORDS } from './stance'
 // "backs" given to a different plan is not a "backs" for this one.
 
 const STANCE_TONE: Record<BackingStance, string> = {
-  backs: 'text-success',
-  backs_with_changes: 'text-warning',
-  passes: 'text-muted-foreground',
+  backs: toneText('success'),
+  backs_with_changes: toneText('warning'),
+  passes: toneText('neutral'),
 }
 
 export function BackingList({ backings }: { backings: readonly ProjectBackingOut[] }): JSX.Element {
