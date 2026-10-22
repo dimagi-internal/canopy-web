@@ -286,11 +286,45 @@ def test_it_dies_when_the_session_leaves_the_runner_or_is_archived(agent, operat
     assert _me(tok2).status_code == 401
 
 
-def test_a_session_reused_for_another_conversation_is_not_this_turns(agent, operator):
+def test_an_agent_turn_whose_session_key_no_longer_names_the_binding_gets_nothing(agent, operator):
     from apps.canopy_sessions.models import RunnerBinding
 
     r, s, turn = _laptop_session(agent, operator)
     RunnerBinding.objects.filter(session=s).update(session_key="a-different-task")
+    assert _ask(r, turn, _runner_token(r)).status_code == 404
+
+
+def test_a_laptop_chat_turn_names_its_session_in_origin_ref(agent, operator):
+    """Production, 2026-10-22: a canopy-web chat turn on a laptop records no session key;
+    its chat is `origin_ref.chat_session_id`, and that session is bound to the runner."""
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    r, _, _ = _laptop_session(agent, operator, key="unrelated")
+    s = Session.objects.create(agent=agent, workspace=agent.workspace, title="chat")
+    RunnerBinding.objects.create(session=s, runner=r, session_key="c-canopy-vault-61db")
+    turn = _turn(agent, runner=r, status=Turn.RUNNING, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+                 origin_ref={"chat_session_id": str(s.pk), "thread_key": "t"})
+    resp = Client().post(f"/api/harness/runners/{r.pk}/turns/{turn.pk}/agent-token?scope=session",
+                         HTTP_AUTHORIZATION=f"Bearer {_runner_token(r)}")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["session_id"] == str(s.pk)
+    tok = resp.json()["token"]
+    assert turn_agent_tokens.revoke_stale() == 0          # held: the chat is live on this laptop
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
+    turn_agent_tokens.revoke_for_turn(turn.pk)
+    assert turn_agent_tokens.revoke_stale() == 0 and _me(tok).status_code == 200
+    Session.objects.filter(pk=s.pk).update(status=Session.ARCHIVED)
+    assert turn_agent_tokens.revoke_stale() == 1 and _me(tok).status_code == 401
+
+
+def test_another_agents_session_is_never_this_turns(agent, operator):
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    r, _, _ = _laptop_session(agent, operator, key="k1")
+    other = Agent.objects.create(slug="hal", name="Hal", workspace=agent.workspace, owner=agent.owner)
+    s = Session.objects.create(agent=other, workspace=agent.workspace, title="hal's")
+    RunnerBinding.objects.create(session=s, runner=r, session_key="k2")
+    turn = _turn(agent, runner=r, status=Turn.DONE, origin_ref={"chat_session_id": str(s.pk)})
     assert _ask(r, turn, _runner_token(r)).status_code == 404
 
 

@@ -571,9 +571,10 @@ back to the stored PAT; phase 2 removes the PAT).
   gets a login tied to the SESSION (`TurnAgentToken.session`; `via=session` in the read
   log), held while that stays true and revoked by `revoke_stale` when the session leaves
   the runner or is archived. `finish_turn` leaves it alone. `?scope=session` asks for that
-  login only (404 with no live session), for a client that outlives the turn. A chat
-  turn names its session; an agent turn's is found by its binding (runner, session key,
-  agent). Never for a cloud or `computer` runner. Every action it takes is tied to
+  login only (404 with no live session), for a client that outlives the turn. A turn's
+  session is its `chat_session`, or the chat it names in `origin_ref.chat_session_id` (a
+  laptop chat turn records no session key), else the binding its session key names; it must
+  be the turn's agent's session. Never for a cloud or `computer` runner. Every action it takes is tied to
   `turn`, the turn that opened the session.
 - Cloud runner: `CANOPY_WEB_PAT` in the turn env + `~/.canopy/agent-token/turn/<tid>.token`
   for the MCP headers helper. Laptop: the canopy CLI asks on demand with the box's
