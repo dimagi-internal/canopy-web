@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     dependencies = [
         ("canopy_sessions", "0046_retitle_uuid_named_sessions"),
-        ("harness", "0098_drop_phi_commit_pin"),
+        ("harness", "0099_runner_credential_slots_unmapped"),
     ]
 
     operations = [
