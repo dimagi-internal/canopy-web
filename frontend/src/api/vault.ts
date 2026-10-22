@@ -124,3 +124,39 @@ export async function setVaultAgentLink(slug: string, linked: boolean): Promise<
   return need<VaultMembersOut>(await apiV2.PUT('/api/agents/{slug}/vault/agent-link', {
     params: { path: { slug } }, body: { linked, role: 'use' } }), 'Could not change the vault’s link to this agent')
 }
+
+// ---- workspace vaults (spec §4): any number per workspace, layered under an agent's own ----
+
+export type WorkspaceVaultOut = Schemas['WorkspaceVaultOut']
+
+export async function listWorkspaceVaults(slug: string): Promise<WorkspaceVaultOut[]> {
+  return need<WorkspaceVaultOut[]>(await apiV2.GET('/api/workspaces/{slug}/vaults', { params: { path: { slug } } }),
+    'Could not load this workspace’s vaults')
+}
+
+export async function createWorkspaceVault(slug: string, name: string): Promise<WorkspaceVaultOut> {
+  return need<WorkspaceVaultOut>(await apiV2.POST('/api/workspaces/{slug}/vaults', {
+    params: { path: { slug } }, body: { name } }), 'Could not make the vault')
+}
+
+export async function attachWorkspaceVault(vaultId: string, to: { agent?: string; workspace?: string }):
+    Promise<WorkspaceVaultOut> {
+  return need<WorkspaceVaultOut>(await apiV2.POST('/api/vaults/{vault_id}/attachments', {
+    params: { path: { vault_id: vaultId } }, body: to }), 'Could not attach the vault')
+}
+
+export async function detachWorkspaceVault(vaultId: string, attachmentId: number): Promise<WorkspaceVaultOut> {
+  return need<WorkspaceVaultOut>(await apiV2.DELETE('/api/vaults/{vault_id}/attachments/{attachment_id}', {
+    params: { path: { vault_id: vaultId, attachment_id: attachmentId } } }), 'Could not detach the vault')
+}
+
+export async function addWorkspaceVaultMember(vaultId: string, email: string, role: 'use' | 'manage'):
+    Promise<WorkspaceVaultOut> {
+  return need<WorkspaceVaultOut>(await apiV2.POST('/api/vaults/{vault_id}/members', {
+    params: { path: { vault_id: vaultId } }, body: { email, role } }), 'Could not add them to the vault')
+}
+
+export async function removeWorkspaceVaultMember(vaultId: string, userId: number): Promise<WorkspaceVaultOut> {
+  return need<WorkspaceVaultOut>(await apiV2.DELETE('/api/vaults/{vault_id}/members/{user_id}', {
+    params: { path: { vault_id: vaultId, user_id: userId } } }), 'Could not remove them from the vault')
+}
