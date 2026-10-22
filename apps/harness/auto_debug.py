@@ -65,8 +65,13 @@ from .models import FailureInvestigation, RunnerDrill, Turn
 
 logger = logging.getLogger(__name__)
 
-#: Every debug turn's idempotency key starts with this; the caps count by it.
+#: Every debug turn's idempotency key starts with this. It does NOT identify a
+#: debug turn: keys are unique only per workspace and whoever posts a turn picks
+#: its key, so anyone could mint `auto-debug:…`. A debug turn is one canopy
+#: itself started for this module — `is_debug_turn` / `debug_turns`.
 KEY_PREFIX = "auto-debug:"
+#: The `initiator_via` of the system initiator every debug turn carries.
+VIA = "auto-debug"
 #: How many recent failed turn ids an investigation keeps as evidence.
 RECENT_TURNS = 20
 #: Agents / runners remembered per investigation.
@@ -187,8 +192,7 @@ def _on_turn_failed(turn: Turn) -> None:
             return
     elif turn.status != Turn.FAILED:
         return
-    ref = turn.origin_ref or {}
-    if ref.get("auto_debug"):
+    if is_debug_turn(turn):
         # The debugger's own turn failed. Record it; NEVER start another.
         _debugger_failed(turn)
         return
@@ -285,10 +289,24 @@ def _carried_ids(turn: Turn) -> list[int]:
 # ---- the brakes ------------------------------------------------------------------
 
 
+def debug_turns():
+    """Every debug turn, fleet-wide. Matched on the initiator, which only canopy
+    sets (`initiator.system`) — never on the key prefix or `origin_ref`, which
+    any poster chooses: a member of another workspace keying turns
+    `auto-debug:…` would otherwise spend the cap and silence failure handling."""
+    from . import initiator as who
+
+    return Turn.objects.filter(initiator_kind=who.SYSTEM, initiator_via=VIA)
+
+
+def is_debug_turn(turn: Turn) -> bool:
+    from . import initiator as who
+
+    return turn.initiator_kind == who.SYSTEM and turn.initiator_via == VIA
+
+
 def debug_turns_since(cutoff: dt.datetime) -> int:
-    return Turn.objects.filter(
-        idempotency_key__startswith=KEY_PREFIX, created_at__gte=cutoff,
-    ).count()
+    return debug_turns().filter(created_at__gte=cutoff).count()
 
 
 def cap_blocks(now: dt.datetime) -> str:
@@ -334,7 +352,7 @@ def _trigger(inv: FailureInvestigation, turn: Turn, debugger, now) -> None:
             "failed_turn": str(turn.pk),
             "escalation": inv.recurred_after_resolve,
         },
-        initiator=who.system(via="auto-debug", accountable=debugger.owner),
+        initiator=who.system(via=VIA, accountable=debugger.owner),
         parent={"turn": turn},
     )
     inv.status = (FailureInvestigation.ESCALATED if inv.recurred_after_resolve
