@@ -27,8 +27,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.common.encryption import decrypt_secret, encrypt_secret
-from apps.tokens import github_app
-from apps.tokens.models import GitHubConnection
+from apps.github_connect import github_app
+from apps.github_connect.models import GitHubConnection
 
 pytestmark = pytest.mark.django_db
 
@@ -75,7 +75,7 @@ def _fake_post(body, status=200):
     resp.status_code = status
     resp.json.return_value = body
     resp.raise_for_status.return_value = None
-    return mock.patch("apps.tokens.github_app.requests.post", return_value=resp)
+    return mock.patch("apps.github_connect.github_app.requests.post", return_value=resp)
 
 
 def _fake_get(body, status=200):
@@ -83,7 +83,7 @@ def _fake_get(body, status=200):
     resp.status_code = status
     resp.json.return_value = body
     resp.raise_for_status.return_value = None
-    return mock.patch("apps.tokens.github_app.requests.get", return_value=resp)
+    return mock.patch("apps.github_connect.github_app.requests.get", return_value=resp)
 
 
 # --- the happy path -----------------------------------------------------------
@@ -291,7 +291,7 @@ def test_a_grant_with_no_refresh_token_is_refused(client, user, configured):
 
 def test_github_being_unreachable_does_not_500(client, user, configured):
     """A third party being down must not present as a canopy crash."""
-    with mock.patch("apps.tokens.github_app.requests.post",
+    with mock.patch("apps.github_connect.github_app.requests.post",
                     side_effect=requests.ConnectionError("boom")):
         res = client.get("/auth/github/callback/?code=abc")
     assert res.status_code == 302
@@ -359,7 +359,7 @@ def test_a_cached_access_token_is_reused_without_a_refresh(user, configured):
         access_token_enc=encrypt_secret("ghu_cached"),
         access_token_expires_at=timezone.now() + timezone.timedelta(hours=4),
     )
-    with mock.patch("apps.tokens.github_app.requests.post") as post:
+    with mock.patch("apps.github_connect.github_app.requests.post") as post:
         assert github_app.access_token_for(user) == "ghu_cached"
         assert github_app.access_token_for(user) == "ghu_cached"
     post.assert_not_called()
@@ -409,7 +409,7 @@ def test_a_refresh_that_lost_the_race_uses_the_winners_token(user, configured):
 
     with mock.patch.object(GitHubConnection.objects, "select_for_update",
                            side_effect=winner_refreshed_first), \
-         mock.patch("apps.tokens.github_app.requests.post") as post:
+         mock.patch("apps.github_connect.github_app.requests.post") as post:
         assert github_app.access_token_for(user) == "ghu_from_winner"
     post.assert_not_called()
     conn = GitHubConnection.objects.get(user=user)
@@ -444,7 +444,7 @@ def test_an_expired_refresh_token_needs_reconnect_without_calling_github(user, c
         refresh_token_enc=encrypt_secret("ghr_old"),
         refresh_token_expires_at=timezone.now() - timezone.timedelta(days=1),
     )
-    with mock.patch("apps.tokens.github_app.requests.post") as post:
+    with mock.patch("apps.github_connect.github_app.requests.post") as post:
         with pytest.raises(github_app.GitHubAuthError):
             github_app.access_token_for(user)
     post.assert_not_called()
@@ -472,7 +472,7 @@ def test_installations_come_from_github_not_from_a_cache(user, configured):
 def test_status_reports_not_configured_without_touching_github(client, settings):
     settings.GITHUB_APP_CLIENT_ID = ""
     settings.GITHUB_APP_CLIENT_SECRET = ""
-    with mock.patch("apps.tokens.github_app.requests.get") as get:
+    with mock.patch("apps.github_connect.github_app.requests.get") as get:
         body = client.get("/api/tokens/github").json()
     get.assert_not_called()
     assert body == {"configured": False, "connected": False, "github_login": "",
@@ -486,8 +486,8 @@ def test_status_never_calls_github(client, user, configured):
         user=user, github_login="jjackson", github_user_id=1,
         refresh_token_enc=encrypt_secret("ghr_1"),
     )
-    with mock.patch("apps.tokens.github_app.requests.get") as get, \
-         mock.patch("apps.tokens.github_app.requests.post") as post:
+    with mock.patch("apps.github_connect.github_app.requests.get") as get, \
+         mock.patch("apps.github_connect.github_app.requests.post") as post:
         body = client.get("/api/tokens/github").json()
     get.assert_not_called()
     post.assert_not_called()
@@ -553,7 +553,7 @@ def _sequential_get(*bodies):
         r.json.return_value = body
         r.raise_for_status.return_value = None
         resps.append(r)
-    return mock.patch("apps.tokens.github_app.requests.get", side_effect=resps)
+    return mock.patch("apps.github_connect.github_app.requests.get", side_effect=resps)
 
 
 def test_a_scoped_installation_reports_the_repositories_it_reaches(user, configured):
@@ -646,3 +646,16 @@ def test_the_endpoint_serializes_the_repositories(client, user, configured):
         "repositories": ["dimagi-internal/ace"],
         "repository_count": 1,
     }]
+
+
+def test_the_connection_kept_its_table_and_its_routes_when_it_got_its_own_app():
+    """Moved out of apps/tokens with no data moved (state-only migrations), and
+    still published where it was: the paths and operationIds are MCP tool names."""
+    from apps.api.api import api
+
+    assert GitHubConnection._meta.app_label == "github_connect"
+    assert GitHubConnection._meta.db_table == "tokens_githubconnection"
+    paths = api.get_openapi_schema()["paths"]
+    assert paths["/api/tokens/github"]["get"]["operationId"] == "github_connection"
+    assert paths["/api/tokens/github"]["delete"]["operationId"] == "github_disconnect"
+    assert paths["/api/tokens/github/installations"]["get"]["operationId"] == "github_installations"

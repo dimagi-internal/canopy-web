@@ -42,7 +42,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.canopy_sessions.invalidation import mark_dirty
-from apps.tokens import github_app
+from apps.github_connect import github_app
 from apps.workspaces import permissions as perms
 
 from .models import Agent, SkillHistoryCommit, SkillHistorySync, SkillRevision

@@ -176,7 +176,7 @@ def test_a_failed_attempt_is_not_retried_on_the_next_read(client, ws_and_users, 
 def test_a_real_failed_attempt_debounces_the_next_read(client, ws_and_users, agent):
     """End to end through the real sync: the first read attempts (and fails
     for want of a grant), the second read within the hour does not."""
-    from apps.tokens.github_app import GitHubAuthError
+    from apps.github_connect.github_app import GitHubAuthError
 
     _, _, viewer, _ = ws_and_users
     SkillHistorySync.objects.filter(agent=agent).update(synced_at=timezone.now() - timezone.timedelta(hours=2))
