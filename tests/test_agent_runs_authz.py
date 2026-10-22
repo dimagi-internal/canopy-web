@@ -161,3 +161,31 @@ def test_homed_agent_run_surface_still_reachable_by_its_member(owner_client, age
     run_id = _create_run(owner_client).json()["id"]
     assert owner_client.get(f"/api/agents/echo/runs/{run_id}/").status_code == 200
     assert owner_client.get(f"/api/agents/echo/runs/{run_id}/steps/").status_code == 200
+
+
+# --- the agent's own login: a member like anyone, or nobody -----------------
+
+
+def test_the_agents_own_login_writes_its_runs_below_the_editor_role(workspace, agent):
+    """A viewer login (a capped turn) still writes its own agent's runs."""
+    login = User.objects.create_user("echo-login", "echo@dimagi-ai.com", "pw")
+    WorkspaceMembership.objects.create(user=login, workspace=workspace, role=WorkspaceMembership.VIEWER)
+    agent.user = login
+    agent.save(update_fields=["user"])
+    c = Client()
+    c.force_login(login)
+    assert _create_run(c).status_code == 201
+
+
+def test_the_agents_own_login_is_a_stranger_once_it_is_not_a_member(owner_client, agent):
+    """No own-login door past membership: a login a workspace admin removed, or
+    one a move left behind, gets the 404 any non-member gets — reads and writes."""
+    run_id = _create_run(owner_client).json()["id"]
+    login = User.objects.create_user("echo-login", "echo@dimagi-ai.com", "pw")
+    agent.user = login
+    agent.save(update_fields=["user"])
+    c = Client()
+    c.force_login(login)
+    assert _create_run(c).status_code == 404
+    assert c.get("/api/agents/echo/runs/").status_code == 404
+    assert c.get(f"/api/agents/echo/runs/{run_id}/").status_code == 404

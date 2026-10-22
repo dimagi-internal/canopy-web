@@ -295,8 +295,7 @@ def _run_qs():
 
 def _run_or_404(request: HttpRequest, run_id: int) -> CheckinRun:
     r = (_run_qs().filter(pk=run_id)
-         .filter(Q(project__agent__workspace_id__in=wsvc.request_workspace_slugs(request))
-                 | Q(project__agent__user_id=request.user.pk)).first())
+         .filter(project__agent__workspace_id__in=wsvc.request_workspace_slugs(request)).first())
     if r is None:
         raise HttpError(404, f"check-in run {run_id} not found")
     return r
@@ -316,10 +315,10 @@ def _finish(request: HttpRequest, run_id: int, payload: CheckinRunFinishIn) -> C
 
 
 @router.get("/runs/{run_id}", response=CheckinRunOut, summary="Get one check-in run, with its material")
-@gate("member", "agent-login")  # material included: members, and the project agent's login
+@gate("member")  # material included: members (the project agent's login among them)
 def get_checkin_run(request: HttpRequest, run_id: int) -> dict:
     """One run: status, who took part, the read window and the channel material
-    it read (members of the project's workspace, and the project agent's own login)."""
+    it read (members of the project's workspace)."""
     return run_out(_run_or_404(request, run_id), material=True)
 
 

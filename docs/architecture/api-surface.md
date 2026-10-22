@@ -414,11 +414,11 @@ Framework tier, generic over its producer (`source` + `kind` strings). Where an 
 
 ### Capabilities (`apps/capabilities`) — machines an agent leases
 Framework tier. Bodies, lease states, long-poll, exec, slot data and every refusal: [`capabilities.md`](capabilities.md) §1, §3, §4, §6. "Own login" = the agent's own login; lease routes take editor+ of the agent's workspace or its own login.
-- `GET /api/agents/{slug}/capabilities` — declared capabilities + grant, limits, live leases, `retired` (member, or own login).
+- `GET /api/agents/{slug}/capabilities` — declared capabilities + grant, limits, live leases, `retired` (member).
 - `PUT /api/agents/{slug}/capabilities` — publish the whole list (agent owner/admins, or own login). A setting.
 - `POST /api/agents/{slug}/capabilities/{name}/refresh` — re-read the stack's Outputs (agent admins, or own login).
 - `POST /api/agents/{slug}/capabilities/{name}/terminate-orphans` — the sweep's machine pass, now (`integrations`, or the agent's admins).
-- `GET /api/agents/{slug}/capabilities/{name}/slots` — a pool's slots, masked (member, or own login).
+- `GET /api/agents/{slug}/capabilities/{name}/slots` — a pool's slots, masked (member).
 - `PUT|DELETE /api/agents/{slug}/capabilities/{name}/slots/{slot}` — set / remove a pool slot's data (`integrations`, or own login). A setting (audited with key names only).
 - `GET /api/capabilities/grants?agent=` — grants in your workspaces.
 - `PUT /api/capabilities/grants` · `DELETE /api/capabilities/grants/{id}` — grant / revoke (`integrations`). Settings.

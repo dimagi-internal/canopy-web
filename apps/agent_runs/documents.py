@@ -122,19 +122,11 @@ class RunDocDetailOut(RunDocOut):
 
 
 def _visible_agents(request):
-    """Agents a BY-ID read may reach: pinned, or every membership (never refused) —
-    plus, unpinned, the agent whose own login the caller is (the same door
-    `apps.agents.gates.agent_for_read(allow_own_login=True)` opens for writes)."""
-    from django.db.models import Q
-
+    """Agents a BY-ID read may reach: pinned, or every membership (never refused)."""
     from apps.agents.models import Agent
     from apps.workspaces import services as wsvc
 
-    q = Q(workspace_id__in=wsvc.request_member_slugs(request))
-    pk = getattr(getattr(request, "user", None), "pk", None)
-    if pk is not None and not getattr(request, "workspace_slug", None):
-        q |= Q(user_id=pk)
-    return Agent.objects.filter(q)
+    return Agent.objects.filter(workspace_id__in=wsvc.request_member_slugs(request))
 
 
 def _listed_agents(request):

@@ -81,8 +81,8 @@ def _agent_to_lease_for(request: HttpRequest, slug: str):
 
 
 def _lease_visible(request: HttpRequest, lease_id: str) -> CapabilityLease:
-    """The lease, if the caller may see its agent at all (a member, or the agent
-    itself); else 404. The route then applies its own gate."""
+    """The lease, if the caller may see its agent at all (a member of its
+    workspace); else 404. The route then applies its own gate."""
     try:
         pk = uuid.UUID(lease_id)
     except ValueError:
@@ -92,7 +92,7 @@ def _lease_visible(request: HttpRequest, lease_id: str) -> CapabilityLease:
     if lease is None:
         raise HttpError(404, f"lease '{lease_id}' not found")
     try:
-        agent_for_read(request, allow_own_login=True, slug=lease.agent.slug)
+        agent_for_read(request, slug=lease.agent.slug)
     except HttpError:
         raise HttpError(404, f"lease '{lease_id}' not found") from None
     return lease
@@ -121,16 +121,8 @@ def _capability_admin(request: HttpRequest, agent) -> None:
         raise HttpError(403, f"this is for a workspace admin or one of {agent.slug}'s admins")
 
 
-def _own_agent_ids(request: HttpRequest) -> list[int]:
-    """Agents whose own login the caller IS (an agent's PAT sees its own leases)."""
-    from apps.agents.models import Agent
-
-    uid = getattr(request.user, "pk", None)
-    return list(Agent.objects.filter(user_id=uid).values_list("pk", flat=True)) if uid else []
-
-
 def _declared(request: HttpRequest, slug: str, name: str) -> AgentCapability:
-    agent = agent_for_read(request, allow_own_login=True, slug=slug)
+    agent = agent_for_read(request, slug=slug)
     cap = (AgentCapability.objects.filter(agent=agent, name=name)
            .select_related("agent", "agent__workspace").first())
     if cap is None:
@@ -194,12 +186,12 @@ def _capabilities_out(agent, retired: list[str] | None = None) -> AgentCapabilit
 
 @agents_router.get("/{slug}/capabilities", response=AgentCapabilitiesOut,
                    summary="An agent's declared capabilities, grants and live leases")
-@gate("member", "agent-login")
+@gate("member")
 def get_agent_capabilities(request: HttpRequest, slug: str) -> AgentCapabilitiesOut:
     """What the agent declares (each capability's manifest and the stack Outputs
     resolved when it was published), whether its workspace grants each one, the
     limits an acquire gets now, and the leases holding or waiting for a machine."""
-    return _capabilities_out(agent_for_read(request, allow_own_login=True, slug=slug))
+    return _capabilities_out(agent_for_read(request, slug=slug))
 
 
 @agents_router.put("/{slug}/capabilities", response=AgentCapabilitiesOut,
@@ -214,7 +206,7 @@ def put_agent_capabilities(request: HttpRequest, slug: str, payload: AgentCapabi
     survive a change to its slots (one on a removed slot runs out; that slot is
     not handed out again). For the agent's owner and admins, or the agent's own
     login."""
-    agent = agent_for_read(request, allow_own_login=True, slug=slug)
+    agent = agent_for_read(request, slug=slug)
     if not (agent.is_own_login(request.user) or agent.is_admin(request.user)):
         raise HttpError(403, f"publishing {slug}'s capabilities is for its owner or admins, "
                              "or the agent's own login")
@@ -279,7 +271,7 @@ def _slot_writer(request: HttpRequest, cap: AgentCapability) -> None:
 
 @agents_router.get("/{slug}/capabilities/{name}/slots", response=CapabilitySlotsOut,
                    summary="A pool capability's slots and their data (masked)")
-@gate("member", "agent-login")  # pool slot data: read masked by members; secret values leave only via the lease read
+@gate("member")  # pool slot data: read masked by members; secret values leave only via the lease read
 def list_capability_slot_data(request: HttpRequest, slug: str, name: str) -> CapabilitySlotsOut:
     """Every declared slot of a `pool` capability: its `public` values, the NAMES
     of its secret keys (never a value — to anyone, admins included), who last
@@ -360,7 +352,7 @@ def set_capability_grant(request: HttpRequest, payload: CapabilityGrantIn) -> Ca
     """A workspace admin ALLOWS the agent to lease the capability in the agent's
     workspace, optionally lowering its limits (a grant may never raise them).
     Without a grant an acquire is refused with 403."""
-    agent = agent_for_read(request, allow_own_login=True, slug=payload.agent)
+    agent = agent_for_read(request, slug=payload.agent)
     if not perms.can(request.user, agent.workspace_id, perms.INTEGRATIONS):
         raise HttpError(403, "granting a capability is for a workspace admin")
     try:
@@ -419,12 +411,11 @@ def acquire_capability_lease(request: HttpRequest, payload: CapabilityLeaseIn) -
 
 
 @router.get("/leases", response=CapabilityLeaseListOut, summary="List capability leases")
-@gate("member", "agent-login")  # a read, scoped to the caller's workspaces
+@gate("member")  # a read, scoped to the caller's workspaces
 def list_capability_leases(request: HttpRequest, agent: str | None = None, capability: str | None = None,
                            status: str | None = None, since: dt.datetime | None = None,
                            limit: int = Query(100, ge=1, le=500)) -> CapabilityLeaseListOut:
-    """Leases in the caller's workspaces (or of the agent whose own login the
-    caller is), newest first. `status` is one status or a comma-separated list
+    """Leases in the caller's workspaces, newest first. `status` is one status or a comma-separated list
     (`live` for queued,provisioning,ready); `since` filters on `created_at`. A
     read: no heartbeat."""
     statuses = None
@@ -436,14 +427,14 @@ def list_capability_leases(request: HttpRequest, agent: str | None = None, capab
         bad = sorted(set(statuses) - {c for c, _ in CapabilityLease.STATUS_CHOICES})
         if bad:
             raise HttpError(422, f"unknown lease status {', '.join(bad)}")
-    rows = services.leases_for(wsvc.request_member_slugs(request), agent_ids=_own_agent_ids(request),
+    rows = services.leases_for(wsvc.request_member_slugs(request),
                                agent=agent, capability=capability, statuses=statuses, since=since,
                                limit=limit + 1)
     return CapabilityLeaseListOut(leases=[_lease_out(r) for r in rows[:limit]], truncated=len(rows) > limit)
 
 
 @router.get("/spend", response=CapabilitySpendOut, summary="Machine time by agent and capability")
-@gate("member", "agent-login")
+@gate("member")
 def capability_spend(request: HttpRequest, since: dt.datetime | None = None, until: dt.datetime | None = None,
                      agent: str | None = None, capability: str | None = None) -> CapabilitySpendOut:
     """Machine-seconds per agent and capability over [since, until) (default: the
@@ -454,7 +445,7 @@ def capability_spend(request: HttpRequest, since: dt.datetime | None = None, unt
     since = since or until - dt.timedelta(days=7)
     if since >= until:
         raise HttpError(422, "since must be before until")
-    rows = services.spend(wsvc.request_member_slugs(request), agent_ids=_own_agent_ids(request),
+    rows = services.spend(wsvc.request_member_slugs(request),
                           since=since, until=until, agent=agent, capability=capability)
     return CapabilitySpendOut(since=since, until=until, rows=[CapabilitySpendRow(**r) for r in rows],
                               total_machine_seconds=sum(r["machine_seconds"] for r in rows))

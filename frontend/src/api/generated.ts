@@ -5634,8 +5634,7 @@ export interface paths {
         };
         /**
          * List capability leases
-         * @description Leases in the caller's workspaces (or of the agent whose own login the
-         *     caller is), newest first. `status` is one status or a comma-separated list
+         * @description Leases in the caller's workspaces, newest first. `status` is one status or a comma-separated list
          *     (`live` for queued,provisioning,ready); `since` filters on `created_at`. A
          *     read: no heartbeat.
          */
@@ -9904,7 +9903,7 @@ export interface paths {
         /**
          * Get one check-in run, with its material
          * @description One run: status, who took part, the read window and the channel material
-         *     it read (members of the project's workspace, and the project agent's own login).
+         *     it read (members of the project's workspace).
          */
         readonly get: operations["get_checkin_run"];
         readonly put?: never;

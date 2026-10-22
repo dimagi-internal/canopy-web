@@ -5,7 +5,7 @@ capabilities, threads, mail, huddles…). It used to be hand-copied in each of
 them "because api modules must not depend on each other", and the copies
 drifted: some honoured the `/api/w/{ws}/` pin as exactly that workspace while
 `wsvc.member_scope` (the by-id rule) had moved on to the pin's subtree; one
-admitted the agent's own login without membership. This module is not an api
+let the agent's own login in without membership. This module is not an api
 module — it holds no routes — so importing it couples nobody to anyone's
 router.
 
@@ -35,8 +35,7 @@ def _not_found(slug: str) -> HttpError:
     return HttpError(404, f"agent '{slug}' not found")
 
 
-def agent_for_read(request: HttpRequest, slug: str, *, honor_pin: bool = True,
-                   allow_own_login: bool = False) -> Agent:
+def agent_for_read(request: HttpRequest, slug: str, *, honor_pin: bool = True) -> Agent:
     """The agent, if it lives in a workspace this request may reach by id; else 404.
 
     `honor_pin=True` (every route but one): `wsvc.request_member_slugs` — pinned,
@@ -46,12 +45,10 @@ def agent_for_read(request: HttpRequest, slug: str, *, honor_pin: bool = True,
     several workspaces of its tree), where the pin names the object's home, not
     each participant's.
 
-    `allow_own_login=True` also admits the agent's OWN canopy login
-    (`Agent.is_own_login`) when it is not a member of the agent's workspace —
-    `Agent.user` is one-to-one with the agent, so this reaches nothing but that
-    agent's own rows. For routes the agent itself calls with its PAT (its runs,
-    run documents and capabilities); a moved agent's login may not have followed
-    it. A pinned request still has to name the agent's tenant.
+    The agent's own canopy login is a caller like any other here: it reaches
+    the agent only as a member of the agent's workspace. Making the login, or
+    moving the agent, makes it one (`agents.agent_login`); a workspace admin who
+    removes it means it, so there is no own-login door past membership.
 
     A non-member, a wrong-tenant pin and a missing slug all get the same 404. A
     workspace-less agent is unrepresentable (`Agent.workspace` is NOT NULL) and
@@ -62,12 +59,9 @@ def agent_for_read(request: HttpRequest, slug: str, *, honor_pin: bool = True,
         raise _not_found(slug)
     scope = (wsvc.request_member_slugs(request) if honor_pin
              else wsvc.member_scope(getattr(request, "user", None)))
-    if agent.workspace_id in scope:
-        return agent
-    pinned = getattr(request, "workspace_slug", None) if honor_pin else None
-    if allow_own_login and agent.is_own_login(request.user) and not pinned:
-        return agent
-    raise _not_found(slug)  # wrong tenant / non-member
+    if agent.workspace_id not in scope:
+        raise _not_found(slug)  # wrong tenant / non-member
+    return agent
 
 
 def agent_for_work(
@@ -83,14 +77,14 @@ def agent_for_work(
     `agent_for_read` runs first, so a non-member gets 404, never 403.
 
     `allow_own_login=True` lets the agent's own canopy login stand in for the
-    editor role (and admits it past membership, as `agent_for_read` does) — the
-    agent writing its own runs, leasing its own capabilities, under whatever
-    role a turn's cap left that login with.
+    editor role — the agent writing its own runs, leasing its own capabilities,
+    under whatever role a turn's cap left that login with. It is a member all
+    the same: membership is `agent_for_read`'s, and has no exception.
 
     `forbidden` is the 403 detail, so each route keeps telling the caller what
     it was they could not do.
     """
-    agent = agent_for_read(request, slug, honor_pin=honor_pin, allow_own_login=allow_own_login)
+    agent = agent_for_read(request, slug, honor_pin=honor_pin)
     if allow_own_login and agent.is_own_login(request.user):
         return agent
     if not perms.can(request.user, agent.workspace_id, perms.AGENT_WORK):
