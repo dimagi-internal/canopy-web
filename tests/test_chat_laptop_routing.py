@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import services as chat
-from apps.canopy_sessions.services import send_message
+from apps.canopy_sessions.send import send_message
 from apps.harness.schemas import TurnOut
 from apps.workspaces.models import Workspace, WorkspaceMembership
 

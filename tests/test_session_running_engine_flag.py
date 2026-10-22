@@ -18,7 +18,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.canopy_sessions.services import is_session_running
+from apps.canopy_sessions.transcript_read import is_session_running
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 

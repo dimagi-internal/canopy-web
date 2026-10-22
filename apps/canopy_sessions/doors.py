@@ -1,6 +1,6 @@
 """The one send preamble every chat door shares.
 
-A chat send reaches `services.send_message` through several doors — the REST
+A chat send reaches `send.send_message` through several doors — the REST
 send, the chat socket, an app view's `ui/message`, the contact API (and its app
 views), and Slack. Each used to repeat the same preamble: stamp the site's runner
 requirements, cap the client nonce, send, turn a refusal into a 422, run the dev
@@ -18,6 +18,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 
 from . import services
+from . import send
 
 #: The client nonce is capped where it is used, not in the schemas, so the
 #: request models (and `generated.ts`) stay unbounded `str`s.
@@ -29,7 +30,7 @@ class Door:
     # A refused send (`ValueError`: an unplaceable runner, a forbidden pin) is a
     # 422 on an HTTP door; elsewhere it propagates to the door's own handler.
     http: bool
-    # Run the dev/test stub inline (`services.maybe_execute_inline`). Slack never
+    # Run the dev/test stub inline (`send.maybe_execute_inline`). Slack never
     # has: its thread is answered by the status line, posted off the enqueue
     # signal, and its tests rely on the turn staying queued.
     inline: bool
@@ -59,7 +60,7 @@ def send_from(
     door send a ZDR site's member's turn with no floor at all. `context`: request provenance to bind around the send for a
     door with no HTTP request behind it (the socket; `apps/common/request_context`).
     Everything else (`placement`, `origin`, `origin_ref`, `parent`, ...) is
-    `services.send_message`'s own."""
+    `send.send_message`'s own."""
     spec = DOORS[door]
     services.add_runner_requirements(session, runner_requirements)
     if context is not None:
@@ -70,7 +71,7 @@ def send_from(
         bound = nullcontext()
     try:
         with bound:
-            message, turn = services.send_message(
+            message, turn = send.send_message(
                 session=session, text=text, user=user,
                 client_id=(client_id or "")[:CLIENT_ID_MAX], initiator=initiator,
                 **send_kwargs,
@@ -82,5 +83,5 @@ def send_from(
 
         raise HttpError(422, str(exc)) from None
     if spec.inline:
-        services.maybe_execute_inline(turn)
+        send.maybe_execute_inline(turn)
     return message, turn

@@ -16,7 +16,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import control as session_control
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -54,7 +54,7 @@ def test_an_agent_session_with_no_turn_is_interrupted(seeded, monkeypatch):
     from apps.realtime import groups
     monkeypatch.setattr(groups, "publish", lambda group, msg: published.append((group, msg)))
 
-    assert chat.interrupt_session(session) == "sent"
+    assert session_control.interrupt_session(session) == "sent"
 
     [(group, msg)] = published
     assert group == groups.runner_group(runner.id)
@@ -67,13 +67,13 @@ def test_an_unbound_session_refuses_rather_than_raising(seeded):
     """A session canopy cannot reach a terminal for. Ordinary, not an error —
     mirrors answer_menu's refusal shape."""
     _owner, _ws, _agent, session, _runner = seeded
-    assert chat.interrupt_session(session) == "unbound"
+    assert session_control.interrupt_session(session) == "unbound"
 
 
 def test_a_binding_with_no_session_key_is_unbound(seeded):
     _owner, _ws, _agent, session, runner = seeded
     RunnerBinding.objects.create(session=session, runner=runner, session_key="")
-    assert chat.interrupt_session(session) == "unbound"
+    assert session_control.interrupt_session(session) == "unbound"
 
 
 def test_a_runner_that_is_gone_refuses(seeded):
@@ -91,7 +91,7 @@ def test_a_runner_that_is_gone_refuses(seeded):
     )
     session.refresh_from_db()
     _bind(session, Runner.objects.get(pk=runner.pk))
-    assert chat.interrupt_session(session) == "unavailable"
+    assert session_control.interrupt_session(session) == "unavailable"
 
 
 def test_a_paused_runner_still_presses_escape(seeded, monkeypatch):
@@ -106,7 +106,7 @@ def test_a_paused_runner_still_presses_escape(seeded, monkeypatch):
     from apps.realtime import groups
     monkeypatch.setattr(groups, "publish", lambda group, msg: None)
 
-    assert chat.interrupt_session(session) == "sent"
+    assert session_control.interrupt_session(session) == "sent"
 
 
 def test_a_chat_session_with_a_live_turn_is_not_double_interrupted(seeded, monkeypatch):
@@ -121,7 +121,7 @@ def test_a_chat_session_with_a_live_turn_is_not_double_interrupted(seeded, monke
                         idempotency_key="live-1", status=Turn.RUNNING, claimed_by=runner)
 
     interrupted = []
-    monkeypatch.setattr(chat, "interrupt_session",
+    monkeypatch.setattr(session_control, "interrupt_session",
                         lambda s: interrupted.append(s) or "sent")
 
     consumer = SessionConsumer()
@@ -139,7 +139,7 @@ def test_stop_falls_through_to_the_session_when_no_turn_owns_it(seeded, monkeypa
     _bind(session, runner)
 
     interrupted = []
-    monkeypatch.setattr(chat, "interrupt_session",
+    monkeypatch.setattr(session_control, "interrupt_session",
                         lambda s: interrupted.append(s) or "sent")
 
     consumer = SessionConsumer()
@@ -222,7 +222,7 @@ def test_rest_and_websocket_stop_are_the_same_stop(seeded, monkeypatch):
 
     _owner, _ws, _agent, session, _runner = seeded
     calls = []
-    monkeypatch.setattr(chat, "stop_session", lambda s, **kw: calls.append(s.pk) or "session")
+    monkeypatch.setattr(session_control, "stop_session", lambda s, **kw: calls.append(s.pk) or "session")
     consumer = SessionConsumer()
     consumer.session = session
     assert consumer._stop_session() == "session"

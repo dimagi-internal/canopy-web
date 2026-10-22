@@ -15,7 +15,7 @@ from django.contrib.auth import get_user_model
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.canopy_sessions.services import with_driving_turn
+from apps.canopy_sessions.transcript_read import with_driving_turn
 from apps.harness import turn_mode as modes
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership

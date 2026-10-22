@@ -22,7 +22,7 @@ class SessionCreateIn(Schema):
     # Directed placement at creation time: the runner this new chat should run
     # on. Stashed on session.metadata["requested_runner_id"] and consumed by the
     # session's FIRST send (as long as the session is still unbound) — see
-    # services.send_message.
+    # send.send_message.
     runner_id: uuid.UUID | None = None
     # What this session was opened from (apps/harness/schemas.ParentIn) — the
     # same as the X-Canopy-Parent-* headers. Optional, never checked.
@@ -72,7 +72,7 @@ class TransferIn(Schema):
     # "pin to where this session already is", which is the one thing a transfer
     # can never mean.
     runner: str
-    # The handoff. Prepended with `services.TRANSFER_PREAMBLE` server-side, so
+    # The handoff. Prepended with `placement.TRANSFER_PREAMBLE` server-side, so
     # this carries only what the server cannot know: the branch, what is pushed,
     # what shipped, what is still open. Optional, but a transfer without one
     # lands a cold session in a fresh worktree and it will go looking.
@@ -325,7 +325,7 @@ class SessionOut(Schema):
     workspace: str
     title: str
     #: The start of the first thing the person typed — what a widget names a
-    #: conversation by, since its title is canopy's (`services.opening_of`).
+    #: conversation by, since its title is canopy's (`transcript_read.opening_of`).
     #: Empty on a single-session read, which does not annotate it.
     opening: str = ""
     status: str
@@ -459,7 +459,7 @@ class SessionDetailOut(SessionOut):
     can_move: bool = False
     # Tail-first cursor: the transcript ships the last N messages by default;
     # these tell the client whether earlier history exists and where the loaded
-    # window starts, for scroll-back / "load full". See services.SESSION_TAIL_DEFAULT.
+    # window starts, for scroll-back / "load full". See transcript_read.SESSION_TAIL_DEFAULT.
     has_more_before: bool = False
     oldest_loaded_turn_index: int | None = None
 

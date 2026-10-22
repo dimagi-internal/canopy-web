@@ -12,7 +12,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import placement as session_placement
+from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.models import Session
 from apps.harness.models import Runner, RunnerAdmin, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -54,7 +55,7 @@ def _agent_chat(ws, agent, person):
 def test_editor_cannot_repin_an_agent_chats_queued_turn_onto_a_box_they_may_not_pin(team):
     _alice, bob, _carol, ws, agent, box = team
     session = _agent_chat(ws, agent, bob)
-    chat.send_message(session=session, text="hi", user=bob, client_id="c1")
+    session_send.send_message(session=session, text="hi", user=bob, client_id="c1")
     c = Client()
     c.force_login(bob)
     r = c.post(f"/api/canopy-sessions/{session.id}/place",
@@ -66,9 +67,9 @@ def test_editor_cannot_repin_an_agent_chats_queued_turn_onto_a_box_they_may_not_
 def test_editor_cannot_move_an_agent_chats_queued_turns_onto_a_box_they_may_not_pin(team):
     _alice, bob, _carol, ws, agent, box = team
     session = _agent_chat(ws, agent, bob)
-    chat.send_message(session=session, text="hi", user=bob, client_id="c1")
+    session_send.send_message(session=session, text="hi", user=bob, client_id="c1")
     with pytest.raises(ValueError):
-        chat.move_queued_turns(session=session, placement=str(box.id), user=bob)
+        session_send.move_queued_turns(session=session, placement=str(box.id), user=bob)
 
 
 @pytest.mark.parametrize("who", ["alice", "bob", "carol"])
@@ -92,16 +93,16 @@ def test_send_place_and_move_agree(team, who, kind):
             return False
 
     s1 = fresh()
-    at_send = allowed(lambda: chat.send_message(session=s1, text="hi", user=user,
+    at_send = allowed(lambda: session_send.send_message(session=s1, text="hi", user=user,
                                                 client_id="a", placement=str(box.id)))
     s2 = fresh()
-    chat.send_message(session=s2, text="hi", user=user, client_id="b")
-    at_place = allowed(lambda: chat.place_queued_turn(session=s2, placement=str(box.id),
+    session_send.send_message(session=s2, text="hi", user=user, client_id="b")
+    at_place = allowed(lambda: session_send.place_queued_turn(session=s2, placement=str(box.id),
                                                       user=user))
     s3 = fresh()
-    chat.send_message(session=s3, text="hi", user=user, client_id="c")
-    at_move = allowed(lambda: chat.move_queued_turns(session=s3, placement=str(box.id),
+    session_send.send_message(session=s3, text="hi", user=user, client_id="c")
+    at_move = allowed(lambda: session_send.move_queued_turns(session=s3, placement=str(box.id),
                                                      user=user))
-    assert at_send == at_place == at_move == chat.may_place(user, s1, box)
+    assert at_send == at_place == at_move == session_placement.may_place(user, s1, box)
     # alice owns the agent and the box; carol administers the box; bob neither.
     assert at_send is (who != "bob")

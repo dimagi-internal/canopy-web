@@ -43,6 +43,11 @@ from . import (
     staleness,
     status_feed,
 )
+from . import control
+from . import placement
+from . import send as cs_send
+from . import transcript_ingest
+from . import transcript_read
 from . import activity as session_activity
 from .models import Attachment, Session
 from .schemas import (
@@ -127,13 +132,13 @@ def _runner_status(runner) -> str | None:
 def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     waiting_on_you = serializers.pending_menu(session) is not None
-    last_reply, agent_spoke_last = services.last_reply_of(session, binding) if reply else ("", False)
+    last_reply, agent_spoke_last = transcript_read.last_reply_of(session, binding) if reply else ("", False)
     # The reply is whole (untrimmed), so carry it only where the feed renders it:
     # sessions where it is the person's turn. That is what bounds the payload.
     if not (agent_spoke_last or waiting_on_you):
         last_reply = ""
     runner = binding.runner if (binding and binding.runner_id) else None
-    running = services.is_session_running(binding)
+    running = transcript_read.is_session_running(binding)
     turn_mode = getattr(session, "_turn_mode", None) or ""
     turn_origin = getattr(session, "_turn_origin", None) or ""
     # The supervisor feed's verdict for THIS caller — the one rule, which the
@@ -176,10 +181,10 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
             else ((binding.session_key if (binding and binding.session_key) else "") or session.title)
         ),
         "status": session.status,
-        "opening": services.opening_of(session),
+        "opening": transcript_read.opening_of(session),
         "created_at": session.created_at,
         # When it last DID something (binding > newest message > created).
-        "last_activity_at": services.last_activity_at(session, binding),
+        "last_activity_at": transcript_read.last_activity_at(session, binding),
         # --- liveness (Plan 4): one shape, computed from the binding ---
         "origin": session.origin,
         "running": running,
@@ -210,7 +215,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "close_error_at": binding.close_error_at if binding else None,
         # Which of close_session's two branches a close takes — what a delete
         # confirm must name (an emdash task, or only this session).
-        "runner_reported": services.is_runner_reported(binding),
+        "runner_reported": control.is_runner_reported(binding),
         # Is a requested full-history ship still outstanding? EXACT, where the
         # client previously had to guess: it slept a flat 1200 ms and read once,
         # which on labs was 13 s early (rows landed at t+14.6s), so the button
@@ -330,8 +335,8 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         from apps.harness.models import Runner
 
         # The stash is consumed on the first send WITHOUT asking who may choose
-        # (services._resolve_placement), so the choice is decided here, by the one
-        # placement rule every door asks (`services.may_place`): for a chat with
+        # (placement._resolve_placement), so the choice is decided here, by the one
+        # placement rule every door asks (`placement.may_place`): for a chat with
         # an agent its admins may pin any box, anyone else only a box they
         # administer; for a project chat, only someone who administers the box.
         # An id that names no runner is left as before — the first send ignores
@@ -339,7 +344,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         # cannot see.
         requested = Runner.objects.filter(pk=payload.runner_id).first()
         draft = Session(agent=agent, project=payload.project)
-        if requested is not None and not services.may_place(request.user, draft, requested):
+        if requested is not None and not placement.may_place(request.user, draft, requested):
             if agent is not None:
                 raise HttpError(
                     403,
@@ -347,10 +352,10 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
                     "admins, or for someone who administers that runner; start the chat "
                     "without a runner and the agent's routing places it",
                 )
-            raise HttpError(403, services.PROJECT_CHAT_PLACEMENT_REFUSED.format(
+            raise HttpError(403, placement.PROJECT_CHAT_PLACEMENT_REFUSED.format(
                 runner="a chosen runner"))
         # Directed new chat: stashed for the session's first send to pin onto
-        # (as long as it's still unbound at that point) — see services.send_message.
+        # (as long as it's still unbound at that point) — see send.send_message.
         metadata["requested_runner_id"] = str(payload.runner_id)
     session = services.create_session(
         workspace=workspace, created_by=request.user, agent=agent,
@@ -454,9 +459,9 @@ def _filtered_sessions(
             rows = rows.filter(session_activity.filter_q(branch=branch, pr=pr))
         except ValueError as exc:
             raise HttpError(422, str(exc)) from exc
-    # `_activity` is services.last_activity_at's rule in SQL, so a window and a
+    # `_activity` is transcript_read.last_activity_at's rule in SQL, so a window and a
     # cursor can be applied to it.
-    rows = services.with_activity(services.with_opening(rows)).distinct()
+    rows = transcript_read.with_activity(transcript_read.with_opening(rows)).distinct()
     if since is not None:
         rows = rows.filter(_activity__gte=_aware(since))
     if until is not None:
@@ -464,7 +469,7 @@ def _filtered_sessions(
     if state == "active":
         rows = staleness.active(rows)
     elif state == "archived":
-        rows = rows.filter(Q(status=Session.ARCHIVED) | services.unseen_q())
+        rows = rows.filter(Q(status=Session.ARCHIVED) | staleness.unseen_q())
     return rows
 
 
@@ -507,9 +512,9 @@ def list_sessions(
 
     # Every row says which mode drove it — the list shows it on each card, so an
     # auto session that just ran and a manual one waiting on you can be told apart.
-    rows = services.with_driving_turn(rows)
+    rows = transcript_read.with_driving_turn(rows)
     if reply:
-        rows = services.with_open_turn(services.with_last_reply(rows))
+        rows = transcript_read.with_open_turn(transcript_read.with_last_reply(rows))
     out = [_out(s, reply=reply, viewer=request.user) for s in rows]
     # Waiting first, then running, then genuinely-most-recent. Sorting by
     # created_at made a dead repo and a live one interleave arbitrarily (both
@@ -595,7 +600,7 @@ def search_sessions(
         at, sid = _decode_cursor(cursor)
         rows = rows.filter(Q(_activity__lt=at) | Q(_activity=at, id__lt=sid))
     limit = clamp_limit(limit)
-    rows = services.with_driving_turn(rows.order_by("-_activity", "-id"))
+    rows = transcript_read.with_driving_turn(rows.order_by("-_activity", "-id"))
     page = list(rows[: limit + 1])
     more = len(page) > limit
     page = page[:limit]
@@ -1000,7 +1005,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     except Http404:
         session = _session_by_key_or_404(request, session_id)
     data = _out(session)
-    rows, has_more, oldest = services.visible_transcript(session, full=full)
+    rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
     from apps.agents.credentials import secret_requests
     from apps.tokens import delegation, mcp_apps_views
 
@@ -1008,7 +1013,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     secret_requests.annotate(session, rows)
 
     if delegation.acting_app(request) is not None:
-        rows = services.for_widget(rows)
+        rows = transcript_read.for_widget(rows)
     data["messages"] = [MessageOut.from_orm(m) for m in rows]
     data["has_more_before"] = has_more
     data["oldest_loaded_turn_index"] = oldest
@@ -1108,16 +1113,16 @@ def list_messages(
     request: HttpRequest,
     session_id: uuid.UUID,
     before: int,
-    limit: int = services.SCROLLBACK_PAGE_DEFAULT,
+    limit: int = transcript_read.SCROLLBACK_PAGE_DEFAULT,
 ):
     # Cursor-based backward paging: the window of `limit` messages immediately
     # older than `before` (a turn_index), chronological, + whether older exists.
-    # Clamp here (not in services.messages_before, which stays a pure helper) —
+    # Clamp here (not in transcript_read.messages_before, which stays a pure helper) —
     # an unclamped `?limit=-1`/`0` hits `queryset[:limit]` and raises
     # ValueError("Negative indexing is not supported"), surfacing as a 500.
     session = _session_or_404(request, session_id)
     limit = clamp_limit(limit)
-    rows, has_more = services.messages_before(session, before=before, limit=limit)
+    rows, has_more = transcript_read.messages_before(session, before=before, limit=limit)
     from apps.agents.credentials import secret_requests
     from apps.tokens import delegation, mcp_apps_views
 
@@ -1125,7 +1130,7 @@ def list_messages(
     secret_requests.annotate(session, rows)
 
     if delegation.acting_app(request) is not None:
-        rows = services.for_widget(rows)
+        rows = transcript_read.for_widget(rows)
     return {
         "messages": [MessageOut.from_orm(m) for m in rows],
         "has_more_before": has_more,
@@ -1141,7 +1146,7 @@ def list_human_inputs(
     request: HttpRequest,
     session_id: uuid.UUID,
     after: int | None = None,
-    limit: int = services.SCROLLBACK_PAGE_DEFAULT,
+    limit: int = transcript_read.SCROLLBACK_PAGE_DEFAULT,
 ):
     """Only the human side of a session: what a person typed, oldest first,
     `limit` (≤ 500) at a time. Pass the response's `next_cursor` back as
@@ -1157,7 +1162,7 @@ def list_human_inputs(
     are decided by the transcript record's own flags (`content.record`, captured
     by the runner); a row shipped before runners captured them falls back to the
     session's own rows (the tool call that carried the prompt, the Skill result
-    it follows) and, last, to text shape (`services.InjectedPrompts`).
+    it follows) and, last, to text shape (`transcript_read.InjectedPrompts`).
 
     A session with no durable transcript yet (a local runner session before its
     backfill) answers from the runner's recent tail, `source: "tail"`, unpaged.
@@ -1168,7 +1173,7 @@ def list_human_inputs(
         session = _session_or_404(request, session_id)
     except Http404:
         session = _session_by_key_or_404(request, session_id)
-    rows, next_cursor, source = services.human_inputs(
+    rows, next_cursor, source = transcript_read.human_inputs(
         session, after=after, limit=clamp_limit(limit))
     return {
         "messages": [MessageOut.from_orm(m) for m in rows],
@@ -1329,7 +1334,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
     # line sent here stayed in the draft and came back on every later connect
     # as "<you> is typing". Clear it and tell the room, same frame the socket
     # sends (`draft.updated`, rendered per recipient by the consumer).
-    services.clear_draft_after_http_send(session, request.user, payload.text)
+    cs_send.clear_draft_after_http_send(session, request.user, payload.text)
     return {"turn_id": turn.id if turn else None, "message": MessageOut.from_orm(message)}
 
 
@@ -1342,7 +1347,7 @@ def place(request: HttpRequest, session_id: uuid.UUID, payload: PlaceIn):
     # on create / `placement` on send, which only apply to a turn at enqueue time).
     session = _session_or_404(request, session_id, write=True)
     try:
-        turn = services.place_queued_turn(session=session, placement=payload.placement,
+        turn = cs_send.place_queued_turn(session=session, placement=payload.placement,
                                           user=request.user)
     except LookupError as exc:
         raise HttpError(404, str(exc))
@@ -1362,7 +1367,7 @@ def fork_session(request: HttpRequest, session_id: uuid.UUID, payload: ForkIn):
     message; 409 when the cut would fall inside a turn that is still running."""
     session = _session_or_404(request, session_id, write=True)
     try:
-        fork = services.fork_session(session=session, turn_index=payload.turn_index,
+        fork = placement.fork_session(session=session, turn_index=payload.turn_index,
                                      user=request.user)
     except LookupError as exc:
         raise HttpError(404, str(exc))
@@ -1447,7 +1452,7 @@ def answer_menu(request: HttpRequest, session_id: uuid.UUID, payload: MenuAnswer
     Same shape `reset` uses for the same reason.
     """
     session = _session_or_404(request, session_id, write=True)
-    outcome = services.answer_menu(session=session, option=payload.option,
+    outcome = control.answer_menu(session=session, option=payload.option,
                                    selections=payload.selections,
                                    texts=payload.texts)
     return {"ok": outcome == "sent", "reason": "" if outcome == "sent" else outcome}
@@ -1468,7 +1473,7 @@ def close_session(request: HttpRequest, session_id: uuid.UUID):
     nothing on a box, which is the second branch rather than an error.
     """
     session = _session_or_404(request, session_id, write=True)   # membership gate: non-member -> 404
-    outcome = services.close_session(session=session)
+    outcome = control.close_session(session=session)
     ok = outcome in ("closing", "closed")
     return {"ok": ok, "closing": outcome == "closing", "reason": "" if ok else outcome}
 
@@ -1481,29 +1486,29 @@ def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
     open, so the session's runner was asked to interrupt the agent) and `route`."""
     # canopy-web#1226: this used to cancel turns only. An agent/project turn is
     # already DONE once its prompt is delivered, so a stop from MCP or a script
-    # found nothing to cancel and the agent worked on. services.stop_session is the
+    # found nothing to cancel and the agent worked on. control.stop_session is the
     # one stop the websocket uses too: turns first, then the session interrupt.
     session = _session_or_404(request, session_id, write=True)
-    route = services.stop_session(session, by=services.person_name(request.user))
+    route = control.stop_session(session, by=control.person_name(request.user))
     return {"cancelled": route == "turns", "interrupted": route == "session", "route": route}
 
 
 @router.post("/{session_id}/attach", response=StreamStateOut, summary="Attach a viewer (start live streaming)")
 def attach_session(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
-    return {"streaming": services.attach_session(session)}
+    return {"streaming": transcript_ingest.attach_session(session)}
 
 
 @router.post("/{session_id}/detach", response=StreamStateOut, summary="Detach a viewer (stop when last leaves)")
 def detach_session(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
-    return {"streaming": services.detach_session(session)}
+    return {"streaming": transcript_ingest.detach_session(session)}
 
 
 @router.post("/{session_id}/backfill", response=BackfillStateOut, summary="Request full history from the runner")
 def request_backfill(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
-    return {"status": services.request_backfill(session)}
+    return {"status": transcript_read.request_backfill(session)}
 
 
 @router.post(

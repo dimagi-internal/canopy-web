@@ -15,7 +15,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.canopy_sessions import services as chat_services
+from apps.canopy_sessions import control as chat_control
 from apps.canopy_sessions.models import RunnerBinding
 from apps.harness.models import Runner
 from apps.harness.services import replace_reported_sessions
@@ -90,7 +90,7 @@ def test_a_failed_close_shows_until_it_is_retried_succeeds_or_the_task_is_gone()
 
     # Retry is a new close request: it starts clean, and the runner sees the
     # server's (now blank) reason, so it reports again if this attempt fails.
-    assert chat_services.close_session(session=binding.session) == "closing"
+    assert chat_control.close_session(session=binding.session) == "closing"
     binding.refresh_from_db()
     assert binding.close_error == "" and binding.close_requested
     closes = client.get(f"/api/harness/runners/{runner.id}/closes").json()["closes"]

@@ -327,7 +327,7 @@ async def _received_frames(comm, window: float = 1.0, interval: float = 0.02) ->
 
 async def test_send_during_running_turn_only_queues():
     from apps.canopy_sessions.models import Session
-    from apps.canopy_sessions.services import send_message
+    from apps.canopy_sessions.send import send_message
 
     @database_sync_to_async
     def _running():
@@ -384,11 +384,12 @@ async def test_claim_over_ws_carries_a_session_turns_identity():
     @database_sync_to_async
     def _enqueue_session_turn():
         from apps.canopy_sessions import services as chat
+        from apps.canopy_sessions import send as session_send
 
         runner.capabilities = {**runner.capabilities, "sessions": True}
         runner.save(update_fields=["capabilities"])
         session = chat.create_session(workspace=ws, created_by=user, agent=agent)
-        _msg, turn = chat.send_message(session=session, text="hello", user=user)
+        _msg, turn = session_send.send_message(session=session, text="hello", user=user)
         return session, turn
 
     session, _turn = await _enqueue_session_turn()
@@ -560,13 +561,13 @@ async def test_ws_heartbeat_without_confinement_capabilities_reports_zero():
 # terminal.
 
 def _published_menu_answer_frame(monkeypatch):
-    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions import control as chat_control
     from apps.realtime import groups
 
     sent = {}
     monkeypatch.setattr(groups, "publish",
                         lambda group, payload: sent.update(payload))
-    return sent, chat_services
+    return sent, chat_control
 
 
 @pytest.mark.django_db(transaction=True)
@@ -582,9 +583,9 @@ def test_the_relay_forwards_every_published_field(monkeypatch):
     RunnerBinding.objects.create(session=session, runner=runner,
                                  session_key="agent-task")
 
-    sent, chat_services = _published_menu_answer_frame(monkeypatch)
-    chat_services.answer_menu(session=session, option=1, selections=[[1, 3], [2]],
-                              texts=["Teal", None])
+    sent, chat_control = _published_menu_answer_frame(monkeypatch)
+    chat_control.answer_menu(session=session, option=1, selections=[[1, 3], [2]],
+                             texts=["Teal", None])
 
     # What the socket actually writes, for that exact published payload.
     relayed = {}
@@ -703,11 +704,12 @@ async def test_a_chat_turn_claimed_over_ws_carries_its_chats_key():
     @database_sync_to_async
     def _enqueue_session_turn():
         from apps.canopy_sessions import services as chat
+        from apps.canopy_sessions import send as session_send
 
         runner.capabilities = {**runner.capabilities, "sessions": True}
         runner.save(update_fields=["capabilities"])
         session = chat.create_session(workspace=ws, created_by=user, agent=agent)
-        chat.send_message(session=session, text="hello", user=user)
+        session_send.send_message(session=session, text="hello", user=user)
         return session
 
     session = await _enqueue_session_turn()

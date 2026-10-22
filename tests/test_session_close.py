@@ -7,7 +7,7 @@ from unittest.mock import patch
 from django.contrib.auth.models import User
 from django.utils import timezone
 
-from apps.canopy_sessions import services
+from apps.canopy_sessions import control
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -54,7 +54,7 @@ def test_a_reported_session_relays_and_writes_nothing():
     user, ws = _ctx()
     s = _local_session(user, ws, _runner(user, ws))
     with patch("apps.realtime.groups.publish") as pub:
-        assert services.close_session(session=s) == "closing"
+        assert control.close_session(session=s) == "closing"
     s.refresh_from_db()
     assert s.status == Session.ACTIVE
     frame = pub.call_args[0][1]
@@ -71,7 +71,7 @@ def test_an_unreported_session_archives_here_and_sticks():
         workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="cloud chat"
     )
     with patch("apps.realtime.groups.publish") as pub:
-        assert services.close_session(session=s) == "closed"
+        assert control.close_session(session=s) == "closed"
     s.refresh_from_db()
     assert s.status == Session.ARCHIVED
     assert pub.call_count == 0
@@ -91,7 +91,7 @@ def test_a_cloud_binding_takes_the_unreported_branch():
         thread_key=str(s.id), live_seen_at=timezone.now(), reported_at=None,
     )
     with patch("apps.realtime.groups.publish") as pub:
-        assert services.close_session(session=s) == "closed"
+        assert control.close_session(session=s) == "closed"
     assert pub.call_count == 0
 
 
@@ -105,7 +105,7 @@ def test_a_stale_report_takes_the_unreported_branch():
     binding.reported_at = timezone.now() - timezone.timedelta(hours=1)
     binding.save(update_fields=["reported_at"])
     with patch("apps.realtime.groups.publish") as pub:
-        assert services.close_session(session=s) == "closed"
+        assert control.close_session(session=s) == "closed"
     assert pub.call_count == 0
 
 
@@ -116,7 +116,7 @@ def test_an_unreachable_runner_refuses_up_front():
     runner = _runner(user, ws, paused=True)
     s = _local_session(user, ws, runner)
     with patch("apps.realtime.groups.publish") as pub:
-        assert services.close_session(session=s) == "unavailable"
+        assert control.close_session(session=s) == "unavailable"
     s.refresh_from_db()
     assert s.status == Session.ACTIVE
     assert pub.call_count == 0
@@ -128,7 +128,7 @@ def test_already_archived_is_a_refusal_not_a_second_close():
         workspace=ws, created_by=user, origin=Session.ORIGIN_WEB,
         title="done", status=Session.ARCHIVED,
     )
-    assert services.close_session(session=s) == "already_closed"
+    assert control.close_session(session=s) == "already_closed"
 
 
 def test_the_unreported_branch_cancels_non_terminal_turns():
@@ -138,7 +138,7 @@ def test_the_unreported_branch_cancels_non_terminal_turns():
         workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="cloud chat"
     )
     turn = _turn(s, key="k-unreported-1")
-    services.close_session(session=s)
+    control.close_session(session=s)
     turn.refresh_from_db()
     assert turn.status not in Turn.NON_TERMINAL
 
@@ -152,7 +152,7 @@ def test_the_reported_branch_cancels_turns_too_before_relaying():
     s = _local_session(user, ws, _runner(user, ws))
     turn = _turn(s, key="k-reported-1")
     with patch("apps.realtime.groups.publish"):
-        assert services.close_session(session=s) == "closing"
+        assert control.close_session(session=s) == "closing"
     turn.refresh_from_db()
     assert turn.status not in Turn.NON_TERMINAL
     s.refresh_from_db()

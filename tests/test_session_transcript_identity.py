@@ -21,9 +21,10 @@ blank recorded id) are still dropped and re-derived.
 from __future__ import annotations
 
 import pytest
+from canopy_transcript import BLOCK_STRIDE
 from django.contrib.auth.models import User
 
-from apps.canopy_sessions import services
+from apps.canopy_sessions import transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace
@@ -48,7 +49,7 @@ def _ctx(transcript_id=""):
 
 
 def _rows(session, indices, prefix="old"):
-    services.persist_transcript_rows(
+    transcript_ingest.persist_transcript_rows(
         session, [{"index": i, "role": "assistant", "text": f"{prefix} {i}"} for i in indices]
     )
 
@@ -60,13 +61,13 @@ def test_a_different_transcript_keeps_the_held_rows_and_opens_an_epoch():
     session, binding = _ctx(transcript_id="fc41aa1a")
     _rows(session, [64, 128, 37696])
 
-    assert services.ensure_transcript_identity(session, "737c1a0a") == 0
+    assert transcript_ingest.ensure_transcript_identity(session, "737c1a0a") == 0
 
     assert Message.objects.filter(session=session).count() == 3
     binding.refresh_from_db()
     assert binding.transcript_id == "737c1a0a"
     assert binding.index_offset > 37696
-    assert binding.index_offset % services.BLOCK_STRIDE == 0
+    assert binding.index_offset % BLOCK_STRIDE == 0
 
 
 def test_the_new_transcript_lands_above_the_old_one_without_colliding():
@@ -75,7 +76,7 @@ def test_the_new_transcript_lands_above_the_old_one_without_colliding():
     them past the high-water mark instead, so the render stays chronological."""
     session, binding = _ctx(transcript_id="fc41aa1a")
     _rows(session, [64, 128, 37696])
-    services.ensure_transcript_identity(session, "737c1a0a")
+    transcript_ingest.ensure_transcript_identity(session, "737c1a0a")
 
     _rows(session, [64, 128], prefix="new")
 
@@ -90,11 +91,11 @@ def test_a_second_change_opens_another_epoch_above_both():
     """Epochs stack: each change keeps everything below it."""
     session, binding = _ctx(transcript_id="a")
     _rows(session, [64])
-    services.ensure_transcript_identity(session, "b")
+    transcript_ingest.ensure_transcript_identity(session, "b")
     _rows(session, [64], prefix="b")
     first = RunnerBinding.objects.get(pk=binding.pk).index_offset
 
-    services.ensure_transcript_identity(session, "c")
+    transcript_ingest.ensure_transcript_identity(session, "c")
     _rows(session, [64], prefix="c")
 
     assert RunnerBinding.objects.get(pk=binding.pk).index_offset > first
@@ -106,7 +107,7 @@ def test_the_same_transcript_keeps_everything():
     session, binding = _ctx(transcript_id="b8c44ef3")
     _rows(session, [64, 128])
 
-    assert services.ensure_transcript_identity(session, "b8c44ef3") == 0
+    assert transcript_ingest.ensure_transcript_identity(session, "b8c44ef3") == 0
     assert Message.objects.filter(session=session).count() == 2
 
 
@@ -116,7 +117,7 @@ def test_an_old_runner_making_no_claim_changes_nothing():
     session, _ = _ctx(transcript_id="b8c44ef3")
     _rows(session, [64, 128])
 
-    assert services.ensure_transcript_identity(session, "") == 0
+    assert transcript_ingest.ensure_transcript_identity(session, "") == 0
     assert Message.objects.filter(session=session).count() == 2
 
 
@@ -128,12 +129,12 @@ def test_rows_of_unknown_provenance_are_rebuilt_once():
     session, binding = _ctx(transcript_id="")
     _rows(session, [64, 128])
 
-    assert services.ensure_transcript_identity(session, "b8c44ef3") == 2
+    assert transcript_ingest.ensure_transcript_identity(session, "b8c44ef3") == 2
     binding.refresh_from_db()
     assert binding.transcript_id == "b8c44ef3"
     # ...and only once: the second ship is a plain continuation.
     _rows(session, [192], prefix="new")
-    assert services.ensure_transcript_identity(session, "b8c44ef3") == 0
+    assert transcript_ingest.ensure_transcript_identity(session, "b8c44ef3") == 0
     assert Message.objects.filter(session=session).count() == 1
 
 
@@ -144,11 +145,11 @@ def test_a_chunked_ship_cannot_delete_its_own_earlier_chunks():
     session, _ = _ctx(transcript_id="")
     _rows(session, [64])
 
-    assert services.ensure_transcript_identity(session, "b8c44ef3") == 1   # chunk 1
+    assert transcript_ingest.ensure_transcript_identity(session, "b8c44ef3") == 1   # chunk 1
     _rows(session, [64, 128], prefix="new")
-    assert services.ensure_transcript_identity(session, "b8c44ef3") == 0   # chunk 2
+    assert transcript_ingest.ensure_transcript_identity(session, "b8c44ef3") == 0   # chunk 2
     _rows(session, [192], prefix="new")
-    assert services.ensure_transcript_identity(session, "b8c44ef3") == 0   # chunk 3
+    assert transcript_ingest.ensure_transcript_identity(session, "b8c44ef3") == 0   # chunk 3
     assert Message.objects.filter(session=session).count() == 3
 
 
@@ -159,10 +160,10 @@ def test_a_chunked_ship_opens_its_epoch_only_once():
     session, binding = _ctx(transcript_id="6ee00fa8")
     _rows(session, [64])
 
-    services.ensure_transcript_identity(session, "b8c44ef3")                # chunk 1
+    transcript_ingest.ensure_transcript_identity(session, "b8c44ef3")                # chunk 1
     offset = RunnerBinding.objects.get(pk=binding.pk).index_offset
     _rows(session, [64, 128], prefix="new")
-    services.ensure_transcript_identity(session, "b8c44ef3")                # chunk 2
+    transcript_ingest.ensure_transcript_identity(session, "b8c44ef3")                # chunk 2
 
     assert RunnerBinding.objects.get(pk=binding.pk).index_offset == offset
     assert Message.objects.filter(session=session).count() == 3
@@ -176,5 +177,5 @@ def test_an_unbound_session_is_left_alone():
     session = Session.objects.create(workspace=ws, origin=Session.ORIGIN_WEB, title="chat")
     _rows(session, [64])
 
-    assert services.ensure_transcript_identity(session, "b8c44ef3") == 0
+    assert transcript_ingest.ensure_transcript_identity(session, "b8c44ef3") == 0
     assert Message.objects.filter(session=session).count() == 1

@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from apps.agents.models import Agent
-from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.models import Session
 from apps.harness import actors
 from apps.harness.models import Turn
@@ -37,7 +37,7 @@ def _setup(django_user_model, *, metadata=None, email="sarvesh@dimagi.com"):
 
 def test_a_chat_send_records_the_sender_as_the_turns_actor(django_user_model):
     user, session = _setup(django_user_model)
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user)
 
     assert turn.origin == Turn.ORIGIN_CANOPY_WEB_CHAT
     assert turn.enqueued_by_id == user.id
@@ -49,7 +49,7 @@ def test_an_ace_web_send_records_the_ace_web_user_as_the_actor(django_user_model
     user's email, so canopy knows exactly which human triggered the run — and an
     `(ace, ace_web, sarvesh@dimagi.com)` rule can finally match it."""
     user, session = _setup(django_user_model, metadata={"source": "ace-web"})
-    _msg, turn = chat.send_message(session=session, text="/ace:run bednet", user=user)
+    _msg, turn = session_send.send_message(session=session, text="/ace:run bednet", user=user)
 
     assert turn.origin == Turn.ORIGIN_ACE_WEB
     assert actors.actor_of(turn) == "sarvesh@dimagi.com"
@@ -57,7 +57,7 @@ def test_an_ace_web_send_records_the_ace_web_user_as_the_actor(django_user_model
 
 def test_the_actor_is_normalized_so_a_rule_matches_regardless_of_casing(django_user_model):
     user, session = _setup(django_user_model, email="Sarvesh@Dimagi.com")
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user)
     assert actors.actor_of(turn) == "sarvesh@dimagi.com"
 
 
@@ -65,6 +65,6 @@ def test_a_send_with_no_authenticated_user_records_no_actor(django_user_model):
     """`enqueue_turn` only stores an authenticated user. No actor means the turn
     falls through to the source rule — never matches one by accident."""
     _user, session = _setup(django_user_model)
-    _msg, turn = chat.send_message(session=session, text="hi", user=None)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=None)
     assert turn.enqueued_by_id is None
     assert actors.actor_of(turn) == ""

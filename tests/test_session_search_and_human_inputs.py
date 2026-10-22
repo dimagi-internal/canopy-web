@@ -252,7 +252,7 @@ def test_human_inputs_follow_the_session_access_rule():
 
 import canopy_transcript as ct  # noqa: E402
 
-from apps.canopy_sessions import services  # noqa: E402
+from apps.canopy_sessions import transcript_ingest  # noqa: E402
 
 _SKILL_ID = "toolu_019YSB9iTAYw5QYH9FM1kNfd"
 _WAKEUP_PROMPT = ("Continue the DDD run supply-sophie-unanswered-round-2026-10-02-002: check "
@@ -305,7 +305,7 @@ def _ingest(s, *, strip_provenance=False):
     if strip_provenance:   # what a runner from before this change shipped
         rows = [{**r, "content": {k: v for k, v in r["content"].items() if k != "record"}}
                 for r in rows]
-    services.persist_transcript_rows(s, rows, attribute=False)
+    transcript_ingest.persist_transcript_rows(s, rows, attribute=False)
 
 
 def test_human_inputs_trust_the_records_own_provenance():

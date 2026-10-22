@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.canopy_sessions import services
+from apps.canopy_sessions import transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -145,10 +145,10 @@ def test_backfill_unavailable_when_no_live_runner():
 def test_write_backfill_writes_rows_once():
     _u, _w, s, _r, _c = _ctx()
     msgs = [{"role": "user", "text": "q1"}, {"role": "assistant", "text": "a1"}]
-    assert services.write_backfill(s, msgs) == 2
+    assert transcript_ingest.write_backfill(s, msgs) == 2
     assert [m.plaintext for m in s.messages.order_by("turn_index")] == ["q1", "a1"]
     # second call is a no-op (server-full thereafter)
-    assert services.write_backfill(s, msgs) == 0
+    assert transcript_ingest.write_backfill(s, msgs) == 0
     assert s.messages.count() == 2
 
 

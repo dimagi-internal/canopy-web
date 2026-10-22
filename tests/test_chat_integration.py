@@ -13,6 +13,7 @@ from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.executor import execute_turn_stub
 from apps.realtime.consumers import TurnConsumer
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -26,7 +27,7 @@ def _seed_and_send():
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=user)
     session = chat.create_session(workspace=ws, created_by=user, agent=agent)
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)  # enqueue only
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user)  # enqueue only
     return user, session, turn
 
 

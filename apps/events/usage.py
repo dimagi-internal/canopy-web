@@ -144,7 +144,7 @@ def send_up(runner, claude_sessions: list[str]) -> list[str]:
     transcript (the ordinary backfill, keyed `claude:<id>`); its usage is matched
     to it at once. Filed where the report sweep files that box's sessions
     (`harness.services.session_home`). Returns the canopy session ids."""
-    from apps.canopy_sessions import services as chat
+    from apps.canopy_sessions import transcript_read as session_transcript_read
     from apps.canopy_sessions.models import RunnerBinding, Session
     from apps.harness.services import session_home
 
@@ -166,6 +166,6 @@ def send_up(runner, claude_sessions: list[str]) -> list[str]:
             SessionUsage.objects.filter(claude_session=cs).update(
                 workspace_id=who["workspace_id"], session=session, agent=agent,
                 agent_slug=agent.slug if agent else "", project=who["project"] or "", user=who["user"])
-        chat.request_backfill(session)
+        session_transcript_read.request_backfill(session)
         out.append(str(session.pk))
     return out

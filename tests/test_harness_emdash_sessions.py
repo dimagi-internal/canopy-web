@@ -442,7 +442,7 @@ def test_an_answer_survives_the_control_channel_being_down():
     """
     from django.test import Client as DjangoClient
 
-    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions import control as chat_control
     from apps.canopy_sessions.models import RunnerBinding
     from apps.harness.services import replace_reported_sessions
 
@@ -452,7 +452,7 @@ def test_an_answer_survives_the_control_channel_being_down():
     replace_reported_sessions(runner, ws, [_reported("chat-1")])
     binding = RunnerBinding.objects.get(session_key="chat-1")
 
-    assert chat_services.answer_menu(session=binding.session, option=2) == "sent"
+    assert chat_control.answer_menu(session=binding.session, option=2) == "sent"
 
     client = DjangoClient()
     client.force_login(jj)
@@ -479,7 +479,7 @@ def test_a_stale_result_never_retires_a_newer_answer():
     moved on, so results are matched on id rather than on session."""
     from django.test import Client as DjangoClient
 
-    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions import control as chat_control
     from apps.canopy_sessions.models import RunnerBinding
     from apps.harness.services import replace_reported_sessions
 
@@ -489,10 +489,10 @@ def test_a_stale_result_never_retires_a_newer_answer():
     replace_reported_sessions(runner, ws, [_reported("chat-1")])
     binding = RunnerBinding.objects.get(session_key="chat-1")
 
-    chat_services.answer_menu(session=binding.session, option=1)
+    chat_control.answer_menu(session=binding.session, option=1)
     binding.refresh_from_db()
     stale_id = binding.pending_answer["id"]
-    chat_services.answer_menu(session=binding.session, option=2)   # they tapped again
+    chat_control.answer_menu(session=binding.session, option=2)   # they tapped again
 
     client = DjangoClient()
     client.force_login(jj)
@@ -518,7 +518,7 @@ def test_a_close_survives_the_control_channel_being_down():
     """
     from django.test import Client as DjangoClient
 
-    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions import control as chat_control
     from apps.canopy_sessions.models import RunnerBinding
     from apps.harness.services import replace_reported_sessions
 
@@ -530,7 +530,7 @@ def test_a_close_survives_the_control_channel_being_down():
     binding.reported_at = binding.live_seen_at        # a runner is holding a task
     binding.save(update_fields=["reported_at"])
 
-    assert chat_services.close_session(session=binding.session) == "closing"
+    assert chat_control.close_session(session=binding.session) == "closing"
 
     client = DjangoClient()
     client.force_login(jj)

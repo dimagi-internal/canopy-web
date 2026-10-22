@@ -5,7 +5,7 @@ tools (`apps/mcp/tools/close_review.py`) are thin; this module is the rule.
 
 **The agent never closes.** `proposal_rows` only reads. `close` runs only from
 the review View's button (an app-only tool, refused to anything but a person's
-grant), as the person who clicked, through the same `services.close_session`
+grant), as the person who clicked, through the same `control.close_session`
 the /ide right-click uses. The agent reads the candidates from /ide itself — a
 page action the person's own browser answers — so no server read here widens
 what an agent's login can see.
@@ -21,7 +21,9 @@ import uuid
 
 from django.db.models import Max
 
-from . import access, services
+from . import access
+from . import control
+from . import transcript_read
 from .models import Session
 
 #: A proposal's quote and reason, as shown in the panel.
@@ -47,7 +49,7 @@ def _readable(user, ids: list[uuid.UUID]) -> dict[uuid.UUID, Session]:
     rows = (access.readable_sessions(user).filter(pk__in=ids)
             .select_related("agent", "created_by", "runner_binding", "runner_binding__runner")
             .annotate(_last_msg_at=Max("messages__created_at")))
-    rows = services.with_open_turn(services.with_last_reply(services.with_driving_turn(rows)))
+    rows = transcript_read.with_open_turn(transcript_read.with_last_reply(transcript_read.with_driving_turn(rows)))
     return {s.pk: s for s in rows}
 
 
@@ -67,7 +69,7 @@ def _blocked(user, session: Session, row: dict) -> str:
     if row["waiting_on_you"]:
         return "It is waiting on you"
     binding = getattr(session, "runner_binding", None)
-    if services.is_runner_reported(binding) and \
+    if control.is_runner_reported(binding) and \
             binding.runner.live_status not in (Runner.ONLINE, Runner.DEGRADED):
         return f"Its runner {binding.runner.name} is offline"
     return ""
@@ -142,7 +144,7 @@ def close(user, session_ids) -> dict:
             outcome = "not_found"
         else:
             reason = _blocked(user, session, _out(session, reply=True, viewer=user))
-            outcome = "blocked" if reason else services.close_session(session=session)
+            outcome = "blocked" if reason else control.close_session(session=session)
         results.append({"id": str(i), "title": session.title if session else "",
                          "outcome": outcome, "reason": reason})
     return {"results": results,

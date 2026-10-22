@@ -112,19 +112,19 @@ def test_real_rows_win_over_the_tail():
 
 def test_send_reuses_the_bindings_thread_key():
     """Sending str(session.id) matched no binding -> runner spawned a fresh session."""
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
     user, ws, runner, _c = _ctx()
     s = _discovered(ws, runner, key="ace-demo")
-    _msg, turn = services.send_message(session=s, user=user, text="hello", client_id="c1")
+    _msg, turn = send.send_message(session=s, user=user, text="hello", client_id="c1")
     assert turn.origin_ref["thread_key"] == "emdash:ace-demo"     # the LIVE session
     assert turn.origin_ref["chat_session_id"] == str(s.id)        # bridge target unchanged
 
 
 def test_web_session_send_still_keys_on_the_session_id():
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
     user, ws, _r, _c = _ctx()
     s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="web")
-    _msg, turn = services.send_message(session=s, user=user, text="hello", client_id="c1")
+    _msg, turn = send.send_message(session=s, user=user, text="hello", client_id="c1")
     assert turn.origin_ref["thread_key"] == str(s.id)
 
 

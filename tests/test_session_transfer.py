@@ -17,7 +17,8 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import placement as session_placement
+from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.harness import services as harness_services
 from apps.harness.models import Runner, Turn
@@ -82,12 +83,12 @@ def test_transfer_preserves_history_when_the_new_box_ships_a_new_transcript():
     """
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud, indices=(0, 64, 128))
-    chat.transfer_session(session=s, placement=str(laptop.id))
+    session_placement.transfer_session(session=s, placement=str(laptop.id))
 
     offset = RunnerBinding.objects.get(session=s).index_offset
     # The new box ships ordinals that restart at 0 — head-on with the old rows.
-    chat.ensure_transcript_identity(s, "brand-new-transcript-uuid")
-    chat.persist_transcript_rows(s, [
+    session_transcript_ingest.ensure_transcript_identity(s, "brand-new-transcript-uuid")
+    session_transcript_ingest.persist_transcript_rows(s, [
         {"index": 0, "role": Message.USER, "text": "picking this up"},
         {"index": 64, "role": Message.ASSISTANT, "text": "verified both PRs"},
     ])
@@ -106,14 +107,14 @@ def test_a_later_transcript_change_opens_another_epoch_above_the_transfer():
     rows and the new box's first transcript both stay (issue #1731)."""
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud, indices=(0, 64))
-    chat.transfer_session(session=s, placement=str(laptop.id))
+    session_placement.transfer_session(session=s, placement=str(laptop.id))
     offset = RunnerBinding.objects.get(session=s).index_offset
 
-    chat.ensure_transcript_identity(s, "transcript-A")
-    chat.persist_transcript_rows(s, [{"index": 0, "role": Message.USER, "text": "A"}])
-    chat.ensure_transcript_identity(s, "transcript-B")
+    session_transcript_ingest.ensure_transcript_identity(s, "transcript-A")
+    session_transcript_ingest.persist_transcript_rows(s, [{"index": 0, "role": Message.USER, "text": "A"}])
+    session_transcript_ingest.ensure_transcript_identity(s, "transcript-B")
     second = RunnerBinding.objects.get(session=s).index_offset
-    chat.persist_transcript_rows(s, [{"index": 0, "role": Message.USER, "text": "B"}])
+    session_transcript_ingest.persist_transcript_rows(s, [{"index": 0, "role": Message.USER, "text": "B"}])
 
     held = sorted(Message.objects.filter(session=s).values_list("turn_index", flat=True))
     assert held == [0, 64, offset, second]
@@ -133,10 +134,10 @@ def test_an_ordinal_scheme_upgrade_also_spares_the_inherited_epoch():
     s = _bound_session(ws, cloud, indices=(0, 64))
     Session.objects.filter(pk=s.pk).update(ordinal_scheme=0)  # a legacy session
     s.refresh_from_db()
-    chat.transfer_session(session=s, placement=str(laptop.id))
+    session_placement.transfer_session(session=s, placement=str(laptop.id))
     offset = RunnerBinding.objects.get(session=s).index_offset
 
-    chat.persist_transcript_rows(s, [{"index": 0, "role": Message.USER, "text": "new"}])
+    session_transcript_ingest.persist_transcript_rows(s, [{"index": 0, "role": Message.USER, "text": "new"}])
 
     held = sorted(Message.objects.filter(session=s).values_list("turn_index", flat=True))
     assert held == [0, 64, offset], "a scheme upgrade must not take the inherited epoch"
@@ -151,7 +152,7 @@ def test_untransferred_session_with_unknown_provenance_still_drops_everything():
     s = _bound_session(ws, cloud, indices=(0, 64, 128))
     RunnerBinding.objects.filter(session=s).update(transcript_id="")
     assert RunnerBinding.objects.get(session=s).index_offset == 0
-    chat.ensure_transcript_identity(s, "a-different-transcript")
+    session_transcript_ingest.ensure_transcript_identity(s, "a-different-transcript")
     assert Message.objects.filter(session=s).count() == 0
 
 
@@ -161,7 +162,7 @@ def test_untransferred_session_with_unknown_provenance_still_drops_everything():
 def test_transfer_repoints_the_binding_and_clears_the_old_box_state():
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud)
-    binding, _turn = chat.transfer_session(session=s, placement=str(laptop.id))
+    binding, _turn = session_placement.transfer_session(session=s, placement=str(laptop.id))
 
     binding.refresh_from_db()
     assert binding.runner_id == laptop.id
@@ -181,7 +182,7 @@ def test_transfer_repoints_the_binding_and_clears_the_old_box_state():
 def test_transfer_offset_clears_the_high_water_mark_on_a_stride_boundary():
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud, indices=(0, 64, 130))
-    binding, _turn = chat.transfer_session(session=s, placement=str(laptop.id))
+    binding, _turn = session_placement.transfer_session(session=s, placement=str(laptop.id))
     assert binding.index_offset % BLOCK_STRIDE == 0
     assert binding.index_offset > 130
 
@@ -189,7 +190,7 @@ def test_transfer_offset_clears_the_high_water_mark_on_a_stride_boundary():
 def test_transfer_enqueues_a_turn_pinned_to_the_target_carrying_the_brief():
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud)
-    _binding, turn = chat.transfer_session(
+    _binding, turn = session_placement.transfer_session(
         session=s, placement=str(laptop.id), brief="BRANCH: docs/widget-design",
     )
     assert turn.pinned_runner_id == laptop.id
@@ -206,7 +207,7 @@ def test_transfer_re_pins_later_unrouted_sends_to_the_target():
     open routing and can land back on the box we just left."""
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud)
-    chat.transfer_session(session=s, placement=str(laptop.id))
+    session_placement.transfer_session(session=s, placement=str(laptop.id))
     s.refresh_from_db()
     assert s.metadata["requested_runner_id"] == str(laptop.id)
 
@@ -217,8 +218,8 @@ def test_transferring_back_does_not_dedupe_onto_the_outbound_turn():
     collapse the return leg onto the outbound one."""
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud)
-    _b, out = chat.transfer_session(session=s, placement=str(laptop.id))
-    _b2, back = chat.transfer_session(session=s, placement=str(cloud.id))
+    _b, out = session_placement.transfer_session(session=s, placement=str(laptop.id))
+    _b2, back = session_placement.transfer_session(session=s, placement=str(cloud.id))
     assert out.id != back.id
     assert out.idempotency_key != back.idempotency_key
 
@@ -234,16 +235,16 @@ def test_transfer_refuses_an_unknown_or_non_session_capable_runner():
         capabilities={"projects": ["canopy-web"]},  # sessions: absent
     )
     with pytest.raises(ValueError):
-        chat.transfer_session(session=s, placement=str(no_sessions.id))
+        session_placement.transfer_session(session=s, placement=str(no_sessions.id))
     with pytest.raises(ValueError):
-        chat.transfer_session(session=s, placement="not-a-uuid")
+        session_placement.transfer_session(session=s, placement="not-a-uuid")
 
 
 def test_transfer_refuses_a_no_op_move_to_the_same_runner():
     _u, ws, cloud, _laptop, _c = _ctx()
     s = _bound_session(ws, cloud)
     with pytest.raises(ValueError, match="already on"):
-        chat.transfer_session(session=s, placement=str(cloud.id))
+        session_placement.transfer_session(session=s, placement=str(cloud.id))
 
 
 def test_transfer_refuses_while_a_turn_is_executing():
@@ -255,14 +256,14 @@ def test_transfer_refuses_while_a_turn_is_executing():
         idempotency_key="k1", status=Turn.RUNNING, claimed_by=cloud,
     )
     with pytest.raises(RuntimeError, match="still executing"):
-        chat.transfer_session(session=s, placement=str(laptop.id))
+        session_placement.transfer_session(session=s, placement=str(laptop.id))
 
 
 def test_transfer_refuses_a_session_with_no_binding():
     _u, ws, _cloud, laptop, _c = _ctx()
     s = Session.objects.create(workspace=ws, project="canopy-web", title="never ran")
     with pytest.raises(LookupError):
-        chat.transfer_session(session=s, placement=str(laptop.id))
+        session_placement.transfer_session(session=s, placement=str(laptop.id))
 
 
 def test_the_targets_first_report_does_not_reset_the_epoch():
@@ -277,7 +278,7 @@ def test_the_targets_first_report_does_not_reset_the_epoch():
     """
     _u, ws, cloud, laptop, _c = _ctx()
     s = _bound_session(ws, cloud, indices=(0, 64, 128))
-    chat.transfer_session(session=s, placement=str(laptop.id))
+    session_placement.transfer_session(session=s, placement=str(laptop.id))
     offset = RunnerBinding.objects.get(session=s).index_offset
     assert offset > 0
 
@@ -303,7 +304,7 @@ def test_streams_report_markers_in_the_runners_own_ordinal_space():
     failure, reintroduced by preserving history."""
     _u, ws, cloud, laptop, c = _ctx()
     s = _bound_session(ws, cloud, indices=(0, 64, 128))
-    chat.transfer_session(session=s, placement=str(laptop.id))
+    session_placement.transfer_session(session=s, placement=str(laptop.id))
     binding = RunnerBinding.objects.get(session=s)
     binding.session_key = "fresh-local-task"  # the target reported in
     binding.save(update_fields=["session_key"])
@@ -314,7 +315,7 @@ def test_streams_report_markers_in_the_runners_own_ordinal_space():
     assert row["first_index"] is None
     assert row["last_index"] is None
 
-    chat.persist_transcript_rows(s, [
+    session_transcript_ingest.persist_transcript_rows(s, [
         {"index": 0, "role": Message.USER, "text": "hi"},
         {"index": 192, "role": Message.ASSISTANT, "text": "there"},
     ])

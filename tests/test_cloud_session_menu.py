@@ -65,11 +65,11 @@ def test_a_cloud_ask_lands_where_every_channel_reads_it():
 
 
 def test_the_answer_comes_back_through_the_same_drain():
-    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions import control as chat_control
 
     _jj, runner, session, _binding, client = _setup()
     _post(client, runner, session, MENU)
-    assert chat_services.answer_menu(session=session, option=1) == "sent"
+    assert chat_control.answer_menu(session=session, option=1) == "sent"
     answers = client.get(f"/api/harness/runners/{runner.id}/menu-answers").json()["answers"]
     assert [(a["session_id"], a["option"]) for a in answers] == [(str(session.id), 1)]
 

@@ -10,7 +10,8 @@ from __future__ import annotations
 import pytest
 from django.contrib.auth.models import User
 
-from apps.canopy_sessions import services
+from apps.canopy_sessions import transcript_ingest
+from apps.canopy_sessions import transcript_read
 from apps.canopy_sessions.models import Message, Session
 from apps.canopy_sessions.transcript_noise import is_system_noise
 from apps.workspaces.models import Workspace
@@ -71,7 +72,7 @@ def _session():
 def test_persist_drops_harness_records_but_keeps_the_conversation():
     session = _session()
 
-    written = services.persist_transcript_rows(
+    written = transcript_ingest.persist_transcript_rows(
         session,
         [
             {"index": 0, "role": "user", "text": "ship the fix"},
@@ -95,7 +96,7 @@ def test_dropping_noise_does_not_shift_the_ordinals_of_real_messages():
     the same record arrive under two different indices and duplicate it."""
     session = _session()
 
-    services.persist_transcript_rows(
+    transcript_ingest.persist_transcript_rows(
         session,
         [
             {"index": 7, "role": "user", "text": "<task-notification>\nnoise"},
@@ -111,7 +112,7 @@ def test_an_assistant_record_is_never_dropped_by_the_filter():
     text that happens to quote a marker is still the agent talking."""
     session = _session()
 
-    services.persist_transcript_rows(
+    transcript_ingest.persist_transcript_rows(
         session,
         [{"index": 0, "role": "assistant", "text": "<system-reminder> is injected by the harness"}],
     )
@@ -125,8 +126,8 @@ def test_re_shipping_a_dropped_record_stays_a_no_op():
     session = _session()
     rows = [{"index": 2, "role": "user", "text": "<task-notification>\nnoise"}]
 
-    services.persist_transcript_rows(session, rows)
-    services.persist_transcript_rows(session, rows)
+    transcript_ingest.persist_transcript_rows(session, rows)
+    transcript_ingest.persist_transcript_rows(session, rows)
 
     assert Message.objects.filter(session=session).count() == 0
 
@@ -232,7 +233,7 @@ def test_the_tail_drops_a_skill_body_a_lagging_runner_shipped():
         {"role": "user", "text": "Base directory for this skill: /Users/jj/.claude/…"},
     ])
 
-    rows = services.tail_as_messages(session, binding)
+    rows = transcript_read.tail_as_messages(session, binding)
 
     assert [r.plaintext for r in rows] == [
         "go look at the fleet",
@@ -250,7 +251,7 @@ def test_dropping_a_tail_row_does_not_shift_its_neighbours():
         {"role": "assistant", "text": "real reply"},
     ])
 
-    rows = services.tail_as_messages(session, binding)
+    rows = transcript_read.tail_as_messages(session, binding)
 
     assert [(r.turn_index, r.plaintext) for r in rows] == [(-1, "real reply")]
 
@@ -263,7 +264,7 @@ def test_an_assistant_tail_row_is_never_dropped():
         {"role": "assistant", "text": "<system-reminder> is injected by the harness"},
     ])
 
-    assert len(services.tail_as_messages(session, binding)) == 1
+    assert len(transcript_read.tail_as_messages(session, binding)) == 1
 
 
 # --- one definition, not two ------------------------------------------------

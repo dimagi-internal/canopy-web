@@ -712,9 +712,10 @@ def test_a_refused_markdown_block_still_delivers_the_reply(slack, linked, hal,
 
 def test_a_non_slack_session_is_left_alone(slack, hal, alice, django_capture_on_commit_callbacks):
     from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import send as session_send
 
     session = session_services.create_session(workspace=hal.workspace, created_by=alice, agent=hal)
-    _msg, turn = session_services.send_message(session=session, text="hi", user=alice)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=alice)
     _reply(turn, {"kind": "assistant", "payload": {"text": "web only"}}, capture=django_capture_on_commit_callbacks)
     assert not slack.said("chat.postMessage")
 
@@ -1219,7 +1220,7 @@ def test_continuing_from_the_web_while_the_runner_is_offline_still_tells_the_thr
     question, not that it was stuck. Meanwhile the chat page, driven by the
     enqueue signal, said "queued, runner offline". Now both hear it from the
     same event."""
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import send as session_send
 
     _runner("jj-mbp", runner_owner=alice, agent=hal, online=False)
     mention("hal summarise")
@@ -1227,7 +1228,7 @@ def test_continuing_from_the_web_while_the_runner_is_offline_still_tells_the_thr
     before = len(slack.said("chat.postMessage"))
 
     with django_capture_on_commit_callbacks(execute=True):
-        _msg, turn = session_services.send_message(
+        _msg, turn = session_send.send_message(
             session=session, text="and the bit about budgets?", user=alice,
             origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
 
@@ -1446,7 +1447,7 @@ def test_mention_cloud_is_the_same_and_leaves_live_work_alone(slack, linked, hal
 
 def test_a_turn_sent_from_canopy_web_is_announced_in_the_thread(
         slack, linked, hal, alice, django_capture_on_commit_callbacks):
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import send as session_send
 
     runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal first")
@@ -1454,7 +1455,7 @@ def test_a_turn_sent_from_canopy_web_is_announced_in_the_thread(
     with django_capture_on_commit_callbacks(execute=True):
         harness_services.finish_turn(claim.claim_next_turn(runner), status=Turn.DONE)
     slack.calls.clear()
-    session_services.send_message(session=session, text="now do the second half", user=alice)
+    session_send.send_message(session=session, text="now do the second half", user=alice)
     with django_capture_on_commit_callbacks(execute=True):
         claim.claim_next_turn(runner)
     (line,) = slack.said("chat.postMessage")

@@ -20,6 +20,7 @@ from apps.agents import access
 from apps.agents.interface import parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
 from apps.harness import caller_context, services
 from apps.harness import initiator as who
 from apps.harness import turn_mode
@@ -83,7 +84,7 @@ def _via_api(w, user, key):
 
 def _via_chat(w, user, key, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, assurance=who.SESSION):
     session = chat.create_session(workspace=w["ws"], created_by=user, agent=w["agent"], title="t")
-    _msg, turn = chat.send_message(session=session, text="go", user=user, client_id=key,
+    _msg, turn = session_send.send_message(session=session, text="go", user=user, client_id=key,
                                    origin=origin,
                                    initiator=who.for_user(user, via=origin, assurance=assurance))
     return turn

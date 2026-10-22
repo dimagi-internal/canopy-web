@@ -26,7 +26,7 @@ from apps.api.errors import (
     ProblemError,
 )
 from apps.api.pagination import Page, clamp_limit, paginate
-from apps.canopy_sessions.services import close_agent_sessions
+from apps.canopy_sessions.control import close_agent_sessions
 from apps.events import audit
 from apps.harness import closeout, turn_access
 from apps.harness import initiator as who

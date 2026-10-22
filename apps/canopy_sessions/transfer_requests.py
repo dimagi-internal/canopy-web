@@ -1,5 +1,5 @@
 """Transfer requests: a move of a session onto another runner, decided by that runner's
-administrator, then carried out by `services.transfer_session`.
+administrator, then carried out by `placement.transfer_session`.
 
 `transfer_session` already does the hard part (re-point the binding, open a new
 transcript epoch, hand the cold session a brief). What it never asked is whose
@@ -30,7 +30,7 @@ from django.utils import timezone
 from apps.harness import runners
 from apps.harness.models import Runner, RunnerAdmin
 
-from . import services
+from . import placement
 from .models import Session, TransferRequest
 
 #: Fired after commit with `request=<TransferRequest>` whenever one is created or
@@ -74,7 +74,7 @@ def _expire_if_stale(req: TransferRequest) -> bool:
 def _transfer(req: TransferRequest, user, initiator):
     """Carry it out. RuntimeError (a turn is executing) propagates — the caller
     keeps the request pending and says to stop the session first."""
-    return services.transfer_session(
+    return placement.transfer_session(
         session=req.session, placement=str(req.to_runner_id), brief=req.brief, user=user,
         initiator=initiator,
     )
@@ -92,8 +92,8 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
     immediate path, and FileExistsError when a request is already open.
     """
     target = resolve_runner(runner_value)
-    if target is None or services._placeable_runner(session, str(target.id)) is None:
-        raise services._placement_refused(
+    if target is None or placement._placeable_runner(session, str(target.id)) is None:
+        raise placement._placement_refused(
             session, str(target.id) if target else runner_value, "unknown runner for transfer")
     if session.status != Session.ACTIVE:
         raise ValueError("cannot transfer an archived session")
@@ -112,7 +112,7 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
                   and binding.runner.owner_id is not None
                   and binding.runner.owner_id == target.owner_id)
     if same_owner or runners.can_administer_runner(user, target):
-        binding_after, turn = services.transfer_session(
+        binding_after, turn = placement.transfer_session(
             session=session, placement=str(target.id), brief=brief, user=user,
             initiator=initiator)
         req = TransferRequest.objects.create(

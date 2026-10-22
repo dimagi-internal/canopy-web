@@ -12,6 +12,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import placement as session_placement
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.harness import services as harness_services
 from apps.harness.models import Runner, Turn
@@ -70,7 +71,7 @@ def test_fork_keeps_the_clicked_turn_and_drops_what_follows():
     assert fork.parent_session_id == s.id
     assert fork.agent_id == s.agent_id and fork.workspace_id == s.workspace_id
     assert list(fork.messages.values_list("turn_index", flat=True)) == [0, S, 2 * S, 3 * S, 3 * S + 1]
-    assert fork.metadata[chat.FORK_KEY] == {"session_key": "src-sid", "records": 4,
+    assert fork.metadata[session_placement.FORK_KEY] == {"session_key": "src-sid", "records": 4,
                                             "from_session": str(s.id), "worktree_of": str(s.id)}
     assert fork.metadata["requested_runner_id"] == str(runner.id)
     # The source is untouched.
@@ -84,7 +85,7 @@ def test_fork_from_the_last_turn_keeps_everything():
     fork = Session.objects.get(pk=_fork(c, s, 5 * S).json()["id"])
 
     assert fork.messages.count() == len(ROWS)
-    assert fork.metadata[chat.FORK_KEY]["records"] == 6
+    assert fork.metadata[session_placement.FORK_KEY]["records"] == 6
 
 
 def test_resolve_session_hands_the_cut_to_the_runner_until_the_fork_has_its_own():
@@ -169,8 +170,8 @@ def test_a_cloud_runner_can_fork_and_a_fork_of_a_fork_shares_the_root_directory(
 
     again = Session.objects.get(pk=_fork(c, fork, 0).json()["id"])
 
-    assert again.metadata[chat.FORK_KEY]["worktree_of"] == str(s.id)
-    assert again.metadata[chat.FORK_KEY]["session_key"] == "fork-sid"
+    assert again.metadata[session_placement.FORK_KEY]["worktree_of"] == str(s.id)
+    assert again.metadata[session_placement.FORK_KEY]["session_key"] == "fork-sid"
 
 
 def test_a_fork_keeps_the_conversations_runner_requirements():

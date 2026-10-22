@@ -216,7 +216,7 @@ class Message(models.Model):
     # that to the session owner would be a guess.
     author = models.JSONField(null=True, blank=True)
     # The Turn a user line was delivered by, from the same marker. What lets the
-    # queued list (`services.queued_messages`) know a send has landed.
+    # queued list (`send.queued_messages`) know a send has landed.
     source_turn_id = models.UUIDField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -424,7 +424,7 @@ class RunnerBinding(models.Model):
     #
     # Recording the identity makes the mismatch detectable, which is the whole
     # point: on a change the new transcript opens a new epoch above the held rows
-    # (see services.ensure_transcript_identity; a blank prior id still drops and
+    # (see transcript_ingest.ensure_transcript_identity; a blank prior id still drops and
     # re-derives, as `Session.ordinal_scheme` does for a change of ordinal
     # SCHEME). Blank = never reported (an old
     # runner, or a session whose runner has not shipped since this landed).
@@ -453,7 +453,7 @@ class RunnerBinding(models.Model):
     # a Message row, and subtracted again when the markers are reported back to
     # the runner (apps/harness/api.py::get_session_streams).
     #
-    # It exists for TRANSFER (services.transfer_session). A transfer re-points
+    # It exists for TRANSFER (placement.transfer_session). A transfer re-points
     # this binding at another box, which cannot resume the old box's claude
     # session — it opens a fresh one, whose transcript ordinals restart near 0.
     # Those collide head-on with the ordinals the previous box already wrote

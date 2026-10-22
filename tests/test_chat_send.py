@@ -8,6 +8,8 @@ from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
+from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import ledger
 from apps.harness.models import Runner, Turn
@@ -29,7 +31,7 @@ def _ctx():
 
 def test_send_creates_user_message_and_queued_turn():
     user, _ws, _agent, session = _ctx()
-    msg, turn = chat.send_message(session=session, text="hello", user=user)
+    msg, turn = session_send.send_message(session=session, text="hello", user=user)
     assert msg.role == Session.objects.get(pk=session.pk).messages.first().role == "user"
     assert msg.turn_index == 0
     assert msg.plaintext == "hello"
@@ -40,17 +42,17 @@ def test_send_creates_user_message_and_queued_turn():
 
 def test_distinct_sends_make_distinct_turns():
     user, _ws, _agent, session = _ctx()
-    _m, turn1 = chat.send_message(session=session, text="hi", user=user)
+    _m, turn1 = session_send.send_message(session=session, text="hi", user=user)
     # A second, genuinely different send is a NEW index -> a new turn.
-    _m2, turn2 = chat.send_message(session=session, text="again", user=user)
+    _m2, turn2 = session_send.send_message(session=session, text="again", user=user)
     assert turn1.id != turn2.id
 
 
 def test_send_with_client_nonce_is_idempotent():
     user, _ws, _agent, session = _ctx()
-    m1, turn1 = chat.send_message(session=session, text="hi", user=user, client_id="nonce-1")
+    m1, turn1 = session_send.send_message(session=session, text="hi", user=user, client_id="nonce-1")
     # A retry with the SAME nonce collapses onto the same Message + Turn.
-    m2, turn2 = chat.send_message(session=session, text="hi", user=user, client_id="nonce-1")
+    m2, turn2 = session_send.send_message(session=session, text="hi", user=user, client_id="nonce-1")
     assert m1.id == m2.id
     assert turn1.id == turn2.id
     assert session.messages.filter(role="user").count() == 1
@@ -58,7 +60,7 @@ def test_send_with_client_nonce_is_idempotent():
 
 def test_projection_materializes_assistant_events():
     user, _ws, _agent, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="hello", user=user)
+    _msg, turn = session_send.send_message(session=session, text="hello", user=user)
     ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "hi there"}}])
     rows = list(session.messages.order_by("turn_index"))
     assert [m.role for m in rows] == ["user", "assistant"]
@@ -68,7 +70,7 @@ def test_projection_materializes_assistant_events():
 
 def test_projection_maps_tool_events_and_is_idempotent():
     user, _ws, _agent, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="do it", user=user)
+    _msg, turn = session_send.send_message(session=session, text="do it", user=user)
     ledger.append_events(
         turn,
         [
@@ -82,13 +84,13 @@ def test_projection_maps_tool_events_and_is_idempotent():
 
     # Re-projecting the same ledger rows creates nothing new (idempotent per seq).
     before = session.messages.count()
-    chat.project_events(turn, list(turn.events.all()))
+    session_transcript_ingest.project_events(turn, list(turn.events.all()))
     assert session.messages.count() == before
 
 
 def test_status_events_are_not_transcript_rows():
     user, _ws, _agent, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user)
     ledger.append_events(turn, [{"kind": "status", "payload": {"status": "running"}}])
     # Only the user message exists; status is not a transcript row.
     assert [m.role for m in session.messages.all()] == ["user"]
@@ -105,8 +107,8 @@ def test_maybe_execute_inline_leaves_turn_for_runner_when_disabled(settings):
     # the text lives in Turn.prompt and the client's optimistic echo.
     settings.CHAT_STUB_EXECUTOR = False
     user, _ws, _agent, session = _ctx()
-    msg, turn = chat.send_message(session=session, text="hi", user=user)
-    chat.maybe_execute_inline(turn)
+    msg, turn = session_send.send_message(session=session, text="hi", user=user)
+    session_send.maybe_execute_inline(turn)
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
     assert session.messages.count() == 0
@@ -118,8 +120,8 @@ def test_maybe_execute_inline_runs_stub_when_enabled(settings):
     # Dev/test (default True): the stub runs inline and completes the turn.
     settings.CHAT_STUB_EXECUTOR = True
     user, _ws, _agent, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)
-    chat.maybe_execute_inline(turn)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user)
+    session_send.maybe_execute_inline(turn)
     turn.refresh_from_db()
     assert turn.status == Turn.DONE
     assert [m.role for m in session.messages.order_by("turn_index")] == ["user", "assistant"]
@@ -144,7 +146,7 @@ def test_directed_new_chat_pins_first_turn():
     session = Session.objects.create(
         workspace=ws, project="canopy-web", metadata={"requested_runner_id": str(r2.id)},
     )
-    _msg, turn = chat.send_message(session=session, text="hi", user=user, client_id="c1")
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user, client_id="c1")
     assert turn.pinned_runner_id == r2.id
 
 
@@ -157,7 +159,7 @@ def test_send_placement_wait_pins_to_bound_runner():
     r1 = _runner("r1", owner=user)  # offline: default Runner.status is DISCONNECTED
     session = Session.objects.create(workspace=ws, project="canopy-web")
     RunnerBinding.objects.create(session=session, runner=r1, thread_key=str(session.id))
-    _msg, turn = chat.send_message(
+    _msg, turn = session_send.send_message(
         session=session, text="hi", user=user, client_id="c2", placement="wait",
     )
     assert turn.pinned_runner_id == r1.id
@@ -173,10 +175,10 @@ def test_place_repins_queued_turn():
     r2 = _runner("r2", owner=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
     RunnerBinding.objects.create(session=session, runner=r1, thread_key=str(session.id))
-    _msg, turn = chat.send_message(session=session, text="hi", user=user, client_id="c3")
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user, client_id="c3")
     # Placed by r2's owner: choosing a box for a project chat needs you to
     # administer it (`may_place`).
-    chat.place_queued_turn(session=session, placement=str(r2.id), user=user)
+    session_send.place_queued_turn(session=session, placement=str(r2.id), user=user)
     turn.refresh_from_db()
     assert turn.pinned_runner_id == r2.id
 
@@ -185,18 +187,18 @@ def test_place_wait_requires_bound_runner():
     user = User.objects.create_user("o4", "o4@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-place-wait-422", display_name="W", created_by=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
-    chat.send_message(session=session, text="hi", user=user, client_id="c4")
+    session_send.send_message(session=session, text="hi", user=user, client_id="c4")
     with pytest.raises(ValueError):
-        chat.place_queued_turn(session=session, placement="wait")
+        session_send.place_queued_turn(session=session, placement="wait")
 
 
 def test_place_unknown_runner_raises_value_error():
     user = User.objects.create_user("o5", "o5@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-place-unknown", display_name="W", created_by=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
-    chat.send_message(session=session, text="hi", user=user, client_id="c5")
+    session_send.send_message(session=session, text="hi", user=user, client_id="c5")
     with pytest.raises(ValueError):
-        chat.place_queued_turn(session=session, placement=str(uuid.uuid4()))
+        session_send.place_queued_turn(session=session, placement=str(uuid.uuid4()))
 
 
 def test_place_no_queued_turn_raises_lookup_error():
@@ -204,7 +206,7 @@ def test_place_no_queued_turn_raises_lookup_error():
     ws = Workspace.objects.create(slug="w-place-empty", display_name="W", created_by=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
     with pytest.raises(LookupError):
-        chat.place_queued_turn(session=session, placement="wait")
+        session_send.place_queued_turn(session=session, placement="wait")
 
 
 def test_send_placement_unknown_runner_raises_value_error():
@@ -212,7 +214,7 @@ def test_send_placement_unknown_runner_raises_value_error():
     ws = Workspace.objects.create(slug="w-send-unknown", display_name="W", created_by=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
     with pytest.raises(ValueError):
-        chat.send_message(
+        session_send.send_message(
             session=session, text="hi", user=user, client_id="c7", placement=str(uuid.uuid4()),
         )
 
@@ -230,7 +232,7 @@ def test_send_placement_foreign_tenant_runner_raises_value_error():
     session = Session.objects.create(workspace=ws, project="canopy-web")
 
     with pytest.raises(ValueError):
-        chat.send_message(
+        session_send.send_message(
             session=session, text="hi", user=user, client_id="c8",
             placement=str(foreign_runner.id),
         )
@@ -246,7 +248,7 @@ def test_send_placement_malformed_runner_id_raises_value_error():
     ws = Workspace.objects.create(slug="w-send-malformed", display_name="W", created_by=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
     with pytest.raises(ValueError):
-        chat.send_message(
+        session_send.send_message(
             session=session, text="hi", user=user, client_id="c10", placement="banana",
         )
 
@@ -255,9 +257,9 @@ def test_place_malformed_runner_id_raises_value_error():
     user = User.objects.create_user("o11", "o11@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-place-malformed", display_name="W", created_by=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
-    chat.send_message(session=session, text="hi", user=user, client_id="c11")
+    session_send.send_message(session=session, text="hi", user=user, client_id="c11")
     with pytest.raises(ValueError):
-        chat.place_queued_turn(session=session, placement="banana")
+        session_send.place_queued_turn(session=session, placement="banana")
 
 
 def test_send_placement_sessions_incapable_runner_raises_value_error():
@@ -273,7 +275,7 @@ def test_send_placement_sessions_incapable_runner_raises_value_error():
     )
     session = Session.objects.create(workspace=ws, project="canopy-web")
     with pytest.raises(ValueError):
-        chat.send_message(
+        session_send.send_message(
             session=session, text="hi", user=user, client_id="c12",
             placement=str(incapable.id),
         )
@@ -291,11 +293,11 @@ def test_place_queued_turn_foreign_tenant_runner_raises_value_error():
     foreign_runner = _runner("foreign2", owner=outsider)  # not a member of `ws`
 
     session = Session.objects.create(workspace=ws, project="canopy-web")
-    _msg, turn = chat.send_message(session=session, text="hi", user=user, client_id="c9")
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user, client_id="c9")
     original_pin = turn.pinned_runner_id
 
     with pytest.raises(ValueError):
-        chat.place_queued_turn(session=session, placement=str(foreign_runner.id))
+        session_send.place_queued_turn(session=session, placement=str(foreign_runner.id))
 
     turn.refresh_from_db()
     assert turn.pinned_runner_id == original_pin
@@ -311,13 +313,13 @@ def test_place_queued_turn_foreign_tenant_runner_raises_value_error():
 
 def test_send_defaults_to_canopy_web_chat_origin():
     user, _ws, _agent, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user)
     assert turn.origin == Turn.ORIGIN_CANOPY_WEB_CHAT
 
 
 def test_send_carries_an_explicit_origin():
     user, _ws, _agent, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="hi", user=user, origin=Turn.ORIGIN_ACE_WEB)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user, origin=Turn.ORIGIN_ACE_WEB)
     assert turn.origin == Turn.ORIGIN_ACE_WEB
 
 
@@ -330,7 +332,7 @@ def test_transcript_sourced_send_carries_the_origin_too():
     session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
     session.save(update_fields=["metadata"])
     assert chat.transcript_sourced(session)
-    _msg, turn = chat.send_message(session=session, text="hi", user=user, origin=Turn.ORIGIN_ACE_WEB)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user, origin=Turn.ORIGIN_ACE_WEB)
     assert turn.origin == Turn.ORIGIN_ACE_WEB
 
 
@@ -354,13 +356,13 @@ def _ace_web_session(**meta):
 
 def test_a_human_typing_in_an_ace_web_session_is_ace_web_work():
     user, session = _ace_web_session(origin_key="ace-web:dimagi-team")
-    _msg, turn = chat.send_message(session=session, text="testing", user=user)
+    _msg, turn = session_send.send_message(session=session, text="testing", user=user)
     assert turn.origin == Turn.ORIGIN_ACE_WEB
 
 
 def test_a_canopy_session_is_still_chat():
     user, _ws, _agent, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user)
     assert turn.origin == Turn.ORIGIN_CANOPY_WEB_CHAT
 
 
@@ -371,7 +373,7 @@ def test_transcript_sourced_ace_web_session_also_derives_ace_web():
     session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
     session.save(update_fields=["metadata"])
     assert chat.transcript_sourced(session)
-    _msg, turn = chat.send_message(session=session, text="testing", user=user)
+    _msg, turn = session_send.send_message(session=session, text="testing", user=user)
     assert turn.origin == Turn.ORIGIN_ACE_WEB
 
 
@@ -379,7 +381,7 @@ def test_an_explicit_origin_still_wins():
     # The run dispatcher names ace_web outright; derivation must not fight it,
     # and a caller naming something else must not be silently overridden.
     user, session = _ace_web_session()
-    _msg, turn = chat.send_message(session=session, text="x", user=user,
+    _msg, turn = session_send.send_message(session=session, text="x", user=user,
                                    origin=Turn.ORIGIN_EMAIL)
     assert turn.origin == Turn.ORIGIN_EMAIL
 
@@ -388,4 +390,4 @@ def test_unknown_or_missing_source_falls_back_to_chat():
     user, _ws, _agent, session = _ctx()
     for meta in ({}, {"source": "something-else"}, {"source": None}):
         session.metadata = meta
-        assert chat.default_origin(session) == Turn.ORIGIN_CANOPY_WEB_CHAT, meta
+        assert session_send.default_origin(session) == Turn.ORIGIN_CANOPY_WEB_CHAT, meta

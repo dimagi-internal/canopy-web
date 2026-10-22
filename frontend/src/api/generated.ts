@@ -10446,7 +10446,7 @@ export interface paths {
          *     are decided by the transcript record's own flags (`content.record`, captured
          *     by the runner); a row shipped before runners captured them falls back to the
          *     session's own rows (the tool call that carried the prompt, the Skill result
-         *     it follows) and, last, to text shape (`services.InjectedPrompts`).
+         *     it follows) and, last, to text shape (`transcript_read.InjectedPrompts`).
          *
          *     A session with no durable transcript yet (a local runner session before its
          *     backfill) answers from the runner's recent tail, `source: "tail"`, unpaged.

@@ -13,7 +13,7 @@ in the UI.
 The user's call: the prompt must reach the agent EXACTLY as typed — it
 already learns who is asking from canopy's `caller_context` hook (the caller
 envelope), which never touches the prompt, so marking it was redundant
-there. Attribution moved server-side (`services.persist_transcript_rows`
+there. Attribution moved server-side (`transcript_ingest.persist_transcript_rows`
 matches an unmarked user row to the earliest unlinked chat-send Turn with
 the same text, in send order) — see that function's docstring.
 

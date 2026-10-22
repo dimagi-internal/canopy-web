@@ -16,6 +16,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.models import Message, Session
 from apps.harness import services as hsvc
 from apps.harness.models import Runner, Turn
@@ -58,7 +59,7 @@ def session(workspace, user):
 
 
 def _finish(session, user, status=Turn.DONE):
-    _, turn = chat.send_message(session=session, text="go", user=user)
+    _, turn = session_send.send_message(session=session, text="go", user=user)
     # A session id makes this a real attempt: a FAILED turn without one is a
     # non-attempt, which finish_turn requeues instead of failing.
     Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, session_key="task-1")
@@ -98,7 +99,7 @@ def test_the_push_is_sent_once_due_and_lands_on_the_chat(session, user):
 def test_a_new_turn_cancels_the_pending_push(session, user):
     _finish(session, user)
     assert _due(session) is not None
-    chat.send_message(session=session, text="one more thing", user=user)
+    session_send.send_message(session=session, text="one more thing", user=user)
     assert _due(session) is None
 
 

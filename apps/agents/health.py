@@ -18,7 +18,7 @@ from collections.abc import Callable
 from django.db.models import Count
 
 from apps.canopy_sessions import access, staleness
-from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import transcript_read as session_transcript_read
 from apps.canopy_sessions.models import Session
 from apps.events import analytics
 from apps.harness import topology
@@ -116,7 +116,7 @@ def _sessions(agents: list[Agent], viewer) -> dict[int, dict]:
     readable = set(access.readable_sessions(viewer).filter(agent_id__in=ids).values_list("pk", flat=True))
     # One pass, newest first: the first row per agent is its last activity (over
     # every session); the readable ones fill its recent list.
-    rows = chat.with_activity(mine).order_by("-_activity").values(
+    rows = session_transcript_read.with_activity(mine).order_by("-_activity").values(
         "pk", "agent_id", "workspace_id", "title", "_activity")
     for s in rows:
         row = out[s["agent_id"]]

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from .models import RetentionRule
 
 # Chat sessions whose creator stamped a product marker. The same marker
-# `canopy_sessions.services.default_origin` routes on.
+# `canopy_sessions.send.default_origin` routes on.
 _SESSION_SOURCES = {"ace-web": "ace_web", "email": "email", "slack": "slack"}
 # Thread keys the channel front doors write into Session.metadata. Spelled here
 # rather than imported (slack.services pulls in the whole Slack client);

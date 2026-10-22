@@ -32,6 +32,7 @@ from django.core import signing
 from apps.agents.models import Agent
 from apps.canopy_sessions import doors
 from apps.canopy_sessions import services as session_services
+from apps.canopy_sessions import control as session_control
 from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.canopy_sessions.participants import ensure_participant
 from apps.harness import initiator as who
@@ -940,17 +941,17 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
     every dimagi.com address.
 
     This is a deliberately STRICTER variant of the one placement rule
-    (`canopy_sessions.services.may_place`, which `move_queued_turns` still asks):
+    (`canopy_sessions.placement.may_place`, which `move_queued_turns` still asks):
     administering a box implies `may_place`, but an agent admin who does not
     administer the box may move the chat from the web and not from a Slack
     button, whose identity is a weaker principal than a browser session.
     """
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import send as session_send
     from apps.harness import runners
 
     from . import status
 
-    runner = session_services.available_cloud_runner(session, user=user)
+    runner = session_send.available_cloud_runner(session, user=user)
     if runner is None:
         return Outcome(NO_CLOUD, "No cloud runner is online to take this right now.", session=session)
     if not runners.can_administer_runner(user, runner):
@@ -959,7 +960,7 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
             "from the runner's page in canopy."), session=session)
     closed, asked = _requeue_stranded(session, user, via)
     try:
-        moved = session_services.move_queued_turns(
+        moved = session_send.move_queued_turns(
             session=session, placement=str(runner.id), user=user,
             initiator=who.for_user(user, via=via, assurance=""),
         )
@@ -1104,10 +1105,10 @@ def _answer_if_waiting(session: Session, agent: Agent | None, reply: str) -> Out
             f"{who} is waiting on its question above — reply with the option number, "
             "or `cancel`."), session=session, agent=agent)
     if choice == menus.CANCEL:
-        result = session_services.answer_menu(session=session, option=None)
+        result = session_control.answer_menu(session=session, option=None)
         said = "Dismissed the question."
     else:
-        result = session_services.answer_menu(session=session, option=choice[0][0], selections=choice)
+        result = session_control.answer_menu(session=session, option=choice[0][0], selections=choice)
         said = f"Answered: {menus.describe(choice, menu)}"
     if result != "sent":
         return Outcome(ANSWER_UNDELIVERABLE, (
@@ -1166,10 +1167,10 @@ def answer_from_click(installation: SlackInstallation, *, slack_user_id: str, ch
                        session=session, agent=session.agent)
 
     if choice == menus.CANCEL:
-        result = session_services.answer_menu(session=session, option=None)
+        result = session_control.answer_menu(session=session, option=None)
         said = f":heavy_minus_sign: Dismissed by <@{slack_user_id}>"
     else:
-        result = session_services.answer_menu(session=session, option=choice[0][0], selections=choice)
+        result = session_control.answer_menu(session=session, option=choice[0][0], selections=choice)
         said = f":white_check_mark: Answered by <@{slack_user_id}>: {menus.describe(choice, menu)}"
     if result != "sent":
         return Outcome(ANSWER_UNDELIVERABLE, (

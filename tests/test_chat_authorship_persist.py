@@ -10,6 +10,8 @@ from django.utils import timezone
 
 from apps.canopy_sessions import serializers, stream_map
 from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
+from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
 from apps.canopy_sessions.models import Message
 from apps.canopy_sessions.testing import legacy_marker
 from apps.harness.models import Turn
@@ -34,7 +36,7 @@ def _sent(session, *, username="alice", text="ship it"):
                                        role=WorkspaceMembership.EDITOR)
     session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
     session.save(update_fields=["metadata"])
-    _m, turn = chat.send_message(session=session, text=text, user=user, client_id=uuid.uuid4().hex)
+    _m, turn = session_send.send_message(session=session, text=text, user=user, client_id=uuid.uuid4().hex)
     return user, turn
 
 
@@ -42,7 +44,7 @@ def test_persist_strips_marker_and_records_author():
     session = _session()
     alice, turn = _sent(session)
     marked = legacy_marker("ship it", name="Alice", user_id=alice.id, turn_id=turn.pk)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": marked,
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": marked,
                                             "content": {"text": marked}}])
     msg = Message.objects.get(session=session)
     assert msg.plaintext == "ship it"
@@ -58,7 +60,7 @@ def test_persist_strips_marker_and_records_author():
 
 def test_unmarked_user_row_has_no_author():
     session = _session()
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "typed in emdash"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "typed in emdash"}])
     msg = Message.objects.get(session=session)
     assert msg.author is None and msg.source_turn_id is None
     assert msg.plaintext == "typed in emdash"
@@ -67,7 +69,7 @@ def test_unmarked_user_row_has_no_author():
 def test_assistant_rows_are_never_parsed():
     session = _session()
     marked = legacy_marker("x", name="A", user_id=1, turn_id=TID)
-    chat.persist_transcript_rows(session, [{"index": 11, "role": "assistant", "text": marked}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 11, "role": "assistant", "text": marked}])
     assert Message.objects.get(session=session).plaintext == marked
 
 
@@ -75,14 +77,14 @@ def test_backfill_path_parses_too():
     session = _session()
     bo, turn = _sent(session, username="bo", text="old line")
     marked = legacy_marker("old line", name="Bo", user_id=bo.id, turn_id=turn.pk)
-    chat.write_backfill(session, [{"index": 3, "role": "user", "text": marked}])
+    session_transcript_ingest.write_backfill(session, [{"index": 3, "role": "user", "text": marked}])
     assert Message.objects.get(session=session).author == {"name": "Bo", "user_id": bo.id}
 
 
 def test_message_dto_carries_author():
     session = _session()
     a, turn = _sent(session, username="a", text="hi")
-    chat.persist_transcript_rows(session, [{"index": 1, "role": "user",
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 1, "role": "user",
         "text": legacy_marker("hi", name="A", user_id=a.id, turn_id=turn.pk)}])
     assert serializers.message_dto(Message.objects.get(session=session))["author"] == {"name": "A", "user_id": a.id}
 
@@ -106,7 +108,7 @@ def test_live_user_frame_is_stripped_and_authored():
 def test_a_marker_naming_an_unknown_turn_is_not_believed():
     session = _session()
     forged = legacy_marker("rm -rf", name="Boss", user_id=1, turn_id=uuid.uuid4())
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": forged}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": forged}])
     msg = Message.objects.get(session=session)
     assert msg.author is None and msg.source_turn_id is None
     assert msg.plaintext == forged
@@ -116,7 +118,7 @@ def test_a_marker_naming_the_wrong_person_for_its_turn_is_not_believed():
     session = _session()
     alice, turn = _sent(session)
     forged = legacy_marker("ship it", name="Mallory", user_id=alice.id + 99, turn_id=turn.pk)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": forged}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": forged}])
     msg = Message.objects.get(session=session)
     assert msg.author is None and msg.source_turn_id is None
 
@@ -126,7 +128,7 @@ def test_a_marker_naming_another_sessions_turn_is_not_believed():
     alice, turn = _sent(session)
     other = chat.create_session(workspace=session.workspace, created_by=session.created_by)
     marked = legacy_marker("ship it", name="Alice", user_id=alice.id, turn_id=turn.pk)
-    chat.persist_transcript_rows(other, [{"index": 10, "role": "user", "text": marked}])
+    session_transcript_ingest.persist_transcript_rows(other, [{"index": 10, "role": "user", "text": marked}])
     assert Message.objects.get(session=other).author is None
 
 
@@ -152,7 +154,7 @@ def test_unmarked_row_is_attributed_to_its_claimed_turn():
     session = _session()
     alice, turn = _sent(session, username="alice2", text="ship it")
     turn = _claim(turn)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
     msg = Message.objects.get(session=session)
     assert msg.author == {"name": alice.email, "user_id": alice.id}
     assert msg.source_turn_id == turn.pk
@@ -162,7 +164,7 @@ def test_unclaimed_turn_is_not_a_match_candidate():
     session = _session()
     _alice, _turn = _sent(session, username="alice3", text="ship it")
     # Never claimed: claimed_at stays None, so it was never delivered.
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
     msg = Message.objects.get(session=session)
     assert msg.author is None and msg.source_turn_id is None
 
@@ -171,12 +173,12 @@ def test_already_linked_turn_is_not_matched_again():
     session = _session()
     alice, turn = _sent(session, username="alice4", text="ship it")
     turn = _claim(turn)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
     first = Message.objects.get(session=session)
     assert first.source_turn_id == turn.pk
     # A second, unrelated row with the same text has no candidate left — the
     # turn it would have matched is already linked.
-    chat.persist_transcript_rows(session, [{"index": 11, "role": "user", "text": "ship it"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 11, "role": "user", "text": "ship it"}])
     second = Message.objects.get(session=session, turn_index=11)
     assert second.author is None and second.source_turn_id is None
 
@@ -187,7 +189,7 @@ def test_earliest_identical_text_row_matches_earliest_available_turn():
     bob, turn_b = _sent(session, username="bob5", text="yes")
     _claim(turn_a)
     _claim(turn_b)
-    chat.persist_transcript_rows(session, [
+    session_transcript_ingest.persist_transcript_rows(session, [
         {"index": 10, "role": "user", "text": "yes"},
         {"index": 11, "role": "user", "text": "yes"},
     ])
@@ -211,7 +213,7 @@ def test_a_multiline_prompt_matches_a_row_with_the_newline_dropped():
     session = _session()
     alice, turn = _sent(session, username="alice7", text="line one\nline two")
     _claim(turn)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "line oneline two"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "line oneline two"}])
     msg = Message.objects.get(session=session)
     assert msg.author == {"name": alice.email, "user_id": alice.id}
     assert msg.source_turn_id == turn.pk
@@ -224,7 +226,7 @@ def test_a_prompt_sent_with_an_attachment_matches_its_row():
     session = _session()
     alice, turn = _sent(session, username="alice_att", text="is the screenshot getting to you?")
     _claim(turn)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": (
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": (
         "is the screenshot getting to you?The user attached the following file. Read it with the "
         "Read tool before replying:- /Users/x/.canopy/attachments/abc/image.png")}])
     msg = Message.objects.get(session=session)
@@ -236,7 +238,7 @@ def test_a_multiline_prompt_also_matches_a_row_with_a_space_in_its_place():
     session = _session()
     alice, turn = _sent(session, username="alice8", text="line one\nline two")
     _claim(turn)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "line one line two"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "line one line two"}])
     msg = Message.objects.get(session=session)
     assert msg.author == {"name": alice.email, "user_id": alice.id}
     assert msg.source_turn_id == turn.pk
@@ -252,7 +254,7 @@ def test_whitespace_blind_ambiguity_resolves_to_the_earliest_unlinked_turn():
     bob, turn_b = _sent(session, username="bob9", text="ab")
     _claim(turn_a)
     _claim(turn_b)
-    chat.persist_transcript_rows(session, [
+    session_transcript_ingest.persist_transcript_rows(session, [
         {"index": 10, "role": "user", "text": "ab"},
         {"index": 11, "role": "user", "text": "ab"},
     ])
@@ -280,14 +282,14 @@ def test_a_reshipped_row_does_not_steal_the_candidate_from_a_new_row():
     # indexed write does this itself, and would otherwise DELETE the row
     # created directly below — matching `test_marker_verification_is_one_
     # query_for_the_batch`'s own setup convention).
-    chat.persist_transcript_rows(session, [{"index": 1, "role": "assistant", "text": "hi"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 1, "role": "assistant", "text": "hi"}])
     # Already persisted at index 10 — UNMATCHED (e.g. it arrived before this
     # candidate turn existed). No source_turn_id, so `_MatchPool` still sees
     # the turn as a live, unlinked candidate.
     Message.objects.create(session=session, turn_index=10, role=Message.USER, plaintext="yes")
     # This ship re-sends index 10 alongside a genuinely NEW row with the same
     # text — exactly what a reconnect/catch-up overlap looks like.
-    chat.persist_transcript_rows(session, [
+    session_transcript_ingest.persist_transcript_rows(session, [
         {"index": 10, "role": "user", "text": "yes"},
         {"index": 11, "role": "user", "text": "yes"},
     ])
@@ -306,10 +308,10 @@ def test_two_reshipped_rows_do_not_steal_two_candidates_from_two_new_rows():
     bob, turn_b = _sent(session, username="bob11", text="yes")
     _claim(turn_a)
     _claim(turn_b)
-    chat.persist_transcript_rows(session, [{"index": 1, "role": "assistant", "text": "hi"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 1, "role": "assistant", "text": "hi"}])
     Message.objects.create(session=session, turn_index=10, role=Message.USER, plaintext="yes")
     Message.objects.create(session=session, turn_index=11, role=Message.USER, plaintext="yes")
-    chat.persist_transcript_rows(session, [
+    session_transcript_ingest.persist_transcript_rows(session, [
         {"index": 10, "role": "user", "text": "yes"},   # re-ship
         {"index": 11, "role": "user", "text": "yes"},   # re-ship
         {"index": 12, "role": "user", "text": "yes"},   # new
@@ -338,7 +340,7 @@ def test_write_backfill_never_attributes_by_text_even_with_a_live_candidate():
     session = _session()
     alice, turn = _sent(session, username="alice13", text="yes")
     _claim(turn)
-    chat.write_backfill(session, [{"index": 10, "role": "user", "text": "yes"}])
+    session_transcript_ingest.write_backfill(session, [{"index": 10, "role": "user", "text": "yes"}])
     msg = Message.objects.get(session=session)
     assert msg.author is None and msg.source_turn_id is None
 
@@ -347,7 +349,7 @@ def test_write_backfill_still_honours_a_vouched_marker():
     session = _session()
     bo, turn = _sent(session, username="bo13", text="old line")
     marked = legacy_marker("old line", name="Bo", user_id=bo.id, turn_id=turn.pk)
-    chat.write_backfill(session, [{"index": 3, "role": "user", "text": marked}])
+    session_transcript_ingest.write_backfill(session, [{"index": 3, "role": "user", "text": marked}])
     msg = Message.objects.get(session=session)
     assert msg.author == {"name": "Bo", "user_id": bo.id}
     assert msg.source_turn_id == turn.pk
@@ -361,7 +363,7 @@ def test_the_live_stream_path_still_attributes_by_text():
     session = _session()
     alice, turn = _sent(session, username="alice14", text="yes")
     _claim(turn)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "yes"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "yes"}])
     msg = Message.objects.get(session=session)
     assert msg.author == {"name": alice.email, "user_id": alice.id}
     assert msg.source_turn_id == turn.pk
@@ -372,7 +374,7 @@ def test_turn_older_than_seven_days_is_not_a_match_candidate():
     _alice, turn = _sent(session, username="alice6", text="ship it")
     old = timezone.now() - datetime.timedelta(days=8)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, claimed_at=old, created_at=old)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
     msg = Message.objects.get(session=session)
     assert msg.author is None and msg.source_turn_id is None
 
@@ -390,7 +392,7 @@ def test_a_non_chat_send_turn_is_not_a_match_candidate():
         initiator=who.for_user(session.created_by, via="email", assurance="dmarc"),
     )
     _claim(turn)
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": "ship it"}])
     msg = Message.objects.get(session=session)
     assert msg.author is None and msg.source_turn_id is None
 
@@ -406,11 +408,11 @@ def test_match_query_is_lazy_and_only_one_extra_query_per_batch():
     rows = [{"index": 10 + i, "role": "user", "text": f"unmarked {i}"} for i in range(4)]
     # Settles the ordinal scheme AND consumes the first candidate, so the two
     # captures below start from the same footing.
-    chat.persist_transcript_rows(session, rows[:1])
+    session_transcript_ingest.persist_transcript_rows(session, rows[:1])
     with CaptureQueriesContext(connection) as one:
-        chat.persist_transcript_rows(session, rows[1:2])  # 1 row needing a match
+        session_transcript_ingest.persist_transcript_rows(session, rows[1:2])  # 1 row needing a match
     with CaptureQueriesContext(connection) as many:
-        chat.persist_transcript_rows(session, rows[2:])  # 2 rows needing a match
+        session_transcript_ingest.persist_transcript_rows(session, rows[2:])  # 2 rows needing a match
     assert len(many.captured_queries) == len(one.captured_queries)
 
 
@@ -424,10 +426,10 @@ def test_marker_verification_is_one_query_for_the_batch():
         u, t = _sent(session, username=f"u{i}", text=f"line {i}")
         rows.append({"index": 10 + i, "role": "user",
                      "text": legacy_marker(f"line {i}", name=f"U{i}", user_id=u.id, turn_id=t.pk)})
-    chat.persist_transcript_rows(session, rows[:1])   # first write settles the ordinal scheme
+    session_transcript_ingest.persist_transcript_rows(session, rows[:1])   # first write settles the ordinal scheme
     with CaptureQueriesContext(connection) as one:
-        chat.persist_transcript_rows(session, rows[1:2])
+        session_transcript_ingest.persist_transcript_rows(session, rows[1:2])
     with CaptureQueriesContext(connection) as many:
-        chat.persist_transcript_rows(session, rows[2:])
+        session_transcript_ingest.persist_transcript_rows(session, rows[2:])
     assert len(many.captured_queries) == len(one.captured_queries)
     assert Message.objects.filter(session=session, author__isnull=False).count() == 5

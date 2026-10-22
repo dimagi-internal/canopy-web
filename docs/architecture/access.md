@@ -178,7 +178,7 @@ Asked in this order; the first row that matches decides.
 * A **project chat** (no agent, only a repo) has no agent admins, so choosing its
   box — `runner_id` at creation, a placement on send, `/place`, a move — is for a
   **runner admin** of that box only
-  (`canopy_sessions.services.may_place`, the one placement rule). Unplaced, it runs on a box
+  (`canopy_sessions.placement.may_place`, the one placement rule). Unplaced, it runs on a box
   its workspace's runner order shares or one its sender administers
   (`runners.md` → "Project chats"), never on a teammate's box by default.
   It acts as the person who asked (see "Projects run as the person who asked").
