@@ -87,7 +87,7 @@ def test_a_confined_turns_rules_narrow_the_profile_and_never_widen_it(zdr):
 def test_readiness_needs_the_zdr_key(zdr):
     _stage(zdr, {k: v for k, v in BUNDLE.items() if k != "claude_api_key"})
     ok, note = zdr.zdr_readiness()
-    assert not ok and "API-key slot" in note
+    assert not ok and "API keys" in note
     _stage(zdr, BUNDLE)
     assert zdr.zdr_readiness() == (True, "")
 
@@ -116,7 +116,7 @@ def test_a_zdr_box_without_its_key_says_it_is_not_ready(zdr, monkeypatch):
     _stage(zdr, {})
     monkeypatch.setattr(zdr, "health_report", lambda: {})
     body = zdr._heartbeat_body([])
-    assert body["ready"] is False and "API-key slot" in body["ready_note"]
+    assert body["ready"] is False and "API keys" in body["ready_note"]
 
 
 def test_the_hash_moves_when_the_profile_does(zdr, monkeypatch):
@@ -180,3 +180,43 @@ def test_a_zdr_box_sends_no_transcript(zdr, monkeypatch):
     monkeypatch.setattr(zdr, "_api", lambda *a, **k: sent.append(a) or (200, {}))
     assert zdr._post_transcript_batch("t1", "a1", 1, ['{"text": "x"}']) is False
     assert sent == []
+
+
+# ── canopy-web's credential list (`cascade`) ─────────────────────────────────
+LIST = {**BUNDLE, "logins": [{"key": "default"}], "cascade": [
+    {"key": "k1", "kind": "api_key", "value": "sk-ant-1"},
+    {"key": "default", "kind": "login", "value": ""},
+    {"key": "t1", "kind": "token", "value": "tok-1"},
+    {"key": "k2", "kind": "api_key", "value": "sk-ant-2"},
+]}
+
+
+def test_the_list_is_used_in_the_order_a_person_set(ordinary, monkeypatch):
+    monkeypatch.setattr(ordinary, "box_login_ready", lambda *a, **k: True)
+    monkeypatch.setattr(ordinary, "_default_adopted", lambda: True)
+    assert [(c[0], c[1]) for c in ordinary._cascade_from(LIST)] == [
+        ("api-key:k1", "ANTHROPIC_API_KEY"), ("box-login", "CLAUDE_CONFIG_DIR"),
+        ("token:t1", "CLAUDE_CODE_OAUTH_TOKEN"), ("api-key:k2", "ANTHROPIC_API_KEY")]
+
+
+def test_a_login_not_signed_in_on_the_box_is_skipped(ordinary, monkeypatch):
+    monkeypatch.setattr(ordinary, "box_login_ready", lambda *a, **k: False)
+    assert [c[0] for c in ordinary._cascade_from(LIST)] == ["api-key:k1", "token:t1", "api-key:k2"]
+
+
+def test_stepping_onto_an_api_key_anywhere_in_the_list_notifies(ordinary, monkeypatch):
+    sent = []
+    monkeypatch.setattr(ordinary, "box_login_ready", lambda *a, **k: False)
+    monkeypatch.setattr(ordinary, "_notify_api_key_fallback", lambda label, turn: sent.append(label))
+    _stage(ordinary, LIST)
+    ordinary._apply_claude_credential(0)
+    assert ordinary._advance_claude_credential() and sent == []          # onto the token
+    assert ordinary._advance_claude_credential() and sent == ["api-key:k2"]
+
+
+def test_a_zdr_box_uses_every_api_key_in_the_list_and_nothing_else(zdr):
+    assert [c[0] for c in zdr._cascade_from(LIST)] == ["api-key:k1", "api-key:k2"]
+    _stage(zdr, LIST)
+    assert zdr.zdr_readiness() == (True, "")
+    _stage(zdr, {**LIST, "cascade": [e for e in LIST["cascade"] if e["kind"] != "api_key"]})
+    assert zdr.zdr_readiness()[0] is False

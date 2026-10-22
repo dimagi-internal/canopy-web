@@ -600,21 +600,31 @@ call `access_token_for(user)`; no route hands it to a runner.
 Spec: `docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`
 (`tests/test_github_connect.py`).
 
-## A cloud runner's Claude login (setup-token vs. full login)
+## A cloud runner's Claude credentials (one ordered list)
 
-A cloud runner's bundle holds `claude setup-token` tokens (`subscription-1`,
-`subscription-2`) and an API key, tried in that order. A setup-token is
-**inference-only**: the CLI never loads claude.ai connectors (Claude Docs and the
-rest) for it — `[claudeai-mcp] Missing user:mcp_servers scope`. So a turn on one
-cannot read a Claude Doc however the doc is shared.
+A cloud runner holds **one ordered list** of Claude credentials (`RunnerLogin`),
+any number of each kind, in any order a person sets on its credentials page. The
+box uses the first that works and moves down the list when one hits its usage cap
+or stops working. Three kinds:
 
-A full `claude auth login --claudeai` fixes that, and a box holds **a list of
-them** (`RunnerLogin`), tried in order before any backup token. Each is signed in
-through the browser relay (`RunnerMint` with `slot: box` and the login's
-`login_key`; URL out, code back) and **stays on the box** — its refresh token
-rotates, so a copy anywhere else would break both. canopy-web holds only the list:
-which logins, in what order, and what the box last reported about each
-(`signed_in`, `account`).
+- **Login** — a full `claude auth login --claudeai`, signed in through the browser
+  relay (`RunnerMint` with `slot: box` and the entry's `login_key`; URL out, code
+  back). It **stays on the box** — its refresh token rotates, so a copy anywhere
+  else would break both. canopy-web holds only the entry and what the box last
+  reported about it (`signed_in`, `account`). The only kind that carries claude.ai
+  connectors: a setup-token is inference-only (`[claudeai-mcp] Missing
+  user:mcp_servers scope`).
+- **Token** — a `claude setup-token`, made on the box through the same relay
+  (`slot: token`; `login_key` names the token to replace, "" adds one) and stored
+  encrypted in `value_enc`. Good for a year with nothing to renew.
+- **API key** — pasted, stored encrypted in `value_enc`. Billed per use: stepping
+  onto one raises the coalesced `claude_api_key_fallback` alert.
+
+A token or key cannot say whose it is, so a person names it (`name`). The box
+reads the list as `cascade` on `GET …/credential`; the fixed-slot fields beside it
+(`claude_token`, `claude_token_secondary`, `claude_api_key` = the first two tokens
+and the first API key) and `logins` (the login entries) are what a box from before
+the list reads. Migration 0097 moved the old slots onto the list.
 
 - **On the box**, each login has its own config directory: `default` is the CLI's
   own (`~/.claude`, state in `~/.claude.json`); every other login is
@@ -624,31 +634,27 @@ which logins, in what order, and what the box last reported about each
   a login sets `CLAUDE_CONFIG_DIR` (unset for `default`) and clears both auth env
   vars; concurrent turns each keep the directory they started with. A login is
   in the cascade only when its directory holds a login with the
-  `user:mcp_servers` scope; a usage cap falls through to the next login, then the
-  backup tokens.
-- **Add** (`POST …/logins`) appends a row and starts its sign-in; the row reads
-  "not signed in yet" until the box reports otherwise. **Remove**
-  (`DELETE …/logins/{key}`) drops the row; on its next bundle read (≤5 min) the
-  box deletes that login's directory (for `default`, only its `.credentials.json`).
-  **Reorder** (`PUT …/logins/order`) takes every key, first to last.
+  `user:mcp_servers` scope.
+- **Add** a login (`POST …/logins`) appends an entry and starts its sign-in; it
+  reads "not signed in yet" until the box reports otherwise. **Add** a token or
+  key (`POST …/credentials`), **rename or replace** one (`PATCH …/credentials/{key}`).
+  **Remove** any entry (`DELETE …/credentials/{key}`); on its next bundle read
+  (≤5 min) the box drops it, deleting a login's directory (for `default`, only
+  its `.credentials.json`). **Reorder** (`PUT …/credentials/order`) takes every
+  key, first to last.
 - **The box reports** (`POST …/logins/report`) which listed logins are signed in
   and as which account, whenever that changes. A default login the list has never
   held (signed in before the list existed, or by hand) is reported with
   `adopt_default` and joins the list first; `~/.claude-logins/.default-adopted`
   then records that a missing `default` means removed.
 
-**Long-lived tokens keep the box alive.** A full login renews itself, and a renewal
-can fail; a box whose backup tokens have all been removed then stops. So:
-- The page always offers **Create a long-lived token** (`POST …/mint` with `slot:
-  primary|secondary` runs `claude setup-token` on the box; the token lands in that
-  slot). Its buttons say "token", never "Sign in with Claude": offered side by
-  side under the same words, an operator takes a token believing it is the full
-  login.
-- `POST …/credential` refuses (422) a write that would clear the **last** backup
-  token; replace it first. The page disables that Remove.
-- A box with no usable credential at all waits in `fetch_and_stage_credential`,
-  heartbeating as online but not ready with a note that says to sign in, and
-  serves the browser sign-in from there — it does not read "stale".
+**A token or key keeps the box alive.** A login renews itself, and a renewal can
+fail; a box with nothing else then stops (cloud-ec2-2, 2026-10-15). So removing
+the **last** token or API key is refused (422; `LAST_FALLBACK_REFUSAL`): add
+another first. A box with no usable credential at all waits in
+`fetch_and_stage_credential`, heartbeating as online but not ready with a note
+that says to sign in, and serves the browser sign-in from there — it does not
+read "stale".
 
 The runner reports a `claude.login` health check (ok = signed in on the box as
 the first login's account, warn = backup tokens only). Tests:
@@ -658,7 +664,7 @@ the first login's account, warn = backup tokens only). Tests:
 **Full logins never copy.** `wire.sh` copies a source box's long-lived tokens and
 API key (by name, printed), never its full logins, and prints each one it left
 behind with the new box's credentials link. A cloud box with no signed-in full
-login says so on its page: logins don't copy between runners, add one here.
+login says so on its page.
 
 ### The credential probe: "ready" means a credential answered
 
@@ -682,12 +688,13 @@ or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
   Background requests queue on one prober thread. Each check's detail ends
   `· probed <ISO>`. Never on a plain heartbeat — probes spend usage. A turn's own outcome
   updates the same state for free (a turn that ran marks its credential `ok`; a
-  classified cap or dead marks it so). A promoted subscription carries its probe.
-- **Health:** one check per credential, `claude.probe.<label>` (`subscription-1`,
-  `subscription-2`, `api-key`, `box-login`, `box-login:<key>`): ok / warn "at its
+  classified cap or dead marks it so).
+- **Health:** one check per credential, `claude.probe.<label>` (`box-login`,
+  `box-login:<key>`, `token:<key>`, `api-key:<key>`; from an older bundle
+  `subscription-1`, `subscription-2`, `api-key`): ok / warn "at its
   usage cap — resets <ISO>" / fail "not signed in — someone has to sign it in
   again" / warn "could not check: …". The runner page colours each token and login
-  dot by it (`RunnerCredentials.tsx` `PROBE_LABEL` / `loginProbeLabel`, pinned to
+  dot by it (`RunnerCredentials.tsx` `probeLabel`, pinned to
   the box's labels by `tests/test_probe_labels_match.py`); with no check the dot
   says only that a value is set.
 - **Readiness:** the heartbeat sends `ready=False` with a note naming each

@@ -1,15 +1,18 @@
 """Runner administration — everything about a box that is not routing or work.
 
-Its declared flags (`RunnerFlag`, e.g. ZDR), its Claude login
-(`RunnerCredential`: set, read, swap primary and secondary), refresh requests,
+Its declared flags (`RunnerFlag`, e.g. ZDR), its Claude credentials (one
+ordered list of `RunnerLogin` rows: logins, tokens and API keys), refresh requests,
 its admins (`RunnerAdmin`), and the browser-driven re-authentication
 (`RunnerMint`). Split out of `services.py`; import these names from here.
 """
 from __future__ import annotations
 
+import secrets
+
 from django.db import transaction
 from django.utils import timezone
 
+from apps.common.encryption import decrypt_secret, encrypt_secret
 from apps.workspaces.models import MAX_DEPTH
 
 from .models import (
@@ -35,12 +38,149 @@ def set_runner_flags(runner: Runner, flags: set[str], *, by) -> tuple[set, set]:
     return added, removed
 
 
+# ---- The runner's Claude credentials: one ordered list (RunnerLogin) --------
+class LoginOrderRefused(ValueError):
+    """An order that is not exactly the runner's current credentials, rearranged."""
+
+
+class CredentialRefused(ValueError):
+    """A credential change the list may not take (see the message)."""
+
+
+LAST_FALLBACK_REFUSAL = (
+    "That is this runner's last token or API key. Keep at least one: a full login "
+    "renews itself, and when its renewal fails a runner with nothing else stops "
+    "(cloud-ec2-2, 2026-10-15). Add another first, then remove this one.")
+#: The name the old one-slot-each refusal went by.
+LAST_BACKUP_TOKEN_REFUSAL = LAST_FALLBACK_REFUSAL
+
+#: The kinds that hold a value here (a login's lives on the box).
+VALUE_KINDS = (RunnerLogin.TOKEN, RunnerLogin.API_KEY)
+
+
+def _entries(runner, kind: str | None = None):
+    qs = RunnerLogin.objects.filter(runner=runner).order_by("position", "created_at")
+    return qs.filter(kind=kind) if kind else qs
+
+
+def _touch(runner, by=None) -> None:
+    """Move the bundle's stamp: a box that sees it move proves its credentials again."""
+    cred, _ = RunnerCredential.objects.get_or_create(runner=runner)
+    if by is not None:
+        cred.updated_by = by
+    cred.save()
+
+
+def _renumber(runner) -> None:
+    for i, entry in enumerate(_entries(runner)):
+        if entry.position != i:
+            entry.position = i
+            entry.save(update_fields=["position"])
+
+
+def _would_leave_no_fallback(runner, removing: set[str]) -> bool:
+    """True when removing these entries takes away the runner's last token or API key."""
+    held = set(_entries(runner).filter(kind__in=VALUE_KINDS).exclude(value_enc="")
+               .values_list("key", flat=True))
+    return bool(held) and not (held - removing)
+
+
+def add_runner_credential(runner, *, kind: str, value: str, name: str = "", by=None):
+    """A token or API key, last in the list."""
+
+    if kind not in VALUE_KINDS:
+        raise CredentialRefused(f"a {kind} is not pasted in: sign it in instead")
+    value = (value or "").strip()
+    if not value:
+        raise CredentialRefused("paste the value")
+    with transaction.atomic():
+        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+        last = _entries(runner).order_by("-position").first()
+        entry = RunnerLogin.objects.create(
+            runner=runner, key=secrets.token_hex(4), kind=kind, created_by=by,
+            value_enc=encrypt_secret(value), name=(name or "").strip()[:200],
+            position=(last.position + 1) if last else 0)
+        _touch(runner, by)
+    return entry
+
+
+def update_runner_credential(runner, key: str, *, value: str | None = None,
+                             name: str | None = None, by=None) -> bool:
+    """A new value and/or name for one token or API key. False when there is no such entry."""
+
+    entry = _entries(runner).filter(key=key, kind__in=VALUE_KINDS).first()
+    if entry is None:
+        return False
+    if value is not None and value.strip():
+        entry.value_enc = encrypt_secret(value.strip())
+    if name is not None:
+        entry.name = name.strip()[:200]
+    entry.save()
+    _touch(runner, by)
+    return True
+
+
+def remove_runner_credential(runner, key: str, *, by=None) -> bool:
+    """Drop one entry, of any kind. A login is signed out on the box, a token or
+    key forgotten, the next time the box re-reads its credentials — within a few
+    minutes. Refused when it is the last token or API key."""
+    with transaction.atomic():
+        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+        if not _entries(runner).filter(key=key).exists():
+            return False
+        if _would_leave_no_fallback(runner, {key}):
+            raise CredentialRefused(LAST_FALLBACK_REFUSAL)
+        _entries(runner).filter(key=key).delete()
+        _renumber(runner)
+        _touch(runner, by)
+    return True
+
+
+def order_runner_credentials(runner, keys: list[str], *, by=None) -> None:
+    """Make the order exactly `keys` — every entry on the runner, once each.
+
+    Refused rather than partially applied: an order that names an entry twice or
+    leaves one out is a stale page, and guessing where the rest go would put a
+    credential somewhere nobody chose.
+    """
+    with transaction.atomic():
+        entries = {e.key: e for e in _entries(runner).select_for_update()}
+        if sorted(keys) != sorted(entries):
+            raise LoginOrderRefused(
+                "the order must name every credential on this runner exactly once — "
+                "reload the page and try again")
+        for i, key in enumerate(keys):
+            if entries[key].position != i:
+                entries[key].position = i
+                entries[key].save(update_fields=["position"])
+        _touch(runner, by)
+
+
+def _nth_token(runner, n: int):
+    tokens = list(_entries(runner, RunnerLogin.TOKEN))
+    return tokens[n] if n < len(tokens) else None
+
+
+def _set_slot(runner, entry, kind: str, value: str | None, name: str | None, by) -> None:
+    """One old fixed slot, written onto the list: a value replaces the entry's
+    (or adds one at the end), "" removes it, a name renames it."""
+    if entry is None:
+        if value:
+            add_runner_credential(runner, kind=kind, value=value, name=name or "", by=by)
+        return
+    if value == "":
+        entry.delete()
+        _renumber(runner)
+        return
+    update_runner_credential(runner, entry.key, value=value, name=name, by=by)
+
+
 def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=None,
                           claude_api_key=None, claude_token_label=None,
                           claude_token_secondary_label=None, updated_by=None):
-    """Upsert a runner's credential bundle. None fields are left unchanged."""
-    from apps.common.encryption import encrypt_secret
-
+    """The old fixed-slot write, onto the list — what `wire.sh` and older callers
+    send. `claude_token`/`claude_token_secondary` are the first and second
+    tokens, `claude_api_key` the first API key. None leaves a slot unchanged."""
     # An all-None call is a READ dressed as a write (the shape the CLI used before
     # there was a status endpoint). Don't create a row and don't touch
     # updated_at/updated_by for it — that timestamp is the audit trail for when a
@@ -48,172 +188,128 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
     if all(v is None for v in (claude_token, claude_token_secondary, claude_api_key,
                                claude_token_label, claude_token_secondary_label)):
         return getattr(runner, "credential", None)
-    cred, _ = RunnerCredential.objects.get_or_create(runner=runner)
-    if claude_token is not None:
-        cred.claude_token_enc = encrypt_secret(claude_token)
-    if claude_token_secondary is not None:
-        cred.claude_token_secondary_enc = encrypt_secret(claude_token_secondary)
-    if claude_api_key is not None:
-        cred.claude_api_key_enc = encrypt_secret(claude_api_key)
-    if claude_token_label is not None:
-        cred.claude_token_label = claude_token_label.strip()[:200]
-    if claude_token_secondary_label is not None:
-        cred.claude_token_secondary_label = claude_token_secondary_label.strip()[:200]
-    if updated_by is not None:
-        cred.updated_by = updated_by
-    cred.save()
-    return cred
-
-
-LAST_BACKUP_TOKEN_REFUSAL = (
-    "That is this runner's last long-lived token. Keep at least one: it is what "
-    "runs turns when every full Claude login stops renewing (cloud-ec2-2 went dark "
-    "on 2026-10-15 with none). Create another first, then remove this one.")
+    with transaction.atomic():
+        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+        first, second = _nth_token(runner, 0), _nth_token(runner, 1)
+        api_key = _entries(runner, RunnerLogin.API_KEY).first()
+        _set_slot(runner, first, RunnerLogin.TOKEN, claude_token, claude_token_label, updated_by)
+        _set_slot(runner, second, RunnerLogin.TOKEN, claude_token_secondary,
+                  claude_token_secondary_label, updated_by)
+        _set_slot(runner, api_key, RunnerLogin.API_KEY, claude_api_key, None, updated_by)
+        _touch(runner, updated_by)
+    return runner.credential
 
 
 def would_remove_last_backup_token(runner, *, claude_token=None,
                                    claude_token_secondary=None) -> bool:
-    """True when this write would clear the box's only backup token(s).
+    """True when this old fixed-slot write would clear the box's last token or API key."""
+    removing = set()
+    for n, value in ((0, claude_token), (1, claude_token_secondary)):
+        entry = _nth_token(runner, n) if value == "" else None
+        if entry is not None:
+            removing.add(entry.key)
+    return bool(removing) and _would_leave_no_fallback(runner, removing)
 
-    A backup token (setup-token) is the one credential that never needs
-    renewing. The full sign-in renews itself, and when its renewal fails a box
-    with no backup token stops entirely — so the page may replace a backup
-    token but not take the last one away. A write that clears nothing is fine.
-    """
-    if "" not in (claude_token, claude_token_secondary):
-        return False
-    # Queried, not `runner.credential`: that accessor caches on the instance,
-    # and the write that follows would then report the stale row back.
-    cred = RunnerCredential.objects.filter(runner=runner).first()
-    if cred is None:
-        return False
-    after = {
-        "primary": bool(cred.claude_token_enc) if claude_token is None else bool(claude_token),
-        "secondary": (bool(cred.claude_token_secondary_enc) if claude_token_secondary is None
-                      else bool(claude_token_secondary)),
+
+def _first_values(runner) -> dict:
+    """The old fixed slots, read off the list (encrypted): the first two tokens
+    and the first API key."""
+    tokens = list(_entries(runner, RunnerLogin.TOKEN))
+    api_key = _entries(runner, RunnerLogin.API_KEY).first()
+    return {
+        "claude_token": tokens[0] if tokens else None,
+        "claude_token_secondary": tokens[1] if len(tokens) > 1 else None,
+        "claude_api_key": api_key,
     }
-    had_one = bool(cred.claude_token_enc or cred.claude_token_secondary_enc)
-    return had_one and not any(after.values())
 
 
 def get_runner_credential(runner) -> dict:
-    """Decrypt a runner's bundle for the runner to consume. Empty when unset."""
-    from apps.common.encryption import decrypt_secret
+    """Decrypt a runner's credentials for the runner to consume. Empty when unset.
 
-    logins = [{"key": login.key, "account": login.account}
-              for login in runner.logins.all()]
+    `cascade` is the whole list in order. The fixed-slot fields and `logins` are
+    what a box from before the list reads: it tries its logins, then the first
+    two tokens, then the first API key."""
+
+    entries = list(_entries(runner))
+    slots = _first_values(runner)
     cred = getattr(runner, "credential", None)
-    if cred is None:
-        return {"claude_token": "", "claude_token_secondary": "", "claude_api_key": "",
-                "logins": logins, "updated_at": None}
     return {
-        "claude_token": decrypt_secret(cred.claude_token_enc),
-        "claude_token_secondary": decrypt_secret(cred.claude_token_secondary_enc),
-        "claude_api_key": decrypt_secret(cred.claude_api_key_enc),
-        "logins": logins,
-        "updated_at": cred.updated_at,
+        **{k: decrypt_secret(e.value_enc) if e is not None else "" for k, e in slots.items()},
+        "logins": [{"key": e.key, "account": e.account}
+                   for e in entries if e.kind == RunnerLogin.LOGIN],
+        "cascade": [{"key": e.key, "kind": e.kind,
+                     "value": decrypt_secret(e.value_enc) if e.kind in VALUE_KINDS else ""}
+                    for e in entries],
+        "updated_at": cred.updated_at if cred is not None else None,
     }
 
 
 def runner_credential_status(runner) -> dict:
-    """Masked view — which tokens are set, never their values. Labels are names,
+    """Masked view — which credentials are held, never their values. Names are
     not secrets, so they ride along."""
-    logins = [{"key": login.key, "account": login.account, "signed_in": login.signed_in,
-               "reported_at": login.reported_at} for login in runner.logins.all()]
+    entries = list(_entries(runner))
+    slots = _first_values(runner)
     cred = getattr(runner, "credential", None)
-    if cred is None:
-        return {"has_claude_token": False, "has_claude_token_secondary": False,
-                "has_claude_api_key": False, "claude_token_label": "",
-                "claude_token_secondary_label": "", "logins": logins, "updated_at": None}
     return {
-        "logins": logins,
-        "has_claude_token": bool(cred.claude_token_enc),
-        "has_claude_token_secondary": bool(cred.claude_token_secondary_enc),
-        "has_claude_api_key": bool(cred.claude_api_key_enc),
-        "claude_token_label": cred.claude_token_label,
-        "claude_token_secondary_label": cred.claude_token_secondary_label,
-        "updated_at": cred.updated_at,
+        "credentials": [{"key": e.key, "kind": e.kind, "name": e.name, "account": e.account,
+                         "signed_in": e.signed_in, "has_value": bool(e.value_enc),
+                         "reported_at": e.reported_at} for e in entries],
+        "logins": [{"key": e.key, "account": e.account, "signed_in": e.signed_in,
+                    "reported_at": e.reported_at} for e in entries if e.kind == RunnerLogin.LOGIN],
+        "has_claude_token": slots["claude_token"] is not None,
+        "has_claude_token_secondary": slots["claude_token_secondary"] is not None,
+        "has_claude_api_key": slots["claude_api_key"] is not None,
+        "claude_token_label": slots["claude_token"].name if slots["claude_token"] else "",
+        "claude_token_secondary_label": (slots["claude_token_secondary"].name
+                                         if slots["claude_token_secondary"] else ""),
+        "updated_at": cred.updated_at if cred is not None else None,
     }
 
 
 def swap_runner_logins(runner, *, updated_by=None):
-    """Make the fallback the primary and vice versa — token AND name together.
+    """Swap the first two tokens' places in the list.
 
-    The runner falls through the cascade in slot order, so which login is
-    "primary" is a real choice (whose weekly cap gets spent first), and it used to
-    be changeable only by pasting both tokens back in the other way round. Moving
-    ciphertext is enough: both columns are encrypted with the same key, so no
-    secret is decrypted to do this.
-    """
+    What a box from before the list asks for when its second token ran a turn
+    its first could not (`_promote_working_subscription`)."""
     with transaction.atomic():
-        cred = RunnerCredential.objects.select_for_update().filter(runner=runner).first()
-        if cred is None:
-            return None
-        cred.claude_token_enc, cred.claude_token_secondary_enc = (
-            cred.claude_token_secondary_enc, cred.claude_token_enc)
-        cred.claude_token_label, cred.claude_token_secondary_label = (
-            cred.claude_token_secondary_label, cred.claude_token_label)
-        if updated_by is not None:
-            cred.updated_by = updated_by
-        cred.save()
-    return cred
-# ---- Full Claude logins on the box (RunnerLogin) ---------------------------
-class LoginOrderRefused(ValueError):
-    """An order that is not exactly the runner's current logins, rearranged."""
-
-
-def _renumber(runner) -> None:
-    for i, login in enumerate(runner.logins.all()):
-        if login.position != i:
-            login.position = i
-            login.save(update_fields=["position"])
+        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+        first, second = _nth_token(runner, 0), _nth_token(runner, 1)
+        if first is None or second is None:
+            return getattr(runner, "credential", None)
+        first.position, second.position = second.position, first.position
+        first.save(update_fields=["position"])
+        second.save(update_fields=["position"])
+        _touch(runner, updated_by)
+    return runner.credential
 
 
 def add_runner_login(runner, *, by=None):
-    """Add a login at the END of the cascade and start signing it in.
+    """Add a login at the END of the list and start signing it in.
 
     The row exists from the start rather than on success: a sign-in that is
     abandoned leaves a row saying "not signed in", with Sign in and Remove next
     to it, instead of a login that silently never appeared.
     """
-    import secrets
 
     with transaction.atomic():
         Runner.objects.select_for_update().filter(pk=runner.pk).first()
-        last = runner.logins.order_by("-position").first()
+        last = _entries(runner).order_by("-position").first()
         login = RunnerLogin.objects.create(
-            runner=runner, key=secrets.token_hex(4), created_by=by,
+            runner=runner, key=secrets.token_hex(4), created_by=by, kind=RunnerLogin.LOGIN,
             position=(last.position + 1) if last else 0)
+        _touch(runner, by)
     start_runner_mint(runner, requested_by=by, slot="box", login_key=login.key)
     return login
 
 
 def remove_runner_login(runner, key: str) -> bool:
-    """Drop a login from the list. The box signs it out (deletes its directory)
-    the next time it re-reads its bundle — within a few minutes."""
-    with transaction.atomic():
-        deleted, _ = runner.logins.filter(key=key).delete()
-        _renumber(runner)
-    return bool(deleted)
+    """The old name for removing an entry."""
+    return remove_runner_credential(runner, key)
 
 
 def order_runner_logins(runner, keys: list[str]) -> None:
-    """Make the cascade order exactly `keys` — every current login, once each.
-
-    Refused rather than partially applied: an order that names a login twice or
-    leaves one out is a stale page, and guessing where the rest go would put a
-    login somewhere nobody chose.
-    """
-    with transaction.atomic():
-        logins = {login.key: login for login in runner.logins.select_for_update()}
-        if sorted(keys) != sorted(logins):
-            raise LoginOrderRefused(
-                "the order must name every login on this runner exactly once — "
-                "reload the page and try again")
-        for i, key in enumerate(keys):
-            if logins[key].position != i:
-                logins[key].position = i
-                logins[key].save(update_fields=["position"])
+    """The old name for ordering the list."""
+    order_runner_credentials(runner, keys)
 
 
 def report_runner_logins(runner, reports: list[dict], *, adopt_default: bool = False) -> None:
@@ -230,9 +326,10 @@ def report_runner_logins(runner, reports: list[dict], *, adopt_default: bool = F
             for login in runner.logins.all():
                 login.position += 1
                 login.save(update_fields=["position"])
-            RunnerLogin.objects.create(runner=runner, key=RunnerLogin.DEFAULT, position=0)
+            RunnerLogin.objects.create(runner=runner, key=RunnerLogin.DEFAULT, position=0,
+                                       kind=RunnerLogin.LOGIN)
         for r in reports:
-            runner.logins.filter(key=r.get("key", "")).update(
+            runner.logins.filter(kind=RunnerLogin.LOGIN, key=r.get("key", "")).update(
                 signed_in=bool(r.get("signed_in")),
                 account=(r.get("account") or "")[:254], reported_at=now)
 
@@ -618,9 +715,7 @@ def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bo
         mint.save(update_fields=["status", "detail", "code", "updated_at"])
         return mint
     if token:
-        key = ("claude_token_secondary" if mint.slot == RunnerMint.SECONDARY
-               else "claude_token")
-        set_runner_credential(mint.runner, **{key: token}, updated_by=mint.requested_by)
+        _store_minted_token(mint, token)
         mint.status = RunnerMint.DONE
         mint.detail = detail or "signed in"
     else:
@@ -631,13 +726,27 @@ def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bo
     return mint
 
 
+def _store_minted_token(mint, token: str) -> None:
+    """A setup-token the box minted: a new value for the token the sign-in was
+    for, else a new token at the end of the list. `primary`/`secondary` are the
+    old fixed slots — the first and second token."""
+    runner, by = mint.runner, mint.requested_by
+    if mint.slot == RunnerMint.TOKEN:
+        if not (mint.login_key and update_runner_credential(runner, mint.login_key, value=token,
+                                                            by=by)):
+            add_runner_credential(runner, kind=RunnerLogin.TOKEN, value=token, by=by)
+        return
+    key = "claude_token_secondary" if mint.slot == RunnerMint.SECONDARY else "claude_token"
+    set_runner_credential(runner, **{key: token}, updated_by=by)
+
+
 def _record_signed_in(runner, login_key: str, account: str) -> None:
     """A box sign-in finished: mark its login signed in, as the account the box
     read back. A mint with no login (an older runner, or one started before
     there was a list) signed in the box's default login — which joins the list
     first, where it always sat in the cascade."""
     key = login_key or RunnerLogin.DEFAULT
-    if not runner.logins.filter(key=key).exists():
+    if not runner.logins.filter(kind=RunnerLogin.LOGIN, key=key).exists():
         if key != RunnerLogin.DEFAULT:
             return  # removed while the sign-in was in flight; the box drops it
         report_runner_logins(runner, [], adopt_default=True)

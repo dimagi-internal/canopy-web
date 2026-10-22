@@ -7709,17 +7709,81 @@ export interface paths {
         readonly put?: never;
         /**
          * Set a cloud runner's credential bundle (owner only)
-         * @description Store the per-runner secrets a cloud runner fetches at startup — its Claude
-         *     login (plus the secondary subscription and API key it fails over to).
-         *     Owner-gated exactly
-         *     like heartbeat/claim (owner == caller). Non-clobbering per field. Encrypted
-         *     at rest; the response is masked (booleans, never values).
+         * @description The old fixed-slot write (`wire.sh`, older callers): `claude_token` and
+         *     `claude_token_secondary` are the first and second tokens in the runner's
+         *     credential list, `claude_api_key` its first API key. Non-clobbering per field;
+         *     "" removes that entry. Encrypted at rest; the response is masked.
          */
         readonly post: operations["set_runner_credential"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/credentials": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add a token or API key at the end of a runner's credentials
+         * @description Pasted, encrypted at rest, never shown again. The runner picks it up the
+         *     next time it re-reads its credentials.
+         */
+        readonly post: operations["add_runner_credential"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/credentials/order": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set the order a runner tries its Claude credentials in
+         * @description `keys` is every credential on the runner, first to last. The runner uses
+         *     the first that works.
+         */
+        readonly put: operations["order_runner_credentials"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/credentials/{key}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a credential from a runner
+         * @description A login is signed out on the box, a token or key forgotten, the next time
+         *     the runner re-reads its credentials — within a few minutes. Refused for the
+         *     runner's last token or API key.
+         */
+        readonly delete: operations["remove_runner_credential"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Rename a token or API key, or give it a new value */
+        readonly patch: operations["update_runner_credential"];
         readonly trace?: never;
     };
     readonly "/api/harness/runners/{runner_id}/credential/swap": {
@@ -7732,10 +7796,9 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Swap the primary and fallback Claude logins
-         * @description The fallback becomes the primary and the primary the fallback — each
-         *     login keeps its name. The runner reads the new order the next time it
-         *     re-reads its bundle.
+         * Swap the runner's first two tokens
+         * @description What a runner from before the credential list asks for when its second
+         *     token ran a turn its first could not.
          */
         readonly post: operations["swap_runner_logins"];
         readonly delete?: never;
@@ -7776,8 +7839,7 @@ export interface paths {
         readonly get?: never;
         /**
          * Set the order a runner tries its Claude logins in
-         * @description `keys` is every login on the runner, first to last. When the first hits
-         *     its usage cap the runner moves to the next.
+         * @description The old name for `PUT /credentials/order`: every credential, first to last.
          */
         readonly put: operations["order_runner_logins"];
         readonly post?: never;
@@ -7977,12 +8039,10 @@ export interface paths {
          *     - `box` (the default): a full `claude auth login` the runner keeps for
          *       itself — the only kind that carries claude.ai connectors. It renews
          *       itself, so it can also stop renewing (cloud-ec2-2, 2026-10-15).
-         *     - `primary`/`secondary`: a `claude setup-token` into a backup-token slot.
-         *       Inference only, but good for a year with nothing to renew — what keeps the
-         *       box running when the full login fails. Retired on 2026-10-14 because the
-         *       page offered it beside the full login under the same words; it is back
-         *       under its own ("Create a long-lived token"), since without it a box whose only
-         *       backup was removed had no way to get one but a terminal.
+         *     - `token`: a `claude setup-token` for the credential list — a new token at
+         *       the end, or (`login_key`) a new value for that token. Inference only, but
+         *       good for a year with nothing to renew. `primary`/`secondary` are the old
+         *       fixed slots: the first and second token.
          */
         readonly post: operations["start_runner_mint"];
         readonly delete?: never;
@@ -26626,10 +26686,50 @@ export interface components {
             readonly workspace: string;
         };
         /**
+         * RunnerCredentialEntryOut
+         * @description One credential in the list, masked.
+         */
+        readonly RunnerCredentialEntryOut: {
+            /** Key */
+            readonly key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "login" | "token" | "api_key";
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
+            /**
+             * Signed In
+             * @default false
+             */
+            readonly signed_in: boolean;
+            /**
+             * Has Value
+             * @default false
+             */
+            readonly has_value: boolean;
+            /** Reported At */
+            readonly reported_at?: string | null;
+        };
+        /**
          * RunnerCredentialStatusOut
          * @description Masked view — booleans, never values. The POST response + any UI.
          */
         readonly RunnerCredentialStatusOut: {
+            /**
+             * Credentials
+             * @default []
+             */
+            readonly credentials: readonly components["schemas"]["RunnerCredentialEntryOut"][];
             /**
              * Has Claude Token
              * @default false
@@ -26701,6 +26801,25 @@ export interface components {
             readonly claude_token_secondary_label?: string | null;
         };
         /**
+         * RunnerCascadeItem
+         * @description One credential the box uses, in order. `value` is set for a token or API
+         *     key; a login's lives on the box.
+         */
+        readonly RunnerCascadeItem: {
+            /** Key */
+            readonly key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "login" | "token" | "api_key";
+            /**
+             * Value
+             * @default
+             */
+            readonly value: string;
+        };
+        /**
          * RunnerCredentialOut
          * @description The runner's own fetch — actual token values (HTTPS + PAT-authed, owner-gated).
          */
@@ -26725,6 +26844,11 @@ export interface components {
              * @default []
              */
             readonly logins: readonly components["schemas"]["RunnerLoginRef"][];
+            /**
+             * Cascade
+             * @default []
+             */
+            readonly cascade: readonly components["schemas"]["RunnerCascadeItem"][];
             /** Updated At */
             readonly updated_at?: string | null;
         };
@@ -26741,10 +26865,38 @@ export interface components {
              */
             readonly account: string;
         };
+        /**
+         * RunnerCredentialAddIn
+         * @description A token or API key, pasted, added at the end of the list.
+         */
+        readonly RunnerCredentialAddIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "token" | "api_key";
+            /** Value */
+            readonly value: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+        };
         /** RunnerLoginOrderIn */
         readonly RunnerLoginOrderIn: {
             /** Keys */
             readonly keys: readonly string[];
+        };
+        /**
+         * RunnerCredentialPatchIn
+         * @description A new value and/or name for one token or API key. None leaves it unchanged.
+         */
+        readonly RunnerCredentialPatchIn: {
+            /** Value */
+            readonly value?: string | null;
+            /** Name */
+            readonly name?: string | null;
         };
         /** RunnerLoginReportIn */
         readonly RunnerLoginReportIn: {
@@ -26856,7 +27008,7 @@ export interface components {
              * @default primary
              * @enum {string}
              */
-            readonly slot: "primary" | "secondary" | "box";
+            readonly slot: "primary" | "secondary" | "box" | "token";
             /**
              * Login Key
              * @default
@@ -26884,7 +27036,7 @@ export interface components {
              * @default box
              * @enum {string}
              */
-            readonly slot: "primary" | "secondary" | "box";
+            readonly slot: "primary" | "secondary" | "box" | "token";
             /**
              * Login Key
              * @default
@@ -42531,6 +42683,108 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["RunnerCredentialIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly add_runner_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerCredentialAddIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly order_runner_credentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerLoginOrderIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly remove_runner_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly update_runner_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerCredentialPatchIn"];
             };
         };
         readonly responses: {

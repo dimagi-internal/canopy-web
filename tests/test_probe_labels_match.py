@@ -1,6 +1,6 @@
 """The runner page reads each credential's probe by the label the BOX probes it
-under. Two sources — `cloud_runner._BUNDLE_SLOTS` / `_login_label` on the box,
-`PROBE_LABEL` / `loginProbeLabel` in RunnerCredentials.tsx — so they are pinned
+under. Two sources — `cloud_runner._cascade_from_list` / `_login_label` on the
+box, `probeLabel` in RunnerCredentials.tsx — so they are pinned
 equal here: a label that drifts on one side leaves its dot reading "set" for a
 credential the box has proven dead.
 """
@@ -23,18 +23,16 @@ def _cloud_runner():
     return module
 
 
-def test_slot_labels_match_the_box():
+def test_list_labels_match_the_box():
+    """`probeLabel` on the page, `_cascade_from_list` on the box."""
     src = TSX.read_text()
-    block = re.search(r"export const PROBE_LABEL[^=]*=\s*\{(.*?)\}", src, re.S).group(1)
-    page = dict(re.findall(r"(\w+):\s*'([^']+)'", block))
-    box = {slot: label for label, _var, slot in _cloud_runner()._BUNDLE_SLOTS}
-    assert page == box
-
-
-def test_login_labels_match_the_box():
-    src = TSX.read_text()
-    fn = re.search(r"export function loginProbeLabel.*?\n\}", src, re.S).group(0)
+    fn = re.search(r"export function probeLabel.*?\n\}", src, re.S).group(0)
     cr = _cloud_runner()
     assert f"'{cr._login_label('default')}'" in fn
     assert cr._login_label("a44d94c3") == f"{cr.BOX_LOGIN_LABEL}:a44d94c3"
-    assert f"`{cr.BOX_LOGIN_LABEL}:${{key}}`" in fn
+    assert f"`{cr.BOX_LOGIN_LABEL}:${{e.key}}`" in fn
+    assert cr._LIST_KINDS["token"][0] == "token" and "'token'" in fn
+    assert cr._LIST_KINDS["api_key"][0] == "api-key" and "'api-key'" in fn
+    staged = cr._cascade_from({"cascade": [{"key": "t1", "kind": "token", "value": "x"},
+                                           {"key": "k1", "kind": "api_key", "value": "y"}]})
+    assert [c[0] for c in staged] == ["token:t1", "api-key:k1"]

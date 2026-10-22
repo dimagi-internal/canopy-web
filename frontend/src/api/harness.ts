@@ -104,26 +104,12 @@ export type UnclaimableTurn = components['schemas']['UnclaimableTurnOut']
 /** Queued turns no online runner can claim — a silent stall unless surfaced. */
 export type CredentialStatus = components['schemas']['RunnerCredentialStatusOut']
 
-/** Which credential slots are set — booleans and a timestamp, never values. */
+/** The runner's credentials, masked — kinds, names and whether each is set, never values. */
 export async function getRunnerCredentialStatus(runnerId: string): Promise<CredentialStatus> {
   const res = await apiV2.GET('/api/harness/runners/{runner_id}/credential/status', {
     params: { path: { runner_id: runnerId } },
   })
   return unwrap(res, 'getRunnerCredentialStatus') as unknown as CredentialStatus
-}
-
-/** Set one or more slots. Omitted fields are UNCHANGED (the write schema is
- *  non-clobbering), so callers must send only what was actually entered —
- *  sending "" would wipe a working credential. Returns the masked status. */
-export async function setRunnerCredential(
-  runnerId: string,
-  values: Record<string, string>,
-): Promise<CredentialStatus> {
-  const res = await apiV2.POST('/api/harness/runners/{runner_id}/credential', {
-    params: { path: { runner_id: runnerId } },
-    body: values as never,
-  })
-  return unwrap(res, 'setRunnerCredential') as unknown as CredentialStatus
 }
 
 /** One browser-driven re-authentication of a runner's Claude subscription. */
@@ -144,10 +130,11 @@ export async function startRunnerMint(
   return unwrap(res, 'startRunnerMint')
 }
 
-/** A full Claude login kept on the box, as the box last reported it. */
-export type RunnerLogin = components['schemas']['RunnerLoginOut']
+/** One credential in the runner's list, masked: a login, a token or an API key. */
+export type RunnerCredentialEntry = components['schemas']['RunnerCredentialEntryOut']
+export type CredentialKind = RunnerCredentialEntry['kind']
 
-/** Add a login at the end of the runner's cascade and start signing it in. */
+/** Add a login at the end of the runner's list and start signing it in. */
 export async function addRunnerLogin(runnerId: string): Promise<CredentialStatus> {
   const res = await apiV2.POST('/api/harness/runners/{runner_id}/logins', {
     params: { path: { runner_id: runnerId } },
@@ -155,29 +142,43 @@ export async function addRunnerLogin(runnerId: string): Promise<CredentialStatus
   return unwrap(res, 'addRunnerLogin') as unknown as CredentialStatus
 }
 
-/** Remove a login; the box signs it out on its next re-read. */
-export async function removeRunnerLogin(runnerId: string, key: string): Promise<CredentialStatus> {
-  const res = await apiV2.DELETE('/api/harness/runners/{runner_id}/logins/{key}', {
-    params: { path: { runner_id: runnerId, key } },
+/** Add a pasted token or API key at the end of the runner's list. */
+export async function addRunnerCredential(
+  runnerId: string, kind: 'token' | 'api_key', value: string, name = '',
+): Promise<CredentialStatus> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/credentials', {
+    params: { path: { runner_id: runnerId } },
+    body: { kind, value, name },
   })
-  return unwrap(res, 'removeRunnerLogin') as unknown as CredentialStatus
+  return unwrap(res, 'addRunnerCredential') as unknown as CredentialStatus
 }
 
-/** The order the runner tries its logins in: every key, first to last. */
-export async function orderRunnerLogins(runnerId: string, keys: string[]): Promise<CredentialStatus> {
-  const res = await apiV2.PUT('/api/harness/runners/{runner_id}/logins/order', {
+/** Rename a token or API key, or give it a new value. Omitted fields are unchanged. */
+export async function updateRunnerCredential(
+  runnerId: string, key: string, change: { name?: string; value?: string },
+): Promise<CredentialStatus> {
+  const res = await apiV2.PATCH('/api/harness/runners/{runner_id}/credentials/{key}', {
+    params: { path: { runner_id: runnerId, key } },
+    body: change,
+  })
+  return unwrap(res, 'updateRunnerCredential') as unknown as CredentialStatus
+}
+
+/** Remove any credential; the box drops it on its next re-read. */
+export async function removeRunnerCredential(runnerId: string, key: string): Promise<CredentialStatus> {
+  const res = await apiV2.DELETE('/api/harness/runners/{runner_id}/credentials/{key}', {
+    params: { path: { runner_id: runnerId, key } },
+  })
+  return unwrap(res, 'removeRunnerCredential') as unknown as CredentialStatus
+}
+
+/** The order the runner tries its credentials in: every key, first to last. */
+export async function orderRunnerCredentials(runnerId: string, keys: string[]): Promise<CredentialStatus> {
+  const res = await apiV2.PUT('/api/harness/runners/{runner_id}/credentials/order', {
     params: { path: { runner_id: runnerId } },
     body: { keys },
   })
-  return unwrap(res, 'orderRunnerLogins') as unknown as CredentialStatus
-}
-
-/** Make the fallback login the primary and vice versa; each keeps its name. */
-export async function swapRunnerLogins(runnerId: string): Promise<CredentialStatus> {
-  const res = await apiV2.POST('/api/harness/runners/{runner_id}/credential/swap', {
-    params: { path: { runner_id: runnerId } },
-  })
-  return unwrap(res, 'swapRunnerLogins') as unknown as CredentialStatus
+  return unwrap(res, 'orderRunnerCredentials') as unknown as CredentialStatus
 }
 
 /** The current attempt, or null when none has been started. Polled while a

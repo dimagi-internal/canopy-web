@@ -121,19 +121,6 @@ def test_adopting_a_fresh_login_puts_it_first_once(cr, tmp_path):
     assert cr._claude_cred_label() == "box-login"
 
 
-def test_promotion_still_swaps_the_subscriptions_behind_a_box_login(cr, tmp_path, monkeypatch):
-    _store_login(tmp_path)
-    cr._CLAUDE_CRED_RUNNER_ID = "rid"
-    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {}))
-    cr._CLAUDE_CREDS.extend(cr._cascade_from(
-        {"claude_token": "tok-1", "claude_token_secondary": "tok-2"}))
-    cr._apply_claude_credential(2)          # subscription-2 just worked
-    cr._promote_working_subscription()
-    assert [c[2] for c in cr._CLAUDE_CREDS] == [str(tmp_path), "tok-2", "tok-1"]
-
-
-# ── the sign-in itself ────────────────────────────────────────────────────
-
 def test_the_authorize_url_is_recovered_from_a_real_auth_login_capture(cr):
     url = cr.extract_authorize_url(_FIXTURE.read_bytes())
     assert url and url.startswith("https://claude.com/cai/oauth/authorize?")

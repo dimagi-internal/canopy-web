@@ -57,7 +57,9 @@ from .schemas import (
     RunnerAdminIn,
     RunnerAdminOut,
     RunnerCapabilitiesIn,
+    RunnerCredentialAddIn,
     RunnerCredentialIn,
+    RunnerCredentialPatchIn,
     RunnerCredentialOut,
     RunnerCredentialStatusOut,
     RunnerEngineIn,
@@ -165,11 +167,10 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
              summary="Set a cloud runner's credential bundle (owner only)")
 @gate("runner-admin", setting=True)
 def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerCredentialIn):
-    """Store the per-runner secrets a cloud runner fetches at startup — its Claude
-    login (plus the secondary subscription and API key it fails over to).
-    Owner-gated exactly
-    like heartbeat/claim (owner == caller). Non-clobbering per field. Encrypted
-    at rest; the response is masked (booleans, never values)."""
+    """The old fixed-slot write (`wire.sh`, older callers): `claude_token` and
+    `claude_token_secondary` are the first and second tokens in the runner's
+    credential list, `claude_api_key` its first API key. Non-clobbering per field;
+    "" removes that entry. Encrypted at rest; the response is masked."""
     runner = runner_admin_or_404(request, runner_id)
     if harness_runners.would_remove_last_backup_token(
             runner, claude_token=payload.claude_token,
@@ -187,13 +188,71 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
     return harness_runners.runner_credential_status(runner)
 
 
+@router.post("/runners/{runner_id}/credentials", response=RunnerCredentialStatusOut,
+             summary="Add a token or API key at the end of a runner's credentials")
+@gate("runner-admin", setting=True)
+def add_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerCredentialAddIn):
+    """Pasted, encrypted at rest, never shown again. The runner picks it up the
+    next time it re-reads its credentials."""
+    runner = runner_admin_or_404(request, runner_id)
+    try:
+        harness_runners.add_runner_credential(runner, kind=payload.kind, value=payload.value,
+                                              name=payload.name, by=request.user)
+    except harness_runners.CredentialRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    return harness_runners.runner_credential_status(runner)
+
+
+# The fixed path is declared before `/credentials/{key}`, which would match it.
+@router.put("/runners/{runner_id}/credentials/order", response=RunnerCredentialStatusOut,
+            summary="Set the order a runner tries its Claude credentials in")
+@gate("runner-admin", setting=True)
+def order_runner_credentials(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerLoginOrderIn):
+    """`keys` is every credential on the runner, first to last. The runner uses
+    the first that works."""
+    runner = runner_admin_or_404(request, runner_id)
+    try:
+        harness_runners.order_runner_credentials(runner, payload.keys, by=request.user)
+    except harness_runners.LoginOrderRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    return harness_runners.runner_credential_status(runner)
+
+
+@router.patch("/runners/{runner_id}/credentials/{key}", response=RunnerCredentialStatusOut,
+              summary="Rename a token or API key, or give it a new value")
+@gate("runner-admin", setting=True)
+def update_runner_credential(request: HttpRequest, runner_id: uuid.UUID, key: str,
+                             payload: RunnerCredentialPatchIn):
+    runner = runner_admin_or_404(request, runner_id)
+    if not harness_runners.update_runner_credential(runner, key, value=payload.value,
+                                                    name=payload.name, by=request.user):
+        raise HttpError(404, "no such token or API key on this runner")
+    return harness_runners.runner_credential_status(runner)
+
+
+@router.delete("/runners/{runner_id}/credentials/{key}", response=RunnerCredentialStatusOut,
+               summary="Remove a credential from a runner")
+@gate("runner-admin", setting=True)
+def remove_runner_credential(request: HttpRequest, runner_id: uuid.UUID, key: str):
+    """A login is signed out on the box, a token or key forgotten, the next time
+    the runner re-reads its credentials — within a few minutes. Refused for the
+    runner's last token or API key."""
+    runner = runner_admin_or_404(request, runner_id)
+    try:
+        removed = harness_runners.remove_runner_credential(runner, key, by=request.user)
+    except harness_runners.CredentialRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    if not removed:
+        raise HttpError(404, "no such credential on this runner")
+    return harness_runners.runner_credential_status(runner)
+
+
 @router.post("/runners/{runner_id}/credential/swap", response=RunnerCredentialStatusOut,
-             summary="Swap the primary and fallback Claude logins")
+             summary="Swap the runner's first two tokens")
 @gate("runner-admin", setting=True)
 def swap_runner_logins(request: HttpRequest, runner_id: uuid.UUID):
-    """The fallback becomes the primary and the primary the fallback — each
-    login keeps its name. The runner reads the new order the next time it
-    re-reads its bundle."""
+    """What a runner from before the credential list asks for when its second
+    token ran a turn its first could not."""
     runner = runner_admin_or_404(request, runner_id)
     harness_runners.swap_runner_logins(runner, updated_by=request.user)
     return harness_runners.runner_credential_status(runner)
@@ -216,8 +275,7 @@ def add_runner_login(request: HttpRequest, runner_id: uuid.UUID):
             summary="Set the order a runner tries its Claude logins in")
 @gate("runner-admin", setting=True)
 def order_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerLoginOrderIn):
-    """`keys` is every login on the runner, first to last. When the first hits
-    its usage cap the runner moves to the next."""
+    """The old name for `PUT /credentials/order`: every credential, first to last."""
     runner = runner_admin_or_404(request, runner_id)
     try:
         harness_runners.order_runner_logins(runner, payload.keys)
@@ -244,7 +302,11 @@ def remove_runner_login(request: HttpRequest, runner_id: uuid.UUID, key: str):
     """The runner signs the login out on the box the next time it re-reads its
     credentials, within a few minutes."""
     runner = runner_admin_or_404(request, runner_id)
-    if not harness_runners.remove_runner_login(runner, key):
+    try:
+        removed = harness_runners.remove_runner_credential(runner, key, by=request.user)
+    except harness_runners.CredentialRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    if not removed:
         raise HttpError(404, "no such login on this runner")
     return harness_runners.runner_credential_status(runner)
 
@@ -427,18 +489,17 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
     - `box` (the default): a full `claude auth login` the runner keeps for
       itself — the only kind that carries claude.ai connectors. It renews
       itself, so it can also stop renewing (cloud-ec2-2, 2026-10-15).
-    - `primary`/`secondary`: a `claude setup-token` into a backup-token slot.
-      Inference only, but good for a year with nothing to renew — what keeps the
-      box running when the full login fails. Retired on 2026-10-14 because the
-      page offered it beside the full login under the same words; it is back
-      under its own ("Create a long-lived token"), since without it a box whose only
-      backup was removed had no way to get one but a terminal.
+    - `token`: a `claude setup-token` for the credential list — a new token at
+      the end, or (`login_key`) a new value for that token. Inference only, but
+      good for a year with nothing to renew. `primary`/`secondary` are the old
+      fixed slots: the first and second token.
     """
     runner = runner_admin_or_404(request, runner_id)
     slot = payload.slot if payload else "box"
-    login_key = (payload.login_key if payload else "") if slot == "box" else ""
-    if login_key and not runner.logins.filter(key=login_key).exists():
-        raise HttpError(404, "no such login on this runner")
+    login_key = (payload.login_key if payload else "") if slot in ("box", "token") else ""
+    kind = "login" if slot == "box" else "token"
+    if login_key and not runner.logins.filter(key=login_key, kind=kind).exists():
+        raise HttpError(404, f"no such {kind} on this runner")
     return harness_runners.start_runner_mint(runner, requested_by=request.user, slot=slot,
                                       login_key=login_key)
 

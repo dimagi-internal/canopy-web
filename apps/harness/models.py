@@ -1151,26 +1151,18 @@ class RunnerCredential(models.Model):
     and the tenant's to the workspace (`Workspace.shared_op_sa_token_enc`); the
     box is handed the right one per agent, at bootstrap, and holds none itself.
 
-    Stored encrypted at rest (Fernet — see apps/common/encryption.py); the columns
-    hold ciphertext. One row per runner (unique login per runner, the mapping the
-    fleet wants). Values are set/read through apps/harness/services.py, never raw.
+    The credentials themselves are `RunnerLogin` rows, one ordered list. This row
+    is the bundle's stamp: `updated_at` moves on every change to that list, and a
+    box that sees it move proves its credentials again.
     """
 
     runner = models.OneToOneField(Runner, on_delete=models.CASCADE, related_name="credential")
-    # Claude auth is an ORDERED CASCADE, not one credential. A subscription has a
-    # weekly cap; when it trips, every agent on the box stops (2026-08-01: the
-    # whole fleet went down on one exhausted login, and an unattended agent just
-    # goes silent). So the runner carries a second subscription to fail over to,
-    # and an API key as the last resort — metered, so falling back to it notifies
-    # a human rather than quietly spending money.
+    # The fixed slots the list replaced (migration 0097 copied them into it).
+    # Read by nothing; kept one release so code still running mid-deploy can
+    # write the row, then dropped.
     claude_token_enc = models.TextField(blank=True, default="")
     claude_token_secondary_enc = models.TextField(blank=True, default="")
     claude_api_key_enc = models.TextField(blank=True, default="")
-    # WHOSE subscription each login is, as a human typed it (a setup-token cannot
-    # read its own account: the profile endpoint answers 403). Plaintext on purpose:
-    # it names a login, it is not one. Without it "primary" and "fallback" are
-    # two opaque dots, and neither swapping them nor re-signing the right one in
-    # is a decision anyone can make.
     claude_token_label = models.CharField(max_length=200, blank=True, default="")
     claude_token_secondary_label = models.CharField(max_length=200, blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
@@ -1183,26 +1175,41 @@ class RunnerCredential(models.Model):
 
 
 class RunnerLogin(models.Model):
-    """One full Claude login held ON a cloud runner, in its place in the cascade.
+    """One Claude credential of a cloud runner, in its place in ONE ordered list.
 
-    A full `claude auth login` is the only kind of login that carries claude.ai
-    connectors, and its refresh token rotates, so it can never live here — each
-    one lives on the box in its own config directory (`~/.claude-logins/<key>`;
-    `default` is the CLI's own `~/.claude`). What canopy-web holds is the LIST:
-    which logins the box should keep, in the order it falls through them when
-    one hits its usage cap. Adding a row starts a sign-in; deleting one makes the
-    box drop that login on its next re-read; reordering is the cascade order.
+    Claude auth is an ordered cascade, not one credential: a subscription has a
+    usage cap, and when it trips every agent on the box stops (2026-08-01). The
+    box uses the first credential that works and moves down the list when one is
+    capped or stops working. Any number of each kind, in any order a person sets:
 
-    `account` and `signed_in` are what the BOX reports — it knows who it signed
-    in as, so nobody types a name that can disagree with the login it holds.
+    - `login`: a full `claude auth login` held ON the box. Its refresh token
+      rotates, so it never lives here; it sits in its own config directory on the
+      box (`~/.claude-logins/<key>`; `default` is the CLI's own `~/.claude`).
+      `account` and `signed_in` are what the BOX reports, so nobody types a name
+      that can disagree with the login it holds.
+    - `token`: a `claude setup-token` value, encrypted in `value_enc`.
+    - `api_key`: an Anthropic API key, encrypted in `value_enc`.
+
+    A token or API key cannot say whose it is, so a person names it (`name`).
+    Adding a login row starts a sign-in; deleting any row makes the box drop it
+    on its next re-read; the order of the rows is the cascade order.
     """
 
     DEFAULT = "default"
+    LOGIN = "login"
+    TOKEN = "token"
+    API_KEY = "api_key"
+    KIND_CHOICES = [(LOGIN, "login"), (TOKEN, "token"), (API_KEY, "API key")]
 
     runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="logins")
-    #: Names the login's directory on the box. Short, opaque, never reused.
+    #: Names the entry (and a login's directory on the box). Short, opaque, never reused.
     key = models.CharField(max_length=32)
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=LOGIN)
     position = models.PositiveIntegerField(default=0)
+    #: A token's or API key's name, as a person gave it. Not a secret.
+    name = models.CharField(max_length=200, blank=True, default="")
+    #: A token's or API key's value, encrypted (apps/common/encryption.py). Empty for a login.
+    value_enc = models.TextField(blank=True, default="")
     account = models.CharField(max_length=254, blank=True, default="")
     signed_in = models.BooleanField(default=False)
     reported_at = models.DateTimeField(null=True, blank=True)
@@ -1263,12 +1270,15 @@ class RunnerMint(models.Model):
     #: unconditionally, so "add a fallback" silently overwrote the working login.
     PRIMARY = "primary"
     SECONDARY = "secondary"
+    #: A long-lived token for the runner's credential list: a new one at the end,
+    #: or (with `login_key`) a new value for that token.
+    TOKEN = "token"
     #: Not a bundle slot: a FULL `claude auth login` the box keeps for itself.
     #: The only login that carries claude.ai connectors (a setup-token is
     #: inference-only), and its refresh token rotates, so no value ever comes
     #: back here — the runner reports `logged_in` and puts it first.
     BOX = "box"
-    SLOT_CHOICES = [(PRIMARY, "primary"), (SECONDARY, "secondary"), (BOX, "box")]
+    SLOT_CHOICES = [(PRIMARY, "primary"), (SECONDARY, "secondary"), (BOX, "box"), (TOKEN, "token")]
 
     # UUID pk like Runner/Turn: a mint id travels in URLs and logs, and a
     # sequential one would leak how many sign-ins the fleet has needed.
@@ -1277,7 +1287,8 @@ class RunnerMint(models.Model):
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=REQUESTED)
     slot = models.CharField(max_length=16, choices=SLOT_CHOICES, default=PRIMARY)
     #: For a `box` sign-in: which `RunnerLogin` it signs in. Blank is the
-    #: box's default login (a mint from before there was a list).
+    #: box's default login (a mint from before there was a list). For a `token`
+    #: sign-in: the token it replaces; blank adds a new one.
     login_key = models.CharField(max_length=32, blank=True, default="")
     authorize_url = models.TextField(blank=True, default="")
     # The single-use code a human pastes back. Cleared the moment the runner
