@@ -380,6 +380,7 @@ export function RunnerDetail({
             : null}
           signedInAs={boxLoginAccount(runner.health_checks?.['claude.login']?.detail)}
           healthChecks={runner.health_checks}
+          apiKeysOnly={!!(runner.capabilities as { data_mode?: string } | null)?.data_mode}
         />
       )}
       {/* Who else may fix this box. Rendered for an administrator (who may read

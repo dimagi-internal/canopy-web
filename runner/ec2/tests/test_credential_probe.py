@@ -419,7 +419,6 @@ def test_every_reply_says_whose_pause_it_is(cr):
 
 def test_a_successful_turn_marks_its_credential_ok(cr, monkeypatch):
     monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (True, "done", "s"))
-    monkeypatch.setattr(cr, "_promote_working_subscription", lambda *a, **k: None)
     cr._apply_claude_credential(0)
     cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
     assert cr._PROBES["subscription-1"]["status"] == "ok"
@@ -459,15 +458,3 @@ def test_the_tick_reprobes_a_cap_once_its_reset_passes(cr, monkeypatch):
     assert started == [["subscription-1"]]
 
 
-def test_a_promoted_subscription_carries_its_probe(cr, monkeypatch):
-    monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "rid")
-    _api_log(cr, monkeypatch)
-    cr._CLAUDE_CREDS[:] = [("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1"),
-                           ("subscription-2", "CLAUDE_CODE_OAUTH_TOKEN", "tok-2")]
-    cr._record_probe(_probe("subscription-1", "capped"))
-    cr._record_probe(_probe("subscription-2", "ok"))
-    cr._apply_claude_credential(1)
-    cr._promote_working_subscription("turn-abcdef12")
-    # The values swapped slots, so what each value proved goes with it.
-    assert cr._PROBES["subscription-1"]["status"] == "ok"
-    assert cr._PROBES["subscription-2"]["status"] == "capped"

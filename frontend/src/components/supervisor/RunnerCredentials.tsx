@@ -1,121 +1,54 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import {
+  addRunnerCredential,
   addRunnerLogin,
   getRunnerCredentialStatus,
-  orderRunnerLogins,
-  removeRunnerLogin,
-  setRunnerCredential,
-  swapRunnerLogins,
+  orderRunnerCredentials,
+  removeRunnerCredential,
+  updateRunnerCredential,
+  type CredentialKind,
   type CredentialStatus,
-  type LoginSlot,
-  type RunnerLogin,
+  type RunnerCredentialEntry,
 } from '@/api/harness'
 import { RunnerReauth } from './RunnerReauth'
 
 export type { CredentialStatus }
 
-// Set a cloud runner's credentials from the browser.
-//
-// `POST /runners/{id}/credential` and `GET /credential/status` have existed since
-// the runner-credential work; there was no page, so the only way to set a token
-// was a terminal on someone's machine. Meanwhile every boot of the cloud box
-// logged:
-//
-//   warn: only ONE Claude credential is set — a usage cap will stop every agent
-//   on this box with nothing to fail over to
-//
-// That is a fleet-wide outage waiting on a form. This is the form.
+// A cloud runner's Claude credentials: ONE ordered list of logins, tokens and
+// API keys, any number of each. The runner uses the first that works and moves
+// down when one hits its usage cap or stops working.
 //
 // Values are WRITE-ONLY here by construction: the status endpoint returns
-// booleans and never plaintext, so this component can say "set" and "when", and
-// can never render a token. A field left blank is not sent at all — the write
-// schema is non-clobbering, and sending "" would wipe a working credential.
+// booleans and names, never a value, so this component can say "set" and can
+// never render a token or key.
+//
+// The words stay short on purpose. What each kind of Claude credential can and
+// cannot do is still moving (connectors, Claude Design), so the page names the
+// kinds and leaves the detail to Anthropic's docs rather than restate it wrongly.
 
-export type SlotKey =
-  | 'claude_token'
-  | 'claude_token_secondary'
-  | 'claude_api_key'
-
-export interface Slot {
-  key: SlotKey
-  statusKey: `has_${SlotKey}`
-  label: string
-  hint: string
-  /** A subscription LOGIN: it can be signed in from here, named, and reordered.
-   *  The API key is none of those — it is pasted, and it is always last. */
-  login?: { slot: LoginSlot; labelKey: LabelKey }
+export const KIND_LABEL: Record<CredentialKind, string> = {
+  login: 'Login',
+  token: 'Token',
+  api_key: 'API key',
 }
 
-export type LabelKey = 'claude_token_label' | 'claude_token_secondary_label'
-
-// Claude auth is an ORDERED CASCADE, not one credential — a subscription has a
-// weekly cap, and when it trips every agent on the box stops. Order here is the
-// order the runner falls through them.
-export const SLOTS: readonly Slot[] = [
-  {
-    key: 'claude_token',
-    statusKey: 'has_claude_token',
-    label: 'Token 1',
-    hint: '',
-    login: { slot: 'primary', labelKey: 'claude_token_label' },
-  },
-  {
-    key: 'claude_token_secondary',
-    statusKey: 'has_claude_token_secondary',
-    label: 'Token 2',
-    hint: '',
-    login: { slot: 'secondary', labelKey: 'claude_token_secondary_label' },
-  },
-  {
-    key: 'claude_api_key',
-    statusKey: 'has_claude_api_key',
-    label: 'Claude API key (last resort)',
-    hint: 'Metered, deliberately — falling back this far should notify a human rather than quietly spend money.',
-  },
-]
-// No GitHub slot: a box holds no GitHub credential. Each agent's turns get its
-// owner's token for that agent, one turn at a time — set on the agent's own
-// Settings → Credentials → GitHub.
-
-/** Only the slots actually typed into, trimmed. Blank means "leave alone", never
- *  "clear" — the write schema is non-clobbering and "" would overwrite. */
-export function nextPayload(draft: Partial<Record<SlotKey, string>>): Partial<Record<SlotKey, string>> {
-  const out: Partial<Record<SlotKey, string>> = {}
-  for (const [k, v] of Object.entries(draft)) {
-    const trimmed = (v ?? '').trim()
-    if (trimmed) out[k as SlotKey] = trimmed
-  }
-  return out
+const KIND_HINT: Record<CredentialKind, string> = {
+  login: 'Signs this runner in to a Claude account.',
+  token: 'From claude setup-token. Valid for a year.',
+  api_key: 'An Anthropic API key. Billed per use.',
 }
 
-export interface Summary {
-  claudeFallback: 'none' | 'secondary' | 'api_key'
-  warning: string | null
-  unset: SlotKey[]
+/** Whether an entry can run a turn as far as canopy-web knows: a login the box
+ *  says is signed in, or a token or key that holds a value. */
+export function usable(e: RunnerCredentialEntry): boolean {
+  return e.kind === 'login' ? e.signed_in : e.has_value
 }
 
-export function credentialSummary(s: CredentialStatus, signedIn: boolean | null = null): Summary {
-  const unset = SLOTS.filter((slot) => !s[slot.statusKey]).map((slot) => slot.key)
-  const fallback: Summary['claudeFallback'] = s.has_claude_token_secondary
-    ? 'secondary'
-    : s.has_claude_api_key
-      ? 'api_key'
-      : 'none'
-
-  // ONLY the state that means this box cannot run anything. The two
-  // fallback warnings that used to live here — "only one credential is set",
-  // "the only fallback is metered" — were removed 2026-09-08: a standing banner
-  // about a deliberate configuration is a nag, and it sat above the controls
-  // every single visit, training the eye to skip the whole block. Which is
-  // exactly where the one alarm that matters has to be seen.
-  //
-  // `claudeFallback` is still computed; a caller that wants to say something
-  // about fallbacks can, at a moment when it is actually the subject.
-  const warning: string | null = s.has_claude_token || signedIn
-    || (s.logins ?? []).some((l) => l.signed_in)
+/** The one warning this block shows: nothing on the list can run a turn. */
+export function credentialWarning(s: CredentialStatus, signedIn: boolean | null = null): string | null {
+  return (s.credentials ?? []).some(usable) || signedIn
     ? null
-    : 'No Claude credential at all — this runner cannot execute any turn.'
-  return { claudeFallback: fallback, warning, unset }
+    : 'No working credential: this runner cannot run a turn. Add one below.'
 }
 
 /** The account the box's own login belongs to, read out of its `claude.login`
@@ -127,17 +60,11 @@ export function boxLoginAccount(detail: string | undefined): string {
   return detail?.match(/signed in on this box as (\S+@\S+)/)?.[1] ?? ''
 }
 
-/** The label the box probes each slot under (cloud_runner.py `_BUNDLE_SLOTS`) —
- *  the one frontend source; tests/test_probe_labels_match.py pins it to the box. */
-export const PROBE_LABEL: Record<SlotKey, string> = {
-  claude_token: 'subscription-1',
-  claude_token_secondary: 'subscription-2',
-  claude_api_key: 'api-key',
-}
-
-/** A full login's probe label — the box's `_login_label(key)`. */
-export function loginProbeLabel(key: string): string {
-  return key === 'default' ? 'box-login' : `box-login:${key}`
+/** The label the box reports an entry's probe under (cloud_runner.py
+ *  `_cascade_from_list`, `_login_label`). */
+export function probeLabel(e: Pick<RunnerCredentialEntry, 'kind' | 'key'>): string {
+  if (e.kind === 'login') return e.key === 'default' ? 'box-login' : `box-login:${e.key}`
+  return `${e.kind === 'token' ? 'token' : 'api-key'}:${e.key}`
 }
 
 export interface ProbeCheck {
@@ -173,24 +100,34 @@ function probeTextClass(tone: ProbeTone): string {
   return tone === 'fail' ? 'text-destructive' : tone === 'warn' ? 'text-warning' : 'text-foreground-subtle'
 }
 
-export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', healthChecks = null }: {
+/** Move `key` to `to` in `keys` — the new order to send. */
+export function moved(keys: string[], key: string, to: number): string[] {
+  const rest = keys.filter((k) => k !== key)
+  const i = Math.max(0, Math.min(to, rest.length))
+  return [...rest.slice(0, i), key, ...rest.slice(i)]
+}
+
+const smallButton =
+  'rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30'
+
+export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', healthChecks = null, apiKeysOnly = false }: {
   runnerId: string
   /** The runner's health checks, for each credential's `claude.probe.<label>`. */
   healthChecks?: Record<string, ProbeCheck> | null
   /** Whether the box reports a full Claude sign-in (its `claude.login` health
-   *  check). Null when the runner has not said — an older runner, or no
-   *  heartbeat yet. */
+   *  check). Null when the runner has not said. */
   signedIn?: boolean | null
   /** Which account that sign-in is (see boxLoginAccount); '' when unknown. */
   signedInAs?: string
+  /** A ZDR box uses API keys and nothing else, so only those can be added. */
+  apiKeysOnly?: boolean
 }): JSX.Element {
   const [status, setStatus] = useState<CredentialStatus | null>(null)
-  const [apiKey, setApiKey] = useState('')
-  const [dragging, setDragging] = useState<LoginSlot | null>(null)
-  const [dropTarget, setDropTarget] = useState<LoginSlot | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [saved, setSaved] = useState(false)
+  const [adding, setAdding] = useState<CredentialKind | null>(null)
+  const [dragging, setDragging] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
   const alive = useRef(true)
 
   const load = useCallback(async () => {
@@ -213,7 +150,6 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
   const write = async (fn: () => Promise<CredentialStatus>, fallback: string) => {
     setBusy(true)
     setError(null)
-    setSaved(false)
     try {
       const s = await fn()
       if (alive.current) setStatus(s)
@@ -226,43 +162,32 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
     }
   }
 
-  const saveApiKey = async () => {
-    const payload = nextPayload({ claude_api_key: apiKey })
-    // Nothing typed — skip the request rather than POST an empty body that
-    // reports success and changes nothing.
-    if (!Object.keys(payload).length) return
-    if (await write(() => setRunnerCredential(runnerId, payload), 'Failed to save')) {
-      setApiKey('') // never keep a secret in component state after it lands
-      setSaved(true)
-    }
-  }
-
-  const saveName = (labelKey: LabelKey, name: string) =>
-    write(() => setRunnerCredential(runnerId, { [labelKey]: name.trim() }), 'Failed to rename')
-
-  const swap = () => write(() => swapRunnerLogins(runnerId), 'Failed to swap')
-
-  // Deleting a long-lived token: an empty value clears its slot (the API stores
-  // nothing for an empty secret) and the name goes with it. Confirmed first,
-  // because a token is write-only — once removed, only a person holding it can
-  // put it back.
-  const remove = (key: SlotKey, labelKey: LabelKey, label: string) => {
-    if (!window.confirm(`Remove ${label}? The runner stops using it within a few minutes.`)) return
-    return write(() => setRunnerCredential(runnerId, { [key]: '', [labelKey]: '' }), 'Failed to remove')
-  }
-  const canSwap = !busy && !!status
-    && (status.has_claude_token || status.has_claude_token_secondary)
-
   if (status === null && error === null) {
     return <div className="h-6 w-48 animate-pulse rounded-md bg-muted" data-testid="runner-credentials-loading" />
   }
 
-  const summary = status ? credentialSummary(status, signedIn) : null
-  const heldTokens = SLOTS.filter((s) => s.login && status?.[s.statusKey]).length
-  const emptySlot = status ? SLOTS.find((s) => s.login && !status[s.statusKey]) : undefined
-  const apiSlot = SLOTS.find((s) => !s.login)!
-  const apiKeySet = status?.has_claude_api_key ?? false
-  const apiProbe = probeFor(healthChecks, PROBE_LABEL[apiSlot.key])
+  const entries = status?.credentials ?? []
+  const keys = entries.map((e) => e.key)
+  const warning = status ? credentialWarning(status, signedIn) : null
+
+  const reorder = (key: string, to: number) => {
+    const next = moved(keys, key, to)
+    if (next.join() === keys.join()) return
+    return write(() => orderRunnerCredentials(runnerId, next), 'Failed to reorder')
+  }
+  const remove = (e: RunnerCredentialEntry) => {
+    const what = e.account || e.name || KIND_LABEL[e.kind].toLowerCase()
+    if (!window.confirm(`Remove ${what}? The runner stops using it within a few minutes.`)) return
+    return write(() => removeRunnerCredential(runnerId, e.key), 'Failed to remove')
+  }
+  const startAdding = (kind: CredentialKind) => {
+    if (kind === 'login') {
+      setAdding(null)
+      return void write(() => addRunnerLogin(runnerId), 'Failed to add a login')
+    }
+    setAdding(adding === kind ? null : kind)
+  }
+  const addable: CredentialKind[] = apiKeysOnly ? ['api_key'] : ['login', 'token', 'api_key']
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" data-testid="runner-credentials">
@@ -275,276 +200,20 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
         )}
       </div>
 
-      {summary?.warning && (
+      {warning && (
         <p className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-[12px] text-warning" data-testid="runner-credentials-warning">
-          ⚠ {summary.warning}
+          ⚠ {warning}
         </p>
       )}
 
       <p className="text-[11px] text-foreground-subtle">
-        Turns use full logins first, then long-lived tokens, top to bottom. The runner moves to
-        the next one when one hits its usage cap or stops working.
+        The runner uses the first credential that works, top to bottom.
+        {apiKeysOnly && ' This is a ZDR runner: it uses API keys only.'}
       </p>
-
-      <ClaudeLogins
-        runnerId={runnerId}
-        logins={status?.logins ?? []}
-        healthChecks={healthChecks}
-        signedIn={signedIn}
-        signedInAs={signedInAs}
-        busy={busy}
-        write={write}
-        reload={load}
-      />
-
-      {/* Long-lived tokens: `claude setup-token`. Named for what they ARE, not
-          for where they sit in the order — "backup" made them sound like a
-          copy of the login above (2026-10-16). The full logins renew
-          themselves, and on 2026-10-15 cloud-ec2-2's stopped renewing with no
-          token left, so the box stopped. So the page can always create one and
-          will not remove the last one. Their buttons never say "Sign in": side
-          by side under the same words, an operator once made a token believing
-          it was the full login (2026-10-14). */}
-      <div className="flex flex-col gap-0.5 pt-1">
-        <span className="text-[12px] font-medium text-foreground">Long-lived tokens</span>
-        <span className="text-[11px] text-foreground-subtle">
-          Made by <code>claude setup-token</code>. Model access only, with no claude.ai
-          connectors. Valid for a year with no renewal, and stored encrypted here. Claude does
-          not say which account a token belongs to, so name it yourself.
-        </span>
-      </div>
-      {status && heldTokens === 0 && (
-        <p className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-[12px] text-warning" data-testid="cred-no-backup-warning">
-          ⚠ No long-lived token. If every full login stops renewing, this runner stops.
-        </p>
-      )}
-      {SLOTS.filter((s) => s.login && status?.[s.statusKey]).map((slot, i) => {
-        const login = slot.login!
-        const isSet = true
-        const isLast = heldTokens === 1
-        const dropHere = dragging && dragging !== login.slot && dropTarget === login.slot
-        const probe = probeFor(healthChecks, PROBE_LABEL[slot.key])
-        return (
-          <div key={slot.key}>
-            {/* Between the two logins: the keyboard/touch way to reorder, since
-                HTML drag-and-drop does nothing on a phone. */}
-            {i === 1 && (
-              <div className="-my-1 flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => void swap()}
-                  disabled={!canSwap}
-                  data-testid="runner-credentials-swap"
-                  title="Make the fallback the primary"
-                  className="rounded-md px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-                >
-                  ⇅ swap
-                </button>
-              </div>
-            )}
-            <div
-              data-testid={`cred-slot-${slot.key}`}
-              onDragOver={(e) => {
-                if (dragging && dragging !== login.slot) {
-                  e.preventDefault()
-                  setDropTarget(login.slot)
-                }
-              }}
-              onDragLeave={() => setDropTarget(null)}
-              onDrop={(e) => {
-                e.preventDefault()
-                const from = dragging
-                setDragging(null)
-                setDropTarget(null)
-                if (from && from !== login.slot) void swap()
-              }}
-              className={`flex flex-col gap-1.5 rounded-md border p-2 ${
-                dropHere ? 'border-primary bg-primary/5' : 'border-border'
-              } ${dragging === login.slot ? 'opacity-50' : ''}`}
-            >
-              <div className="flex items-center gap-2 text-[12px] text-foreground">
-                {/* Only the handle drags: a draggable row would steal the mouse
-                    from its own controls. The whole row is still the drop target. */}
-                <span
-                  aria-hidden
-                  draggable={canSwap}
-                  onDragStart={(e) => {
-                    e.dataTransfer.effectAllowed = 'move'
-                    e.dataTransfer.setData('text/plain', login.slot)
-                    const row = e.currentTarget.closest('[data-testid^="cred-slot-"]')
-                    if (row instanceof HTMLElement) e.dataTransfer.setDragImage(row, 12, 12)
-                    setDragging(login.slot)
-                  }}
-                  onDragEnd={() => { setDragging(null); setDropTarget(null) }}
-                  data-testid={`cred-drag-${slot.key}`}
-                  title={canSwap ? 'Drag onto the other login to swap them' : undefined}
-                  className={`select-none text-foreground-subtle ${canSwap ? 'cursor-grab' : 'opacity-40'}`}
-                >
-                  ⋮⋮
-                </span>
-                <span
-                  className={dotClass(probe.tone, isSet)}
-                  title={probe.detail || undefined}
-                  data-testid={`cred-dot-${slot.key}`}
-                >
-                  {isSet ? '●' : '○'}
-                </span>
-                <span className="font-medium">{slot.label}</span>
-                <LoginName
-                  slotKey={slot.key}
-                  name={status?.[login.labelKey] ?? ''}
-                  disabled={busy}
-                  onSave={(name) => saveName(login.labelKey, name)}
-                />
-                {isSet && (
-                  <button
-                    type="button"
-                    onClick={() => void remove(slot.key, login.labelKey, slot.label)}
-                    disabled={busy || isLast}
-                    title={isLast ? 'The last long-lived token. Create another before removing this one.' : undefined}
-                    data-testid={`cred-remove-${slot.key}`}
-                    className="ml-auto rounded-md px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-              {probe.detail && probe.tone !== 'ok' && (
-                <span className={`text-[11px] ${probeTextClass(probe.tone)}`} data-testid={`cred-probe-${slot.key}`}>
-                  {probe.detail}
-                </span>
-              )}
-              <RunnerReauth runnerId={runnerId} slot={login.slot} isSet onSignedIn={load} />
-            </div>
-          </div>
-        )
-      })}
-      {/* The next empty slot, as a way to fill it — never as a "not set" row. */}
-      {emptySlot && (
-        <div className="rounded-md border border-dashed border-border p-2" data-testid={`cred-get-${emptySlot.key}`}>
-          <RunnerReauth runnerId={runnerId} slot={emptySlot.login!.slot} onSignedIn={load} />
-        </div>
-      )}
-
-      {/* The API key is not a login: there is nothing to sign in to, so it is
-          the one credential still pasted. */}
-      <label className="flex flex-col gap-0.5 pt-1" data-testid={`cred-slot-${apiSlot.key}`}>
-        <span className="flex items-center gap-2 text-[12px] text-foreground">
-          <span
-            className={dotClass(apiKeySet ? apiProbe.tone : null, apiKeySet)}
-            title={apiProbe.detail || undefined}
-            data-testid={`cred-dot-${apiSlot.key}`}
-          >
-            {apiKeySet ? '●' : '○'}
-          </span>
-          {apiSlot.label}
-          <span className="text-[11px] text-foreground-subtle">{apiKeySet ? 'set' : 'not set'}</span>
-        </span>
-        {apiKeySet && apiProbe.detail && apiProbe.tone !== 'ok' && (
-          <span className={`text-[11px] ${probeTextClass(apiProbe.tone)}`} data-testid={`cred-probe-${apiSlot.key}`}>
-            {apiProbe.detail}
-          </span>
-        )}
-        <div className="flex gap-2">
-          <input
-            type="password"
-            autoComplete="off"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={apiKeySet ? 'paste to replace' : 'paste to set'}
-            aria-label={apiSlot.label}
-            className="flex-1 rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground"
-          />
-          <button
-            type="button"
-            onClick={() => void saveApiKey()}
-            disabled={busy || !apiKey.trim()}
-            data-testid="runner-credentials-save"
-            className="rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
-          >
-            {busy ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-        <span className="text-[11px] text-foreground-subtle">{apiSlot.hint}</span>
-      </label>
-
-      {saved && <span className="text-[12px] text-success" data-testid="runner-credentials-saved">Saved.</span>}
-      {error && <span className="text-[12px] text-destructive" data-testid="runner-credentials-error">{error}</span>}
-
-      {/* Say the shape of the guarantee, because a password field that renders
-          nothing back looks broken otherwise. */}
-      <p className="text-[11px] text-foreground-subtle">
-        Tokens are write-only: encrypted at rest, and only the paired runner can read them
-        back. This page can show whether one is set, never what is in it.
-      </p>
-    </div>
-  )
-}
-
-/** Move `key` to `to` in `keys` — the new order to send. */
-export function moved(keys: string[], key: string, to: number): string[] {
-  const rest = keys.filter((k) => k !== key)
-  const i = Math.max(0, Math.min(to, rest.length))
-  return [...rest.slice(0, i), key, ...rest.slice(i)]
-}
-
-/** The box's full Claude logins — THE way to sign a runner in to Claude.
- *
- *  Each is a `claude auth login` the runner keeps on the box, in a directory
- *  of its own: the only kind of login that carries claude.ai connectors (Claude
- *  Docs and the rest), and its refresh token rotates, so it never comes back
- *  here. As many as a person adds, tried in the order shown — when one hits its
- *  usage cap the runner moves to the next. The box reports which account each
- *  one is, so nobody types a name that can disagree with the login it holds. */
-function ClaudeLogins({ runnerId, logins, healthChecks, signedIn, signedInAs, busy, write, reload }: {
-  runnerId: string
-  logins: readonly RunnerLogin[]
-  healthChecks: Record<string, ProbeCheck> | null
-  signedIn: boolean | null
-  signedInAs: string
-  busy: boolean
-  write: (fn: () => Promise<CredentialStatus>, fallback: string) => Promise<boolean>
-  reload: () => Promise<void>
-}) {
-  const [dragging, setDragging] = useState<string | null>(null)
-  const [dropTarget, setDropTarget] = useState<string | null>(null)
-  const keys = logins.map((l) => l.key)
-
-  const add = () => write(() => addRunnerLogin(runnerId), 'Failed to add a login')
-  const remove = (login: RunnerLogin, n: number) => {
-    const who = login.account || `login ${n}`
-    if (!window.confirm(`Remove ${who}? The runner signs it out within a few minutes.`)) return
-    return write(() => removeRunnerLogin(runnerId, login.key), 'Failed to remove')
-  }
-  const reorder = (key: string, to: number) => {
-    const next = moved(keys, key, to)
-    if (next.join() === keys.join()) return
-    return write(() => orderRunnerLogins(runnerId, next), 'Failed to reorder')
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5" data-testid="cred-logins">
-      <div className="flex items-baseline gap-2">
-        <span className="text-[12px] font-medium text-foreground">Full Claude logins</span>
-      </div>
-      <span className="text-[11px] text-foreground-subtle">
-        The same login as the Claude app, including claude.ai connectors (Claude Docs, Claude
-        Design). Each renews itself about every 8 hours and lives only on this runner, which
-        reads which account it is.
-      </span>
 
       {/* A box signed in before there was a list: the runner adds it here on
           its next re-read. Until then, say what the box says. */}
-      {/* A full login's refresh token rotates, so it cannot be copied from
-          another runner the way a long-lived token is: say so where it is
-          missing, rather than leave a person wondering why it did not come. */}
-      {!signedIn && !logins.some((l) => l.signed_in) && (
-        <p className="text-[12px] text-muted-foreground" data-testid="cred-no-login">
-          No full login on this runner. Logins don&apos;t copy between runners: add one here to use claude.ai connectors.
-        </p>
-      )}
-
-      {logins.length === 0 && signedIn && (
+      {signedIn && !entries.some((e) => e.kind === 'login') && (
         <div className="flex items-center gap-2 rounded-md border border-border p-2 text-[12px]" data-testid="cred-login-pending-adopt">
           <span className="text-success">●</span>
           <span className="text-foreground">{signedInAs || 'signed in on this runner'}</span>
@@ -552,131 +221,169 @@ function ClaudeLogins({ runnerId, logins, healthChecks, signedIn, signedInAs, bu
         </div>
       )}
 
-      {logins.map((login, i) => {
-        const dropHere = dragging && dragging !== login.key && dropTarget === login.key
-        const probe = probeFor(healthChecks, loginProbeLabel(login.key))
-        return (
-          <div
-            key={login.key}
-            data-testid={`cred-login-${login.key}`}
-            onDragOver={(e) => {
-              if (dragging && dragging !== login.key) {
-                e.preventDefault()
-                setDropTarget(login.key)
-              }
-            }}
-            onDragLeave={() => setDropTarget(null)}
-            onDrop={(e) => {
-              e.preventDefault()
-              const from = dragging
-              setDragging(null)
-              setDropTarget(null)
-              if (from && from !== login.key) void reorder(from, i)
-            }}
-            className={`flex flex-col gap-1.5 rounded-md border p-2 ${
-              dropHere ? 'border-primary bg-primary/5' : 'border-border'
-            } ${dragging === login.key ? 'opacity-50' : ''}`}
-          >
-            <div className="flex items-center gap-2 text-[12px] text-foreground">
-              {/* Only the handle drags: a draggable row would steal the mouse
-                  from its own controls. The whole row is the drop target. */}
-              <span
-                aria-hidden
-                draggable={!busy && logins.length > 1}
-                onDragStart={(e) => {
-                  e.dataTransfer.effectAllowed = 'move'
-                  e.dataTransfer.setData('text/plain', login.key)
-                  const row = e.currentTarget.closest('[data-testid^="cred-login-"]')
-                  if (row instanceof HTMLElement) e.dataTransfer.setDragImage(row, 12, 12)
-                  setDragging(login.key)
+      {entries.length > 0 && (
+        <ol className="flex flex-col gap-1.5" data-testid="cred-list">
+          {entries.map((e, i) => {
+            const probe = probeFor(healthChecks, probeLabel(e))
+            const held = usable(e)
+            const dropHere = dragging && dragging !== e.key && dropTarget === e.key
+            return (
+              <li
+                key={e.key}
+                data-testid={`cred-${e.key}`}
+                onDragOver={(ev) => {
+                  if (dragging && dragging !== e.key) {
+                    ev.preventDefault()
+                    setDropTarget(e.key)
+                  }
                 }}
-                onDragEnd={() => { setDragging(null); setDropTarget(null) }}
-                title={logins.length > 1 ? 'Drag to reorder' : undefined}
-                className={`select-none text-foreground-subtle ${logins.length > 1 ? 'cursor-grab' : 'opacity-40'}`}
+                onDragLeave={() => setDropTarget(null)}
+                onDrop={(ev) => {
+                  ev.preventDefault()
+                  const from = dragging
+                  setDragging(null)
+                  setDropTarget(null)
+                  if (from && from !== e.key) void reorder(from, i)
+                }}
+                className={`flex flex-col gap-1.5 rounded-md border p-2 ${
+                  dropHere ? 'border-primary bg-primary/5' : 'border-border'
+                } ${dragging === e.key ? 'opacity-50' : ''}`}
               >
-                ⋮⋮
-              </span>
-              <span className="w-4 text-right tabular-nums text-foreground-subtle">{i + 1}</span>
-              <span
-                className={dotClass(login.signed_in ? probe.tone : null, login.signed_in)}
-                title={probe.detail || undefined}
-                data-testid={`cred-login-dot-${login.key}`}
-              >
-                {login.signed_in ? '●' : '○'}
-              </span>
-              <span className="truncate font-medium" data-testid={`cred-login-account-${login.key}`}>
-                {login.signed_in
-                  ? (login.account || 'signed in on this runner')
-                  : (login.account ? `${login.account} — signed out` : 'not signed in yet')}
-              </span>
-              <span className="ml-auto flex items-center gap-0.5">
-                {/* Buttons as well as dragging: HTML drag-and-drop does nothing
-                    on a phone. */}
-                <button
-                  type="button"
-                  onClick={() => void reorder(login.key, i - 1)}
-                  disabled={busy || i === 0}
-                  data-testid={`cred-login-up-${login.key}`}
-                  aria-label="Move up"
-                  className="rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void reorder(login.key, i + 1)}
-                  disabled={busy || i === logins.length - 1}
-                  data-testid={`cred-login-down-${login.key}`}
-                  aria-label="Move down"
-                  className="rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void remove(login, i + 1)}
-                  disabled={busy}
-                  data-testid={`cred-login-remove-${login.key}`}
-                  className="rounded-md px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
-                >
-                  Remove
-                </button>
-              </span>
-            </div>
-            {login.signed_in && probe.detail && probe.tone !== 'ok' && (
-              <span className={`text-[11px] ${probeTextClass(probe.tone)}`} data-testid={`cred-login-probe-${login.key}`}>
-                {probe.detail}
-              </span>
-            )}
-            <RunnerReauth
-              runnerId={runnerId}
-              slot="box"
-              loginKey={login.key === 'default' ? '' : login.key}
-              isSet={login.signed_in}
-              onSignedIn={reload}
-            />
-          </div>
-        )
-      })}
+                <div className="flex items-center gap-2 text-[12px] text-foreground">
+                  {/* Only the handle drags: a draggable row would steal the mouse
+                      from its own controls. The whole row is the drop target. */}
+                  <span
+                    aria-hidden
+                    draggable={!busy && entries.length > 1}
+                    onDragStart={(ev) => {
+                      ev.dataTransfer.effectAllowed = 'move'
+                      ev.dataTransfer.setData('text/plain', e.key)
+                      const row = ev.currentTarget.closest('li')
+                      if (row) ev.dataTransfer.setDragImage(row, 12, 12)
+                      setDragging(e.key)
+                    }}
+                    onDragEnd={() => { setDragging(null); setDropTarget(null) }}
+                    title={entries.length > 1 ? 'Drag to reorder' : undefined}
+                    className={`select-none text-foreground-subtle ${entries.length > 1 ? 'cursor-grab' : 'opacity-40'}`}
+                  >
+                    ⋮⋮
+                  </span>
+                  <span className="w-4 text-right tabular-nums text-foreground-subtle">{i + 1}</span>
+                  <span
+                    className={dotClass(held ? probe.tone : null, held)}
+                    title={probe.detail || undefined}
+                    data-testid={`cred-dot-${e.key}`}
+                  >
+                    {held ? '●' : '○'}
+                  </span>
+                  <span
+                    className="w-14 shrink-0 rounded bg-muted px-1.5 py-0.5 text-center text-[11px] text-foreground-secondary"
+                    data-testid={`cred-kind-${e.key}`}
+                  >
+                    {KIND_LABEL[e.kind]}
+                  </span>
+                  {e.kind === 'login' ? (
+                    <span className="truncate" data-testid={`cred-account-${e.key}`}>
+                      {e.signed_in ? (e.account || 'signed in') : e.account ? `${e.account} (signed out)` : 'not signed in yet'}
+                    </span>
+                  ) : (
+                    <CredentialName
+                      entryKey={e.key}
+                      name={e.name}
+                      disabled={busy}
+                      onSave={(name) => write(() => updateRunnerCredential(runnerId, e.key, { name }), 'Failed to rename')}
+                    />
+                  )}
+                  <span className="ml-auto flex items-center gap-0.5">
+                    {/* Buttons as well as dragging: HTML drag-and-drop does nothing on a phone. */}
+                    <button type="button" onClick={() => void reorder(e.key, i - 1)} disabled={busy || i === 0}
+                      data-testid={`cred-up-${e.key}`} aria-label="Move up" className={smallButton}>↑</button>
+                    <button type="button" onClick={() => void reorder(e.key, i + 1)} disabled={busy || i === entries.length - 1}
+                      data-testid={`cred-down-${e.key}`} aria-label="Move down" className={smallButton}>↓</button>
+                    <button type="button" onClick={() => void remove(e)} disabled={busy}
+                      data-testid={`cred-remove-${e.key}`}
+                      className="rounded-md px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40">
+                      Remove
+                    </button>
+                  </span>
+                </div>
+                {held && probe.detail && probe.tone !== 'ok' && (
+                  <span className={`text-[11px] ${probeTextClass(probe.tone)}`} data-testid={`cred-probe-${e.key}`}>
+                    {probe.detail}
+                  </span>
+                )}
+                {e.kind === 'login' && (
+                  <RunnerReauth runnerId={runnerId} slot="box" loginKey={e.key === 'default' ? '' : e.key}
+                    isSet={e.signed_in} onSignedIn={load} />
+                )}
+                {e.kind === 'token' && (
+                  <RunnerReauth runnerId={runnerId} slot="token" loginKey={e.key} isSet onSignedIn={load} />
+                )}
+                {e.kind === 'api_key' && (
+                  <ReplaceKey disabled={busy} entryKey={e.key}
+                    onSave={(value) => write(() => updateRunnerCredential(runnerId, e.key, { value }), 'Failed to save')} />
+                )}
+              </li>
+            )
+          })}
+        </ol>
+      )}
 
-      <button
-        type="button"
-        onClick={() => void add()}
-        disabled={busy}
-        data-testid="cred-login-add"
-        className="w-fit rounded-md border border-dashed border-border px-2.5 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-      >
-        + Add a login
-      </button>
+      <div className="flex flex-wrap gap-1.5 pt-1">
+        {addable.map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            onClick={() => startAdding(kind)}
+            disabled={busy}
+            title={KIND_HINT[kind]}
+            data-testid={`cred-add-${kind}`}
+            className={`rounded-md border border-dashed px-2.5 py-1 text-[12px] hover:bg-muted hover:text-foreground disabled:opacity-40 ${
+              adding === kind ? 'border-primary text-foreground' : 'border-border text-muted-foreground'
+            }`}
+          >
+            + {KIND_LABEL[kind]}
+          </button>
+        ))}
+      </div>
+      <ul className="flex flex-col text-[11px] text-foreground-subtle">
+        {addable.map((kind) => (
+          <li key={kind}><span className="text-foreground-secondary">{KIND_LABEL[kind]}:</span> {KIND_HINT[kind]}</li>
+        ))}
+      </ul>
 
+      {adding === 'token' && (
+        <div className="rounded-md border border-dashed border-border p-2" data-testid="cred-new-token">
+          <RunnerReauth runnerId={runnerId} slot="token" autoStart onSignedIn={() => { setAdding(null); void load() }} />
+        </div>
+      )}
+      {adding === 'api_key' && (
+        <NewApiKey
+          disabled={busy}
+          onCancel={() => setAdding(null)}
+          onSave={async (value, name) => {
+            if (await write(() => addRunnerCredential(runnerId, 'api_key', value, name), 'Failed to add the key')) {
+              setAdding(null)
+              return true
+            }
+            return false
+          }}
+        />
+      )}
+
+      {error && <span className="text-[12px] text-destructive" data-testid="runner-credentials-error">{error}</span>}
+
+      <p className="text-[11px] text-foreground-subtle">
+        Tokens and keys are write-only: this page shows whether one is set, never what it is.
+      </p>
     </div>
   )
 }
 
-/** A login's name, edited in place. The token cannot say whose it is (Claude
- *  refuses a setup-token its own profile), so a person names it, once. */
-function LoginName({ slotKey, name, disabled, onSave }: {
-  slotKey: SlotKey
+/** A token's or key's name, edited in place. Neither can say whose it is, so a
+ *  person names it. */
+function CredentialName({ entryKey, name, disabled, onSave }: {
+  entryKey: string
   name: string
   disabled: boolean
   onSave: (name: string) => Promise<boolean>
@@ -686,7 +393,7 @@ function LoginName({ slotKey, name, disabled, onSave }: {
 
   const commit = async () => {
     if (value.trim() === name) { setEditing(false); return }
-    if (await onSave(value)) setEditing(false)
+    if (await onSave(value.trim())) setEditing(false)
   }
 
   if (!editing) {
@@ -694,13 +401,13 @@ function LoginName({ slotKey, name, disabled, onSave }: {
       <button
         type="button"
         onClick={() => { setValue(name); setEditing(true) }}
-        data-testid={`cred-name-${slotKey}`}
+        data-testid={`cred-name-${entryKey}`}
         title="Rename"
         className={`truncate rounded px-1 text-left hover:bg-muted ${
           name ? 'text-foreground-secondary' : 'text-[11px] italic text-foreground-subtle'
         }`}
       >
-        {name || 'which account?'} <span className="text-foreground-subtle">✎</span>
+        {name || 'add a name'} <span className="text-foreground-subtle">✎</span>
       </button>
     )
   }
@@ -715,10 +422,74 @@ function LoginName({ slotKey, name, disabled, onSave }: {
         if (e.key === 'Enter') void commit()
         if (e.key === 'Escape') setEditing(false)
       }}
-      placeholder="e.g. you@dimagi.com"
+      placeholder="e.g. ZDR org key"
       maxLength={200}
-      data-testid={`cred-label-${slotKey}`}
+      data-testid={`cred-name-input-${entryKey}`}
       className="min-w-0 flex-1 rounded-md border border-input bg-input px-2 py-0.5 text-[12px] text-foreground placeholder:text-muted-foreground"
     />
+  )
+}
+
+const inputClass =
+  'min-w-0 flex-1 rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground'
+const saveClass =
+  'rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40'
+
+/** Paste a new value over an API key. Hidden until asked for. */
+function ReplaceKey({ entryKey, disabled, onSave }: {
+  entryKey: string
+  disabled: boolean
+  onSave: (value: string) => Promise<boolean>
+}) {
+  const [open, setOpen] = useState(false)
+  const [value, setValue] = useState('')
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} data-testid={`cred-replace-${entryKey}`}
+        className="w-fit rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
+        Replace key
+      </button>
+    )
+  }
+  return (
+    <div className="flex gap-2">
+      <input type="password" autoComplete="off" autoFocus value={value} onChange={(e) => setValue(e.target.value)}
+        placeholder="paste the new key" aria-label="New API key" className={inputClass} />
+      <button type="button" disabled={disabled || !value.trim()} className={saveClass}
+        onClick={async () => {
+          // Never keep a secret in component state after it lands.
+          if (await onSave(value.trim())) { setValue(''); setOpen(false) }
+        }}>
+        Save
+      </button>
+      <button type="button" onClick={() => { setValue(''); setOpen(false) }} className={smallButton}>Cancel</button>
+    </div>
+  )
+}
+
+/** Paste a new API key, with an optional name, at the end of the list. */
+function NewApiKey({ disabled, onSave, onCancel }: {
+  disabled: boolean
+  onSave: (value: string, name: string) => Promise<boolean>
+  onCancel: () => void
+}) {
+  const [value, setValue] = useState('')
+  const [name, setName] = useState('')
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-dashed border-border p-2" data-testid="cred-new-api-key">
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="name (optional), e.g. ZDR org key"
+        maxLength={200} aria-label="Name" className={inputClass.replace('font-mono ', '')} />
+      <div className="flex gap-2">
+        <input type="password" autoComplete="off" autoFocus value={value} onChange={(e) => setValue(e.target.value)}
+          placeholder="paste the API key" aria-label="API key" className={inputClass} />
+        <button type="button" disabled={disabled || !value.trim()} data-testid="cred-new-api-key-save" className={saveClass}
+          onClick={async () => {
+            if (await onSave(value.trim(), name.trim())) { setValue(''); setName('') }
+          }}>
+          Add
+        </button>
+        <button type="button" onClick={onCancel} className={smallButton}>Cancel</button>
+      </div>
+    </div>
   )
 }

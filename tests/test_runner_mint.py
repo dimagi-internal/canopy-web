@@ -242,9 +242,9 @@ def _sign_in(client, runner, *, slot=None, token):
 def test_a_fallback_sign_in_leaves_the_primary_alone(client, runner):
     # The defect: every sign-in wrote the primary, so "add a fallback" replaced
     # the login that was working and left the fallback empty.
+    _sign_in(client, runner, token="sk-ant-oat01-primary")
     _post(client, f"/api/harness/runners/{runner.id}/credential",
           {"claude_token_label": "a@dimagi.com"})
-    _sign_in(client, runner, token="sk-ant-oat01-primary")
     r = _sign_in(client, runner, slot="secondary", token="sk-ant-oat01-fallback")
     assert r.json()["slot"] == "secondary"
 
@@ -257,6 +257,7 @@ def test_a_fallback_sign_in_leaves_the_primary_alone(client, runner):
 
 def test_a_sign_in_keeps_the_old_name(client, runner):
     # Re-signing an expired login is the common case, and it is the same account.
+    _sign_in(client, runner, token="sk-ant-oat01-old")
     _post(client, f"/api/harness/runners/{runner.id}/credential",
           {"claude_token_label": "a@dimagi.com"})
     _sign_in(client, runner, token="sk-ant-oat01-new")
@@ -337,3 +338,44 @@ def test_a_backup_token_can_be_signed_in_again(client, runner):
 def test_a_sign_in_with_no_slot_is_the_full_login(client, runner):
     r = _post(client, _base(runner))
     assert r.json()["slot"] == "box"
+
+
+# ── a long-lived token for the credential list ───────────────────────────────
+
+def _token_sign_in(client, runner, *, login_key="", token):
+    r = _post(client, _base(runner), {"slot": "token", "login_key": login_key})
+    assert r.status_code == 200, r.content
+    _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
+    _post(client, f"{_base(runner)}/code", {"code": "c"})
+    client.get(f"{_base(runner)}/claim")
+    return _post(client, f"{_base(runner)}/result", {"token": token})
+
+
+def test_a_token_sign_in_adds_a_token_at_the_end(client, runner):
+    from apps.harness import runners
+
+    runners.add_runner_credential(runner, kind="api_key", value="sk-ant-api")
+    assert _token_sign_in(client, runner, token="sk-ant-oat01-new").json()["status"] == "done"
+    cascade = client.get(f"/api/harness/runners/{runner.id}/credential").json()["cascade"]
+    assert [(c["kind"], c["value"]) for c in cascade] == [
+        ("api_key", "sk-ant-api"), ("token", "sk-ant-oat01-new")]
+
+
+def test_a_token_sign_in_for_a_token_replaces_its_value_in_place(client, runner):
+    from apps.harness import runners
+
+    old = runners.add_runner_credential(runner, kind="token", value="tok-old", name="ace")
+    runners.add_runner_credential(runner, kind="api_key", value="sk-ant-api")
+    _token_sign_in(client, runner, login_key=old.key, token="tok-new")
+    status = client.get(f"/api/harness/runners/{runner.id}/credential/status").json()
+    assert [(c["key"], c["name"]) for c in status["credentials"]][0] == (old.key, "ace")
+    cascade = client.get(f"/api/harness/runners/{runner.id}/credential").json()["cascade"]
+    assert [c["value"] for c in cascade] == ["tok-new", "sk-ant-api"]
+
+
+def test_a_token_sign_in_names_only_a_token(client, runner):
+    from apps.harness import runners
+
+    key = runners.add_runner_credential(runner, kind="api_key", value="k").key
+    r = _post(client, _base(runner), {"slot": "token", "login_key": key})
+    assert r.status_code == 404

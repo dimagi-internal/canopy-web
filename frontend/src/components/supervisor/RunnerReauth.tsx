@@ -25,10 +25,10 @@ import { usePolled } from '@/hooks/usePolled'
 // canopy-web, so the only secret that ever touches a browser is the single-use
 // authorization code.
 //
-// One of these sits on EACH subscription login (primary, fallback), and the
-// sign-in names the slot it fills. It used to be a single button above both
-// that always wrote the primary — so "add a fallback" overwrote the login that
-// was working, and nothing on the screen said it would.
+// One of these sits on EACH login and token in the runner's credential list,
+// and the sign-in names the entry it fills. It used to be a single button above
+// both that always wrote the primary — so "add a fallback" overwrote the login
+// that was working, and nothing on the screen said it would.
 
 /** How long to keep polling for the runner to pick the request up.
  *  A cloud runner polls on its own tick (~15s), so a URL usually lands within
@@ -47,14 +47,16 @@ const POLL_MS = 3_000
  * of. So an outcome shows only when it happened in front of you, in this visit.
  */
 
-export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = false, onSignedIn }: {
+export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = false, autoStart = false, onSignedIn }: {
   runnerId: string
-  /** The login this sign-in fills. */
+  /** What this sign-in fills: `box` a login, `token` a long-lived token. */
   slot?: LoginSlot
-  /** For a `box` sign-in, WHICH of the box's logins ('' = its default one). */
+  /** WHICH login ('' = the box's default one), or which token ('' = a new one). */
   loginKey?: string
-  /** Whether that login already holds a token — only changes the button's words. */
+  /** Whether that entry already holds a sign-in — only changes the button's words. */
   isSet?: boolean
+  /** Start the sign-in as soon as this mounts (the list's "+ Token"). */
+  autoStart?: boolean
   /** Lets the parent refresh its masked credential status once a token lands. */
   onSignedIn?: () => void
 }) {
@@ -64,8 +66,9 @@ export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = fa
   // pasting the fallback's code under the primary. A row older than the slot
   // field has none, and was always the primary.
   // Likewise each of the box's logins: one row must not show another's link.
-  const sameLogin = slot !== 'box'
-    || (latest?.login_key || 'default') === (loginKey || 'default')
+  const sameLogin = slot === 'box'
+    ? (latest?.login_key || 'default') === (loginKey || 'default')
+    : slot === 'token' ? (latest?.login_key || '') === loginKey : true
   const mint = latest && (latest.slot ?? 'primary') === slot && sameLogin ? latest : null
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
@@ -144,6 +147,15 @@ export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = fa
     return startRunnerMint(runnerId, slot, loginKey)
   })
 
+  const autoStarted = useRef(false)
+  useEffect(() => {
+    if (!autoStart || autoStarted.current) return
+    autoStarted.current = true
+    void start()
+    // `start` is recreated each render; this runs once, on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart])
+
   const submit = () => run(async () => {
     actedThisVisit.current = true
     const m = await submitRunnerMintCode(runnerId, code)
@@ -176,14 +188,9 @@ export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = fa
           className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
         >
           {!idle ? 'Start again'
-            : slot !== 'box' ? (isSet ? 'Replace this token' : '+ Create a long-lived token')
+            : slot !== 'box' ? (isSet ? 'Replace token' : 'Get a token')
               : isSet || outcomeIsFresh ? 'Sign in again' : 'Sign in with Claude'}
         </button>
-        <span className="text-[11px] text-foreground-subtle">
-          {slot === 'box'
-            ? 'you open one link and paste one code back'
-            : 'you open one link and paste one code back'}
-        </span>
       </div>
 
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
@@ -217,9 +224,8 @@ export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = fa
             Open Claude sign-in →
           </a>
           <p className="text-xs text-muted-foreground">
-            Sign in as the account whose subscription this runner uses, then copy the
-            code it shows you and paste it here. <strong>Do it now</strong> &mdash; the
-            link is only good for a few minutes.
+            Sign in, then paste the code it shows you here. The link is only good for a
+            few minutes.
           </p>
           <div className="flex gap-2">
             <input

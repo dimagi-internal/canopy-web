@@ -1267,6 +1267,33 @@ class RunnerCredentialIn(Schema):
     claude_token_secondary_label: str | None = Field(default=None, max_length=200)
 
 
+CredentialKind = Literal["login", "token", "api_key"]
+
+
+class RunnerCredentialAddIn(Schema):
+    """A token or API key, pasted, added at the end of the list."""
+
+    kind: Literal["token", "api_key"]
+    value: str = Field(min_length=1, max_length=4000)
+    name: str = Field(default="", max_length=200)
+
+
+class RunnerCredentialPatchIn(Schema):
+    """A new value and/or name for one token or API key. None leaves it unchanged."""
+
+    value: str | None = Field(default=None, max_length=4000)
+    name: str | None = Field(default=None, max_length=200)
+
+
+class RunnerCascadeItem(Schema):
+    """One credential the box uses, in order. `value` is set for a token or API
+    key; a login's lives on the box."""
+
+    key: str
+    kind: CredentialKind
+    value: str = ""
+
+
 class RunnerLoginRef(Schema):
     """One full Claude login the box should keep, in cascade order."""
 
@@ -1283,6 +1310,9 @@ class RunnerCredentialOut(Schema):
     #: The full logins this box should keep, first to last. Any login on the
     #: box that is not listed here is one a person removed.
     logins: list[RunnerLoginRef] = []
+    #: Every credential, in the order the box uses them. The fields above are
+    #: what a box from before the list reads.
+    cascade: list[RunnerCascadeItem] = []
     updated_at: dt.datetime | None = None
 
 
@@ -1296,8 +1326,24 @@ class RunnerLoginOut(Schema):
     reported_at: dt.datetime | None = None
 
 
+class RunnerCredentialEntryOut(Schema):
+    """One credential in the list, masked."""
+
+    key: str
+    kind: CredentialKind
+    #: A token's or API key's name, as a person gave it.
+    name: str = ""
+    #: A login's account, as the box reported it.
+    account: str = ""
+    #: A login: whether the box says it is signed in.
+    signed_in: bool = False
+    #: A token or API key: whether a value is held (never the value).
+    has_value: bool = False
+    reported_at: dt.datetime | None = None
+
+
 class RunnerLoginOrderIn(Schema):
-    #: Every login key on the runner, first to last.
+    #: Every credential key on the runner, first to last.
     keys: list[str]
 
 
@@ -1379,8 +1425,9 @@ class RunnerMintOut(Schema):
     status: str
     #: Which subscription login the new token will replace — or `box`, a full
     #: login the runner keeps on the box (carries claude.ai connectors).
-    slot: Literal["primary", "secondary", "box"] = "primary"
-    #: For a `box` sign-in, the login it signs in ("" = the box's default login).
+    slot: Literal["primary", "secondary", "box", "token"] = "primary"
+    #: For a `box` sign-in, the login it signs in ("" = the box's default login);
+    #: for a `token` one, the token it replaces ("" = a new token).
     login_key: str = ""
     authorize_url: str
     detail: str
@@ -1389,10 +1436,11 @@ class RunnerMintOut(Schema):
 
 
 class RunnerMintStartIn(Schema):
-    # `box` = the full sign-in kept on the runner; `primary`/`secondary` = a
-    # backup token (setup-token) into that slot — see api.start_runner_mint.
-    slot: Literal["primary", "secondary", "box"] = "box"
-    #: Which login to sign in again; "" = the box's default login.
+    # `box` = the full sign-in kept on the runner; `token` = a long-lived token
+    # (setup-token) for the list; `primary`/`secondary` = the old fixed slots.
+    slot: Literal["primary", "secondary", "box", "token"] = "box"
+    #: Which login to sign in again ("" = the box's default login), or which
+    #: token to replace ("" = a new one).
     login_key: str = ""
 
 
@@ -1477,6 +1525,9 @@ class OpenSignInRequestOut(Schema):
 class RunnerCredentialStatusOut(Schema):
     """Masked view — booleans, never values. The POST response + any UI."""
 
+    #: Every credential, in the order the box uses them.
+    credentials: list[RunnerCredentialEntryOut] = []
+    #: The fixed-slot view an older caller reads: the first two tokens, the first API key.
     has_claude_token: bool = False
     has_claude_token_secondary: bool = False
     has_claude_api_key: bool = False

@@ -168,7 +168,7 @@
 "apps/harness/routing.py" = ["PLC0415"]  # 7
 "apps/harness/routing_audit.py" = ["PLC0415"]  # 1
 "apps/harness/runner_releases.py" = ["PLC0415"]  # 2
-"apps/harness/runners.py" = ["PLC0415"]  # 9
+"apps/harness/runners.py" = ["PLC0415"]  # 6
 "apps/harness/schedule_clock.py" = ["PLC0415"]  # 2
 "apps/harness/schedule_turns.py" = ["PLC0415"]  # 10
 "apps/harness/schemas.py" = ["PLC0415"]  # 7

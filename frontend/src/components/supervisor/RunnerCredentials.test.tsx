@@ -1,415 +1,222 @@
 // @vitest-environment jsdom
 //
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RunnerCredentialEntry } from '@/api/harness'
 import {
   boxLoginAccount,
-  RunnerCredentials,
-  SLOTS,
-  credentialSummary,
-  loginProbeLabel,
-  probeFor,
-  PROBE_LABEL,
+  credentialWarning,
   moved,
-  nextPayload,
+  probeFor,
+  probeLabel,
+  RunnerCredentials,
   type CredentialStatus,
 } from './RunnerCredentials'
 
 const api = vi.hoisted(() => ({
   getRunnerCredentialStatus: vi.fn(),
-  setRunnerCredential: vi.fn(),
-  swapRunnerLogins: vi.fn(),
   addRunnerLogin: vi.fn(),
-  removeRunnerLogin: vi.fn(),
-  orderRunnerLogins: vi.fn(),
+  addRunnerCredential: vi.fn(),
+  updateRunnerCredential: vi.fn(),
+  removeRunnerCredential: vi.fn(),
+  orderRunnerCredentials: vi.fn(),
   getRunnerMint: vi.fn(),
   startRunnerMint: vi.fn(),
   submitRunnerMintCode: vi.fn(),
 }))
 vi.mock('@/api/harness', () => api)
 
-// The cloud box warned on every boot: "only ONE Claude credential is set — a
-// usage cap will stop every agent on this box with nothing to fail over to."
-// The API to fix that (POST /runners/{id}/credential) has existed since the
-// runner-credential work; there was simply no page, so the only way to set it
-// was a terminal. These are the rules that page runs on.
-
-const NONE: CredentialStatus = {
-  has_claude_token: false,
-  has_claude_token_secondary: false,
-  has_claude_api_key: false,
-  claude_token_label: '',
-  claude_token_secondary_label: '',
-  logins: [],
-  updated_at: null,
+function entry(over: Partial<RunnerCredentialEntry> & Pick<RunnerCredentialEntry, 'key' | 'kind'>): RunnerCredentialEntry {
+  return { name: '', account: '', signed_in: false, has_value: false, reported_at: null, ...over }
 }
-const ONE_CLAUDE: CredentialStatus = { ...NONE, has_claude_token: true }
 
-describe('slot catalogue', () => {
-  it('covers every field the write schema accepts', () => {
-    // RunnerCredentialIn's fields. A slot missing here is a credential that
-    // cannot be set from the browser — which is the whole defect being fixed.
-    expect(SLOTS.map((s) => s.key).sort()).toEqual([
-      'claude_api_key',
-      'claude_token',
-      'claude_token_secondary',
-    ])
+function status(credentials: RunnerCredentialEntry[]): CredentialStatus {
+  return {
+    credentials,
+    has_claude_token: false,
+    has_claude_token_secondary: false,
+    has_claude_api_key: false,
+    claude_token_label: '',
+    claude_token_secondary_label: '',
+    logins: [],
+    updated_at: null,
+  }
+}
+
+const LOGIN = entry({ key: 'default', kind: 'login', signed_in: true, account: 'a@dimagi.com' })
+const TOKEN = entry({ key: 'tt', kind: 'token', has_value: true, name: 'ace' })
+const KEY = entry({ key: 'kk', kind: 'api_key', has_value: true, name: 'ZDR org' })
+const MIXED = status([KEY, LOGIN, TOKEN])
+
+beforeEach(() => {
+  api.getRunnerMint.mockResolvedValue(null)
+})
+
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+  vi.restoreAllMocks()
+})
+
+describe('credentialWarning', () => {
+  it('warns only when nothing on the list can run a turn', () => {
+    expect(credentialWarning(status([]))).toMatch(/No working credential/)
+    expect(credentialWarning(status([entry({ key: 'x', kind: 'login' })]))).toMatch(/No working credential/)
   })
 
-  it('pairs each slot with the boolean the status endpoint returns', () => {
-    for (const s of SLOTS) expect(s.statusKey).toBe(`has_${s.key}`)
+  it('counts an API key — a box running on one key is not credential-less', () => {
+    expect(credentialWarning(status([KEY]))).toBeNull()
+  })
+
+  it('counts a box the runner says is signed in before the list has it', () => {
+    expect(credentialWarning(status([]), true)).toBeNull()
   })
 })
 
-describe('nextPayload', () => {
-  it('sends only the slots actually typed into', () => {
-    // RunnerCredentialIn is non-clobbering: a field left None is unchanged.
-    // Sending "" for an untouched slot would wipe a working credential.
-    expect(nextPayload({ claude_token_secondary: 'sk-ant-oat01-xyz' })).toEqual({
-      claude_token_secondary: 'sk-ant-oat01-xyz',
-    })
+describe('probe labels', () => {
+  it('match the labels the box reports each entry under', () => {
+    expect(probeLabel(LOGIN)).toBe('box-login')
+    expect(probeLabel({ kind: 'login', key: 'ab12' })).toBe('box-login:ab12')
+    expect(probeLabel(TOKEN)).toBe('token:tt')
+    expect(probeLabel(KEY)).toBe('api-key:kk')
   })
 
-  it('drops blank and whitespace-only entries rather than clobbering', () => {
-    expect(nextPayload({ claude_token: '', claude_token_secondary: '   ', claude_api_key: 'sk-x' })).toEqual({
-      claude_api_key: 'sk-x',
-    })
-  })
-
-  it('trims — a pasted token picks up whitespace and the server stores it verbatim', () => {
-    expect(nextPayload({ claude_api_key: '  sk-ant-api-1  ' })).toEqual({
-      claude_api_key: 'sk-ant-api-1',
-    })
-  })
-
-  it('is empty when nothing was typed, so the caller can skip the request', () => {
-    expect(nextPayload({})).toEqual({})
-    expect(nextPayload({ claude_token: '  ' })).toEqual({})
+  it('reads one probe out of the health checks', () => {
+    const checks = { 'claude.probe.token:tt': { status: 'warn', detail: 'at its usage cap' } }
+    expect(probeFor(checks, 'token:tt')).toEqual({ tone: 'warn', detail: 'at its usage cap' })
+    expect(probeFor(checks, 'api-key:kk')).toEqual({ tone: null, detail: '' })
   })
 })
 
-describe('credentialSummary', () => {
-  it('warns when the only Claude credential is the primary', () => {
-    const s = credentialSummary(ONE_CLAUDE)
-    expect(s.claudeFallback).toBe('none')
-    // A single credential is a CHOICE, not a fault — no banner for it.
-    expect(s.warning).toBeNull()
+describe('moved', () => {
+  it('moves one key to a new place', () => {
+    expect(moved(['a', 'b', 'c'], 'c', 0)).toEqual(['c', 'a', 'b'])
+    expect(moved(['a', 'b', 'c'], 'a', 9)).toEqual(['b', 'c', 'a'])
   })
+})
 
-  it('clears once a secondary subscription is set', () => {
-    const s = credentialSummary({ ...ONE_CLAUDE, has_claude_token_secondary: true })
-    expect(s.claudeFallback).toBe('secondary')
-    expect(s.warning).toBeNull()
-  })
-
-  it('counts a metered API key as a fallback, but names the cost', () => {
-    // The cascade's last resort is deliberately metered so falling back to it
-    // notifies a human rather than quietly spending money.
-    const s = credentialSummary({ ...ONE_CLAUDE, has_claude_api_key: true })
-    expect(s.claudeFallback).toBe('api_key')
-    // Likewise a metered-only fallback: worth knowing, not worth a standing banner.
-    expect(s.warning).toBeNull()
-  })
-
-  it('says nothing is set at all rather than warning about a fallback', () => {
-    // No primary is a different problem: the box cannot run ANY turn, and
-    // telling someone to add a fallback would be the wrong instruction.
-    const s = credentialSummary(NONE)
-    expect(s.claudeFallback).toBe('none')
-    expect(s.warning).toMatch(/no claude credential/i)
-  })
-
-  it('reports which non-Claude slots are unset', () => {
-    const s = credentialSummary(ONE_CLAUDE)
-    expect(s.unset).toContain('claude_api_key')
-    expect(s.unset).not.toContain('claude_token')
+describe('boxLoginAccount', () => {
+  it('reads the account out of the claude.login health check', () => {
+    expect(boxLoginAccount('signed in on this box as ace@dimagi-ai.com — claude.ai connectors available'))
+      .toBe('ace@dimagi-ai.com')
+    expect(boxLoginAccount(undefined)).toBe('')
   })
 })
 
 describe('RunnerCredentials', () => {
-  const TWO = {
-    ...ONE_CLAUDE, has_claude_token_secondary: true,
-    claude_token_label: 'a@dimagi.com', claude_token_secondary_label: 'b@dimagi.com',
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    api.getRunnerMint.mockResolvedValue(null)
-  })
-  afterEach(cleanup)
-
-  const LOGINS = {
-    ...NONE,
-    logins: [
-      { key: 'default', account: 'a@dimagi.com', signed_in: true },
-      { key: 'bb', account: 'b@dimagi.com', signed_in: true },
-      { key: 'cc', account: '', signed_in: false },
-    ],
-  }
-
-  it('says "Sign in with Claude" only on the full logins; backup tokens say token', async () => {
-    // The defect (2026-10-14): three "Sign in with Claude" buttons, two of which
-    // made inference-only setup-tokens. An operator signed in on one of those
-    // believing it was the full login, and the box still could not read a doc.
-    // Backup tokens can be got here again (2026-10-15), under their own words.
-    api.getRunnerCredentialStatus.mockResolvedValue({ ...TWO, logins: LOGINS.logins })
-    api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'box', login_key: 'bb' })
+  it('shows one list of every kind, in order, with no warning when one works', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(MIXED)
     render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('runner-reauth-box-bb')).toBeTruthy())
-    for (const slot of ['primary', 'secondary']) {
-      const text = within(screen.getByTestId(`runner-reauth-${slot}`)).getByTestId('reauth-start').textContent
-      expect(text).toBe('Replace this token')
-    }
-    expect(screen.getAllByTestId('reauth-start')).toHaveLength(5)
-
-    await act(async () => {
-      fireEvent.click(within(screen.getByTestId('runner-reauth-box-bb')).getByTestId('reauth-start'))
-    })
-    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'box', 'bb')
-  })
-
-  it('lists each login as the account the box reports, in order', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(LOGINS)
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('cred-login-account-default').textContent)
-      .toBe('a@dimagi.com'))
-    expect(screen.getByTestId('cred-login-account-cc').textContent).toBe('not signed in yet')
-    const rows = screen.getAllByTestId(/^cred-login-(default|bb|cc)$/).map((el) => el.dataset.testid)
-    expect(rows).toEqual(['cred-login-default', 'cred-login-bb', 'cred-login-cc'])
-    // A signed-in login is a working box, not an alarm.
+    await screen.findByTestId('cred-list')
+    expect(['kk', 'default', 'tt'].map((k) => screen.getByTestId(`cred-kind-${k}`).textContent))
+      .toEqual(['API key', 'Login', 'Token'])
+    expect(screen.getByTestId('cred-account-default').textContent).toBe('a@dimagi.com')
+    expect(screen.getByTestId('cred-name-kk').textContent).toContain('ZDR org')
     expect(screen.queryByTestId('runner-credentials-warning')).toBeNull()
+    expect(screen.queryByText(/last resort/i)).toBeNull()
   })
 
-  it('adds a login', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(NONE)
-    api.addRunnerLogin.mockResolvedValue({ ...NONE, logins: [{ key: 'dd', account: '', signed_in: false }] })
+  it('moves any entry up or down across kinds', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(MIXED)
+    api.orderRunnerCredentials.mockResolvedValue(MIXED)
     render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => screen.getByTestId('cred-login-add'))
-    await act(async () => { fireEvent.click(screen.getByTestId('cred-login-add')) })
-    expect(api.addRunnerLogin).toHaveBeenCalledWith('r1')
-    expect(screen.getByTestId('cred-login-dd')).toBeTruthy()
+    fireEvent.click(await screen.findByTestId('cred-down-kk'))
+    await waitFor(() => expect(api.orderRunnerCredentials).toHaveBeenCalledWith('r1', ['default', 'kk', 'tt']))
+    fireEvent.click(screen.getByTestId('cred-up-tt'))
+    await waitFor(() => expect(api.orderRunnerCredentials).toHaveBeenLastCalledWith('r1', ['kk', 'tt', 'default']))
   })
 
-  it('removes a login after confirming, and the row goes', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(LOGINS)
-    api.removeRunnerLogin.mockResolvedValue({ ...LOGINS, logins: LOGINS.logins.filter((l) => l.key !== 'bb') })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+  it('removes an entry after confirming, and shows why when the server refuses', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(MIXED)
+    api.removeRunnerCredential.mockRejectedValue(new Error("That is this runner's last token or API key."))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => screen.getByTestId('cred-login-remove-bb'))
-    await act(async () => { fireEvent.click(screen.getByTestId('cred-login-remove-bb')) })
-    expect(api.removeRunnerLogin).toHaveBeenCalledWith('r1', 'bb')
-    expect(screen.queryByTestId('cred-login-bb')).toBeNull()
-    confirm.mockRestore()
+    fireEvent.click(await screen.findByTestId('cred-remove-kk'))
+    await waitFor(() => expect(api.removeRunnerCredential).toHaveBeenCalledWith('r1', 'kk'))
+    expect((await screen.findByTestId('runner-credentials-error')).textContent).toMatch(/last token or API key/)
   })
 
-  it('moves a login up and down', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(LOGINS)
-    api.orderRunnerLogins.mockResolvedValue(LOGINS)
+  it('does not remove when the confirm is declined', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(MIXED)
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => screen.getByTestId('cred-login-up-cc'))
-    expect((screen.getByTestId('cred-login-up-default') as HTMLButtonElement).disabled).toBe(true)
-    await act(async () => { fireEvent.click(screen.getByTestId('cred-login-up-cc')) })
-    expect(api.orderRunnerLogins).toHaveBeenCalledWith('r1', ['default', 'cc', 'bb'])
-    await act(async () => { fireEvent.click(screen.getByTestId('cred-login-down-default')) })
-    expect(api.orderRunnerLogins).toHaveBeenLastCalledWith('r1', ['bb', 'default', 'cc'])
+    fireEvent.click(await screen.findByTestId('cred-remove-tt'))
+    expect(api.removeRunnerCredential).not.toHaveBeenCalled()
   })
 
-  it('computes a move', () => {
-    expect(moved(['a', 'b', 'c'], 'c', 0)).toEqual(['c', 'a', 'b'])
-    expect(moved(['a', 'b', 'c'], 'a', 2)).toEqual(['b', 'c', 'a'])
-    expect(moved(['a', 'b', 'c'], 'b', 9)).toEqual(['a', 'c', 'b'])
+  it('adds an API key with a name, and clears the field once it lands', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(status([]))
+    api.addRunnerCredential.mockResolvedValue(status([KEY]))
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('cred-add-api_key'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'ZDR org' } })
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: '  sk-ant-api-1 ' } })
+    fireEvent.click(screen.getByTestId('cred-new-api-key-save'))
+    await waitFor(() => expect(api.addRunnerCredential).toHaveBeenCalledWith('r1', 'api_key', 'sk-ant-api-1', 'ZDR org'))
+    await waitFor(() => expect(screen.queryByTestId('cred-new-api-key')).toBeNull())
+  })
+
+  it('adds a login by starting its sign-in', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(status([]))
+    api.addRunnerLogin.mockResolvedValue(status([entry({ key: 'n1', kind: 'login' })]))
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('cred-add-login'))
+    await waitFor(() => expect(api.addRunnerLogin).toHaveBeenCalledWith('r1'))
+    expect((await screen.findByTestId('cred-account-n1')).textContent).toBe('not signed in yet')
+  })
+
+  it('adds a token by starting a token sign-in straight away', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(status([]))
+    api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'token', login_key: '' })
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('cred-add-token'))
+    await waitFor(() => expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'token', ''))
+  })
+
+  it('renames a token', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(MIXED)
+    api.updateRunnerCredential.mockResolvedValue(MIXED)
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('cred-name-tt'))
+    const input = screen.getByTestId('cred-name-input-tt')
+    fireEvent.change(input, { target: { value: 'jj' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(api.updateRunnerCredential).toHaveBeenCalledWith('r1', 'tt', { name: 'jj' }))
+  })
+
+  it('replaces an API key without showing the old one', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(MIXED)
+    api.updateRunnerCredential.mockResolvedValue(MIXED)
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('cred-replace-kk'))
+    fireEvent.change(screen.getByLabelText('New API key'), { target: { value: 'sk-ant-new' } })
+    fireEvent.click(screen.getByText('Save'))
+    await waitFor(() => expect(api.updateRunnerCredential).toHaveBeenCalledWith('r1', 'kk', { value: 'sk-ant-new' }))
+  })
+
+  it('offers only API keys on a ZDR runner', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(status([KEY]))
+    render(<RunnerCredentials runnerId="r1" apiKeysOnly />)
+    await screen.findByTestId('cred-add-api_key')
+    expect(screen.queryByTestId('cred-add-login')).toBeNull()
+    expect(screen.queryByTestId('cred-add-token')).toBeNull()
+  })
+
+  it('colours an entry by what the box last proved about it', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(MIXED)
+    render(<RunnerCredentials runnerId="r1" healthChecks={{
+      'claude.probe.token:tt': { status: 'warn', detail: 'at its usage cap — resets Monday' },
+      'claude.probe.api-key:kk': { status: 'fail', detail: 'invalid key' },
+    }} />)
+    expect((await screen.findByTestId('cred-dot-tt')).className).toContain('text-warning')
+    expect(screen.getByTestId('cred-probe-tt').textContent).toMatch(/resets Monday/)
+    expect(screen.getByTestId('cred-dot-kk').className).toContain('text-destructive')
   })
 
   it('shows a box signed in before there was a list, as the account it reports', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(NONE)
+    api.getRunnerCredentialStatus.mockResolvedValue(status([]))
     render(<RunnerCredentials runnerId="r1" signedIn signedInAs="ace@dimagi-ai.com" />)
-    await waitFor(() => expect(screen.getByTestId('cred-login-pending-adopt').textContent)
-      .toContain('ace@dimagi-ai.com'))
+    expect((await screen.findByTestId('cred-login-pending-adopt')).textContent).toContain('ace@dimagi-ai.com')
     expect(screen.queryByTestId('runner-credentials-warning')).toBeNull()
-  })
-
-  it('reads the account out of the claude.login health check', () => {
-    expect(boxLoginAccount('signed in on this box as ace@dimagi-ai.com — claude.ai connectors available'))
-      .toBe('ace@dimagi-ai.com')
-    expect(boxLoginAccount('signed in on this box — claude.ai connectors available')).toBe('')
-    expect(boxLoginAccount(undefined)).toBe('')
-  })
-
-  it('removes a backup token and its name, after confirming', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
-    api.setRunnerCredential.mockResolvedValue(TWO)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => screen.getByTestId('cred-remove-claude_token'))
-    await act(async () => { fireEvent.click(screen.getByTestId('cred-remove-claude_token')) })
-    expect(confirm).toHaveBeenCalled()
-    expect(api.setRunnerCredential).toHaveBeenCalledWith('r1', { claude_token: '', claude_token_label: '' })
-    confirm.mockRestore()
-  })
-
-  it('shows no row for a backup token that is not set — only a way to get one', async () => {
-    // Reported 2026-10-14: removing both tokens left two "not set" rows behind.
-    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('cred-slot-claude_token')).toBeTruthy())
-    expect(screen.queryByTestId('cred-slot-claude_token_secondary')).toBeNull()
-    expect(screen.queryByTestId('runner-credentials-swap')).toBeNull()
-    expect(within(screen.getByTestId('cred-get-claude_token_secondary')).getByTestId('reauth-start')
-      .textContent).toBe('+ Create a long-lived token')
-  })
-
-  it('gets a backup token when there is none, and warns until there is', async () => {
-    // cloud-ec2-2, 2026-10-15: both backups removed, the login stopped renewing,
-    // and the page had no way to get a token back.
-    api.getRunnerCredentialStatus.mockResolvedValue(LOGINS)
-    api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'primary', login_key: '' })
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('cred-no-backup-warning')).toBeTruthy())
-    await act(async () => {
-      fireEvent.click(within(screen.getByTestId('cred-get-claude_token')).getByTestId('reauth-start'))
-    })
-    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'primary', '')
-  })
-
-  it('will not remove the last backup token', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => screen.getByTestId('cred-remove-claude_token'))
-    expect((screen.getByTestId('cred-remove-claude_token') as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.queryByTestId('cred-no-backup-warning')).toBeNull()
-  })
-
-  it('does not remove a token when the confirm is declined', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => screen.getByTestId('cred-remove-claude_token_secondary'))
-    await act(async () => { fireEvent.click(screen.getByTestId('cred-remove-claude_token_secondary')) })
-    expect(api.setRunnerCredential).not.toHaveBeenCalled()
-    confirm.mockRestore()
-  })
-
-  it('names each login', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('cred-name-claude_token').textContent)
-      .toContain('a@dimagi.com'))
-    expect(screen.getByTestId('cred-name-claude_token_secondary').textContent).toContain('b@dimagi.com')
-  })
-
-  it('swaps primary and fallback', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
-    api.swapRunnerLogins.mockResolvedValue({
-      ...TWO, claude_token_label: 'b@dimagi.com', claude_token_secondary_label: 'a@dimagi.com',
-    })
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('runner-credentials-swap')).toBeTruthy())
-    await act(async () => { fireEvent.click(screen.getByTestId('runner-credentials-swap')) })
-    expect(api.swapRunnerLogins).toHaveBeenCalledWith('r1')
-    expect(screen.getByTestId('cred-name-claude_token').textContent).toContain('b@dimagi.com')
-  })
-
-  it('has no paste box for a login — you sign in to it instead', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('cred-slot-claude_token')).toBeTruthy())
-    for (const key of ['claude_token', 'claude_token_secondary']) {
-      expect(screen.getByTestId(`cred-slot-${key}`).querySelector('input[type="password"]')).toBeNull()
-    }
-    expect(screen.getByTestId('cred-slot-claude_api_key').querySelector('input[type="password"]')).toBeTruthy()
-  })
-
-  it('saves a renamed login without touching any token', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
-    api.setRunnerCredential.mockResolvedValue({ ...TWO, claude_token_label: 'c@dimagi.com' })
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('cred-name-claude_token')).toBeTruthy())
-    fireEvent.click(screen.getByTestId('cred-name-claude_token'))
-    fireEvent.change(screen.getByTestId('cred-label-claude_token'), { target: { value: 'c@dimagi.com' } })
-    await act(async () => {
-      fireEvent.keyDown(screen.getByTestId('cred-label-claude_token'), { key: 'Enter' })
-    })
-    expect(api.setRunnerCredential).toHaveBeenCalledWith('r1', { claude_token_label: 'c@dimagi.com' })
-  })
-})
-
-// Each dot is what the box last PROVED (its `claude.probe.<label>` check), not
-// that a value is stored: cloud-ec2-fork read ready with a capped token.
-describe('credential probes', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    api.getRunnerMint.mockResolvedValue(null)
-  })
-  afterEach(cleanup)
-
-  const dot = (key: string) =>
-    within(screen.getByTestId(`cred-slot-${key}`)).getByTestId(`cred-dot-${key}`)
-
-  it('maps the slots and logins to the labels the box probes under', () => {
-    expect(PROBE_LABEL).toEqual({
-      claude_token: 'subscription-1',
-      claude_token_secondary: 'subscription-2',
-      claude_api_key: 'api-key',
-    })
-    expect(loginProbeLabel('default')).toBe('box-login')
-    expect(loginProbeLabel('a44d94c3')).toBe('box-login:a44d94c3')
-  })
-
-  it('reads one probe out of the health checks', () => {
-    const checks = { 'claude.probe.api-key': { name: 'claude.probe.api-key', status: 'fail', detail: 'not signed in' } }
-    expect(probeFor(checks, 'api-key')).toEqual({ tone: 'fail', detail: 'not signed in' })
-    expect(probeFor(checks, 'subscription-1')).toEqual({ tone: null, detail: '' })
-    expect(probeFor(null, 'api-key')).toEqual({ tone: null, detail: '' })
-  })
-
-  it('colours a capped token as a warning and says when it resets', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
-    render(<RunnerCredentials runnerId="r1" healthChecks={{
-      'claude.probe.subscription-1': { name: 'claude.probe.subscription-1', status: 'warn',
-        detail: 'at its usage cap — resets 2026-10-18T23:00Z' },
-    }} />)
-    await waitFor(() => screen.getByTestId('cred-slot-claude_token'))
-    expect(dot('claude_token').className).toContain('text-warning')
-    expect(screen.getByTestId('cred-probe-claude_token').textContent)
-      .toContain('at its usage cap — resets 2026-10-18T23:00Z')
-  })
-
-  it('colours a dead credential as destructive', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue({ ...ONE_CLAUDE, has_claude_api_key: true })
-    render(<RunnerCredentials runnerId="r1" healthChecks={{
-      'claude.probe.api-key': { name: 'claude.probe.api-key', status: 'fail',
-        detail: 'not signed in — someone has to sign it in again' },
-    }} />)
-    await waitFor(() => screen.getByTestId('cred-slot-claude_api_key'))
-    expect(dot('claude_api_key').className).toContain('text-destructive')
-  })
-
-  it('keeps the plain "set" dot when the box has not probed', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => screen.getByTestId('cred-slot-claude_token'))
-    expect(dot('claude_token').className).toContain('text-success')
-    expect(screen.queryByTestId('cred-probe-claude_token')).toBeNull()
-  })
-
-  it('colours a login by its probe', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue({
-      ...NONE, logins: [{ key: 'default', account: 'a@dimagi.com', signed_in: true }],
-    })
-    render(<RunnerCredentials runnerId="r1" healthChecks={{
-      'claude.probe.box-login': { name: 'claude.probe.box-login', status: 'warn',
-        detail: 'at its usage cap — resets 2026-10-18T23:00Z' },
-    }} />)
-    await waitFor(() => screen.getByTestId('cred-login-default'))
-    expect(screen.getByTestId('cred-login-dot-default').className).toContain('text-warning')
-    expect(screen.getByTestId('cred-login-probe-default').textContent).toContain('resets')
-  })
-
-  it('says a full login does not copy between runners when there is none', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
-    render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => screen.getByTestId('cred-no-login'))
-    expect(screen.getByTestId('cred-no-login').textContent).toBe(
-      "No full login on this runner. Logins don't copy between runners: add one here to use claude.ai connectors.")
   })
 })

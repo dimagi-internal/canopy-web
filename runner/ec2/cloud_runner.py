@@ -3127,7 +3127,8 @@ RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", "cli").strip().lower()
 # itself as what it is, which no flag accepts: a typo fails closed, never open.
 RUNNER_DATA_MODE = os.environ.get("RUNNER_DATA_MODE", "").strip().lower()
 ZDR_MODE = bool(RUNNER_DATA_MODE)
-#: The one credential a ZDR box uses (`_BUNDLE_SLOTS` label).
+#: The kind of credential a ZDR box uses: an API key (`_is_api_key` labels) —
+#: a zero-data-retention organisation's. In an older bundle, its one API-key slot.
 ZDR_CREDENTIAL_LABEL = "api-key"
 #: What every ZDR turn's environment carries.
 ZDR_ENV = {
@@ -3205,9 +3206,10 @@ def zdr_readiness() -> tuple[bool, str]:
         return True, ""
     if RUNNER_DATA_MODE != "zdr":
         return False, f"RUNNER_DATA_MODE={RUNNER_DATA_MODE!r} is not a mode canopy knows (only 'zdr')"
-    if [c[0] for c in _CLAUDE_CREDS] != [ZDR_CREDENTIAL_LABEL]:
-        return False, ("ZDR mode runs only on the credential bundle's API-key slot "
-                       "(a zero-data-retention organisation's key), and none is staged")
+    labels = [c[0] for c in _CLAUDE_CREDS]
+    if not labels or not all(_is_api_key(lb) for lb in labels):
+        return False, ("ZDR mode runs only on API keys (a zero-data-retention "
+                       "organisation's), and none is staged")
     return True, ""
 
 
@@ -3627,7 +3629,6 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
         if ok or not (capped or dead):
             if ok:
                 _record_outcome(label, "ok", detail="ran a turn")
-                _promote_working_subscription(turn_id)
             return ok, text, session_id
         if capped:
             capped_labels.append(label)
@@ -5616,8 +5617,8 @@ def _run_bootstrap() -> None:
 
 
 # ── Claude credential cascade ───────────────────────────────────────────────
-# Ordered: the subscriptions first (included in what we already pay for), the API
-# key last (metered — every token spends money, so reaching it notifies a human).
+# Ordered as a person set it on canopy-web; the box uses the first that works.
+# Stepping onto an API key notifies a human (it bills per token).
 # Each entry is (label, env_var, value). The two auth env vars are MUTUALLY
 # EXCLUSIVE: claude prefers CLAUDE_CODE_OAUTH_TOKEN when both are set, so
 # selecting a credential must CLEAR the other or the API key can never take over.
@@ -5688,6 +5689,18 @@ def _login_label(key: str) -> str:
 
 def _is_login(label: str) -> bool:
     return label == BOX_LOGIN_LABEL or label.startswith(BOX_LOGIN_LABEL + ":")
+
+
+#: The cascade label of each kind in canopy-web's credential list (`cascade`):
+#: `box-login[:<key>]`, `token:<key>`, `api-key:<key>`. A probe is reported
+#: under its label, which is how the credentials page finds each entry's.
+TOKEN_LABEL = "token"
+_LIST_KINDS = {"token": (TOKEN_LABEL, "CLAUDE_CODE_OAUTH_TOKEN"),
+               "api_key": (ZDR_CREDENTIAL_LABEL, "ANTHROPIC_API_KEY")}
+
+
+def _is_api_key(label: str) -> bool:
+    return label == ZDR_CREDENTIAL_LABEL or label.startswith(ZDR_CREDENTIAL_LABEL + ":")
 
 
 def _login_key_of(label: str) -> str:
@@ -5798,11 +5811,16 @@ def _login_keys(cred: dict | None) -> list[str]:
 
 
 def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
-    """The ordered credential list: the box's own full logins first, in the
-    order a person set (they are the only entries that see claude.ai
-    connectors), then the bundle's backup tokens.
+    """The ordered credential list, as a person set it on canopy-web (`cascade`):
+    logins, tokens and API keys in any order. A login counts only once it is
+    signed in on this box.
 
-    In ZDR mode, only the bundle's API-key slot: no box login, no subscription."""
+    An older canopy-web sends fixed slots instead: the box's logins first, then
+    its two tokens, then its API key.
+
+    In ZDR mode, only API keys: no box login, no subscription."""
+    if isinstance(cred, dict) and isinstance(cred.get("cascade"), list):
+        return _cascade_from_list(cred)
     if ZDR_MODE:
         key = dict((label, k) for label, _v, k in _BUNDLE_SLOTS)[ZDR_CREDENTIAL_LABEL]
         return [(ZDR_CREDENTIAL_LABEL, "ANTHROPIC_API_KEY", cred[key])] if (cred or {}).get(key) else []
@@ -5812,6 +5830,27 @@ def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
     for label, var, key in _BUNDLE_SLOTS:
         if (cred or {}).get(key):
             out.append((label, var, cred[key]))
+    return out
+
+
+def _cascade_from_list(cred: dict) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    listed = [e for e in cred["cascade"] if isinstance(e, dict)]
+    # The CLI's own login, signed in before there was a list: first, where it
+    # always sat, until the list adopts it (`_login_keys`).
+    if (not ZDR_MODE and not _default_adopted()
+            and not any(e.get("kind") == "login" and e.get("key") == DEFAULT_LOGIN for e in listed)
+            and box_login_ready()):
+        out.append((_login_label(DEFAULT_LOGIN), "CLAUDE_CONFIG_DIR", _login_config_env()))
+    for e in listed:
+        kind, key, value = e.get("kind"), str(e.get("key") or ""), str(e.get("value") or "")
+        if kind == "login":
+            if (not ZDR_MODE and (key == DEFAULT_LOGIN or _LOGIN_KEY_RE.match(key))
+                    and box_login_ready(key=key)):
+                out.append((_login_label(key), "CLAUDE_CONFIG_DIR", _login_config_env(key)))
+        elif kind in _LIST_KINDS and value and (kind == "api_key" or not ZDR_MODE):
+            prefix, var = _LIST_KINDS[kind]
+            out.append((f"{prefix}:{key}", var, value))
     return out
 
 
@@ -6034,8 +6073,18 @@ def _claude_cred_label() -> str:
     return "none"
 
 
-def _apply_claude_credential(index: int) -> None:
-    """Point the environment at credential `index`, clearing the other auth var."""
+#: The API key this process last told a human it is billing on ("" = none in use),
+#: so re-applying the same key (every re-read, every park) does not tell them again.
+_API_KEY_NOTICE = {"label": ""}
+
+
+def _apply_claude_credential(index: int, *, turn_id: str = "") -> None:
+    """Point the environment at credential `index`, clearing the other auth var.
+
+    Landing on an API key tells a human, because it bills per token — wherever
+    it sits in the list. A key a person put first, or one that is first because
+    the logins above it are not signed in, bills from the first turn. Not on a
+    ZDR box, which runs on keys by design."""
     global _CLAUDE_CRED_I
     _CLAUDE_CRED_I = index
     label, var, value = _CLAUDE_CREDS[index]
@@ -6050,6 +6099,11 @@ def _apply_claude_credential(index: int) -> None:
     if var and value:
         os.environ[var] = value
     _log(f"claude credential: using {label} ({var or 'the stored login on this box'})")
+    if var != "ANTHROPIC_API_KEY":
+        _API_KEY_NOTICE["label"] = ""
+    elif not ZDR_MODE and _API_KEY_NOTICE["label"] != label:
+        _API_KEY_NOTICE["label"] = label
+        _notify_api_key_fallback(label, turn_id)
 
 
 # ── the credential probe ─────────────────────────────────────────────────────
@@ -6380,66 +6434,12 @@ def _credential_tick(beat: dict | None = None) -> None:
 
 def _advance_claude_credential(*, turn_id: str = "") -> bool:
     """Move to the next credential. False when the cascade is exhausted.
-
-    Notifies on the step INTO the API key, because that one bills per token —
-    the operator asked to be told before we start spending, not after.
-    """
+    Landing on an API key notifies (`_apply_claude_credential`)."""
     nxt = _CLAUDE_CRED_I + 1
     if nxt >= len(_CLAUDE_CREDS):
         return False
-    label, var, _ = _CLAUDE_CREDS[nxt]
-    _apply_claude_credential(nxt)
-    if var == "ANTHROPIC_API_KEY":
-        _notify_api_key_fallback(label, turn_id)
+    _apply_claude_credential(nxt, turn_id=turn_id)
     return True
-
-
-def _promote_working_subscription(turn_id: str = "") -> None:
-    """The fallback just ran a turn the primary could not: make it the primary.
-
-    Without this the switch lived only in this process. Every restart (and the
-    box restarts itself on every update) went back to the capped primary and
-    spent one failed attempt rediscovering the cap, and the settings page kept
-    calling the dead login "primary". Swapping on canopy-web makes the page show
-    what the box is actually using, and puts the capped login second, where it is
-    tried again once the new primary caps, which is roughly when its own weekly
-    cap has had time to reset. Before this, the box went straight from the
-    fallback to the metered API key and never looked at the primary again.
-
-    Subscriptions only. The API key is last on purpose and never promoted.
-    """
-    # The box's logins at the head shift the subscriptions down.
-    base = sum(1 for c in _CLAUDE_CREDS if _is_login(c[0]))
-    if (not _CLAUDE_CRED_RUNNER_ID or _CLAUDE_CRED_I != base + 1
-            or len(_CLAUDE_CREDS) < base + 2):
-        return
-    if ((_CLAUDE_CREDS[base][0], _CLAUDE_CREDS[base + 1][0])
-            != ("subscription-1", "subscription-2")):
-        return
-    try:
-        status, _ = _api("POST", f"/runners/{_CLAUDE_CRED_RUNNER_ID}/credential/swap")
-    except Exception as exc:  # noqa: BLE001 — the turn already succeeded
-        _log(f"warn: could not promote the working login ({exc})")
-        return
-    if status != 200:
-        _log(f"warn: promoting the working login returned {status}")
-        return
-    # Mirror the swap locally so the periodic re-read sees no change (and does
-    # not reset to index 0, which would now be the capped login again).
-    (l1, v1, t1), (l2, v2, t2) = _CLAUDE_CREDS[base], _CLAUDE_CREDS[base + 1]
-    _CLAUDE_CREDS[base], _CLAUDE_CREDS[base + 1] = (l1, v1, t2), (l2, v2, t1)
-    # A probe is about a VALUE, and the values just changed slots.
-    with _PROBES_LOCK:
-        p1, p2 = _PROBES.pop(l1, None), _PROBES.pop(l2, None)
-    for label, probe in ((l1, p2), (l2, p1)):
-        if probe is not None:
-            _record_probe({**probe, "label": label})
-        else:
-            with _HEALTH_LOCK:
-                _HEALTH.pop(f"claude.probe.{label}", None)
-    _apply_claude_credential(base)
-    _log(f"turn {turn_id[:8]}: the fallback login worked while the primary is capped "
-         "— swapped them on canopy-web")
 
 
 def _notify_api_key_fallback(label: str, turn_id: str) -> None:
@@ -6454,9 +6454,9 @@ def _notify_api_key_fallback(label: str, turn_id: str) -> None:
             "source": "runner.credential",
             "kind": "claude_api_key_fallback",
             "level": "warn",
-            "summary": (f"Both Claude subscriptions on {RUNNER_NAME or 'this runner'} are "
-                        f"at their usage cap — falling back to the metered API key "
-                        f"({label}). Turns now bill per token until a cap resets."),
+            "summary": (f"{RUNNER_NAME or 'This runner'} is running on an API key ({label}): "
+                        "turns now bill per token. Anything above it on the runner's "
+                        "credentials is at its usage cap or not working."),
             # Coalescing key: one row per runner per day, not one per turn. The
             # fallback is a STATE a human needs to know about once, not a stream.
             "key": f"api-key-fallback:{RUNNER_NAME}",
@@ -6620,8 +6620,7 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
         status, cred = _api("GET", f"/runners/{runner_id}/credential")
         if status == 200:
             _reconcile_logins(runner_id, cred)
-        if status == 200 and (any(box_login_ready(key=k) for k in _login_keys(cred)) or (
-                cred and (cred.get("claude_token") or cred.get("claude_api_key")))):
+        if status == 200 and _cascade_from(cred):
             global _CLAUDE_CRED_RUNNER_ID
             _CLAUDE_CRED_RUNNER_ID = runner_id
             _BUNDLE_STAMP["updated_at"] = (cred or {}).get("updated_at") or ""
