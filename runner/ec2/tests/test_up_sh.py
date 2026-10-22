@@ -315,6 +315,19 @@ def test_creates_invitation_and_prints_approve_url(tmp_path, canopy):
     assert all(a == "Bearer t" for a in canopy.handler.auth), "up.sh speaks as the operator"
 
 
+def test_a_new_boxs_invitation_lists_its_one_unit(tmp_path, canopy):
+    # A new box runs as isolation units (one: tree:<workspace>, named the box) and
+    # pairs listing it; an invitation without it is refused at every pairing call
+    # however it is approved (cloud-zdr-1, 2026-10-22).
+    _fake(tmp_path)
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "connect")
+    assert res.returncode == 0, res.stdout + res.stderr
+    (_path, body), = [p for p in canopy.handler.posted if p[0] == "/api/harness/runner-invitations/"]
+    assert [(u["name"], u["kind"], u["workspace"]) for u in body["units"]] == [
+        ("cloud-ec2-test", "tree", "connect")]
+    assert "RunnerUnits=tree:connect" in res.stdout
+
+
 def test_an_invitation_that_expires_says_rerun(tmp_path, canopy):
     canopy.handler.states = ["pending", "expired"]
     _fake(tmp_path)
