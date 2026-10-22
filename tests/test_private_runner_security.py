@@ -243,7 +243,7 @@ def test_migration_turns_zk_off_only_for_1password_agents_holding_nothing(world)
     wrapped = Agent.objects.create(slug="wrapped", workspace=ws, owner=jj, zk_enabled=True, zk_kv=0,
                                    credential_source=Agent.ONEPASSWORD)
     AgentVaultWrap.objects.create(agent=wrapped, kv=1, kind=AgentVaultWrap.RECOVERY, wrap={})
-    keyed = Agent.objects.create(slug="keyed", workspace=ws, owner=jj, zk_enabled=True, zk_kv=2,
+    Agent.objects.create(slug="keyed", workspace=ws, owner=jj, zk_enabled=True, zk_kv=2,
                                  credential_source=Agent.ONEPASSWORD)
     Agent.objects.create(slug="vault", workspace=ws, owner=jj, zk_enabled=True, zk_kv=0,
                                  credential_source=Agent.CANOPY_WEB)
