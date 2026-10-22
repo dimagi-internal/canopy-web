@@ -305,10 +305,13 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   with no proof. It is how anyone, an agent included, runs the non-admin path for real.
 * **No PAT on a private runner.** The owner's local sessions there sign in with the
   box's own device key (its runner token), which on a private runner also reaches the
-  local-turn routes and `/api/private-runners` (`runner_auth._PRIVATE_RULES`), and
-  reads credentials under the owner's license. Such a turn's initiator assurance is
-  `private-runner-key` (verified, like a PAT). A shared runner's token opens no local
-  session, and a private runner's opens only its own registration.
+  local-turn routes (`runner_auth._PRIVATE_RULES`) — never `/api/private-runners`,
+  which takes the person's own token — and reads credentials under the owner's
+  license. Such a turn's initiator assurance is `private-runner-key` (verified, like
+  a PAT). A shared runner's token opens no local session and reports on none, and a
+  private runner's reaches only its local-turn routes, for its own registration.
+  Only the owner registers or approves a device key on a private runner
+  (`runners.may_trust_device_keys`); its runner admins still see and may revoke them.
 * A **local turn** (`Turn.origin = local`) is one session there with one agent,
   opened by the canopy plugin's SessionStart hook
   (`POST /api/harness/local-turns/`). It is a real turn: the person is its
@@ -341,7 +344,11 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   `admin`: **`license`** — an ACTIVE license (re-checked against `decide` on every
   read) AND one of the caller's OWN live turns on that agent named in
   `X-Canopy-Turn-Id`: their running local turn, or — on their private runner's
-  token — a turn of theirs that runner claimed. No turn, no secrets. Each read is logged with `via=license`,
+  token — a turn of theirs that runner claimed. No turn, no secrets. A license read
+  never gets the agent's canopy login, the owner's GitHub delegation, lent or shared
+  credentials, or the agent's 1Password service-account key (`op_sa_token`), which
+  reads the whole vault, canopy login included (`LICENSE_WITHHELD_EXTRAS`) — so a
+  non-admin using a 1Password-backed agent locally gets no secrets from it. Each read is logged with `via=license`,
   the turn and the license. Brokering every call through canopy-web so secrets
   never leave the server is future work (canopy-web#1704).
 * **Reporting.** Only its initiator may renew, finish or append its transcript —

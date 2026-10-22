@@ -454,10 +454,11 @@ def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     turn = _turn_or_404(request, turn_id)
     if turn.origin == Turn.ORIGIN_LOCAL:
         # A local turn has no box: the person whose session it is reports on it
-        # (apps/harness/local.py), and nobody else — not even an editor.
+        # (apps/harness/local.py), and nobody else — not even an editor, nor their
+        # shared runner's token.
         from . import local
 
-        if not local.is_initiator(turn, request.user):
+        if not local.may_report(turn, request):
             raise HttpError(404, "turn not found")
         return turn
     if turn.claimed_by_id is not None:
@@ -1200,14 +1201,17 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
     if runner.private:
         # The box IS its owner's private runner: link the registration here, so the
         # runner writes it on its next heartbeat and no one runs `canopy private-runner
-        # register` on the machine.
+        # register` on the machine. Its OWN registration — never another machine's
+        # that shares its name (`local.private_runner_for_runner`).
         from . import local
 
-        if not PrivateRunner.objects.filter(runner=runner, retired_at__isnull=True).exists():
-            local.register_private_runner(request.user, name=runner.name,
-                                          host=runner.host, runner=runner)
-        audit.note_change(scope=f"runner-private:{runner.name}", before=before, after=after,
-                          workspace=runner.workspace)
+        local.private_runner_for_runner(runner)
+    else:
+        # Shared again: the registration stops naming a box whose token now speaks
+        # for the fleet. Making it private again links (or makes) one afresh.
+        PrivateRunner.objects.filter(runner=runner).update(runner=None)
+    audit.note_change(scope=f"runner-private:{runner.name}", before=before, after=after,
+                      workspace=runner.workspace)
     out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
     out.can_manage = True
     out.can_administer = services.can_administer_runner(request.user, out)

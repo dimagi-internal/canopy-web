@@ -257,9 +257,10 @@ function RouteChips({
 
 // People's OWN machines (canopy-web#1704): a session there runs an agent in that
 // person's Claude Code and is recorded as a local turn. Listed beside the runners
-// because "where does this agent's work happen" now has a second answer, but they
-// are not runners — they claim nothing and nothing routes to them, so there is no
-// status and no route chip. Hidden until someone has used one.
+// because "where does this agent's work happen" now has a second answer. A private
+// runner works only for its owner: their local sessions, and — when the machine
+// also runs the runner app — only what they pin or bind to it. Nothing of the
+// fleet routes to it, so there is no route chip. Hidden until someone has used one.
 function PrivateRunners({ slug }: { slug: string }): JSX.Element | null {
   const [rows, setRows] = useState<PrivateRunnerUseOut[] | null>(null)
 

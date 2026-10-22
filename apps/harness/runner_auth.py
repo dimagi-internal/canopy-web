@@ -64,10 +64,11 @@ _RULES: tuple[tuple[frozenset[str], str], ...] = (
 #: instead of a PAT, so they open, renew and close their local turns and read their
 #: agent's secrets under the owner's license (credentials/resolve, above). Only on a
 #: private runner — the owner's own machine — never on
-#: a shared box, whose token speaks for the fleet, not a person.
+#: a shared box, whose token speaks for the fleet, not a person. Not
+#: `/api/private-runners`: registering or relinking one is the person's, with their
+#: own token, and a box's token has no reason to.
 _PRIVATE_RULES: tuple[tuple[frozenset[str], str], ...] = (
     (frozenset({"POST"}), r"/api/harness/local-turns(/.*)?"),
-    (frozenset({"GET", "POST"}), r"/api/private-runners"),
 )
 
 

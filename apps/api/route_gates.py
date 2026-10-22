@@ -56,6 +56,9 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``runner-admin`` — ``can_administer_runner``.
 * ``runner-holds-agent`` — ``services.caller_runs_agent`` /
   ``runner_may_hold_agent``.
+* ``license`` — an ACTIVE ``AgentLicense`` (``apps/agents/licenses.py``) and the
+  caller's own live turn on that agent named in ``X-Canopy-Turn-Id``
+  (``licenses.credential_principal``).
 * ``contact`` — the ``/api/contact/`` surface, for contact principals.
 * ``device-proof`` — no session or token: a proof from an ACTIVE runner device key
   (DPoP, or an EC2 instance role's signed STS call) bound to this request is the
@@ -104,7 +107,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "members.manage", "integrations", "runners.route", "retention.manage",
     "admission.manage", "projects.decide", "own",
     "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
-    "runner", "runner-admin", "runner-holds-agent",
+    "runner", "runner-admin", "runner-holds-agent", "license",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
     "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "paired-key", "page-viewer",
     "secret-request",
@@ -144,7 +147,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_repository": ("agent-admin",),  # what its boxes run: a DEFINITION_FIELDS change
     "set_device_binding": ("agent-admin",),
     "agent_credential_reads": ("agent-admin",),  # the read log; never a value
-    "agent_device_keys": ("agent-admin",),  # can_manage per key = runner-admin
+    "agent_device_keys": ("agent-admin",),  # can_manage per key = runners.may_trust_device_keys
     "agent_credential_alerts": ("agent-admin",),  # read-anomaly alerts; never a value
     "get_pat_rotation": ("agent-admin",),
     "set_pat_rotation": ("agent-admin",),  # turning it on also asks mint_agent_canopy_token's guard
@@ -229,7 +232,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_agent_credentials": ("agent-admin",),
     "agent_credential_status": ("member",),
     "agent_credential_access": ("member",),  # no values; reports the resolve gate for the caller
-    "resolve_agent_credentials": ("runner-holds-agent", "agent-admin"),  # bearer only
+    "resolve_agent_credentials": ("runner-holds-agent", "agent-admin", "license"),  # bearer only
     "reveal_agent_credential": ("agent-admin",),  # browser session + passkey step-up only (apps/passkeys)
     "get_agent_vault": ("member",),
     "set_agent_vault": ("agent-admin",),
@@ -272,11 +275,11 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_runner_credential_status": ("runner-admin",),
     "get_runner_credential": ("runner",),  # plaintext to the owner's token
     # --- apps/harness/api_device_keys.py (Canopy Vault device keys)
-    "register_runner_device_key": ("runner-admin",),  # lands pending; approval is separate
+    "register_runner_device_key": ("runner-admin",),  # lands pending; on a private runner, owner only
     "create_runner_session": ("device-proof",),  # anonymous door; an ACTIVE key's proof is the authority
     "request_runner_device_key": ("owner-token-and-key",),  # stranded box: lands pending, owner told
     "list_runner_device_keys": ("runner-admin",),
-    "approve_runner_device_key": ("runner-admin",),  # browser session only (+ passkey step-up)
+    "approve_runner_device_key": ("runner-admin",),  # browser + passkey step-up; private runner: owner only
     "revoke_runner_device_key": ("runner-admin",),
     # --- apps/harness/api_runner_invitations.py (a new cloud box pairs by invitation)
     "create_runner_invitation": ("agent.work",),  # member (else 404) with agent.work in the named workspace

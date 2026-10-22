@@ -84,6 +84,37 @@ def register_private_runner(user, *, name: str, host: str = "",
     return ws, created
 
 
+def private_runner_for_runner(runner) -> PrivateRunner:
+    """The registration of a runner its owner just made private (canopy-web#1705).
+
+    The one already linked to THIS runner when there is one (brought back if
+    retired). Otherwise a new one under the runner's name — taking over a row of
+    that name only when it is unlinked and registered from this same host, and
+    else under a free name (`<name>-2`, …). Never `register_private_runner`'s
+    by-name lookup: that would adopt, and relink, a DIFFERENT machine's
+    registration that happens to share the name, handing this box the key to its
+    sessions."""
+    linked = PrivateRunner.objects.filter(runner=runner).first()
+    if linked is not None:
+        if linked.retired_at is not None:
+            linked.retired_at = None
+            linked.save(update_fields=["retired_at"])
+        return linked
+    owner, base, host = runner.owner, (runner.name or "").strip()[:100] or "runner", (runner.host or "")[:200]
+    same = PrivateRunner.objects.filter(owner=owner, name=base, runner__isnull=True).first()
+    if same is not None and host and same.host == host:
+        same.runner, same.retired_at = runner, None
+        same.save(update_fields=["runner", "retired_at"])
+        return same
+    taken = set(PrivateRunner.objects.filter(owner=owner, name__startswith=base[:90])
+                .values_list("name", flat=True))
+    name, n = base, 1
+    while name in taken:
+        n += 1
+        name = f"{base[:90]}-{n}"
+    return PrivateRunner.objects.create(owner=owner, name=name, host=host, runner=runner)
+
+
 def private_runner_of(user, private_runner_id) -> PrivateRunner | None:
     """The caller's OWN live private runner, or None — never someone else's."""
     try:
@@ -202,3 +233,17 @@ def is_initiator(turn: Turn, user) -> bool:
     person whose session it is — there is no box that claimed it."""
     return (turn.origin == Turn.ORIGIN_LOCAL and turn.initiator_user_id is not None
             and turn.initiator_user_id == getattr(user, "pk", None))
+
+
+def may_report(turn: Turn, request) -> bool:
+    """`is_initiator`, and — when a runner token makes the request — that token is the
+    PRIVATE runner this turn was opened on. A runner token signs in as its owner, so
+    without this a shared box's token could finish or write the transcript of its
+    owner's local sessions; it speaks for the fleet, not for the person."""
+    if not is_initiator(turn, request.user):
+        return False
+    rtok = getattr(request, "runner_token", None)
+    if rtok is None:
+        return True
+    pr = turn.private_runner
+    return bool(rtok.runner.private and pr is not None and pr.runner_id == rtok.runner_id)

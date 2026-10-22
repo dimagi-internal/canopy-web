@@ -4283,8 +4283,8 @@ export interface paths {
          *     service-account token (`op_sa_token` is ""): its values come from here, so
          *     the box has no reason to hold a key to its vault.
          *
-         *     **Device proof.** With `require_device_binding` on and `credential_source`
-         *     `canopy-web`, the request must also carry a `DPoP` header: an RFC 9449
+         *     **Device proof.** With `credential_source` `canopy-web` and either
+         *     `require_device_binding` or zero-knowledge on, the request must also carry a `DPoP` header: an RFC 9449
          *     proof (`typ: dpop+jwt`, `alg: ES256`, public `jwk` in the header; claims
          *     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
          *     an ACTIVE runner device key on a runner this agent routes to or one its
@@ -4788,8 +4788,8 @@ export interface paths {
          * Runner device keys that could prove themselves for this agent
          * @description Every device key on a runner this agent routes to or its owner owns —
          *     the keys `require_device_binding` would accept once active. `can_manage`
-         *     says whether the caller may approve or revoke each (the runner's owner or
-         *     an admin of it).
+         *     says whether the caller may approve each (the runner's owner or an admin of
+         *     it; on a private runner, its owner alone).
          */
         readonly get: operations["agent_device_keys"];
         readonly put?: never;
@@ -7645,7 +7645,11 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Retire one of your private runners */
+        /**
+         * Retire one of your private runners
+         * @description Its local sessions stop opening, and a runner linked to it goes back to
+         *     being shared.
+         */
         readonly post: operations["retire_private_runner"];
         readonly delete?: never;
         readonly options?: never;

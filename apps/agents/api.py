@@ -2407,8 +2407,8 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     service-account token (`op_sa_token` is ""): its values come from here, so
     the box has no reason to hold a key to its vault.
 
-    **Device proof.** With `require_device_binding` on and `credential_source`
-    `canopy-web`, the request must also carry a `DPoP` header: an RFC 9449
+    **Device proof.** With `credential_source` `canopy-web` and either
+    `require_device_binding` or zero-knowledge on, the request must also carry a `DPoP` header: an RFC 9449
     proof (`typ: dpop+jwt`, `alg: ES256`, public `jwk` in the header; claims
     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
     an ACTIVE runner device key on a runner this agent routes to or one its
@@ -2472,10 +2472,14 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
         raise HttpError(403, f"the device proof is {device_key.runner.name}'s, not this "
                              f"runner token's ({rtok.runner.name})")
     # A zero-knowledge agent ALWAYS needs one (canopy-web#1550): the wrap handed
-    # out is the proving device's, so there is nothing to give without it.
-    if (device_key is None
-            and (agent.zk_enabled
-                 or (agent.require_device_binding and agent.credential_source == agent.CANOPY_WEB))):
+    # out is the proving device's, so there is nothing to give without it. Only
+    # while its secrets actually come from the canopy-web vault: an agent still on
+    # 1Password has none here to protect, and demanding a proof broke `canopy agent
+    # op-token` on every admin laptop without an approved key. Any ciphertext it
+    # does hold is useless without a device's own key, and a `zk1` value with no
+    # wrap is still the 409 below.
+    if (device_key is None and agent.credential_source == agent.CANOPY_WEB
+            and (agent.zk_enabled or agent.require_device_binding)):
         from . import vault_alerts
 
         if unrouted is not None:
@@ -2499,9 +2503,10 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
         # `zks1` values (server-minted, sealed to each device) open with the
         # device's own key; only `zk1` values need its vault-key wrap.
         if zk_wrap is None and zk.needs_wrap(values):
-            zk.device_wrap_missing(agent, request, device_key)
+            if device_key is not None:
+                zk.device_wrap_missing(agent, request, device_key)
             return JsonResponse({"error": "zk_wrap_missing", "kv": agent.zk_kv,
-                                 "device_key": str(device_key.pk)}, status=409)
+                                 "device_key": str(device_key.pk) if device_key else ""}, status=409)
     else:
         values = services.resolve_agent_credentials(agent, wanted)
     vault, op_token = services.resolve_agent_vault(agent)
@@ -2600,9 +2605,12 @@ RESOLVE_SECRET_EXTRAS = ("op_sa_token", "shared_op_sa_token", "github_token", "s
 #: agent OWNER's GitHub delegation, a credential LENT to the agent, the shared vault's
 #: key — none of them is the agent's own — and the agent's own canopy login, which would
 #: let the holder act AS the agent (graded `system`, past the editor tier's manual cap).
-#: The agent's 1Password key (`op_sa_token`) is handed out: that is the decision on
-#: #1704, and an agent that keeps its canopy PAT in that vault exposes it through the key.
-LICENSE_WITHHELD_EXTRAS = ("shared_op_sa_token", "github_token", "salesforce_creds")
+#: Nor the agent's 1Password service-account key (`op_sa_token`): it reads the WHOLE
+#: vault, the agent's `canopy-pat` included, so handing it out would undo withholding
+#: that login. A non-admin using a 1Password-backed agent locally therefore gets no
+#: secrets from 1Password; an agent whose secrets live in the canopy-web vault serves
+#: them value by value, as `values`.
+LICENSE_WITHHELD_EXTRAS = ("op_sa_token", "shared_op_sa_token", "github_token", "salesforce_creds")
 LICENSE_WITHHELD_REFS = frozenset({"canopy-pat", "canopy-web-pat"})
 
 
@@ -3133,17 +3141,17 @@ def agent_credential_reads(request: HttpRequest, slug: str, name: str, limit: in
 def agent_device_keys(request: HttpRequest, slug: str):
     """Every device key on a runner this agent routes to or its owner owns —
     the keys `require_device_binding` would accept once active. `can_manage`
-    says whether the caller may approve or revoke each (the runner's owner or
-    an admin of it)."""
+    says whether the caller may approve each (the runner's owner or an admin of
+    it; on a private runner, its owner alone)."""
     from apps.harness import device_keys
     from apps.harness.api_device_keys import agents_key_opens, key_out, zk_agents_waiting_on
-    from apps.harness.runners import can_administer_runner
+    from apps.harness.runners import may_trust_device_keys
 
     agent = _agent_for_admin(request, slug)
     vault = [agent] if agent.zk_enabled and agent.credential_source == "canopy-web" else []
     out = []
     for k in device_keys.keys_for_agent(agent):
-        row = key_out(k, can_manage=can_administer_runner(request.user, k.runner))
+        row = key_out(k, can_manage=may_trust_device_keys(request.user, k.runner))
         row.can_open = agents_key_opens(k, vault)
         if row.can_manage:
             # Approving it will also wrap these (one passkey touch, canopy-web#1550);
