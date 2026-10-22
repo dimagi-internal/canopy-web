@@ -16,7 +16,8 @@ UNSATISFIABLE = "__malformed__"
 _LABELS = {"zdr": "ZDR"}
 
 __all__ = ["METADATA_KEY", "RUNNER_FLAGS", "UNSATISFIABLE", "describe", "requirements_of",
-           "requirements_of_grant", "requirements_of_session", "satisfies"]
+           "requirements_of_grant", "requirements_of_session", "satisfies", "in_force",
+           "runner_satisfies"]
 
 
 def _parse_stored(raw) -> frozenset[str]:
@@ -68,6 +69,30 @@ def requirements_of(turn) -> frozenset[str]:
 
 def satisfies(flags: frozenset[str], reqs: frozenset[str]) -> bool:
     return reqs <= flags
+
+
+#: The data mode a box must REPORT for a person's declaration of each flag to count
+#: (spec 2026-10-22-phi-agents-on-zdr-runners §2). canopy cannot see a box's keys;
+#: what it can see is whether the box says it is running in the mode that makes the
+#: declaration true, and a declaration the box contradicts is not in force.
+FLAG_NEEDS_DATA_MODE = {"zdr": "zdr"}
+#: Where the box's heartbeat report lands (`services.heartbeat`).
+DATA_MODE_KEY = "data_mode"
+DATA_MODE_HASH_KEY = "data_mode_hash"
+
+
+def in_force(runner) -> frozenset[str]:
+    """The flags routing may rely on: declared by a person (`Runner.flags`), and,
+    for a flag that names a data mode, matched by the box's own latest report."""
+    reported = str((getattr(runner, "capabilities", None) or {}).get(DATA_MODE_KEY) or "")
+    return frozenset(f for f in runner.flags
+                     if FLAG_NEEDS_DATA_MODE.get(f) in (None, reported))
+
+
+def runner_satisfies(runner, reqs: frozenset[str]) -> bool:
+    """Whether `runner` may hold work that requires `reqs` — the one question every
+    routing, placement and gateway check asks."""
+    return satisfies(in_force(runner), reqs)
 
 
 def describe(reqs) -> str:

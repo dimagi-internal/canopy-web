@@ -424,6 +424,7 @@ def _zdr_runner():
 
     r = Runner.objects.create(name="zdr-box", kind=Runner.CLOUD, capabilities={})
     RunnerFlag.objects.create(runner=r, flag="zdr")
+    _reports_zdr(r)
     return r
 
 
@@ -508,3 +509,13 @@ def test_zdr_conversations_are_never_listed(w):
     plain = _turn(w["ace"], w["lili"], "p", prompt="hello")
     got = {t.pk for t in people.conversations(w["person"], w["ace"])}
     assert plain.pk in got and zdr.pk not in got
+
+
+def _reports_zdr(runner):
+    """The box reports ZDR mode on its heartbeat: without it a person's `zdr`
+    declaration is not in force (runner_requirements.in_force)."""
+    from apps.harness.models import Runner as _Runner
+
+    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
+    _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
+    return runner

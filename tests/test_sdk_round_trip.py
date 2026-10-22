@@ -312,7 +312,18 @@ def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host,
     laptop = runner("laptop", 0)
     cloud = runner("cloud", 1)
     RunnerFlag.objects.create(runner=cloud, flag="zdr", declared_by=site["owner"])
+    _reports_zdr(cloud)
 
     assert claim_next_turn(laptop) is None, "a non-ZDR runner must not get the visitor's turn"
     claimed = claim_next_turn(cloud)
     assert claimed is not None and claimed.id == turn.id
+
+
+def _reports_zdr(runner):
+    """The box reports ZDR mode on its heartbeat: without it a person's `zdr`
+    declaration is not in force (runner_requirements.in_force)."""
+    from apps.harness.models import Runner as _Runner
+
+    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
+    _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
+    return runner

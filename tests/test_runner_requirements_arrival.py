@@ -237,6 +237,7 @@ def _runners(site):
                                 status=Runner.ONLINE, owner=site["owner"], host="zdr-box",
                                 capabilities=caps)
     RunnerFlag.objects.create(runner=zdr, flag="zdr", declared_by=site["owner"])
+    _reports_zdr(zdr)
     return cloud, zdr
 
 
@@ -304,3 +305,13 @@ def test_the_socket_carries_the_tokens_requirements(site, key):
         {"query_string": b"", "headers": [(b"authorization", f"Bearer {raw}".encode())]}) == ("zdr",)
     assert async_to_sync(channels_auth._delegated_runner_requirements)(
         {"query_string": b"", "headers": []}) == ()
+
+
+def _reports_zdr(runner):
+    """The box reports ZDR mode on its heartbeat: without it a person's `zdr`
+    declaration is not in force (runner_requirements.in_force)."""
+    from apps.harness.models import Runner as _Runner
+
+    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
+    _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
+    return runner

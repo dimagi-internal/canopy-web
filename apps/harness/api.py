@@ -521,7 +521,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
 
 #: Capabilities a box REPORTS on heartbeat and never declares at pairing.
-REPORTED_CAPABILITIES = ("profiles", "envelope", "midturn")
+REPORTED_CAPABILITIES = ("profiles", "envelope", "midturn", "data_mode", "data_mode_hash")
 
 
 def declared_capabilities(caps: dict) -> dict:
@@ -1339,7 +1339,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "routable, open it as a project in emdash on that runner (or set "
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
-    for key in ("profiles", "envelope", "midturn", "unprepared"):
+    for key in ("profiles", "envelope", "midturn", "unprepared", "data_mode", "data_mode_hash"):
         if key in payload.capabilities:
             # Reported, like `projects` — and here it is a SECURITY property: a hand
             # edit claiming a runner can confine a caller's session would route
@@ -1347,7 +1347,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             raise HttpError(422, f"`{key}` is reported by the runner on every heartbeat, "
                                  "not set by hand.")
     caps = dict(payload.capabilities)
-    for key in ("projects", "profiles", "envelope", "midturn", "unprepared"):
+    for key in ("projects", "profiles", "envelope", "midturn", "unprepared", "data_mode", "data_mode_hash"):
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
     # The isolation unit is SERVER-OWNED once it is set (`unit_pairing` records it

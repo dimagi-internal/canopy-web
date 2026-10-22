@@ -153,7 +153,7 @@ def resolve(turn_id: str) -> SiteContext:
     # Defence in depth: routing should make this unreachable. This is where the
     # host's data enters a turn, so a routing bug fails as a refusal, not a leak.
     reqs = rr.requirements_of_session(session)
-    if reqs and (turn.claimed_by is None or not rr.satisfies(turn.claimed_by.flags, reqs)):
+    if reqs and (turn.claimed_by is None or not rr.runner_satisfies(turn.claimed_by, reqs)):
         raise GatewayRefusal(
             "runner_requirements",
             f"this conversation must run on a {rr.describe(reqs)} runner, and this one is not")
@@ -198,7 +198,7 @@ def resolve(turn_id: str) -> SiteContext:
         add_runner_requirements(session, grant_reqs)
     effective = reqs | grant_reqs
     if effective and (turn.claimed_by is None
-                      or not rr.satisfies(turn.claimed_by.flags, effective)):
+                      or not rr.runner_satisfies(turn.claimed_by, effective)):
         raise GatewayRefusal(
             "runner_requirements",
             f"this conversation must run on a {rr.describe(effective)} runner, and this one is not")

@@ -55,6 +55,7 @@ def test_a_non_zdr_runner_is_not_a_placement_for_a_zdr_session(fleet):
 def test_a_zdr_runner_is(fleet):
     s = _zdr_session(fleet)
     RunnerFlag.objects.create(runner=fleet["cloud"], flag="zdr")
+    _reports_zdr(fleet["cloud"])
     got = session_services._placeable_runner(s, str(fleet["cloud"].id))
     assert got is not None and got.id == fleet["cloud"].id
 
@@ -63,6 +64,7 @@ def test_available_cloud_runner_skips_a_non_zdr_box(fleet):
     s = _zdr_session(fleet)
     assert session_services.available_cloud_runner(s, user=fleet["user"]) is None
     RunnerFlag.objects.create(runner=fleet["cloud"], flag="zdr")
+    _reports_zdr(fleet["cloud"])
     assert session_services.available_cloud_runner(s, user=fleet["user"]).id == fleet["cloud"].id
 
 
@@ -125,3 +127,13 @@ def test_the_session_payload_carries_its_runner_requirements(fleet):
     c.force_login(fleet["user"])
     assert c.get(f"/api/canopy-sessions/{s.id}").json()["runner_requirements"] == ["zdr"]
     assert c.get(f"/api/canopy-sessions/{plain.id}").json()["runner_requirements"] == []
+
+
+def _reports_zdr(runner):
+    """The box reports ZDR mode on its heartbeat: without it a person's `zdr`
+    declaration is not in force (runner_requirements.in_force)."""
+    from apps.harness.models import Runner as _Runner
+
+    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
+    _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
+    return runner

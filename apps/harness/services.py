@@ -833,6 +833,7 @@ def heartbeat(
     projects: list[str] | None = None, profiles: int = 0,
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
     envelope: int = 0, midturn: int = 0, agents_unprepared: list[str] | None = None,
+    data_mode: str = "", data_mode_hash: str = "",
 ) -> Runner:
     """`profiles` is the profile-enforcement version the runner REPORTS it can
     honour (see `profile_q`). Written on every beat, and 0 from a runner that
@@ -920,6 +921,17 @@ def heartbeat(
         runner.capabilities = {**runner.capabilities, "midturn": int(midturn or 0)}
         if "capabilities" not in fields:
             fields.append("capabilities")
+    # The box's data mode and its config hash (`runner_requirements.in_force`):
+    # reported, same contract as `envelope` -- written every beat, absent = "", so a
+    # box that stops running in ZDR mode loses its `zdr` on the next beat.
+    from . import runner_requirements as rr
+
+    for key, value in ((rr.DATA_MODE_KEY, (data_mode or "")[:32]),
+                       (rr.DATA_MODE_HASH_KEY, (data_mode_hash or "")[:64])):
+        if (runner.capabilities.get(key) or "") != value:
+            runner.capabilities = {**runner.capabilities, key: value}
+            if "capabilities" not in fields:
+                fields.append("capabilities")
     runner.save(update_fields=fields)
     # Same clock: run every scheduled unpause that has come due, fleet-wide — so a
     # parked box is woken by ANY runner's beat, its own included. If this beat's

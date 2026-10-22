@@ -438,7 +438,7 @@ def assignment_rows_for(
         # grace has nobody below the floor to promote (spec 2026-09-30). Applied
         # AFTER the strict truncation, so a strict rule whose runners all lack the
         # flag leaves an empty list — the turn waits, it does not fall through.
-        out = [r for r in out if rr.satisfies(r.flags, requires)]
+        out = [r for r in out if rr.runner_satisfies(r, requires)]
     out = [r for r in out if not r.directed_only()]
     if serves:
         # The same FLOOR, after the strict truncation for the same reason: a strict
@@ -548,7 +548,7 @@ def order_for(workspace_id, project: str, orders: dict, *, requires: frozenset,
             if not r.directed_only()
             and (not sessions or r.session_capable())
             and (not project or project in r.project_names())
-            and rr.satisfies(r.flags, requires)]
+            and rr.runner_satisfies(r, requires)]
 
 
 def repo_order_for(turn: Turn, orders: dict, *, requires: frozenset | None = None) -> list | None:

@@ -63,3 +63,41 @@ def test_satisfies_is_a_subset_check():
 
 def test_describe_names_the_flags_for_people():
     assert rr.describe(frozenset({"zdr"})) == "ZDR"
+
+
+# ---- a declaration counts only while the box reports the mode (spec 2026-10-22 §2) ---
+
+
+def test_a_declared_zdr_is_not_in_force_until_the_box_reports_zdr_mode():
+    r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={})
+    RunnerFlag.objects.create(runner=r, flag="zdr")
+    r = Runner.objects.get(pk=r.pk)
+    assert r.flags == frozenset({"zdr"})  # declared: what the owner said
+    assert rr.in_force(r) == frozenset()  # but the box does not say it runs in ZDR mode
+    assert not rr.runner_satisfies(r, frozenset({"zdr"}))
+    for mode in ("", "zrd", "ZDR"):
+        r.capabilities = {"data_mode": mode}
+        assert not rr.runner_satisfies(r, frozenset({"zdr"})), mode
+    r.capabilities = {"data_mode": "zdr"}
+    assert rr.runner_satisfies(r, frozenset({"zdr"}))
+
+
+def test_a_box_reporting_zdr_mode_without_a_declaration_is_not_zdr():
+    # The report is the box speaking for itself; only a person's declaration makes it ZDR.
+    r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={"data_mode": "zdr"})
+    assert not rr.runner_satisfies(r, frozenset({"zdr"}))
+
+
+def test_the_heartbeat_records_the_mode_and_a_beat_without_it_clears_it():
+    from apps.harness import services
+
+    r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={"sessions": True})
+    RunnerFlag.objects.create(runner=r, flag="zdr")
+    services.heartbeat(r, active_turn_ids=[], data_mode="zdr", data_mode_hash="abc123")
+    r = Runner.objects.get(pk=r.pk)
+    assert r.capabilities["data_mode"] == "zdr" and r.capabilities["data_mode_hash"] == "abc123"
+    assert r.capabilities["sessions"] is True and rr.runner_satisfies(r, frozenset({"zdr"}))
+    services.heartbeat(r, active_turn_ids=[])  # older code, or ZDR mode turned off
+    r = Runner.objects.get(pk=r.pk)
+    assert r.capabilities["data_mode"] == "" and not rr.runner_satisfies(r, frozenset({"zdr"}))
+

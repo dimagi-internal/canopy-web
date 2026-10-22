@@ -347,6 +347,16 @@ def test_envelope_cannot_be_declared_by_hand(w, claimable):
     assert r.status_code == 422
 
 
+@pytest.mark.parametrize("key", ["data_mode", "data_mode_hash"])
+def test_the_data_mode_cannot_be_declared_by_hand(w, claimable, key):
+    # A `zdr` declaration counts only while the box itself reports ZDR mode
+    # (runner_requirements.in_force): a hand edit would make the report a person's.
+    c, rid = claimable
+    r = c.patch(f"/api/harness/runners/{rid}", {"capabilities": {"agents": ["ace"], key: "zdr"}},
+                content_type="application/json")
+    assert r.status_code == 422
+
+
 def test_a_downgraded_runner_stops_claiming_on_its_next_beat(w, claimable):
     c, rid = claimable
     _beat(c, rid, profiles=3, envelope=2)
