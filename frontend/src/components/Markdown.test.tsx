@@ -54,3 +54,25 @@ describe('Markdown links', () => {
     expect(a.getAttribute('rel')).toContain('noopener')
   })
 })
+
+describe('Markdown for data', () => {
+  it('wraps a table in its own scroll box with a sticky header', () => {
+    const { container } = render(<Markdown>{'| a | b |\n|---|---|\n| 1 | 2 |'}</Markdown>)
+    const box = container.querySelector('[data-slot="md-table"]')
+    expect(box).not.toBeNull()
+    expect(box!.className).toContain('overflow-auto')
+    expect(box!.querySelector('table th')?.textContent).toBe('a')
+  })
+
+  it('gives a fenced code block a copy button carrying its text', () => {
+    const { container } = render(<Markdown>{'```sql\nselect 1;\n```'}</Markdown>)
+    const block = container.querySelector('[data-slot="md-code"]')
+    expect(block?.querySelector('pre code')?.textContent).toBe('select 1;\n')
+    expect(block?.querySelector('button[aria-label="Copy code"]')).not.toBeNull()
+  })
+
+  it('leaves inline code alone', () => {
+    const { container } = render(<Markdown>{'use `x` here'}</Markdown>)
+    expect(container.querySelector('[data-slot="md-code"]')).toBeNull()
+  })
+})

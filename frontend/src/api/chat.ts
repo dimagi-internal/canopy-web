@@ -506,5 +506,7 @@ export function appHostFor(sessionId: string): AppHost {
       request<void>(`${at(callId)}/message`, json("POST", { text, client_id: `appview-${crypto.randomUUID()}` }))
         .then(() => undefined),
     resolveUrl: (path) => (/^https?:\/\//.test(path) ? path : apiUrl(path)),
+    // A View may ask to fill the window (a results table, a chart).
+    fullscreen: true,
   };
 }

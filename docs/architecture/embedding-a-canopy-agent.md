@@ -492,9 +492,31 @@ called when data your page shows has changed (§5a); `dismissible`, `storage`,
 `csrfCookieName`, `csrfToken` as above; plus `width`, `title`, `open: true`.
 
 The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
-`dismiss()`, `isDismissed()`, `setPageState()`, `registerAction()`,
-`unregisterAction()`, `setTheme()`, `setLauncherVisible()`, `ask()`, `destroy()`, and the older
-`provideContext()` (§5).
+`dismiss()`, `isDismissed()`, `expand()`, `collapse()`, `isExpanded()`,
+`setPageState()`, `registerAction()`, `unregisterAction()`, `setTheme()`,
+`setLauncherVisible()`, `ask()`, `destroy()`, and the older `provideContext()` (§5).
+
+### A bigger panel for data work
+
+In `overlay` and `docked` the panel header has an expand control: the panel grows
+to fill the window bar a 16px margin (all of it on a phone) and Esc or the control
+puts it back in the mode it came from. In it, a View (an MCP Apps results table or
+chart) uses the panel's full width and most of its height, and a View may also ask
+to go full screen over the panel. Wide markdown tables scroll sideways with their
+header pinned, and code blocks have a Copy button.
+
+```js
+canopy.init({ /* … */
+  expandable: true,             // default true; false hides the control
+  initialDisplay: 'expanded',   // or 'normal' (default) — the visitor's own
+                                // remembered choice on this site wins
+})
+```
+
+The visitor's choice is remembered per site (`storage`, as for a dragged
+launcher). `widget.expand()` / `collapse()` let the page do it itself — a
+"work with this data" button, say — without overriding what the visitor chose
+last time. `inline` never expands: there your page owns the box.
 
 `setLauncherVisible(false)` hides the bubble on a page where it is wrong — it
 covers that page's own controls, or duplicates what the page already is — and

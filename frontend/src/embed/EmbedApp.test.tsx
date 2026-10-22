@@ -36,6 +36,9 @@ function fakeLink(overrides: Partial<HostLink> = {}): HostLink {
     invalidate: () => undefined,
     requestClose: () => undefined,
     requestHeight: () => undefined,
+    requestExpand: () => undefined,
+    isExpanded: () => false,
+    onDisplayChanged: () => () => undefined,
     dispose: () => undefined,
     ...overrides,
   }
@@ -107,6 +110,51 @@ const created = () =>
       c.init?.method === 'POST' &&
       (/\/canopy-sessions\/$/.test(c.url) || /\/contact\/sessions$/.test(c.url)),
   )
+
+describe('expanding the panel', () => {
+  it('offers expand only when the host allows it, and asks the host', async () => {
+    const requestExpand = vi.fn()
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [], expandable: true }),
+          requestExpand,
+        })}
+        app="canopy-web"
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand panel' }))
+    expect(requestExpand).toHaveBeenCalledWith(true)
+  })
+
+  it('has no expand control for a host that did not allow it', async () => {
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })}
+        app="canopy-web"
+      />,
+    )
+    await screen.findByPlaceholderText(/^Type a message/)
+    expect(screen.queryByRole('button', { name: 'Expand panel' })).toBeNull()
+  })
+
+  it('collapses on Esc while expanded', async () => {
+    const requestExpand = vi.fn()
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [], expandable: true }),
+          isExpanded: () => true,
+          requestExpand,
+        })}
+        app="canopy-web"
+      />,
+    )
+    await screen.findByRole('button', { name: 'Collapse panel' })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(requestExpand).toHaveBeenCalledWith(false)
+  })
+})
 
 describe('starting a conversation', () => {
   it('creates NOTHING until somebody actually says something', async () => {

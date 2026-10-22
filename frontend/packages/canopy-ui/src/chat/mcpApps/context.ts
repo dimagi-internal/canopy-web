@@ -55,6 +55,11 @@ export interface AppHost {
   proxyOrigin?: string;
   /** Narrow panels (the embed) pass their width. */
   maxWidth?: number;
+  /** The tallest a View may grow inline, in px (default 900). */
+  maxHeight?: number;
+  /** Whether a View may go full screen (`ui/request-display-mode`): drawn over
+   *  the surface with a close control. Absent, every View stays inline. */
+  fullscreen?: boolean;
 }
 
 export const AppHostContext = createContext<AppHost | null>(null);

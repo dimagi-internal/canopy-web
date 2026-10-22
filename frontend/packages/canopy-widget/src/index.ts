@@ -146,6 +146,12 @@ export interface CanopyWidgetOptions {
   zIndex?: number
   /** Open immediately rather than waiting for the launcher. */
   open?: boolean
+  /** Whether the visitor may expand the panel to fill most of the window
+   *  (default true; overlay and docked only). False hides the control. */
+  expandable?: boolean
+  /** How the panel starts: `'normal'` (default) or `'expanded'`. A visitor's
+   *  own remembered choice on this site wins over it. */
+  initialDisplay?: 'normal' | 'expanded'
   /** How the launcher and the panel are dressed. Every field is optional and
    *  the default is the widget as it always looked; see `WidgetTheme`, and the
    *  embedding guide for the CSS-variable and `::part()` alternatives that need
@@ -165,6 +171,12 @@ export interface CanopyWidget {
    *  Exposed so a host can offer its own way to put it away. */
   dismiss(): void
   isDismissed(): boolean
+  /** Expand the panel to fill most of the window (opening it if closed), or
+   *  put it back. No-ops inline or when `expandable` is false. A host call is
+   *  not remembered as the visitor's choice; the panel's own control is. */
+  expand(): void
+  collapse(): void
+  isExpanded(): boolean
   /** What the agent may read off this page. Pulled when a session opens, not
    *  subscribed to — see `canopy-client/bridge` for why. */
   provideContext(provider: ContextProvider): void
@@ -248,6 +260,12 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     width: options.width ?? 400,
     zIndex: options.zIndex ?? 2147483000,
     theme,
+    expandable: options.expandable ?? true,
+    initialExpanded: options.initialDisplay === 'expanded',
+    // Before `ready` there is nobody to tell; `init` carries the state.
+    onDisplay: (expanded) => {
+      if (frameReady) post({ source: SOURCE, type: 'display', expanded })
+    },
     onToggle: (open) => post({ source: SOURCE, type: 'visibility', open }),
   })
 
@@ -338,6 +356,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
             metadata: options.metadata,
             actions: actionSpecs(),
             theme,
+            expandable: (options.expandable ?? true) && mode !== 'inline',
+            expanded: chrome.isExpanded(),
           })
           // After init, never inside it: `init` carries the token and is the
           // one message whose shape the frame validates strictly. The view is
@@ -420,6 +440,11 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
         chrome.setHeight(message.height)
         return
       }
+      case 'expand': {
+        // The visitor pressed the panel's own control: their choice, remembered.
+        chrome.setExpanded(message.expanded === true, true)
+        return
+      }
     }
   }
 
@@ -435,6 +460,9 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     isOpen: () => chrome.isOpen(),
     dismiss: () => chrome.dismiss(),
     isDismissed: () => chrome.isDismissed(),
+    expand: () => chrome.setExpanded(true),
+    collapse: () => chrome.setExpanded(false),
+    isExpanded: () => chrome.isExpanded(),
     setLauncherVisible: (visible: boolean) => chrome.setLauncherVisible(visible),
     ask(text: string) {
       const question = String(text ?? '').trim().slice(0, MAX_ASK_CHARS)

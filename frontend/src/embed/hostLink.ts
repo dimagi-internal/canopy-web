@@ -43,6 +43,10 @@ export interface HostInit {
   actions: ActionSpec[]
   /** The host's theme, UNVALIDATED — `applyFrameTheme` checks it itself. */
   theme?: unknown
+  /** Whether the host lets this panel expand (draw the control only then). */
+  expandable?: boolean
+  /** Whether it is expanded now. */
+  expanded?: boolean
 }
 
 type Pending = { resolve: (v: never) => void; reject: (e: Error) => void }
@@ -82,6 +86,13 @@ export interface HostLink {
   requestClose(): void
   /** Ask for a panel height, in the modes where the host owns it. */
   requestHeight(px: number): void
+  /** Ask the host to expand (or collapse) the panel. The host answers with
+   *  `display`, which is what `onDisplayChanged` reports — the button follows
+   *  the answer, never the request. */
+  requestExpand(expanded: boolean): void
+  /** Whether the panel is expanded, as the host last said. */
+  isExpanded(): boolean
+  onDisplayChanged(listener: (expanded: boolean) => void): () => void
   /** Stop listening. The frame normally lives as long as its document, so
    *  nothing in the app calls this — but a link that cannot be torn down
    *  cannot be tested in isolation either, and an untestable listener is how
@@ -117,6 +128,8 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
   let latestState: Record<string, unknown> | null = null
   const stateListeners = new Set<(state: Record<string, unknown>) => void>()
   const themeListeners = new Set<(theme: unknown) => void>()
+  const displayListeners = new Set<(expanded: boolean) => void>()
+  let expanded = false
 
   /** The parent's origin, learned from the first accepted message. Until then
    *  there is nothing to reply to — every outbound message except `ready` is a
@@ -175,7 +188,10 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
           metadata: (data.metadata as Record<string, unknown> | undefined) ?? {},
           actions: Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : [],
           theme: data.theme,
+          expandable: data.expandable === true,
+          expanded: data.expanded === true,
         })
+        expanded = data.expanded === true
         actionSpecs = Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : []
         return
       case 'token':
@@ -218,6 +234,10 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
         stateListeners.forEach((l) => l(latestState as Record<string, unknown>))
         return
       }
+      case 'display':
+        expanded = data.expanded === true
+        displayListeners.forEach((l) => l(expanded))
+        return
       case 'theme':
         themeListeners.forEach((l) => l(data.theme))
         return
@@ -270,6 +290,12 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
     invalidate: (resource: string) => send({ type: 'invalidate', resource }),
     requestClose: () => send({ type: 'close' }),
     requestHeight: (px) => send({ type: 'resize', height: px }),
+    requestExpand: (next) => send({ type: 'expand', expanded: next }),
+    isExpanded: () => expanded,
+    onDisplayChanged(listener) {
+      displayListeners.add(listener)
+      return () => displayListeners.delete(listener)
+    },
     dispose() {
       window.removeEventListener('message', onMessage)
       // Anything still outstanding will never be answered now; rejecting is

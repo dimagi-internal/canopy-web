@@ -148,8 +148,30 @@ routes in `apps/canopy_sessions/app_views_api.py` and `apps/contacts/contact_api
   separate-origin rule, recorded in the spec. Views therefore cannot use
   storage. It is answered by `McpAppsSandboxMiddleware`, which runs before
   sessions and auth, so it can never set a cookie. Don't add `allow-same-origin`.
+- **Size and display modes come from the `AppHost`** (`canopy-ui` `mcpApps/context.ts`):
+  `maxWidth` / `maxHeight` (default 900, floor 80) bound an inline View, and
+  `fullscreen: true` advertises `availableDisplayModes: ["inline","fullscreen"]`
+  and grants `ui/request-display-mode` → the same frame restyled `fixed inset-0`
+  with a close control and Esc (never remounted; `ui/notifications/host-context-changed`
+  tells the View). Without the flag the answer is always `inline`. ChatPage and
+  the embed panel set it; the embed lifts `maxWidth: 420` and raises `maxHeight`
+  while the panel is expanded.
 
-Tests: `tests/test_mcp_apps_{gateway,sandbox,views}.py`.
+Tests: `tests/test_mcp_apps_{gateway,sandbox,views}.py`; frontend
+`mcpApps/{bridge,AppView}.test.ts(x)`.
+
+### The expanded panel
+
+Overlay and docked panels can expand to `inset: 16px` (the whole viewport under
+640px). It is a STATE over the mode (`data-expanded` on the panel, `chrome.ts`),
+so collapsing returns to the same overlay or rail; it uses `!important` because
+a dragged position and a frame-requested height are inline styles that must
+survive untouched. The frame asks (`expand`, frame→host) and the host answers
+(`display`, host→frame) — the frame's button follows the answer. The visitor's
+choice is remembered per `app` (`canopy.widget.display.<app>`) through the
+injected `storage`; a host's `expand()` / `initialDisplay` is not. Esc collapses
+from either document (a full-screen View takes the first Esc). Tests:
+`canopy-widget/src/widget.test.ts` § expanding the panel, `src/embed/hostLink.test.ts`.
 
 ## Live host-grant probe
 

@@ -1,7 +1,8 @@
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
-import type { JSX } from 'react'
+import { Children, isValidElement, type JSX, type ReactNode } from 'react'
+import { CopyButton } from 'canopy-ui/ui'
 
 // Shared markdown renderer for agent-authored text (Item bodies, turn/sync
 // summaries, and any other surface that shows model output). One place so the
@@ -37,9 +38,9 @@ const PROSE = `
   [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-inherit
   [&_blockquote]:my-1.5 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground
   [&_hr]:my-3 [&_hr]:border-border
-  [&_table]:my-2 [&_table]:block [&_table]:overflow-x-auto [&_table]:text-[0.9em]
-  [&_th]:border [&_th]:border-border [&_th]:bg-muted/50 [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_th]:align-bottom [&_th]:font-semibold
-  [&_td]:border [&_td]:border-border [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:align-top
+  [&_table]:min-w-full [&_table]:border-separate [&_table]:border-spacing-0 [&_table]:text-[0.9em]
+  [&_th]:sticky [&_th]:top-0 [&_th]:z-[1] [&_th]:bg-muted [&_th]:border-b [&_th]:border-r [&_th]:border-border [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_th]:align-bottom [&_th]:font-semibold
+  [&_td]:border-b [&_td]:border-r [&_td]:border-border [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:align-top
   [&_th]:[overflow-wrap:normal] [&_td]:[overflow-wrap:break-word]
   [&_img]:my-2 [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-border
 `
@@ -50,7 +51,37 @@ const PROSE = `
 // full-size original in a new tab, since the inline copy is scaled down.
 // urlTransform is left at react-markdown's default, so a `data:` src is still
 // stripped to an empty string — no image src is rendered from it.
+/** The plain text of a rendered node — what a code block's Copy copies. */
+function textOf(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  if (isValidElement<{ children?: ReactNode }>(node)) return textOf(node.props.children)
+  return ''
+}
+
 const components: Components = {
+  // Data answers are tables: a wide one scrolls sideways inside its own box
+  // (never the panel), and a long one scrolls down with its header pinned.
+  table: ({ children }) => (
+    <div data-slot="md-table" className="my-2 max-h-[70vh] max-w-full overflow-auto rounded border-l border-t border-border">
+      <table>{children}</table>
+    </div>
+  ),
+  // A query or a JSON payload is something you paste somewhere else.
+  pre: ({ children }) => {
+    const text = textOf(Children.toArray(children)).replace(/\n$/, '')
+    return (
+      <div data-slot="md-code" className="group relative">
+        <pre>{children}</pre>
+        <CopyButton
+          text={text}
+          variant="outline"
+          aria-label="Copy code"
+          className="absolute right-1.5 top-1.5 bg-card opacity-70 hover:opacity-100 focus-visible:opacity-100"
+        />
+      </div>
+    )
+  },
   img: ({ src, alt, title }) => {
     const img = (
       <img src={src} alt={alt ?? ''} title={title} loading="lazy" referrerPolicy="no-referrer" />

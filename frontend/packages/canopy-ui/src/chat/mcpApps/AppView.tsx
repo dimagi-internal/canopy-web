@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ExternalLink, Loader2, X } from "lucide-react";
+import { Check, ExternalLink, Loader2, Minimize2, X } from "lucide-react";
 
 import { AppBridge } from "./bridge";
 import { useAppHost, type AppReceipt, type AppRef, type AppViewResource } from "./context";
 
 const MIN_HEIGHT = 80;
 const MAX_HEIGHT = 900;
+
+function dimensions(host: { maxWidth?: number; maxHeight?: number }): Record<string, number> {
+  return {
+    maxHeight: host.maxHeight ?? MAX_HEIGHT,
+    ...(host.maxWidth ? { maxWidth: host.maxWidth } : {}),
+  };
+}
 
 function siteLabel(site: string): string {
   return /labs/i.test(site) ? "Labs" : site;
@@ -36,16 +43,34 @@ function receiptTime(at: string): string {
  * inside a labelled boundary ("from Labs") so nobody mistakes it for canopy's
  * own UI. Mounting re-reads everything from the server, so a reload never
  * replays anything the previous mount held.
+ *
+ * A host that sets `fullscreen` lets a View ask (`ui/request-display-mode`) to
+ * be drawn over the whole surface, with a close control and Esc to come back.
+ * The SAME frame is restyled, never remounted: a remount would reload the View
+ * and lose whatever its person had done in it. The sandbox is unchanged.
  */
 export function AppView({ app }: { app: AppRef }) {
   const host = useAppHost();
   const frame = useRef<HTMLIFrameElement | null>(null);
   const [res, setRes] = useState<AppViewResource | null>(null);
   const [error, setError] = useState<string>("");
-  const [height, setHeight] = useState<number>(160);
+  // What the View asked for; clamped to the host's limit at render, so a panel
+  // that grows (the embed, expanded) lets an already-tall View use the room.
+  const [requested, setRequested] = useState<number>(160);
   const [receipts, setReceipts] = useState<AppReceipt[]>([]);
+  const [fullscreen, setFullscreen] = useState(false);
+  const fullscreenRef = useRef(false);
+  fullscreenRef.current = fullscreen;
+  // The host's identity may change when only its SIZE does (the embed panel
+  // expanding). Read through a ref, so that never re-loads the View or tears
+  // its bridge down — a torn-down bridge would leave the frame talking to nobody.
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  const hasHost = !!host;
+  const bridgeRef = useRef<AppBridge | null>(null);
 
   useEffect(() => {
+    const host = hostRef.current;
     if (!host) return;
     let live = true;
     let attempt = 0;
@@ -71,14 +96,16 @@ export function AppView({ app }: { app: AppRef }) {
     return () => {
       live = false;
     };
-  }, [host, app.tool_call_id]);
+  }, [hasHost, app.tool_call_id]);
 
   const src = useMemo(() => {
     if (!res) return "";
-    return host?.resolveUrl ? host.resolveUrl(res.sandbox_src) : res.sandbox_src;
-  }, [host, res]);
+    const h = hostRef.current;
+    return h?.resolveUrl ? h.resolveUrl(res.sandbox_src) : res.sandbox_src;
+  }, [res]);
 
   useEffect(() => {
+    const host = hostRef.current;
     if (!host || !res || !frame.current) return;
     const refreshReceipts = () =>
       host.load(app.tool_call_id).then((r) => setReceipts(r.receipts ?? []), () => undefined);
@@ -94,9 +121,9 @@ export function AppView({ app }: { app: AppRef }) {
       hostContext: {
         theme: theme(),
         displayMode: "inline",
-        availableDisplayModes: ["inline"],
+        availableDisplayModes: host.fullscreen ? ["inline", "fullscreen"] : ["inline"],
         platform: "web",
-        containerDimensions: { maxHeight: MAX_HEIGHT, ...(host.maxWidth ? { maxWidth: host.maxWidth } : {}) },
+        containerDimensions: dimensions(host),
         locale: typeof navigator !== "undefined" ? navigator.language : "en",
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         toolInfo: { tool: { name: res.tool, inputSchema: { type: "object" } } },
@@ -112,16 +139,53 @@ export function AppView({ app }: { app: AppRef }) {
         sendMessage: (text) => host.sendMessage(app.tool_call_id, text),
         openLink,
         onSize: ({ height: h }) => {
-          if (typeof h === "number" && h > 0) {
-            setHeight(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.ceil(h))));
-          }
+          if (typeof h === "number" && h > 0) setRequested(Math.ceil(h));
+        },
+        requestDisplayMode: (mode) => {
+          const allowed = !!hostRef.current?.fullscreen;
+          const next = mode === "fullscreen" && allowed ? "fullscreen"
+            : mode === "inline" ? "inline"
+            : fullscreenRef.current ? "fullscreen" : "inline";
+          setFullscreen(next === "fullscreen");
+          bridgeRef.current?.notifyHostContext({ displayMode: next });
+          return next;
         },
       },
     });
-    return () => bridge.close();
-  }, [host, res, app.tool_call_id]);
+    bridgeRef.current = bridge;
+    return () => {
+      bridgeRef.current = null;
+      bridge.close();
+    };
+  }, [res, app.tool_call_id]);
+
+  // A grown or shrunk surface is news to the View: it may lay out for it.
+  const maxW = host?.maxWidth;
+  const maxH = host?.maxHeight;
+  useEffect(() => {
+    bridgeRef.current?.notifyHostContext({ containerDimensions: dimensions({ maxWidth: maxW, maxHeight: maxH }) });
+  }, [maxW, maxH]);
+
+  // Esc leaves full screen — first, in the capture phase, and marked handled so
+  // a surface that also collapses on Esc (the embed panel) waits for the next one.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      exitFullscreen();
+    };
+    document.addEventListener("keydown", onKeydown, true);
+    return () => document.removeEventListener("keydown", onKeydown, true);
+  });
+
+  function exitFullscreen(): void {
+    setFullscreen(false);
+    bridgeRef.current?.notifyHostContext({ displayMode: "inline" });
+  }
 
   if (!host) return null;
+  const height = Math.max(MIN_HEIGHT, Math.min(host.maxHeight ?? MAX_HEIGHT, requested));
   const label = siteLabel(app.site);
   const bordered = res?.prefers_border !== false;
 
@@ -129,11 +193,25 @@ export function AppView({ app }: { app: AppRef }) {
     <section
       data-testid="app-view"
       aria-label={`View from ${label}`}
-      className={`my-2 overflow-hidden rounded-lg ${bordered ? "border border-border bg-card" : ""}`}
+      data-display-mode={fullscreen ? "fullscreen" : "inline"}
+      className={fullscreen
+        ? "fixed inset-0 z-50 flex flex-col overflow-hidden bg-background"
+        : `my-2 overflow-hidden rounded-lg ${bordered ? "border border-border bg-card" : ""}`}
     >
       <header className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
         <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-foreground">from {label}</span>
         <span className="truncate font-mono">{app.tool}</span>
+        {fullscreen && (
+          <button
+            type="button"
+            onClick={exitFullscreen}
+            aria-label="Exit full screen"
+            title="Exit full screen (Esc)"
+            className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-foreground hover:bg-muted"
+          >
+            <Minimize2 className="h-3.5 w-3.5" /> Close
+          </button>
+        )}
       </header>
       {error ? (
         <p className="px-3 py-2 text-sm text-muted-foreground">{error}</p>
@@ -161,7 +239,10 @@ export function AppView({ app }: { app: AppRef }) {
             // Opaque origin: never `allow-same-origin` (owner decision 1).
             sandbox="allow-scripts"
             referrerPolicy="no-referrer"
-            style={{ height, width: "100%", border: 0, display: "block" }}
+            className={fullscreen ? "min-h-0 flex-1" : undefined}
+            style={fullscreen
+              ? { width: "100%", border: 0, display: "block" }
+              : { height, width: "100%", border: 0, display: "block" }}
           />
         </>
       )}

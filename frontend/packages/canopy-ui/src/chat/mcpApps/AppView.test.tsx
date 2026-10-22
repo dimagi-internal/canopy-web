@@ -5,7 +5,7 @@
  * never receives the tool_use) — and remounts cleanly from history.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { MessageList } from "../MessageList";
 import type { Message } from "../protocol";
@@ -104,5 +104,57 @@ describe("AppView", () => {
     render(tree);
     await waitFor(() => expect(screen.getByTestId("app-view")).toBeTruthy());
     expect(h.load).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("AppView full screen", () => {
+  async function mounted(over: Partial<AppHost>) {
+    const h = { ...host(resource()), ...over } as AppHost;
+    render(
+      <AppHostContext.Provider value={h}>
+        <MessageList messages={[use, result]} />
+      </AppHostContext.Provider>,
+    );
+    await waitFor(() => expect(screen.getByTitle("Labs: workflow_run_action")).toBeTruthy());
+    const frame = screen.getByTitle("Labs: workflow_run_action") as HTMLIFrameElement;
+    const posted: Array<Record<string, unknown>> = [];
+    vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(((m: unknown) => {
+      posted.push(m as Record<string, unknown>);
+    }) as Window["postMessage"]);
+    const ask = (mode: string) => act(() => {
+      window.dispatchEvent(new MessageEvent("message", {
+        data: { jsonrpc: "2.0", id: 7, method: "ui/request-display-mode", params: { mode } },
+        source: frame.contentWindow, origin: "null",
+      }));
+    });
+    return { frame, posted, ask, view: () => screen.getByTestId("app-view") };
+  }
+
+  it("stays inline when the host does not offer full screen", async () => {
+    const { ask, view, posted } = await mounted({});
+    await ask("fullscreen");
+    await waitFor(() => expect(posted.find((m) => m.id === 7)).toMatchObject({ result: { mode: "inline" } }));
+    expect(view().dataset.displayMode).toBe("inline");
+  });
+
+  it("goes full screen over the surface, keeps its sandbox, and comes back on close or Esc", async () => {
+    const { ask, view, posted, frame } = await mounted({ fullscreen: true });
+    await ask("fullscreen");
+    await waitFor(() => expect(view().dataset.displayMode).toBe("fullscreen"));
+    expect(posted.find((m) => m.id === 7)).toMatchObject({ result: { mode: "fullscreen" } });
+    expect(view().className).toContain("fixed");
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    // The same frame, restyled — never remounted (that would reload the View).
+    expect(screen.getByTitle("Labs: workflow_run_action")).toBe(frame);
+
+    fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+    expect(view().dataset.displayMode).toBe("inline");
+
+    await ask("fullscreen");
+    await waitFor(() => expect(view().dataset.displayMode).toBe("fullscreen"));
+    const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    act(() => { document.dispatchEvent(esc); });
+    expect(esc.defaultPrevented).toBe(true);
+    expect(view().dataset.displayMode).toBe("inline");
   });
 });

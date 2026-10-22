@@ -60,6 +60,10 @@ export type FrameMessage =
   | { source: typeof SOURCE; type: 'close' }
   /** Desired panel height in `inline` mode, where the host owns layout. */
   | { source: typeof SOURCE; type: 'resize'; height: number }
+  /** The user pressed the panel's expand control (or Esc while expanded).
+   *  The host decides: it answers with `display` either way, so the frame's
+   *  button always shows what is actually on screen. */
+  | { source: typeof SOURCE; type: 'expand'; expanded: boolean }
 
 /** host → frame */
 export type HostMessage =
@@ -74,7 +78,15 @@ export type HostMessage =
        *  AGAIN — it is canopy's document, and does not take a host's word for
        *  what may be written into its styles. */
       theme?: SafeTheme
+      /** Whether the panel may be expanded — the frame draws its expand
+       *  control only when this is true. Absent (an older loader) = false. */
+      expandable?: boolean
+      /** Whether the panel is expanded right now (a remembered choice). */
+      expanded?: boolean
     }
+  /** The panel's size changed: expanded (most of the viewport) or not. Sent
+   *  after every `expand` and whenever the host expands or collapses itself. */
+  | { source: typeof SOURCE; type: 'display'; expanded: boolean }
   | { source: typeof SOURCE; type: 'token'; id: string; token: string }
   | { source: typeof SOURCE; type: 'token-error'; id: string; message: string }
   | { source: typeof SOURCE; type: 'context'; id: string; context: Record<string, unknown> }
@@ -111,7 +123,7 @@ export function isFrameMessage(data: unknown): data is FrameMessage {
   // arriving here is not something to interpret — the host is the only party
   // that issues those, so seeing one means something is impersonating it.
   return [
-    'ready', 'token-request', 'context-request', 'action-request', 'invalidate', 'close', 'resize',
+    'ready', 'token-request', 'context-request', 'action-request', 'invalidate', 'close', 'resize', 'expand',
   ].includes(m.type)
 }
 
