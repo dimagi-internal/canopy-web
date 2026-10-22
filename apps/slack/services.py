@@ -450,7 +450,7 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
         "slack_thread_ts": inbound.reply_thread_ts,
     }
     # A contact has no account: `created_by` stays null, exactly like a widget
-    # contact's session (tokens.contact_api) — null is what keeps it out of every
+    # contact's session (contacts.contact_api) — null is what keeps it out of every
     # member's list. The one constructor either way, so a contact's thread is
     # recorded (transcript stamp, provenance) the same as a member's.
     return session_services.create_session(

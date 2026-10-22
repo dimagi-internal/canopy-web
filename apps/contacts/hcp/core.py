@@ -89,7 +89,7 @@ SYSTEM = Actor("canopy", PersonAuditEvent.SYSTEM)
 
 def contact_actor(contact) -> Actor:
     """The person themself, acting through a contact token in canopy's own frame
-    (`tokens/contact_hcp_api`) — a person's act, so `user`, named by the contact
+    (`contacts/contact_hcp_api`) — a person's act, so `user`, named by the contact
     because there is no account."""
     return Actor(f"contact:{contact.pk}", PersonAuditEvent.USER)
 

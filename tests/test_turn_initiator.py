@@ -356,7 +356,7 @@ def test_no_grade_above_tier_2_exists_for_an_embedded_site():
     assert top == {Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED, Contact.AUTH_SLACK_MEMBER}, (
         f"the top of the ladder changed: {top}. A grade an embedded site could "
         "hold up here needs canopy to verify the PERSON, which it does not do — "
-        "it verifies the host's signature. See tokens/contact_api.py."
+        "it verifies the host's signature. See contacts/contact_api.py."
     )
     assert all(g in dict(Contact.AUTH_CHOICES) for g in Contact.AUTH_RANK), (
         "a ranked grade is missing from AUTH_CHOICES"

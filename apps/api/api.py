@@ -58,7 +58,16 @@ class CanopyNinjaAPI(NinjaAPI):
 
 
 def _app_label(module: str) -> str:
-    """``apps.canopy_sessions.contact_api`` → ``canopy_sessions_contact``."""
+    """``apps.canopy_sessions.contact_api`` → ``canopy_sessions_contact``.
+
+    A module that moved apps keeps the label it was published under by naming it
+    in ``OPERATION_LABEL`` — an operationId is an MCP tool name and a
+    ``generated.ts`` key, so moving code must not rename it."""
+    import sys
+
+    pinned = getattr(sys.modules.get(module), "OPERATION_LABEL", None)
+    if pinned:
+        return pinned
     parts = module.split(".")
     if parts[0] == "apps":
         parts = parts[1:]
@@ -254,7 +263,7 @@ from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
 from apps.contacts.hcp_clients_api import router as hcp_clients_router  # noqa: E402
 from apps.contacts.people_api import router as people_router  # noqa: E402
 from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
-from apps.tokens.contact_api import contact_router, contact_token_router  # noqa: E402
+from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.tokens.embed_api import embed_router
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
@@ -276,7 +285,7 @@ api.add_router("/storyboards", storyboards_router)
 api.add_router("", beta_requests_router)
 api.add_router("/embed", embed_router)
 # The contact surface. `/api/contact/` is the ONLY prefix a contact token can
-# reach — see apps/tokens/contact_api.py and the allowlist in
+# reach — see apps/contacts/contact_api.py and the allowlist in
 # apps/common/middleware.py. `/api/auth/contact-token` mints one and is
 # unauthenticated because the signed assertion is the credential.
 api.add_router("/contact", contact_router)
