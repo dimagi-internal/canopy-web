@@ -40,6 +40,7 @@ class Migration(migrations.Migration):
                     ("token", "token"),
                     ("api_key", "API key"),
                 ],
+                db_default="login",
                 default="login",
                 max_length=16,
             ),
@@ -47,12 +48,12 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="runnerlogin",
             name="name",
-            field=models.CharField(blank=True, default="", max_length=200),
+            field=models.CharField(blank=True, db_default="", default="", max_length=200),
         ),
         migrations.AddField(
             model_name="runnerlogin",
             name="value_enc",
-            field=models.TextField(blank=True, default=""),
+            field=models.TextField(blank=True, db_default="", default=""),
         ),
         migrations.AlterField(
             model_name="runnermint",

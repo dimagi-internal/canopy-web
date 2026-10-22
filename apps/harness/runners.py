@@ -111,12 +111,16 @@ def update_runner_credential(runner, key: str, *, value: str | None = None,
     entry = _entries(runner).filter(key=key, kind__in=VALUE_KINDS).first()
     if entry is None:
         return False
-    if value is not None and value.strip():
+    new_value = value is not None and bool(value.strip())
+    if new_value:
         entry.value_enc = encrypt_secret(value.strip())
     if name is not None:
         entry.name = name.strip()[:200]
     entry.save()
-    _touch(runner, by)
+    if new_value:
+        # Only a new value moves the stamp: the box proves every credential
+        # again when it moves, and a name is nothing to prove.
+        _touch(runner, by)
     return True
 
 
@@ -201,13 +205,18 @@ def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=N
 
 
 def would_remove_last_backup_token(runner, *, claude_token=None,
-                                   claude_token_secondary=None) -> bool:
-    """True when this old fixed-slot write would clear the box's last token or API key."""
-    removing = set()
-    for n, value in ((0, claude_token), (1, claude_token_secondary)):
-        entry = _nth_token(runner, n) if value == "" else None
-        if entry is not None:
-            removing.add(entry.key)
+                                   claude_token_secondary=None, claude_api_key=None) -> bool:
+    """True when this old fixed-slot write would leave the runner with no token or
+    API key it had one before. A value written in the same call counts."""
+    if "" not in (claude_token, claude_token_secondary, claude_api_key):
+        return False
+    slots = _first_values(runner)
+    removing = {slots[k].key for k, v in (("claude_token", claude_token),
+                                         ("claude_token_secondary", claude_token_secondary),
+                                         ("claude_api_key", claude_api_key))
+                if v == "" and slots[k] is not None}
+    if any(v for v in (claude_token, claude_token_secondary, claude_api_key)):
+        return False  # something is written too: the runner still holds one after
     return bool(removing) and _would_leave_no_fallback(runner, removing)
 
 
@@ -294,10 +303,10 @@ def add_runner_login(runner, *, by=None):
     with transaction.atomic():
         Runner.objects.select_for_update().filter(pk=runner.pk).first()
         last = _entries(runner).order_by("-position").first()
+        # No stamp: the box has nothing new to prove until the login is signed in.
         login = RunnerLogin.objects.create(
             runner=runner, key=secrets.token_hex(4), created_by=by, kind=RunnerLogin.LOGIN,
             position=(last.position + 1) if last else 0)
-        _touch(runner, by)
     start_runner_mint(runner, requested_by=by, slot="box", login_key=login.key)
     return login
 
@@ -308,8 +317,14 @@ def remove_runner_login(runner, key: str) -> bool:
 
 
 def order_runner_logins(runner, keys: list[str]) -> None:
-    """The old name for ordering the list."""
-    order_runner_credentials(runner, keys)
+    """The old route: every credential, or just the logins — then the logins are
+    reordered among the places they already hold, and the rest stay put."""
+    logins = list(_entries(runner, RunnerLogin.LOGIN).values_list("key", flat=True))
+    if sorted(keys) != sorted(logins):
+        return order_runner_credentials(runner, keys)
+    wanted = iter(keys)
+    order_runner_credentials(runner, [next(wanted) if kind == RunnerLogin.LOGIN else key
+                                      for key, kind in _entries(runner).values_list("key", "kind")])
 
 
 def report_runner_logins(runner, reports: list[dict], *, adopt_default: bool = False) -> None:

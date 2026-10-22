@@ -6073,8 +6073,18 @@ def _claude_cred_label() -> str:
     return "none"
 
 
-def _apply_claude_credential(index: int) -> None:
-    """Point the environment at credential `index`, clearing the other auth var."""
+#: The API key this process last told a human it is billing on ("" = none in use),
+#: so re-applying the same key (every re-read, every park) does not tell them again.
+_API_KEY_NOTICE = {"label": ""}
+
+
+def _apply_claude_credential(index: int, *, turn_id: str = "") -> None:
+    """Point the environment at credential `index`, clearing the other auth var.
+
+    Landing on an API key tells a human, because it bills per token — wherever
+    it sits in the list. A key a person put first, or one that is first because
+    the logins above it are not signed in, bills from the first turn. Not on a
+    ZDR box, which runs on keys by design."""
     global _CLAUDE_CRED_I
     _CLAUDE_CRED_I = index
     label, var, value = _CLAUDE_CREDS[index]
@@ -6089,6 +6099,11 @@ def _apply_claude_credential(index: int) -> None:
     if var and value:
         os.environ[var] = value
     _log(f"claude credential: using {label} ({var or 'the stored login on this box'})")
+    if var != "ANTHROPIC_API_KEY":
+        _API_KEY_NOTICE["label"] = ""
+    elif not ZDR_MODE and _API_KEY_NOTICE["label"] != label:
+        _API_KEY_NOTICE["label"] = label
+        _notify_api_key_fallback(label, turn_id)
 
 
 # ── the credential probe ─────────────────────────────────────────────────────
@@ -6419,17 +6434,11 @@ def _credential_tick(beat: dict | None = None) -> None:
 
 def _advance_claude_credential(*, turn_id: str = "") -> bool:
     """Move to the next credential. False when the cascade is exhausted.
-
-    Notifies on a step onto an API key, because that one bills per token — the
-    operator asked to be told before we start spending, not after.
-    """
+    Landing on an API key notifies (`_apply_claude_credential`)."""
     nxt = _CLAUDE_CRED_I + 1
     if nxt >= len(_CLAUDE_CREDS):
         return False
-    label, var, _ = _CLAUDE_CREDS[nxt]
-    _apply_claude_credential(nxt)
-    if var == "ANTHROPIC_API_KEY":
-        _notify_api_key_fallback(label, turn_id)
+    _apply_claude_credential(nxt, turn_id=turn_id)
     return True
 
 
@@ -6445,9 +6454,9 @@ def _notify_api_key_fallback(label: str, turn_id: str) -> None:
             "source": "runner.credential",
             "kind": "claude_api_key_fallback",
             "level": "warn",
-            "summary": (f"{RUNNER_NAME or 'This runner'} moved down its Claude credentials "
-                        f"to an API key ({label}): the ones above it are at their usage "
-                        "cap or not working. Turns now bill per token."),
+            "summary": (f"{RUNNER_NAME or 'This runner'} is running on an API key ({label}): "
+                        "turns now bill per token. Anything above it on the runner's "
+                        "credentials is at its usage cap or not working."),
             # Coalescing key: one row per runner per day, not one per turn. The
             # fallback is a STATE a human needs to know about once, not a stream.
             "key": f"api-key-fallback:{RUNNER_NAME}",

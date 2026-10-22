@@ -1204,12 +1204,14 @@ class RunnerLogin(models.Model):
     runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="logins")
     #: Names the entry (and a login's directory on the box). Short, opaque, never reused.
     key = models.CharField(max_length=32)
-    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=LOGIN)
+    # db_default as well: code from before the list, still serving mid-deploy,
+    # inserts login rows without these columns.
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=LOGIN, db_default=LOGIN)
     position = models.PositiveIntegerField(default=0)
     #: A token's or API key's name, as a person gave it. Not a secret.
-    name = models.CharField(max_length=200, blank=True, default="")
+    name = models.CharField(max_length=200, blank=True, default="", db_default="")
     #: A token's or API key's value, encrypted (apps/common/encryption.py). Empty for a login.
-    value_enc = models.TextField(blank=True, default="")
+    value_enc = models.TextField(blank=True, default="", db_default="")
     account = models.CharField(max_length=254, blank=True, default="")
     signed_in = models.BooleanField(default=False)
     reported_at = models.DateTimeField(null=True, blank=True)

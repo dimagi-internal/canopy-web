@@ -282,3 +282,35 @@ def test_the_box_gets_only_logins_in_its_login_list(client, runner):
     assert [lg["key"] for lg in got["logins"]] == ["aaaa1111"]
     assert [(c["key"], c["kind"], c["value"]) for c in got["cascade"]] == [
         ("aaaa1111", "login", ""), (got["cascade"][1]["key"], "api_key", "k1")]
+
+
+def test_a_legacy_write_that_replaces_while_it_removes_is_allowed(client, runner):
+    runners.set_runner_credential(runner, claude_token="C")
+    r = client.post(_cred_url(runner), data={"claude_token": "", "claude_api_key": "K"},
+                    content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert [c["kind"] for c in r.json()["credentials"]] == ["api_key"]
+
+
+def test_a_legacy_write_cannot_clear_the_last_api_key(client, runner):
+    runners.set_runner_credential(runner, claude_api_key="K")
+    r = client.post(_cred_url(runner), data={"claude_api_key": ""}, content_type="application/json")
+    assert r.status_code == 422
+
+
+def test_the_old_logins_order_route_reorders_just_the_logins(client, runner):
+    RunnerLogin.objects.create(runner=runner, key="aa", kind=RunnerLogin.LOGIN, position=0)
+    runners.add_runner_credential(runner, kind="api_key", value="k1")
+    RunnerLogin.objects.create(runner=runner, key="bb", kind=RunnerLogin.LOGIN, position=2)
+    r = client.put(f"/api/harness/runners/{runner.id}/logins/order", data={"keys": ["bb", "aa"]},
+                   content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert [c["kind"] if c["kind"] != "login" else c["key"] for c in r.json()["credentials"]] == [
+        "bb", "api_key", "aa"]
+
+
+def test_a_rename_does_not_move_the_bundle_stamp(client, runner):
+    key = runners.add_runner_credential(runner, kind="api_key", value="k1").key
+    before = RunnerCredential.objects.get(runner=runner).updated_at
+    runners.update_runner_credential(runner, key, name="billing")
+    assert RunnerCredential.objects.get(runner=runner).updated_at == before

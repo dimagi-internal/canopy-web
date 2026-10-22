@@ -210,8 +210,9 @@ def test_stepping_onto_an_api_key_anywhere_in_the_list_notifies(ordinary, monkey
     monkeypatch.setattr(ordinary, "_notify_api_key_fallback", lambda label, turn: sent.append(label))
     _stage(ordinary, LIST)
     ordinary._apply_claude_credential(0)
-    assert ordinary._advance_claude_credential() and sent == []          # onto the token
-    assert ordinary._advance_claude_credential() and sent == ["api-key:k2"]
+    assert sent == ["api-key:k1"]
+    assert ordinary._advance_claude_credential() and sent == ["api-key:k1"]   # onto the token
+    assert ordinary._advance_claude_credential() and sent == ["api-key:k1", "api-key:k2"]
 
 
 def test_a_zdr_box_uses_every_api_key_in_the_list_and_nothing_else(zdr):
@@ -220,3 +221,23 @@ def test_a_zdr_box_uses_every_api_key_in_the_list_and_nothing_else(zdr):
     assert zdr.zdr_readiness() == (True, "")
     _stage(zdr, {**LIST, "cascade": [e for e in LIST["cascade"] if e["kind"] != "api_key"]})
     assert zdr.zdr_readiness()[0] is False
+
+
+def test_an_api_key_first_in_the_list_notifies_once(ordinary, monkeypatch):
+    """It bills from the first turn: a key a person put first, or one first
+    because the login above it is not signed in."""
+    sent = []
+    monkeypatch.setattr(ordinary, "box_login_ready", lambda *a, **k: False)
+    monkeypatch.setattr(ordinary, "_notify_api_key_fallback", lambda label, turn: sent.append(label))
+    _stage(ordinary, LIST)
+    ordinary._apply_claude_credential(0)
+    ordinary._apply_claude_credential(0)   # a re-read re-applies the same key
+    assert sent == ["api-key:k1"]
+
+
+def test_a_zdr_box_never_sends_the_billing_notice(zdr, monkeypatch):
+    sent = []
+    monkeypatch.setattr(zdr, "_notify_api_key_fallback", lambda label, turn: sent.append(label))
+    _stage(zdr, LIST)
+    zdr._apply_claude_credential(0)
+    assert zdr._advance_claude_credential() and sent == []

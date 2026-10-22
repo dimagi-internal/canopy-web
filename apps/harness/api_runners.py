@@ -174,7 +174,8 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
     runner = runner_admin_or_404(request, runner_id)
     if harness_runners.would_remove_last_backup_token(
             runner, claude_token=payload.claude_token,
-            claude_token_secondary=payload.claude_token_secondary):
+            claude_token_secondary=payload.claude_token_secondary,
+            claude_api_key=payload.claude_api_key):
         raise HttpError(422, harness_runners.LAST_BACKUP_TOKEN_REFUSAL)
     harness_runners.set_runner_credential(
         runner,
