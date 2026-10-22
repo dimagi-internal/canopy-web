@@ -352,11 +352,8 @@ def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
     visible = _listed_agent_workspace_ids(request)
     agents = [a for a in services.list_agents() if a.workspace_id in visible]
     refs = plugin_services.plugin_refs(request.user) if agents else {}
-    items = [
-        AgentOut.model_validate(a).model_copy(update={"plugin": _plugin_out(a, refs)})
-        for a in agents
-    ]
-    return paginate(items, offset=0, limit=limit)
+    return paginate(agents, offset=0, limit=limit, map=lambda a: AgentOut.model_validate(a).model_copy(
+        update={"plugin": _plugin_out(a, refs)}))
 
 
 @router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",)

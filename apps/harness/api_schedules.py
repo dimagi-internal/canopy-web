@@ -116,8 +116,8 @@ def list_schedules(request: HttpRequest, slug: str, limit: int = 100) -> Page[Sc
         schedules = ss.list_schedules(request.user, slug, workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:
         raise _not_found(exc) from None
-    items = [ScheduleOut(**ss.serialize_schedule(s)) for s in schedules]
-    return paginate(items, offset=0, limit=clamp_limit(limit))
+    return paginate(schedules, offset=0, limit=clamp_limit(limit),
+                    map=lambda s: ScheduleOut(**ss.serialize_schedule(s)))
 
 
 @router.post("/{slug}/schedules/", response={201: ScheduleOut},

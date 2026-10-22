@@ -98,3 +98,40 @@ def test_the_timeline_clamps_to_its_own_lower_cap(client, monkeypatch):
     resp = client.get("/api/timeline/?limit=99999")
     assert resp.status_code == 200
     assert seen["limit"] == 200
+
+
+# ---- a page is sliced in SQL: totals stay right, only the page is serialized --
+
+
+def test_issues_page_serializes_only_its_rows(client, workspace, monkeypatch):
+    from apps.issues import api as issues_api
+    from apps.issues.models import OriginIssue
+
+    for n in range(12):
+        OriginIssue.objects.create(repo="o/r", number=n, title=f"t{n}", workspace=workspace)
+    calls = []
+    real = issues_api._out
+    monkeypatch.setattr(issues_api, "_out", lambda o: calls.append(o.pk) or real(o))
+    body = client.get("/api/issues/?offset=4&limit=3").json()
+    assert body["total"] == 12
+    assert len(body["items"]) == 3
+    assert len(calls) == 3
+
+
+def test_contacts_page_serializes_only_its_rows(client, workspace, monkeypatch):
+    from apps.contacts import api as contacts_api
+    from apps.contacts.models import Contact
+
+    for n in range(7):
+        Contact.objects.create(workspace=workspace, email=f"p{n}@example.com")
+    calls = []
+    real = contacts_api._serialize
+    monkeypatch.setattr(contacts_api, "_serialize", lambda c: calls.append(c.pk) or real(c))
+    body = client.get("/api/contacts/?limit=2").json()
+    assert body["total"] == 7
+    assert len(body["items"]) == 2
+    assert len(calls) == 2
+    # pages do not overlap: the order ends in a unique column
+    ids = {i["id"] for o in range(0, 7, 2)
+           for i in client.get(f"/api/contacts/?offset={o}&limit=2").json()["items"]}
+    assert len(ids) == 7
