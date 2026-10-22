@@ -209,6 +209,14 @@ def execution_statement(audience: str, facts: dict, *, access_token: str | None 
                                         jkt=dpop_jkt(), access_token=access_token)
 
 
+def sign_offer(site_name: str, content: dict) -> str:
+    """The site offer (`site_offer.py`): signed by the same client key, so a site
+    believes it exactly as it believes `Canopy-Execution`."""
+    from canopy_sdk import offer
+
+    return offer.sign_offer(_client_key(), client_id(), site_name, content)
+
+
 def credentials() -> consumer.ClientCredentials:
     """canopy's client identity as the SDK's `ClientCredentials` — for the
     conformance checks a Connected site's "Test connection" runs. Raises

@@ -36,6 +36,14 @@
         "RETIRED_KEYS": [],
         "RUNNER_REQUIREMENTS": ["zdr"],  # optional: only run my visitors on ZDR runners
         "PAGE_TOKEN_MAX_AGE": 7200,
+        # What this site asks of canopy's agents, published signed at
+        # canopy/site.json (canopy_sdk.site): a callable (or dotted path)
+        # returning {"real_data": {"requires": {"phi_safe": True,
+        # "runner_flag": "zdr"}}, "uses": {"agents": [...], "real_data_agents":
+        # [...], "version": "<offer version>"}, "titles": {page_key: title}}.
+        # The pages and their scopes are PAGE_SCOPES; PAGE_TITLES names them.
+        "SITE_NEEDS": None,
+        "PAGE_TITLES": {},
         # Where the panel mints. Default: reverse("canopy_host:panel_token").
         "PANEL_TOKEN_URL": "",       # a literal URL, or
         "PANEL_TOKEN_URL_NAME": "",  # a URL name of the host's own, reversed per request
@@ -267,6 +275,23 @@ def _default_user_claims(user) -> dict:
                 break
     return {"name": name or user.get_username(), "email": getattr(user, "email", "") or "",
             "email_verified": False}
+
+
+def site_needs() -> dict:
+    """What ``SITE_NEEDS`` returns now (``{}`` when unset)."""
+    return dict(_hook("SITE_NEEDS", dict)() or {})
+
+
+def site_pages(titles=None) -> list[dict]:
+    """``PAGE_SCOPES`` as ``site.json``'s pages, titled from ``titles`` (the
+    needs hook's) over ``PAGE_TITLES``."""
+    cfg = raw()
+    names = {**(cfg.get("PAGE_TITLES") or {}), **(titles or {})}
+    out = []
+    for key, scopes in (cfg.get("PAGE_SCOPES") or {}).items():
+        scopes = [scopes] if isinstance(scopes, str) else list(scopes or ())
+        out.append({"key": str(key), "title": str(names.get(key) or ""), "scopes": scopes})
+    return out
 
 
 def subject_for_user(user) -> str:

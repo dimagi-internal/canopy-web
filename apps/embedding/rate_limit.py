@@ -119,3 +119,28 @@ def _over(key: str, limit: int, window: int) -> bool:
         cache.add(key, 1, timeout=window)
         return False
     return count > limit
+
+
+# --- the site offer ---------------------------------------------------------
+#
+# `GET /api/sites/offer` is unauthenticated in the same way: the signed request
+# IS the credential. A site asks every few minutes, so both budgets are far above
+# real use; they bound the signature checks (and offer builds) a flood can cause.
+
+
+class OfferRateLimitError(Exception):
+    """Raised when offer requests exceed a budget."""
+
+
+def check_offer_client(client_ip) -> None:
+    limit = int(getattr(settings, "SITE_OFFER_CLIENT_LIMIT", 120))
+    window = int(getattr(settings, "SITE_OFFER_WINDOW_SECONDS", 60))
+    if _over(f"tokens:offer:ip:{client_ip or 'unknown'}", limit, window):
+        raise OfferRateLimitError(f"too many offer requests ({limit} per {window}s)")
+
+
+def check_offer_issuer(name: str) -> None:
+    limit = int(getattr(settings, "SITE_OFFER_ISSUER_LIMIT", 60))
+    window = int(getattr(settings, "SITE_OFFER_WINDOW_SECONDS", 60))
+    if _over(f"tokens:offer:iss:{name}", limit, window):
+        raise OfferRateLimitError(f"too many offer requests for this site ({limit} per {window}s)")

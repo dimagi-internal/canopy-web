@@ -2,6 +2,34 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.14.0 — 2026-10-22
+
+The site offer: canopy tells a connected site, signed, which agents it may offer
+and on what terms, and the site publishes what it needs back (connect-labs spec
+`2026-10-22-canopy-site-offer-design` §1–2). No new secrets: the site asks with
+its own signing key, canopy answers with its client (`Canopy-Execution`) key.
+
+- **`canopy_sdk.offer`.** `fetch_offer(canopy_url, site_name, site_key, canopy_keys, *,
+  client_id=None, agent="")` → `Offer` (`version`, `site_name`, `tenant`, `runner_flags`,
+  `agents`, `agent(slug)`, `stale`, `age`), with `OfferedAgent` (`capabilities`,
+  `phi_safe`, `flags_available`, `ready_with` / `ready_with_flag`, `ready`, `problems`)
+  and `OfferedCapability` (`phi_safe`, `phi_set_by`, `phi_set_at`); `OfferError(code)`
+  otherwise. Also `request_assertion` and `verify_offer`, and canopy's `verify_request`,
+  `sign_offer`, `content_version`. `typ` `canopy-offer-request+jwt` / `canopy-offer+jwt`.
+- **`canopy_sdk.django.offer.current()`**: cached in the host's cache for 5 minutes,
+  refreshed on a miss; a failed refresh serves the last good offer marked `stale=True`
+  for up to 24 hours (retried at most once a minute), then `None` — offer nothing.
+- **`canopy/site.json`** (`views.site_document`, in `canopy_sdk.django.urls`): the
+  host's `PAGE_SCOPES` (titled by `PAGE_TITLES`) plus `SITE_NEEDS()` (`real_data`,
+  `uses`, `titles`), signed with the host key, `typ` `canopy-site+jwt`.
+  `canopy_sdk.site` holds both halves (`site_document`, `sign_site_document`,
+  `verify_site_document` → `SiteNeeds`, `site_document_url`).
+- `canopy_sdk.fetch.get_text` — the pinned, bounded GET for a compact JWS; a refusal's
+  RFC 7807 `detail` is carried in the `FetchError`.
+
+Needs a canopy-web that serves `GET /api/sites/offer`; until then `current()` is
+`None`.
+
 ## 0.13.0 — 2026-10-22
 
 `Canopy-Execution` no longer pins a commit: PHI-safe is an interface setting

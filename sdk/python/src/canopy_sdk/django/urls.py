@@ -17,6 +17,9 @@ app_name = "canopy_host"
 urlpatterns = [
     path("token/", views.token_endpoint, name="token"),
     path("jwks.json", views.jwks, name="jwks"),
+    # What this site asks of canopy's agents (canopy_sdk.site); canopy reads it
+    # beside jwks.json.
+    path("site.json", views.site_document, name="site"),
     path("panel-token/", views.panel_token, name="panel_token"),
     # canopy's live probe; 404s unless CANOPY_HOST["PROBE"] is set, and its
     # public URL must equal PROBE["ENDPOINT"] (a DPoP proof names it).

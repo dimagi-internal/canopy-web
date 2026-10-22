@@ -1,0 +1,144 @@
+"""The Django host's half of the site offer: ``offer.current()`` (cached, stale
+for a day, then None) and ``canopy/site.json``."""
+from __future__ import annotations
+
+from unittest import mock
+
+import pytest
+from django.core.cache import cache
+from django.test import Client, override_settings
+
+from canopy_sdk import offer as offer_mod
+from canopy_sdk import site as site_mod
+from canopy_sdk.django import offer
+from canopy_sdk.fetch import FetchError
+from canopy_sdk.keys import private_pem
+
+from .helpers import CANOPY, CLIENT_ID, World
+from .test_offer import CONTENT
+
+pytestmark = pytest.mark.django_db
+
+T0 = 1_800_000_000.0
+
+
+@pytest.fixture
+def world():
+    return World()
+
+
+def _settings(world, **extra):
+    return {"SIGNING_KEY": private_pem(world.host_key), "CANOPY_BASE_URL": CANOPY,
+            "APP_NAME": "connect-labs", "AGENT_SLUG": "labsdata", "CLIENT_ID": CLIENT_ID, **extra}
+
+
+@pytest.fixture
+def host(world):
+    cache.clear()
+    with override_settings(CANOPY_HOST=_settings(world)), \
+            mock.patch("canopy_sdk.host.client_keys.fetch.get_json", side_effect=world._fetch):
+        yield world
+    cache.clear()
+
+
+class Canopy:
+    """Stands in for canopy's offer endpoint: verifies the signed request, then
+    answers with a fresh signed offer, or fails."""
+
+    def __init__(self, world):
+        self.world = world
+        self.calls = 0
+        self.down = False
+        self.content = CONTENT
+
+    def __call__(self, url, *, headers, accept):
+        self.calls += 1
+        if self.down:
+            raise FetchError(f"{url} could not be fetched (ConnectionRefusedError)")
+        bearer = headers["Authorization"].removeprefix("Bearer ")
+        claims = offer_mod.verify_request(bearer, [self.world.host_key.public_key()],
+                                          audiences=[offer_mod.offer_url(CANOPY)])
+        assert claims["canopy_agent"] == "labsdata"
+        return offer_mod.sign_offer(self.world.client.client_key, CLIENT_ID, "connect-labs", self.content)
+
+
+def test_current_fetches_once_then_serves_the_cache(host):
+    canopy = Canopy(host)
+    first = offer.current(now=T0, get=canopy)
+    again = offer.current(now=T0 + 100, get=canopy)
+    assert canopy.calls == 1
+    assert first.agent("labsdata").ready and not first.stale
+    assert again.version == first.version and again.age == pytest.approx(100)
+
+
+def test_a_failed_refresh_serves_the_last_good_offer_marked_stale(host):
+    canopy = Canopy(host)
+    good = offer.current(now=T0, get=canopy)
+    cache.delete(offer._keys(offer.conf.get_host_config())[0])   # the fresh copy expires
+    canopy.down = True
+    stale = offer.current(now=T0 + 3600, get=canopy)
+    assert stale.stale and stale.version == good.version
+    assert stale.age == pytest.approx(3600)
+    # Not retried within RETRY_SECONDS: an outage is not a request per page view.
+    offer.current(now=T0 + 3610, get=canopy)
+    assert canopy.calls == 2
+
+
+def test_after_a_day_of_failures_it_offers_nothing(host):
+    canopy = Canopy(host)
+    offer.current(now=T0, get=canopy)
+    fresh, _, failed = offer._keys(offer.conf.get_host_config())
+    cache.delete(fresh)
+    canopy.down = True
+    assert offer.current(now=T0 + offer.STALE_SECONDS + 1, get=canopy) is None
+
+
+def test_no_offer_ever_fetched_is_none(host):
+    canopy = Canopy(host)
+    canopy.down = True
+    assert offer.current(now=T0, get=canopy) is None
+
+
+def test_a_forged_offer_is_never_cached(host):
+    from canopy_sdk.keys import generate_private_key
+
+    def forged(url, **kw):
+        return offer_mod.sign_offer(generate_private_key("EdDSA"), CLIENT_ID, "connect-labs", CONTENT)
+
+    assert offer.current(now=T0, get=forged) is None
+
+
+def test_unconfigured_host_offers_nothing():
+    cache.clear()
+    with override_settings(CANOPY_HOST={}):
+        assert offer.current(get=lambda *a, **k: pytest.fail("must not fetch")) is None
+
+
+def test_site_json_is_signed_and_carries_the_needs(world):
+    def needs():
+        return {"real_data": {"requires": {"phi_safe": True, "runner_flag": "zdr"}},
+                "uses": {"agents": ["labsdata"], "real_data_agents": ["labsdata"], "version": "v1"},
+                "titles": {"labs:workflow:run:data": "A workflow run, read-only"}}
+
+    cfg = _settings(world, PAGE_SCOPES={"labs:workflow:run:data": ["workflow:read", "data:read"]},
+                    SITE_NEEDS=needs)
+    with override_settings(CANOPY_HOST=cfg):
+        response = Client().get("/canopy/site.json")
+    assert response.status_code == 200 and response["Content-Type"] == "application/jose"
+    got = site_mod.verify_site_document(response.content.decode(), [world.host_key.public_key()],
+                                        site_name="connect-labs")
+    assert got.pages[0].title == "A workflow run, read-only"
+    assert got.pages[0].scopes == ("workflow:read", "data:read")
+    assert got.real_data_requires == {"phi_safe": True, "runner_flag": "zdr"}
+    assert got.uses_version == "v1"
+
+
+def test_site_json_without_a_key_is_503():
+    with override_settings(CANOPY_HOST={}):
+        assert Client().get("/canopy/site.json").status_code == 503
+
+
+def test_site_json_with_bad_needs_is_503(world):
+    cfg = _settings(world, SITE_NEEDS=lambda: {"real_data": {"requires": {"runner_flag": "nope"}}})
+    with override_settings(CANOPY_HOST=cfg):
+        assert Client().get("/canopy/site.json").status_code == 503

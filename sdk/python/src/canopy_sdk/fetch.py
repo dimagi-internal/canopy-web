@@ -154,6 +154,26 @@ def get_json(url: str, *, timeout: float = TIMEOUT_SECONDS,
     return _json(url, data)
 
 
+def get_text(url: str, *, headers: dict | None = None, accept: str = "application/jose",
+             timeout: float = TIMEOUT_SECONDS, max_bytes: int = MAX_DOCUMENT_BYTES) -> str:
+    """GET a text body (a compact JWS, say). Anything but a 200 is a
+    ``FetchError`` (a redirect included — it is never followed)."""
+    status, data, _ = _request("GET", url, body=None, headers={"Accept": accept, **(headers or {})},
+                               timeout=timeout, max_bytes=max_bytes)
+    if status != 200:
+        # A refusal names its reason in an RFC 7807 `detail`; that is the one
+        # useful thing in it, and it never carries a credential.
+        try:
+            detail = str(json.loads(data).get("detail") or "")[:300]
+        except Exception:  # noqa: BLE001 - not a problem document
+            detail = ""
+        raise FetchError(f"{url} answered {status}" + (f": {detail}" if detail else ""))
+    try:
+        return data.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise FetchError(f"{url} did not answer with a compact token") from exc
+
+
 def post_form(url: str, data: dict, *, headers: dict | None = None,
               timeout: float = TIMEOUT_SECONDS,
               max_bytes: int = MAX_DOCUMENT_BYTES) -> tuple[int, dict, dict]:

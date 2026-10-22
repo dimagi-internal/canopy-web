@@ -254,6 +254,8 @@ from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
 from apps.contacts.hcp_clients_api import router as hcp_clients_router  # noqa: E402
 from apps.contacts.people_api import router as people_router  # noqa: E402
 from apps.embedding.connected_apps_api import connected_apps_router  # noqa: E402
+from apps.host_grants.api import needs_router as site_needs_router  # noqa: E402
+from apps.host_grants.api import sites_router  # noqa: E402
 from apps.embedding.embed_api import embed_router
 from apps.events.api import router as events_router  # noqa: E402
 from apps.feedback.api import router as feedback_router  # noqa: E402
@@ -364,6 +366,8 @@ api.add_router("", kb_router)
 api.add_router("/workspaces", workspaces_router)
 # Tenant-admin surface, same prefix and shape as members/invites (apps/tokens).
 api.add_router("/workspaces", connected_apps_router)
+api.add_router("/workspaces", site_needs_router)
+api.add_router("/sites", sites_router)
 api.add_router("/timeline", timeline_router)
 api.add_router("/system", system_router)
 api.add_router("/share", session_share_router)

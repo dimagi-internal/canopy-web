@@ -14,8 +14,14 @@ METADATA_KEY = "runner_requirements"
 #: declare it, so a corrupted row is unclaimable rather than unrestricted.
 UNSATISFIABLE = "__malformed__"
 _LABELS = {"zdr": "ZDR"}
+#: What each flag means, as canopy states it to a connected site (the site
+#: offer's `runner_flags`). One entry per `RUNNER_FLAGS` member (a test holds it).
+MEANINGS = {
+    "zdr": ("zero data retention: the runner's owner declared that its Claude traffic uses a "
+            "zero-data-retention key, and the box reports running in that mode"),
+}
 
-__all__ = ["METADATA_KEY", "RUNNER_FLAGS", "UNSATISFIABLE", "describe", "requirements_of",
+__all__ = ["MEANINGS", "METADATA_KEY", "RUNNER_FLAGS", "UNSATISFIABLE", "describe", "requirements_of",
            "requirements_of_grant", "requirements_of_session", "satisfies", "in_force",
            "runner_satisfies"]
 

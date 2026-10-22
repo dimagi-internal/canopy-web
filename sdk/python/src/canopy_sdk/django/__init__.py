@@ -9,6 +9,9 @@ what you need:
   (django-oauth-toolkit's ``TokenView``), leaving every other grant to it;
 * ``views.jwks`` — the host's public key(s), for canopy to verify with;
 * ``views.panel_token`` — the endpoint the widget mints through;
+* ``views.site_document`` — ``site.json``, what this site asks of canopy's
+  agents (``SITE_NEEDS``), signed; and ``canopy_sdk.django.offer.current()`` —
+  canopy's signed offer to this site, cached, failing closed;
 * ``canopy_sdk.django.asgi.dpop_gate(app)`` — wrap the MCP ASGI app;
 * ``canopy_sdk.django.execution.verify_execution(request)`` — canopy's signed
   ``Canopy-Execution`` statement on a tool call, before releasing real data;
