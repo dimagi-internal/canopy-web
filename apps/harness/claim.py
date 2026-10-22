@@ -60,6 +60,7 @@ from .routing import (
     turn_unit_refusal,
 )
 from .drills import expire_stale_drills
+from .turn_agent_tokens import revoke_for_turn, revoke_stale
 from .schedule_turns import release_stale_occurrence_turns_all, skip_late_scheduled_turns
 
 DEFAULT_LEASE_SECONDS = 900
@@ -85,6 +86,8 @@ def sweep_expired_leases() -> int:
             status__in=Turn.TERMINAL
         ).update(status=status, finished_at=now)
         if updated:
+            # Bypasses finish_turn, so its revocation is mirrored here.
+            revoke_for_turn(turn.pk)
             append_events(turn, [{"kind": "status", "payload": {"status": status, "reason": "lease_expired"}}])
             count += 1
             from apps.events import activity
@@ -125,6 +128,8 @@ def sweep_expired_leases() -> int:
 
                 turn.refresh_from_db()
                 auto_debug.on_turn_failed(turn)
+    # The catch-all: a turn requeued or ended by any other queryset update.
+    revoke_stale()
     return count
 
 

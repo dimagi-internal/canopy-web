@@ -7546,6 +7546,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/turns/{turn_id}/agent-token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A login as the turn's agent, for one turn this runner holds
+         * @description A canopy login as the turn's agent, for ONE turn this runner is executing:
+         *     expires within 12 hours and is revoked when the turn stops executing here.
+         *     Only with this runner's own runner token — a personal or OAuth token is
+         *     refused, its owner's included. 404 unless this runner holds the turn and may
+         *     hold its agent; 409 with the reason for a local turn, a caller's (confined)
+         *     turn, or an agent with no active login. Each issue is logged with the
+         *     agent's credential reads.
+         */
+        readonly post: operations["turn_agent_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/local-turns/": {
         readonly parameters: {
             readonly query?: never;
@@ -26301,6 +26327,25 @@ export interface components {
             /** Downloads */
             readonly downloads: readonly components["schemas"]["RunnerDownloadOut"][];
         };
+        /**
+         * TurnAgentTokenOut
+         * @description An agent login for ONE turn this runner holds: a token for the turn's
+         *     `Agent.user`, revoked when the turn stops executing here, expiring at
+         *     `expires_at` at the latest. For that turn's environment only.
+         */
+        readonly TurnAgentTokenOut: {
+            /** Token */
+            readonly token: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Turn Id */
+            readonly turn_id: string;
+        };
         /** LocalTurnOut */
         readonly LocalTurnOut: {
             /**
@@ -42071,6 +42116,29 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerDownloadsOut"];
+                };
+            };
+        };
+    };
+    readonly turn_agent_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnAgentTokenOut"];
                 };
             };
         };

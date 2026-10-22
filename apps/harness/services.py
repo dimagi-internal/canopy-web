@@ -1002,6 +1002,11 @@ def finish_turn(
     """
     if status not in (Turn.DONE, Turn.FAILED, Turn.MISSED, Turn.CANCELLED):
         raise ValueError(f"finish status must be done|failed|missed|cancelled, got {status!r}")
+    # Whatever happens below — terminal, or back to the queue — the turn stops
+    # executing on its runner, so the agent logins issued for it die now.
+    from .turn_agent_tokens import revoke_for_turn
+
+    revoke_for_turn(turn.pk)
 
     # ---- a follow-up that could not be typed into the running turn waits instead ----
     #

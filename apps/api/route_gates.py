@@ -304,6 +304,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "current_runner_release": ("authenticated",),  # a person, or a runner's own token (runner_auth)
     "runner_downloads": ("authenticated",),
     "turn_github_token": ("runner", "runner-holds-agent"),  # turn must be claimed by this box
+    # only the box's own runner token (a PAT is 403), turn claimed by it and executing
+    "turn_agent_token": ("runner", "runner-holds-agent"),
     "turn_attachment_content": ("runner", "runner-holds-agent"),  # an attachment of the chat a turn this box holds belongs to
     "runner_github_readiness": ("runner",),
     "runner_agents": ("runner",),
@@ -1100,6 +1102,7 @@ NOT_SETTINGS: dict[str, str] = {
     "post_session_stream": "runner-protocol", "report_sessions": "runner-protocol",
     "post_runner_usage": "runner-protocol", "request_usage_scan": "action", "send_up_missing_sessions": "action",
     "post_sign_in_request": "runner-protocol", "turn_github_token": "runner-protocol",
+    "turn_agent_token": "runner-protocol",
     "post_sign_in_request_result": "runner-protocol",
     "report_drill": "runner-protocol",
     # action

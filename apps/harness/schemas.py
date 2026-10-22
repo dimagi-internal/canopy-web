@@ -1475,6 +1475,18 @@ class RunnerCredentialStatusOut(Schema):
     updated_at: dt.datetime | None = None
 
 
+class TurnAgentTokenOut(Schema):
+    """An agent login for ONE turn this runner holds: a token for the turn's
+    `Agent.user`, revoked when the turn stops executing here, expiring at
+    `expires_at` at the latest. For that turn's environment only."""
+
+    token: str
+    expires_at: dt.datetime
+    #: The agent it signs in as — a client checks it is the agent it runs.
+    agent_slug: str
+    turn_id: str
+
+
 class TurnGitHubTokenOut(Schema):
     """One turn's GitHub credential: its agent OWNER's token for that agent
     (`AgentDelegation`), and the identity to commit with. Handed to the runner

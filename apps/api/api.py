@@ -228,6 +228,7 @@ from apps.harness.api_runner_invitations import pair_router as runner_pair_by_ro
 from apps.harness.api_runner_invitations import router as runner_invitations_router  # noqa: E402
 from apps.harness.api_runner_pairings import router as runner_pairings_router  # noqa: E402
 from apps.harness.api_runner_releases import router as runner_releases_router  # noqa: E402
+from apps.harness.api_turn_agent_token import router as turn_agent_token_router  # noqa: E402
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.agents.engagement_api import router as engagement_router  # noqa: E402
 from apps.agents.proposals_api import router as proposals_router  # noqa: E402
@@ -314,6 +315,8 @@ api.add_router("/harness/runners/pair-by-role", runner_pair_by_role_router)
 # 2026-10-19-runner-installers).
 api.add_router("/harness/runner-pairings", runner_pairings_router)
 api.add_router("/harness/runner-releases", runner_releases_router)
+# A turn-scoped agent login (spec 2026-10-21-turn-scoped-agent-token).
+api.add_router("/harness/runners", turn_agent_token_router)
 
 # Local use (canopy-web#1704): a person's private runner and the turns its sessions open.
 api.add_router("/harness/local-turns", local_turns_router)

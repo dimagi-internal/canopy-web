@@ -2031,3 +2031,26 @@ class PrivateRunner(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"private_runner:{self.name}"
+
+
+class TurnAgentToken(models.Model):
+    """An agent login a runner was given for ONE turn it holds (turn-scoped agent token).
+
+    `POST /api/harness/runners/{rid}/turns/{tid}/agent-token` mints a `PersonalToken`
+    for the turn's `Agent.user` and records it here, so every token of a turn can be
+    revoked when the turn stops executing on that runner (`turn_agent_tokens`). It
+    replaces the agent's stored, never-expiring `canopy-pat` for runner turns.
+    Spec: docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md.
+    """
+
+    turn = models.ForeignKey(Turn, on_delete=models.CASCADE, related_name="agent_tokens")
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="+")
+    token = models.OneToOneField("tokens.PersonalToken", on_delete=models.CASCADE,
+                                 related_name="turn_grant")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"turn-agent-token:{self.turn_id}"
