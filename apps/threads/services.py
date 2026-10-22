@@ -27,7 +27,7 @@ from apps.harness.models import Turn, TurnTranscript
 from .models import AgentThread
 
 MESSAGE_KIND = "thread_message"
-#: A report-only close-out row's idempotency key (apps/agents/services.py). Such a
+#: A report-only close-out row's idempotency key (apps/harness/closeout.py). Such a
 #: row may carry the message's origin_ref, but it is the REPLY to a message, never
 #: a message of its own — so it never counts against the budget.
 CLOSEOUT_PREFIX = "closeout:"

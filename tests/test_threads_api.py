@@ -244,6 +244,16 @@ def test_guard_budget_ignores_closeout_rows(owner, agents):
     assert _say(c, tid, 2, "echo").status_code == 201
 
 
+def test_a_message_keyed_like_a_closeout_cannot_slip_past_the_budget(owner, agents):
+    # The budget skips `closeout:` rows, and the poster picks the key: a message
+    # keyed that way would never count, and the thread would take messages forever.
+    c = _client(owner)
+    tid = _open(c, max_messages=2).json()["id"]
+    r = _say(c, tid, 1, "eva", key=f"closeout:eva:{tid}-1")
+    assert r.status_code == 422 and "closeout:" in r.content.decode()
+    assert _say(c, tid, 1, "eva").status_code == 201
+
+
 def test_guard_refuses_non_participant(owner, agents):
     c = _client(owner)
     tid = _open(c).json()["id"]

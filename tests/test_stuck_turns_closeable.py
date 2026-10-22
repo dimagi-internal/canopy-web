@@ -116,6 +116,24 @@ def test_an_ordinary_pinned_turn_never_expires(fleet):
     assert t.status == Turn.QUEUED
 
 
+def test_a_turn_another_workspace_keys_like_a_drill_is_not_a_drill(fleet):
+    # Keys are unique per workspace and the poster picks them, so `drill:` is a
+    # guessable prefix, not the mark of a readiness check: a turn someone else
+    # keys that way is not expired and cancelled as a stale drill.
+    ivan = User.objects.create_user("ivan", "ivan@example.com", "pw")
+    elsewhere = Workspace.objects.create(slug="w2", display_name="W2", created_by=ivan)
+    WorkspaceMembership.objects.create(user=ivan, workspace=elsewhere, role=WorkspaceMembership.OWNER)
+    bot = Agent.objects.create(slug="ivan-bot", name="Ivan bot", workspace=elsewhere, owner=ivan)
+    t, _ = services.enqueue_turn(
+        initiator=initiator.for_user(ivan, via="api", assurance=initiator.PAT), agent=bot,
+        origin=Turn.ORIGIN_API, idempotency_key=f"{drills.DRILL_KEY_PREFIX}{fleet['box'].pk}:hal:x",
+        prompt="go")
+    _age(t, DRILL_EXPIRY * 3)
+    assert expire_stale_drills() == 0
+    t.refresh_from_db()
+    assert t.status == Turn.QUEUED
+
+
 def test_a_re_drill_replaces_the_one_still_waiting(fleet):
     first = _drill(fleet)
     first_turn = first.turn
