@@ -23,6 +23,10 @@ from tests.fixtures.contact_websocket import _contact_token, _world
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.asyncio]
 
+# A frame that IS coming is built after `accept()`, on the one shared sync thread;
+# under load that can take over channels' 1s default (tests/test_chat_session_consumer.py).
+ARRIVES = 10
+
 
 @pytest.fixture(autouse=True)
 def _clean_cache():
@@ -70,7 +74,7 @@ async def test_a_contact_can_listen_to_their_own_session():
     comm, connected = await _connect(sid, contact)
 
     assert connected
-    snapshot = await comm.receive_json_from()
+    snapshot = await comm.receive_json_from(timeout=ARRIVES)
     assert snapshot["event"] == "session.state"
     await comm.disconnect()
 
@@ -88,7 +92,7 @@ async def test_a_contacts_snapshot_names_the_contact():
 
     comm, connected = await _connect(sid, contact)
     assert connected
-    snapshot = await comm.receive_json_from()
+    snapshot = await comm.receive_json_from(timeout=ARRIVES)
     assert snapshot["data"]["current_user_id"] is None
     assert snapshot["data"]["current_contact_id"] == contact.pk
     await comm.disconnect()
@@ -137,10 +141,10 @@ async def test_a_contact_may_listen_but_not_act():
     contact = await sync_to_async(Contact.objects.get)()
     comm, connected = await _connect(sid, contact)
     assert connected
-    await comm.receive_json_from()
+    await comm.receive_json_from(timeout=ARRIVES)
 
     await comm.send_json_to({"action": "draft.update", "data": {"body": "hi"}})
-    reply = await comm.receive_json_from()
+    reply = await comm.receive_json_from(timeout=ARRIVES)
 
     assert reply["event"] == "session.error"
     assert reply["data"]["code"] == "read_only"

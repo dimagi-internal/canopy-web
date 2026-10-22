@@ -43,6 +43,21 @@ def _no_real_cli_refresh(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_sidecar_install(monkeypatch):
+    """main() installs the CDP sidecar's node deps when they are missing — a real
+    `npm install` through `subprocess.run(timeout=...)`. Missing is the normal state
+    of a fresh checkout (CI), so a test driving main() ran npm from inside the test.
+    Worse, the loop tests patch `time.sleep` to break the loop, and
+    `subprocess.run`'s wait polls with `time.sleep` whenever npm has closed its
+    pipes but not yet exited: then the patched sleep fired INSIDE the install,
+    before the first heartbeat, and the test saw no calls at all. Whether that
+    window was hit depended on scheduling, so it failed only under load.
+    `cdp_control.ensure_sidecar_deps` keeps its own tests (test_cdp_control.py)."""
+    from canopy_runner import main as main_mod
+    monkeypatch.setattr(main_mod, "_provision_sidecar_or_warn", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_desktop_runtime(monkeypatch, tmp_path):
     """The Claude desktop runtime keeps a session index under ~/.canopy/desktop. On a
     box that has run desktop sessions, a test reading the REAL index sees them: the
