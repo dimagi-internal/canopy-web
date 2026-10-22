@@ -72,6 +72,13 @@ describe('viewerReadiness', () => {
       keys: [key('k1', 'my-mac', { zk_pending_agents: ['hal'] } as never)] })
     expect(grant.text).toMatch(/^Grant pending/)
   })
+  it('counts a computer without the runner app, which no runner list shows', () => {
+    const laptop = key('k2', 'aath-mbp', { runner_kind: 'computer', can_open: [{ slug: 'hal', name: 'Hal' }] } as never)
+    expect(viewerReadiness({ ...base, license: license(), keys: [laptop] }))
+      .toEqual({ light: 'ready', text: 'Ready: aath-mbp can read its secrets.' })
+    expect(viewerReadiness({ ...base, license: license(),
+      keys: [key('k3', 'aath-mbp', { runner_kind: 'computer', status: 'pending' } as never)] }).light).toBe('waiting')
+  })
   it('says a revoked licence plainly', () => {
     expect(viewerReadiness({ ...base, license: license({ status: 'revoked' }), keys: [] }).text).toMatch(/revoked/)
   })

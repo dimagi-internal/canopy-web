@@ -376,8 +376,11 @@ def enroll_runner(runner, workspace_slug: str, *, by=None):
     """
     from apps.workspaces import permissions as perms
 
-    from .models import RunnerEnrollment
+    from .models import Runner, RunnerEnrollment
 
+    if runner.kind == Runner.COMPUTER:
+        # A computer in plain Claude Code (no runner app) serves no workspace's work.
+        raise EnrollmentRefused(f"{runner.name} is a computer without the runner app; it serves no workspace")
     if not runner.owner_id or not perms.can(runner.owner, workspace_slug, perms.AGENT_WORK):
         raise EnrollmentRefused(
             f"this runner's owner is not an editor (or above) in '{workspace_slug}', "

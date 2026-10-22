@@ -2126,7 +2126,8 @@ class PrivateRunnerOut(Schema):
     id: uuid.UUID
     name: str
     host: str
-    # The Runner this machine also is (canopy-web#1705), else None.
+    # The Runner holding this machine's device keys: its runner app when linked,
+    # else its own `computer` runner. None only on a retired registration.
     runner_id: uuid.UUID | None = None
     created_at: dt.datetime
     last_seen_at: dt.datetime | None = None

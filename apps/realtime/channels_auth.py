@@ -105,7 +105,9 @@ def _user_from_bearer(scope):
         from apps.harness import runner_auth
 
         rtok = RunnerAccessToken.lookup(token_value)
-        if rtok is None or not runner_auth.reaches_ws(scope.get("path", ""), rtok.runner_id):
+        if rtok is None or not runner_auth.reaches_ws(
+                scope.get("path", ""), rtok.runner_id,
+                computer=rtok.runner.kind == rtok.runner.COMPUTER):
             return None
         return rtok.runner.owner
 

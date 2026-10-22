@@ -19,7 +19,9 @@ they cannot disagree).
    page. Who may: the agent's owner and admins, a `full:` rule, workspace editors —
    whom `access.decide` gives the whole agent (`apps/agents/licenses.py`). The people
    doing it are listed under the agent's Settings → How it runs and → People → Local
-   use. Detail: [`access.md`](access.md) → "Local use of an agent".
+   use. A computer without the runner app gets its own key for reading the agent's
+   vault (a `computer` runner made when it registers, which is no fleet runner).
+   Detail: [`access.md`](access.md) → "Local use of an agent".
 2. **Let it run on its own — needs a runner.** Either your own Mac running the
    runner app (set **Private**, it does only your work), or a fleet cloud box.
    Schedules, mail and dispatches start these turns; the rest of this doc is how
@@ -38,8 +40,11 @@ the owner's own Claude Code sessions on that computer (local turns). Those sessi
 prove themselves with the box's device key, which may read an agent's secrets while
 its owner holds an active licence. Internally the computer is a `PrivateRunner`
 registration linked to the `Runner` (`PrivateRunner.runner`); the UI calls these
-"your computers (used in Claude Code)", not a separate kind of runner. See
-[`access.md`](access.md) → "Local use of an agent".
+"your computers (used in Claude Code)", not a separate kind of runner. A computer
+with no runner app is linked instead to a `computer` runner made for it, which only
+holds its device keys: it never claims or heartbeats and is left out of every fleet
+list, routing picker and health report. See [`access.md`](access.md) → "Local use
+of an agent".
 
 ## Which workspaces a runner serves (the tenant gate)
 
@@ -238,7 +243,7 @@ box and agent pair:
 
 | Reader | Uses |
 |---|---|
-| **The vault**: a resolve's device proof (`device_keys.runner_serves_agent`) | the rule, OR the box holds a live turn of the agent (a pinned dispatch, a bound chat), OR it is the agent owner's own LAPTOP working by hand. An owner's cloud box reads only what it runs. |
+| **The vault**: a resolve's device proof (`device_keys.runner_serves_agent`) | the rule, OR the box holds a live turn of the agent (a pinned dispatch, a bound chat), OR it is the agent owner's own LAPTOP working by hand, OR a private runner whose owner holds an active licence. An owner's cloud box reads only what it runs. A `computer` runner (no runner app) is asked only: does its owner administer the agent, or hold an active licence for it. |
 | **The box's refresh**: `GET /runners/{id}/agents`, read by `bootstrap_agents.sh` | exactly the rule. A box prepares the agents it runs, not every agent its token can list. An answer is final, an empty one included (a new box prepares nothing); only no answer (not paired, an error, not a list) falls back to the registry. |
 | **Readiness and the fleet view** (`agents_served_by`) | exactly the rule. |
 

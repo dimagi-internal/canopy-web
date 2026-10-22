@@ -915,7 +915,7 @@ def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) ->
     if len(ids) != len(set(ids)):
         raise HttpError(422, "duplicate runner id in list")
     runners = {r.id: r for r in Runner.objects.filter(id__in=ids)
-               .exclude(status=Runner.RETIRED).select_related("owner")}
+               .exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER).select_related("owner")}
     missing = [str(rid) for rid in ids if rid not in runners]
     if missing:
         raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")

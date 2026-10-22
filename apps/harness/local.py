@@ -29,11 +29,12 @@ import datetime as dt
 import uuid
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from . import initiator as who
 from .ledger import append_events
-from .models import Turn, PrivateRunner
+from .models import PrivateRunner, Runner, Turn
 from .turn_mode import AUTO, MANUAL
 
 #: A local turn's lease. A person's session can sit idle for hours between prompts;
@@ -75,13 +76,55 @@ def register_private_runner(user, *, name: str, host: str = "",
     if runner is not None and ws.runner_id != runner.pk:
         if runner.owner_id != user.pk:
             raise ValueError("a private runner can only be linked to a runner you own")
+        if runner.kind == Runner.COMPUTER:
+            raise ValueError("link a private runner to a runner app, not to a computer's own key holder")
         # One machine, one private runner: release the link from any other row first.
         PrivateRunner.objects.filter(runner=runner).exclude(pk=ws.pk).update(runner=None)
+        # The runner app now holds this machine's keys: its computer runner retires.
+        retire_computer_runner(ws.runner)
         ws.runner = runner
         fields.append("runner")
     if fields:
         ws.save(update_fields=fields)
+    ensure_computer_runner(ws)
     return ws, created
+
+
+def ensure_computer_runner(private_runner: PrivateRunner):
+    """The runner that holds this computer's device keys, created on first need.
+
+    A computer used in plain Claude Code (no runner app) is only a `PrivateRunner`,
+    and a device key belongs to a `Runner` — so without one it could enrol no key,
+    be wrapped no vault key, and read no zero-knowledge agent's secrets. It gets a
+    `Runner.COMPUTER`: owned by the person, `private` (owner-only keys, directed
+    only), in no workspace and enrolled nowhere, so nothing routes to it. A machine
+    already linked to its runner app keeps that runner. Idempotent: the linked
+    runner is returned while it lives."""
+    current = private_runner.runner
+    if current is not None and current.status != Runner.RETIRED:
+        return current
+    with transaction.atomic():
+        locked = PrivateRunner.objects.select_for_update().get(pk=private_runner.pk)
+        if locked.runner_id is not None and locked.runner.status != Runner.RETIRED:
+            private_runner.runner = locked.runner
+            return locked.runner
+        box = Runner.objects.create(
+            name=locked.name, kind=Runner.COMPUTER, private=True, owner=locked.owner,
+            workspace=None, capabilities={})
+        locked.runner = box
+        locked.save(update_fields=["runner"])
+    private_runner.runner = box
+    return box
+
+
+def retire_computer_runner(runner) -> None:
+    """Retire a computer's key holder (its machine was retired, or its runner app
+    took over): its tokens stop at once (`RunnerAccessToken.lookup`) and its keys
+    serve no agent (`device_keys.runner_serves_agent`). A runner app is left alone."""
+    if runner is None or runner.kind != Runner.COMPUTER or runner.status == Runner.RETIRED:
+        return
+    runner.status = Runner.RETIRED
+    runner.save(update_fields=["status"])
 
 
 def private_runner_for_runner(runner) -> PrivateRunner:
@@ -93,7 +136,7 @@ def private_runner_for_runner(runner) -> PrivateRunner:
     else under a free name (`<name>-2`, …). Never `register_private_runner`'s
     by-name lookup: that would adopt, and relink, a DIFFERENT machine's
     registration that happens to share the name, handing this box the key to its
-    sessions."""
+    sessions. Its computer key holder, if it had one, retires (`retire_computer_runner`)."""
     linked = PrivateRunner.objects.filter(runner=runner).first()
     if linked is not None:
         if linked.retired_at is not None:
@@ -101,8 +144,12 @@ def private_runner_for_runner(runner) -> PrivateRunner:
             linked.save(update_fields=["retired_at"])
         return linked
     owner, base, host = runner.owner, (runner.name or "").strip()[:100] or "runner", (runner.host or "")[:200]
-    same = PrivateRunner.objects.filter(owner=owner, name=base, runner__isnull=True).first()
+    # "Unlinked" includes a row whose only runner is its computer key holder: the
+    # runner app on the machine takes over from it.
+    same = (PrivateRunner.objects.filter(owner=owner, name=base)
+            .filter(Q(runner__isnull=True) | Q(runner__kind=Runner.COMPUTER)).first())
     if same is not None and host and same.host == host:
+        retire_computer_runner(same.runner)
         same.runner, same.retired_at = runner, None
         same.save(update_fields=["runner", "retired_at"])
         return same
