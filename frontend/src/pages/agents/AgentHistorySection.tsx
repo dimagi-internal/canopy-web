@@ -317,7 +317,7 @@ export function AgentHistorySection() {
     <div className="flex flex-col gap-6 px-6 py-8">
       <header className="flex flex-wrap items-end justify-between gap-6">
         <div className="flex max-w-3xl flex-col gap-2">
-          <h1 className="m-0 text-[28px] font-semibold text-foreground">How {agent.name}’s skills changed</h1>
+          <h1 className="m-0 text-[28px] font-semibold text-foreground">How {agent.display_name}’s skills changed</h1>
           <p className="m-0 text-[14px] text-foreground-secondary">
             Every skill in the repository, read from its git history. A revision is a commit that changed the skill’s SKILL.md.
             Select a group, a skill, a week on the chart or a commit.

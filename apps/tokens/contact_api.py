@@ -353,7 +353,7 @@ def contact_me(request: HttpRequest) -> ContactMeOut:
         identity=contact.identity,
         app=app.name,
         agents=[
-            ContactAgentOut(slug=a.slug, name=a.name, description=a.description)
+            ContactAgentOut(slug=a.slug, name=a.display_name, description=a.description)
             for a in rows
         ],
     )

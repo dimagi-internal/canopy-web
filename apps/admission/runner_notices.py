@@ -88,7 +88,7 @@ def claim(runner, mailboxes: dict[str, str]) -> list[AdmissionNotice]:
 def notice_out(notice: AdmissionNotice) -> dict:
     agent = notice.agent
     return {
-        "id": notice.pk, "agent": agent.slug, "agent_name": agent.name,
+        "id": notice.pk, "agent": agent.slug, "agent_name": agent.display_name,
         "mailbox": notice.mailbox, "thread_id": notice.thread_id,
         "message_id": notice.message_id, "to": notice.recipient,
         "subject": notice.subject, "body": notice.body,

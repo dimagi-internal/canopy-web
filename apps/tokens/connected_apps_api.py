@@ -177,7 +177,7 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         issues_host_grants=app.issues_host_grants(),
         runner_requirements=list(app.last_runner_requirements or []),
         agents=[
-            ConnectedAgentOut(slug=link.agent.slug, name=link.agent.name)
+            ConnectedAgentOut(slug=link.agent.slug, name=link.agent.display_name)
             for link in app.allowed_agents.all()
         ],
         shows_on_canopy_pages=app.show_on_canopy_pages,

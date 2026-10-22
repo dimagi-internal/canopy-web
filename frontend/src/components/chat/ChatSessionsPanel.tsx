@@ -125,7 +125,7 @@ export function ChatSessionsPanel({
   const repos = useMemo(() => repoChoices(runners ?? []), [runners])
 
   const agentName = useMemo(() => {
-    const by = new Map(agents.map((a) => [a.slug, a.name]))
+    const by = new Map(agents.map((a) => [a.slug, a.display_name]))
     return (slug: string | null) => (slug ? by.get(slug) ?? slug : null)
   }, [agents])
 

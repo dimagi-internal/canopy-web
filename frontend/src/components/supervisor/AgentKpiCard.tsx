@@ -92,7 +92,7 @@ export function AgentKpiCard({ agent, waiting }: { agent: AgentOut; waiting: num
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <p className="truncate text-[13px] font-semibold text-foreground">{agent.name}</p>
+          <p className="truncate text-[13px] font-semibold text-foreground">{agent.display_name}</p>
           <TurnModeChip slug={agent.slug} mode={agent.turn_mode} />
         </div>
         <p className="mt-0.5 text-[11px] text-muted-foreground">

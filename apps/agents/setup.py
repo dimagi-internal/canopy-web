@@ -305,7 +305,7 @@ def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False) -> dict:
     title = "Give it a runner, to run on its own"
     # Every not-done answer says the other way too: a person can use the agent in
     # their own Claude Code with no runner at all.
-    yourself = (f" Not needed to use {agent.name} yourself in Claude Code "
+    yourself = (f" Not needed to use {agent.display_name} yourself in Claude Code "
                 f"(canopy agent use {agent.slug}).")
 
     def step(status, detail, **kw):
@@ -318,7 +318,7 @@ def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False) -> dict:
     if unset:
         names = ", ".join(r.name for r in unset)
         return step(WAITING,
-                    f"{names} will take its turns once it has set {agent.name} up. It does that on "
+                    f"{names} will take its turns once it has set {agent.display_name} up. It does that on "
                     "its own when it next has no turn running, which can take a while if it is "
                     "busy; this ticks when it reports back.",
                     href=f"{settings}#running", action="See routing")

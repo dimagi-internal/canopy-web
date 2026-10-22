@@ -48,7 +48,7 @@ def client_key(agent, channel: str, host: str, attributes: dict | None = None) -
 
 def client_name(agent, channel: str, host: str) -> str:
     """A name the person recognizes (4.1.5): "ACE over Slack", "Echo on example.org"."""
-    who = (agent.name or agent.slug) if agent is not None else "canopy"
+    who = agent.display_name if agent is not None else "canopy"
     where = f" on {host}" if host else (f" over {channel.capitalize()}" if channel else "")
     return f"{who}{where}"[:200]
 
@@ -351,7 +351,7 @@ def _disclosure(agent, features, sources, duration: str, expires_at) -> str:
     cats = ", ".join(HELD_CATEGORIES)
     acts = " and ".join(sorted(_ACTION_OF[f] for f in features))
     how = ("for this session, until " + _iso(expires_at) if duration == TEMPORARY_FOR_SESSION
-           else f"always for {agent.name or agent.slug}, until you revoke it")
+           else f"always for {agent.display_name}, until you revoke it")
     return (f"shown: agent={agent.slug}; categories={cats}; actions={acts}; "
             f"reach=only {reach_label(sources)}; {how}")
 

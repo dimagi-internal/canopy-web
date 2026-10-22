@@ -93,7 +93,7 @@ export function SchedulesSection(): JSX.Element {
         <WorkbenchSkeleton />
       ) : rows.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">
-          No recurring activities yet. Add one to have {agent.name} start it on a cadence.
+          No recurring activities yet. Add one to have {agent.display_name} start it on a cadence.
         </p>
       ) : (
         <div className="overflow-hidden rounded-lg border border-border bg-card">

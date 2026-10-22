@@ -34,7 +34,8 @@ def test_upsert_agent_is_idempotent_by_slug():
     )
     assert a1.pk == a2.pk
     assert Agent.objects.count() == 1
-    assert Agent.objects.get(slug="echo").name == "Echo v2"
+    # The name is set on create; a re-upsert never renames (that is PATCH …/display-name).
+    assert Agent.objects.get(slug="echo").name == "Echo"
 
 
 def test_sync_is_idempotent_per_period_and_source():

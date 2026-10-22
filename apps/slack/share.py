@@ -226,7 +226,7 @@ def _byline(installation: SlackInstallation, user, session: Session | None = Non
     agent = _agent_identity(user)
     if agent is None:
         return "", None
-    byline = f"*{agent.name or agent.slug}*"
+    byline = f"*{agent.display_name}*"
     asker = _asker(session, user)
     asker_slack = _slack_user(installation, asker) if asker is not None else ""
     if asker_slack:

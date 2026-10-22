@@ -205,7 +205,7 @@ export function NewChatMenu({
                 closeOnClick={false}
                 onClick={() => pickAgent(a)}
               >
-                {a.name}
+                {a.display_name}
                 {a.workspace ? <span className="ml-2 text-xs text-muted-foreground">{a.workspace}</span> : null}
               </DropdownMenuItem>
             ))}
@@ -229,7 +229,7 @@ export function NewChatMenu({
         ) : (
           <div className="flex flex-col gap-2 px-2 py-1.5" data-testid="run-on-picker">
             <div className="text-sm text-foreground">
-              {pending.kind === 'agent' ? pending.agent.name : pending.project.slug}
+              {pending.kind === 'agent' ? pending.agent.display_name : pending.project.slug}
             </div>
             <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
               Run on

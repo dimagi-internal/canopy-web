@@ -102,7 +102,7 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
     return [
         EmbedAgentOut(
             slug=a.slug,
-            name=a.name,
+            name=a.display_name,
             description=a.description,
             avatar_url=a.avatar_url,
             workspace=a.workspace_id,

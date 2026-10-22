@@ -102,7 +102,7 @@ def _notify(agent, notice) -> dict:
 
     result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
     try:
-        name = agent.name or agent.slug
+        name = agent.display_name
         link = _link(agent)
         what = (f"The device {notice.label}" if notice.kind == "device"
                 else f"{notice.label}, a new admin of {agent.slug},")

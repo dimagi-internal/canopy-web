@@ -15,8 +15,8 @@ vi.mock('@/api/harness', () => ({ listRunners: vi.fn(() => Promise.resolve([])) 
 
 const { NewChatMenu } = await import('./NewChatMenu')
 
-const ace = { slug: 'ace', name: 'ACE', workspace: 'dimagi' } as AgentOut
-const hal = { slug: 'hal', name: 'Hal', workspace: 'dimagi' } as AgentOut
+const ace = { slug: 'ace', name: 'ACE', display_name: 'ACE', workspace: 'dimagi' } as AgentOut
+const hal = { slug: 'hal', name: 'Hal', display_name: 'Hal', workspace: 'dimagi' } as AgentOut
 
 afterEach(() => {
   cleanup()

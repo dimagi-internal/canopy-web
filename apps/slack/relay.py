@@ -131,7 +131,7 @@ def persona(agent) -> dict | None:
     """Post as the agent — its name, and its avatar when Slack can fetch it."""
     if agent is None:
         return None
-    out = {"username": (agent.name or agent.slug)[:80]}
+    out = {"username": agent.display_name[:80]}
     if str(agent.avatar_url or "").startswith("https://"):
         out["icon_url"] = agent.avatar_url
     return out

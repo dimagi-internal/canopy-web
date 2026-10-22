@@ -335,7 +335,7 @@ def agents_key_opens(key: RunnerDeviceKey, agents: list) -> list[DeviceKeyAgentO
         return []
     from apps.agents import zk
 
-    return [DeviceKeyAgentOut(slug=a.slug, name=a.name or a.slug) for a in agents
+    return [DeviceKeyAgentOut(slug=a.slug, name=a.display_name) for a in agents
             if device_keys.runner_serves_agent(key.runner, a) and not zk.device_waits(a, key)]
 
 

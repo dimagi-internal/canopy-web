@@ -30,7 +30,7 @@ vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useOutletContext: () => ({
     agent: {
-      slug: 'hal', name: 'Hal', persona: 'The fleet engineer.', description: '', workspace: 'connect',
+      slug: 'hal', name: 'Hal', display_name: 'Hal', persona: 'The fleet engineer.', description: '', workspace: 'connect',
       task_count: 1, sync_count: 2, skill_count: 4,
       turn_mode: 'manual', slack_enabled: false, owner: null, can_transfer_owner: false,
       ...agentOverride,

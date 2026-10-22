@@ -45,7 +45,7 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
     c = counts.get(agent.pk) or {}
     return {
         "slug": agent.slug,
-        "name": agent.name,
+        "name": agent.display_name,
         "workspace": agent.workspace_id,
         "owner_email": agent.owner.email if agent.owner_id else "",
         "can_fix": can_fix,

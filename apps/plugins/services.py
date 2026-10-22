@@ -171,7 +171,7 @@ def entry(plugin: _Plugin) -> dict:
     agent = plugin.first
     return {
         "name": plugin.name,
-        "description": agent.description or agent.name,
+        "description": agent.description or agent.display_name,
         "source": plugin_source(agent),
         "metadata": {
             # An INSTANCE is canopy-web's Agent row: identity, workspace, and the

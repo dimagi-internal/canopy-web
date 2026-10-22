@@ -61,7 +61,7 @@ export function AgentTurnsSection() {
         <Section
           id="status-reports"
           title="Status reports"
-          description={`Periodic reviews ${agent.name} writes about its own work, with its own grades.`}
+          description={`Periodic reviews ${agent.display_name} writes about its own work, with its own grades.`}
         >
           {reports === null ? (
             <WorkbenchSkeleton />

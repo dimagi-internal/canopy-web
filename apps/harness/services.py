@@ -1484,7 +1484,7 @@ def turn_session_title(turn, proposed: str = "") -> str:
     if named:
         return named[:200]
     agent = turn.acting_agent
-    return f"{agent.name} turn" if agent else "Turn"
+    return f"{agent.display_name} turn" if agent else "Turn"
 
 
 def record_session(

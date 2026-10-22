@@ -61,7 +61,7 @@ export function AgentProjectPage(): JSX.Element {
         if (cancelled) return
         const error =
           err instanceof AgentApiError && err.status === 404
-            ? `No project ${ref} on ${agent.name || agent.slug}.`
+            ? `No project ${ref} on ${agent.display_name}.`
             : err instanceof Error
               ? err.message
               : 'Could not load the project'
@@ -70,7 +70,7 @@ export function AgentProjectPage(): JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [agent.slug, agent.name, ref])
+  }, [agent.slug, agent.display_name, ref])
 
   useEffect(() => reload(), [reload])
   // A task on this project moved (here, on the Tasks page, or by the agent).
@@ -169,7 +169,7 @@ export function AgentProjectPage(): JSX.Element {
       {statusError && <p className="mt-2 text-[12px] text-destructive">{statusError}</p>}
     </>
   )
-  const who = agent.name || agent.slug
+  const who = agent.display_name
   const isFinished = (t: TaskOut) => t.status === 'done' || t.status === 'declined'
   const open = nested.roots.filter((t) => !isFinished(t))
   const finished = nested.roots.filter(isFinished)

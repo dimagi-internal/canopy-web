@@ -61,11 +61,11 @@ export function AgentLeftNav({ agent, waiting }: { agent: AgentDetailOut; waitin
           />
         ) : (
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-            {(agent.name || agent.slug).slice(0, 1).toUpperCase()}
+            {agent.display_name.slice(0, 1).toUpperCase()}
           </span>
         )}
         <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold leading-snug text-foreground">{agent.name}</h2>
+          <h2 className="truncate text-sm font-semibold leading-snug text-foreground">{agent.display_name}</h2>
           {agent.email && (
             <a
               href={`mailto:${agent.email}`}

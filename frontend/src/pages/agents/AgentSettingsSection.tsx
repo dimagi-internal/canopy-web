@@ -12,6 +12,7 @@ import { AgentRouting } from '@/components/agents/AgentRouting'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import { AgentMailboxControl } from '@/components/agents/AgentMailboxControl'
 import { AgentGoogleAccountControl } from '@/components/agents/AgentGoogleAccountControl'
+import { AgentDisplayNameControl } from '@/components/agents/AgentDisplayNameControl'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
 import { AgentSetupChecklist } from '@/components/agents/AgentSetupChecklist'
@@ -41,7 +42,7 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 export function AgentSettingsSection() {
   const { agent } = useOutletContext<AgentOutletContext>()
   const isAdmin = agent.is_admin ?? false
-  const admins = `${agent.name}'s admins`
+  const admins = `${agent.display_name}'s admins`
   // Routing writes are gated on agent.work (route_gates.py): workspace editors.
   const canRoute = roleAllows(useWorkspaceRole(agent.workspace), 'agent.work')
 
@@ -91,7 +92,7 @@ export function AgentSettingsSection() {
         {created && (
           <p className="mb-3 flex items-center gap-1.5 text-[13px] text-success" data-testid="agent-created">
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            {agent.name} is created. Its code is in {created}; finish the steps below.
+            {agent.display_name} is created. Its code is in {created}; finish the steps below.
           </p>
         )}
         <AgentSetupChecklist slug={agent.slug} hideWhenDone={!created} />
@@ -117,10 +118,18 @@ export function AgentSettingsSection() {
       <Section id="operators" title="People and roles">
         <div className="divide-y divide-border rounded-lg border border-border bg-card">
           <Setting
+            title="Display name"
+            who={admins}
+            canEdit={isAdmin}
+            description={`What people see ${agent.slug} called. Optional: without one it is shown by its slug, which never changes.`}
+          >
+            <AgentDisplayNameControl agent={agent} canEdit={isAdmin} />
+          </Setting>
+          <Setting
             title="Owner"
-            who={`workspace owners and ${agent.name}'s owner`}
+            who={`workspace owners and ${agent.display_name}'s owner`}
             canEdit={agent.can_transfer_owner ?? false}
-            description={`Runs ${agent.name}. GitHub features use their GitHub connection.`}
+            description={`Runs ${agent.display_name}. GitHub features use their GitHub connection.`}
           >
             <AgentOwnerControl
               agentSlug={agent.slug}
@@ -133,7 +142,7 @@ export function AgentSettingsSection() {
             title="Canopy user"
             who={admins}
             canEdit={isAdmin}
-            description={`The canopy account ${agent.name} signs in as.`}
+            description={`The canopy account ${agent.display_name} signs in as.`}
           >
             <AgentCanopyUserControl
               agentSlug={agent.slug}
@@ -144,13 +153,13 @@ export function AgentSettingsSection() {
           </Setting>
           <Setting
             title="People"
-            who={`workspace owners and ${agent.name}'s owner`}
+            who={`workspace owners and ${agent.display_name}'s owner`}
             canEdit={agent.can_manage_admins ?? false}
-            description={`What each workspace role gets on ${agent.name}, and who is set here.`}
+            description={`What each workspace role gets on ${agent.display_name}, and who is set here.`}
           >
             <AgentAccessRoster
               agentSlug={agent.slug}
-              agentName={agent.name}
+              agentName={agent.display_name}
               workspace={agent.workspace ?? undefined}
               canManage={agent.can_manage_admins ?? false}
             />
@@ -159,7 +168,7 @@ export function AgentSettingsSection() {
             title="Local use"
             who={admins}
             canEdit={isAdmin}
-            description={`Who runs ${agent.name} in their own Claude Code, on which computers, and when they last did.`}
+            description={`Who runs ${agent.display_name} in their own Claude Code, on which computers, and when they last did.`}
           >
             <AgentLicenses agentSlug={agent.slug} canEdit={isAdmin} />
           </Setting>
@@ -172,15 +181,15 @@ export function AgentSettingsSection() {
             title="Callers"
             who={admins}
             canEdit={isAdmin}
-            description={`Who outside the workspace may use ${agent.name}, and for what.`}
+            description={`Who outside the workspace may use ${agent.display_name}, and for what.`}
           >
-            <AgentInterfaceView agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
+            <AgentInterfaceView agentSlug={agent.slug} agentName={agent.display_name} canEdit={isAdmin} />
           </Setting>
           <Setting
             title="Slack"
             who={admins}
             canEdit={isAdmin}
-            description={`Whether people can talk to ${agent.name} from the connected Slack.`}
+            description={`Whether people can talk to ${agent.display_name} from the connected Slack.`}
           >
             <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
           </Setting>
@@ -188,7 +197,7 @@ export function AgentSettingsSection() {
             title="Email"
             who={admins}
             canEdit={isAdmin}
-            description={`The address ${agent.name} sends and reads mail as — a Google mailbox, or a canopy-hosted one (e.g. @dimagi.ai) with nothing to sign in.`}
+            description={`The address ${agent.display_name} sends and reads mail as — a Google mailbox, or a canopy-hosted one (e.g. @dimagi.ai) with nothing to sign in.`}
           >
             <AgentMailboxControl slug={agent.slug} workspace={agent.workspace ?? ''} canEdit={isAdmin} />
           </Setting>
@@ -196,7 +205,7 @@ export function AgentSettingsSection() {
             title="Google account"
             who={admins}
             canEdit={isAdmin}
-            description={`The Google login ${agent.name} uses for Drive, Docs and gog, when it is not the mailbox.`}
+            description={`The Google login ${agent.display_name} uses for Drive, Docs and gog, when it is not the mailbox.`}
           >
             <AgentGoogleAccountControl agent={agent} canEdit={isAdmin} />
           </Setting>
@@ -207,7 +216,7 @@ export function AgentSettingsSection() {
         <div className="rounded-lg border border-border bg-card">
           {/* The two ways an agent runs, side by side — a summary that links to
               the settings below (docs/architecture/runners.md). */}
-          <AgentHowItRuns slug={agent.slug} name={agent.name} isAdmin={isAdmin} />
+          <AgentHowItRuns slug={agent.slug} name={agent.display_name} isAdmin={isAdmin} />
           {/* Turn mode and runners were two settings; a routing rule can now set
               both ("Beth's email → cloud, auto"), so they are one table whose
               last row is the agent's own defaults (spec 2026-09-23). */}
@@ -218,7 +227,7 @@ export function AgentSettingsSection() {
               canEdit={canRoute}
               description="Which runner takes each kind of work, and whether it may act without approval."
             >
-              <AgentRouting agentSlug={agent.slug} agentName={agent.name} initialTurnMode={agent.turn_mode} />
+              <AgentRouting agentSlug={agent.slug} agentName={agent.display_name} initialTurnMode={agent.turn_mode} />
             </Setting>
           </div>
           {/* The checklist's "Give it a repository" lands here (#repository). */}
@@ -239,7 +248,7 @@ export function AgentSettingsSection() {
       {/* Same gate as the route (delete_agent: agent.work), so only people who can. */}
       {canRoute && (
         <Section id="delete" title="Delete">
-          <DeleteAgentControl slug={agent.slug} name={agent.name} workspace={agent.workspace ?? ''} />
+          <DeleteAgentControl slug={agent.slug} name={agent.display_name} workspace={agent.workspace ?? ''} />
         </Section>
       )}
     </div>

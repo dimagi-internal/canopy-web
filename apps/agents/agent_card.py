@@ -171,7 +171,7 @@ def _skill(agent, name: str, cap: dict, *, public: bool) -> A2AAgentSkill:
     return A2AAgentSkill(
         id=name,
         name=name.replace("_", " ").capitalize(),
-        description=(cap.get("description") or "").strip() or f"Ask {agent.name} ({name}).",
+        description=(cap.get("description") or "").strip() or f"Ask {agent.display_name} ({name}).",
         tags=_tags(cap, outsiders_only=public),
         security_requirements=security or None,
     )
@@ -215,8 +215,8 @@ def _security_schemes() -> dict[str, A2ASecurityScheme]:
 def _card(agent, skills: list[A2AAgentSkill], interfaces: list[A2AAgentInterface]) -> A2AAgentCardOut:
     published_at = getattr(agent, "interface_published_at", None)
     return A2AAgentCardOut(
-        name=agent.name,
-        description=(agent.description or "").strip() or f"{agent.name}, an agent hosted on canopy.",
+        name=agent.display_name,
+        description=(agent.description or "").strip() or f"{agent.display_name}, an agent hosted on canopy.",
         supported_interfaces=interfaces,
         provider=A2AAgentProvider(
             organization=getattr(settings, "CANOPY_A2A_PROVIDER_ORGANIZATION", "Dimagi"),

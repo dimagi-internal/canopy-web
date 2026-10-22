@@ -35,7 +35,7 @@ vi.mock('@/api/checkins', () => ({
 }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
-  useOutletContext: () => ({ agent: { slug: 'eva', name: 'Eva' }, ...ctx }),
+  useOutletContext: () => ({ agent: { slug: 'eva', name: 'Eva', display_name: 'Eva' }, ...ctx }),
 }))
 
 function teamView() {

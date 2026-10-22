@@ -272,7 +272,7 @@ def _notify(agent, alert) -> dict:
     try:
         link = _link(agent)
         label = dict(alert.KIND_CHOICES).get(alert.kind, alert.kind)
-        subject = f"Canopy vault alert · {agent.name or agent.slug}: {label}"
+        subject = f"Canopy vault alert · {agent.display_name}: {label}"
         why = _WHY.get(alert.kind, "")
         text = (f"{alert.detail}\n\n" + (f"{why}\n\n" if why else "")
                 + f"See {agent.slug}'s credential read history: {link}\n\n"

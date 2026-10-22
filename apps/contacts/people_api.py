@@ -157,7 +157,7 @@ def _me_payload(person: Person) -> dict:
         d["asserted_by"] = (f.asserted_by_agent.slug if f.asserted_by_agent_id
                             else (f.asserted_by_user.email if f.asserted_by_user_id else ""))
         d["source_turn_id"] = str(f.source_turn_id) if f.source_turn_id else None
-        d["learned_by"] = (f.asserted_by_agent.name or f.asserted_by_agent.slug
+        d["learned_by"] = (f.asserted_by_agent.display_name
                            if f.asserted_by_agent_id else "")
         d["provenance_site"] = dict(f.provenance_site or {})
         facts.append(d)
@@ -244,7 +244,7 @@ def session_memory_payload(person: Person, session) -> dict:
                               "reach": hcp.reach_label(hcp.grant_sources(g))}
                              if g is not None else None)
     return {"session_id": str(session.pk), **state,
-            "agent": ({"slug": agent.slug, "name": agent.name or agent.slug}
+            "agent": ({"slug": agent.slug, "name": agent.display_name}
                       if agent is not None else None),
             "categories": list(hcp.HELD_CATEGORIES),
             # 4.1.5.1: what a grant here would reach (derived, never chosen in the prompt),
@@ -640,7 +640,7 @@ def _searches(person: Person, before: str | None, limit: int) -> dict:
         sess = s.turn.chat_session if s.turn_id and s.turn.chat_session_id else None
         rows.append({
             "retrieval_id": str(s.retrieval_id), "at": s.created_at, "actor_id": s.actor_id,
-            "actor_type": s.actor_type, "agent": s.turn.agent.name if s.turn_id and s.turn.agent_id else None,
+            "actor_type": s.actor_type, "agent": s.turn.agent.display_name if s.turn_id and s.turn.agent_id else None,
             "purpose": s.purpose, "query": s.query, "method": s.method, "model": s.model,
             "floor": s.floor, "weight": s.weight, "project_boost": s.project_boost, "embed_ms": s.embed_ms,
             "scored": s.scored, "turn_id": str(s.turn_id) if s.turn_id else None,
@@ -742,10 +742,10 @@ def _viewers(person: Person, user) -> dict:
 
     live = viewers.live(person)
     taken = {v.agent_id for v in live}
-    return {"viewers": [{"agent": v.agent.slug, "name": v.agent.name or v.agent.slug,
+    return {"viewers": [{"agent": v.agent.slug, "name": v.agent.display_name,
                          "granted_at": v.granted_at, "last_viewed_at": v.last_viewed_at}
                         for v in live],
-            "agents": [{"slug": a.slug, "name": a.name or a.slug}
+            "agents": [{"slug": a.slug, "name": a.display_name}
                        for a in _pickable_agents(user) if a.pk not in taken]}
 
 

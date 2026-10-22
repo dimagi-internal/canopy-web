@@ -24,11 +24,11 @@ const cw = 'canopy-web'
 
 describe('ZkAgentsPanel', () => {
   it('shows each vault agent as private, names who is waiting, and has no buttons', async () => {
-    agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal', credential_source: cw },
-      { slug: 'eva', name: 'Eva', credential_source: cw }, { slug: 'ada', name: 'Ada', credential_source: cw },
-      { slug: 'ace', name: 'ACE', credential_source: cw },
+    agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal', display_name: 'Hal', credential_source: cw },
+      { slug: 'eva', name: 'Eva', display_name: 'Eva', credential_source: cw }, { slug: 'ada', name: 'Ada', display_name: 'Ada', credential_source: cw },
+      { slug: 'ace', name: 'ACE', display_name: 'ACE', credential_source: cw },
       // A 1Password agent I administer: nothing of it lives here.
-      { slug: 'lex', name: 'lex', credential_source: '1password' }] })
+      { slug: 'lex', name: 'lex', display_name: 'lex', credential_source: '1password' }] })
     vault.getZkState.mockImplementation(async (slug: string) => {
       if (slug === 'ace') throw new Error('403') // not mine
       if (slug === 'hal') return { enabled: true, kv: 1, pending: [], sealed: [] }
@@ -48,8 +48,8 @@ describe('ZkAgentsPanel', () => {
   })
 
   it('says who can open each agent, in plain words', async () => {
-    agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal', credential_source: cw },
-      { slug: 'eva', name: 'Eva', credential_source: cw }] })
+    agents.listAgents.mockResolvedValue({ items: [{ slug: 'hal', name: 'Hal', display_name: 'Hal', credential_source: cw },
+      { slug: 'eva', name: 'Eva', display_name: 'Eva', credential_source: cw }] })
     const w = (kind: string, target: string | null, label: string, current = true) => ({ kind, kv: 1, target, label, current })
     vault.getZkState.mockImplementation(async (slug: string) => slug === 'eva'
       ? { enabled: true, kv: 0, wraps: [], pending: [], sealed: [] }
@@ -74,7 +74,7 @@ describe('ZkAgentsPanel', () => {
   })
 
   it('says so when no agent keeps secrets here', async () => {
-    agents.listAgents.mockResolvedValue({ items: [{ slug: 'lex', name: 'lex', credential_source: '1password' }] })
+    agents.listAgents.mockResolvedValue({ items: [{ slug: 'lex', name: 'lex', display_name: 'lex', credential_source: '1password' }] })
     render(<ZkAgentsPanel />)
     expect(await screen.findByTestId('zk-agents-none')).toBeTruthy()
   })

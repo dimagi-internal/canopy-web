@@ -135,7 +135,7 @@ export async function getAgent(slug: string): Promise<AgentDetailOut> {
 }
 
 /** Set the agent's Google account ("" = the same as its mailbox, if that is Google).
- *  Through the ordinary upsert, which rewrites name/description/persona/email/avatar,
+ *  Through the ordinary upsert, which rewrites description/persona/email/avatar,
  *  so those are sent back exactly as they are. Returns the stored value. */
 export async function setAgentGoogleAccount(agent: AgentDetailOut, googleAccount: string): Promise<string> {
   const res = await apiV2.POST('/api/agents/', {
@@ -917,6 +917,15 @@ export async function recordEngagementView(
 
 // Point an agent at its GitHub repository (owner or admin) — the one field the
 // setup checklist's first step asks for, without the create wizard.
+/** Set or clear ("") the agent's display name; the owner or an admin. */
+export async function setAgentDisplayName(slug: string, name: string): Promise<AgentDetailOut> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/display-name', {
+    params: { path: { slug } },
+    body: { name },
+  })
+  return normalizeAgentDetail(unwrap(res, 'setAgentDisplayName'))
+}
+
 export async function setAgentRepository(slug: string, repoUrl: string, repoRef = ''): Promise<AgentDetailOut> {
   const res = await apiV2.PATCH('/api/agents/{slug}/repository', {
     params: { path: { slug } },

@@ -282,7 +282,7 @@ def _state(request: HttpRequest, session=None, person=None) -> ContactHcpOut:
         if g.status != PersonGrant.ACTIVE:
             continue
         grants.append(HcpGrantOut(grant_id=hcp.entry_urn(g.grant_id),
-                                  agent=g.agent.name or g.agent.slug, type=g.grant_type,
+                                  agent=g.agent.display_name, type=g.grant_type,
                                   features=sorted(hcp.features_of(g)),
                                   expires_at=g.expires_at.isoformat() if g.expires_at else None))
     out.grants = grants

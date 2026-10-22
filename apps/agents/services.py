@@ -60,7 +60,6 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
     homes a new agent with an owner, and never transfers an existing one.
     """
     defaults = {
-        "name": data.name,
         "description": data.description,
         "persona": data.persona,
         "email": data.email,
@@ -80,8 +79,9 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
     if google_account is not None:
         defaults["google_account"] = google_account.strip().lower()
     agent, _ = Agent.objects.update_or_create(
-        slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace, "owner": owner,
-                                                            **born_zk_fields(owner)}
+        # The name only on create: after that it is canopy's to change (`set_display_name`).
+        slug=data.slug, defaults=defaults, create_defaults={**defaults, "name": data.name.strip(), "workspace": workspace,
+                                                            "owner": owner, **born_zk_fields(owner)}
     )
     return agent
 
@@ -309,6 +309,7 @@ def agent_detail(agent: Agent) -> dict:
         "id": agent.id,
         "slug": agent.slug,
         "name": agent.name,
+        "display_name": agent.display_name,
         "description": agent.description,
         "persona": agent.persona,
         "email": agent.email,

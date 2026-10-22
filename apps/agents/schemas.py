@@ -28,7 +28,10 @@ class AgentIn(StrictModel):
     """Create or update an agent (upsert by slug)."""
 
     slug: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9-]+$")
-    name: str = Field(min_length=1, max_length=120)
+    # The display name, optional ("" shows the slug). Applied when the agent is
+    # created; after that it is changed only by PATCH /{slug}/display-name, so a
+    # repo's re-upsert never undoes a rename made in canopy.
+    name: str = Field(default="", max_length=120)
     description: str = ""
     persona: str = ""
     email: str = Field(default="", max_length=254)
@@ -101,7 +104,8 @@ class AgentScaffoldIn(StrictModel):
 
     workspace: str = Field(min_length=1, max_length=64)
     slug: str = Field(min_length=1, max_length=80)
-    name: str = Field(min_length=1, max_length=120)
+    # Optional, as on the agent: the scaffold names it by its slug when blank.
+    name: str = Field(default="", max_length=120)
     mandate: str = Field(min_length=1, max_length=500)
     mailbox: str = Field(default="", max_length=254)
     # The agent's Google account, when it differs from `mailbox`. Stamped into the repo's
@@ -174,6 +178,12 @@ class AgentSetupStepOut(StrictModel):
     # Needed only for the agent to run on its own (a runner), not to use it in your
     # own Claude Code: an agent used that way alone is complete without this step.
     only_to_run_on_its_own: bool = False
+
+
+class DisplayNameIn(StrictModel):
+    """Set or clear an agent's display name. Empty clears it: the agent is then shown by its slug."""
+
+    name: str = Field(max_length=120)
 
 
 class TurnModeIn(StrictModel):
@@ -416,7 +426,9 @@ class AgentPluginOut(StrictModel):
 class AgentOut(StrictModel):
     id: int
     slug: str
+    # The display name as set ("" = none); `display_name` is what to show.
     name: str
+    display_name: str
     description: str
     persona: str
     email: str

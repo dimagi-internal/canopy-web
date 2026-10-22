@@ -404,7 +404,7 @@ def _backer(row: ProjectBacking) -> dict:
 
     if row.agent_id:
         return {"kind": "agent", "agent": row.agent.slug, "person_id": None,
-                "name": row.agent.name or row.agent.slug, "email": ""}
+                "name": row.agent.display_name, "email": ""}
     return {"kind": "person", "agent": "", "person_id": row.person_id,
             "name": people.display_name(row.person), "email": people.email_of(row.person)}
 

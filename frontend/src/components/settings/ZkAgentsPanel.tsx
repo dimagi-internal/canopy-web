@@ -72,7 +72,7 @@ async function findAgents(): Promise<AgentRow[]> {
   const agents = (await listAgents({ limit: 200 })).items.filter((a) => a.credential_source === 'canopy-web')
   const rows = await Promise.all(agents.map(async (a): Promise<AgentRow | null> => {
     try {
-      return { slug: a.slug, name: a.name || a.slug, zk: await getZkState(a.slug) } // refuses unless you administer it
+      return { slug: a.slug, name: a.display_name, zk: await getZkState(a.slug) } // refuses unless you administer it
     } catch {
       return null
     }

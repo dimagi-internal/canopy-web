@@ -177,7 +177,7 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
         raise SendRefused(429, f"this workspace reached its daily send cap on {domain.name} ({share.daily_send_cap})")
     subject = _line(subject)
     msg = EmailMessage()
-    msg["From"] = formataddr((_line(route.agent.name) if route.agent_id else "", route.address))
+    msg["From"] = formataddr((_line(route.agent.display_name) if route.agent_id else "", route.address))
     msg["To"] = ", ".join(to)
     if cc:
         msg["Cc"] = ", ".join(cc)

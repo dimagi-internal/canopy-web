@@ -186,7 +186,7 @@ def notify(task: AgentTask, *, by_user) -> list[str]:
             initiator=who.for_user(by_user, via=f"idea:{agent.slug}/{task.ext_id}",
                                    assurance=who.SESSION),
         )
-        told.append(agent.name or agent.slug)
+        told.append(agent.display_name)
     except Exception:  # noqa: BLE001 — see docstring
         logger.exception("ideas: could not tell %s about idea %s", agent.slug, task.pk)
     owner = project.owner_user
@@ -228,7 +228,7 @@ def owner_name(project: AgentProject) -> str:
 
 def _is_agent_label(text: str, agent) -> bool:
     t = (text or "").strip().lower()
-    return t in {"", agent.slug.lower(), (agent.name or "").lower()}
+    return t in {"", agent.slug.lower(), agent.name.lower()}
 
 
 def waiting_on_people(project: AgentProject) -> list[dict]:
@@ -310,7 +310,7 @@ def team(project: AgentProject, user) -> dict:
     agent = project.agent
     me = contacts.person_for(user=user) if getattr(user, "is_authenticated", False) else None
     return {
-        "agent": agent.slug, "agent_name": agent.name or agent.slug,
+        "agent": agent.slug, "agent_name": agent.display_name,
         "project": project.ext_id, "name": project.name, "outcome": project.outcome,
         "status": project.status, "owner_name": owner_name(project),
         "links": [link for link in (project.links or []) if isinstance(link, dict) and link.get("url")],

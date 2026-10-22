@@ -88,9 +88,9 @@ def _owner_name(agent) -> str:
 
 def sender_text(agent) -> str:
     return (
-        f"Hi — this is an automatic reply. {agent.name} can't act on this email on its own "
-        f"right now, so it has been passed to {_owner_name(agent)}, {agent.name}'s owner.\n\n"
-        f"— {agent.name} (automatic reply)\n"
+        f"Hi — this is an automatic reply. {agent.display_name} can't act on this email on its own "
+        f"right now, so it has been passed to {_owner_name(agent)}, {agent.display_name}'s owner.\n\n"
+        f"— {agent.display_name} (automatic reply)\n"
     )
 
 
@@ -200,9 +200,9 @@ def fix_links(turn, rule, agent) -> list[dict]:
     links = [
         {"label": "The admission rule that fired",
          "url": wslinks.scoped_url(ws, f"/settings/admission-rules?rule={rule.pk}")},
-        {"label": f"{agent.name}'s turn mode and runners",
+        {"label": f"{agent.display_name}'s turn mode and runners",
          "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/settings#running")},
-        {"label": f"Who can reach {agent.name} (interface callers)",
+        {"label": f"Who can reach {agent.display_name} (interface callers)",
          "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/settings#reach")},
         {"label": f"The rejected turn ({turn.pk})",
          "url": wslinks.scoped_url(ws, f"/agents/{agent.slug}/turns")},
@@ -246,9 +246,9 @@ def _owner_body(turn, rule, agent, detail: str = "") -> tuple[str, str]:
            or (turn.initiator_contact.email if turn.initiator_contact_id else "")
            or (turn.initiator_user.email if turn.initiator_user_id else "") or "someone")
     subject = str(ref.get("subject") or "")
-    title = f"{agent.name} did not run {turn.origin} from {who}"
+    title = f"{agent.display_name} did not run {turn.origin} from {who}"
     lines = [
-        f"{agent.name} received {turn.origin} from {who} and did not run it: an admission rule "
+        f"{agent.display_name} received {turn.origin} from {who} and did not run it: an admission rule "
         f"rejected it before any session started.",
         "",
         f"From:    {who}",

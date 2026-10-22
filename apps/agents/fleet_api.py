@@ -86,7 +86,7 @@ def list_my_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
     """The agent list as a user-level view: each organisation read on its own,
     every row carrying its workspace. By name."""
     rows = wsvc.each_organisation(request, lambda: list_agents(request, limit=limit).items)
-    return paginate(sorted(rows, key=lambda a: a.name.lower()), offset=0, limit=clamp_limit(limit))
+    return paginate(sorted(rows, key=lambda a: a.display_name.lower()), offset=0, limit=clamp_limit(limit))
 
 
 @router.get("/projects/", response=list[AgentProjectOut],
@@ -148,7 +148,7 @@ def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
     from .health import _counts
 
     visible = listed_agent_workspaces(request)
-    agents = list(Agent.objects.filter(workspace_id__in=visible).select_related("owner").order_by("name"))
+    agents = list(Agent.objects.filter(workspace_id__in=visible).select_related("owner"))
     counts = _counts(agents)
     since = timezone.now() - dt.timedelta(days=7)
     failed = [Turn.FAILED, Turn.LOST]
@@ -163,7 +163,7 @@ def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
     for a in agents:
         c, t = counts.get(a.pk, {}), stats.get(a.pk, {})
         rows.append(AgentRosterRowOut(
-            slug=a.slug, name=a.name, description=a.description, workspace=a.workspace_id,
+            slug=a.slug, name=a.display_name, description=a.description, workspace=a.workspace_id,
             avatar_url=a.avatar_url, email=a.email, turn_mode=a.turn_mode,
             owner_email=a.owner.email if a.owner_id else None,
             url=scoped_path(a.workspace_id, f"/agents/{a.slug}"),

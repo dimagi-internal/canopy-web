@@ -149,7 +149,7 @@ def send_reply(agent, *, thread_id: str, message_id: str, to: str, subject: str,
     rfc_id = headers.get("message-id", "")
     msg = EmailMessage()
     if mailbox:
-        msg["From"] = f"{agent.name} <{mailbox}>"
+        msg["From"] = f"{agent.display_name} <{mailbox}>"
     msg["To"] = to
     original = headers.get("subject") or subject
     msg["Subject"] = original if re.match(r"(?i)^re:", original or "") else f"Re: {original}".strip()

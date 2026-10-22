@@ -114,7 +114,7 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
         full = [r["email"] for r in access.roster(a) if r["access"] == "full"]
         agent_rows.append({
             "slug": a.slug,
-            "name": a.name,
+            "name": a.display_name,
             "workspace": a.workspace_id,
             "owner_email": a.owner.email if a.owner_id else None,
             "login_email": a.user.email if a.user_id else None,

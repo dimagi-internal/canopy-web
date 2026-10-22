@@ -162,7 +162,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
                                   and not runners[route["runner_id"]].directed_only())
         agents_by_ws.setdefault(agent.workspace_id, []).append({
             "slug": agent.slug,
-            "name": agent.name,
+            "name": agent.display_name,
             "turn_mode": agent.turn_mode,
             "routes": routes,
             "follows": ({

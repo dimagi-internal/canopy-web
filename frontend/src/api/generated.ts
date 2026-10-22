@@ -3554,6 +3554,27 @@ export interface paths {
         readonly patch: operations["set_turn_mode"];
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/display-name": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Set or clear an agent's display name
+         * @description Rename the agent, or clear its name so it is shown by its slug. The slug never
+         *     changes. The agent's owner or an admin.
+         */
+        readonly patch: operations["set_display_name"];
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/repository": {
         readonly parameters: {
             readonly query?: never;
@@ -17998,6 +18019,8 @@ export interface components {
             readonly slug: string;
             /** Name */
             readonly name: string;
+            /** Display Name */
+            readonly display_name: string;
             /** Description */
             readonly description: string;
             /** Persona */
@@ -18088,7 +18111,10 @@ export interface components {
         readonly AgentIn: {
             /** Slug */
             readonly slug: string;
-            /** Name */
+            /**
+             * Name
+             * @default
+             */
             readonly name: string;
             /**
              * Description
@@ -18331,6 +18357,8 @@ export interface components {
             readonly slug: string;
             /** Name */
             readonly name: string;
+            /** Display Name */
+            readonly display_name: string;
             /** Description */
             readonly description: string;
             /** Persona */
@@ -18692,6 +18720,14 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "manual" | "auto";
+        };
+        /**
+         * DisplayNameIn
+         * @description Set or clear an agent's display name. Empty clears it: the agent is then shown by its slug.
+         */
+        readonly DisplayNameIn: {
+            /** Name */
+            readonly name: string;
         };
         /**
          * RepositoryIn
@@ -37012,6 +37048,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["TurnModeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
+    readonly set_display_name: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DisplayNameIn"];
             };
         };
         readonly responses: {

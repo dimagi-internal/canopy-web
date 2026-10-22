@@ -29,6 +29,7 @@ function agent(overrides: Partial<AgentOut> = {}): AgentOut {
   return {
     slug: 'echo',
     name: 'Echo',
+    display_name: 'Echo',
     workspace: 'dimagi',
     ...overrides,
   } as AgentOut
@@ -231,8 +232,8 @@ describe('ChatSessionsPanel — Run on picker', () => {
       .mockImplementationOnce(() => second.promise)
 
     renderPanel([
-      agent({ slug: 'echo', name: 'Echo' }),
-      agent({ slug: 'hal', name: 'Hal', workspace: 'dimagi' }),
+      agent({ slug: 'echo', name: 'Echo', display_name: 'Echo' }),
+      agent({ slug: 'hal', name: 'Hal', display_name: 'Hal', workspace: 'dimagi' }),
     ])
 
     // Pick Echo — still in flight.

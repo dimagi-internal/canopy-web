@@ -39,7 +39,7 @@ def grant(person: Person, agent, *, user) -> MemoryViewer:
             return current
         viewer = MemoryViewer.objects.create(person=person, agent=agent, granted_by=user)
         hcp.audit(person, "viewer.granted", actor=hcp.user_actor(user),
-                  purpose=f"let {agent.name or agent.slug} see this page, read-only")
+                  purpose=f"let {agent.display_name} see this page, read-only")
     return viewer
 
 
@@ -49,7 +49,7 @@ def revoke(person: Person, agent, *, user) -> bool:
         n = live(person).filter(agent=agent).update(revoked_at=timezone.now())
         if n:
             hcp.audit(person, "viewer.revoked", actor=hcp.user_actor(user),
-                      purpose=f"stop {agent.name or agent.slug} seeing this page")
+                      purpose=f"stop {agent.display_name} seeing this page")
     return bool(n)
 
 

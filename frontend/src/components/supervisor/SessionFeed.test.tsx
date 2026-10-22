@@ -45,7 +45,7 @@ const s = (id: string, fields: Partial<ChatSession> = {}): ChatSession =>
 const renderFeed = () =>
   render(
     <MemoryRouter>
-      <SessionFeed agents={[{ slug: 'hal', name: 'Hal' } as never]} />
+      <SessionFeed agents={[{ slug: 'hal', name: 'Hal', display_name: 'Hal' } as never]} />
     </MemoryRouter>,
   )
 
@@ -199,7 +199,7 @@ describe('SessionFeed', () => {
     render(
       <MemoryRouter>
         <SessionFeed
-          agents={[{ slug: 'hal', name: 'Hal' } as never]}
+          agents={[{ slug: 'hal', name: 'Hal', display_name: 'Hal' } as never]}
           runners={[{ id: 'r-1', name: 'haldimagi-mbp-cdp', status_note: '', ready_note: 'emdash CDP unreachable on :9224 — not claiming', paused_note: '' }]}
         />
       </MemoryRouter>,

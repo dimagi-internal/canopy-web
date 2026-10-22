@@ -78,10 +78,10 @@ def test_upsert_homes_on_create_and_never_moves_an_existing_agent():
     created = services.upsert_agent(payload, workspace=home)
     assert created.workspace_id == "acme"
 
-    payload.name = "Echo v2"
+    payload.description = "v2"
     again = services.upsert_agent(payload, workspace=elsewhere)
     assert again.pk == created.pk
-    assert again.name == "Echo v2"
+    assert again.description == "v2"
     assert again.workspace_id == "acme"  # not moved
 
 

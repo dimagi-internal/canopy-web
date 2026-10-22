@@ -15,7 +15,7 @@ def agents_in_tree(tree: list[tuple[Workspace, int]], *related: str) -> list[Age
     workspace in tree order, by name within one. `related` is passed to
     select_related."""
     slugs = [ws.slug for ws, _ in tree]
-    qs = Agent.objects.filter(workspace_id__in=slugs).order_by("name")
+    qs = Agent.objects.filter(workspace_id__in=slugs)
     if related:
         qs = qs.select_related(*related)
     by_ws: dict[str, list[Agent]] = {}

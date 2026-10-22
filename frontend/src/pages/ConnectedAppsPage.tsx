@@ -94,7 +94,7 @@ function AgentPicker({
                 : 'border-border text-foreground-secondary hover:bg-muted'
             }`}
           >
-            {a.name}
+            {a.display_name}
           </button>
         )
       })}

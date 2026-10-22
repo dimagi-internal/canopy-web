@@ -11,7 +11,8 @@ import uuid
 
 from django.conf import settings
 from django.db import models
-from django.db.models.functions import Lower
+from django.db.models import Value
+from django.db.models.functions import Coalesce, Lower, NullIf
 from pgvector.django import HalfVectorField
 
 
@@ -19,7 +20,10 @@ class Agent(models.Model):
     """A first-class AI agent that publishes its work into canopy-web."""
 
     slug = models.SlugField(unique=True, max_length=80)
-    name = models.CharField(max_length=120)
+    #: The agent's display name — optional and changeable (`PATCH /{slug}/display-name`).
+    #: The slug is the stable identifier; a utility agent (`labsdata`) may have no
+    #: name at all. Anything shown to a person reads `display_name`, never this.
+    name = models.CharField(max_length=120, blank=True, default="")
     description = models.TextField(blank=True, default="")
     persona = models.TextField(blank=True, default="", help_text="Who the agent is / its remit.")
     email = models.EmailField(blank=True, default="", help_text="The agent's own mailbox, if any.")
@@ -286,8 +290,13 @@ class Agent(models.Model):
                 if m.user_id == self.owner_id or m.user_id in granted
                 or perms.role_allows(m.role, perms.OWN)}
 
+    @property
+    def display_name(self) -> str:
+        """What to call the agent: its name, else its slug."""
+        return self.name or self.slug
+
     class Meta:
-        ordering = ["name"]
+        ordering = [Coalesce(NullIf("name", Value("")), "slug")]
 
     def __str__(self):
         return f"agent:{self.slug}"

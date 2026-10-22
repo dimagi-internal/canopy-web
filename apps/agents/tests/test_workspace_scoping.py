@@ -146,11 +146,11 @@ def test_flat_reregister_of_an_existing_agent_leaves_its_home_alone():
     c = _client(member)
     r = _post(c, "/api/w/connect/agents/", {"slug": "echo", "name": "Echo"})
     assert r.status_code == 201, r.content
-    r = _post(c, "/api/agents/", {"slug": "echo", "name": "Echo v2"})
+    r = _post(c, "/api/agents/", {"slug": "echo", "name": "Echo", "description": "v2"})
     assert r.status_code == 201, r.content
     echo = Agent.objects.get(slug="echo")
     assert echo.workspace_id == "connect"
-    assert echo.name == "Echo v2"
+    assert echo.description == "v2"
 
 
 def test_flat_create_lands_in_a_workspace_the_caller_is_in_not_the_default():
@@ -176,3 +176,34 @@ def test_flat_create_with_an_ambiguous_home_422s_and_writes_nothing():
     r = _post(_client(member), "/api/agents/", {"slug": "newbie", "name": "Newbie"})
     assert r.status_code == 422
     assert not Agent.objects.filter(slug="newbie").exists()
+
+
+def test_display_name_is_optional_changeable_and_audited():
+    """An agent needs no name — it is shown by its slug — and its owner can name it,
+    rename it or clear the name again; an editor cannot. Each change is a SettingChange."""
+    from apps.events.models import SettingChange
+    from apps.workspaces import services as wsvc
+
+    owner = _user("o@dimagi.com")
+    editor = _user("e@dimagi.com")
+    ws = _make_ws("labs", owner)
+    wsvc.ensure_member(ws, owner, role="owner")
+    wsvc.ensure_member(ws, editor, role="editor")
+    r = _post(_client(owner), "/api/w/labs/agents/", {"slug": "labsdata"})
+    assert r.status_code == 201, r.content
+    assert (r.json()["name"], r.json()["display_name"]) == ("", "labsdata")
+
+    def patch(u, name):
+        return _client(u).patch("/api/w/labs/agents/labsdata/display-name",
+                                data=json.dumps({"name": name}), content_type="application/json")
+
+    assert patch(editor, "Labs Data").status_code == 403
+    r = patch(owner, "  Labs Data ")
+    assert r.status_code == 200, r.content
+    assert (r.json()["name"], r.json()["display_name"]) == ("Labs Data", "Labs Data")
+    # A re-upsert from the agent's repo does not undo it.
+    _post(_client(owner), "/api/w/labs/agents/", {"slug": "labsdata", "name": "Something else"})
+    assert Agent.objects.get(slug="labsdata").name == "Labs Data"
+    r = patch(owner, "")
+    assert r.json()["display_name"] == "labsdata"
+    assert SettingChange.objects.filter(operation="set_display_name").count() == 2

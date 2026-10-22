@@ -122,6 +122,7 @@ from .schemas import (
     CredentialSourceIn,
     DeviceBindingIn,
     DeviceProofRequiredOut,
+    DisplayNameIn,
     PatRotationIn,
     PatRotationOut,
     ProjectParticipantOut,
@@ -357,7 +358,7 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # the repo writes the code that runs with the agent's credentials. So it is
     # the agent's admins', like its credentials. A field sent with the value
     # already stored is not a change: the plugin re-upserts on every publish.
-    # Creating an agent, and editing its name/description/persona, stay editor.
+    # Creating an agent, and editing its description/persona, stay editor.
     if existing is not None and not existing.is_admin(request.user):
         changed = [f for f in services.DEFINITION_FIELDS
                    if getattr(payload, f, None) is not None
@@ -561,7 +562,7 @@ def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
     if state.state in ("ready", "update"):
         user = request.user
         rendered = creation.render(AgentSpec(
-            slug=slug, display_name=payload.name.strip(), mandate=payload.mandate.strip(),
+            slug=slug, display_name=payload.name.strip() or slug, mandate=payload.mandate.strip(),
             mailbox=payload.mailbox.strip(), google_account=payload.google_account.strip(),
             stakeholders=payload.stakeholders.strip(),
             author_name=user.get_full_name() or user.email, author_email=user.email,
@@ -995,6 +996,21 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
         _refuse_auto_unless_admin(request, agent, "setting the agent's turn mode")
     agent.turn_mode = payload.turn_mode
     agent.save(update_fields=["turn_mode", "updated_at"])
+    return _detail(request, agent)
+
+
+@router.patch("/{slug}/display-name", response=AgentDetailOut,
+              summary="Set or clear an agent's display name")
+def set_display_name(request: HttpRequest, slug: str, payload: DisplayNameIn) -> AgentDetailOut:
+    """Rename the agent, or clear its name so it is shown by its slug. The slug never
+    changes. The agent's owner or an admin."""
+    from apps.events import audit
+
+    agent = agent_for_admin(request, slug)
+    before, after = agent.name, payload.name.strip()
+    agent.name = after
+    agent.save(update_fields=["name", "updated_at"])
+    audit.note_change(scope=f"agent:{agent.slug}/display-name", before=before, after=after)
     return _detail(request, agent)
 
 

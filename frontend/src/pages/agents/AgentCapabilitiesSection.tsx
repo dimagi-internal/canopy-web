@@ -51,7 +51,7 @@ export function AgentCapabilitiesSection() {
       <WorkbenchSubHeader title="Capabilities" count={data ? caps.length : undefined} />
 
       <p className="-mt-2 mb-2 text-[13px] text-foreground-secondary">
-        Cloud machines and pools {agent.name} declares it can lease. {agent.name} can lease one only after a
+        Cloud machines and pools {agent.display_name} declares it can lease. {agent.display_name} can lease one only after a
         workspace admin grants it in this workspace.
       </p>
       {!canGrant && (
@@ -69,7 +69,7 @@ export function AgentCapabilitiesSection() {
 
       {data && caps.length === 0 && (
         <p className="mt-4 text-[13px] text-muted-foreground">
-          {agent.name} declares no capabilities. Its deploy publishes them with{' '}
+          {agent.display_name} declares no capabilities. Its deploy publishes them with{' '}
           <code className="text-[12px]">canopy-runtime publish-capabilities</code>.
         </p>
       )}
@@ -115,7 +115,7 @@ export function AgentCapabilitiesSection() {
             Retired ({data.retired.length})
           </summary>
           <p className="mt-2 text-[12px] text-muted-foreground">
-            No longer declared by {agent.name}'s deploy; they cannot be leased.
+            No longer declared by {agent.display_name}'s deploy; they cannot be leased.
           </p>
           <ul className="mt-1 list-inside list-disc text-[12px] text-foreground-secondary">
             {data.retired.map((name) => (
