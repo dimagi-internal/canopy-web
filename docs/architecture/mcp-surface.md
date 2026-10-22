@@ -60,7 +60,7 @@ session-noise audit). The implementation lives in `apps/mcp/`.
 
 | File | Responsibility |
 |---|---|
-| `auth.py` | `CanopyPATVerifier` — the server's one FastMCP `TokenVerifier`: resolves a bearer (PAT, OAuth access token, caller token, or a DPoP-proved host-grant token) to a Django user (mirrors `apps.tokens.middleware`). |
+| `auth.py` | `CanopyPATVerifier` — the server's one FastMCP `TokenVerifier`: resolves a bearer (PAT, OAuth access token, caller token, or a DPoP-proved host-grant token) to a Django user through `apps.tokens.principal.resolve_bearer`, the one resolver REST and the WebSocket handshake use too. |
 | `server.py` | The `FastMCP("canopy-web", auth=CanopyPATVerifier(...))` instance, its middleware (`TurnScopeMiddleware`, `DelegatedScopeMiddleware`) and providers (page actions, generated API tools), and `build_http_app()` for the ASGI mount. Importing `apps.mcp.tools` registers the static tools. |
 | `api_tools.py` | The generated API tools: `CanopyAPIProvider` (one tool per REST route), the in-process transport, `EXCLUDED` / `EXCLUDED_PREFIXES`. |
 | `tools/` | Hand-written static tools: `caller.py`, `site.py`, `page.py`, `close_review.py`, `slack.py`, `sessions.py`. |
@@ -84,8 +84,9 @@ caller via `get_access_token()`.
 
 * **PAT.** A per-user Personal Access Token
   (`apps.tokens`) presented as `Authorization: Bearer <raw>`.
-  `CanopyPATVerifier.verify_token()` calls `PersonalToken.lookup()`,
-  stamps `last_used_at`, and returns a FastMCP `AccessToken` whose claims
+  `CanopyPATVerifier.verify_token()` resolves it with
+  `apps.tokens.principal.resolve_bearer` (PATs only), which stamps
+  `last_used_at` and `last_used_client` exactly as REST does, and returns a FastMCP `AccessToken` whose claims
   carry the user (`sub`/`user_id`/`email`). Tools read the user via
   `get_access_token()`. A miss returns `None` → 401.
 

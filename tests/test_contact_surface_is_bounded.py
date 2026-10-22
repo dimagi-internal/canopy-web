@@ -162,9 +162,14 @@ def test_a_contact_principal_never_becomes_a_user():
     from apps.tokens import middleware
 
     source = inspect.getsource(middleware.BearerTokenAuthMiddleware._authenticate)
-    contact_block = source[source.index("ctok = ContactToken.lookup"):]
-    contact_block = contact_block[: contact_block.index("dtok = DelegatedToken.lookup")]
+    contact_block = source[source.index("if found.kind == P.CONTACT:"):]
+    contact_block = contact_block[: contact_block.index("dtok = found.token")]
     assert "request.user" not in contact_block, (
         "the contact branch now assigns request.user; every /api/contact/ "
         "boundary depends on it NOT doing that"
     )
+    # And at the resolver every door shares: a contact principal has no user.
+    principal_src = inspect.getsource(__import__("apps.tokens.principal", fromlist=["x"]))
+    contact_return = principal_src[principal_src.index("return Principal(CONTACT"):]
+    contact_return = contact_return[: contact_return.index("\n    if DELEGATED")]
+    assert "user=" not in contact_return

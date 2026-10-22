@@ -20,6 +20,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
+from apps.common.token_hash import hash_token
 
 
 
@@ -123,7 +124,7 @@ class PersonalToken(models.Model):
                 None if ttl_days == 0 else timezone.now() + timedelta(days=ttl_days)
             )
         raw = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(raw.encode()).hexdigest()
+        token_hash = hash_token(raw)
         token = cls.objects.create(
             user=user, token_hash=token_hash, label=label, expires_at=expires_at,
             oauth_grant=oauth_grant,
@@ -146,7 +147,7 @@ class PersonalToken(models.Model):
         """
         if not raw:
             return None
-        token_hash = hashlib.sha256(raw.encode()).hexdigest()
+        token_hash = hash_token(raw)
         return (
             cls.objects.select_related("user")
             .filter(token_hash=token_hash, revoked_at__isnull=True, user__is_active=True)
@@ -170,7 +171,7 @@ def note_used(token: PersonalToken, client: str) -> None:
 
 def hash_secret(raw: str) -> str:
     """sha256 hex of an opaque secret — how every token-shaped value here is stored."""
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return hash_token(raw)
 
 
 class OAuthClient(models.Model):
@@ -596,7 +597,7 @@ class DelegatedToken(models.Model):
         token = cls.objects.create(
             app=app, user=user, assurance=assurance,
             runner_requirements=list(runner_requirements),
-            token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )
         return raw, token
@@ -621,7 +622,7 @@ class DelegatedToken(models.Model):
             return None
         return (
             cls.objects.select_related("user", "app")
-            .filter(token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            .filter(token_hash=hash_token(raw),
                     expires_at__gt=timezone.now(),
                     app__revoked_at__isnull=True,
                     # A system account never authenticates (apps/workspaces/system_accounts.py).
@@ -869,7 +870,7 @@ class ContactToken(models.Model):
         token = cls.objects.create(
             app=app, contact=contact, runner_requirements=list(runner_requirements),
             verified_email=verified_email or "",
-            token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )
         return raw, token
@@ -892,7 +893,7 @@ class ContactToken(models.Model):
         return (
             cls.objects.select_related("contact", "contact__workspace", "app")
             .filter(
-                token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+                token_hash=hash_token(raw),
                 expires_at__gt=timezone.now(),
                 app__revoked_at__isnull=True,
                 contact__blocked_at__isnull=True,

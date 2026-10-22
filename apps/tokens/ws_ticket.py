@@ -21,17 +21,17 @@ token is already in that process's memory for every request it authenticates.
 """
 from __future__ import annotations
 
-import hashlib
 import secrets
 
 from django.core.cache import cache
+from apps.common.token_hash import hash_token
 
 TICKET_TTL_SECONDS = 30
 _PREFIX = "ws-ticket:"
 
 
 def _key(ticket: str) -> str:
-    return _PREFIX + hashlib.sha256(ticket.encode()).hexdigest()
+    return _PREFIX + hash_token(ticket)
 
 
 def mint(raw_token: str) -> str:

@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import datetime as dt
 import fnmatch
-import hashlib
 import secrets
 from dataclasses import dataclass, field
 
 from django.utils import timezone
 
+from apps.common.token_hash import hash_token
 from .models import CallerToken, Turn
 
 PREFIX = "cct_"
@@ -21,7 +21,7 @@ _SERVER = "canopy-web__"
 
 
 def _hash(raw: str) -> str:
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return hash_token(raw)
 
 
 def mint(turn: Turn, *, scoped: bool = False) -> str:

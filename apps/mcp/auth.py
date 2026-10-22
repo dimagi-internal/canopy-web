@@ -1,10 +1,9 @@
 """Per-user PAT authentication for the MCP server.
 
 `CanopyPATVerifier` is a FastMCP `TokenVerifier` that resolves a raw
-bearer token to a canopy-web Django user via the existing PAT store
-(`apps.tokens.models.PersonalToken`). This mirrors
-`apps.tokens.middleware.BearerTokenAuthMiddleware` exactly so a PAT works
-identically against the REST surface and the MCP surface.
+bearer token to a canopy-web Django user through `apps.tokens.principal.resolve_bearer`,
+the resolver `BearerTokenAuthMiddleware` and the WebSocket handshake use too, so
+a PAT works — and is stamped as used — identically on every surface.
 
 On a hit, `verify_token` returns a FastMCP `AccessToken` whose claims
 carry the user's id and email (`sub` = user id) so tools can recover the
@@ -12,8 +11,8 @@ authenticated user with `get_access_token()`. On a miss it returns
 `None`, which FastMCP turns into a 401.
 
 ORM access is wrapped in `sync_to_async` because `verify_token` runs in
-the MCP server's async event loop while `PersonalToken.lookup` /
-`.touch` hit the database synchronously.
+the MCP server's async event loop while the lookup and its use stamp hit the
+database synchronously.
 """
 from __future__ import annotations
 
@@ -27,17 +26,26 @@ PAT_SCOPES = ["canopy:user"]
 
 
 def _lookup_user(raw: str):
-    """Synchronous PAT lookup. Returns (user, token) or (None, None)."""
-    from apps.tokens.models import PersonalToken
+    """A PAT (or OAuth access token) through the one resolver every door uses
+    (`apps/tokens/principal.py`) — stamped exactly as REST stamps it. Returns
+    (user, token) or (None, None)."""
+    from apps.tokens import principal as P
+    from apps.tokens.models import client_label
 
-    token = PersonalToken.lookup(raw)
-    if token is None:
+    found = P.resolve_bearer(raw, accept={P.PAT}, client=client_label(_user_agent(), "mcp"))
+    if found is None:
         return None, None
-    # Stamp last_used_at, mirroring BearerTokenAuthMiddleware.
-    from django.utils import timezone
+    return found.user, found.token
 
-    PersonalToken.objects.filter(pk=token.pk).update(last_used_at=timezone.now())
-    return token.user, token
+
+def _user_agent() -> str:
+    """The MCP request's User-Agent, when there is one in scope."""
+    try:
+        from fastmcp.server.dependencies import get_http_headers
+
+        return (get_http_headers() or {}).get("user-agent", "")
+    except Exception:  # noqa: BLE001 — no request in scope (a direct call, a test)
+        return ""
 
 
 #: Scope for a CONFINED session's caller token (harness.caller_tokens): tools run

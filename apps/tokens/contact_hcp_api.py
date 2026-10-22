@@ -33,7 +33,6 @@ must never change an account's settings.
 
 from __future__ import annotations
 
-import hashlib
 import secrets
 import uuid
 
@@ -44,6 +43,7 @@ from django.utils import timezone
 from ninja import Router, Schema
 from ninja.errors import HttpError
 
+from apps.common.token_hash import hash_token
 from .contact_api import contact_auth
 from .models import HcpFrameProof
 from .views_embed import FRAME_COOKIE
@@ -57,7 +57,7 @@ PROOF_HEADER = "X-Canopy-Frame-Proof"
 
 
 def _hash(raw: str) -> str:
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return hash_token(raw)
 
 
 def _own_origin(request: HttpRequest) -> str:

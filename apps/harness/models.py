@@ -13,6 +13,7 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from apps.common.token_hash import hash_token
 
 # Owned here (not services.py) so Runner.live_status can use it without a
 # models -> services import cycle (services already imports models). services.py
@@ -1511,12 +1512,11 @@ class RunnerAccessToken(models.Model):
     @classmethod
     def mint(cls, device_key: RunnerDeviceKey) -> tuple[str, RunnerAccessToken]:
         """A fresh token for the key's runner. The raw value is returned once."""
-        import hashlib
         import secrets
 
         raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
-            token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            token_hash=hash_token(raw),
             runner_id=device_key.runner_id, device_key=device_key,
             expires_at=timezone.now() + cls.TTL)
         # Tokens past their hour authenticate nothing; drop them as new ones arrive
@@ -1529,13 +1529,11 @@ class RunnerAccessToken(models.Model):
     def lookup(cls, raw: str) -> RunnerAccessToken | None:
         """The live token for `raw`: unexpired, its device key still ACTIVE, its
         runner not retired, its owner an active person. Else None."""
-        import hashlib
-
         if not raw or not raw.startswith(cls.PREFIX):
             return None
         return (
             cls.objects.select_related("runner__owner", "device_key")
-            .filter(token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            .filter(token_hash=hash_token(raw),
                     expires_at__gt=timezone.now(),
                     device_key__status=RunnerDeviceKey.ACTIVE,
                     runner__owner__is_active=True,
