@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.db import transaction
 from django.http import HttpRequest
 from django.utils import timezone
 from ninja import Router, Status
@@ -102,17 +103,31 @@ def list_workspace_private_runners(request: HttpRequest, workspace: str):
 @private_runners_router.post("/{private_runner_id}/retire", response=PrivateRunnerOut,
                           summary="Retire one of your private runners")
 def retire_private_runner(request: HttpRequest, private_runner_id: uuid.UUID):
+    """Its local sessions stop opening, and a runner linked to it goes back to
+    being shared."""
+    # Unlinked and shared rather than left private: a private runner with no live
+    # registration still takes no fleet work, and its token opens nothing.
+    from apps.events import audit
+
     ws = local.private_runner_of(request.user, private_runner_id)
     if ws is None:
         raise HttpError(404, "private runner not found")
-    ws.retired_at = timezone.now()
-    ws.save(update_fields=["retired_at"])
+    with transaction.atomic():
+        ws.retired_at = timezone.now()
+        box, ws.runner = ws.runner, None
+        ws.save(update_fields=["retired_at", "runner"])
+        if box is not None and box.private:
+            box.private = False
+            box.save(update_fields=["private"])
+            audit.note_change(scope=f"runner-private:{box.name}", before={"private": True},
+                              after={"private": False}, workspace=box.workspace)
     return ws
 
 
 def _local_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
-    turn = Turn.objects.filter(pk=turn_id, origin=Turn.ORIGIN_LOCAL).select_related("agent").first()
-    if turn is None or not local.is_initiator(turn, request.user):
+    turn = (Turn.objects.filter(pk=turn_id, origin=Turn.ORIGIN_LOCAL)
+            .select_related("agent", "private_runner").first())
+    if turn is None or not local.may_report(turn, request):
         raise HttpError(404, "turn not found")
     return turn
 

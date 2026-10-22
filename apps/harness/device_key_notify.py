@@ -24,12 +24,16 @@ logger = logging.getLogger(__name__)
 
 
 def approvers(runner) -> list:
-    """The owner and every explicit runner admin, active, de-duplicated."""
+    """The owner and every explicit runner admin, active, de-duplicated — the
+    owner alone on a private runner, the only person who may approve there
+    (`runners.may_trust_device_keys`)."""
     from .models import RunnerAdmin
 
     people = []
     if runner.owner_id and runner.owner.is_active:
         people.append(runner.owner)
+    if runner.private:
+        return people
     for grant in RunnerAdmin.objects.filter(runner=runner).select_related("user"):
         if grant.user.is_active and all(p.pk != grant.user_id for p in people):
             people.append(grant.user)

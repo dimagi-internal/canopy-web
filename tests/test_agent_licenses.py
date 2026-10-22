@@ -212,3 +212,17 @@ def test_a_license_read_withholds_what_is_not_the_agents_tools(world, monkeypatc
     admin = _resolve(world["owner"]).json()
     assert admin["values"]["canopy-pat"] == "agent-own-pat"
     assert admin["github_token"] == "owner-github-token"
+
+
+def test_a_license_read_never_gets_the_agents_1password_key(world, monkeypatch):
+    """The service-account key reads the whole vault, the agent's canopy-pat included,
+    so handing it to a license holder would undo withholding that login."""
+    from apps.agents import api as agents_api
+
+    agent = world["agent"]
+    Agent.objects.filter(pk=agent.pk).update(credential_source=Agent.ONEPASSWORD)
+    monkeypatch.setattr(agents_api.services, "resolve_agent_vault", lambda a: ("Agent-ACE", "ops-sa-key"))
+    turn_id = _open(world["aath"]).json()["turn_id"]
+    body = _resolve(world["aath"], turn_id).json()
+    assert body["op_sa_token"] == "" and body["op_vault"] == "Agent-ACE"
+    assert _resolve(world["owner"]).json()["op_sa_token"] == "ops-sa-key"
