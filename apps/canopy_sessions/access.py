@@ -12,9 +12,10 @@ The rule, whole:
   a participant removed from the workspace loses the session with it, the
   same as every other tenant surface in canopy. Which workspace that is — the
   filing rule for a new runner session, and moving one — is `filing.py`.
-* **Then one of four legs** (`visible_session_q`): you created it; you were
+* **Then one of five legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered emdash session (tenant-visible
-  by design); or it is the own thread of an agent you run.
+  by design); it is the own thread of an agent you run; or a runner you own
+  holds it (read-only).
 * **Writing** (sending, answering, stopping, archiving, page actions,
   attachments) needs a role of owner or editor. A `viewer` participant reads.
 * **Sharing** — adding or removing a participant — is the OWNER's: the
@@ -69,7 +70,7 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Four ways in, and no fifth:
+    Five ways in, and no sixth:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -86,6 +87,12 @@ def visible_session_q(user) -> Q:
        "Owner" alone was not enough: on labs every agent's `owner` is null, so
        it matched no one. Narrower than leg 3 on purpose: the agent's admins,
        not the whole tenant.
+    5. it is bound to a runner YOU OWN, whatever its origin. The box ran it: the
+       transcript is on your disk, your Claude subscription paid for it, and
+       emdash on that box already lists it. Hiding it here hid nothing — it only
+       made /ide disagree with emdash about what your machine is running (a
+       colleague's web chats with your agent, 2026-10-21). Read-only:
+       `role_for` gives this leg no derived role, so you watch, you do not type.
 
     Leg 3 keeps `runner_binding__isnull=False` alongside the origin check
     rather than dropping it: origin alone would newly expose runner-origin rows
@@ -113,6 +120,7 @@ def visible_session_q(user) -> Q:
         | Q(participants__user=user)
         | (Q(origin=Session.ORIGIN_RUNNER) & Q(runner_binding__isnull=False))
         | (Q(origin=Session.ORIGIN_RUNNER) & _agent_admin_q(user))
+        | Q(runner_binding__runner__owner=user)
     )
 
 
@@ -161,7 +169,7 @@ def _tenant_slugs(user) -> set:
 
 
 def readable_sessions(user, *, workspace_slugs=None):
-    """Every session `user` may read — the tenant gate AND the four legs.
+    """Every session `user` may read — the tenant gate AND the five legs.
 
     `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
     never widen past the caller's own workspaces.
@@ -227,7 +235,9 @@ def role_for(user, session) -> str | None:
             else SessionParticipant.VIEWER
         )
     else:
-        derived = None  # a web chat you did not create: only a row gets you in
+        # A web chat you did not create: only a row gets you in. If you can read
+        # it anyway, it is through leg 5 (your runner holds it), which watches.
+        derived = None
     candidates = [r for r in (row, derived) if r in ranks]
     return max(candidates, key=ranks.__getitem__) if candidates else SessionParticipant.VIEWER
 
