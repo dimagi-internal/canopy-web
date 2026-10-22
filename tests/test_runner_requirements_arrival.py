@@ -274,7 +274,7 @@ def test_moving_queued_turns_from_a_stale_copy_keeps_the_stamp(site):
                                 agent=site["agent"])
     services.send_message(session=s, text="hello", user=site["owner"])
     stale = _stale_copy_then_stamp(s)
-    moved = services.move_queued_turns(session=stale, placement=str(zdr.id))
+    moved = services.move_queued_turns(session=stale, placement=str(zdr.id), user=site["owner"])
     assert moved
     meta = Session.objects.get(pk=s.pk).metadata
     assert meta["runner_requirements"] == ["zdr"]

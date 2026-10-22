@@ -61,9 +61,9 @@ def test_a_zdr_runner_is(fleet):
 
 def test_available_cloud_runner_skips_a_non_zdr_box(fleet):
     s = _zdr_session(fleet)
-    assert session_services.available_cloud_runner(s) is None
+    assert session_services.available_cloud_runner(s, user=fleet["user"]) is None
     RunnerFlag.objects.create(runner=fleet["cloud"], flag="zdr")
-    assert session_services.available_cloud_runner(s).id == fleet["cloud"].id
+    assert session_services.available_cloud_runner(s, user=fleet["user"]).id == fleet["cloud"].id
 
 
 def test_sending_with_an_explicit_non_zdr_placement_is_refused(fleet):
