@@ -127,7 +127,9 @@ def _organisation(alert: Alert) -> str:
 def list_alerts(request: HttpRequest, scope: str | None = None,
                 status: Literal["open", "dismissed"] = "open") -> list[AlertOut]:
     """Open alerts you are offered an action on, in the workspaces you are in,
-    most severe first (`blocking`, `action`, `setup`) then newest. `scope` keeps
+    most severe first (`blocking`, `action`, `setup`), then most recently raised
+    (`first_seen_at`), then id — a stable order, since every reconciled alert
+    shares the tick's `last_seen_at`. `scope` keeps
     those whose `scopes` include it. `status=dismissed` lists what was dismissed
     in the last 7 days that you could dismiss (so you can `undismiss` it). A
     `workspace:<slug>` scope also keeps alerts in any workspace below that one;
@@ -161,7 +163,8 @@ def list_alerts(request: HttpRequest, scope: str | None = None,
         return out
 
     rows = {a.pk: o for a, o in wsvc.each_organisation(request, read)}  # a row in two reads is one row
-    ranked = sorted(rows.values(), key=lambda o: (Alert.SEVERITY_RANK[o.severity], -o.last_seen_at.timestamp()))
+    ranked = sorted(rows.values(),
+                    key=lambda o: (Alert.SEVERITY_RANK[o.severity], -o.first_seen_at.timestamp(), o.id))
     return ranked
 
 
@@ -170,12 +173,17 @@ def list_alerts(request: HttpRequest, scope: str | None = None,
 def act_on_alert(request: HttpRequest, id: int, payload: AlertActIn) -> AlertOut:
     """Runs `action` if it is still offered to you. A link action is followed in
     the browser; calling this for one only records that you followed it. 404 if you cannot see the alert; 409
-    `action-not-offered` if the action is not (or no longer) yours to run."""
+    `action-not-offered` if the action is not (or no longer) yours to run; 409
+    `action-failed` (with the reason) if its handler refused — nothing was
+    changed."""
     alert = _visible(request, id)
     try:
         alerts.act(alert, request.user, payload.action)
     except alerts.ActionNotOffered as e:
         raise _not_offered(str(e)) from e
+    except ValueError as e:  # a source's perform refusing; act rolled it back
+        raise ProblemError(409, "Action failed", type_=TYPE_CONFLICT, detail=str(e),
+                           members={"code": "action-failed"}) from e
     return _after(request, alert)
 
 

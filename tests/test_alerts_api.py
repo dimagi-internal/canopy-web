@@ -115,6 +115,20 @@ def test_scope_filter_and_ordering(world):
     assert _ids(world.ca.get("/api/me/alerts/?scope=agent:eva")) == [blocking_old.pk, act.pk, setup.pk]
 
 
+def test_order_is_deterministic_when_a_tick_confirms_everything_at_once(world):
+    """Every reconciled alert shares the tick's `last_seen_at`; the order falls
+    back to most recently raised, then id."""
+    tick = timezone.now()
+    early, late = tick - dt.timedelta(hours=2), tick - dt.timedelta(hours=1)
+    a1 = _alert(world.a, "a1", first_seen_at=early, last_seen_at=tick)
+    a2 = _alert(world.a, "a2", first_seen_at=late, last_seen_at=tick)
+    a3 = _alert(world.a, "a3", first_seen_at=late, last_seen_at=tick)  # tie on both: id breaks it
+    b = _alert(world.a, "b", severity=Alert.BLOCKING, first_seen_at=early, last_seen_at=tick)
+    world.source.offered = {world.ann.pk: [FIX]}
+    for _ in range(3):
+        assert _ids(world.ca.get("/api/me/alerts/")) == [b.pk, a2.pk, a3.pk, a1.pk]
+
+
 def test_workspace_scope_covers_the_subtree(world):
     # A parent's Topology shows its divisions' problems; a sibling's does not.
     child = Workspace.objects.create(slug="org-a-child", display_name="child", created_by=world.ann, parent=world.a)
@@ -165,6 +179,25 @@ def test_act_runs_handler_and_closes(world):
     assert resp.status_code == 200, resp.content
     assert resp.json()["status"] == "resolved" and resp.json()["actions"] == []
     assert world.source.performed == [(al.pk, world.ann.pk, "fix")]
+
+
+def test_act_handler_refusal_is_409_action_failed(world):
+    """A source's `perform` raising ValueError (e.g. the subject moved on) is a
+    409 with the reason, not a 500 — and nothing is left behind."""
+    al = _alert(world.a)
+    world.source.offered = {world.ann.pk: [FIX]}
+
+    def refuse(alert, user, action_id):
+        raise ValueError("this investigation is no longer waiting on a person")
+
+    world.source.perform = refuse
+    resp = world.ca.post(f"/api/me/alerts/{al.pk}/act", {"action": "fix"}, content_type="application/json")
+    assert resp.status_code == 409, resp.content
+    body = resp.json()
+    assert body["code"] == "action-failed"
+    assert body["detail"] == "this investigation is no longer waiting on a person"
+    al.refresh_from_db()
+    assert al.status == Alert.OPEN and not al.events.filter(kind=AlertEvent.ACTED).exists()
 
 
 def test_act_not_offered_409(world):

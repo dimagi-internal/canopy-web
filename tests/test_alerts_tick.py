@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import sys
 import types
+from unittest import mock
 
 import pytest
 from django.contrib.auth.models import User
@@ -172,6 +173,47 @@ def test_failed_delivery_is_retried_next_tick(source, ws, owner, monkeypatch):
     monkeypatch.setattr(alerts, "_send", lambda *a, **k: "sent")
     alerts.tick()
     assert Alert.objects.get().notified_at is not None
+
+
+def test_overlapping_ticks_send_once(source, ws, owner, pushes):
+    """Claim, then send: a tick that finds the claim already taken (another
+    process stamped `notified_at` after this one read `pending`) sends nothing."""
+    source.offered = {owner.pk: [FIX]}
+    alerts.apply_reconcile(KIND, [_raise(ws)], timezone.now())
+    a = Alert.objects.get()
+    real_filter = Alert.objects.filter
+
+    class _Racing:
+        """The first `pending` read returns the alert, then the other tick claims it."""
+
+        def __init__(self):
+            self.raced = False
+
+        def __call__(self, *args, **kw):
+            qs = real_filter(*args, **kw)
+            if kw.get("notified_at__isnull") and kw.get("severity") == Alert.BLOCKING and not self.raced:
+                self.raced = True
+                rows = list(qs)
+                real_filter(pk=a.pk).update(notified_at=timezone.now())  # the other tick wins
+                return rows
+            return qs
+
+    with mock.patch.object(Alert.objects, "filter", _Racing()):
+        alerts.notify_new_blocking(timezone.now())
+    assert mail.outbox == [] and pushes == []
+    assert not AlertEvent.objects.filter(alert=a, kind=AlertEvent.NOTIFIED).exists()
+
+
+def test_failed_fanout_gives_the_claim_back(source, ws, owner, monkeypatch):
+    source.offered = {owner.pk: [FIX]}
+    source.reconcile = lambda now: [_raise(ws)]
+
+    def boom(*a, **k):
+        raise RuntimeError("smtp down")
+
+    monkeypatch.setattr(alerts, "notify_users", boom)
+    alerts.tick()
+    assert Alert.objects.get().notified_at is None  # retried next tick
 
 
 def test_one_broken_source_does_not_stop_another(source, ws, owner, pushes, monkeypatch):

@@ -431,11 +431,15 @@ def _expire_stale(mod, now) -> None:
 
 def notify_new_blocking(now) -> None:
     """Email + push each open `blocking` alert not yet notified, to the people
-    in its workspace's organisation tree who hold a CLOSING action on it, then
-    stamp `notified_at` (a raise or a reopen clears it, so each gets one).
+    in its workspace's organisation tree who hold a CLOSING action on it (a
+    raise or a reopen clears `notified_at`, so each gets one).
 
-    `notified_at` is set even when nobody was reached, so an alert with no
-    eligible closer is not retried every minute (it is logged).
+    Claim, then send: `notified_at` is stamped first with a conditional update
+    (`... WHERE notified_at IS NULL`), and only the tick that stamped it sends —
+    two overlapping ticks (two web processes, the cache lock down) cannot both
+    mail. If closers exist but every delivery fails, or the fan-out raises, the
+    stamp is cleared so the next tick retries. An alert with no eligible closer
+    keeps its stamp, so it is not retried every minute (it is logged).
     """
     pending = list(Alert.objects.filter(severity=Alert.BLOCKING, status=Alert.OPEN, notified_at__isnull=True))
     if not pending:
@@ -458,6 +462,9 @@ def notify_new_blocking(now) -> None:
     users = {u.pk: u for u in get_user_model().objects.filter(pk__in=set().union(*members.values()), is_active=True)}
 
     for alert in pending:
+        if not Alert.objects.filter(pk=alert.pk, status=Alert.OPEN, notified_at__isnull=True) \
+                .update(notified_at=now):
+            continue  # another tick claimed it (or it closed) since `pending` was read
         try:
             candidates = [users[uid] for uid in sorted(members[roots[alert.workspace_id]]) if uid in users]
             closers = [u for u in candidates if any(a.closes for a in visible_actions(alert, u))]
@@ -465,11 +472,14 @@ def notify_new_blocking(now) -> None:
                 logger.warning("alerts tick: no one holds a closing action on blocking alert %s (%s); not notifying",
                                alert.pk, alert.title)
             elif notify_users(alert, closers) == 0:
-                # Closers exist but every delivery failed (sends return, not raise):
-                # leave notified_at null so the next tick retries.
+                # Closers exist but every delivery failed (sends return, not raise).
                 logger.warning("alerts tick: every delivery for blocking alert %s failed; will retry", alert.pk)
-                continue
-        except Exception:  # noqa: BLE001 — leave notified_at null: retried next tick
+                _unclaim(alert, now)
+        except Exception:  # noqa: BLE001 — unclaim: retried next tick
             logger.exception("alerts tick: notifying for alert %s failed", alert.pk)
-            continue
-        Alert.objects.filter(pk=alert.pk, notified_at__isnull=True).update(notified_at=now)
+            _unclaim(alert, now)
+
+
+def _unclaim(alert: Alert, now) -> None:
+    """Give back this tick's `notified_at` claim (only if it is still ours)."""
+    Alert.objects.filter(pk=alert.pk, notified_at=now).update(notified_at=None)
