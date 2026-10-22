@@ -153,14 +153,105 @@ def test_dismiss_sticks_until_fingerprint_changes(source, ws, owner):
     assert _kinds(a) == [AlertEvent.RAISED, AlertEvent.DISMISSED, AlertEvent.REOPENED]
 
 
-def test_dismissed_alert_is_left_alone_when_condition_clears(source, ws, owner):
+def test_dismissed_alert_resolves_when_condition_clears(source, ws, owner):
     t0 = timezone.now()
     alerts.apply_reconcile(KIND, [_raise(ws)], t0)
     a = Alert.objects.get()
     alerts.dismiss(a, owner)
-    alerts.apply_reconcile(KIND, [], t0 + dt.timedelta(minutes=1))
+    alerts.apply_reconcile(KIND, [], timezone.now() + dt.timedelta(minutes=1))
+    a.refresh_from_db()
+    assert a.status == Alert.RESOLVED and a.resolved_reason == Alert.REASON_SOURCE
+    assert _kinds(a) == [AlertEvent.RAISED, AlertEvent.DISMISSED, AlertEvent.RESOLVED]
+
+
+def test_dismissed_then_cleared_then_recurs_with_same_fingerprint_reopens(source, ws, owner):
+    t0 = timezone.now()
+    alerts.apply_reconcile(KIND, [_raise(ws, fingerprint="v1")], t0)
+    a = Alert.objects.get()
+    alerts.dismiss(a, owner)
+    t1 = timezone.now() + dt.timedelta(minutes=1)
+    alerts.apply_reconcile(KIND, [], t1)
+    alerts.apply_reconcile(KIND, [_raise(ws, fingerprint="v1")], t1 + dt.timedelta(minutes=1))
+    a.refresh_from_db()
+    assert a.status == Alert.OPEN
+    assert _kinds(a) == [AlertEvent.RAISED, AlertEvent.DISMISSED, AlertEvent.RESOLVED, AlertEvent.REOPENED]
+
+
+def test_dismissed_alert_still_true_stays_dismissed(source, ws, owner):
+    t0 = timezone.now()
+    alerts.apply_reconcile(KIND, [_raise(ws)], t0)
+    a = Alert.objects.get()
+    alerts.dismiss(a, owner)
+    alerts.apply_reconcile(KIND, [_raise(ws)], timezone.now() + dt.timedelta(minutes=1))
     a.refresh_from_db()
     assert a.status == Alert.DISMISSED
+    assert _kinds(a) == [AlertEvent.RAISED, AlertEvent.DISMISSED]
+
+
+def test_stale_snapshot_does_not_reopen_an_alert_closed_after_it(source, ws, owner):
+    """A tick computes its snapshot at `now`; a person closes the alert while
+    it runs; applying that snapshot must not reopen (and re-notify) it."""
+    t0 = timezone.now() - dt.timedelta(minutes=5)
+    alerts.apply_reconcile(KIND, [_raise(ws)], t0)
+    a = Alert.objects.get()
+    snapshot_at = timezone.now()
+    source.offered[owner.pk] = [alerts.Action("fix", "Fix it", closes=True)]
+    alerts.act(a, owner, "fix")  # closed_at is after snapshot_at
+    alerts.apply_reconcile(KIND, [_raise(ws)], snapshot_at)
+    a.refresh_from_db()
+    assert a.status == Alert.RESOLVED and a.closed_by == owner
+    assert AlertEvent.REOPENED not in _kinds(a)
+
+
+def test_stale_snapshot_does_not_resolve_a_newer_confirmation(source, ws):
+    t1 = timezone.now()
+    alerts.apply_reconcile(KIND, [_raise(ws)], t1)
+    alerts.apply_reconcile(KIND, [], t1 - dt.timedelta(seconds=1))  # older snapshot, applied late
+    assert Alert.objects.get().status == Alert.OPEN
+
+
+def test_concurrent_create_falls_through_to_update(source, ws, monkeypatch):
+    """Another reconcile creates the subject between our lookup and our create:
+    the unique-constraint error must not abort this reconcile."""
+    t0 = timezone.now()
+    real = alerts._find_locked
+    calls = []
+
+    def racing(kind, subject_key):
+        if not calls:
+            calls.append(1)
+            Alert.objects.create(kind=kind, subject_key=subject_key, workspace=ws, severity=Alert.BLOCKING,
+                                 title="old", fingerprint="old", first_seen_at=t0, last_seen_at=t0)
+            return None
+        return real(kind, subject_key)
+
+    monkeypatch.setattr(alerts, "_find_locked", racing)
+    later = t0 + dt.timedelta(minutes=1)
+    alerts.apply_reconcile(KIND, [_raise(ws), _raise(ws, subject_key="thing:2")], later)
+    assert Alert.objects.count() == 2
+    a = Alert.objects.get(subject_key="thing:1")
+    assert a.title == "Token hal is signed out" and a.last_seen_at == later
+    assert _kinds(a) == [AlertEvent.CHANGED]
+
+
+def test_offers_dismiss_ignores_status(source, ws, owner):
+    alerts.apply_reconcile(KIND, [_raise(ws)], timezone.now())
+    a = Alert.objects.get()
+    other = User.objects.create_user("other", "other@dimagi.com", "pw")
+    source.offered[owner.pk] = [alerts.DISMISS]
+    alerts.dismiss(a, owner)
+    assert alerts.visible_actions(a, owner) == []
+    assert alerts.offers_dismiss(a, owner) is True
+    assert alerts.offers_dismiss(a, other) is False
+
+
+def test_action_shapes_are_exclusive():
+    with pytest.raises(ValueError):
+        alerts.Action("ask", "Ask", closes=True, notify=(1,))
+    with pytest.raises(ValueError):
+        alerts.Action("ask", "Ask", closes=False, href="/w/acme/x", notify=(1,))
+    alerts.Action("ask", "Ask", closes=False, notify=(1,))
+    alerts.Action("open", "Open", closes=True, href="/w/acme/x")
 
 
 def test_undismiss_reopens_and_logs(source, ws, owner):

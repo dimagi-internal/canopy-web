@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from importlib import import_module
 
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.html import escape
 
@@ -83,6 +83,14 @@ class Action:
     closes: bool
     href: str = ""
     notify: tuple[int, ...] = ()
+
+    def __post_init__(self):
+        # A notify never closes (the alert stays open and shows who asked whom),
+        # and an action is one shape: a link is not also a notify.
+        if self.notify and self.closes:
+            raise ValueError(f"action {self.id!r}: a notify action cannot close the alert")
+        if self.notify and self.href:
+            raise ValueError(f"action {self.id!r}: an action is a link or a notify, not both")
 
 
 #: The shared dismiss. A source offers it by including it in `actions()`; the
@@ -141,17 +149,40 @@ def apply_reconcile(kind: str, raises: list[Raise], now) -> None:
     Per raise: new → `raised`; open with a changed fingerprint → updated +
     `changed`; dismissed with a changed fingerprint → `reopened` (and eligible
     to notify again); resolved → `reopened` (the condition came back);
-    unchanged → `last_seen_at` only, no event. Then every OPEN alert of `kind`
-    the set no longer names resolves (`reason=source`). A dismissed alert whose
-    condition cleared is left dismissed, so it stays in the dismissed fold.
+    unchanged → `last_seen_at` only, no event. Then every open OR dismissed
+    alert of `kind` the set no longer names resolves (`reason=source`): the
+    condition cleared, so a later recurrence — even with the same fingerprint —
+    reopens it (resolved → reopened) instead of staying hidden. A dismissed
+    alert whose condition is still true stays dismissed.
+
+    `now` is when the source computed its snapshot. A snapshot older than a
+    person's close (`closed_at >= now`) never reopens that alert, and one older
+    than a newer confirmation (`last_seen_at >= now`) never resolves it — so a
+    slow tick cannot undo an action taken while it ran.
     """
     severity = source_for(kind).SEVERITY
     seen: set[str] = set()
     for r in raises:
         seen.add(r.subject_key)
         _upsert(kind, severity, r, now)
-    for alert in Alert.objects.filter(kind=kind, status=Alert.OPEN).exclude(subject_key__in=seen):
-        resolve(alert, reason=Alert.REASON_SOURCE)
+    missing = (Alert.objects.filter(kind=kind, status__in=[Alert.OPEN, Alert.DISMISSED], last_seen_at__lt=now)
+               .exclude(subject_key__in=seen).values_list("pk", flat=True))
+    for pk in list(missing):
+        _resolve_missing(pk, now)
+
+
+def _resolve_missing(pk: int, now) -> None:
+    """Resolve one alert its source no longer reports — re-checked under the row
+    lock, since it may have been dismissed, resolved or re-confirmed since the
+    query that found it."""
+    with transaction.atomic():
+        row = Alert.objects.select_for_update().filter(pk=pk).first()
+        if row and row.status in (Alert.OPEN, Alert.DISMISSED) and row.last_seen_at < now:
+            resolve(row, reason=Alert.REASON_SOURCE)
+
+
+def _find_locked(kind: str, subject_key: str) -> Alert | None:
+    return Alert.objects.select_for_update().filter(kind=kind, subject_key=subject_key).first()
 
 
 def _upsert(kind: str, severity: str, r: Raise, now) -> None:
@@ -159,12 +190,22 @@ def _upsert(kind: str, severity: str, r: Raise, now) -> None:
     fields = dict(workspace_id=r.workspace, scopes=list(r.scopes), severity=severity, title=r.title,
                   body=r.body, url=r.url, fingerprint=fingerprint)
     with transaction.atomic():
-        alert = Alert.objects.select_for_update().filter(kind=kind, subject_key=r.subject_key).first()
+        alert = _find_locked(kind, r.subject_key)
         if alert is None:
-            alert = Alert.objects.create(kind=kind, subject_key=r.subject_key, first_seen_at=now,
-                                         last_seen_at=now, **fields)
-            _log(alert, AlertEvent.RAISED, at=now)
-            return
+            try:
+                # A savepoint: a concurrent reconcile may create the same
+                # subject first, and its unique-constraint error must not abort
+                # the rest of this reconcile.
+                with transaction.atomic():
+                    alert = Alert.objects.create(kind=kind, subject_key=r.subject_key, first_seen_at=now,
+                                                 last_seen_at=now, **fields)
+                    _log(alert, AlertEvent.RAISED, at=now)
+                return
+            except IntegrityError:
+                alert = Alert.objects.select_for_update().get(kind=kind, subject_key=r.subject_key)
+
+        if alert.status != Alert.OPEN and alert.closed_at is not None and alert.closed_at >= now:
+            return  # closed after this snapshot was taken: the snapshot is stale
 
         changed = alert.fingerprint != fingerprint
         event = None
@@ -239,10 +280,18 @@ def undismiss(alert: Alert, user) -> None:
 
 def visible_actions(alert: Alert, user) -> list[Action]:
     """What `user` may do on `alert` — the source's per-viewer list. A closed
-    (resolved or dismissed) alert offers nothing; undismiss is its own path."""
+    (resolved or dismissed) alert offers nothing here; who may UNDISMISS a
+    dismissed alert is asked separately, with `offers_dismiss`."""
     if alert.status != Alert.OPEN:
         return []
     return list(source_for(alert.kind).actions(alert, user))
+
+
+def offers_dismiss(alert: Alert, user) -> bool:
+    """Does the source offer `user` the shared dismiss on `alert`, whatever the
+    alert's status? The undismiss path authorizes with this, since
+    `visible_actions` is empty for a dismissed alert."""
+    return any(a.id == DISMISS.id for a in source_for(alert.kind).actions(alert, user))
 
 
 def act(alert: Alert, user, action_id: str) -> Alert:
