@@ -54,8 +54,6 @@ from django.conf import settings
 
 from . import client
 
-_PAGE = 200
-
 
 def message_ceiling() -> int:
     """Stop reading after this many messages, window or not — a busy channel
@@ -233,20 +231,7 @@ class Line:
 
 def _line(m: dict) -> Line:
     return Line(m["ts"], m.get("user") or m.get("bot_id") or "", m.get("text") or "",
-                name=str(m.get("username") or (m.get("bot_profile") or {}).get("name") or ""))
-
-
-def _messages(token: str, method: str, data: dict, *, budget: int) -> list[dict]:
-    out: list[dict] = []
-    cursor = ""
-    while len(out) < budget:
-        body = client.call(method, token=token, data={**data, "limit": min(_PAGE, budget - len(out)),
-                                                      **({"cursor": cursor} if cursor else {})})
-        out.extend(body.get("messages") or [])
-        cursor = ((body.get("response_metadata") or {}).get("next_cursor") or "")
-        if not cursor or not body.get("has_more", True):
-            break
-    return out[:budget]
+                name=client.message_name(m))
 
 
 def fetch(token: str, *, channel_id: str, minutes: int, thread_ts: str = "",
@@ -290,7 +275,7 @@ def _fetch(token: str, *, channel_id: str, minutes: int, thread_ts: str = "",
     budget = message_ceiling()
     # One scan reaching back past the window, so an old thread with a new reply
     # is seen; only in-window parents are kept as lines.
-    scanned = _messages(token, "conversations.history",
+    scanned = client.paginate(token, "conversations.history",
                         {"channel": channel_id, "oldest": f"{now - lookback:.6f}"},
                         budget=max(budget, int(settings.SLACK_HISTORY_SCAN_CEILING)))
     parents = [m for m in scanned if float(m.get("ts") or 0) >= start][:budget]
@@ -313,7 +298,7 @@ def _fetch(token: str, *, channel_id: str, minutes: int, thread_ts: str = "",
         data = {"channel": channel_id, "ts": parent_ts}
         if parent_ts != thread_ts:
             data["oldest"] = oldest
-        msgs = _messages(token, "conversations.replies", data, budget=budget + 1)
+        msgs = client.paginate(token, "conversations.replies", data, budget=budget + 1)
         budget -= max(0, len(msgs) - 1)
         for m in msgs:
             if m.get("ts") == skip_ts:
@@ -340,7 +325,7 @@ def fetch_thread(token: str, *, channel_id: str, thread_ts: str, skip_ts: str = 
     mention itself, which the agent receives as its prompt anyway.
     """
     ceiling = message_ceiling()
-    msgs = [m for m in _messages(token, "conversations.replies", {"channel": channel_id, "ts": thread_ts},
+    msgs = [m for m in client.paginate(token, "conversations.replies", {"channel": channel_id, "ts": thread_ts},
                                  budget=max(ceiling, int(settings.SLACK_HISTORY_SCAN_CEILING)))
             if m.get("ts") and m.get("ts") != skip_ts]
     parent = next((m for m in msgs if m["ts"] == thread_ts), None)
@@ -361,17 +346,7 @@ def count(lines: list[Line]) -> int:
 
 def _names(token: str, lines: list[Line]) -> dict[str, str]:
     ids = {ln.user for ln in lines} | {r.user for ln in lines for r in ln.replies}
-    names: dict[str, str] = {}
-    for uid in ids:
-        if not uid:
-            continue
-        try:
-            info = client.user_info(token, uid)
-        except client.SlackApiError:
-            info = {}
-        profile = info.get("profile") or {}
-        names[uid] = str(profile.get("real_name") or profile.get("display_name") or info.get("name") or uid)
-    return names
+    return {uid: client.user_name(token, uid) for uid in ids if uid}
 
 
 _MENTION = re.compile(r"<@([A-Z0-9]+)>")

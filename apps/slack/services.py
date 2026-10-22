@@ -388,7 +388,7 @@ def resolve_principal(installation: SlackInstallation, slack_user_id: str,
         team_id=installation.team_id,
         slack_user_id=slack_user_id,
         email=str(profile.get("email") or ""),
-        display_name=str(profile.get("real_name") or profile.get("display_name") or info.get("name") or ""),
+        display_name=client.display_name(info),
         grade=(contacts.Contact.AUTH_SLACK_MEMBER if is_home_member(installation, info)
                else contacts.Contact.AUTH_SLACK),
     )

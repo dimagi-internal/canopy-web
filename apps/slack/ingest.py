@@ -68,7 +68,6 @@ logger = logging.getLogger(__name__)
 APPROVE, DECLINE, REVOKE = "ingest_approve", "ingest_decline", "ingest_revoke"
 ACTIONS = (APPROVE, DECLINE, REVOKE)
 
-_PAGE = 200
 _CHANNEL = re.compile(r"^[CG][A-Z0-9]{1,31}$")
 _NAME = re.compile(r"^#?([a-z0-9][a-z0-9_\-]{0,79})$")
 #: Statuses in which canopy may still read the channel.
@@ -496,7 +495,7 @@ def _store(ingest: SlackChannelIngest, msgs: list[dict], *, thread_ts: str = "")
         rows.append(SlackIngestMessage(
             ingest=ingest, ts=ts, thread_ts=(thread_ts or parent) if (thread_ts or parent) != ts else "",
             user=str(m.get("user") or m.get("bot_id") or ""),
-            name=str(m.get("username") or (m.get("bot_profile") or {}).get("name") or "")[:255],
+            name=client.message_name(m)[:255],
             text=str(m.get("text") or ""),
         ))
         if not ingest.latest_ts or float(ts) > float(ingest.latest_ts):
@@ -506,17 +505,11 @@ def _store(ingest: SlackChannelIngest, msgs: list[dict], *, thread_ts: str = "")
     return SlackIngestMessage.objects.filter(ingest=ingest).count() - before
 
 
-def _page(token: str, method: str, data: dict, cursor: str) -> tuple[list[dict], str]:
-    body = client.call(method, token=token, data={**data, "limit": _PAGE, **({"cursor": cursor} if cursor else {})})
-    nxt = (body.get("response_metadata") or {}).get("next_cursor") or ""
-    return body.get("messages") or [], (nxt if body.get("has_more", True) else "")
-
-
 def _step(ingest: SlackChannelIngest, token: str) -> int:
     """One Slack call's worth of reading. Returns the new messages stored."""
     if ingest.phase == SlackChannelIngest.HISTORY:
         data = {"channel": ingest.channel_id, **({"oldest": ingest.history_oldest} if ingest.history_oldest else {})}
-        msgs, ingest.history_cursor = _page(token, "conversations.history", data, ingest.history_cursor)
+        msgs, ingest.history_cursor = client.page(token, "conversations.history", data, ingest.history_cursor)
         for m in msgs:
             if not m.get("reply_count"):
                 continue
@@ -535,7 +528,7 @@ def _step(ingest: SlackChannelIngest, token: str) -> int:
             return 0
         parent, oldest = ingest.thread_queue[0]
         data = {"channel": ingest.channel_id, "ts": parent, **({"oldest": oldest} if oldest else {})}
-        msgs, ingest.thread_cursor = _page(token, "conversations.replies", data, ingest.thread_cursor)
+        msgs, ingest.thread_cursor = client.page(token, "conversations.replies", data, ingest.thread_cursor)
         new = _store(ingest, [m for m in msgs if m.get("ts") != parent], thread_ts=parent)
         if not ingest.thread_cursor:
             ingest.thread_queue = ingest.thread_queue[1:]
@@ -548,11 +541,9 @@ def _name_people(ingest: SlackChannelIngest, token: str) -> None:
               .values_list("user", flat=True).distinct())
     for uid in ids - set(ingest.names):
         try:
-            info = client.user_info(token, uid)
-        except (client.SlackApiError, client.RateLimited):
-            info = {}
-        profile = info.get("profile") or {}
-        ingest.names[uid] = str(profile.get("real_name") or profile.get("display_name") or info.get("name") or uid)
+            ingest.names[uid] = client.user_name(token, uid)
+        except client.RateLimited:
+            ingest.names[uid] = uid
 
 
 def _start_follow_pass(ingest: SlackChannelIngest) -> None:

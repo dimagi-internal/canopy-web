@@ -120,7 +120,7 @@ def predates_bind(turn) -> bool:
     return bool(bound_at and created and created.timestamp() < float(bound_at))
 
 
-def _destination(turn):
+def turn_destination(turn):
     """(installation, channel, thread_ts) for a Slack-born session's turn, else None."""
     if predates_bind(turn):
         return None
@@ -194,7 +194,7 @@ def relay(turn, rows) -> int:
     """Post each reply row of `turn` into its Slack thread, once. Returns posts made."""
     if not getattr(turn, "chat_session_id", None):
         return 0
-    dest = _destination(turn)
+    dest = turn_destination(turn)
     if dest is None:
         return 0
     installation, channel, thread_ts = dest
@@ -221,11 +221,11 @@ def relay(turn, rows) -> int:
             logger.exception("could not relay a reply to Slack")
             record.error = str(e)[:200]
             record.save(update_fields=["error"])
-            _log_failure(installation, turn, channel, str(e))
+            log_failure(installation, turn, channel, str(e))
     return posted
 
 
-def _log_failure(installation, subject, channel: str, error: str) -> None:
+def log_failure(installation, subject, channel: str, error: str) -> None:
     from apps.events import services as events_services
     from apps.events.models import Event
     from apps.workspaces.models import Workspace
@@ -306,7 +306,7 @@ def relay_menu(session_id, menu) -> bool:
             posted = True
         except Exception as e:  # noqa: BLE001 — never break the runner's report over Slack
             logger.exception("could not post a question to Slack")
-            _log_failure(installation, session, channel, str(e))
+            log_failure(installation, session, channel, str(e))
     return posted
 
 
@@ -367,7 +367,7 @@ def notify_elsewhere(session, texts) -> bool:
         client.post_message(installation.bot_token, channel=channel, text=text, thread_ts=thread_ts)
     except Exception as e:  # noqa: BLE001 — never break the runner's stream over Slack
         logger.exception("could not post a Slack elsewhere notice")
-        _log_failure(installation, locked, channel, str(e))
+        log_failure(installation, locked, channel, str(e))
         return False
     return True
 
@@ -418,7 +418,7 @@ def notify_closed(session_ids) -> int:
             posted += 1
         except Exception as e:  # noqa: BLE001 — a missed notice must not fail a report
             logger.exception("could not post a Slack closed notice")
-            _log_failure(installation, session, channel, str(e))
+            log_failure(installation, session, channel, str(e))
     return posted
 
 
@@ -523,7 +523,7 @@ def relay_after_turn(session, replies) -> int:
             logger.exception("could not relay after-turn text to Slack")
             record.error = str(e)[:200]
             record.save(update_fields=["error"])
-            _log_failure(installation, session, channel, str(e))
+            log_failure(installation, session, channel, str(e))
     return posted
 
 
@@ -569,6 +569,6 @@ def notify_transfer_request(req) -> bool:
                             text=transfer_request_text(req), thread_ts=thread_ts)
     except Exception as e:  # noqa: BLE001
         logger.exception("could not post a Slack transfer-request notice")
-        _log_failure(installation, req.session, channel, str(e))
+        log_failure(installation, req.session, channel, str(e))
         return False
     return True
