@@ -23,7 +23,7 @@ from apps.workspaces import role_cap
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import participants
+from . import participants, phi
 from .definition import definition_key, siblings
 from .models import (
     MAX_TASK_DEPTH,
@@ -1523,10 +1523,26 @@ def runner_may_hold_agent(runner, agent) -> bool:
     as an agent has been refused since #1049, so a box owned by an agent login
     is a pre-#1049 leftover, and the agent's own login is no admin of it.
 
-    Fails closed on a runner with no owner."""
+    Fails closed on a runner with no owner.
+
+    A ZDR box (`is_zdr_box`) is dedicated: it holds only an agent with a
+    `data: phi` capability, whoever owns it — so no other agent's full profile,
+    secrets or GitHub identity ever shares a box with a PHI conversation (spec
+    2026-10-22-phi-agents-on-zdr-runners §1, "A dedicated box")."""
     if getattr(runner, "owner_id", None) is None:
         return False
+    if is_zdr_box(runner) and not phi.phi_capabilities(agent.interface):
+        return False
     return agent.is_admin(runner.owner)
+
+
+def is_zdr_box(runner) -> bool:
+    """A box set up for PHI work: a person declared `zdr` on it, OR it reports ZDR
+    mode on its heartbeat. Either alone makes it dedicated — unlike routing's
+    `runner_requirements.in_force`, which needs both before it sends ZDR work
+    there; dedication errs toward keeping other agents off."""
+    caps = getattr(runner, "capabilities", None) or {}
+    return "zdr" in runner.flags or bool(caps.get("data_mode"))
 
 
 # ---- 1Password vault + import (spec 2026-09-06) -------------------------------

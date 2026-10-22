@@ -14,6 +14,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
+from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import claim
@@ -21,6 +22,10 @@ from apps.harness.models import Runner, RunnerAssignment, RunnerFlag, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
+
+# A ZDR box holds only an agent with a `data: phi` capability (dedicated box).
+PHI_IFACE = {"capabilities": {"data": {"callers": ["member"], "sites": ["connect-labs"],
+                                       "data": "phi", "tools": ["Read"]}}}
 
 
 def _creator(agent):
@@ -38,7 +43,8 @@ def fleet():
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
-    echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
+    echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws,
+                                interface=parse(PHI_IFACE))
     now = timezone.now()
     laptop = Runner.objects.create(
         name="jj-mbp", kind=Runner.EMDASH, owner=jj, workspace=ws, status=Runner.ONLINE,

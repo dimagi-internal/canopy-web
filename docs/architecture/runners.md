@@ -219,6 +219,12 @@ routes). Don't let a runner-assignment row be the trust boundary: the editor tie
 writes those rows. A teammate whose laptop should run an agent's work needs an admin
 grant on that agent. An agent's own canopy login is not a holder.
 
+A **ZDR box is dedicated**: one with a declared `zdr` flag OR reporting `data_mode:
+zdr` (`services.is_zdr_box` — either alone, unlike routing's `in_force`, which needs
+both) holds only an agent with a `data: phi` capability, whoever owns it. So no other
+agent's full profile, secrets or GitHub identity shares a box with a PHI conversation.
+Guarded by `tests/test_zdr_box_is_dedicated.py`.
+
 ## Which agents a box runs — one rule
 
 `routing.runner_routes_agent(runner, agent)` answers "could this box ever claim

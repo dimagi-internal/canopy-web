@@ -100,9 +100,13 @@ at boot:
 - **Nothing kept on the box.** Each turn in its own isolation unit; after it finishes,
   its transcript under `~/.claude/projects`, its caller envelope, its profile and its
   per-turn work directory are deleted. Encrypted EBS.
-- **A dedicated box.** A ZDR box serves only agents that hold a PHI declaration
-  (`runner_may_hold_agent` refuses the rest), and its security group allows egress only
-  to `api.anthropic.com` and canopy-web.
+- **A dedicated box.** A ZDR box — declared `zdr` OR reporting ZDR mode, either alone
+  (`services.is_zdr_box`) — holds only an agent with a `data: phi` capability, whoever
+  owns it (`runner_may_hold_agent` refuses the rest, so claim, pins, credentials and
+  routing writes all do).
+- **Egress locked.** Agent processes reach only an allowlist of hosts: canopy-web,
+  `api.anthropic.com` and what the box itself needs. Egress is its own runner setting,
+  not part of ZDR mode — any box may lock it — but ZDR mode requires it.
 - **Posture on every heartbeat.** The box reports `data_mode: "zdr"` and a hash of the
   config that produced it (settings, MCP config, environment allowlist, credential slot
   kinds — never the key). That is a self-report and proves nothing; what it buys is
@@ -345,15 +349,16 @@ Each step ships on its own and fails closed until the next lands.
 3. **canopy-web runner: ZDR mode** (§1), including the ACP settings fix and the posture
    report; claim requires agreement (§2). Done (#1821).
 4. **Stand up the box.** Jonathan obtains the ZDR-org key; a dedicated cloud box in ZDR
-   mode; Jonathan declares `zdr`.
+   mode; Jonathan declares `zdr`. Done: `cloud-zdr-1`, declared and reporting ZDR mode.
+   The box holds only `data: phi` agents (§1, `is_zdr_box`). Next: the egress lock (§1).
 5. **canopy-web: storage rules** (§4). Done (#1847).
 6. **Declarations + the execution statement** (§5, §6), with the SDK's host half and a
    `dimagi-canopy` release; connect-labs verifies it and flips
    `CANOPY_EXECUTION_STATEMENTS`. canopy-web half done: declarations, confinement for
    everyone and the declared commit (#1849); `Canopy-Execution` and
    `canopy_sdk.host.verify_execution` / `Execution.phi_clearance` (dimagi-canopy 0.12.0).
-   The statement is also bound to the access token (`ath`), and the runner reports
-   `pins` (it checks out `agent_sha`) before it is given a declared turn.
+   The statement is also bound to the access token (`ath`). (The commit pin was
+   dropped, §5 amended: no `agent_sha`, no `pins`.)
 7. **`labsdata`, `data:read` and `workflow:edit`** (§7). `data:read` is built in
    connect-labs; `workflow:edit` and the sandbox rule for render-code edits are next.
    Then connect-labs sets
