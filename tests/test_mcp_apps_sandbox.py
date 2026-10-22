@@ -12,7 +12,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.tokens import mcp_apps
+from apps.mcp_apps_host import mcp_apps
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace
 

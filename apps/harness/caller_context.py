@@ -423,7 +423,7 @@ def _slack_location(cs) -> dict | None:
 def _apps(cs) -> dict | None:
     if cs is None:
         return None
-    from apps.tokens.mcp_apps_views import envelope_block
+    from apps.mcp_apps_host.mcp_apps_views import envelope_block
 
     return envelope_block(cs)
 

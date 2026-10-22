@@ -89,6 +89,7 @@ INSTALLED_APPS = [
     "apps.tokens",
     "apps.github_connect",
     "apps.oauth_server",
+    "apps.mcp_apps_host",
     "apps.reviews",
     "apps.runs",
     "apps.shareouts",
@@ -132,10 +133,10 @@ MIDDLEWARE = [
     # Before anything that builds a URL: a request on the OLD address
     # (labs.connect.dimagi.com/canopy) is redirected or gets its prefix back.
     "apps.common.legacy_prefix.LegacyPrefixMiddleware",
-    # MCP Apps sandbox proxy (apps/tokens/views_mcp_apps.py): answered here,
+    # MCP Apps sandbox proxy (apps/mcp_apps_host/views_mcp_apps.py): answered here,
     # before sessions/auth/CSRF, so a page that frames untrusted HTML can never
     # carry a Set-Cookie (SESSION_SAVE_EVERY_REQUEST would re-issue one).
-    "apps.tokens.views_mcp_apps.McpAppsSandboxMiddleware",
+    "apps.mcp_apps_host.views_mcp_apps.McpAppsSandboxMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "config.static_middleware.CanopyWhiteNoiseMiddleware",  # WhiteNoise, minus `/` (see module)
@@ -689,7 +690,7 @@ CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="")
 # Slack sync to recognise what it registered there.
 CANOPY_FORMER_BASE_URLS: list[str] = []
 
-# MCP Apps (SEP-1865; apps/tokens/mcp_apps.py, spec 2026-10-08): where canopy's
+# MCP Apps (SEP-1865; apps/mcp_apps_host/mcp_apps.py, spec 2026-10-08): where canopy's
 # chat frames the SANDBOX PROXY that hosts a Connected site's View. A canopy
 # sub-path by default (owner decision 1: no new DNS) — isolated by framing it
 # `sandbox="allow-scripts"` with no `allow-same-origin`, so its origin is opaque.

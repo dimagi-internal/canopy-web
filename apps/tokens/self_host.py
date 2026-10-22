@@ -410,7 +410,7 @@ def _index_views(app, scopes) -> None:
     The tools are canopy's own, so their `_meta` is known here without a call."""
     from apps.mcp.tools.close_review import VIEW_TOOL_META
 
-    from . import mcp_apps
+    from apps.mcp_apps_host import mcp_apps
 
     tools = [(name, meta) for scope in scopes for name in SCOPE_TOOLS.get(scope, ())
              if (meta := VIEW_TOOL_META.get(name))]

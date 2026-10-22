@@ -43,7 +43,9 @@ from django.utils import timezone
 
 from apps.harness import sensitivity
 
-from . import host_gateway, mcp_apps
+from apps.tokens import host_gateway
+
+from . import mcp_apps
 
 log = logging.getLogger(__name__)
 
@@ -114,7 +116,7 @@ class Viewer:
 
 def site_app(session):
     """The session's live Connected site, in the AGENT's tenant, or None."""
-    from .models import AppCredential
+    from apps.tokens.models import AppCredential
 
     site = str((session.metadata or {}).get("embed_app") or "").strip()
     if not site:
@@ -322,7 +324,7 @@ def resolve_for_viewer(session, viewer: Viewer, row: ViewRow) -> host_gateway.Si
     if not app.issues_host_grants():
         raise ViewRefusal("site_not_configured", f"{app.name} does not let canopy act for you there")
     # The viewer's grant for THIS conversation's agent (`host_grants.grant_for`).
-    from .host_grants import grant_for
+    from apps.tokens.host_grants import grant_for
 
     grant = grant_for(app, agent=session.agent if session.agent_id else None,
                       contact=viewer.contact, user=viewer.user if viewer.contact is None else None)
@@ -631,7 +633,7 @@ def refresh_index_soon(app, grant) -> None:
 def _refresh(app_id: int, grant_id: int) -> None:
     from django.db import close_old_connections
 
-    from .models import AppCredential, HostGrant
+    from apps.tokens.models import AppCredential, HostGrant
 
     try:
         app = AppCredential.objects.filter(pk=app_id, revoked_at__isnull=True).first()

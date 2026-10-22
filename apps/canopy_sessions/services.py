@@ -35,7 +35,7 @@ SERVER_OWNED_METADATA = frozenset({
     # A host's runner requirements (ZDR, apps/harness/runner_requirements.py),
     # copied from the token that started or sent into the session.
     "runner_requirements",
-    # MCP Apps receipts + model context (apps/tokens/mcp_apps_views.py): canopy's
+    # MCP Apps receipts + model context (apps/mcp_apps_host/mcp_apps_views.py): canopy's
     # own record of what a View did — a host must never be able to write it.
     "mcp_apps",
 })
