@@ -62,22 +62,19 @@ class BearerTokenAuthMiddleware:
         from apps.harness.models import RunnerAccessToken
 
         if raw.startswith(RunnerAccessToken.PREFIX):
-            from django.http import JsonResponse
             from django.utils import timezone
 
+            from apps.api.errors import problem_response
             from apps.harness import runner_auth
 
             rtok = RunnerAccessToken.lookup(raw)
             if rtok is None:
-                return JsonResponse({"detail": "runner token is not valid (expired, or its "
-                                     "device key was revoked)"}, status=401)
+                return problem_response(401, detail="runner token is not valid (expired, or its "
+                                                    "device key was revoked)")
             if not runner_auth.reaches(request.method, request.path_info, rtok.runner_id,
                                        private=rtok.runner.private,
                                        computer=rtok.runner.kind == rtok.runner.COMPUTER):
-                detail = "a runner token opens the runner protocol only"
-                return JsonResponse(
-                    {"type": "about:blank", "title": detail, "status": 403, "detail": detail},
-                    status=403, content_type="application/problem+json")
+                return problem_response(403, detail="a runner token opens the runner protocol only")
             RunnerAccessToken.objects.filter(pk=rtok.pk).update(last_used_at=timezone.now())
             request.user = rtok.runner.owner
             request.runner_token = rtok
@@ -94,18 +91,17 @@ class BearerTokenAuthMiddleware:
         from apps.contacts import hcp_oauth
 
         if raw.startswith(hcp_oauth.ACCESS_PREFIX):
-            from django.http import JsonResponse
+            from apps.api.errors import problem_response
 
             tok = hcp_oauth.authenticate_access(raw)
             if tok is None or not request.path_info.startswith("/api/hcp/v1/"):
                 detail = ("the access token is not valid" if tok is None
                           else "an HCP access token opens /api/hcp/v1/ only")
-                return JsonResponse(
-                    {"type": "https://hcp.me/problems/invalid-token", "title": "invalid token",
-                     "status": 401, "detail": detail, "instance": request.path_info,
-                     "hcp_version": "1.0"},
-                    status=401, content_type="application/problem+json",
-                    headers={"WWW-Authenticate": 'Bearer error="invalid_token"'})
+                resp = problem_response(
+                    401, type="https://hcp.me/problems/invalid-token", title="invalid token",
+                    detail=detail, instance=request.path_info, hcp_version="1.0")
+                resp["WWW-Authenticate"] = 'Bearer error="invalid_token"'
+                return resp
             request.hcp_access = tok
             request.auth_method = "hcp-oauth"
             request.auth_credential = _credential("hcp-oauth", tok.pk, tok.client.name)
@@ -168,13 +164,9 @@ class BearerTokenAuthMiddleware:
         from apps.tokens import delegation
 
         if not already_signed_in and not delegation.reaches(request.method, request.path_info):
-            from django.http import JsonResponse
+            from apps.api.errors import problem_response
 
-            detail = delegation.refusal(request.path_info)
-            return JsonResponse(
-                {"type": "about:blank", "title": detail, "status": 403, "detail": detail},
-                status=403, content_type="application/problem+json",
-            )
+            return problem_response(403, detail=delegation.refusal(request.path_info))
 
         # WHICH app is acting, for the surfaces whose answer depends on it
         # (`/api/embed/agents`). Kept here rather than re-resolved per view so

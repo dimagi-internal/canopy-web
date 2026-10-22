@@ -78,11 +78,11 @@ def test_stranger_cannot_read_someone_elses_turn(owner_client, stranger_client, 
     assert resp.status_code == 404
     # Security review 2026-07-26, F4: status-code-only assertions here are
     # exactly what let the agent-turn branch leak the agent's slug via
-    # _agent_or_404's own 404 message (copied into both title and detail by
-    # the shared HttpError handler) go undetected. _turn_or_404 now catches
+    # _agent_or_404's own 404 message (copied into detail by the shared
+    # HttpError handler) go undetected. _turn_or_404 now catches
     # and re-raises a uniform message — pin the body, not just the code.
     body = resp.json()
-    assert body["title"] == "turn not found"
+    assert body["title"] == "Not Found"
     assert body["detail"] == "turn not found"
     assert "echo" not in body["title"].lower()
     assert "echo" not in (body["detail"] or "").lower()

@@ -177,7 +177,12 @@ def test_concurrent_connections_are_bounded(kb):
         time.sleep(0.2)
         with socket.socket(socket.AF_UNIX) as c:
             c.connect(path)
-            c.sendall(b'{"op": "public_key"}\n')
+            # The broker answers `busy` and closes without reading, so on Linux
+            # the write can race the close (EPIPE); the reply is already ours.
+            try:
+                c.sendall(b'{"op": "public_key"}\n')
+            except BrokenPipeError:
+                pass
             assert "busy" in json.loads(c.makefile().readline())["error"]
         idle.close()                   # the slot comes back
         time.sleep(0.2)

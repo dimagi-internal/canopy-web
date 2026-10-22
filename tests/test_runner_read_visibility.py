@@ -171,7 +171,7 @@ def test_an_editor_pins_only_to_a_runner_they_administer(teammate, workspace, ru
             "prompt": "/echo:turn", "runner_id": str(runner.id)}
     resp = _client(teammate).post("/api/harness/turns/", body, content_type="application/json")
     assert resp.status_code == 403, resp.content
-    assert "administers that runner" in resp.json()["title"]
+    assert "administers that runner" in resp.json()["detail"]
     RunnerAdmin.objects.create(runner=runner, user=teammate)
     resp = _client(teammate).post("/api/harness/turns/", body, content_type="application/json")
     assert resp.status_code == 201, resp.content

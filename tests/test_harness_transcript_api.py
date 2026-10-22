@@ -155,7 +155,7 @@ def test_stranger_gets_404_not_403_on_both_routes_with_a_uniform_body(owner_clie
     for resp in (post_resp, get_resp):
         body = resp.json()
         # Uniform message — never leaks which agent owns the turn.
-        assert body["title"] == "turn not found"
+        assert body["title"] == "Not Found"
         assert body["detail"] == "turn not found"
         assert "echo" not in body["title"].lower()
         assert "echo" not in (body["detail"] or "").lower()

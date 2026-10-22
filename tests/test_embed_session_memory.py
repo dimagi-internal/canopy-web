@@ -110,7 +110,7 @@ def test_a_site_acting_for_the_person_cannot_change_it(w):
                      data=json.dumps({"record": "off"}), content_type="application/json",
                      **_bearer(w["app"], w["lili"]))
     assert r.status_code == 403
-    assert "not_delegable" in r.json()["title"]
+    assert "not_delegable" in r.json()["detail"]
 
 
 def test_canopys_own_widget_signed_in_by_session_can_change_it(w):

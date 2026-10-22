@@ -488,7 +488,10 @@ def test_a_device_without_a_wrap_gets_409_and_the_owner_an_alert(fleet):
     assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
     res = _resolve(fleet)
     assert res.status_code == 409
-    assert res.json() == {"error": "zk_wrap_missing", "kv": 1, "device_key": str(fleet.device.pk)}
+    body = res.json()
+    assert res["content-type"] == "application/problem+json" and body["status"] == 409
+    assert {k: body[k] for k in ("error", "kv", "device_key")} == {
+        "error": "zk_wrap_missing", "kv": 1, "device_key": str(fleet.device.pk)}
     alert = AgentCredentialAlert.objects.get()
     assert alert.kind == "zk-wrap-missing" and alert.runner_id == fleet.runner.pk
     assert not AgentCredentialRead.objects.exists()

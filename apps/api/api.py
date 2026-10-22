@@ -19,6 +19,7 @@ from .errors import (
     TYPE_VALIDATION,
     Problem,
     ProblemError,
+    status_title,
 )
 from .renderers import OrjsonRenderer
 
@@ -111,7 +112,10 @@ def _on_problem_error(request: HttpRequest, exc: ProblemError) -> HttpResponse:
         instance=request.path,
         extras=exc.problem_extras,
     )
-    return _problem_response(request, problem, getattr(exc, "problem_members", None))
+    response = _problem_response(request, problem, getattr(exc, "problem_members", None))
+    for name, value in (getattr(exc, "problem_headers", None) or {}).items():
+        response[name] = value
+    return response
 
 
 @api.exception_handler(ValidationError)
@@ -141,12 +145,15 @@ def _on_auth_error(request: HttpRequest, exc: AuthenticationError) -> HttpRespon
 
 @api.exception_handler(HttpError)
 def _on_http_error(request: HttpRequest, exc: HttpError) -> HttpResponse:
-    """Bare HttpError (raised from handlers using ninja's shortcut) → problem+json."""
+    """Bare HttpError (raised from handlers using ninja's shortcut) → problem+json.
+
+    `type: about:blank`, so `title` is the status's reason phrase (stable per
+    type, RFC 7807 §4.2) and the message raised is the `detail`."""
     problem = Problem(
         type="about:blank",
-        title=exc.message if hasattr(exc, "message") else "HTTP error",
+        title=status_title(exc.status_code),
         status=exc.status_code,
-        detail=str(exc) if str(exc) else None,
+        detail=str(exc) or None,
         instance=request.path,
     )
     return _problem_response(request, problem)

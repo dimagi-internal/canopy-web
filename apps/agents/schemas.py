@@ -1594,15 +1594,20 @@ class AgentCredentialReadOut(StrictModel):
 
 
 class DeviceProofRequiredOut(StrictModel):
-    """401 from resolve: the agent requires a runner device proof (DPoP) and
-    the request carried none that verified against an active key."""
+    """401 from resolve (problem+json): the agent requires a runner device
+    proof (DPoP) and the request carried none that verified against an active
+    key. `error` and `reason` are extension members a runner branches on."""
 
+    type: str
+    title: str
+    status: int
+    detail: str = ""
+    instance: str | None = None
     error: Literal["device_proof_required"]
     #: `not_routed`: the proof is an approved box's, but that box does not run
     #: this agent (no alert; fix the routing or stop asking). `no_valid_proof`:
     #: no proof, or one no active key matches (the owner is alerted).
     reason: Literal["not_routed", "no_valid_proof"] = "no_valid_proof"
-    detail: str = ""
 
 
 class AgentCredentialAlertOut(StrictModel):
@@ -1752,9 +1757,15 @@ class AgentCredentialsResolveOut(StrictModel):
 
 
 class ZkWrapMissingOut(StrictModel):
-    """409 from resolve: the agent is zero-knowledge and the proving device
-    holds no vault-key wrap at the current kv (its owner is alerted)."""
+    """409 from resolve (problem+json): the agent is zero-knowledge and the
+    proving device holds no vault-key wrap at the current kv (its owner is
+    alerted). `error`, `kv` and `device_key` are extension members."""
 
+    type: str
+    title: str
+    status: int
+    detail: str = ""
+    instance: str | None = None
     error: Literal["zk_wrap_missing"]
     kv: int
     device_key: str
