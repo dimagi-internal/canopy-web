@@ -18,7 +18,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner
-from apps.tokens import assertions
+from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 

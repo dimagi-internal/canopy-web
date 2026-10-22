@@ -17,7 +17,7 @@ from django.core.cache import cache
 from django.test import Client, override_settings
 
 from apps.host_grants import client_identity
-from apps.tokens import jwks
+from apps.embedding import jwks
 
 pytestmark = pytest.mark.django_db
 
@@ -59,13 +59,13 @@ class _Resp:
 
 
 def _serving(doc: dict, status=200):
-    return mock.patch("apps.tokens.jwks.requests.get",
+    return mock.patch("apps.embedding.jwks.requests.get",
                       return_value=_Resp(json.dumps(doc).encode(), status))
 
 
 def _public_dns():
     """Every hostname resolves somewhere public, unless a test says otherwise."""
-    return mock.patch("apps.tokens.jwks.socket.getaddrinfo",
+    return mock.patch("apps.embedding.jwks.socket.getaddrinfo",
                       return_value=[(2, 1, 6, "", ("93.184.216.34", 443))])
 
 
@@ -82,7 +82,7 @@ def test_a_url_resolving_into_private_space_is_refused(addr, what):
     """Canopy makes this request from inside its own VPC. Without this check a
     'JWKS URL' is a way to read whatever lives there — starting with the
     instance's credentials."""
-    with mock.patch("apps.tokens.jwks.socket.getaddrinfo",
+    with mock.patch("apps.embedding.jwks.socket.getaddrinfo",
                     return_value=[(2, 1, 6, "", (addr, 443))]):
         with pytest.raises(jwks.JwksError) as exc:
             jwks.validate_url("https://keys.partner.test/jwks.json")
@@ -102,7 +102,7 @@ def test_the_address_is_checked_again_at_fetch_not_only_at_save():
     priv, _pub = _keypair()
     with _public_dns():
         url = jwks.validate_url("https://keys.partner.test/jwks.json")
-    with mock.patch("apps.tokens.jwks.socket.getaddrinfo",
+    with mock.patch("apps.embedding.jwks.socket.getaddrinfo",
                     return_value=[(2, 1, 6, "", ("169.254.169.254", 443))]):
         with pytest.raises(jwks.JwksError):
             jwks.keys_for(url)
@@ -110,7 +110,7 @@ def test_the_address_is_checked_again_at_fetch_not_only_at_save():
 
 def test_a_redirect_is_not_followed():
     """The cheapest way around a host check is to be sent somewhere else."""
-    with _public_dns(), mock.patch("apps.tokens.jwks.requests.get") as get:
+    with _public_dns(), mock.patch("apps.embedding.jwks.requests.get") as get:
         get.return_value = _Resp(b"", status=302)
         with pytest.raises(jwks.JwksError):
             jwks.keys_for("https://keys.partner.test/jwks.json")
@@ -179,7 +179,7 @@ def test_a_site_whose_server_is_down_keeps_working_on_the_last_good_copy():
     cache.delete(jwks._cache_key(url))  # the 10-minute copy has aged out
 
     with _public_dns(), mock.patch(
-        "apps.tokens.jwks.requests.get",
+        "apps.embedding.jwks.requests.get",
         side_effect=_requests.ConnectionError("connection refused"),
     ) as get:
         assert len(jwks.keys_for(url)) == 1
@@ -190,7 +190,7 @@ def test_with_no_copy_at_all_it_refuses_rather_than_verifying_against_nothing():
     import requests as _requests
 
     with _public_dns(), mock.patch(
-        "apps.tokens.jwks.requests.get",
+        "apps.embedding.jwks.requests.get",
         side_effect=_requests.ConnectionError("connection refused"),
     ):
         with pytest.raises(jwks.JwksError):

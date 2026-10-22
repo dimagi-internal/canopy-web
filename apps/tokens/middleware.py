@@ -153,12 +153,12 @@ class BearerTokenAuthMiddleware:
 
         dtok = found.token
 
-        # `site ∩ user` (apps/tokens/delegation.py): a site's token is not the
+        # `site ∩ user` (apps/embedding/delegation.py): a site's token is not the
         # user's whole canopy. Refused HERE, before any view, and loudly — a
         # 401 would read as an expired token and send a host re-minting one
         # that is equally refused. Only when the token IS the identity: with a
         # canopy session already present the person at the browser is acting.
-        from apps.tokens import delegation
+        from apps.embedding import delegation
 
         if not already_signed_in and not delegation.reaches(request.method, request.path_info):
             from apps.api.errors import problem_response

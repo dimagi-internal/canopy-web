@@ -17,7 +17,7 @@ class BetaRequest(models.Model):
     reason = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     # Correlation, not evidence: X-Forwarded-For is client-settable on a direct
-    # connection (apps/tokens/audit.client_ip). Used for the per-address limit.
+    # connection (apps/embedding/audit.client_ip). Used for the per-address limit.
     client_ip = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.CharField(max_length=300, blank=True, default="")
     # The notification is best-effort and recorded here, never raised: a request

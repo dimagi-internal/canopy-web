@@ -25,15 +25,11 @@ from apps.api.errors import TYPE_FORBIDDEN, ProblemError
 from apps.workspaces import services as wsvc
 
 from .audit import record as audit
-from .models import AppCredential, DelegatedToken, EmbedAuditLog
+from apps.tokens.models import AppCredential, DelegatedToken, EmbedAuditLog
 from .rate_limit import MintRateLimitError, check_mint_limit
-from .schemas import (
-    EmbedAgentOut,
-    EmbedSelfOut,
-    EmbedSelfTokenOut,
-    EmbedSessionMemoryOut,
-    WsTicketOut,
-)
+from apps.tokens.schemas import WsTicketOut
+
+from .schemas import EmbedAgentOut, EmbedSelfOut, EmbedSelfTokenOut, EmbedSessionMemoryOut
 
 embed_router = Router(auth=session_auth, tags=["embed"])
 
@@ -232,7 +228,7 @@ def embed_ws_ticket(request: HttpRequest) -> WsTicketOut:
     """
     # Only a delegated token is traded. A browser on canopy's own pages signs its
     # socket in with the session cookie, and a PAT client can send a header.
-    from . import ws_ticket
+    from apps.tokens import ws_ticket
 
     raw = ws_ticket.bearer(request)
     if getattr(request, "delegated_app", None) is None or DelegatedToken.lookup(raw) is None:

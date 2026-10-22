@@ -10,7 +10,7 @@ This validator decides from origins instead of hosts:
 
 * **A browser always sends Origin** on a WebSocket. It must be canopy's own
   address (current or former) or a live connected site's declared origin — the
-  same list that may call the API cross-origin (`apps/tokens/cors.py`).
+  same list that may call the API cross-origin (`apps/embedding/cors.py`).
 * **No Origin** means a non-browser client — a script, the e2e checks.
   (The runners' `websocket-client` does send one: the host it connects to,
   which is canopy's own.) Cross-site WebSocket hijacking is a browser attack, and these clients

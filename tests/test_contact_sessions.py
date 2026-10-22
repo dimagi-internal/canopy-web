@@ -25,7 +25,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.contacts.models import Contact
-from apps.tokens import assertions
+from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 

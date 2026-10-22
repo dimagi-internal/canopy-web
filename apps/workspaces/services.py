@@ -501,7 +501,7 @@ def _read_pin(request) -> str | None:
     """The workspace a request's LIST reads are pinned to: the `/api/w/{ws}/`
     pin, else — for a connected site acting for its visitor (a delegated token)
     — the site's own workspace, which is the only one it may act in
-    (`apps.tokens.delegation`). A site is one tenant's; its visitor being in
+    (`apps.embedding.delegation`). A site is one tenant's; its visitor being in
     several must not make its chat feed refuse or mix them.
 
     The URL pin was membership-checked by `WorkspaceResolveMiddleware`; the

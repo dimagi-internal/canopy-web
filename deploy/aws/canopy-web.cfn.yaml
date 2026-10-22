@@ -574,7 +574,7 @@ Resources:
             # Canopy offering its own agent on its own pages. This is an
             # AppCredential NAME, not a secret — the credential is never
             # exchanged here, because the host and canopy are one process (see
-            # apps/tokens/embed_api.py::embed_self_token).
+            # apps/embedding/embed_api.py::embed_self_token).
             #
             # Safe to set BEFORE the credential exists: `_self_app()` resolves a
             # name that matches no live credential to None, so /api/embed/self

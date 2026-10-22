@@ -29,9 +29,9 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.contacts import hcp
 from apps.contacts.models import Contact, Person, PersonAuditEvent, PersonGrant
-from apps.tokens import assertions
+from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken
-from apps.tokens.views_embed import FRAME_COOKIE
+from apps.embedding.views_embed import FRAME_COOKIE
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db

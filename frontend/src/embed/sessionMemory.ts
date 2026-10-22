@@ -6,7 +6,7 @@
  * visitor: if a host's delegated token could flip these, any site could switch
  * on learning for everyone who chats on it. So the write lives on
  * `/api/people/me/…`, which a delegated token cannot reach
- * (apps/tokens/delegation.py).
+ * (apps/embedding/delegation.py).
  *
  * That gives the two cases without asking which one this is:
  *

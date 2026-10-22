@@ -23,7 +23,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.contacts.models import Contact
-from apps.tokens import assertions
+from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -468,7 +468,7 @@ def test_the_client_budget_is_generous_by_default():
     """A host's BACKEND calls this, so one site's legitimate traffic arrives
     from a handful of addresses. A tight per-client cap would throttle a busy
     partner rather than an attacker — the per-issuer limit is the real bound."""
-    from apps.tokens import rate_limit
+    from apps.embedding import rate_limit
 
     assert rate_limit._over.__doc__  # the shared counter, not a third copy
     from django.conf import settings as s

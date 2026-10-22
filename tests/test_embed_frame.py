@@ -52,7 +52,7 @@ def built_frontend(settings, tmp_path):
     that is the case the resolver exists to handle.
     """
     import json as _json
-    from apps.tokens import views_embed
+    from apps.embedding import views_embed
 
     vite = tmp_path / ".vite"
     vite.mkdir()

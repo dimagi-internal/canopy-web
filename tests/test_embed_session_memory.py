@@ -4,7 +4,7 @@ The widget may SHOW what applies in the visitor's own conversation —
 `GET /api/embed/sessions/{id}/agent-memory` — but a site acting for the person
 is not the person, so it can never CHANGE it: the write stays on
 `/api/people/me/sessions/{id}/agent-memory/`, which a delegated token cannot
-reach (apps/tokens/delegation.py). canopy's own widget is signed in by canopy's
+reach (apps/embedding/delegation.py). canopy's own widget is signed in by canopy's
 session cookie, so there the person is acting and the write goes through.
 """
 from __future__ import annotations

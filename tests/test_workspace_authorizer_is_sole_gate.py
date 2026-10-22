@@ -21,7 +21,7 @@ authorization, only to recognise its shape.
 DELIBERATELY NARROW, and the narrowness is what makes it usable:
 
 * Filtering by USER alone is a listing ("which workspaces am I in?") — not a
-  decision, not flagged. `apps/tokens/embed_apps.py::owned_workspace_slugs` is
+  decision, not flagged. `apps/embedding/embed_apps.py::owned_workspace_slugs` is
   exactly this and is correct as written.
 * Filtering by WORKSPACE alone is a listing ("who is in this workspace?") — not
   flagged either.

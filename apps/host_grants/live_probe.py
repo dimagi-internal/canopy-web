@@ -112,7 +112,7 @@ def run(app) -> ProbeReport:
     """Walk the whole chain for this site. Never raises; never records."""
     from canopy_sdk import conformance
 
-    from apps.tokens import connection_test
+    from apps.embedding import connection_test
     from . import client_identity, host_gateway, host_grants, outbound
 
     report = ProbeReport()

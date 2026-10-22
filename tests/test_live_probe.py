@@ -433,7 +433,7 @@ def test_test_connection_runs_the_live_probe_and_the_table_shows_it(site, owner,
     _register(site, host)
     c = Client()
     c.force_login(owner)
-    monkeypatch.setattr("apps.tokens.connection_test.run", lambda app: [])
+    monkeypatch.setattr("apps.embedding.connection_test.run", lambda app: [])
     r = _in_lifespan(host.inner, lambda: c.post(f"/api/workspaces/connect/connected-apps/{site.pk}/test"))
     assert r.status_code == 200, r.content
     body = r.json()
@@ -450,7 +450,7 @@ def test_a_failing_live_probe_fails_test_connection(site, owner, monkeypatch):
     _register(site, host)
     c = Client()
     c.force_login(owner)
-    monkeypatch.setattr("apps.tokens.connection_test.run", lambda app: [])
+    monkeypatch.setattr("apps.embedding.connection_test.run", lambda app: [])
     body = _in_lifespan(host.inner, lambda: c.post(
         f"/api/workspaces/connect/connected-apps/{site.pk}/test")).json()
     assert body["ok"] is False and body["live_probe_ok"] is False

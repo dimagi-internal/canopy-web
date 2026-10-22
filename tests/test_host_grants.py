@@ -30,7 +30,7 @@ from apps.agents.models import Agent
 from apps.common.encryption import decrypt_secret
 from apps.events.models import Event
 from apps.host_grants import client_identity, host_grants, outbound
-from apps.tokens import assertions
+from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -341,7 +341,7 @@ def test_a_site_without_host_config_ignores_the_id_jag(site, host):
     ("https://user:pw@host.test/", "93.184.216.34"),
 ])
 def test_outbound_refuses_plaintext_private_and_credentialed_urls(url, addr):
-    with mock.patch("apps.tokens.jwks.socket.getaddrinfo",
+    with mock.patch("apps.embedding.jwks.socket.getaddrinfo",
                     return_value=[(2, 1, 6, "", (addr, 443))]):
         with pytest.raises(outbound.OutboundError):
             outbound.check_url(url)
@@ -349,7 +349,7 @@ def test_outbound_refuses_plaintext_private_and_credentialed_urls(url, addr):
 
 def test_outbound_never_follows_a_redirect():
     resp = mock.Mock(status_code=302, headers={"Location": "https://10.0.0.5/"})
-    with mock.patch("apps.tokens.jwks.socket.getaddrinfo",
+    with mock.patch("apps.embedding.jwks.socket.getaddrinfo",
                     return_value=[(2, 1, 6, "", ("93.184.216.34", 443))]), \
             mock.patch("apps.host_grants.outbound.requests.post", return_value=resp) as post:
         with pytest.raises(outbound.OutboundError, match="redirected"):

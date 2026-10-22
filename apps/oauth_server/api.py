@@ -1,7 +1,7 @@
 """The MCP clients a person connected by signing in, under `/api/tokens/connected-apps`.
 
 Mounted on `/tokens` with the `tokens` tag, where these routes were published.
-Their view names are shared with `apps/tokens/connected_apps_api.py`, so their
+Their view names are shared with `apps/embedding/connected_apps_api.py`, so their
 operationIds are module-qualified; `OPERATION_LABEL` keeps the published
 `tokens_` label (the MCP tool names `tokens_list_connected_apps`,
 `tokens_disconnect_app`).

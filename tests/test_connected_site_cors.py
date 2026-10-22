@@ -2,7 +2,7 @@
 
 ace-web's chat panel calls canopy from the browser with a token it minted. That
 was same-origin while canopy lived at labs.connect.dimagi.com/canopy; at
-canopy.dimagi.com the browser needs canopy's CORS answer (apps/tokens/cors.py).
+canopy.dimagi.com the browser needs canopy's CORS answer (apps/embedding/cors.py).
 """
 import pytest
 from django.utils import timezone

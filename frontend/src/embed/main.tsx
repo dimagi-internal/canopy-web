@@ -14,7 +14,7 @@ import { applyFrameTheme } from './theme'
  * shape of issue #345, where an iframe rendered the entire app inside itself.
  *
  * `window.CANOPY_EMBED` is injected by the server that rendered the shell
- * (apps/tokens/views_embed.py), which is the only party that can be trusted to
+ * (apps/embedding/views_embed.py), which is the only party that can be trusted to
  * say which origins may talk to this frame — the host is the one being
  * authenticated, so a list it supplied would authenticate nothing.
  */

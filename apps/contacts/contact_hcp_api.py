@@ -18,7 +18,7 @@ Two things have to be true at once, and they pull against each other:
   and that the browser itself marks `Sec-Fetch-Site: same-origin`, bound to that
   cookie and this contact, single use, minutes long. The host page's scripts get
   none of the three: they cannot read the cookie, their requests are cross-origin
-  (and carry no canopy cookie — CORS never allows credentials, `tokens/cors.py`),
+  (and carry no canopy cookie — CORS never allows credentials, `embedding/cors.py`),
   and they cannot read the frame. What this does NOT stop is a host's own SERVER
   impersonating its visitor with forged headers — a server that does that can
   already sign anything about its visitor, which is exactly why trust is a
@@ -46,7 +46,7 @@ from ninja.errors import HttpError
 from apps.common.token_hash import hash_token
 from .contact_api import contact_auth
 from apps.tokens.models import HcpFrameProof
-from apps.tokens.views_embed import FRAME_COOKIE
+from apps.embedding.views_embed import FRAME_COOKIE
 
 contact_hcp_router = Router(auth=contact_auth, tags=["contact"])
 

@@ -113,7 +113,7 @@ and the embed does not — not a component. Compare against `ChatPage.tsx`:
   with the same `normalizeTheme` — the loader's check runs in the host's page,
   where a raw `postMessage` can skip it.
 - `theme.mode` goes in the iframe URL (`?theme=`, allowlisted) and is rendered
-  by the server (`apps/tokens/views_embed.py::_theme_mode`); applying it from JS
+  by the server (`apps/embedding/views_embed.py::_theme_mode`); applying it from JS
   flashes the wrong theme on load.
 - The accent overrides canopy's own `--primary`. The font is set inline on
   `body`: `--font-sans` lives in a `@theme inline` block, so overriding the
@@ -196,7 +196,7 @@ needs an ID-JAG signed by the **host's** key. The live probe walks the rest.
   are pushed on the transition only — a site is not an agent, so there is no
   task to ask on.
 - **On demand only**, from Test connection
-  (`apps/tokens/connected_apps_api.py`): each probe mints a real grant and makes
+  (`apps/embedding/connected_apps_api.py`): each probe mints a real grant and makes
   real calls at a host. A host with no probe is "not set up"
   (`last_probe_ok` null), never a failure.
 - **canopy-web probes itself the same way**: `/oauth/probe`, the `canopy-probe`

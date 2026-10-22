@@ -849,7 +849,7 @@ def list_runners(request: HttpRequest):
         .prefetch_related("declared_flags", "enrollments")
         .order_by(models.F("last_heartbeat_at").desc(nulls_last=True))
     )
-    from apps.tokens import delegation
+    from apps.embedding import delegation
 
     offered = delegation.offered_for(request)
     if offered is not None:

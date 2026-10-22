@@ -443,7 +443,7 @@ def test_canopy_uses_the_sdks_constants_not_copies():
     from canopy_sdk import contract
 
     from apps.host_grants import client_identity, host_gateway, host_grants
-    from apps.tokens import assertions
+    from apps.embedding import assertions
 
     assert client_identity.JWT_BEARER_GRANT is contract.JWT_BEARER_GRANT
     assert client_identity.CLIENT_ASSERTION_TYPE is contract.CLIENT_ASSERTION_TYPE
