@@ -1891,6 +1891,8 @@ def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int) -> dict:
         "RUNNER_SESSIONS": box.get("RUNNER_SESSIONS", "1"),
         "RUNNER_DIRECTED": box.get("RUNNER_DIRECTED", "0"),
         "RUNNER_EXECUTOR": box.get("RUNNER_EXECUTOR", "acp"),
+        # A box in ZDR mode runs every unit in it (one key, the locked profile).
+        "RUNNER_DATA_MODE": box.get("RUNNER_DATA_MODE", ""),
         "HOME": home, "USER": unit["user"], "LOGNAME": unit["user"],
         "PATH": f"{home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "WORK_DIR": f"{home}/work", "AGENT_ROOT": f"{home}/agents",
@@ -2280,7 +2282,8 @@ def install_broker(*, run=subprocess.run) -> bool:
 #: The stack parameters a box of units needs (never a secret), as the legacy
 #: runner.env names them — what an in-place move carries over into box.env.
 BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS", "RUNNER_DIRECTED",
-                "RUNNER_EXECUTOR", "RUNNER_WORKSPACE", "RUNNER_NAME", "AGENT_SLUGS", "RUNNER_UNITS")
+                "RUNNER_EXECUTOR", "RUNNER_WORKSPACE", "RUNNER_NAME", "AGENT_SLUGS", "RUNNER_UNITS",
+                "RUNNER_DATA_MODE")
 _IN_PLACE_FETCH_ENV = """#!/bin/sh
 # Replaced by `cloud_runner.py --install-units` when this box moved to isolation
 # units in place: the old script re-wrote /opt/canopy-runner/runner.env (a PAT, the

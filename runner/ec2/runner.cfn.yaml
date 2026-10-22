@@ -29,6 +29,16 @@ Parameters:
     Type: String
     Default: ''
     Description: Comma-separated agent slugs this runner may drive.
+  RunnerDataMode:
+    Type: String
+    AllowedValues: ['', 'zdr']
+    Default: ''
+    Description: >
+      `zdr` puts the box in ZDR mode: Claude runs only on the credential bundle's
+      API-key slot (a key from an Anthropic organisation with zero data
+      retention), every turn runs under a locked permission profile, and the
+      box reports the mode on every heartbeat so a person's `zdr` declaration
+      is in force. See docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md.
   RunnerExecutor:
     Type: String
     AllowedValues: ['cli', 'acp']
@@ -279,6 +289,7 @@ Resources:
                 RUNNER_SESSIONS=${RunnerSessions}
                 RUNNER_DIRECTED=${RunnerDirected}
                 RUNNER_EXECUTOR=${RunnerExecutor}
+                RUNNER_DATA_MODE=${RunnerDataMode}
                 RUNNER_WORKSPACE=${RunnerWorkspace}
                 RUNNER_NAME=${RunnerName}
                 AGENT_SLUGS=${AgentSlugs}

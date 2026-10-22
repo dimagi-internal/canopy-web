@@ -662,6 +662,29 @@ Either, when convenient:
   The stack's template stays the old one; the next `up.sh` will still show (and
   refuse) the instance change until you take the blue/green path.
 
+## ZDR mode (`RunnerDataMode=zdr`): a box that may hold a host's PHI
+
+A box in ZDR mode is the only kind canopy routes a ZDR-requiring conversation to
+(spec `docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md`). In it:
+
+- **One credential.** Claude runs only on the bundle's **API-key slot**, which must hold
+  a key from an Anthropic organisation with zero data retention. Box logins and
+  subscriptions are never used, and there is no fallback (`claude.*` health shows only
+  `api-key`). Without the key the box reports `ready: false`.
+- **A locked profile on every turn**: `claude -p --permission-mode dontAsk` with a
+  settings document that denies Bash, file writes, the web, subagents and scheduling,
+  allows only read tools and canopy-web's MCP, and disables bypass and auto mode. ACP
+  is not used. Telemetry, error reporting and non-essential model calls are off.
+- **Nothing kept**: a turn's caller envelope and profiles are deleted when it ends,
+  and a confined turn's transcript too.
+- **It says so.** Every heartbeat carries `data_mode` and a config hash; canopy counts
+  a person's `zdr` declaration only while the box reports `zdr`.
+
+Standing one up: deploy with `RunnerDataMode=zdr` on a dedicated box (agents that
+hold a PHI declaration only; egress limited to `api.anthropic.com` and canopy-web), put
+the ZDR key in the API-key slot with `canopy runner credential`, then a person
+declares `zdr` on the runner page (passkey).
+
 ## Isolation units: one box, many tenants (`RunnerUnits`)
 
 Spec: `docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md`; the

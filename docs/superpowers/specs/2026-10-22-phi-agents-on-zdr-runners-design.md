@@ -58,7 +58,8 @@ of these hold for the call in front of it:
 
 - the agent's author has declared this capability PHI-safe, at the commit that is
   executing;
-- the runner executing the turn carries `zdr` and `phi`, each declared by a person;
+- the runner executing the turn carries `zdr`, declared by a person, and is reporting ZDR
+  mode on its heartbeat;
 - the conversation carries the host's requirement, and has from its first turn.
 
 The host adds its own allowlist of agents it accepts the claim from. Generated synthetic
@@ -77,8 +78,8 @@ at boot:
 
 - **One credential.** Claude runs only on a dedicated Anthropic API key from an
   organisation with zero data retention enabled (Jonathan's choice, 2026-10-22). The key
-  goes in the runner's credential bundle as a new typed slot, `zdr-api-key`; in ZDR mode
-  the cascade is that one slot. Box logins, `subscription-*` and the ordinary `api-key`
+  goes in the runner's credential bundle's API-key slot; in ZDR mode the cascade is that
+  one slot.
   slot are refused: the box will not start (health `claude.zdr` = fail) while any is
   present, and never falls back. A usage cap waits; it does not cascade.
 - **Locked harness on every turn**, on both executors:
@@ -105,20 +106,22 @@ at boot:
   config that produced it (settings, MCP config, environment allowlist, credential slot
   kinds — never the key). That is a self-report and proves nothing; what it buys is
   drift detection: a flagged box whose report is missing or disagrees cannot claim
-  (§3).
+  (§2).
 
 ## 2. Flags a person declares (canopy-web)
 
-- `RUNNER_FLAGS` gains `phi`: *"This box runs in ZDR mode: one zero-data-retention key, a
-  locked harness, and nothing kept after a turn."* `zdr` keeps its 09-30 meaning. A host
-  that serves PHI requires both.
+- `zdr` keeps its vocabulary entry and gains its teeth: it now means *"this box runs in ZDR
+  mode"*. No second flag — a host that serves PHI requires `zdr`.
 - `set_runner_flags` is refused for a `RunnerAccessToken` (by path in `runner_auth.py`
   and in the view), for PATs and for every `is_machine` caller, and requires a passkey
   step-up: it is a person vouching for a box. The 09-30 test that lets a token declare
   it is inverted.
-- **Claim requires agreement:** a runner carrying `phi` claims a turn only while its
-  latest heartbeat reports `data_mode: "zdr"`. Otherwise turn status says *"…'s ZDR
-  runner is not reporting ZDR mode"*.
+- **A declaration counts only while the box agrees** (built: `runner_requirements.in_force`):
+  a person's `zdr` routes ZDR work — claim, placement, the gateway — only while the box's
+  latest heartbeat reports `data_mode: "zdr"`. A declared box that is not in ZDR mode takes
+  no ZDR work, and the runner page says *"Not in force: this box is not reporting ZDR
+  mode"*. A box reporting the mode with no declaration is not ZDR either. The report and
+  its hash are written every beat and cannot be set by hand.
 
 ## 3. The requirement is never dropped
 
@@ -131,7 +134,7 @@ session (a schedule a ZDR conversation set up) stores them on the turn itself
 ## 4. PHI stays inside the boundary in canopy-web
 
 One predicate, `apps.harness.sensitivity.is_sensitive(session | turn)` — true when the
-requirements include `phi` — read everywhere below, with one test per surface:
+requirements include `zdr` — read everywhere below, with one test per surface:
 
 - **Store less.** No `TurnTranscript`; `tool_end` events keep the tool name and
   status, never the result; `Message` rows are kept (they are the conversation), under a
@@ -142,7 +145,7 @@ requirements include `phi` — read everywhere below, with one test per surface:
 - **Refuse re-processing.** Auto-debug files the failure with its id and error class
   only; the fleet reviewers skip sensitive turns (the transcript endpoints refuse them
   anyway, since they hold no transcript).
-- **Memory, people, contributors** — already refused for ZDR turns; extended to `phi`.
+- **Memory, people, contributors** — already refused for ZDR turns.
 
 ## 5. The author's PHI-safe declaration
 
@@ -187,14 +190,14 @@ published key (the same JWKS the host already reads for canopy's client metadata
 | `turn`, `session` | ids |
 
 The gateway refuses to call a host at all when the session's requirements are not met
-(as today), and now also when a `phi` session's capability has no declaration covering the
+(as today), and now also when a `zdr` session's capability has no declaration covering the
 executing SHA. The SDK gains the host half: `canopy_sdk.host.verify_execution(request)` →
 the claims, or a named refusal.
 
 **The host's side (connect-labs).** Labs' `CANOPY_EXECUTION_STATEMENTS` turns on, and
 `real_data_clearance` (today: the agent is in `CANOPY_PHI_AGENTS`, and labs requires
 `zdr`) adds, per call: a valid statement; `agent` in labs' allowlist; a declaration whose
-SHA equals `agent_sha`; runner flags ⊇ {`zdr`, `phi`}; requirements ⊇ {`zdr`, `phi`}.
+SHA equals `agent_sha`; the runner's flags in force ⊇ {`zdr`}; requirements ⊇ {`zdr`}.
 Labs records the agent, SHA, runner and declarer on `AuditEvent` and `MCPAuditLog`.
 
 **The side door closes.** Every agent's own connect-labs credential is a
@@ -219,17 +222,17 @@ Each step ships on its own and fails closed until the next lands.
 1. **connect-labs: no agent over real data.** Done in connect-labs (`canopy_panel.py`):
    the panel is not drawn over real data, and labs' MCP refuses canopy's calls there.
 2. **canopy-web: flags.** Machine callers and the runner's own token cannot declare a
-   flag; passkey step-up; `phi` in `RUNNER_FLAGS`; requirement inheritance (§3).
+   flag; passkey step-up; requirement inheritance (§3). Done (#1804).
 3. **canopy-web runner: ZDR mode** (§1), including the ACP settings fix and the posture
    report; claim requires agreement (§2).
 4. **Stand up the box.** Jonathan obtains the ZDR-org key; a dedicated cloud box in ZDR
-   mode; Jonathan declares `zdr` + `phi`.
+   mode; Jonathan declares `zdr`.
 5. **canopy-web: storage rules** (§4).
 6. **Declarations + the execution statement** (§5, §6), with the SDK's host half and a
    `dimagi-canopy` release; connect-labs verifies it and flips
    `CANOPY_EXECUTION_STATEMENTS`.
 7. **The workflow agent and `workflow:full`** (§7). Then connect-labs sets
-   `CANOPY_RUNNER_REQUIREMENTS=zdr,phi` and `CANOPY_PHI_AGENTS=<the agent>`.
+   `CANOPY_RUNNER_REQUIREMENTS=zdr` and `CANOPY_PHI_AGENTS=<the agent>`.
 8. **Red team, end to end:** a scripted run on a real opportunity that tries each exit —
    Bash, a file write, WebFetch, a subagent, a non-ZDR runner, a self-declared flag, a
    fork, a share link, Slack, export, auto-debug, an undeclared SHA, the agent's own PAT —
