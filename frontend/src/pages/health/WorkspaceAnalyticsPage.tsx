@@ -2,7 +2,7 @@ import { useState, type JSX, type ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 
 import { getWorkspaceAnalytics, type WorkspaceAnalyticsOut } from '@/api/workspaces'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { DailyBars } from './DailyBars'
 import { AdminOnly, HealthViews } from './HealthViews'
 import { useTreeRead } from './useTreeRead'
@@ -120,7 +120,7 @@ function Analytics({ a }: { a: WorkspaceAnalyticsOut }): JSX.Element {
                 <td className="font-mono text-foreground-secondary">{u.top.join(', ') || '—'}</td>
                 <Num>{compact(u.cache_read_tokens)}</Num>
                 <Num>{compact(u.input_tokens)} · {compact(u.output_tokens)}</Num>
-                <td className="text-foreground-secondary">{u.last_at ? relativeTime(u.last_at, new Date()) : '—'}</td>
+                <td className="text-foreground-secondary">{u.last_at ? relativeAge(u.last_at, new Date(), { seconds: false }) : '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -162,7 +162,7 @@ function Breakdown({ title, column, testid, rows, note, empty }: {
               <Num>{r.turns}</Num><Num>{r.failed}</Num><Num>{r.sessions}</Num><Num>{r.messages}</Num>
               <Num>{r.people}</Num><Num>{compact(r.cache_read_tokens)}</Num>
               <Num>{compact(r.input_tokens)} · {compact(r.output_tokens)}</Num>
-              <td className="text-foreground-secondary">{r.last_at ? relativeTime(r.last_at, now) : '—'}</td>
+              <td className="text-foreground-secondary">{r.last_at ? relativeAge(r.last_at, now, { seconds: false }) : '—'}</td>
             </tr>
           ))}
         </tbody>

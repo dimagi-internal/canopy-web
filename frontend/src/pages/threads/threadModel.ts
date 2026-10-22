@@ -9,6 +9,7 @@
  * state — an unread or unanswered message says so.
  */
 import type { AgentThread, ThreadMessage } from '@/api/threads'
+import { scopedPath } from '../../lib/scopedLinks'
 
 export type Position = 'agree' | 'counter' | 'decline' | 'question'
 
@@ -100,5 +101,5 @@ export function budgetWords(t: Pick<AgentThread, 'messages_used' | 'max_messages
 
 /** The thread page for a thread, under a workspace. */
 export function threadHref(workspace: string, id: string): string {
-  return `/w/${workspace}/threads/${id}`
+  return scopedPath(workspace, `/threads/${id}`)
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { relativeAge } from '@/lib/relativeAge'
 import {
   WorkbenchShell,
   WorkbenchMain,
@@ -29,18 +30,6 @@ const ICON: Record<string, string> = {
   task: '◆',
   session: '⌘',
   skill: '✧',
-}
-
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const m = Math.floor(diff / 60000)
-  if (m < 1) return 'now'
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  const d = Math.floor(h / 24)
-  if (d < 7) return `${d}d ago`
-  return new Date(iso).toLocaleDateString()
 }
 
 function dayLabel(iso: string): string {
@@ -76,7 +65,7 @@ function EventRow({ ev, label }: { ev: TimelineEvent; label: string }) {
   const inner = (
     <>
       <div className="w-14 shrink-0 pt-0.5 text-right text-[11px] tabular-nums text-muted-foreground">
-        {relativeTime(ev.at)}
+        {relativeAge(ev.at, new Date(), { seconds: false, dateAfterDays: 7 })}
       </div>
       <div
         aria-hidden

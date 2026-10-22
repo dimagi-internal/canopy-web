@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { listCheckins } from '@/api/checkins'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /**
  * /w/:workspace/huddles/groups/:slug — a work group's old page. Work groups
@@ -17,9 +18,9 @@ export function LegacyGroupRedirect() {
     listCheckins()
       .then((rows) => {
         const hit = rows.find((c) => c.legacy_slug === slug)
-        if (alive) setTo(hit ? hit.url : `/w/${workspace}/huddles`)
+        if (alive) setTo(hit ? hit.url : scopedPath(workspace, '/huddles'))
       })
-      .catch(() => alive && setTo(`/w/${workspace}/huddles`))
+      .catch(() => alive && setTo(scopedPath(workspace, '/huddles')))
     return () => {
       alive = false
     }

@@ -36,10 +36,11 @@ import {
   groupByPlace,
   placeOf,
   reads,
-  relTime,
+  IN_WORDS,
   type AgentAccess,
   type Place,
 } from './memory/words'
+import { relativeAge } from '@/lib/relativeAge'
 
 /** The two canopy-level switches. They are POLICY: they grant no agent anything.
  *  An agent is granted only when you allow it in a conversation (and, separately,
@@ -367,7 +368,7 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
             <span className="inline-flex items-center gap-1" title={`Last given to an agent ${new Date(u.last_at).toLocaleString()}`}>
               <Eye className="h-3 w-3" />
               Given to {(u.by ?? []).map((s) => names.get(s) ?? s.toUpperCase()).join(', ')} in{' '}
-              {u.conversations === 1 ? '1 conversation' : `${u.conversations} conversations`} · last {relTime(u.last_at)}
+              {u.conversations === 1 ? '1 conversation' : `${u.conversations} conversations`} · last {relativeAge(u.last_at, new Date(), IN_WORDS)}
             </span>
           ) : (
             <span>Not used yet</span>
@@ -404,7 +405,7 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
                   access.length === 0
                     ? 'No agent can read them right now.'
                     : `${access.map((a) => a.name).join(' and ')} can read ${settled.length === 1 ? 'it' : 'them'}`
-                }${access.length > 0 && usedIn > 0 && lastUsed ? `, and ${usedIn === 1 ? 'was' : 'has been'} given ${settled.length === 1 ? 'it' : 'them'} in ${usedIn === 1 ? '1 conversation' : `${usedIn} conversations`}, most recently ${relTime(lastUsed)}.` : access.length > 0 ? '.' : ''}`}
+                }${access.length > 0 && usedIn > 0 && lastUsed ? `, and ${usedIn === 1 ? 'was' : 'has been'} given ${settled.length === 1 ? 'it' : 'them'} in ${usedIn === 1 ? '1 conversation' : `${usedIn} conversations`}, most recently ${relativeAge(lastUsed, new Date(), IN_WORDS)}.` : access.length > 0 ? '.' : ''}`}
         </p>
         <p className="text-xs text-muted-foreground">
           {readOnly
@@ -543,7 +544,7 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
                     </div>
                   )}
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span>{lastByThem ? `Last read ${relTime(lastByThem.timestamp)}.` : 'Hasn’t read anything yet.'}</span>
+                    <span>{lastByThem ? `Last read ${relativeAge(lastByThem.timestamp, new Date(), IN_WORDS)}.` : 'Hasn’t read anything yet.'}</span>
                     <a
                       href="#remembered"
                       onClick={() => {

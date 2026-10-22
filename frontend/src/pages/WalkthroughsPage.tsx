@@ -5,6 +5,7 @@ import {
   type WalkthroughListItem,
   type WalkthroughKind,
 } from '../api/walkthroughs'
+import { useScopedPath } from '../lib/scopedLinks'
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -25,6 +26,7 @@ function VisibilityChip({ v }: { v: 'private' | 'link' }) {
 }
 
 export function WalkthroughsPage() {
+  const scope = useScopedPath()
   const [params, setParams] = useSearchParams()
   const project = params.get('project') ?? ''
   const kind = (params.get('kind') as WalkthroughKind | null) ?? null
@@ -135,7 +137,7 @@ export function WalkthroughsPage() {
             {items.map((w) => (
               <tr key={w.id} className="border-b hover:bg-muted/50">
                 <td className="py-2 pr-3">
-                  <Link to={`/w/${w.id}`} className="text-primary hover:underline">
+                  <Link to={scope(`/walkthrough/${encodeURIComponent(w.id)}`)} className="text-primary hover:underline">
                     {w.title}
                   </Link>
                 </td>

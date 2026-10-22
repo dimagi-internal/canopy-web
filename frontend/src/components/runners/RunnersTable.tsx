@@ -4,9 +4,10 @@ import { clsx } from 'clsx'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
 import type { TopologyRunnerOut } from '@/api/workspaces'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { statusTone } from '@/pages/runnerTopology'
 import { MissingSessions } from './MissingSessions'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // THE RUNNER TABLE — one table for Health and Topology → Runners, over the
 // topology's own runner rows (`harness.topology.build`). Facts and states only:
@@ -94,7 +95,7 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
                   <span className={clsx('tabular-nums', r.missing_sessions ? 'text-primary' : 'text-foreground-secondary')}>{r.missing_sessions}</span>
                   {!r.usage_reported_at && <span className="text-muted-foreground"> · no report</span>}
                 </td>
-                <td className="text-foreground-secondary">{r.last_heartbeat_at ? relativeTime(r.last_heartbeat_at, now) : 'never'}</td>
+                <td className="text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}</td>
               </tr>
               {open === r.id && (
                 <tr><td colSpan={8} className="bg-muted/30 p-3"><RunnerDetail runner={r} workspace={workspace} /></td></tr>
@@ -150,22 +151,22 @@ function RunnerDetail({ runner: r, workspace }: { runner: TopologyRunnerOut; wor
         <dd className="text-foreground-secondary">
           {r.agents.length === 0 ? 'none in this tree' : r.agents.map((a, i) => (
             <span key={a.slug}>{i > 0 && ', '}
-              <Link to={`/w/${a.workspace}/agents/${a.slug}/settings#running`} className="text-primary hover:underline">{a.name}</Link>
+              <Link to={scopedPath(a.workspace, `/agents/${a.slug}/settings#running`)} className="text-primary hover:underline">{a.name}</Link>
             </span>
           ))}
         </dd>
         <dt className="text-muted-foreground">Last heartbeat</dt>
-        <dd className="text-foreground-secondary">{r.last_heartbeat_at ? relativeTime(r.last_heartbeat_at, now) : 'never'}{r.host && <> · {r.host}</>}</dd>
+        <dd className="text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}{r.host && <> · {r.host}</>}</dd>
         <dt className="text-muted-foreground">Usage report</dt>
         <dd className="text-foreground-secondary">
-          {r.usage_reported_at ? `last sent ${relativeTime(r.usage_reported_at, now)}` : 'not sent yet — it sends one on current code'}
+          {r.usage_reported_at ? `last sent ${relativeAge(r.usage_reported_at, now, { seconds: false })}` : 'not sent yet — it sends one on current code'}
         </dd>
         <dt className="text-muted-foreground">Lives in</dt>
         <dd className="text-foreground-secondary">{r.workspace ?? '—'}{!r.in_tree && ' (outside this tree)'}</dd>
         <dt className="text-muted-foreground">More</dt>
         <dd className="space-x-3">
           <Link to={`/supervisor?tab=runners&runner=${r.id}`} className="text-primary hover:underline">Open in supervisor</Link>
-          <Link to={`/w/${workspace}/settings/topology/runners`} className="text-primary hover:underline">Routing</Link>
+          <Link to={scopedPath(workspace, '/settings/topology/runners')} className="text-primary hover:underline">Routing</Link>
         </dd>
       </dl>
       <div className="rounded-lg border border-border bg-card p-3">

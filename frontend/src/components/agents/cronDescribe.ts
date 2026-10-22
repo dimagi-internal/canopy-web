@@ -38,15 +38,3 @@ export function describeCron(cron: string, tz: string): string {
   if (dom === "*" && mon === "*" && dow === "*") return `Daily at ${time} · ${zone}`;
   return fallback;
 }
-
-/** Coarse relative time — "in 2d", "3h ago". Deliberately not a full i18n
- * formatter: the table only needs to answer "soon or not?". */
-export function relative(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const ms = new Date(iso).getTime() - Date.now();
-  const days = Math.round(ms / 86_400_000);
-  if (Math.abs(days) >= 1) return days > 0 ? `in ${days}d` : `${-days}d ago`;
-  const hours = Math.round(ms / 3_600_000);
-  if (Math.abs(hours) >= 1) return hours > 0 ? `in ${hours}h` : `${-hours}h ago`;
-  return "now";
-}

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { describeCron, relative } from "./cronDescribe";
+import { describe, it, expect } from "vitest";
+import { describeCron } from "./cronDescribe";
 
 describe("describeCron", () => {
   it("renders a weekly schedule", () => {
@@ -58,28 +58,5 @@ describe("describeCron", () => {
         expect(() => describeCron(s, "UTC")).not.toThrow();
       }
     });
-  });
-});
-
-describe("relative", () => {
-  afterEach(() => vi.useRealTimers());
-
-  it("renders an em dash for no value", () => {
-    expect(relative(null)).toBe("—");
-  });
-
-  it("renders future days", () => {
-    vi.useFakeTimers().setSystemTime(new Date("2026-07-15T12:00:00Z"));
-    expect(relative("2026-07-17T13:00:00Z")).toBe("in 2d");
-  });
-
-  it("renders past hours", () => {
-    vi.useFakeTimers().setSystemTime(new Date("2026-07-15T12:00:00Z"));
-    expect(relative("2026-07-15T09:00:00Z")).toBe("3h ago");
-  });
-
-  it("renders 'now' inside the hour", () => {
-    vi.useFakeTimers().setSystemTime(new Date("2026-07-15T12:00:00Z"));
-    expect(relative("2026-07-15T12:10:00Z")).toBe("now");
   });
 });

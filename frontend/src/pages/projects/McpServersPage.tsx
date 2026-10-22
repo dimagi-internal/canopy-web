@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { listMcpServers, type McpServerOut } from '@/api/agents'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { CopyCommand } from '@/components/agents/CopyCommand'
 
 // THE MCP DIRECTORY — every server a workspace project serves (a knowledge base
@@ -68,7 +68,7 @@ export function McpServersPage(): JSX.Element {
               {s.description && <p className="mt-1 text-[13px] text-foreground-secondary">{s.description}</p>}
               <p className="mt-1 text-[12px] text-muted-foreground">
                 Kept by {s.steward_slug}
-                {s.published_at && <> · published {relativeTime(s.published_at, new Date())}</>}
+                {s.published_at && <> · published {relativeAge(s.published_at, new Date(), { seconds: false })}</>}
                 {s.bytes ? <> · {size(s.bytes)}</> : null}
               </p>
               <button

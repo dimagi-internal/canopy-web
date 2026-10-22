@@ -8,6 +8,7 @@ import { saidOn, tally, unwritten, type Stage } from '@/pages/agents/ideaStage'
 import { Section } from '@/pages/agents/sectionLayout'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // ONE CONTRIBUTOR on one project (hal T69): what they are trying to achieve, in
 // their own words with links to where they said it, and their ideas — built so
@@ -25,7 +26,7 @@ const GROUPS: { stage: Stage; title: string; empty?: string }[] = [
 export function ContributorPage(): JSX.Element {
   const { agent, canEdit } = useOutletContext<AgentOutletContext>()
   const { workspace = '', ref = '', person = '' } = useParams<{ workspace: string; ref: string; person: string }>()
-  const base = `/w/${workspace}/agents/${agent.slug}/projects/${encodeURIComponent(ref)}`
+  const base = scopedPath(workspace, `/agents/${agent.slug}/projects/${encodeURIComponent(ref)}`)
   return <ContributorPageView slug={agent.slug} projectRef={ref} person={person} base={base} showRefs={canEdit} />
 }
 

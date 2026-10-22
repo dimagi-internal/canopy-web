@@ -61,6 +61,7 @@ import { AboutPage } from './pages/AboutPage'
 import SupervisorPage from '@/pages/SupervisorPage'
 import ActivityPage from '@/pages/ActivityPage'
 import SchedulesPage from './pages/SchedulesPage'
+import { scopedPath } from './lib/scopedLinks'
 
 /**
  * `lazy()`, plus recovery when the chunk is gone.
@@ -178,7 +179,7 @@ export function TenantRedirect({ to }: { to: string }) {
   if (loading) return null
   if (!active) return <FirstRunPage /> // no membership yet — explain, don't blank
   const suffix = tail ? `/${tail}` : ''
-  return <Navigate to={`/w/${active}/${to}${suffix}`} replace />
+  return <Navigate to={scopedPath(active, `/${to}${suffix}`)} replace />
 }
 
 // Bare "/" → the active workspace's index (which lands on its agents).
@@ -195,9 +196,9 @@ export function RootRedirect() {
 // carried over: /w/x/inbound is where the gcloud runbook sends people, and an
 // inbound link can arrive with one.
 export function SettingsRedirect({ to }: { to: string }) {
-  const { workspace } = useParams()
+  const { workspace = '' } = useParams()
   const { search, hash } = useLocation()
-  return <Navigate to={`/w/${workspace}/settings/${to}${search}${hash}`} replace />
+  return <Navigate to={scopedPath(workspace, `/settings/${to}${search}${hash}`)} replace />
 }
 
 // /w/:workspace index: lands on the workspace's agents — their projects and
@@ -206,14 +207,14 @@ export function SettingsRedirect({ to }: { to: string }) {
 // link never reaches here: the server answers it with a plain 404
 // (canopy-web#1337).
 function WorkspaceIndex() {
-  const { workspace } = useParams()
-  return <Navigate to={`/w/${workspace}/agents`} replace />
+  const { workspace = '' } = useParams()
+  return <Navigate to={scopedPath(workspace, '/agents')} replace />
 }
 
 // /w/:workspace/projects/:agent/:ref[/people/:person] → the project's one page.
 export function ProjectPageRedirect() {
-  const { workspace, agent = '', ref = '', person } = useParams()
-  const page = `/w/${workspace}/agents/${agent}/projects/${encodeURIComponent(ref)}`
+  const { workspace = '', agent = '', ref = '', person } = useParams()
+  const page = scopedPath(workspace, `/agents/${agent}/projects/${encodeURIComponent(ref)}`)
   return <Navigate to={person ? `${page}/people/${person}` : page} replace />
 }
 

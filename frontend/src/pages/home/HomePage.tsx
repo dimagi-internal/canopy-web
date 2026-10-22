@@ -5,7 +5,7 @@ import { actOnTask, type ProjectOut } from '@/api/agents'
 import { hide, loadAttention, unhide, type Attention, type AttentionRow, type AttentionState } from '@/api/attention'
 import { apiV2 } from '@/api/client.v2'
 import { useAuth } from '@/auth/AuthProvider'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { StateDot, type DotTone } from '@/components/sessions/StateDot'
 import { folderKey, shortAge } from '@/pages/ide/ideTree'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
@@ -492,7 +492,7 @@ function AttentionRow({ item, workspaceName, onAct, onHide }: {
           {item.body && <p className="mt-0.5 line-clamp-2 text-[12px] text-foreground-secondary">{item.body}</p>}
           <div className="mt-0.5 text-[11px] text-muted-foreground">
             {meta && <span>{meta} · </span>}
-            <span title={new Date(item.last_activity_at).toLocaleString()}>{relativeTime(item.last_activity_at, new Date())}</span>
+            <span title={new Date(item.last_activity_at).toLocaleString()}>{relativeAge(item.last_activity_at, new Date(), { seconds: false })}</span>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1 pl-15 text-[12px] sm:pl-0">

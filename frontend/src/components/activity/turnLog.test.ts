@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Turn } from "./turnLog";
-import { originLabel, agentLabel, matchesTurnFilters, relativeTime } from "./turnLog";
+import { originLabel, agentLabel, matchesTurnFilters } from "./turnLog";
 
 function turn(over: Partial<Turn>): Turn {
   return {
@@ -71,21 +71,5 @@ describe("matchesTurnFilters", () => {
   it("filters project turns by their project:<name> agent label", () => {
     const p = turn({ agent_slug: null, project: "canopy-web" });
     expect(matchesTurnFilters(p, { agent: "project:canopy-web", origin: null, status: null })).toBe(true);
-  });
-});
-
-describe("relativeTime", () => {
-  const now = new Date("2026-07-20T18:00:00Z");
-  it("reads 'just now' within a minute", () => {
-    expect(relativeTime("2026-07-20T17:59:30Z", now)).toBe("just now");
-  });
-  it("reads minutes", () => {
-    expect(relativeTime("2026-07-20T17:45:00Z", now)).toBe("15m ago");
-  });
-  it("reads hours", () => {
-    expect(relativeTime("2026-07-20T16:00:00Z", now)).toBe("2h ago");
-  });
-  it("reads days", () => {
-    expect(relativeTime("2026-07-18T18:00:00Z", now)).toBe("2d ago");
   });
 });

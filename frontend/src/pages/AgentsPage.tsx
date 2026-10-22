@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { listAgentRoster, type AgentRosterRow } from '@/api/agents'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
+import { scopedPath } from '../lib/scopedLinks'
 
 // The workspace's agents, one row each: who it is and what it is doing — tasks
 // open and waiting on a person, active projects, and its turns (the last one and
@@ -60,7 +61,7 @@ export function AgentsPage() {
         </div>
         {canCreate && (
           <Link
-            to={`/w/${workspace}/agents/new`}
+            to={scopedPath(workspace, '/agents/new')}
             className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90"
           >
             New agent
@@ -103,7 +104,7 @@ export function AgentsPage() {
                     {a.last_turn_at ? (
                       <span className={FAILED.has(a.last_turn_status) ? 'text-destructive' : 'text-foreground-secondary'}
                         title={`${a.last_turn_status} · ${new Date(a.last_turn_at).toLocaleString()}`}>
-                        {relativeTime(a.last_turn_at, now)}
+                        {relativeAge(a.last_turn_at, now, { seconds: false })}
                         {FAILED.has(a.last_turn_status) && ' · failed'}
                       </span>
                     ) : (
@@ -133,7 +134,7 @@ export function AgentsPage() {
             An agent is a persona with its own git repo — skills, hooks and an identity.{' '}
             {canCreate ? (
               <>
-                <Link to={`/w/${workspace}/agents/new`} className="text-primary hover:underline">
+                <Link to={scopedPath(workspace, '/agents/new')} className="text-primary hover:underline">
                   Create one
                 </Link>{' '}
                 here: canopy makes the repo from its agent template, registers it, and walks you

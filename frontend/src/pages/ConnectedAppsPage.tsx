@@ -5,7 +5,7 @@ import { WorkbenchSubHeader } from 'canopy-ui'
 
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { listAgents, type AgentOut } from '@/api/agents'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 import {
   connectApp,
   disconnectApp,
@@ -269,7 +269,7 @@ export function ConnectionTestTable({ result }: { result: ConnectionTest }): JSX
 }
 
 function ago(iso: string | null | undefined, now: Date): string {
-  return iso ? relativeTime(iso, now) : '—'
+  return iso ? relativeAge(iso, now, { seconds: false }) : '—'
 }
 
 /** The live probe's last verdict as a badge: pass, fail, or not set up. */

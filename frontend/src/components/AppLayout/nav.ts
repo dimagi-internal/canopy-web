@@ -23,6 +23,7 @@
 
 import { SURFACES } from '@/guide/surfaces'
 import { roleAllows, type Capability } from '@/lib/workspaceRoles'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /** A single destination. `tenant` items resolve under /w/:workspace. */
 export interface NavItem {
@@ -122,7 +123,7 @@ function resolveItem(
   if (!item.tenant) return [{ href: item.path, label: item.label }]
   if (!opts.active) return []
   if (item.capability && !roleAllows(opts.role, item.capability)) return []
-  return [{ href: `/w/${opts.active}${item.path ? `/${item.path}` : ''}`, label: item.label }]
+  return [{ href: scopedPath(opts.active, item.path ? `/${item.path}` : ''), label: item.label }]
 }
 
 /**
@@ -204,10 +205,10 @@ export function isNavEntryActive(
  */
 export function switchWorkspacePath(pathname: string, slug: string): string {
   const m = /^\/w\/[^/]+\/?(.*)$/.exec(pathname)
-  if (!m || !m[1]) return `/w/${slug}/agents`
+  if (!m || !m[1]) return scopedPath(slug, '/agents')
   const parts = m[1].split('/').filter(Boolean)
-  if (parts[0] === 'settings') return `/w/${slug}/${parts.slice(0, 2).join('/')}`
-  return `/w/${slug}/${LIST_FOR[parts[0]] ?? parts[0]}`
+  if (parts[0] === 'settings') return scopedPath(slug, `/${parts.slice(0, 2).join('/')}`)
+  return scopedPath(slug, `/${LIST_FOR[parts[0]] ?? parts[0]}`)
 }
 
 /** Sections that exist only as one item's page (a shared walkthrough, a thread),

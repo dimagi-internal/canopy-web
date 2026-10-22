@@ -11,6 +11,7 @@ import {
 import { PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import type { RoleOption } from '@/components/people/roles'
 import { roleAllows } from '@/lib/workspaceRoles'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // EVERYONE'S ROLE ON THIS AGENT.
 //
@@ -134,7 +135,7 @@ export function AgentAccessRoster({
             Inherited from the {workspace ? `${workspace} ` : ''}workspace ({people})
           </h4>
           {workspace && (
-            <Link to={`/w/${workspace}/settings/members`} className="text-[11px] text-primary hover:underline">
+            <Link to={scopedPath(workspace, '/settings/members')} className="text-[11px] text-primary hover:underline">
               Manage in workspace →
             </Link>
           )}

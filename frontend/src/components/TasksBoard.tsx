@@ -10,6 +10,7 @@ import {
 } from '@/api/agents'
 import { Markdown } from '@/components/Markdown'
 import { TaskAge } from '@/components/TaskAge'
+import { scopedPath } from '../lib/scopedLinks'
 
 // ── "Who has the ball" model ───────────────────────────────────────────────
 // The board is organized by whose court the next action sits in, not by equal
@@ -209,7 +210,7 @@ function TaskLinkChip({ label, url }: { label: string; url: string }): JSX.Eleme
 // `/agents/*` resolves the active workspace (TenantRedirect).
 export function projectHref(task: TaskOut, workspace?: string): string {
   const tail = `agents/${task.agent_slug}/projects/${task.project_ext_id}`
-  return workspace ? `/w/${workspace}/${tail}` : `/${tail}`
+  return workspace ? scopedPath(workspace, `/${tail}`) : `/${tail}`
 }
 
 const PILL =

@@ -1,4 +1,5 @@
 import type { AgentOut } from '@/api/agents'
+import { scopedPath } from '../lib/scopedLinks'
 
 // Link to the agent's HOME workspace, not the flat `/agents/<slug>`. The flat
 // route goes through TenantRedirect, which resolves the user's ACTIVE workspace
@@ -7,6 +8,6 @@ import type { AgentOut } from '@/api/agents'
 export function agentHref(agent: Pick<AgentOut, 'slug' | 'workspace'>): string {
   const slug = encodeURIComponent(agent.slug)
   return agent.workspace
-    ? `/w/${encodeURIComponent(agent.workspace)}/agents/${slug}`
+    ? scopedPath(agent.workspace, `/agents/${slug}`)
     : `/agents/${slug}`
 }
