@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { clsx } from 'clsx'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import {
   ChatPanel,
   PlacementBanner,
   MenuPrompt,
   useSessionSocket,
-  type PendingAttachment,
-  type PlacementRunner,
   type SecretRequestHost,
 } from 'canopy-ui/chat'
 import { renderChatMarkdown } from '@/components/chat/renderChatMarkdown'
@@ -15,76 +13,25 @@ import { SecretSealCard } from '@/components/vault/SecretSealCard'
 import { wsUrl } from '@/lib/wsUrl'
 import {
   getSession,
-  listMessages,
   attachSession,
   detachSession,
-  requestBackfill,
-  resetSession,
-  closeSession,
-  detachSessionFromSlack,
   sendMessage,
-  setSessionNotify,
-  setSessionTitle,
-  moveSession,
-  placeTurn,
-  answerMenu,
-  ChatApiError,
-  type ChatSessionDetail,
-  uploadAttachment,
-  deleteAttachment,
   appHostFor,
-  forkSession,
   type ChatSession,
 } from '@/api/chat'
-import {
-  CLOSE_POLL_MS,
-  CLOSE_WAIT_MS,
-  closeDestination,
-  closeIntent,
-  closeResultMessage,
-} from '@/components/chat/closeAction'
 import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
-import { MessageContextMenu, canFork, turnIndexAt } from '@/components/chat/MessageContextMenu'
+import { MessageContextMenu } from '@/components/chat/MessageContextMenu'
 import { useSessionMemory } from '@/components/chat/SessionMemoryToggles'
 import { TitleInput } from '@/components/chat/TitleInput'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
-import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
-import { getAgent } from '@/api/agents'
-import { getSessionWorkspacePreference } from '@/api/sessionWorkspace'
-import type { MoveTarget } from '@/components/chat/MoveWorkspaceForm'
-import {
-  findBoundRunner,
-  isBoundRunnerOffline,
-  onlineSessionCapableRunners,
-} from '@/components/chat/runnerEligibility'
-import {
-  backfillAction,
-  restToKitMessage,
-  menuBlocksComposer,
-  menuIdentity,
-  answerHidesMenu,
-  ANSWER_GRACE_MS,
-  type PendingAnswer,
-  sendBlockReason,
-  shouldShowLoadFull,
-  withFreshLiveness,
-} from './chatPageLogic'
-import { scopedPath } from '../lib/scopedLinks'
-
-
-/**
- * "Load full session" WAITS for the rows, it does not guess at them.
- *
- * It used to sleep a flat 1200 ms and read once. Measured on labs (2026-07-31)
- * the rows landed at t+14.6s, so the read happened 13 s early, returned the
- * identical tail, and the button reported success having changed nothing —
- * which is exactly what it looks like from a phone. Now it polls until the
- * transcript actually grows, which is also the only formulation that stays
- * correct as the runner gets faster: with eager persistence most sessions are
- * already complete server-side and the first poll returns immediately.
- */
-const BACKFILL_POLL_MS = 600
-const BACKFILL_TIMEOUT_MS = 30_000
+import { menuBlocksComposer, sendBlockReason, shouldShowLoadFull } from './chatPageLogic'
+import { useAttachments } from './chat/useAttachments'
+import { useMenuAnswer } from './chat/useMenuAnswer'
+import { useMessageFork } from './chat/useMessageFork'
+import { useRunnerPlacement } from './chat/useRunnerPlacement'
+import { useSessionActions } from './chat/useSessionActions'
+import { useSessionMeta } from './chat/useSessionMeta'
+import { useTranscriptPaging } from './chat/useTranscriptPaging'
 
 /**
  * Standalone live-chat route (/w/:workspace/chat/:id). Wires canopy's
@@ -126,80 +73,16 @@ export function ChatPage({
           + 'resolve it the usual way.').catch(() => undefined)} />
     ),
   }), [id])
-  const navigate = useNavigate()
-  const [meta, setMeta] = useState<ChatSessionDetail | null>(null)
-  const [renaming, setRenaming] = useState(editTitle)
   const onTitleChangeRef = useRef(onTitleChange)
   onTitleChangeRef.current = onTitleChange
-  const [metaError, setMetaError] = useState<string | null>(null)
-  // Scroll-back cursor, seeded from the REST detail (the WS `session.state`
-  // snapshot doesn't carry it — it's frozen to the tail page it was built from).
-  const [hasMoreBefore, setHasMoreBefore] = useState(false)
-  const [oldestTurn, setOldestTurn] = useState<number | null>(null)
-  const [loadingEarlier, setLoadingEarlier] = useState(false)
-  const [loadingFull, setLoadingFull] = useState(false)
-  const [resetting, setResetting] = useState(false)
-  const [resetNote, setResetNote] = useState('')
-  const [historyUnavailable, setHistoryUnavailable] = useState(false)
-  // Display name for the header's "with <agent>" tag — `meta.agent_slug` is
-  // the stable id, not something to show. A full agent list isn't otherwise
-  // loaded on this standalone route, so this fetches just the one.
-  const [agentName, setAgentName] = useState<string | null>(null)
-
-  // Offline-runner placement banner state. The session payload only carries
-  // `runner_name` (no runner id/liveness), so offline-ness is DERIVED by
-  // matching that name against the fleet-wide runner list.
-  const [fleetRunners, setFleetRunners] = useState<RunnerOut[]>([])
-  const [placing, setPlacing] = useState(false)
-  // Staged attachments. Uploaded eagerly on pick/paste/drop so the file is on
-  // the server before you press send — sending then sweeps up whatever the
-  // session is holding, which is why no ids need to cross the WebSocket.
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
-
-  // Uploads go one at a time: the server hands files to the runner in upload
-  // order, and the composer's "[Image #N]" means the Nth file staged.
-  const uploads = useRef<Promise<unknown>>(Promise.resolve())
-  const handleAttach = useCallback(
-    (files: File[]) => {
-      for (const file of files) {
-        // Optimistic chip keyed on a temp id, swapped for the server's id on
-        // success. Without it a large paste looks like nothing happened.
-        const tempId = `pending:${file.name}:${Date.now()}:${Math.random()}`
-        setAttachments((prev) => [...prev, { id: tempId, filename: file.name, uploading: true }])
-        uploads.current = uploads.current.then(() => uploadAttachment(id!, file)
-          .then((saved) =>
-            setAttachments((prev) =>
-              prev.map((a) => (a.id === tempId ? { id: saved.id, filename: saved.filename } : a)),
-            ),
-          )
-          .catch((err: unknown) =>
-            setAttachments((prev) =>
-              prev.map((a) =>
-                a.id === tempId
-                  ? { ...a, uploading: false, error: err instanceof Error ? err.message : 'failed' }
-                  : a,
-              ),
-            ),
-          ))
-      }
-    },
-    [id],
-  )
-
-  const handleRemoveAttachment = useCallback((attachmentId: string) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
-    // A failed upload has no server row (its id is still the temp one), so only
-    // ask the server to forget the ones it actually knows about.
-    if (!attachmentId.startsWith('pending:')) {
-      deleteAttachment(attachmentId).catch(() => {
-        /* the chip is already gone from the UI; a stray row is swept server-side */
-      })
-    }
-  }, [])
-  const [placeInfo, setPlaceInfo] = useState<string | null>(null)
-  const [placeError, setPlaceError] = useState<string | null>(null)
   // Your memory in this session lives in the ⋯ menu; null hides it.
   const memory = useSessionMemory(id)
+  const { attachments, attach, remove: removeAttachment, clear: clearAttachments } = useAttachments(id)
+
+  // Session meta seeds the scroll-back cursor (the WS `session.state` snapshot
+  // doesn't carry it — it's frozen to the tail page it was built from). Called
+  // once the fetch lands, after `paging` below exists.
+  const { meta, setMeta, metaError, agentName } = useSessionMeta(id, (m) => paging.seed(m))
 
   // AG-UI on the wire, canopy frames in memory: `fromAgui` turns the protocol
   // back into the same `WsEvent`s the reducer has always consumed, and
@@ -221,363 +104,16 @@ export function ChatPage({
         .then((m) => setMeta((prev) => (prev ? { ...prev, title: m.title } : prev)))
         .catch(() => {})
       onTitleChangeRef.current?.()
-    }, [id]),
+    }, [id, setMeta]),
   })
 
-  // Session meta + scroll-back cursor seed.
-  useEffect(() => {
-    if (!id) return
-    setMeta(null)
-    setMetaError(null)
-    setHistoryUnavailable(false)
-    setAgentName(null)
-    getSession(id)
-      .then((m) => {
-        setMeta(m)
-        setHasMoreBefore(m.has_more_before)
-        setOldestTurn(m.oldest_loaded_turn_index ?? null)
-      })
-      .catch((err: unknown) => {
-        setMetaError(err instanceof Error ? err.message : 'session not found')
-      })
-  }, [id])
-
-  // Resolve the agent's display name for the header tag, once `meta` names a
-  // slug. Not re-fetched per session switch beyond that — `agentSlug` is
-  // stable for the life of a session, so there is nothing to invalidate.
-  useEffect(() => {
-    const slug = meta?.agent_slug
-    if (!slug) return
-    let live = true
-    getAgent(slug)
-      .then((a) => { if (live) setAgentName(a.name) })
-      // Same fallback as every other agent/slug join in this app (e.g.
-      // ChatSessionsPanel's `agentName`): the slug reads fine on its own.
-      .catch(() => { if (live) setAgentName(slug) })
-    return () => { live = false }
-  }, [meta?.agent_slug])
-
-  // Reset the placement-banner UI state on session switch, so a stale info/
-  // error message doesn't leak across sessions. The "Continue on…" picker's
-  // open/closed state is now local to <PlacementBanner> (a fresh mount per
-  // session key anyway, per router.tsx's `key={id}`), so it needs no reset here.
-  useEffect(() => {
-    setPlacing(false)
-    setPlaceInfo(null)
-    setPlaceError(null)
-  }, [id])
-
-  // Fleet runner list, for deriving the bound runner's liveness + the
-  // "Continue on…" eligible set. Fetched once on mount; re-polled below
-  // while the offline banner is showing (see the recovery-poll effect).
-  useEffect(() => {
-    let live = true
-    listRunners()
-      .then((r) => {
-        if (live) setFleetRunners(r)
-      })
-      .catch(() => {
-        /* non-fatal: the offline banner just won't have evidence to show */
-      })
-    return () => {
-      live = false
-    }
-  }, [])
-
-  const boundOffline = isBoundRunnerOffline(
-    meta?.runner_name,
-    fleetRunners,
-    meta?.runner_online,
-  )
-  // Only runners the conversation's host allows (ZDR): the server refuses any
-  // other placement, so offering one would only produce an error.
-  const runnerRequirements = meta?.runner_requirements
-  const continueOptions = useMemo(
-    () => onlineSessionCapableRunners(fleetRunners, runnerRequirements),
-    [fleetRunners, runnerRequirements],
-  )
-  // The bound runner's fleet row — the id `Resume` needs, and the `paused` /
-  // `can_manage` flags that decide whether resuming is even on offer here.
-  const boundRunner = findBoundRunner(meta?.runner_name, fleetRunners)
-
-  // Right-click a message: "Fork from here".
-  const [messageMenu, setMessageMenu] = useState<{ x: number; y: number; turnIndex: number } | null>(null)
-  const [forking, setForking] = useState(false)
-  const [forkError, setForkError] = useState<string | null>(null)
-  const closeMessageMenu = useCallback(() => {
-    setMessageMenu(null)
-    setForkError(null)
-  }, [])
-  const onMessageContextMenu = (e: ReactMouseEvent) => {
-    // Only where a fork can be cut; elsewhere the browser's own menu stays.
-    if (!canFork(meta?.runner_name, fleetRunners)) return
-    const turnIndex = turnIndexAt(e.target)
-    // A row not yet in the transcript (your own line, still sending) has a
-    // placeholder index; leave the browser's own menu there.
-    if (turnIndex == null || !socket.state.messages.some((m) => m.turn_index === turnIndex && m.status !== 'pending')) {
-      return
-    }
-    e.preventDefault()
-    setForkError(null)
-    setMessageMenu({ x: e.clientX, y: e.clientY, turnIndex })
-  }
-  const forkHere = async () => {
-    if (!messageMenu || !id) return
-    setForking(true)
-    setForkError(null)
-    try {
-      const fork = await forkSession(id, messageMenu.turnIndex)
-      setMessageMenu(null)
-      navigate(
-        sessionPath
-          ? sessionPath(fork)
-          : scopedPath(fork.workspace, `/chat/${encodeURIComponent(fork.id)}`),
-      )
-    } catch (err) {
-      setForkError(err instanceof ChatApiError ? err.message : 'Could not fork this session')
-    } finally {
-      setForking(false)
-    }
-  }
-  const boundPaused = boundOffline && Boolean(boundRunner?.paused)
-
-  // Answering the dialog a blocked agent is waiting on. The clear is optimistic
-  // and happens at TAP time, not when the server confirms: nothing retracts the
-  // menu until the next session report (~10s) or the agent's next row, and until
-  // then a phone showed live buttons, "needs you" and a locked composer over an
-  // answer that had already landed. The runner re-reads the screen and refuses
-  // a stale answer, so the worst case is a menu that comes back (see
-  // `answerHidesMenu`), which is better than a tap that looks ignored.
-  const [answering, setAnswering] = useState(false)
-  const [answerError, setAnswerError] = useState('')
-  const [pendingAnswer, setPendingAnswer] = useState<PendingAnswer | null>(null)
-  const [answerClock, setAnswerClock] = useState(0)
-  const onAnswerMenu = useCallback(
-    async (option: number | null, selections?: number[][] | null,
-           texts?: (string | null)[] | null) => {
-      if (!id) return
-      const menu = socket.state.menu
-      setAnswering(true)
-      setAnswerError('')
-      if (menu) {
-        setPendingAnswer({
-          key: menuIdentity(menu),
-          note: menu.answer_note ?? '',
-          activity: socket.state.activity,
-          at: Date.now(),
-        })
-      }
-      try {
-        const res = await answerMenu(id, option, selections, texts)
-        if (!res.ok) {
-          // Not relayed, so nothing will press the key. Put the dialog back
-          // with the reason instead of claiming the answer was sent.
-          setPendingAnswer(null)
-          setAnswerError(
-            res.reason === 'unavailable'
-              ? 'That runner is offline — answer it in emdash.'
-              : res.reason === 'unbound'
-                ? 'This session has no runner to answer on.'
-                : 'Could not answer.',
-          )
-        }
-      } catch {
-        setPendingAnswer(null)
-        setAnswerError('Could not answer.')
-      } finally {
-        setAnswering(false)
-      }
-    },
-    [id, socket.state.menu, socket.state.activity],
-  )
-
-  // Wake up when the grace window runs out, so a dialog that is STILL reported
-  // comes back without waiting for some unrelated frame to trigger a render.
-  useEffect(() => {
-    if (!pendingAnswer) return
-    const t = setTimeout(() => setAnswerClock((n) => n + 1),
-      Math.max(0, pendingAnswer.at + ANSWER_GRACE_MS - Date.now()) + 50)
-    return () => clearTimeout(t)
-  }, [pendingAnswer])
-
-  const menuHidden = Boolean(
-    socket.state.menu && answerHidesMenu(socket.state.menu, pendingAnswer, Date.now()),
-  )
-  const visibleMenu = menuHidden ? undefined : socket.state.menu
-
-  // Let go of the answer once the truth has caught up: the agent's activity has
-  // moved on (it is working, or idle again), or a dialog is showing that this
-  // answer does not cover (refused, a different dialog, or grace expired).
-  useEffect(() => {
-    if (!pendingAnswer) return
-    const activity = socket.state.activity
-    if (activity !== pendingAnswer.activity && activity !== 'blocked') {
-      setPendingAnswer(null)
-    } else if (socket.state.menu && !menuHidden) {
-      setPendingAnswer(null)
-    }
-  }, [pendingAnswer, socket.state.activity, socket.state.menu, menuHidden, answerClock])
-
-  // The composer refuses rather than queueing — see sendBlockReason.
-  // A viewer was given this chat to read (canopy_sessions.access); the server
-  // refuses their send with a 403, so say so here instead of letting it bounce.
-  const disabledReason =
-    meta?.my_role === 'viewer'
-      ? "You were given this chat as a viewer, so you can read it but not send."
-      : sendBlockReason({
-          runnerName: meta?.runner_name,
-          boundOffline,
-          paused: boundPaused,
-          blockedOnMenu: menuBlocksComposer(visibleMenu),
-        })
-  // "Others see" moved from the composer into the ⋯ menu (canopy-web#1004) —
-  // an owner/editor has a composer for it to describe; a viewer does not.
-  const canEditTypingVisibility = meta?.my_role === 'owner' || meta?.my_role === 'editor'
-  const canDetachSlack = canEditTypingVisibility
-  const canRename = canEditTypingVisibility
-  const renameTo = async (next: string) => {
-    if (!id) return
-    const s = await setSessionTitle(id, next)
-    setMeta((prev) => (prev ? { ...prev, title: s.title } : prev))
-    setRenaming(false)
-    onTitleChange?.()
-  }
-  // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
-  // (already online + session-capable) options above.
-  const placementRunners: PlacementRunner[] = useMemo(
-    () => continueOptions.map((r) => ({ id: r.id, name: r.name, online: r.status === 'online' })),
-    [continueOptions],
-  )
-
-  // Best-effort fleet resync, used both by the recovery poll below and after
-  // a successful placement — non-fatal on failure (the banner just keeps
-  // showing the last-known snapshot).
-  const refreshFleet = useCallback(() => {
-    listRunners()
-      .then((r) => setFleetRunners(r))
-      .catch(() => {
-        /* non-fatal: keep the last-known fleet snapshot */
-      })
-  }, [])
-
-  // While the offline banner is up, a bound runner that recovers later in
-  // the same page-load would otherwise leave a stale-offline false positive
-  // forever. Poll on a modest interval for as long as the condition holds, so
-  // recovery hides the banner; stop the instant it flips false (recovered, or
-  // session switch).
-  //
-  // Each tick re-reads the SESSION's liveness too, not just the fleet: the
-  // payload's `runner_online` is authoritative in `isBoundRunnerOffline`, so a
-  // `false` read at mount outranks any fleet row that says the box is back.
-  // Refreshing only the fleet is why a laptop that rebooted and reconnected
-  // kept "<runner> is unavailable" up over a Connected, streaming chat until
-  // the page was remounted (Jonathan, 2026-10-22).
-  //
-  // A tick also fires the moment the tab comes back to the foreground or the
-  // network returns — a machine waking from sleep is exactly when the runner
-  // reconnects, and background timers are throttled while it slept.
-  useEffect(() => {
-    if (!boundOffline) return
-    let cancelled = false
-    const POLL_MS = 30_000
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let inFlight = false
-    const tick = () => {
-      // One read at a time, so a wake event landing mid-poll cannot start a
-      // second timer chain.
-      if (inFlight) return
-      inFlight = true
-      clearTimeout(timer)
-      Promise.allSettled([
-        listRunners().then((r) => {
-          if (!cancelled) setFleetRunners(r)
-        }),
-        getSession(id).then((m) => {
-          if (!cancelled) setMeta((prev) => withFreshLiveness(prev, m))
-        }),
-      ]).finally(() => {
-        inFlight = false
-        if (!cancelled) timer = setTimeout(tick, POLL_MS)
-      })
-    }
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') tick()
-    }
-    timer = setTimeout(tick, POLL_MS)
-    document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('online', tick)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-      document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('online', tick)
-    }
-  }, [boundOffline, id])
-
-  const placementFail = useCallback((err: unknown) => {
-    if (err instanceof ChatApiError && err.status === 404) {
-      setPlaceInfo('No pending message to place.')
-      return
-    }
-    if (err instanceof ChatApiError && err.status === 422) {
-      setPlaceError(err.message)
-      return
-    }
-    setPlaceError(err instanceof Error ? err.message : 'Could not place the turn.')
-  }, [])
-
-  const waitForIt = useCallback(() => {
-    setPlacing(true)
-    setPlaceInfo(null)
-    setPlaceError(null)
-    placeTurn(id, 'wait')
-      .then(() => {
-        setPlaceInfo('Waiting for the bound runner.')
-        refreshFleet()
-      })
-      .catch(placementFail)
-      .finally(() => setPlacing(false))
-  }, [id, placementFail, refreshFleet])
-
-  // Un-park the bound runner from inside the chat. The fix for a pause is one
-  // tap and it is YOUR decision being undone, so making you leave for
-  // /supervisor to do it is what pushed people toward waiting instead.
-  const resumeBoundRunner = useCallback(() => {
-    if (!boundRunner) return
-    setPlacing(true)
-    setPlaceInfo(null)
-    setPlaceError(null)
-    unpauseRunner(boundRunner.id)
-      .then((fresh) => {
-        setFleetRunners((prev) => prev.map((r) => (r.id === fresh.id ? fresh : r)))
-        // Drop the session payload's liveness snapshot — it was computed before
-        // the unpause and is stale by construction — so the freshly-patched
-        // fleet row answers instead. This clears a STALE READING, it does not
-        // assert the box is up: unpause restores whatever the heartbeat says,
-        // so a runner that is also offline keeps the banner, correctly.
-        setMeta((prev) => (prev ? { ...prev, runner_online: null, runner_status: null } : prev))
-        setPlaceInfo(`${fresh.name} resumed.`)
-      })
-      .catch(placementFail)
-      .finally(() => setPlacing(false))
-  }, [boundRunner, placementFail])
-
-  const continueOn = useCallback(
-    (runnerId: string) => {
-      if (!runnerId) return
-      setPlacing(true)
-      setPlaceInfo(null)
-      setPlaceError(null)
-      placeTurn(id, runnerId)
-        .then(() => {
-          setPlaceInfo('Placed — the new runner will pick it up shortly.')
-          refreshFleet()
-        })
-        .catch(placementFail)
-        .finally(() => setPlacing(false))
-    },
-    [id, placementFail, refreshFleet],
-  )
+  const paging = useTranscriptPaging(id, socket.prependMessages)
+  const placement = useRunnerPlacement(id, meta, setMeta)
+  const { boundOffline, boundRunner, boundPaused } = placement
+  const fork = useMessageFork(id, meta?.runner_name, placement.fleetRunners, socket.state.messages, sessionPath)
+  const menuAnswer = useMenuAnswer(id, socket.state.menu, socket.state.activity)
+  const { pendingAnswer, menuHidden, visibleMenu } = menuAnswer
+  const actions = useSessionActions({ sessionId: id, meta, setMeta, onLeave, onTitleChange, editTitle })
 
   // Attach-on-open / detach-on-unmount. The server's attach counter floors at
   // 0 rather than going negative, so a detach that lands BEFORE its paired
@@ -604,160 +140,23 @@ export function ChatPage({
     }
   }, [id])
 
-  const loadEarlier = useCallback(async () => {
-    if (oldestTurn == null || loadingEarlier) return
-    // Capture the session this call was made for. Belt-and-suspenders on top
-    // of the route-level `key={id}` remount (router.tsx): even if this
-    // component instance somehow outlives the session it was fetching for,
-    // a stale response can never splice into whatever session is current.
-    const requestedId = id
-    setLoadingEarlier(true)
-    try {
-      const page = await listMessages(requestedId, oldestTurn)
-      if (requestedId !== id) return
-      if (page.messages.length > 0) {
-        socket.prependMessages(page.messages.map(restToKitMessage))
-        setOldestTurn(page.messages[0].turn_index)
-      }
-      // A local (origin=runner) session with no server rows yet returns an
-      // empty page with has_more_before=false — history lives on the runner,
-      // so fall through to offering the full backfill instead.
-      setHasMoreBefore(page.messages.length > 0 ? page.has_more_before : false)
-    } catch {
-      /* keep what's shown; the button stays available to retry */
-    } finally {
-      if (requestedId === id) setLoadingEarlier(false)
-    }
-  }, [id, oldestTurn, loadingEarlier, socket])
-
-  /** Drop canopy's derived copy and rebuild it from the runner's transcript.
-   * Cheap and repeatable: the rows are a cache of a file on the runner's disk,
-   * so this is the way to pick up anything that happened outside a turn. */
-  const resetFromTranscript = useCallback(async () => {
-    if (!id) return
-    setResetting(true)
-    setResetNote('')
-    try {
-      const res = await resetSession(id)
-      setResetNote(
-        res.ok
-          ? `Reset — rebuilding ${res.rows_dropped} message(s) from ${res.runner}`
-          : res.reason === 'runner_unreachable'
-            ? 'Its runner is offline — try again when it is back'
-            : 'Nothing to rebuild from: this session has no runner transcript',
-      )
-    } catch (err) {
-      setResetNote(err instanceof ChatApiError ? err.message : 'Reset failed')
-    } finally {
-      setResetting(false)
-    }
-  }, [id])
-
-  const [closing, setClosing] = useState(false)
-  const [closeNote, setCloseNote] = useState<string | null>(null)
-
-  // Navigate away only when the session is REALLY gone. When the close was
-  // relayed to a runner (`closing: true`), the emdash task is still the truth
-  // until the runner's next report retires the session, so wait for that and
-  // THEN leave. Leaving on the relay alone would claim a result we do not have
-  // yet, and staying put for good left you on a dead chat with no way back
-  // (Jonathan, 2026-09-18: "it should return me to the previous page").
-  const closeThisSession = useCallback(async () => {
-    if (!meta) return
-    const intent = closeIntent(meta)
-    if (intent.kind === 'blocked') {
-      setCloseNote(intent.why)
-      return
-    }
-    if (intent.confirm && !window.confirm('This chat is still working. Close it anyway?')) return
-    const leave = () => {
-      if (onLeave) return onLeave()
-      const to = closeDestination(window.history.state?.idx, meta.workspace)
-      if (to === -1) navigate(-1)
-      else navigate(to, { replace: true })
-    }
-    const closingId = id
-    setClosing(true)
-    setCloseNote(null)
-    try {
-      const result = await closeSession(closingId)
-      const message = closeResultMessage(result, meta)
-      if (message) {
-        setCloseNote(message)
-        return
-      }
-      if (result.closing) {
-        setCloseNote('Closing on the runner…')
-        const deadline = Date.now() + CLOSE_WAIT_MS
-        while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, CLOSE_POLL_MS))
-          // Stop if you navigated elsewhere while waiting.
-          if (!window.location.pathname.includes(closingId)) return
-          const s = await getSession(closingId).catch(() => null)
-          if (s && s.status !== 'active') {
-            leave()
-            return
-          }
-        }
-        setCloseNote('Still closing on the runner. It will drop off the list once it’s done.')
-        return
-      }
-      leave()
-    } catch {
-      setCloseNote('Couldn’t close this session')
-    } finally {
-      setClosing(false)
-    }
-  }, [id, meta, navigate, onLeave])
-
-  const loadFull = useCallback(async () => {
-    if (loadingFull) return
-    // See loadEarlier: capture the session this call was made for so a
-    // stale response can never apply to a different session.
-    const requestedId = id
-    setHistoryUnavailable(false)
-    setLoadingFull(true)
-    try {
-      const res = await requestBackfill(requestedId)
-      if (requestedId !== id) return
-      const action = backfillAction(res.status)
-      if (action === 'unavailable') {
-        setHistoryUnavailable(true)
-        return
-      }
-      if (action === 'reload-after-delay') {
-        // The runner is shipping. Poll the TAIL read for `backfill_pending` —
-        // it carries the same flag for a nineteenth of the bytes (measured on
-        // labs: 43 KB / 0.36s against 825 KB / 1.6-2.8s for ?full=true on a
-        // 940-row session). Polling the full read instead meant ~11 downloads
-        // of the entire transcript, on a phone, to answer a yes/no question;
-        // it was slow enough to time out a 90s client. The flag is the exact
-        // signal (cleared by the runner's final chunk), so waiting on it beats
-        // both a fixed sleep and watching the row count grow — growth cannot
-        // tell "still arriving" from "there was nothing more to send".
-        const deadline = Date.now() + BACKFILL_TIMEOUT_MS
-        while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, BACKFILL_POLL_MS))
-          if (requestedId !== id) return
-          const probe = await getSession(requestedId)
-          if (requestedId !== id) return
-          if (!probe.backfill_pending) break
-        }
-      }
-      // Exactly ONE full read, after the wait — not one per poll. Whatever has
-      // landed by the deadline is applied either way: a partially rebuilt
-      // history beats discarding it and showing the tail.
-      const full = await getSession(requestedId, { full: true })
-      if (requestedId !== id) return
-      socket.prependMessages(full.messages.map(restToKitMessage))
-      setHasMoreBefore(false)
-      setOldestTurn(full.oldest_loaded_turn_index ?? null)
-    } catch {
-      if (requestedId === id) setHistoryUnavailable(true)
-    } finally {
-      if (requestedId === id) setLoadingFull(false)
-    }
-  }, [id, loadingFull, socket])
+  // The composer refuses rather than queueing — see sendBlockReason.
+  // A viewer was given this chat to read (canopy_sessions.access); the server
+  // refuses their send with a 403, so say so here instead of letting it bounce.
+  const disabledReason =
+    meta?.my_role === 'viewer'
+      ? "You were given this chat as a viewer, so you can read it but not send."
+      : sendBlockReason({
+          runnerName: meta?.runner_name,
+          boundOffline,
+          paused: boundPaused,
+          blockedOnMenu: menuBlocksComposer(visibleMenu),
+        })
+  // "Others see" moved from the composer into the ⋯ menu (canopy-web#1004) —
+  // an owner/editor has a composer for it to describe; a viewer does not.
+  const canEditTypingVisibility = actions.canManage
+  const canDetachSlack = actions.canManage
+  const canRename = actions.canManage
 
   // Until the socket is up the transcript is not empty, it is unknown: saying
   // "Start the conversation" over a session still loading read as a blank chat.
@@ -782,19 +181,19 @@ export function ChatPage({
     [loadingTranscript],
   )
 
-  const showLoadFull = shouldShowLoadFull({
-    runnerName: meta?.runner_name,
-    hasMoreBefore,
-    historyUnavailable,
-  })
-
   // "Load earlier"/"Load full session" moved into the ⋯ menu (ChatSessionMenu,
   // below) — Jonathan, 2026-10-05: they used to live here as a strip PINNED
   // above the transcript whenever the server held more history, which on an
   // old session is most of the time, for a control almost never tapped. Only
   // the WARNING stays pinned: it's a fact about what's on screen, not an
   // action, so it still renders nothing when there's nothing to say.
-  const historySlot = !historyUnavailable ? undefined : (
+  const showLoadFull = shouldShowLoadFull({
+    runnerName: meta?.runner_name,
+    hasMoreBefore: paging.hasMoreBefore,
+    historyUnavailable: paging.historyUnavailable,
+  })
+
+  const historySlot = !paging.historyUnavailable ? undefined : (
     <div className="flex flex-col items-center gap-1 border-b border-border py-2">
       <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-1.5 text-[12px] text-warning">
         Full history unavailable — runner offline. Showing the latest messages.
@@ -843,68 +242,6 @@ export function ChatPage({
   const staleRunning = liveWorking === undefined && Boolean(meta?.running);
   const title = meta?.title?.trim() || 'Chat'
 
-  // "Disconnect from Slack": stop the session posting into its bound thread and
-  // the thread's replies reaching it. Confirmed first — re-attaching means a
-  // fresh share, which starts a new thread.
-  const [detachingSlack, setDetachingSlack] = useState(false)
-  const [slackNote, setSlackNote] = useState<string | null>(null)
-  const detachSlack = async () => {
-    if (!id || !meta?.slack) return
-    if (!window.confirm(
-      "Disconnect this session from its Slack thread? Replies there will no longer reach it, " +
-      "and its replies will stop posting there.")) return
-    setDetachingSlack(true)
-    setSlackNote(null)
-    try {
-      await detachSessionFromSlack(id)
-      setMeta((prev) => (prev ? { ...prev, slack: null } : prev))
-      setSlackNote('Disconnected from Slack')
-    } catch (err) {
-      setSlackNote(err instanceof Error ? err.message : 'Could not disconnect from Slack')
-    } finally {
-      setDetachingSlack(false)
-    }
-  }
-
-  // Where this session could be moved to — fetched only for a session that is
-  // yours to move (`can_move`), since the menu item is the only reader.
-  const [moveTargets, setMoveTargets] = useState<MoveTarget[] | undefined>(undefined)
-  const canMove = Boolean(meta?.can_move)
-  useEffect(() => {
-    if (!canMove) return
-    let live = true
-    getSessionWorkspacePreference()
-      .then((pref) => {
-        if (live) setMoveTargets(pref.choices)
-      })
-      .catch(() => {})
-    return () => {
-      live = false
-    }
-  }, [canMove])
-
-  const moveToWorkspace = async (workspace: string) => {
-    if (!id) return
-    const moved = await moveSession(id, workspace)
-    setMeta((prev) => (prev ? { ...prev, workspace: moved.workspace } : prev))
-    if (onLeave) return
-    // The URL names the workspace; keep it true so a reload lands here.
-    navigate(scopedPath(moved.workspace, `/chat/${encodeURIComponent(id)}`), {
-      replace: true,
-    })
-  }
-
-  const toggleNotify = async () => {
-    if (!id || !meta) return
-    const next = !meta.notify_every_completion
-    setMeta((prev) => (prev ? { ...prev, notify_every_completion: next } : prev))
-    try {
-      await setSessionNotify(id, next)
-    } catch {
-      setMeta((prev) => (prev ? { ...prev, notify_every_completion: !next } : prev))
-    }
-  }
-
   // "with <agent>" / the project name / "no agent" — the same tag the Feed and
   // the Sessions list show per row, missing from the one place you most want
   // it: a session you're actually inside, with only its (often generic) title
@@ -924,18 +261,18 @@ export function ChatPage({
         )}
       >
         <div className={clsx('min-w-0', compact && 'flex items-baseline gap-1.5')}>
-          {renaming && meta && canRename ? (
+          {actions.renaming && meta && canRename ? (
             <TitleInput
               initial={meta.title ?? ''}
-              onSave={renameTo}
-              onCancel={() => setRenaming(false)}
+              onSave={actions.renameTo}
+              onCancel={() => actions.setRenaming(false)}
               className={clsx('w-64 font-semibold', compact ? 'text-[13px]' : 'text-sm')}
             />
           ) : canRename ? (
             <h1 className={clsx('truncate font-semibold text-foreground', compact ? 'text-[13px]' : 'text-sm')}>
               <button
                 type="button"
-                onClick={() => setRenaming(true)}
+                onClick={() => actions.setRenaming(true)}
                 title="Rename this session"
                 data-testid="session-title"
                 className="max-w-full truncate rounded px-0.5 text-left hover:bg-muted"
@@ -989,16 +326,16 @@ export function ChatPage({
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
-          {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
-          {slackNote && <span className="text-[12px] text-muted-foreground">{slackNote}</span>}
+          {actions.closeNote && <span className="text-[12px] text-muted-foreground">{actions.closeNote}</span>}
+          {actions.resetNote && <span className="text-[12px] text-muted-foreground">{actions.resetNote}</span>}
+          {actions.slackNote && <span className="text-[12px] text-muted-foreground">{actions.slackNote}</span>}
           {id && (
             <ChatSessionMenu
               sessionId={id}
               agentSlug={meta?.agent_slug ?? null}
               myRole={meta?.my_role ?? null}
               notifyEveryCompletion={meta ? meta.notify_every_completion : undefined}
-              onToggleNotify={() => void toggleNotify()}
+              onToggleNotify={() => void actions.toggleNotify()}
               shareDisabledReason={disabledReason}
               onShare={async (command) => {
                 // Sent over REST like any message; `noteLocalSend` is what shows
@@ -1010,44 +347,44 @@ export function ChatPage({
                 await sendMessage(id, command, clientId)
                 socket.noteLocalSend(command, clientId)
               }}
-              showLoadEarlier={hasMoreBefore}
-              onLoadEarlier={() => void loadEarlier()}
-              loadingEarlier={loadingEarlier}
+              showLoadEarlier={paging.hasMoreBefore}
+              onLoadEarlier={() => void paging.loadEarlier()}
+              loadingEarlier={paging.loadingEarlier}
               showLoadFull={showLoadFull}
-              onLoadFull={() => void loadFull()}
-              loadingFull={loadingFull}
-              onReset={() => void resetFromTranscript()}
-              resetting={resetting}
-              onClose={() => void closeThisSession()}
-              closing={closing}
+              onLoadFull={() => void paging.loadFull()}
+              loadingFull={paging.loadingFull}
+              onReset={() => void actions.resetFromTranscript()}
+              resetting={actions.resetting}
+              onClose={() => void actions.closeThisSession()}
+              closing={actions.closing}
               // A viewer was given this chat to read, not to type into — the
               // control changes what a person's OWN composer shows others,
               // which a viewer has no composer for.
               slackThread={meta?.slack ?? null}
               // Same gate as the server's: an owner or editor of the session.
-              onDetachSlack={canDetachSlack ? () => void detachSlack() : undefined}
-              detachingSlack={detachingSlack}
+              onDetachSlack={canDetachSlack ? () => void actions.detachSlack() : undefined}
+              detachingSlack={actions.detachingSlack}
               typingVisibility={canEditTypingVisibility ? socket.typingVisibility : undefined}
               onTypingVisibilityChange={
                 canEditTypingVisibility ? socket.setTypingVisibility : undefined
               }
               workspace={meta?.workspace}
-              moveTargets={canMove ? moveTargets : undefined}
-              onMove={canMove ? moveToWorkspace : undefined}
+              moveTargets={actions.canMove ? actions.moveTargets : undefined}
+              onMove={actions.canMove ? actions.moveToWorkspace : undefined}
               memory={memory}
             />
           )}
         </div>
       </div>
-      <div className="min-h-0 flex-1" onContextMenu={onMessageContextMenu}>
-        {messageMenu && (
+      <div className="min-h-0 flex-1" onContextMenu={fork.onMessageContextMenu}>
+        {fork.messageMenu && (
           <MessageContextMenu
-            x={messageMenu.x}
-            y={messageMenu.y}
-            busy={forking}
-            error={forkError}
-            onFork={forkHere}
-            onDismiss={closeMessageMenu}
+            x={fork.messageMenu.x}
+            y={fork.messageMenu.y}
+            busy={fork.forking}
+            error={fork.forkError}
+            onFork={fork.forkHere}
+            onDismiss={fork.closeMessageMenu}
           />
         )}
         <ChatPanel
@@ -1058,15 +395,15 @@ export function ChatPage({
             // The server consumes whatever the session is holding, so the chips
             // are spent the moment we send — leaving them would imply they will
             // ride along again on the next message.
-            setAttachments([])
+            clearAttachments()
             socket.sendChat()
           }}
           onStop={socket.stopChat}
           onUnqueue={socket.unqueueChat}
           awaitingReply={socket.awaitingReply}
           attachments={attachments}
-          onAttach={handleAttach}
-          onRemoveAttachment={handleRemoveAttachment}
+          onAttach={attach}
+          onRemoveAttachment={removeAttachment}
           onUpdateDraft={socket.updateDraft}
           onDiscard={socket.discardDraft}
           // "Others see" moved into the ⋯ menu (ChatSessionMenu, above) — not
@@ -1089,9 +426,9 @@ export function ChatPage({
             visibleMenu ? (
               <MenuPrompt
                 menu={visibleMenu}
-                busy={answering}
-                error={answerError}
-                onAnswer={onAnswerMenu}
+                busy={menuAnswer.answering}
+                error={menuAnswer.answerError}
+                onAnswer={menuAnswer.answer}
               />
             ) : menuHidden ? (
               // The tap's receipt, shown only while the dialog is still being
@@ -1103,18 +440,18 @@ export function ChatPage({
             ) : boundOffline ? (
               <PlacementBanner
                 runnerName={meta?.runner_name ?? ''}
-                eligibleRunners={placementRunners}
-                busy={placing}
-                error={placeError}
-                info={placeInfo}
-                onWait={waitForIt}
-                onPlace={continueOn}
+                eligibleRunners={placement.placementRunners}
+                busy={placement.placing}
+                error={placement.placeError}
+                info={placement.placeInfo}
+                onWait={placement.waitForIt}
+                onPlace={placement.continueOn}
                 paused={boundPaused}
                 pausedNote={boundRunner?.paused_note || undefined}
                 // Pause/resume is owner-only server-side; `can_manage` is the
                 // row saying so. Without it, Resume would 404 and read as the
                 // runner refusing to come back.
-                onResume={boundPaused && boundRunner?.can_manage ? resumeBoundRunner : undefined}
+                onResume={boundPaused && boundRunner?.can_manage ? placement.resumeBoundRunner : undefined}
               />
             ) : undefined
           }
