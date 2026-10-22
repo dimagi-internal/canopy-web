@@ -7,6 +7,17 @@ title = "canopy-web"
 [extend]
 useDefault = true
 
+# canopy's own bearer tokens, by prefix (apps/tokens/models.py `PREFIX`,
+# apps/harness: crt_/cct_, apps/canopy_sessions/chat_keys.py: chk_,
+# apps/contacts/hcp_oauth.py: hcpat_/hcprt_). The random part is
+# `secrets.token_urlsafe(32)` — 43 base64url characters.
+[[rules]]
+id = "canopy-token"
+description = "canopy-web bearer token (personal, delegated, contact, caller, runner, chat key, HCP)"
+regex = '''\b(?:cpat|cdt|ccon|cct|crt|chk|hcpat|hcprt)_[A-Za-z0-9_-]{40,}'''
+entropy = 3.5
+keywords = ["cpat_", "cdt_", "ccon_", "cct_", "crt_", "chk_", "hcpat_", "hcprt_"]
+
 # Deliberately fake secrets — the redaction tests feed a GitHub PAT, a JWT and a
 # PEM private key to the scrubber to prove it removes them. They have to look
 # real, so every specific rule fires on them.

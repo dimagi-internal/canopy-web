@@ -32,6 +32,12 @@ class PersonalToken(models.Model):
     looks up an unrevoked match, and stamps `request.user = token.user`.
     """
 
+    #: Every personal access token minted now starts with this, so it is recognisable on
+    #: sight (secret scanners, the transcript scrubber) and `principal.resolve_bearer`
+    #: looks it up in this table alone. Tokens minted before it are 43 bare
+    #: characters and still resolve (`principal.LEGACY_LENGTH`).
+    PREFIX = "cpat_"
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -123,7 +129,7 @@ class PersonalToken(models.Model):
             expires_at = (
                 None if ttl_days == 0 else timezone.now() + timedelta(days=ttl_days)
             )
-        raw = secrets.token_urlsafe(32)
+        raw = cls.PREFIX + secrets.token_urlsafe(32)
         token_hash = hash_token(raw)
         token = cls.objects.create(
             user=user, token_hash=token_hash, label=label, expires_at=expires_at,
@@ -567,6 +573,12 @@ class DelegatedToken(models.Model):
     """Short-lived bearer minted by token exchange: <app> acting as <user>.
     DB-backed (not JWT) so it is revocable and the table is the audit trail."""
 
+    #: Every delegated token minted now starts with this, so it is recognisable on
+    #: sight (secret scanners, the transcript scrubber) and `principal.resolve_bearer`
+    #: looks it up in this table alone. Tokens minted before it are 43 bare
+    #: characters and still resolve (`principal.LEGACY_LENGTH`).
+    PREFIX = "cdt_"
+
     app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="delegated_tokens")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="delegated_tokens")
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
@@ -593,7 +605,7 @@ class DelegatedToken(models.Model):
     def issue(cls, *, app, user, ttl_seconds, assurance: str = "delegated",
               runner_requirements=()):
         from django.utils import timezone
-        raw = secrets.token_urlsafe(32)
+        raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, user=user, assurance=assurance,
             runner_requirements=list(runner_requirements),
@@ -842,6 +854,12 @@ class ContactToken(models.Model):
     standing.
     """
 
+    #: Every contact token minted now starts with this, so it is recognisable on
+    #: sight (secret scanners, the transcript scrubber) and `principal.resolve_bearer`
+    #: looks it up in this table alone. Tokens minted before it are 43 bare
+    #: characters and still resolve (`principal.LEGACY_LENGTH`).
+    PREFIX = "ccon_"
+
     app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="contact_tokens")
     contact = models.ForeignKey(
         "contacts.Contact", on_delete=models.CASCADE, related_name="tokens",
@@ -866,7 +884,7 @@ class ContactToken(models.Model):
     def issue(cls, *, app, contact, ttl_seconds, runner_requirements=(), verified_email=""):
         from django.utils import timezone
 
-        raw = secrets.token_urlsafe(32)
+        raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, contact=contact, runner_requirements=list(runner_requirements),
             verified_email=verified_email or "",
