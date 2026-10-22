@@ -179,6 +179,13 @@ def upload_session(
     finally:
         tmp_path.unlink(missing_ok=True)
 
+    # A sensitive conversation is never shared (spec 2026-10-22-phi-agents-on-zdr-
+    # runners §4): its transcript is the host's data.
+    from apps.harness import sensitivity
+
+    if sensitivity.claude_session_is_sensitive(parsed.cli_session_id):
+        raise ProblemError(403, "Not shared", type_=TYPE_FORBIDDEN, detail=sensitivity.REFUSAL)
+
     # Idempotent re-upload: if this owner already shared this CLI session,
     # return the existing link rather than creating a duplicate.
     if parsed.cli_session_id:

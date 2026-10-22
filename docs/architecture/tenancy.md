@@ -283,4 +283,29 @@ Built and **off** unless `CANOPY_RETENTION_ENFORCE=true`.
 - Per-workspace rules: `/w/:ws/settings/retention`, `GET|POST|PUT|DELETE
   /api/workspaces/{slug}/retention…`. Any member reads; `retention.manage` (admin+) changes;
   every change goes to the event log; a preview counts what the rules would delete.
+- **A sensitive conversation is held to its own clock.** One that requires ZDR runners
+  (`apps.harness.sensitivity.is_sensitive`) is purged after `CANOPY_SENSITIVE_KEEP_DAYS`
+  (30) by the same heartbeat sweep **whatever `CANOPY_RETENTION_ENFORCE` says**
+  (`retention.services._sweep_sensitive`, a forced rule tallied as `#0`); a shorter
+  workspace rule still wins when enforcement is on.
 - Spec: `docs/superpowers/specs/2026-10-05-content-retention-design.md`.
+
+## Sensitive conversations (`apps/harness/sensitivity.py`)
+
+`is_sensitive(session | turn)` — the requirements (`runner_requirements.requirements_of`,
+so a child, dispatched or forked turn inherits it) include `zdr`, or cannot be read. It is
+THE predicate; every surface below asks it, one test each in
+`tests/test_sensitive_storage.py` (spec `2026-10-22-phi-agents-on-zdr-runners` §4):
+
+- **Stored less:** no `TurnTranscript` (`ledger.append_transcript` answers the runner with
+  an empty success); a `tool_end`/`tool_result` event, a `TOOL_RESULT` `Message` and its
+  live frame keep `{tool_use_id, is_error, withheld}`, never the result
+  (`sensitivity.strip_result`, in `ledger.append_events`, `persist_transcript_rows` and
+  `post_session_stream`). The `TOOL_USE` row is kept.
+- **MCP Apps:** a View gets `tool_result: null` and fetches its data as the viewer from
+  `tool_input`; a receipt keeps no excerpt; `ui/update-model-context` is accepted and not
+  kept (`apps/tokens/mcp_apps_views.py`).
+- **Never re-exposed:** share-link upload (403), Slack share / new thread (403) and
+  mirroring (`slack.relay`), export (403), the usage scan's title.
+- **Never re-processed:** auto-debug starts nothing for a turn with any requirement; the
+  fleet's transcript readers find none to read.

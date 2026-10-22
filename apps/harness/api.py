@@ -2016,6 +2016,12 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     n = 0
     from apps.canopy_sessions.transcript_noise import is_system_noise
 
+    from . import sensitivity
+
+    # The live frame carries what the row stores (spec 2026-10-22-phi-agents-on-
+    # zdr-runners §4): a watcher and a reload see the same withheld result.
+    withhold = sensitivity.is_sensitive(binding.session)
+
     for e in payload.events:
         # The noise filter has to run HERE too, not just in
         # persist_transcript_rows. Now that user events fan out live, a filter
@@ -2043,6 +2049,8 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # (observed 2026-07-27). The client upserts on turn_index, so a message
         # that does arrive twice collapses instead of doubling.
         event_payload = e.payload
+        if withhold and e.kind in sensitivity.RESULT_KINDS:
+            event_payload = {**sensitivity.strip_result(e.payload), "text": ""}
         if e.kind == "user":
             author = authors_by_index.get(e.index)
             if author:

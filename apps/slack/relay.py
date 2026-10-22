@@ -21,6 +21,8 @@ import re
 
 from django.db import IntegrityError, transaction
 
+from apps.harness import sensitivity
+
 from . import client, menus
 from .models import SlackMenuPost, SlackRelayPost
 
@@ -194,6 +196,8 @@ def relay(turn, rows) -> int:
     """Post each reply row of `turn` into its Slack thread, once. Returns posts made."""
     if not getattr(turn, "chat_session_id", None):
         return 0
+    if sensitivity.is_sensitive(turn):
+        return 0  # never mirrored (spec 2026-10-22-phi-agents-on-zdr-runners §4)
     dest = turn_destination(turn)
     if dest is None:
         return 0
@@ -441,7 +445,7 @@ def on_transcript(session, rows) -> None:
     into the session directly (announced, not mirrored); agent rows written
     outside a turn are relayed (see `relay_after_turn`).
     """
-    if session_destination(session) is None:
+    if session_destination(session) is None or sensitivity.is_sensitive(session):
         return
     users = [t for _i, k, t in rows if k == "user"]
     if users:

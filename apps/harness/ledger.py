@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 
 
 def append_events(turn: Turn, events: list[dict]) -> int:
+    from . import sensitivity
+
+    if any(e.get("kind") in sensitivity.RESULT_KINDS for e in events) and sensitivity.is_sensitive(turn):
+        # A sensitive conversation's tool results are never stored (spec
+        # 2026-10-22-phi-agents-on-zdr-runners §4): the row keeps which call and
+        # whether it failed, and so does the live frame built from it.
+        events = [{**e, "payload": sensitivity.strip_result(e.get("payload"))}
+                  if e.get("kind") in sensitivity.RESULT_KINDS else e for e in events]
     with transaction.atomic():
         # Lock the turn row first so concurrent appenders to the same turn
         # serialize on the Max("seq") read instead of racing each other into
@@ -113,6 +121,13 @@ def append_transcript(turn: Turn, raw_lines: list[str], *, batch_id: str = "") -
     A turn still executing must not be failed over transcript SIZE, so this
     never raises; the caller (the HTTP route) always sees success.
     """
+    from . import sensitivity
+
+    if sensitivity.is_sensitive(turn):
+        # A sensitive conversation keeps no transcript (spec 2026-10-22-phi-agents-
+        # on-zdr-runners §4). The runner still gets its success, so it never retries.
+        return TurnTranscript(turn=turn, line_count=0, bytes_raw=0, truncated=False)
+
     # Drop truly-empty elements (see docstring) before both the count and the
     # join — a splitter's trailing "" must never count as a stored line.
     lines = [line for line in raw_lines if line != ""]
