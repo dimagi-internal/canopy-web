@@ -30,6 +30,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.core import signing
 
 from apps.agents.models import Agent
+from apps.canopy_sessions import doors
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.canopy_sessions.participants import ensure_participant
@@ -874,7 +875,8 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
             origin_ref = {**(origin_ref or {}), "attachments": stored}
         prompt = "\n\n".join(p for p in (prompt, *notes) if p) or "(sent an attachment)"
     _remember_location(session, inbound)
-    _message, turn = session_services.send_message(
+    _message, turn = doors.send_from(
+        "slack",
         session=session,
         text=prompt,
         # A contact has no account; enqueue_turn ignores an anonymous user, so
@@ -1018,8 +1020,8 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
             closed.append(last)
     asked: list[Turn] = []
     for turn in closed:
-        _msg, again = session_services.send_message(
-            session=session, text=turn.prompt, user=user,
+        _msg, again = doors.send_from(
+            "slack", session=session, text=turn.prompt, user=user,
             # Idempotent per lost turn: a double click re-asks once.
             client_id=f"requeue:{turn.pk}", origin=turn.origin,
             initiator=who.for_user(user, via=via, assurance=""),

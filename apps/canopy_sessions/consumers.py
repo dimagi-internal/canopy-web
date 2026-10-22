@@ -15,7 +15,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from apps.harness import initiator as who
 from apps.realtime.groups import chat_user_group, session_group
 
-from . import access, agui, attach, drafts, presence, serializers, stream_map
+from . import access, agui, attach, doors, drafts, presence, serializers, stream_map
 from . import services as chat_services
 from .models import Draft, Message, Session, SessionParticipant
 
@@ -411,22 +411,15 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         text = committed if text is None else text
         if not text.strip():
             return None
-        # A site's token carries its runner requirements (ZDR). Stamped before
-        # the send so the turn is routed under them, as the REST send does. A
-        # union — a socket without them never lifts a floor already set.
-        chat_services.add_runner_requirements(self.session,
-                                              self.scope.get("runner_requirements", ()))
-        from apps.common import request_context
-
         # No HTTP request behind a socket frame, so nothing else would record what
         # sent it: bind the socket's own provenance (apps/harness/provenance.py),
         # and name a widget's host the way the REST send does (`who.channel`).
-        with request_context.bound(_socket_context(self.scope)):
-            msg, turn = chat_services.send_message(
-                session=self.session, text=text, user=self.user, client_id=client_id,
-                initiator=who.for_scope(self.scope, via=who.channel(self.scope, "chat")),
-            )
-        chat_services.maybe_execute_inline(turn)
+        msg, _turn = doors.send_from(
+            "socket", session=self.session, text=text, user=self.user, client_id=client_id,
+            runner_requirements=self.scope.get("runner_requirements", ()),
+            context=_socket_context(self.scope),
+            initiator=who.for_scope(self.scope, via=who.channel(self.scope, "chat")),
+        )
         return str(msg.pk)
 
     def _stop_session(self) -> str:
