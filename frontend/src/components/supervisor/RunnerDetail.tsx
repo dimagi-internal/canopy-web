@@ -1,6 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Link } from 'react-router-dom'
-import { pauseRunner, retireRunner, setRunnerSessions, unpauseRunner, type RunnerOut } from '@/api/harness'
+import { retireRunner, type RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
 import { AgentRouting } from '@/components/agents/AgentRouting'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
@@ -11,7 +11,8 @@ import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
 import { RunnerPrivate } from '@/components/supervisor/RunnerPrivate'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
-import { isDirectedOnly } from '@/components/chat/runnerEligibility'
+import { RunnerPause } from '@/components/supervisor/RunnerPause'
+import { RunnerSessions } from '@/components/supervisor/RunnerSessions'
 
 // A runner's full state — the click-through from the Runners tab's runner list.
 // Leads with the signals that actually matter: is it AVAILABLE to fire a turn
@@ -74,46 +75,6 @@ export function RunnerDetail({
       else next.add(slug)
       return next
     })
-
-  // Pause/resume. `note` is only read on the way IN — resuming clears it
-  // server-side, because a reason for a pause that is over is just stale text.
-  const [pausing, setPausing] = useState(false)
-  const [pauseErr, setPauseErr] = useState<string | null>(null)
-  const [note, setNote] = useState('')
-
-  const togglePause = () => {
-    setPausing(true)
-    setPauseErr(null)
-    const call = runner.paused ? unpauseRunner(runner.id) : pauseRunner(runner.id, note.trim())
-    call
-      .then((fresh) => {
-        setNote('')
-        onChanged?.(fresh)
-      })
-      .catch((err: unknown) => {
-        // Say it failed. A pause that silently didn't take is the expensive
-        // failure here — you walk away believing an account stopped spending.
-        setPauseErr(err instanceof Error ? err.message : 'could not change pause state')
-      })
-      .finally(() => setPausing(false))
-  }
-
-  // Slack/chat sessions on or off. Was settable only over the API, so a box paired
-  // before pairing set it (haldimagi-mbp-cdp, 2026-10-02) silently never appeared
-  // in "start a session" and nobody could see why.
-  const takesSessions = Boolean((runner.capabilities as { sessions?: boolean } | null)?.sessions)
-  const [savingSessions, setSavingSessions] = useState(false)
-  const [sessionsErr, setSessionsErr] = useState<string | null>(null)
-  const toggleSessions = () => {
-    setSavingSessions(true)
-    setSessionsErr(null)
-    setRunnerSessions(runner, !takesSessions)
-      .then((fresh) => onChanged?.(fresh))
-      .catch((err: unknown) =>
-        setSessionsErr(err instanceof Error ? err.message : 'could not change session setting'),
-      )
-      .finally(() => setSavingSessions(false))
-  }
 
   // Retire. Two clicks, because it drops every route to this box (the server
   // deletes its assignments and /unretire does not bring them back).
@@ -211,72 +172,78 @@ export function RunnerDetail({
         agentWorkspace={agentWorkspace ?? ((slug) => agents?.find((a) => a.slug === slug)?.workspace ?? undefined)}
       />
 
-      {/* Session runtime (canopy-web#1188): emdash or the Claude desktop app. A
-          laptop runner's owner flips it here instead of in a shell on the box. */}
-      {(runner.can_administer || runner.can_manage) && runner.kind !== 'cloud' && onChanged && (
-        <RunnerEngine runner={runner} onChange={onChanged} />
+      {/* Settings: every plain choice about this box, one row each, in one list.
+          Who may flip each row is the server's rule for its route — Pause, Private
+          and sessions are the owner's (they speak AS the box); the runtime and the
+          ZDR declaration are also a runner admin's. Anything that needs more than
+          a click gets its own panel below. */}
+      <div className="flex flex-col divide-y divide-border rounded-lg border border-border bg-card p-3" data-testid="runner-settings">
+        <span className="pb-2 text-[11px] uppercase tracking-wide text-muted-foreground">Settings</span>
+        {runner.can_manage && <RunnerPause runner={runner} onChanged={onChanged} />}
+        <RunnerSessions runner={runner} onChanged={onChanged} />
+        {runner.can_manage && onChanged && <RunnerPrivate runner={runner} onChange={onChanged} />}
+        {runner.can_administer && onChanged && <RunnerFlags runner={runner} onChange={onChanged} />}
+        {(runner.can_administer || runner.can_manage) && runner.kind !== 'cloud' && onChanged && (
+          <RunnerEngine runner={runner} onChange={onChanged} />
+        )}
+      </div>
+
+      {/* Owner- and admin-only surface. The fleet list is workspace-scoped since
+          _runner_read_q, so this view can open a runner the caller neither paired
+          nor administers; rendering these panels for them would produce a 404
+          rather than a control. Say whose
+          box it is instead — "nothing here" is indistinguishable from a broken
+          page, and naming the owner makes "ask them to declare it" a next step. */}
+      {/* TWO tiers, and they gate different routes — which is the whole reason
+          they are separate flags. Administering a box (its credentials, its
+          browser sign-in, starting a readiness check) resolves through
+          _runner_admin_or_404; speaking AS it (pause, retire, heartbeat, claim)
+          stays with the owner. Gating both on can_manage meant the identity a
+          box RUNS AS could not sign it back in, because someone else had run
+          the pairing command. */}
+      {runner.can_administer && runner.kind === 'cloud' && (
+        <RunnerCredentials
+          runnerId={runner.id}
+          signedIn={runner.health_checks?.['claude.login']
+            ? runner.health_checks['claude.login'].status === 'ok'
+            : null}
+          signedInAs={boxLoginAccount(runner.health_checks?.['claude.login']?.detail)}
+          healthChecks={runner.health_checks}
+          apiKeysOnly={!!(runner.capabilities as { data_mode?: string } | null)?.data_mode}
+        />
+      )}
+      {/* Who else may fix this box. Rendered for an administrator (who may read
+          the list) as well as the owner (who may edit it) — the panel itself
+          hides the form when there is nothing the viewer may change. */}
+      {(runner.can_administer || runner.can_manage) && (
+        <RunnerAdmins
+          runnerId={runner.id}
+          workspace={runner.workspace}
+          canManage={runner.can_manage}
+          ownerEmail={runner.owner_email}
+        />
+      )}
+      {/* Which workspaces this box serves — owner or administrator, like the
+          admins panel (both tiers may enroll it; the server checks the owner
+          is an editor in the workspace named). */}
+      {(runner.can_administer || runner.can_manage) && <RunnerWorkspaces runnerId={runner.id} />}
+      {/* Readiness checks are runner-ADMIN (owner decision 2026-10-04): the
+          owner, or anyone they granted administration. A non-owner admin drills
+          only the agents they also administer — the server says which. */}
+      {(runner.can_administer || runner.can_manage) && <RunnerDrills runnerId={runner.id} />}
+      {!runner.can_manage && (
+        <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">
+          {runner.can_administer
+            ? `You can sign this box in, set its credentials, declare what it runs with (ZDR)
+               and check its readiness for the agents you administer. Pausing or retiring it
+               belongs to its owner, ${runner.owner_email ?? 'someone else'}.`
+            : `Read-only — this runner is owned by ${runner.owner_email ?? 'someone else'},
+               who can check its readiness or grant you administration; they or a runner admin
+               can change what it declares.`}
+        </p>
       )}
 
-      {/* Private runner (canopy-web#1705): its owner's own work only, judged as a
-          role they pick. Owner-only, like Pause: the route 404s for anyone else. */}
-      {runner.can_manage && onChanged && <RunnerPrivate runner={runner} onChange={onChanged} />}
-
-      {/* Pause — the one control this view offers on the runner itself, and the
-          only way to park a box from a phone (the alternative is the local
-          ~/.canopy/PAUSED sentinel, which needs a shell on that macOS account).
-          Owner-only: POST /pause resolves through _runner_visibility_q, the same
-          predicate can_manage reports, so rendering it for anyone else would
-          hand out a button that 404s. */}
-      {runner.can_manage && (
-        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" data-testid="runner-pause">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              {runner.paused ? 'Paused' : 'Routing'}
-            </span>
-            <button
-              type="button"
-              onClick={togglePause}
-              disabled={pausing}
-              data-testid="runner-pause-toggle"
-              className={`ml-auto rounded-md px-2.5 py-1 text-[12px] font-medium disabled:opacity-50 ${
-                runner.paused
-                  ? 'bg-primary text-primary-foreground'
-                  : 'border border-border text-foreground hover:bg-muted'
-              }`}
-            >
-              {pausing ? '…' : runner.paused ? 'Resume' : 'Pause'}
-            </button>
-          </div>
-          {runner.paused ? (
-            <p className="text-[12px] text-muted-foreground" data-testid="runner-pause-why">
-              {runner.paused_by_email ? <>Paused by {runner.paused_by_email}: </> : null}
-              {runner.paused_note || 'No reason given.'}{' '}
-              {runner.unpause_at ? (
-                <span data-testid="runner-unpause-at">
-                  Resumes on its own at {new Date(runner.unpause_at).toLocaleString()} — work only
-                  it could take waits until then; resume now to let it claim sooner.
-                </span>
-              ) : (
-                <>
-                  Work only this runner could take is not run: the workspace&apos;s admission rule
-                  rejects it and tells the agent&apos;s owner. Resume to let it claim again.
-                </>
-              )}
-            </p>
-          ) : (
-            <input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Why? (e.g. token limit on this account)"
-              maxLength={200}
-              data-testid="runner-pause-note"
-              className="rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-placeholder"
-            />
-          )}
-          {pauseErr && <p className="text-[12px] text-destructive" data-testid="runner-pause-error">{pauseErr}</p>}
-        </div>
-      )}
-
+      {/* Retire last: it is the one setting that cannot be undone in full. */}
       {runner.can_manage && onRetired && (
         <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3" data-testid="runner-retire">
           <div className="flex items-center gap-2">
@@ -319,99 +286,6 @@ export function RunnerDetail({
           </p>
           {retireErr && <p className="text-[12px] text-destructive">{retireErr}</p>}
         </div>
-      )}
-
-      {/* Takes Slack & chat sessions — same owner-only gate as Pause. Shown
-          read-only to everyone else, because "why isn't this box in the session
-          picker?" is a question any member asks. */}
-      <div className="flex flex-col gap-1 rounded-lg border border-border bg-card p-3" data-testid="runner-sessions">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Slack &amp; chat sessions</span>
-          {runner.can_manage ? (
-            <button
-              type="button"
-              onClick={toggleSessions}
-              disabled={savingSessions}
-              data-testid="runner-sessions-toggle"
-              className={`ml-auto rounded-md px-2.5 py-1 text-[12px] font-medium disabled:opacity-50 ${
-                takesSessions ? 'border border-border text-foreground hover:bg-muted' : 'bg-primary text-primary-foreground'
-              }`}
-            >
-              {savingSessions ? '…' : takesSessions ? 'Turn off' : 'Turn on'}
-            </button>
-          ) : (
-            <span className="ml-auto text-[12px] text-foreground" data-testid="runner-sessions-state">
-              {takesSessions ? 'on' : 'off'}
-            </span>
-          )}
-        </div>
-        <p className="text-[12px] text-muted-foreground">
-          {takesSessions
-            ? 'Takes Slack threads and web chat, and appears in "start a session".'
-            : 'Off — this box never takes Slack or chat work and is hidden from "start a session".'}
-        </p>
-        {isDirectedOnly(runner) && (
-          <p className="text-[12px] text-foreground" data-testid="runner-directed">
-            Directed only: takes turns pinned to it and chats started on it, and nothing routed — no
-            agent, repo or unrouted chat work, even where a runner order or an agent's list names it.
-          </p>
-        )}
-        {sessionsErr && <p className="text-[12px] text-destructive" data-testid="runner-sessions-error">{sessionsErr}</p>}
-      </div>
-
-      {/* Owner- and admin-only surface. The fleet list is workspace-scoped since
-          _runner_read_q, so this view can open a runner the caller neither paired
-          nor administers; rendering these panels for them would produce a 404
-          rather than a control. Say whose
-          box it is instead — "nothing here" is indistinguishable from a broken
-          page, and naming the owner makes "ask them to declare it" a next step. */}
-      {/* TWO tiers, and they gate different routes — which is the whole reason
-          they are separate flags. Administering a box (its credentials, its
-          browser sign-in, starting a readiness check) resolves through
-          _runner_admin_or_404; speaking AS it (pause, retire, heartbeat, claim)
-          stays with the owner. Gating both on can_manage meant the identity a
-          box RUNS AS could not sign it back in, because someone else had run
-          the pairing command. */}
-      {runner.can_administer && runner.kind === 'cloud' && (
-        <RunnerCredentials
-          runnerId={runner.id}
-          signedIn={runner.health_checks?.['claude.login']
-            ? runner.health_checks['claude.login'].status === 'ok'
-            : null}
-          signedInAs={boxLoginAccount(runner.health_checks?.['claude.login']?.detail)}
-          healthChecks={runner.health_checks}
-          apiKeysOnly={!!(runner.capabilities as { data_mode?: string } | null)?.data_mode}
-        />
-      )}
-      {/* Who else may fix this box. Rendered for an administrator (who may read
-          the list) as well as the owner (who may edit it) — the panel itself
-          hides the form when there is nothing the viewer may change. */}
-      {(runner.can_administer || runner.can_manage) && (
-        <RunnerAdmins
-          runnerId={runner.id}
-          canManage={runner.can_manage}
-          ownerEmail={runner.owner_email}
-        />
-      )}
-      {/* Which workspaces this box serves — owner or administrator, like the
-          admins panel (both tiers may enroll it; the server checks the owner
-          is an editor in the workspace named). */}
-      {(runner.can_administer || runner.can_manage) && <RunnerWorkspaces runnerId={runner.id} />}
-      {runner.can_administer && onChanged && <RunnerFlags runner={runner} onChange={onChanged} />}
-      {/* Readiness checks are runner-ADMIN (owner decision 2026-10-04): the
-          owner, or anyone they granted administration. A non-owner admin drills
-          only the agents they also administer — the server says which. */}
-      {(runner.can_administer || runner.can_manage) && <RunnerDrills runnerId={runner.id} />}
-      {!runner.can_manage && (
-        <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">
-          {runner.can_administer
-            ? `You can sign this box in, set its credentials, declare what it runs with (ZDR)
-               and check its readiness for the agents you administer. Pausing or retiring it
-               belongs to its owner, ${runner.owner_email ?? 'someone else'}.`
-            : `Read-only — this runner is owned by ${runner.owner_email ?? 'someone else'},
-               who can check its readiness or grant you administration; they or a runner admin
-               can change what it declares.`}
-        </p>
       )}
 
       {/* The fleet-wide routing matrix, expandable per agent — no cheap query for
