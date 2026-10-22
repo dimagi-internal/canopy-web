@@ -51,8 +51,6 @@ def test_the_doc_exists_and_is_indexed_in_claude_md(doc):
     "command,flags",
     [
         ("create_app_credential", ["--name"]),
-        ("grant_app_frame_origin", ["--name", "--origin", "--list"]),
-        ("grant_app_agent", ["--name", "--agent", "--list"]),
     ],
 )
 def test_documented_commands_exist_with_the_documented_flags(doc, command, flags):

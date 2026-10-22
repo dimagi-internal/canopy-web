@@ -81,24 +81,19 @@ what you get from an address bar.
 > public half.
 
 > **Why not the Django admin?** It is read-only for this. It is staff-only, so the person who wants to embed an agent could
-> not do it; the management commands need a shell in the live container (ECS
-> Exec, a labs admin login); and every field here fails closed and silently, so a bare form
+> not do it; and every field here fails closed and silently, so a bare form
 > produces a widget that never appears with nothing to say why. See §11 for
 > canopy's own pages, where the whole thing is one button.
 
-**Alternatively, by command** (local or scripted setup — on a deployment they
-run only over ECS Exec, which needs a labs admin login, and the database is
-VPC-internal). Signing keys are set on the page:
-
-```bash
-uv run python manage.py create_app_credential --workspace connect --name connect-labs
-uv run python manage.py grant_app_frame_origin --workspace connect --name connect-labs \
-    --origin https://labs.connect.dimagi.com
-uv run python manage.py grant_app_frame_origin --workspace connect --name connect-labs \
-    --origin http://localhost:8000
-uv run python manage.py grant_app_agent --workspace connect --name connect-labs --agent labs-helper
-uv run python manage.py grant_app_agent --workspace connect --name connect-labs --list
-```
+**Alternatively, by API or MCP** (scripted setup): the page is two routes,
+`POST /api/workspaces/<ws>/connected-apps` (MCP `connect_app`) and
+`PATCH /api/workspaces/<ws>/connected-apps/<id>` (MCP `update_connected_app`), which take
+the same fields — `origins`, `agents`, `public_keys` or `jwks_url` — with the
+same validation, and record each change in the settings audit
+(`settings-audit.md`). There is no management command for origins or agents: a
+command would skip both. `manage.py create_app_credential --workspace connect
+--name connect-labs` still registers a bare site (it grants nothing) for local
+setup.
 
 ### Serving more than one canopy workspace
 

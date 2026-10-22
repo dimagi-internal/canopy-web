@@ -387,3 +387,44 @@ def test_keys_can_be_rotated_by_editing():
 def test_a_site_with_no_key_says_so():
     _user, _ws, c = _ctx()
     assert _connect(c).json()["signs_assertions"] is False
+
+
+# --- the one write path for what a site may do ---------------------------------
+
+
+def test_changing_a_sites_origins_and_agents_is_audited():
+    """Origins and agents are settings: every change is a SettingChange, from
+    every entry point (`route_gates.SETTINGS`)."""
+    from apps.events.models import SettingChange
+
+    _user, ws, c = _ctx()
+    _agent(ws, "alpha")
+    app_id = _connect(c).json()["id"]
+
+    r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+                data={"origins": [LABS, "http://localhost:8000"], "agents": ["alpha"]},
+                content_type="application/json")
+
+    assert r.status_code == 200, r.content
+    assert SettingChange.objects.filter(operation="update_connected_app").count() == 1
+
+
+def test_an_injected_second_directive_is_refused_on_update():
+    _user, _ws, c = _ctx()
+    app_id = _connect(c).json()["id"]
+    r = c.patch(f"/api/workspaces/w1/connected-apps/{app_id}",
+                data={"origins": [f"{LABS}; default-src *"]}, content_type="application/json")
+    assert r.status_code == 422
+    assert AppCredential.objects.get(pk=app_id).allowed_frame_origins == [LABS]
+
+
+def test_no_management_command_writes_what_a_site_may_do():
+    """A command would skip `embed_apps`' validation and the settings audit; the
+    routes above (and their MCP tools) are the only door."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "apps"
+    markers = ("AppCredentialAgent", "allowed_frame_origins =", "set_agents(", "embed_apps.update(")
+    offenders = [str(p.relative_to(root)) for p in root.glob("*/management/commands/*.py")
+                 if any(m in p.read_text() for m in markers)]
+    assert offenders == []

@@ -505,7 +505,7 @@ class AppCredential(models.Model):
         """The origins that may frame this app's embed shell — validated here,
         not trusted from the column.
 
-        The write path validates too (`grant_app_frame_origin`), so this is
+        The write path validates too (`embed_apps._clean_origins`), so this is
         defence in depth: a row inserted by a shell, a fixture or a future
         migration must not be able to produce a permissive or malformed
         directive. `*` is the case that matters — it would re-open framing to
