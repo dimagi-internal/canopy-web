@@ -26,6 +26,7 @@ runs.
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from importlib import import_module
 
@@ -37,10 +38,14 @@ from django.utils.html import escape
 from apps.events import services as events
 from apps.events.models import Event
 from apps.push.services import send_to_user
+from apps.workspaces import services as wsvc
 from apps.workspaces.links import base_url
+from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.notifications import _button, _send, _who
 
 from .models import Alert, AlertEvent
+
+logger = logging.getLogger(__name__)
 
 #: Dotted paths of source modules. Empty until the first source lands.
 SOURCES: list[str] = []
@@ -364,3 +369,82 @@ def notify_users(alert: Alert, users, *, by=None) -> int:
             _log(alert, AlertEvent.NOTIFIED, actor=by,
                  payload={"to": reached, "by": by.pk if by is not None else None})
     return len(reached)
+
+
+# --- the tick ---------------------------------------------------------------
+
+
+def tick(now=None) -> None:
+    """One pass of the alert clock: reconcile every source, expire stale
+    alerts, notify new blocking ones. Registered with `apps.common.ticks`.
+
+    A source whose `reconcile` raises is skipped ENTIRELY — a source we could
+    not read says nothing about whether its conditions still hold, so nothing
+    it owns resolves as "gone". Staleness is separate: a source with
+    `CONFIRM_WITHIN` that has not confirmed an open alert in that long loses it
+    even while its reconcile is failing (an alert nobody can re-confirm must
+    not stay on screen forever).
+    """
+    now = now or timezone.now()
+    for path in list(SOURCES):
+        mod = import_module(path)
+        try:
+            raises = mod.reconcile(now)
+            apply_reconcile(mod.KIND, raises, now)
+        except Exception:  # noqa: BLE001 — one broken source must not stop the others
+            logger.exception("alerts tick: source %s failed; its alerts are left as they are", path)
+    _expire_stale(now)
+    notify_new_blocking(now)
+
+
+def _expire_stale(now) -> None:
+    for path in list(SOURCES):
+        mod = import_module(path)
+        within = getattr(mod, "CONFIRM_WITHIN", None)
+        if within is None:
+            continue
+        for alert in Alert.objects.filter(kind=mod.KIND, status=Alert.OPEN, last_seen_at__lt=now - within):
+            resolve(alert, reason=Alert.REASON_STALE)
+
+
+def notify_new_blocking(now) -> None:
+    """Email + push each open `blocking` alert not yet notified, to the people
+    in its workspace's organisation tree who hold a CLOSING action on it, then
+    stamp `notified_at` (a raise or a reopen clears it, so each gets one).
+
+    `notified_at` is set even when nobody was reached, so an alert with no
+    eligible closer is not retried every minute (it is logged).
+    """
+    pending = list(Alert.objects.filter(severity=Alert.BLOCKING, status=Alert.OPEN, notified_at__isnull=True))
+    if not pending:
+        return
+    roots = wsvc.tree_roots({a.workspace_id for a in pending})
+    # Everyone holding a membership anywhere in a tree is a candidate (roles flow
+    # DOWN, so an ancestor's owner has a row at the top of the tree): one query
+    # for all the trees, not one per alert.
+    tree_slugs: dict[str, set[str]] = {}
+    for slug, root in roots.items():
+        tree_slugs.setdefault(root, {root})
+    below = wsvc.descendant_map(set(tree_slugs))
+    for root, slugs in tree_slugs.items():
+        slugs |= below.get(root, set())
+    members: dict[str, set[int]] = {root: set() for root in tree_slugs}
+    owner_of = {slug: root for root, slugs in tree_slugs.items() for slug in slugs}
+    for slug, uid in (WorkspaceMembership.objects.filter(workspace_id__in=list(owner_of))
+                      .values_list("workspace_id", "user_id")):
+        members[owner_of[slug]].add(uid)
+    users = {u.pk: u for u in get_user_model().objects.filter(pk__in=set().union(*members.values()), is_active=True)}
+
+    for alert in pending:
+        try:
+            candidates = [users[uid] for uid in sorted(members[roots[alert.workspace_id]]) if uid in users]
+            closers = [u for u in candidates if any(a.closes for a in visible_actions(alert, u))]
+            if not closers:
+                logger.warning("alerts tick: no one holds a closing action on blocking alert %s (%s); not notifying",
+                               alert.pk, alert.title)
+            else:
+                notify_users(alert, closers)
+        except Exception:  # noqa: BLE001 — leave notified_at null: retried next tick
+            logger.exception("alerts tick: notifying for alert %s failed", alert.pk)
+            continue
+        Alert.objects.filter(pk=alert.pk, notified_at__isnull=True).update(notified_at=now)
