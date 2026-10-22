@@ -9,6 +9,7 @@ import pytest
 from apps.agent_runs.models import AgentRun
 from apps.agents import services
 from apps.agents.models import Agent, AgentSkill, AgentSync, AgentTask
+from apps.harness import closeout
 from apps.harness.models import Turn
 from apps.workspaces.testing import a_workspace
 
@@ -88,9 +89,9 @@ def _turn(**kw):
 
 def test_turn_is_idempotent_per_cli_session_id():
     agent = _agent()
-    services.upsert_turn(agent, _turn(title="Turn 1", task_ext_ids=["t1"]))
+    closeout.upsert_turn(agent, _turn(title="Turn 1", task_ext_ids=["t1"]))
     # re-package the same session (e.g. after the transcript uploads) → updates in place
-    services.upsert_turn(agent, _turn(title="Turn 1 (transcript added)",
+    closeout.upsert_turn(agent, _turn(title="Turn 1 (transcript added)",
                                       task_ext_ids=["t1", "t2"],
                                       session_slug="abc123", share_token="tok999"))
     assert Turn.objects.filter(agent=agent).count() == 1
@@ -99,13 +100,13 @@ def test_turn_is_idempotent_per_cli_session_id():
     assert turn.task_ext_ids == ["t1", "t2"]
     assert turn.share_token == "tok999"
     # a different session is a separate turn
-    services.upsert_turn(agent, _turn(cli_session_id="sess-2", title="Turn 2"))
+    closeout.upsert_turn(agent, _turn(cli_session_id="sess-2", title="Turn 2"))
     assert Turn.objects.filter(agent=agent).count() == 2
 
 
 def test_turn_transcript_is_optional():
     agent = _agent()
-    turn = services.upsert_turn(agent, _turn(session_slug="", share_token=""))
+    turn = closeout.upsert_turn(agent, _turn(session_slug="", share_token=""))
     assert turn.session_slug == "" and turn.share_token == ""
     assert turn.task_ext_ids == ["t1"]  # the unit of work is still packaged
 
@@ -114,8 +115,8 @@ def test_agent_detail_counts_turns():
     agent = _agent()
     assert services.agent_detail(agent)["turn_count"] == 0
     assert services.agent_detail(agent)["latest_turn_at"] is None
-    services.upsert_turn(agent, _turn(cli_session_id="s1"))
-    services.upsert_turn(agent, _turn(cli_session_id="s2"))
+    closeout.upsert_turn(agent, _turn(cli_session_id="s1"))
+    closeout.upsert_turn(agent, _turn(cli_session_id="s2"))
     detail = services.agent_detail(agent)
     assert detail["turn_count"] == 2
     assert detail["latest_turn_at"] is not None
@@ -190,7 +191,7 @@ def test_card_counts_the_same_turns_the_harness_lists():
 def test_close_out_attaches_to_its_dispatch_row_instead_of_adding_one():
     agent = _agent()
     dispatched = _dispatch(agent, key="k1", task="echo-api-1234-0810-1805")
-    services.upsert_turn(agent, _turn(cli_session_id="s1", title="Did the thing",
+    closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="Did the thing",
                                       session_key="echo-api-1234-0810-1805"))
     assert Turn.objects.filter(agent=agent).count() == 1  # not two halves, one turn
     dispatched.refresh_from_db()
@@ -202,7 +203,7 @@ def test_close_out_attaches_to_its_dispatch_row_instead_of_adding_one():
 def test_close_out_without_a_matching_dispatch_row_still_records():
     """A turn a human started by hand has no queue row. The report must not vanish."""
     agent = _agent()
-    turn = services.upsert_turn(agent, _turn(cli_session_id="s9", title="Hand-run"))
+    turn = closeout.upsert_turn(agent, _turn(cli_session_id="s9", title="Hand-run"))
     assert turn.report_title == "Hand-run"
     assert turn.status == Turn.DONE
     assert Turn.objects.filter(agent=agent).count() == 1
@@ -214,9 +215,9 @@ def test_close_out_does_not_reclaim_an_already_reported_turn():
     agent = _agent()
     task = "echo-api-1234-0810-1805"
     first = _dispatch(agent, key="k1", task=task)
-    services.upsert_turn(agent, _turn(cli_session_id="s1", title="First", session_key=task))
+    closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="First", session_key=task))
     second = _dispatch(agent, key="k2", task=task)
-    services.upsert_turn(agent, _turn(cli_session_id="s2", title="Second", session_key=task))
+    closeout.upsert_turn(agent, _turn(cli_session_id="s2", title="Second", session_key=task))
     first.refresh_from_db()
     second.refresh_from_db()
     assert first.report_title == "First"

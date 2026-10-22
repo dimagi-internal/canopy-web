@@ -25,6 +25,7 @@ from apps.api.errors import (
     ProblemError,
 )
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.harness import closeout
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 from apps.harness.schemas import RunnerDeviceKeyOut
 from apps.passkeys import stepup
@@ -1658,8 +1659,8 @@ def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentT
 
     # Everyone sees what the agent did; a turn's prompt and transcript link are
     # a log (turn_access).
-    turns = turn_access.redact(list(services.list_turns(agent, limit=limit)), request.user)
-    services.stamp_share_urls(turns)
+    turns = turn_access.redact(list(closeout.list_turns(agent, limit=limit)), request.user)
+    closeout.stamp_share_urls(turns)
     items = [AgentTurnOut.model_validate(t) for t in turns]
     return paginate(items, offset=0, limit=limit)
 
@@ -1672,9 +1673,9 @@ def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status
 
     # A report-only row (no dispatch matched) is a turn someone ran by hand; the
     # caller posting its close-out is the best account of who that was.
-    turn = services.upsert_turn(agent, payload,
+    turn = closeout.upsert_turn(agent, payload,
                                 initiator=who.for_request(request, via="closeout"))
-    services.stamp_share_urls([turn])
+    closeout.stamp_share_urls([turn])
     return Status(201, AgentTurnOut.model_validate(turn))
 
 

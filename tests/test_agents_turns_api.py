@@ -6,6 +6,7 @@ import pytest
 
 from apps.agents import services
 from apps.agents.models import Agent
+from apps.harness import closeout
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -170,9 +171,8 @@ def test_a_chat_turn_links_to_its_own_session(authed_client, workspace):
                                idempotency_key="c1", status="done")
     # A chat turn targets the session, not the agent, so it is not on the agent's
     # own turn list — the link is exercised directly.
-    from apps.agents import services as agent_services
 
-    agent_services._link_turn_sessions(agent, [turn])
+    closeout._link_turn_sessions(agent, [turn])
     assert turn.linked_session_id == session.id
 
 
