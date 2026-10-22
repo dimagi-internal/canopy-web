@@ -4025,6 +4025,72 @@ def _scoped_token_env(turn: dict) -> dict:
     return {"CANOPY_SCOPED_TURN": turn_id}
 
 
+#: Where a turn's own agent login waits for the MCP headers helper, by turn id.
+AGENT_TOKEN_ROOT = pathlib.Path.home() / ".canopy" / "agent-token"
+_AGENT_TOKEN_KEEP_SECONDS = 24 * 3600
+
+
+def _agent_token_env(runner_id: str, turn: dict) -> dict:
+    """This turn's OWN canopy login as its agent, from canopy-web — or nothing, and
+    the agent acts with its stored `canopy-pat` exactly as before (phase 1 of the
+    turn-scoped agent token: canopy-web docs/superpowers/specs/
+    2026-10-21-turn-scoped-agent-token-design.md).
+
+    Asked with this box's runner token (a PAT is refused by design), only for a
+    full-profile agent turn — a confined turn never gets here. The token, which
+    canopy-web revokes when the turn ends, goes:
+      * into the turn's env as CANOPY_WEB_PAT — layered over the agent's own .env,
+        so the canopy CLI and the agent's scripts act with it;
+      * into `~/.canopy/agent-token/turn/<turn id>.token` (0600) for the canopy-web
+        MCP headers helper, which never sees a secret-looking variable but does see
+        CANOPY_TURN_ID. Removed when the turn ends (`_remove_agent_token`).
+    Any refusal — an older canopy-web, no runner token, an agent with no login —
+    is logged and the turn runs as it did before. Opt out: CANOPY_TURN_AGENT_TOKEN=0."""
+    slug = _turn_agent_slug(turn)
+    turn_id = str(turn.get("id") or "")
+    if not slug or not _CHAT_ID.match(turn_id):
+        return {}
+    if os.environ.get("CANOPY_TURN_AGENT_TOKEN", "1").strip() == "0":
+        return {}
+    if not _bearer().startswith("crt_"):
+        _log(f"turn {turn_id[:8]}: no runner token, so no turn-scoped login — {slug} "
+             f"acts with its stored canopy-pat")
+        return {}
+    status, body = _api("POST", f"/runners/{runner_id}/turns/{turn_id}/agent-token")
+    body = body if isinstance(body, dict) else {}
+    token = str(body.get("token") or "") if status == 200 else ""
+    if not token or body.get("agent_slug") != slug:
+        _log(f"turn {turn_id[:8]}: no turn-scoped login (HTTP {status}) — {slug} acts "
+             f"with its stored canopy-pat")
+        return {}
+    d = AGENT_TOKEN_ROOT / "turn"
+    try:
+        _write_private_text(d / f"{turn_id}.token", token)
+        now = time.time()
+        for old in d.glob("*.token"):
+            try:
+                if now - old.stat().st_mtime > _AGENT_TOKEN_KEEP_SECONDS:
+                    old.unlink()
+            except OSError:
+                continue
+    except OSError as exc:
+        # The env still carries it; the MCP helper falls back to the stored PAT.
+        _log(f"warn: could not leave turn {turn_id[:8]}'s login for its MCP helper: {exc}")
+    _log(f"turn {turn_id[:8]}: {slug} acts with a turn-scoped canopy login "
+         f"(expires {body.get('expires_at') or '?'})")
+    return {"CANOPY_WEB_PAT": token}
+
+
+def _remove_agent_token(turn_id: str) -> None:
+    """The turn's login file goes with the turn (canopy-web revokes the token too)."""
+    if not _CHAT_ID.match(turn_id or ""):
+        return
+    try:
+        (AGENT_TOKEN_ROOT / "turn" / f"{turn_id}.token").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _write_private_text(path: pathlib.Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
@@ -8239,7 +8305,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 return
             per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
                         **_chat_key_env(turn), **_lineage_env(turn), **scoped_env,
-                        **ONE_SHOT_TURN_ENV}
+                        **_agent_token_env(runner_id, turn), **ONE_SHOT_TURN_ENV}
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         # The chat a person is watching, whose agent may ask them (run_acp). Not a
@@ -8428,6 +8494,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     finally:
         # The turn's secrets end with it — done, failed, raised, stopped or timed out.
         remove_turn_env(str(turn_id))
+        _remove_agent_token(str(turn_id))
         with _TURNS_LOCK:
             _IN_FLIGHT.pop(turn_id, None)
         _clear_stop(turn_id)

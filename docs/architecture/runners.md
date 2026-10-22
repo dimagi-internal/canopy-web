@@ -470,6 +470,28 @@ Spec: `docs/superpowers/specs/2026-09-24-agent-github-delegation-design.md`
 (`tests/test_agent_delegations.py`). Salesforce uses the same model with an agent
 as lender (`delegations.set_salesforce`).
 
+### The canopy login a turn gets (turn-scoped agent token)
+
+A runner turn acts as its agent with a login canopy-web issues for THAT turn, in place
+of the agent's stored, never-expiring `canopy-pat` (phase 1: clients prefer it and fall
+back to the stored PAT; phase 2 removes the PAT).
+
+- `POST /api/harness/runners/{rid}/turns/{tid}/agent-token`
+  (`apps/harness/api_turn_agent_token.py`, `turn_agent_tokens.py`): only with runner
+  `rid`'s own runner token (a PAT is 403), for a turn it is executing, re-checking
+  `runner_may_hold_agent`; 409 for a local turn, a confined (caller) turn, or an
+  agent with no active `Agent.user`. Mints a `PersonalToken` for `Agent.user` (12 h),
+  recorded as a `TurnAgentToken`; logged as an `AgentCredentialRead`
+  (`turn-agent-token`, `via=turn`) and an `agent.canopy_token.issued` event.
+- Revoked when the turn stops executing on that runner: `finish_turn` (every exit,
+  requeues included), the lease sweep, and `revoke_stale` on every sweep tick.
+- Cloud runner: `CANOPY_WEB_PAT` in the turn env + `~/.canopy/agent-token/turn/<tid>.token`
+  for the MCP headers helper. Laptop: the canopy CLI asks on demand with the box's
+  runner token and the session's turn id.
+
+Spec: `docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md`
+(`tests/test_turn_agent_token.py`).
+
 ### The per-user GitHub App (`apps/tokens/github_app.py`)
 
 A public GitHub App (`canopy-agents`) authorized per user (user-to-server flow).
