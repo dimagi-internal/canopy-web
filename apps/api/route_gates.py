@@ -98,6 +98,18 @@ Vocabulary (closed — add to it deliberately, never in passing):
   answer an agent's OPEN request for one of its declared secrets — an agent admin,
   or a person who can write to the chat it was asked from (filling a MISSING value
   only); never an agent's own login. Seals ciphertext; never reads.
+* ``caller-token`` — a confined turn's ``cct_`` caller token
+  (``apps/harness/caller_tokens.py``): the turn is read from the token, never an
+  argument. Used only by ``HAND_TOOL_GATES``.
+* ``host-grant`` — a person's own DPoP-bound host-grant token, the only credential
+  an MCP Apps View's button call carries (``apps/mcp/delegation.py``). Used only by
+  ``HAND_TOOL_GATES``.
+
+``HAND_TOOL_GATES`` (bottom of this file) is the same declaration for the MCP tools
+that are not routes (``apps/mcp/tools/``): every hand-written tool names its gate
+and whether it writes, and ``tests/test_every_route_declares_its_gate.py`` fails a
+tool that is missing or stale. A hand-written tool that is a plain write should be
+a route instead — it then gets the settings audit and the acting cap for free.
 """
 from __future__ import annotations
 
@@ -110,7 +122,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "runner", "runner-admin", "runner-holds-agent", "license",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
     "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "paired-key", "page-viewer",
-    "secret-request",
+    "secret-request", "caller-token", "host-grant",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -472,6 +484,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "answer_menu": ("session-acl",),  # write
     "close_session": ("session-acl",),  # write
     "detach_session_from_slack": ("session-acl", "agent-login"),  # write; or the agent's own live turn
+    "share_session_to_slack": ("session-acl", "agent-login"),  # write; or the agent's own live turn
+    "audit_session_noise": ("session-acl",),  # rows of sessions the caller can read
+    "purge_session_noise": ("session-acl",),  # write; readable sessions, write scope when applied
     "start_new_slack_thread": ("session-acl", "agent-login"),  # write; or the agent's own live turn
     "stop_session_turn": ("session-acl",),  # write
     "attach_session": ("session-acl",),  # READ gate on a POST (viewer signal)
@@ -1064,6 +1079,7 @@ NOT_SETTINGS: dict[str, str] = {
     # conversation
     "create_session": "conversation", "delete_attachment": "conversation", "reset_sessions": "conversation",
     "detach_session_from_slack": "conversation", "start_new_slack_thread": "conversation",
+    "share_session_to_slack": "conversation", "purge_session_noise": "conversation",
     "approve_transfer_request": "conversation",
     "cancel_transfer_request": "conversation", "decline_transfer_request": "conversation",
     "answer_menu": "conversation", "app_view_call": "conversation", "app_view_context": "conversation",
@@ -1132,4 +1148,25 @@ NOT_SETTINGS: dict[str, str] = {
     "finish_passkey_step_up": "ephemeral-credential",
     "reveal_agent_credential": "action",  # reads one value; changes no configuration (recorded as an event)
     "embed_ws_ticket": "ephemeral-credential", "contact_ws_ticket": "ephemeral-credential",
+}
+
+
+#: The MCP tools that are NOT routes (`apps/mcp/tools/`, registered with `@mcp.tool`):
+#: name -> (gate labels from VOCABULARY, "read" | a WRITE_KINDS kind). A route is
+#: declared above; a tool that bypasses the routes declares itself here, so the
+#: question "who may call this" is asked for it too.
+HAND_TOOL_GATES: dict[str, tuple[tuple[str, ...], str]] = {
+    # The caller envelope of a turn: a member of the turn's tenant, or the
+    # turn's own caller token. Same gate as `get_turn_caller_context`.
+    "who_is_asking": (("member", "caller-token"), "read"),
+    # The Connected site the visitor is on: caller tokens only, and only with
+    # the visitor's live host grant (`apps/tokens/host_gateway.py`).
+    "site_tools": (("caller-token",), "read"),
+    "site_call": (("caller-token",), "action"),
+    # The caller's own open pages (or, for a caller token, its own conversation's).
+    "current_page": (("self", "caller-token"), "read"),
+    # /ide close review: carries an MCP Apps View, which has no REST shape.
+    "propose_session_closes": (("session-acl",), "read"),
+    # The View's Close button: a person's host grant only, then the session ACL.
+    "close_proposed_sessions": (("host-grant", "session-acl"), "conversation"),
 }

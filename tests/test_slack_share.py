@@ -271,20 +271,29 @@ def test_the_tool_is_served_by_the_mounted_server():
     assert "share_session_to_slack" in {t.name for t in asyncio.run(mcp._list_tools())}
 
 
-def test_the_tool_shares_as_the_pat_holder(slack, linked, alice, repo_session):
-    from apps.mcp.tools.slack import _share_sync
+def _share_route(user, **body):
+    from django.test import Client
 
-    out = _share_sync(alice.pk, "C1", "doing things", "bind", "", "claude-abc", "", "", "")
+    c = Client()
+    c.force_login(user)
+    return c.post("/api/canopy-sessions/slack/share", body, content_type="application/json")
+
+
+def test_the_tool_shares_as_the_pat_holder(slack, linked, alice, repo_session):
+    r = _share_route(alice, channel="C1", summary="doing things", mode="bind",
+                     claude_session_id="claude-abc")
+    assert r.status_code == 200, r.content
+    out = r.json()
     assert out["session_id"] == str(repo_session.id) and out["ts"] == POSTED_TS
     repo_session.refresh_from_db()
     assert repo_session.metadata["slack_thread_ts"] == POSTED_TS
 
 
 def test_the_tool_raises_the_refusal_as_a_sentence(slack, linked, alice):
-    from apps.mcp.tools.slack import _share_sync
-
-    with pytest.raises(ValueError, match="nothing for the thread's replies"):
-        _share_sync(alice.pk, "C1", "doing things", "bind", "", "no-such-session", "", "", "")
+    r = _share_route(alice, channel="C1", summary="doing things", mode="bind",
+                     claude_session_id="no-such-session")
+    assert r.status_code in (409, 422)
+    assert "nothing for the thread's replies" in r.content.decode()
 
 
 def test_the_agents_reply_is_relayed_into_the_bound_thread(slack, linked, alice, repo_session):

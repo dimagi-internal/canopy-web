@@ -212,6 +212,65 @@ class SlackDetachIn(Schema):
     turn_id: str = ""
 
 
+class SlackShareIn(Schema):
+    """What to post, where, and which session it is about."""
+    #: Markdown: what we are doing, why, and where it stands.
+    summary: str
+    #: A channel name (`#dev`) or id; the canopy app must be in it. Optional when
+    #: the session is already bound (the update goes into its own thread).
+    channel: str = ""
+    #: `broadcast` (one post) or `bind` (the thread becomes the session's own).
+    mode: str = "broadcast"
+    claude_session_id: str = ""
+    emdash_task: str = ""
+    emdash_project: str = ""
+    session_id: str = ""
+    #: Needed only when you belong to several workspaces with Slack connected
+    #: and no session is named.
+    workspace: str = ""
+    #: An agent's own live turn (the caller envelope's `turn_id`) — tried first.
+    turn_id: str = ""
+
+
+class SlackShareOut(Schema):
+    #: "shared", or "updated" when a bound session's thread got the summary.
+    status: str
+    message: str
+    mode: str
+    channel: str = ""
+    ts: str = ""
+    permalink: str = ""
+    session_id: uuid.UUID | None = None
+
+
+class NoiseSampleOut(Schema):
+    session_id: str
+    workspace: str | None = None
+    turn_index: int
+    text: str
+
+
+class NoiseReportOut(Schema):
+    #: Rows matched, and the sessions they sit in.
+    matched: int
+    sessions: int
+    sample: list[NoiseSampleOut]
+
+
+class NoisePurgeIn(Schema):
+    #: Restrict to one session (UUID). Omit for all your sessions.
+    session_id: str | None = None
+    #: Actually delete. Default False: a dry run that deletes nothing.
+    apply: bool = False
+    #: Example rows to include (clamped to 50).
+    sample: int = 5
+
+
+class NoisePurgeOut(NoiseReportOut):
+    applied: bool
+    deleted: int
+
+
 class SlackNewThreadIn(Schema):
     """Which conversation to move, and what the new thread opens with."""
     #: Markdown: what the new thread is for. Required — it is the thread's first post.

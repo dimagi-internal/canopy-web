@@ -10105,6 +10105,105 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/noise": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Find harness output stored as your messages
+         * @description Report harness output stored as USER messages in your sessions.
+         *
+         *     Claude Code writes task notifications, system reminders, skill bodies and
+         *     interrupt markers as `type: "user"` transcript records, so they can land in
+         *     the store looking like something a person typed. Ingest filters them now;
+         *     this finds rows written before a given prefix was recognised.
+         *
+         *     `session_id` restricts it to one session; omitted, it sweeps every session
+         *     you can read — and then a caller whose workspaces sit in more than one
+         *     tenant tree must name the workspace. `sample` (clamped to 50) is how many
+         *     example rows to include. Read-only: `purge_session_noise` deletes.
+         */
+        readonly get: operations["audit_session_noise"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/noise/purge": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Delete harness output stored as your messages
+         * @description Delete the rows `audit_session_noise` reports.
+         *
+         *     DRY RUN BY DEFAULT: without `apply: true` this reports what WOULD go and
+         *     deletes nothing. Deleting is irreversible and the match is only as good as
+         *     the current prefix list, so the intended sequence is audit, read the count,
+         *     then apply. Only sessions you can read; a sweep that deletes covers exactly
+         *     the workspace named (never the ones below it).
+         */
+        readonly post: operations["purge_session_noise"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/slack/share": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post a session's summary to Slack
+         * @description Post a summary of the current session into a Slack channel.
+         *
+         *     `channel` is a channel name (`#dev`) or id; the canopy app must be in it.
+         *     `summary` is Markdown — what we are doing, why, and where it stands.
+         *
+         *     `mode`: `broadcast` (default) — one post; replies in Slack stay between
+         *     people. `bind` — the post starts a thread bound to this session from now
+         *     on, exactly as if the session had been started from Slack: its replies
+         *     appear in the thread and teammates' replies reach the session.
+         *
+         *     Sharing a session that is ALREADY bound posts `summary` as an update in its
+         *     thread instead (mode and channel are then ignored). `channel` is required
+         *     otherwise.
+         *
+         *     Identify the session with `claude_session_id` ($CLAUDE_CODE_SESSION_ID),
+         *     else `emdash_task` + `emdash_project`, else `session_id`. A broadcast works
+         *     without one; a bind does not. `workspace` is needed only when you belong to
+         *     several workspaces with Slack connected and no session is given.
+         *
+         *     An AGENT answering a turn names its conversation with `turn_id`: its own
+         *     login may act on the conversation of a turn it is running, while that turn
+         *     is in flight — post an update, or (after `detach_session_from_slack`) bind
+         *     again, only in the conversation's own channel. To move the conversation to
+         *     a fresh thread in one step, use `start_new_slack_thread`.
+         */
+        readonly post: operations["share_session_to_slack"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/slack/detach": {
         readonly parameters: {
             readonly query?: never;
@@ -29431,6 +29530,128 @@ export interface components {
              */
             readonly dry_run: boolean;
         };
+        /** NoiseReportOut */
+        readonly NoiseReportOut: {
+            /** Matched */
+            readonly matched: number;
+            /** Sessions */
+            readonly sessions: number;
+            /** Sample */
+            readonly sample: readonly components["schemas"]["NoiseSampleOut"][];
+        };
+        /** NoiseSampleOut */
+        readonly NoiseSampleOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Workspace */
+            readonly workspace?: string | null;
+            /** Turn Index */
+            readonly turn_index: number;
+            /** Text */
+            readonly text: string;
+        };
+        /** NoisePurgeOut */
+        readonly NoisePurgeOut: {
+            /** Matched */
+            readonly matched: number;
+            /** Sessions */
+            readonly sessions: number;
+            /** Sample */
+            readonly sample: readonly components["schemas"]["NoiseSampleOut"][];
+            /** Applied */
+            readonly applied: boolean;
+            /** Deleted */
+            readonly deleted: number;
+        };
+        /** NoisePurgeIn */
+        readonly NoisePurgeIn: {
+            /** Session Id */
+            readonly session_id?: string | null;
+            /**
+             * Apply
+             * @default false
+             */
+            readonly apply: boolean;
+            /**
+             * Sample
+             * @default 5
+             */
+            readonly sample: number;
+        };
+        /** SlackShareOut */
+        readonly SlackShareOut: {
+            /** Status */
+            readonly status: string;
+            /** Message */
+            readonly message: string;
+            /** Mode */
+            readonly mode: string;
+            /**
+             * Channel
+             * @default
+             */
+            readonly channel: string;
+            /**
+             * Ts
+             * @default
+             */
+            readonly ts: string;
+            /**
+             * Permalink
+             * @default
+             */
+            readonly permalink: string;
+            /** Session Id */
+            readonly session_id?: string | null;
+        };
+        /**
+         * SlackShareIn
+         * @description What to post, where, and which session it is about.
+         */
+        readonly SlackShareIn: {
+            /** Summary */
+            readonly summary: string;
+            /**
+             * Channel
+             * @default
+             */
+            readonly channel: string;
+            /**
+             * Mode
+             * @default broadcast
+             */
+            readonly mode: string;
+            /**
+             * Claude Session Id
+             * @default
+             */
+            readonly claude_session_id: string;
+            /**
+             * Emdash Task
+             * @default
+             */
+            readonly emdash_task: string;
+            /**
+             * Emdash Project
+             * @default
+             */
+            readonly emdash_project: string;
+            /**
+             * Session Id
+             * @default
+             */
+            readonly session_id: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+        };
         /** SlackDetachOut */
         readonly SlackDetachOut: {
             /** Status */
@@ -44943,6 +45164,77 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ResetSummaryOut"];
+                };
+            };
+        };
+    };
+    readonly audit_session_noise: {
+        readonly parameters: {
+            readonly query?: {
+                readonly session_id?: string | null;
+                readonly sample?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["NoiseReportOut"];
+                };
+            };
+        };
+    };
+    readonly purge_session_noise: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["NoisePurgeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["NoisePurgeOut"];
+                };
+            };
+        };
+    };
+    readonly share_session_to_slack: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlackShareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackShareOut"];
                 };
             };
         };

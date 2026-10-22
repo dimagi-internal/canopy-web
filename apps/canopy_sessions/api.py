@@ -46,6 +46,11 @@ from . import (
 from . import activity as session_activity
 from .models import Attachment, Session
 from .schemas import (
+    NoisePurgeIn,
+    NoisePurgeOut,
+    NoiseReportOut,
+    SlackShareIn,
+    SlackShareOut,
     SessionExportOut,
     AttachmentOut,
     BackfillStateOut,
@@ -625,6 +630,106 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
     return services.reset_sessions(
         rows, prune_ghosts=payload.prune_ghosts, dry_run=payload.dry_run
     )
+
+
+@router.get("/noise", response=NoiseReportOut, summary="Find harness output stored as your messages")
+def audit_session_noise(request: HttpRequest, session_id: str | None = None, sample: int = 5):
+    """Report harness output stored as USER messages in your sessions.
+
+    Claude Code writes task notifications, system reminders, skill bodies and
+    interrupt markers as `type: "user"` transcript records, so they can land in
+    the store looking like something a person typed. Ingest filters them now;
+    this finds rows written before a given prefix was recognised.
+
+    `session_id` restricts it to one session; omitted, it sweeps every session
+    you can read — and then a caller whose workspaces sit in more than one
+    tenant tree must name the workspace. `sample` (clamped to 50) is how many
+    example rows to include. Read-only: `purge_session_noise` deletes.
+    """
+    from . import maintenance
+
+    slugs = _visible_slugs(request) if session_id else _visible_slugs(request, listing=True)
+    return maintenance.audit_noise(workspace_slugs=slugs, session_id=session_id,
+                                   sample=sample, user=request.user)
+
+
+@router.post("/noise/purge", response=NoisePurgeOut,
+             summary="Delete harness output stored as your messages")
+def purge_session_noise(request: HttpRequest, payload: NoisePurgeIn):
+    """Delete the rows `audit_session_noise` reports.
+
+    DRY RUN BY DEFAULT: without `apply: true` this reports what WOULD go and
+    deletes nothing. Deleting is irreversible and the match is only as good as
+    the current prefix list, so the intended sequence is audit, read the count,
+    then apply. Only sessions you can read; a sweep that deletes covers exactly
+    the workspace named (never the ones below it).
+    """
+    from . import maintenance
+
+    if payload.session_id:
+        slugs = _visible_slugs(request)
+    else:
+        slugs = _visible_slugs(request, bulk_write=True) if payload.apply \
+            else _visible_slugs(request, listing=True)
+    return maintenance.purge_noise(workspace_slugs=slugs, session_id=payload.session_id,
+                                   sample=payload.sample, apply=payload.apply, user=request.user)
+
+
+@router.post("/slack/share", response=SlackShareOut, summary="Post a session's summary to Slack")
+def share_session_to_slack(request: HttpRequest, payload: SlackShareIn):
+    """Post a summary of the current session into a Slack channel.
+
+    `channel` is a channel name (`#dev`) or id; the canopy app must be in it.
+    `summary` is Markdown — what we are doing, why, and where it stands.
+
+    `mode`: `broadcast` (default) — one post; replies in Slack stay between
+    people. `bind` — the post starts a thread bound to this session from now
+    on, exactly as if the session had been started from Slack: its replies
+    appear in the thread and teammates' replies reach the session.
+
+    Sharing a session that is ALREADY bound posts `summary` as an update in its
+    thread instead (mode and channel are then ignored). `channel` is required
+    otherwise.
+
+    Identify the session with `claude_session_id` ($CLAUDE_CODE_SESSION_ID),
+    else `emdash_task` + `emdash_project`, else `session_id`. A broadcast works
+    without one; a bind does not. `workspace` is needed only when you belong to
+    several workspaces with Slack connected and no session is given.
+
+    An AGENT answering a turn names its conversation with `turn_id`: its own
+    login may act on the conversation of a turn it is running, while that turn
+    is in flight — post an update, or (after `detach_session_from_slack`) bind
+    again, only in the conversation's own channel. To move the conversation to
+    a fresh thread in one step, use `start_new_slack_thread`.
+    """
+    from apps.slack import share
+
+    visible = _site_scoped(request, access.readable_sessions(
+        request.user, workspace_slugs=_visible_slugs(request)))
+    own = False
+    if payload.turn_id:
+        session, own = share.resolve_turn_session(request.user, payload.turn_id, visible=visible)
+        if session is None:
+            raise HttpError(404, "no conversation of a live turn of yours matches that turn_id "
+                                 "(a turn reaches its conversation only while it is claimed or running)")
+    else:
+        try:
+            session = share.resolve_session(
+                request.user, session_id=payload.session_id,
+                claude_session_id=payload.claude_session_id,
+                emdash_task=payload.emdash_task, emdash_project=payload.emdash_project,
+                visible=visible)
+        except share.Ambiguous:
+            raise HttpError(409, "more than one session matches that emdash task; pass "
+                                 "claude_session_id or session_id") from None
+    result = share.share_session(request.user, channel=payload.channel, summary=payload.summary,
+                                 mode=payload.mode, session=session, workspace=payload.workspace,
+                                 own_turn=own)
+    if not result.ok:
+        raise HttpError(422 if result.status == share.BAD_REQUEST else 409, result.message)
+    return {"status": result.status, "message": result.message, "mode": payload.mode,
+            "channel": result.channel_id, "ts": result.ts, "permalink": result.permalink,
+            "session_id": result.session.pk if result.session else None}
 
 
 @router.post("/slack/detach", response=SlackDetachOut,

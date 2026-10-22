@@ -118,3 +118,43 @@ def test_every_write_says_whether_it_is_a_setting(operations):
     assert not stale, f"SETTINGS / NOT_SETTINGS name routes that are not live writes: {stale}"
     bad = {op: k for op, k in route_gates.NOT_SETTINGS.items() if k not in route_gates.WRITE_KINDS}
     assert not bad, f"NOT_SETTINGS kinds outside WRITE_KINDS: {bad}"
+
+
+def _mcp_tools() -> dict:
+    from asgiref.sync import async_to_sync
+
+    from apps.mcp.server import mcp
+
+    return {t.name: t for t in async_to_sync(mcp.list_tools)()}
+
+
+@pytest.mark.django_db
+def test_every_hand_written_mcp_tool_declares_its_gate():
+    """A hand-written tool bypasses the route gates, the settings audit and the
+    acting cap, so it must at least say who may call it — and a stale entry
+    means a tool was turned into a route (good) without its row going.
+    Dynamic page tools (`page_<action>`) are each open page's, per caller."""
+    from apps.mcp import api_tools
+
+    tools = {name for name, t in _mcp_tools().items()
+             if not isinstance(t, api_tools.CanopyAPITool) and not name.startswith("page_")}
+    declared = set(route_gates.HAND_TOOL_GATES)
+    assert not sorted(tools - declared), (
+        "Hand-written MCP tools with no entry in route_gates.HAND_TOOL_GATES: "
+        f"{sorted(tools - declared)}. If it is a plain write, make it a REST route instead.")
+    assert not sorted(declared - tools), \
+        f"HAND_TOOL_GATES names tools that do not exist: {sorted(declared - tools)}"
+    for name, (gates, kind) in route_gates.HAND_TOOL_GATES.items():
+        assert gates and set(gates) <= route_gates.VOCABULARY, name
+        assert kind == "read" or kind in route_gates.WRITE_KINDS, name
+
+
+@pytest.mark.django_db
+def test_plain_writes_are_routes_not_hand_written_tools():
+    """Slack share and the noise sweep are routes, reaching MCP as generated
+    tools under the same names — so they are gated, audited and acting-capped."""
+    from apps.mcp import api_tools
+
+    tools = _mcp_tools()
+    for name in ("share_session_to_slack", "purge_session_noise", "audit_session_noise"):
+        assert isinstance(tools[name], api_tools.CanopyAPITool), name
