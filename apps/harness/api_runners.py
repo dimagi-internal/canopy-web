@@ -999,6 +999,13 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     it as a side effect.
     """
     runner = runner_or_404(request, runner_id)
+    # A reported key sent back UNCHANGED is an echo, not a declaration: the page's
+    # Slack & chat toggle round-trips the capabilities it read. Only a value that
+    # differs from what the box reported is a hand edit to refuse.
+    reported = ("projects", "profiles", "envelope", "midturn", "pins", "unprepared", "data_mode",
+                "data_mode_hash")
+    payload.capabilities = {k: v for k, v in payload.capabilities.items()
+                            if not (k in reported and runner.capabilities.get(k) == v)}
     if "projects" in payload.capabilities:
         raise HttpError(
             422,
@@ -1015,8 +1022,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             raise HttpError(422, f"`{key}` is reported by the runner on every heartbeat, "
                                  "not set by hand.")
     caps = dict(payload.capabilities)
-    for key in ("projects", "profiles", "envelope", "midturn", "pins", "unprepared", "data_mode",
-                "data_mode_hash"):
+    for key in reported:
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
     # The isolation unit is SERVER-OWNED once it is set (`unit_pairing` records it
