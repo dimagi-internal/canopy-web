@@ -875,6 +875,9 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         "slack",
         session=session,
         text=prompt,
+        # No site's token behind a Slack event: nothing to stamp. A floor an
+        # earlier site send set stays (the stamp only grows).
+        runner_requirements=(),
         # A contact has no account; enqueue_turn ignores an anonymous user, so
         # the turn carries no `enqueued_by` and the initiator names the contact.
         user=principal.user or AnonymousUser(),
@@ -1017,7 +1020,7 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
     asked: list[Turn] = []
     for turn in closed:
         _msg, again = doors.send_from(
-            "slack", session=session, text=turn.prompt, user=user,
+            "slack", session=session, text=turn.prompt, user=user, runner_requirements=(),
             # Idempotent per lost turn: a double click re-asks once.
             client_id=f"requeue:{turn.pk}", origin=turn.origin,
             initiator=who.for_user(user, via=via, assurance=""),
