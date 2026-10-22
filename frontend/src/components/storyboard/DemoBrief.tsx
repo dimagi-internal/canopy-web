@@ -50,7 +50,7 @@ export function runningOrder(board: Storyboard): RunItem[] {
           key: `${entry.narrative_slug}/${c.cut_id}`,
           title: c.title,
           part: entry.title,
-          duration: c.duration_sec,
+          duration: c.duration_sec ?? null,
           href: `#${cutDomId(entry.narrative_slug, c.cut_id)}`,
           optional: c.optional,
         })

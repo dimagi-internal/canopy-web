@@ -13938,13 +13938,6 @@ export interface components {
             /** Items */
             readonly items: readonly components["schemas"]["StoryboardListItemOut"][];
         };
-        /** ActOut */
-        readonly ActOut: {
-            readonly task: components["schemas"]["AgentTaskOut"];
-            readonly action: components["schemas"]["AgentTaskActionOut"];
-            /** Turn Ids */
-            readonly turn_ids?: readonly string[];
-        };
         /**
          * CutAppLinkOut
          * @description A live product screen a cut films (one of its ``reference`` links),
@@ -14271,6 +14264,17 @@ export interface components {
             /** At */
             readonly at: string;
         };
+        /** StoryboardActOut */
+        readonly StoryboardActOut: {
+            /** Anchor Id */
+            readonly anchor_id: string;
+            /** Title */
+            readonly title: string;
+            /** Prose */
+            readonly prose: string;
+            /** Entries */
+            readonly entries: readonly components["schemas"]["EntryOut"][];
+        };
         /**
          * StoryboardBrief
          * @description Optional framing for the whole set. Every field may be absent.
@@ -14348,7 +14352,7 @@ export interface components {
              */
             readonly can_manage: boolean;
             /** Acts */
-            readonly acts: readonly components["schemas"]["ActOut"][];
+            readonly acts: readonly components["schemas"]["StoryboardActOut"][];
             readonly round?: components["schemas"]["RoundPayloadOut"] | null;
             readonly previous_round?: components["schemas"]["RoundPayloadOut"] | null;
         };
@@ -16926,191 +16930,6 @@ export interface components {
             /** Share Token */
             readonly share_token: string;
         };
-        /** SessionDetailOut */
-        readonly SessionDetailOut: {
-            /**
-             * Backfill Pending
-             * @default false
-             */
-            readonly backfill_pending: boolean;
-            /**
-             * Id
-             * Format: uuid
-             */
-            readonly id: string;
-            /** Agent Slug */
-            readonly agent_slug: string | null;
-            /** Project */
-            readonly project: string;
-            /** Workspace */
-            readonly workspace: string;
-            /** Title */
-            readonly title: string;
-            /**
-             * Opening
-             * @default
-             */
-            readonly opening: string;
-            /** Status */
-            readonly status: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /**
-             * Last Activity At
-             * Format: date-time
-             */
-            readonly last_activity_at: string;
-            /**
-             * Origin
-             * @default web
-             */
-            readonly origin: string;
-            /**
-             * Running
-             * @default false
-             */
-            readonly running: boolean;
-            /** Runner Name */
-            readonly runner_name?: string | null;
-            /** Runner Id */
-            readonly runner_id?: string | null;
-            /**
-             * Runner Host
-             * @default
-             */
-            readonly runner_host: string;
-            /** Runner Location */
-            readonly runner_location?: string | null;
-            /**
-             * Emdash Project
-             * @default
-             */
-            readonly emdash_project: string;
-            /** Runner Online */
-            readonly runner_online?: boolean | null;
-            /** Runner Status */
-            readonly runner_status?: string | null;
-            /**
-             * Runner Signed Out
-             * @default false
-             */
-            readonly runner_signed_out: boolean;
-            /**
-             * Session Key
-             * @default
-             */
-            readonly session_key: string;
-            /**
-             * Waiting On You
-             * @default false
-             */
-            readonly waiting_on_you: boolean;
-            /**
-             * Close Error
-             * @default
-             */
-            readonly close_error: string;
-            /**
-             * Runner Reported
-             * @default false
-             */
-            readonly runner_reported: boolean;
-            /** Close Error At */
-            readonly close_error_at?: string | null;
-            /**
-             * Notify Every Completion
-             * @default false
-             */
-            readonly notify_every_completion: boolean;
-            /**
-             * Last Reply
-             * @default
-             */
-            readonly last_reply: string;
-            /**
-             * Agent Spoke Last
-             * @default false
-             */
-            readonly agent_spoke_last: boolean;
-            /**
-             * Turn Mode
-             * @default
-             */
-            readonly turn_mode: string;
-            /**
-             * Turn Origin
-             * @default
-             */
-            readonly turn_origin: string;
-            /**
-             * Feed Status
-             * @default
-             */
-            readonly feed_status: string;
-            /**
-             * Runner Requirements
-             * @default []
-             */
-            readonly runner_requirements: readonly string[];
-            /** Created By */
-            readonly created_by?: string | null;
-            /**
-             * Provenance
-             * @default {}
-             */
-            readonly provenance: {
-                readonly [key: string]: unknown;
-            };
-            /** Parent Turn Id */
-            readonly parent_turn_id?: string | null;
-            /** Parent Session Id */
-            readonly parent_session_id?: string | null;
-            /**
-             * Parent Task
-             * @default
-             */
-            readonly parent_task: string;
-            /**
-             * Parent Claude Session
-             * @default
-             */
-            readonly parent_claude_session: string;
-            /**
-             * Activity
-             * @default {}
-             */
-            readonly activity: {
-                readonly [key: string]: unknown;
-            };
-            readonly slack?: components["schemas"]["SlackBindingOut"] | null;
-            /** Messages */
-            readonly messages: readonly components["schemas"]["MessageOut"][];
-            /** Menu */
-            readonly menu?: {
-                readonly [key: string]: unknown;
-            } | null;
-            /** Turn Status */
-            readonly turn_status?: {
-                readonly [key: string]: unknown;
-            } | null;
-            /** My Role */
-            readonly my_role?: string | null;
-            /**
-             * Can Move
-             * @default false
-             */
-            readonly can_move: boolean;
-            /**
-             * Has More Before
-             * @default false
-             */
-            readonly has_more_before: boolean;
-            /** Oldest Loaded Turn Index */
-            readonly oldest_loaded_turn_index?: number | null;
-        };
         /** SessionMessageOut */
         readonly SessionMessageOut: {
             /** Turn Index */
@@ -17129,6 +16948,53 @@ export interface components {
              * @default
              */
             readonly plaintext: string;
+        };
+        /** SharedSessionDetailOut */
+        readonly SharedSessionDetailOut: {
+            /** Slug */
+            readonly slug: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /** Project Slug */
+            readonly project_slug?: string | null;
+            /**
+             * Visibility
+             * @enum {string}
+             */
+            readonly visibility: "private" | "link";
+            /**
+             * Owner Email
+             * Format: email
+             */
+            readonly owner_email: string;
+            /** Message Count */
+            readonly message_count: number;
+            /** Redaction Count */
+            readonly redaction_count: number;
+            /** Share Token */
+            readonly share_token?: string | null;
+            /** Is Owner */
+            readonly is_owner: boolean;
+            /** Workspace */
+            readonly workspace?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /**
+             * Messages
+             * @default []
+             */
+            readonly messages: readonly components["schemas"]["SessionMessageOut"][];
         };
         /** SessionPatchIn */
         readonly SessionPatchIn: {
@@ -20441,6 +20307,13 @@ export interface components {
             /** Links */
             readonly links?: readonly components["schemas"]["AgentTaskLink"][] | null;
         };
+        /** ActOut */
+        readonly ActOut: {
+            readonly task: components["schemas"]["AgentTaskOut"];
+            readonly action: components["schemas"]["AgentTaskActionOut"];
+            /** Turn Ids */
+            readonly turn_ids?: readonly string[];
+        };
         /** AgentTaskActionIn */
         readonly AgentTaskActionIn: {
             /**
@@ -22209,12 +22082,21 @@ export interface components {
             readonly rationale: string;
         };
         /**
-         * ForkIn
-         * @description Body for POST /{session_id}/fork.
+         * RunForkIn
+         * @description Fork a run at a step boundary.
          */
-        readonly ForkIn: {
-            /** Turn Index */
-            readonly turn_index: number;
+        readonly RunForkIn: {
+            /** At Step */
+            readonly at_step: string;
+            /**
+             * Mode
+             * @default keep-overrides-only
+             */
+            readonly mode: string;
+            /** Edits */
+            readonly edits?: {
+                readonly [key: string]: unknown;
+            };
         };
         /** RunDocOut */
         readonly RunDocOut: {
@@ -29744,6 +29626,191 @@ export interface components {
              */
             readonly note: string;
         };
+        /** SessionDetailOut */
+        readonly SessionDetailOut: {
+            /**
+             * Backfill Pending
+             * @default false
+             */
+            readonly backfill_pending: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Agent Slug */
+            readonly agent_slug: string | null;
+            /** Project */
+            readonly project: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Opening
+             * @default
+             */
+            readonly opening: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Last Activity At
+             * Format: date-time
+             */
+            readonly last_activity_at: string;
+            /**
+             * Origin
+             * @default web
+             */
+            readonly origin: string;
+            /**
+             * Running
+             * @default false
+             */
+            readonly running: boolean;
+            /** Runner Name */
+            readonly runner_name?: string | null;
+            /** Runner Id */
+            readonly runner_id?: string | null;
+            /**
+             * Runner Host
+             * @default
+             */
+            readonly runner_host: string;
+            /** Runner Location */
+            readonly runner_location?: string | null;
+            /**
+             * Emdash Project
+             * @default
+             */
+            readonly emdash_project: string;
+            /** Runner Online */
+            readonly runner_online?: boolean | null;
+            /** Runner Status */
+            readonly runner_status?: string | null;
+            /**
+             * Runner Signed Out
+             * @default false
+             */
+            readonly runner_signed_out: boolean;
+            /**
+             * Session Key
+             * @default
+             */
+            readonly session_key: string;
+            /**
+             * Waiting On You
+             * @default false
+             */
+            readonly waiting_on_you: boolean;
+            /**
+             * Close Error
+             * @default
+             */
+            readonly close_error: string;
+            /**
+             * Runner Reported
+             * @default false
+             */
+            readonly runner_reported: boolean;
+            /** Close Error At */
+            readonly close_error_at?: string | null;
+            /**
+             * Notify Every Completion
+             * @default false
+             */
+            readonly notify_every_completion: boolean;
+            /**
+             * Last Reply
+             * @default
+             */
+            readonly last_reply: string;
+            /**
+             * Agent Spoke Last
+             * @default false
+             */
+            readonly agent_spoke_last: boolean;
+            /**
+             * Turn Mode
+             * @default
+             */
+            readonly turn_mode: string;
+            /**
+             * Turn Origin
+             * @default
+             */
+            readonly turn_origin: string;
+            /**
+             * Feed Status
+             * @default
+             */
+            readonly feed_status: string;
+            /**
+             * Runner Requirements
+             * @default []
+             */
+            readonly runner_requirements: readonly string[];
+            /** Created By */
+            readonly created_by?: string | null;
+            /**
+             * Provenance
+             * @default {}
+             */
+            readonly provenance: {
+                readonly [key: string]: unknown;
+            };
+            /** Parent Turn Id */
+            readonly parent_turn_id?: string | null;
+            /** Parent Session Id */
+            readonly parent_session_id?: string | null;
+            /**
+             * Parent Task
+             * @default
+             */
+            readonly parent_task: string;
+            /**
+             * Parent Claude Session
+             * @default
+             */
+            readonly parent_claude_session: string;
+            /**
+             * Activity
+             * @default {}
+             */
+            readonly activity: {
+                readonly [key: string]: unknown;
+            };
+            readonly slack?: components["schemas"]["SlackBindingOut"] | null;
+            /** Messages */
+            readonly messages: readonly components["schemas"]["MessageOut"][];
+            /** Menu */
+            readonly menu?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Turn Status */
+            readonly turn_status?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** My Role */
+            readonly my_role?: string | null;
+            /**
+             * Can Move
+             * @default false
+             */
+            readonly can_move: boolean;
+            /**
+             * Has More Before
+             * @default false
+             */
+            readonly has_more_before: boolean;
+            /** Oldest Loaded Turn Index */
+            readonly oldest_loaded_turn_index?: number | null;
+        };
         /**
          * SessionBindingInfoOut
          * @description The runner side of a session, for Session info: where it lives right now
@@ -29978,6 +30045,14 @@ export interface components {
         readonly PlaceIn: {
             /** Placement */
             readonly placement: string;
+        };
+        /**
+         * ForkIn
+         * @description Body for POST /{session_id}/fork.
+         */
+        readonly ForkIn: {
+            /** Turn Index */
+            readonly turn_index: number;
         };
         /**
          * TransferIn
@@ -35675,7 +35750,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["SessionDetailOut"];
+                    readonly "application/json": components["schemas"]["SharedSessionDetailOut"];
                 };
             };
         };
@@ -38788,7 +38863,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["ForkIn"];
+                readonly "application/json": components["schemas"]["RunForkIn"];
             };
         };
         readonly responses: {

@@ -105,7 +105,7 @@ class EntryOut(StrictModel):
     """The narrative's own caveats, from its version's request_json."""
 
 
-class ActOut(StrictModel):
+class StoryboardActOut(StrictModel):
     anchor_id: str
     """What an act-level note anchors to. Resolvable back to the act via this
     same read — feedback carries a pointer, never a copy of the act."""
@@ -264,7 +264,7 @@ class StoryboardOut(StrictModel):
     can_manage: bool = False
     """True when the caller may open and close feedback rounds (editor or
     above in the owning workspace). False for viewers and token holders."""
-    acts: list[ActOut]
+    acts: list[StoryboardActOut]
     # Round notes are visible to every reader while the round is open (spec C,
     # Visibility) — names only, never emails.
     round: RoundPayloadOut | None = None

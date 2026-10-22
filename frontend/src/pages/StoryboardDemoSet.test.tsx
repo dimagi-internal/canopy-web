@@ -40,6 +40,7 @@ function cut(over: Partial<api.EntryCut> = {}): api.EntryCut {
     audience_note: 'For Edesia: their order is the one on the road.',
     provenance: 'supply_chain overview, programme 10112',
     optional: false,
+    app_links: [],
     ...over,
   }
 }
@@ -62,6 +63,7 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
     capability: 'comment',
     layout: 'review',
     is_member: false,
+    can_manage: false,
     brief: {
       audience: 'Edesia and OES',
       purpose: 'One set of screens shows where every sachet is.',
@@ -92,6 +94,8 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
                     video_url: null, recorded: false, screen_notes: '', audience_note: '', provenance: '' }),
             ],
             open_questions: ['Name the partner store?'],
+            assumptions: [],
+            divergences: [],
           },
         ],
       },
@@ -156,8 +160,9 @@ describe('Storyboard as a demo set', () => {
 
   it('links each cut to the live product screen it films, in a new tab', async () => {
     const b = board()
-    b.acts[0].entries[0].cuts![0] = {
-      ...b.acts[0].entries[0].cuts![0],
+    const cuts = b.acts[0].entries[0].cuts as api.EntryCut[]
+    cuts[0] = {
+      ...cuts[0],
       app_links: [{ label: 'Supply overview', url: 'https://labs.connect.dimagi.com/supply/overview/?program_id=10112' }],
     }
     getStoryboard.mockResolvedValue(b)
@@ -217,6 +222,7 @@ describe('Storyboard as a demo set', () => {
       decisions: [],
       acts: [{ anchor_id: 'act:a', title: 'A', prose: '', entries: [{
         narrative_slug: 'x', title: 'X', lede: '', version: 1, video_url: '/v', video_viewer_url: '/v', published: true,
+        cuts: [], assumptions: [], divergences: [], open_questions: [],
       }] }],
     }))
     renderAt()
