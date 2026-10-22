@@ -84,10 +84,10 @@ def _turn_list_queries(n_agent, n_chat):
     a = Agent.objects.create(slug=f"hal{tag}", name="Hal", workspace=ws, owner=owner)
     by = initiator.system(via="test")
     for i in range(n_agent):
-        services.enqueue_turn(initiator=by, agent=a, origin=Turn.ORIGIN_API, idempotency_key=f"a{i}")
+        services.enqueue_turn(initiator=by, agent=a, origin=Turn.ORIGIN_API, idempotency_key=f"{tag}:a{i}")
     for i in range(n_chat):
         sess = Session.objects.create(agent=a, workspace=ws, created_by=ed, title=f"s{i}")
-        services.enqueue_turn(initiator=by, session=sess, origin=Turn.ORIGIN_API, idempotency_key=f"c{i}")
+        services.enqueue_turn(initiator=by, session=sess, origin=Turn.ORIGIN_API, idempotency_key=f"{tag}:c{i}")
     c = Client()
     c.force_login(ed)  # a member, not an admin: every row is permission-checked
     with CaptureQueriesContext(connection) as q:
