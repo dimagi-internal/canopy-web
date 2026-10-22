@@ -111,6 +111,22 @@ describe('NewAgentPage', () => {
     expect(register.mock.invocationCallOrder[0]).toBeLessThan(lend.mock.invocationCallOrder[0])
   })
 
+  it('says when lending the token fails, and still offers the setup', async () => {
+    check.mockResolvedValue(answer('ready', { login: 'olive' }))
+    scaffold.mockResolvedValue({ repo: 'olive/scout-bot', repo_url: 'https://github.com/olive/scout-bot', repo_ref: 'main', adopted: false, files: 22 })
+    register.mockResolvedValue(undefined)
+    lend.mockRejectedValue(new Error('Saving the token failed: it cannot push to olive/scout-bot.'))
+    mount()
+    fill()
+    fireEvent.change(screen.getByPlaceholderText('github_pat_…'), { target: { value: 'github_pat_olive' } })
+    await screen.findByText('olive/scout-bot is empty; pushing as @olive.', {}, { timeout: 3000 })
+    fireEvent.click(screen.getByRole('button', { name: 'Create agent' }))
+    expect(await screen.findByText(/was created, but saving the token as its GitHub identity failed: Saving the token failed: it cannot push/)).toBeTruthy()
+    expect(screen.queryByTestId('landed')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Open its setup' }))
+    expect((await screen.findByTestId('landed')).textContent).toBe('?created=olive%2Fscout-bot')
+  })
+
   it('will not create when the token cannot see the repo, and says why', async () => {
     check.mockResolvedValue(answer('missing', { detail: 'The token cannot see olive/scout-bot.' }))
     mount()

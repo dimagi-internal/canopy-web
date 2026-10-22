@@ -343,7 +343,7 @@ def _job(agent: Agent) -> dict:
     folder = _checkout(agent.slug)
     command = (
         f"git clone {agent.repo_url} {folder} && cd {folder} && claude \"Continue "
-        f"/canopy:create-agent for {agent.slug} from Step 3 (Make it real): fill in persona.md "
+        f"/canopy:create-agent for {agent.slug} at Step 4's `job` step: fill in persona.md "
         "with me, write its first domain skill, add a deny rail for each outbound action, then "
         "run canopy agent doctor and publish it.\""
     ) if agent.repo_url else ""
