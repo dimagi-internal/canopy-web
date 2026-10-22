@@ -415,9 +415,12 @@ export const routeTable: RouteObject[] = [
           { path: 'mail', element: <LazySection><AgentMailSection /></LazySection> },
           // Cloud capabilities it declares, and the workspace admin's grants.
           { path: 'capabilities', element: <LazySection><AgentCapabilitiesSection /></LazySection> },
+          // Settings is tabs (`settings/security`, …); bare `settings` opens the
+          // tab an old `#anchor` belongs to (settingsTabs.ts), else Overview.
           { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },
-          // Credentials is a section of Settings now. Old links (and bookmarks)
-          // keep working and keep their query, e.g. `?google=ok`.
+          { path: 'settings/:tab', element: <LazySection><AgentSettingsSection /></LazySection> },
+          // Credentials lives in Settings now. Old links (and bookmarks) keep
+          // working and keep their query, e.g. `?google=ok`.
           { path: 'credentials', element: <CredentialsRedirect /> },
           {
             // Skills and their history are one subject, two views.
