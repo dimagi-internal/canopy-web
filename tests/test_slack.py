@@ -1834,6 +1834,12 @@ def test_an_admin_moves_a_stranded_turn_to_the_cloud(slack, linked, hal, alice, 
 
     turn.refresh_from_db()
     assert turn.status == Turn.LOST                           # the dead box lets go
+    from apps.events import activity
+    from apps.events.models import Activity
+
+    # ...and analytics hears it ended, once, as lost.
+    assert list(Activity.objects.filter(kind=activity.TURN_FINISHED, ref=str(turn.pk))
+                .values_list("meta__status", flat=True)) == [Turn.LOST]
     again = Turn.objects.exclude(pk=turn.pk).get(prompt="summarise")
     assert again.pinned_runner == cloud                       # the same ask, on the cloud
     assert harness_services.claim_next_turn(cloud) == again
