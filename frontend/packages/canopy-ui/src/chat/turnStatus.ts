@@ -2,7 +2,7 @@ import type { TurnStatus } from "./protocol";
 
 /**
  * The chat kit's VOICE for `harness.turn_status` — the counterpart of
- * `apps/slack/status.py::render`, which says the same eleven states in Slack's
+ * `apps/slack/status.py::render`, which says the same thirteen states in Slack's
  * words. The states are computed once on the server; only the wording is here.
  *
  * Pure functions, no React, so both the wording and the spinner-vs-statement
@@ -194,6 +194,15 @@ export function turnNotice(
           ? `Queued — ${runners} is offline, so nothing is working on this yet. It runs when the runner is back.`
           : "Queued — its runner is offline, so nothing is working on this yet.")
           + (need ? ` It needs a ${need} runner.` : ""),
+        offer,
+      };
+    case "signed_out":
+      return {
+        tone: "error",
+        // Online is not the same as able: the box heartbeats, and every turn it
+        // took came back as the CLI's "Not logged in". Waiting will not fix it.
+        text: `Queued — Claude isn't signed in on ${runners || "its runner"}, so nothing will run this. `
+          + "Sign in there (`claude /login`) and it picks this up.",
         offer,
       };
     case "unrouted":

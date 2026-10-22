@@ -58,6 +58,30 @@
   },
   {
     "canopy": {
+      "event": "chat.stream_complete",
+      "data": {
+        "message_id": "m2",
+        "plaintext": "Not logged in \u00b7 Please run /login",
+        "api_error": "api_error",
+        "signed_out": true
+      }
+    },
+    "agui": [
+      {
+        "type": "TEXT_MESSAGE_END",
+        "metadata": {
+          "canopy": {
+            "plaintext": "Not logged in \u00b7 Please run /login",
+            "api_error": "api_error",
+            "signed_out": true
+          }
+        },
+        "messageId": "m2"
+      }
+    ]
+  },
+  {
+    "canopy": {
       "event": "chat.user_message",
       "data": {
         "message_id": "u1",

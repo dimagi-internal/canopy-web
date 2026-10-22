@@ -509,6 +509,11 @@ class Client:
         )
         return payload or {}
 
+    def post_alert(self, item: dict) -> None:
+        """Record one fleet event (`POST /api/events/`) — a credential alert, which
+        the server also mails to the people who run this box."""
+        self._call_api("/events/", method="POST", body={"items": [item]})
+
     def start(self, turn_id: str, session_id: str = "") -> None:
         self._call("POST", f"/turns/{turn_id}/start", {"session_id": session_id})
 

@@ -22,6 +22,8 @@ export type IdeSession = {
   turn_mode?: string
   runner_id?: string | null
   runner_name?: string | null
+  /** The bound runner is online but Claude is not signed in on it. */
+  runner_signed_out?: boolean
   agent_slug?: string | null
   emdash_project?: string
   project?: string

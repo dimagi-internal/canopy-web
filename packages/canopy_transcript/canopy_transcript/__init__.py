@@ -55,6 +55,13 @@ from .rows import (
     stream_event,
     user_text,
 )
+from .signed_out import (
+    SIGNED_OUT_NOTE,
+    answered_at_transcript_end,
+    is_auth_required,
+    signed_out_at_transcript_end,
+    signed_out_in_record,
+)
 from .tail import TailReader
 
 __all__ = [
@@ -74,4 +81,6 @@ __all__ = [
     "read_records", "resolve_cli_transcript",
     "resolve_emdash_transcript", "rows_for_hook",
     "row_payload", "rows_for_record", "scrub", "user_text",
+    "SIGNED_OUT_NOTE", "answered_at_transcript_end", "is_auth_required",
+    "signed_out_at_transcript_end", "signed_out_in_record",
 ]

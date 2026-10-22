@@ -17,6 +17,19 @@ def test_assistant_maps_to_start_and_complete():
     assert frames[1]["data"]["plaintext"] == "hello"
 
 
+def test_an_api_error_row_says_so_on_the_frame():
+    """A watcher must see "didn't run" live, not the CLI's line as a reply."""
+    frames = turn_event_to_frames(
+        {"seq": 7, "kind": "assistant", "ts": "t",
+         "payload": {"text": "Not logged in · Please run /login",
+                     "api_error": "api_error", "signed_out": True}}, _rid)
+    assert frames[1]["data"] == {"message_id": "m:7", "plaintext": "Not logged in · Please run /login",
+                                 "api_error": "api_error", "signed_out": True}
+    plain = turn_event_to_frames(
+        {"seq": 8, "kind": "assistant", "payload": {"text": "hi"}, "ts": "t"}, _rid)
+    assert "api_error" not in plain[1]["data"]
+
+
 def test_tool_events_map():
     assert turn_event_to_frames(
         {"seq": 1, "kind": "tool_start", "payload": {"name": "Bash"}, "ts": "t"}, _rid

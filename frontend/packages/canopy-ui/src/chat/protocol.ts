@@ -208,7 +208,7 @@ export interface SessionMenu {
  * any of it and simply showed an empty panel.
  */
 export interface TurnStatus {
-  /** `picking_up` | `queued_behind` | `waiting_runner` | `unrouted` | `working` | `blocked`
+  /** `picking_up` | `queued_behind` | `waiting_runner` | `signed_out` | `unrouted` | `working` | `blocked`
    *  | `paused` | `done` | `cancelled` | `missed` | `failed` | `lost`.
    *
    *  Deliberately a string rather than a union: an older client meeting a
@@ -381,7 +381,12 @@ export type WsEvent =
   // occupy after a reload. Optional: an older server omits it.
   | { event: "chat.tool_use"; data: { parent_message_id: string | null; tool_message_id: string; turn_index?: number; block: Record<string, unknown> } }
   | { event: "chat.tool_result"; data: { parent_message_id: string | null; tool_message_id: string; turn_index?: number; block: Record<string, unknown>; app?: MessageAppRef | null; secret_request?: MessageSecretRequestRef | null } }
-  | { event: "chat.stream_complete"; data: { message_id: string; plaintext: string } }
+  | {
+      event: "chat.stream_complete";
+      /** `api_error`: the row is Claude Code's own error notice, not a reply;
+       *  `signed_out`: that notice says the box's Claude login is gone. */
+      data: { message_id: string; plaintext: string; api_error?: string; signed_out?: boolean };
+    }
   | { event: "chat.stream_error"; data: { message_id: string; detail: string } }
   | { event: "chat.stream_cancelled"; data: { message_id: string | null; partial_len: number } }
   | { event: "draft.updated"; data: Draft }

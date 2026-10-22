@@ -192,6 +192,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # went away. None when unbound — nothing to be offline.
         "runner_online": _runner_online(runner),
         "runner_status": _runner_status(runner),
+        "runner_signed_out": bool(runner and runner.signed_out),
         "session_key": binding.session_key if binding else "",
         # Is this session blocked on a human? A bool on the LIST (the menu
         # itself rides the detail read) — a list carrying every session's full

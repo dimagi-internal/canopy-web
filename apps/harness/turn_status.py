@@ -48,6 +48,11 @@ QUEUED_BEHIND = "queued_behind"
 #: Queued, its runner is offline. Resolves when a human opens the laptop — or
 #: when the ask is moved to a runner that is up.
 WAITING_RUNNER = "waiting_runner"
+#: Queued, its runner is online — but Claude is not signed in on it
+#: (`Runner.signed_out`), so it claims nothing. Resolves when a person signs in
+#: on that machine, or the ask is moved. Before this it read PICKING_UP, and the
+#: box answered each message with "Not logged in · Please run /login".
+SIGNED_OUT = "signed_out"
 #: Queued, and nothing is set up that could ever take it. Never resolves on its
 #: own; the agent's routing has to be fixed.
 UNROUTED = "unrouted"
@@ -71,9 +76,10 @@ TERMINAL = frozenset({DONE, CANCELLED, MISSED, FAILED, LOST})
 #: The person who asked is owed something and has not got it yet. The union a
 #: client turns into "still going" — the distinction between the members is for
 #: the words, not for whether to show them.
-PENDING = frozenset({PICKING_UP, QUEUED_BEHIND, WAITING_RUNNER, UNROUTED, WORKING, BLOCKED, PAUSED})
+PENDING = frozenset({PICKING_UP, QUEUED_BEHIND, WAITING_RUNNER, SIGNED_OUT, UNROUTED, WORKING,
+                     BLOCKED, PAUSED})
 #: Nothing is moving and only a person can change that.
-STUCK = frozenset({WAITING_RUNNER, UNROUTED, BLOCKED, PAUSED})
+STUCK = frozenset({WAITING_RUNNER, SIGNED_OUT, UNROUTED, BLOCKED, PAUSED})
 #: A failure reason is one sentence on a chat line, not a traceback.
 DETAIL_MAX = 300
 #: How long a WORKING turn may say nothing before a channel says so. The chat kit
@@ -234,7 +240,7 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
     """The state, from facts already in hand.
 
     Pure: every input is injected, so a channel that already paid for `reach`
-    does not pay again and a test can drive all eleven states without a fleet.
+    does not pay again and a test can drive all thirteen states without a fleet.
     Use `resolve` to gather the inputs first.
 
     Precedence is load-bearing and matches the order the Slack line has always
@@ -271,6 +277,8 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
             state, runners = PICKING_UP, tuple(r.name for r in reach.runners)
         elif reach is not None and reach.kind in (harness.OFFLINE, harness.PARKED):
             state, runners = WAITING_RUNNER, tuple(r.name for r in reach.runners)
+        elif reach is not None and reach.kind == harness.SIGNED_OUT:
+            state, runners = SIGNED_OUT, tuple(r.name for r in reach.runners)
         else:
             state, runners = UNROUTED, ()
     elif runner_gone(turn):

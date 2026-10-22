@@ -211,6 +211,18 @@ def rows_for_record(rec: dict) -> list[dict]:
     if kind not in ("user", "assistant"):
         return []
     rows = _rows_for_record(kind, rec)
+    if kind == "assistant" and rec.get("isApiErrorMessage"):
+        # Claude Code's own error notice (a cap, a dead login, a 500), written as
+        # an assistant record. Said so on the row, or the chat draws the CLI's
+        # "Not logged in · Please run /login" as the agent's answer.
+        from .signed_out import signed_out_in_record  # noqa: PLC0415
+
+        flag = {"api_error": str(rec.get("error") or "api_error")}
+        if signed_out_in_record(rec):
+            flag["signed_out"] = True
+        for row in rows:
+            if row["role"] == "assistant":
+                row["content"] = {**row["content"], **flag}
     if kind == "user":
         flags = record_flags(rec)
         for row in rows:

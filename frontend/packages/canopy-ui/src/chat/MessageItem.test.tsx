@@ -32,3 +32,27 @@ describe("MessageItem — a compaction summary", () => {
     expect(screen.queryByTestId("compaction-summary-row")).toBeNull();
   });
 });
+
+function agentRow(plaintext: string, content: Record<string, unknown> = {}): Message {
+  return { ...userRow(content), role: "assistant", plaintext };
+}
+
+describe("MessageItem — Claude Code's own error notice", () => {
+  it("renders a flagged signed-out row as 'didn't run', not as the agent's reply", () => {
+    render(<MessageItem message={agentRow("Not logged in · Please run /login",
+      { api_error: "api_error", signed_out: true })} />);
+    const row = screen.getByTestId("api-error-row");
+    expect(row.textContent).toContain("Claude isn't signed in on the runner");
+    expect(row.textContent).toContain("Not logged in · Please run /login");
+  });
+
+  it("recognises the same line on a row stored before the flag existed", () => {
+    render(<MessageItem message={agentRow("Not logged in · Please run /login")} />);
+    expect(screen.getByTestId("api-error-row")).toBeTruthy();
+  });
+
+  it("leaves an agent talking ABOUT logging in as a reply", () => {
+    render(<MessageItem message={agentRow("You're not logged in to GitHub yet, so please run /login after that.")} />);
+    expect(screen.queryByTestId("api-error-row")).toBeNull();
+  });
+});

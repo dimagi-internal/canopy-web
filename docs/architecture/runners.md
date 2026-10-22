@@ -730,3 +730,17 @@ take its work. `mark_ok` clears it only after a turn executes, so the marker **e
 keeps heartbeating ONLINE. Expiry is retry-with-backoff: a genuinely broken box
 fails its next turn and re-marks itself. The CDP probe gates independently
 (`compute`), so expiry cannot mask emdash being down.
+
+**Signed out is the one not-ready note that stops claiming.** A laptop turn finishes
+at delivery, so a box with no Claude login used to stay ready and answer every
+message with the CLI's "Not logged in". The hook listener now reads the transcript
+tail on `Stop`/`Notification` (`canopy_transcript.signed_out`, the API-error record
+only — never agent text): on that record the box writes the marker with
+`canopy_transcript.SIGNED_OUT_NOTE`, raises `claude_auth_required` once
+(`hooks.report_signed_out`, mailed by `credential_notify`), and skips its claim; on
+the next real reply from any session on the box it clears it (`note_signed_in`). The
+server reads the note as `Runner.signed_out`: `claim_next_turn` refuses the box
+(above the pin), `turn_reach` returns `signed_out` for a turn only signed-out boxes
+could take, admission rules treat it as offline, and the session list carries
+`runner_signed_out` for `/ide`. Other not-ready notes (no Claude desktop CLI, which
+falls back to emdash) still claim.
