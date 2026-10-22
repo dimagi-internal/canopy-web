@@ -66,8 +66,8 @@ def test_config_stuck_turns_raise_one_alert_per_agent(fleet):
     out = {r.subject_key: r for r in src.reconcile(timezone.now())}
     assert set(out) == {"agent:eva:unclaimable", "agent:hal:unclaimable"}
     eva = out["agent:eva:unclaimable"]
-    assert eva.title == "2 queued turns for Eva have no runner that can take them"
-    assert out["agent:hal:unclaimable"].title == "1 queued turn for Hal has no runner that can take it"
+    assert eva.title == "2 turns for Eva are stuck: no runner can take them"
+    assert out["agent:hal:unclaimable"].title == "1 turn for Hal is stuck: no runner can take it"
     assert eva.workspace == "dimagi"
     assert eva.scopes == ("agent:eva", "workspace:dimagi")
     assert eva.url == "/w/dimagi/agents/eva/turns"
@@ -76,7 +76,7 @@ def test_config_stuck_turns_raise_one_alert_per_agent(fleet):
     t3 = _stuck_turn(fleet["eva"], "d")
     (again,) = [r for r in src.reconcile(timezone.now()) if r.subject_key == "agent:eva:unclaimable"]
     assert again.digest() == before  # same cause: a repeat, not a new fact
-    assert again.title == "3 queued turns for Eva have no runner that can take them"
+    assert again.title == "3 turns for Eva are stuck: no runner can take them"
     assert len(set(Turn.objects.filter(agent=fleet['eva']).values_list('pk', flat=True))
                & {t1.pk, t2.pk, t3.pk}) == 3
 
@@ -97,9 +97,9 @@ def test_actions_are_for_people_who_may_cancel(fleet):
     alerts.tick(timezone.now())
     a = _alert()
     acts = src.actions(a, fleet["ed"])
-    assert [x.id for x in acts] == ["cancel", "route", "dismiss"]
-    assert acts[0].closes and not acts[1].closes
-    assert acts[1].href == "/w/dimagi/agents/eva/settings"
+    assert [x.id for x in acts] == ["route", "cancel"]
+    assert acts[0].closes and acts[1].closes  # both fix it: routing, or no turns left
+    assert acts[0].href == "/w/dimagi/agents/eva/settings"
     assert src.actions(a, fleet["viewer"]) == []
 
 
@@ -120,7 +120,7 @@ def test_cancel_needs_the_right_over_every_stuck_turn(fleet, monkeypatch):
     real = src._cancel_refusal
     monkeypatch.setattr(src, "_cancel_refusal", lambda u, t: "no" if t.pk == t2.pk else real(u, t))
     # Only part of the stuck set: no cancel — but ed may edit eva's routing.
-    assert [x.id for x in src.actions(_alert(), fleet["ed"])] == ["route", "dismiss"]
+    assert [x.id for x in src.actions(_alert(), fleet["ed"])] == ["route"]
     with pytest.raises(alerts.ActionNotOffered):
         alerts.act(_alert(), fleet["ed"], "cancel")
     with pytest.raises(ValueError):  # perform itself refuses, cancelling nothing
@@ -143,7 +143,7 @@ def test_an_unrelated_queued_turn_does_not_earn_cancel(fleet, monkeypatch):
 def test_dismiss_sticks_when_the_stuck_set_shrinks_or_grows_with_the_same_cause(fleet):
     t1, _t2 = _stuck_turn(fleet["eva"], "a"), _stuck_turn(fleet["eva"], "b")
     alerts.tick(timezone.now())
-    alerts.act(_alert(), fleet["jj"], "dismiss")
+    alerts.dismiss(_alert(), fleet["jj"])
     mail.outbox.clear()
     services.cancel_queued_turn(Turn.objects.get(pk=t1.pk))  # one of the two goes
     alerts.tick(timezone.now())
@@ -152,7 +152,7 @@ def test_dismiss_sticks_when_the_stuck_set_shrinks_or_grows_with_the_same_cause(
     alerts.tick(timezone.now())
     a = _alert()
     assert a.status == Alert.DISMISSED
-    assert a.title == "2 queued turns for Eva have no runner that can take them"
+    assert a.title == "2 turns for Eva are stuck: no runner can take them"
     assert mail.outbox == []  # nobody is mailed again
     assert not a.events.filter(kind__in=["reopened", "changed"]).exists()
 
@@ -160,7 +160,7 @@ def test_dismiss_sticks_when_the_stuck_set_shrinks_or_grows_with_the_same_cause(
 def test_a_new_cause_reopens_a_dismissed_alert(fleet):
     _stuck_turn(fleet["eva"], "a")
     alerts.tick(timezone.now())
-    alerts.act(_alert(), fleet["jj"], "dismiss")
+    alerts.dismiss(_alert(), fleet["jj"])
     retired = Runner.objects.create(name="old-box", kind=Runner.CLOUD, host="old-box", owner=fleet["jj"],
                                     workspace=fleet["ws"], status=Runner.RETIRED, capabilities={})
     pinned = _stuck_turn(fleet["eva"], "b")
@@ -201,7 +201,7 @@ def test_agent_admins_keep_route_and_dismiss_after_resolve_so_history_reads(flee
     a = _alert()
     assert a.status == Alert.RESOLVED
     src.forget()
-    assert [x.id for x in src.actions(a, fleet["ed"])] == ["route", "dismiss"]  # nothing stuck: no cancel
+    assert [x.id for x in src.actions(a, fleet["ed"])] == ["route"]  # nothing stuck: no cancel
     assert src.actions(a, fleet["viewer"]) == []
     c = Client()
     c.force_login(fleet["ed"])

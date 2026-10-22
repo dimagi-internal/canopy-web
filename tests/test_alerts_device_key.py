@@ -70,15 +70,15 @@ def test_pending_key_raises_and_approval_resolves(box):
     (r,) = src.reconcile(t0)
     assert r.subject_key == f"device_key:{key.pk}"
     assert r.workspace == "dimagi"
-    assert r.title == "A new device key on haldimagi-mbp is waiting for approval"
+    assert r.title == "haldimagi-mbp has a new device key waiting for approval"
     assert r.url == f"/settings?device_key={key.pk}#device-keys"
     alerts.tick(t0)
     a = Alert.objects.get(kind=src.KIND)
     assert a.status == Alert.OPEN and a.severity == "blocking"
     owner = src.actions(a, box["jj"])
-    assert [x.id for x in owner] == ["approve", "dismiss"]
+    assert [x.id for x in owner] == ["approve", "reject"]
     assert owner[0].closes and owner[0].href == r.url
-    assert [x.id for x in src.actions(a, box["admin"])] == ["approve", "dismiss"]
+    assert [x.id for x in src.actions(a, box["admin"])] == ["approve", "reject"]
     assert src.actions(a, box["other"]) == []
     key.status = RunnerDeviceKey.ACTIVE
     key.save(update_fields=["status"])
@@ -110,3 +110,14 @@ def test_private_runner_keeps_the_pending_key_mail(box, django_capture_on_commit
     with django_capture_on_commit_callbacks(execute=True):
         assert _register(box).status_code == 201
     assert {m.to[0] for m in mail.outbox} == {"ad@dimagi.com", "jj@dimagi.com"}
+
+
+def test_reject_revokes_the_pending_key_and_resolves(box):
+    key = _key(box["runner"])
+    alerts.tick(timezone.now())
+    a = Alert.objects.get(kind=src.KIND)
+    alerts.act(a, box["jj"], "reject")
+    key.refresh_from_db()
+    assert key.status == RunnerDeviceKey.REVOKED and key.revoked_by == box["jj"]
+    a.refresh_from_db()
+    assert a.status == Alert.RESOLVED and a.resolved_reason == Alert.REASON_ACTION

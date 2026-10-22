@@ -129,9 +129,9 @@ def test_actions_are_for_agent_editors(fleet):
     a = Alert.objects.get(kind=src.KIND)
     acts = src.actions(a, fleet["ed"])
     assert [x.id for x in acts] == ["routing", "dismiss"]
-    assert not acts[0].closes and acts[0].href == "/w/dimagi/agents/eva/settings"
+    assert acts[0].closes and acts[0].href == "/w/dimagi/agents/eva/settings"
     assert src.actions(a, fleet["viewer"]) == []
-    assert src.CLOSING_ACTION_IDS == ("dismiss",)
+    assert src.CLOSING_ACTION_IDS == ("routing", "dismiss")
 
 
 def test_only_rule_routes_do_not_count(fleet):
