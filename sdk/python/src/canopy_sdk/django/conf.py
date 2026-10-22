@@ -24,6 +24,11 @@
         "PAGE_MODE": "signed",
         "PAGE_PATTERNS": {},        # key mode: {key: regex over location.pathname}
         "WRITABLE_SCOPES": [],
+        # Key mode: the agent (and extra runner requirements) a page chose —
+        # {key: {"agent": "labsdata", "runner_requirements": ["zdr"]}}. In
+        # signed mode a page chooses through panel_context(agent=...,
+        # runner_requirements=...) instead, signed into its page token.
+        "PAGE_AGENTS": {},
         # Optional hooks (dotted paths or callables):
         "SUBJECT_FOR_USER": None,   # user -> str; default str(user.pk)
         "SUBJECT_ACTIVE": None,     # sub -> bool; default: an active user with that pk
@@ -34,7 +39,14 @@
         # Where the panel mints. Default: reverse("canopy_host:panel_token").
         "PANEL_TOKEN_URL": "",       # a literal URL, or
         "PANEL_TOKEN_URL_NAME": "",  # a URL name of the host's own, reversed per request
-        "PANEL": {"launcher_label": "Ask an agent", "mode": "overlay", "theme": {}},
+        # The widget's options (any one also per render: panel_context(panel={...})).
+        # mode: overlay | docked | inline (inline needs target, a CSS selector);
+        # width in px; open: start open; expandable: offer the full-screen
+        # button; initial_display: "normal" | "expanded" (a visitor's own
+        # remembered choice wins).
+        "PANEL": {"launcher_label": "Ask an agent", "mode": "overlay", "theme": {},
+                  "width": 400, "open": False, "target": "", "expandable": True,
+                  "initial_display": "normal"},
         # canopy's live probe (optional; absent = the probe endpoint 404s and is
         # not advertised). A DEDICATED low-privilege principal — never a real
         # person — one read-only scope, and the one call canopy makes with it.
@@ -79,7 +91,7 @@ from django.conf import settings
 from django.utils.module_loading import import_string
 
 from ..host.config import HostConfig, HostNotConfigured, ProbeIdentity
-from ..host.pages import KEY, MODES, SIGNED, PageRegistry, PageTokens
+from ..host.pages import KEY, MODES, SIGNED, Page, PageRegistry, PageTokens
 
 log = logging.getLogger("canopy_sdk.django")
 
@@ -203,15 +215,23 @@ def page_registry() -> PageRegistry:
         cfg = raw()
         return PageRegistry(cfg.get("PAGE_SCOPES") or {}, scope_tools=cfg.get("SCOPE_TOOLS") or {},
                             patterns=cfg.get("PAGE_PATTERNS") or {},
-                            writable_scopes=cfg.get("WRITABLE_SCOPES") or ())
+                            writable_scopes=cfg.get("WRITABLE_SCOPES") or (),
+                            agents=cfg.get("PAGE_AGENTS") or {})
     return page_tokens()
 
 
-def page_scopes(value, user) -> tuple[str, ...]:
-    """The scopes the page ``value`` (a signed page token, or a page key)
-    grants ``user`` — ``()`` for anything else. The mint's one question."""
+def page_for(value, user) -> Page | None:
+    """The page ``value`` (a signed page token, or a page key) names for
+    ``user`` — its scopes and the agent and requirements it chose — or ``None``.
+    The mint's one question."""
     user_id = getattr(user, "pk", None) if user is not None else None
-    return page_registry().scopes_for(value, user_id)
+    return page_registry().page(value, user_id)
+
+
+def page_scopes(value, user) -> tuple[str, ...]:
+    """The scopes the page ``value`` grants ``user`` — ``()`` for anything else."""
+    page = page_for(value, user)
+    return page.scopes if page is not None else ()
 
 
 def agent_slug() -> str:

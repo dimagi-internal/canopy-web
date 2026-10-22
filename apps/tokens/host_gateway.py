@@ -134,7 +134,7 @@ def resolve(turn_id: str) -> SiteContext:
     """The site, grant and effective tools for this turn — or a refusal."""
     from apps.harness.models import Turn
 
-    from .models import AppCredential, HostGrant
+    from .models import AppCredential
 
     turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__agent",
                                         "initiator_contact", "initiator_user",
@@ -174,14 +174,12 @@ def resolve(turn_id: str) -> SiteContext:
         raise GatewayRefusal("site_not_in_capability",
                              f"I am not set up to use {site}'s tools in this conversation")
 
-    # WHO ASKED, from the turn — the grant is theirs or there is none.
-    grants = HostGrant.objects.filter(app=app)
-    if turn.initiator_contact_id:
-        grant = grants.filter(contact_id=turn.initiator_contact_id).order_by("-updated_at").first()
-    elif turn.initiator_user_id:
-        grant = grants.filter(user_id=turn.initiator_user_id).order_by("-updated_at").first()
-    else:
-        grant = None
+    # WHO ASKED, from the turn — the grant is theirs or there is none. And for
+    # WHICH agent: a grant a page bound to another agent is not this one's.
+    from .host_grants import grant_for
+
+    grant = grant_for(app, agent=agent, contact=turn.initiator_contact,
+                      user=turn.initiator_user if not turn.initiator_contact_id else None)
     if grant is None:
         raise GatewayRefusal("no_grant",
                              f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE)

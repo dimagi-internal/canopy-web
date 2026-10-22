@@ -144,6 +144,8 @@ class BearerTokenAuthMiddleware:
             # The site's runner requirements (ZDR), from the token — never from
             # anything the request itself carries.
             request.runner_requirements = tuple(ctok.runner_requirements or ())
+            # The one agent the site bound this arrival to, if it did.
+            request.bound_agent_id = ctok.bound_agent_id
             request.auth_method = found.auth_method
             request.auth_credential = found.credential
             request._dont_enforce_csrf_checks = True
@@ -180,6 +182,7 @@ class BearerTokenAuthMiddleware:
         # for. Cross-origin hosts never saw it, because no cookie rides along.
         request.delegated_app = dtok.app
         request.runner_requirements = tuple(dtok.runner_requirements or ())
+        request.bound_agent_id = dtok.bound_agent_id
 
         # Identity stays with the session when there is one. The token was
         # minted FOR that user by `/api/embed/token`, so they agree in practice;

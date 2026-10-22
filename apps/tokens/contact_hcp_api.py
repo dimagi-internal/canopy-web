@@ -191,7 +191,9 @@ def _session(request: HttpRequest, session_id: str):
         sid = uuid.UUID(str(session_id))
     except ValueError:
         raise HttpError(404, "Not found") from None
-    session = (Session.objects.filter(contact_session_q(request.contact), pk=sid)
+    from .contact_api import _bound
+
+    session = (_bound(request, Session.objects.filter(contact_session_q(request.contact), pk=sid))
                .select_related("agent").first())
     if session is None or session.agent is None:
         raise HttpError(404, "Not found")

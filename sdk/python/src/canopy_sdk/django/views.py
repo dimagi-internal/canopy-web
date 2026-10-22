@@ -170,18 +170,27 @@ def panel_token(request):
     browser names. Either way it can only SELECT among the pages registered in
     ``PAGE_SCOPES``; unknown, forged, expired or another user's means no grant,
     and the mint goes ahead without one.
+
+    A page that chose its agent (and requirements) has them read from the same
+    place as its scopes, and signed into the assertion: the token is BOUND to
+    that agent. Any other mint gets ``AGENT_SLUG``, unbound, and the site's
+    requirements only.
     """
     if not conf.is_configured():
         return _json({"error": "the canopy panel is not configured here"}, 503)
     try:
         config = conf.get_host_config()
-        scopes = conf.page_scopes(request.GET.get("page"), request.user)
+        page = conf.page_for(request.GET.get("page"), request.user)
     except Exception:  # noqa: BLE001 - HostNotConfigured, a malformed key or registry
         log.exception("CANOPY_HOST could not be read for the panel")
         return _json({"error": "the canopy panel is not configured here"}, 503)
+    chosen = page.agent if page is not None else ""
     try:
         payload = arrival_payload(config, conf.subject_for_user(request.user),
-                                  scopes=scopes, agent_slug=conf.agent_slug(),
+                                  scopes=page.scopes if page is not None else (),
+                                  agent_slug=chosen or conf.agent_slug(), bind_agent=bool(chosen),
+                                  runner_requirements=(page.runner_requirements
+                                                       if page is not None else ()),
                                   **conf.user_claims(request.user))
         vouched = mint_contact_token(config, payload)
     except MintFailed as exc:

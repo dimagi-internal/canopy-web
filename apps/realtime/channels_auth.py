@@ -301,6 +301,11 @@ class RealtimeAuthMiddleware:
         scope["runner_requirements"] = (
             tuple(delegated.runner_requirements or ()) if user is not None and delegated else ()
         )
+        # The agent the site bound the token to, read the same way: the chat
+        # consumer opens no other agent's conversation on it.
+        scope["bound_agent_id"] = (
+            delegated.bound_agent_id if user is not None and delegated else None
+        )
         # Only when nothing resolved a user. A contact and a user are never both
         # present, so a consumer cannot accidentally read the wrong one — and
         # `scope["user"]` stays anonymous for a contact, so any consumer that

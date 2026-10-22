@@ -519,3 +519,137 @@ def test_runner_requirements_are_read_from_the_setting(host):
             "SIGNING_KEY": private_pem(host.host_key), "CANOPY_BASE_URL": CANOPY,
             "APP_NAME": "connect-labs", "RUNNER_REQUIREMENTS": ["zdr"]}):
         assert conf.get_host_config().runner_requirements == ("zdr",)
+
+
+# --- a page that chooses its own agent and runner requirements ------------------------------
+
+
+def _data_host(host):
+    return {**conf.raw(), "RUNNER_REQUIREMENTS": [],
+            "SCOPE_TOOLS": {"marketplace:read": ["marketplace_orgs_get"], "data:read": ["explorer_query"]},
+            "PAGE_SCOPES": {"network": ["marketplace:read"], "data": ["data:read"]}}
+
+
+def _claims(token: str) -> dict:
+    import jwt
+
+    return jwt.decode(token, options={"verify_signature": False})
+
+
+def test_a_page_that_chose_its_agent_binds_the_mint_to_it(host, user):
+    client = Client()
+    client.force_login(user)
+    with override_settings(CANOPY_HOST=_data_host(host)):
+        body = client.get("/data/visits/").content.decode()
+        options = _rendered_options(body)
+        with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
+            client.post(f"/canopy/panel-token/?page={_rendered_token(body)}")
+    assert options["agent"] == "labsdata", "the widget preselects the page's agent"
+    payload = mint.call_args.args[1]
+    assert payload["agent_slug"] == "labsdata"
+    assertion = _claims(payload["assertion"])
+    assert assertion[contract.AGENT_CLAIM] == "labsdata"
+    assert assertion[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+    assert _claims(payload["id_jag"])["scope"] == "data:read"
+
+
+def test_the_rest_of_the_site_keeps_its_default_agent_unbound_and_without_zdr(host, user):
+    client = Client()
+    client.force_login(user)
+    with override_settings(CANOPY_HOST=_data_host(host)):
+        token = _rendered_token(client.get("/marketplace/network/").content.decode())
+        with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
+            client.post(f"/canopy/panel-token/?page={token}")
+    payload = mint.call_args.args[1]
+    assertion = _claims(payload["assertion"])
+    assert payload["agent_slug"] == "ace"
+    assert contract.AGENT_CLAIM not in assertion
+    assert contract.RUNNER_REQUIREMENTS_CLAIM not in assertion
+
+
+def test_a_page_can_raise_the_sites_requirements_never_lower_them(host, user):
+    client = Client()
+    client.force_login(user)
+    with override_settings(CANOPY_HOST={**_data_host(host), "RUNNER_REQUIREMENTS": ["zdr"]}):
+        token = _rendered_token(client.get("/marketplace/network/").content.decode())
+        with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
+            client.post(f"/canopy/panel-token/?page={token}")
+    assert _claims(mint.call_args.args[1]["assertion"])[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+
+
+def test_the_choice_is_inside_the_signature(host, user):
+    # A browser that edits the agent out of a data page's token gets no page at
+    # all — never the page's scopes for the default agent.
+    import base64
+
+    client = Client()
+    client.force_login(user)
+    with override_settings(CANOPY_HOST=_data_host(host)):
+        token = _rendered_token(client.get("/data/visits/").content.decode())
+        payload, _, sig = token.partition(".")
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        assert claims["a"] == "labsdata" and claims["r"] == ["zdr"]
+        claims.pop("a")
+        forged = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
+            client.post(f"/canopy/panel-token/?page={forged}.{sig}")
+    sent = mint.call_args.args[1]
+    assert "id_jag" not in sent and sent["agent_slug"] == "ace"
+    assert contract.AGENT_CLAIM not in _claims(sent["assertion"])
+
+
+def test_a_page_with_no_scopes_may_still_choose_its_agent(host, user):
+    from canopy_sdk.django.pages import panel_context
+
+    rf_request = mock.Mock(user=user, resolver_match=mock.Mock(view_name="unregistered"))
+    ctx = panel_context(rf_request, agent="labsdata", runner_requirements=["zdr"])
+    page = conf.page_for(ctx["page_token"], user)
+    assert page.scopes == () and page.agent == "labsdata" and page.runner_requirements == ("zdr",)
+    assert panel_context(rf_request)["page_token"] == "", "no choice and no scopes: no token"
+
+
+def test_panel_options_pass_through_and_override_per_render(host, user):
+    client = Client()
+    client.force_login(user)
+    with override_settings(CANOPY_HOST={**_data_host(host), "PANEL": {"mode": "overlay", "width": 420,
+                                                                       "launcher_label": "Ask"}}):
+        data = _rendered_options(client.get("/data/visits/").content.decode())
+        network = _rendered_options(client.get("/marketplace/network/").content.decode())
+    assert (data["mode"], data["width"], data["expandable"], data["initialDisplay"]) == \
+        ("docked", 560, True, "expanded")
+    assert data["launcherLabel"] == "Ask", "an override is per key, not the whole PANEL"
+    assert network["mode"] == "overlay" and network["width"] == 420
+    assert "expandable" not in network and "open" not in network, "unset keeps the widget's default"
+
+
+def test_an_unknown_panel_key_or_bad_requirement_is_refused_where_it_is_written(host, user):
+    from canopy_sdk.django.pages import panel_context
+
+    request = mock.Mock(user=user, resolver_match=mock.Mock(view_name="data"))
+    with pytest.raises(ValueError, match="unknown keys"):
+        panel_context(request, panel={"heigth": 3})
+    with pytest.raises(ValueError, match="unknown runner requirement"):
+        panel_context(request, agent="labsdata", runner_requirements=["fast"])
+
+
+def test_key_mode_reads_the_pages_agent_from_page_agents(spa, user):
+    settings = {**conf.raw(), "PAGE_AGENTS": {"network": {"agent": "labsdata",
+                                                          "runner_requirements": ["zdr"]}}}
+    client = Client()
+    client.force_login(user)
+    with override_settings(CANOPY_HOST=settings):
+        with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
+            client.post("/canopy/panel-token/?page=/marketplace/network/")
+        with pytest.raises(ValueError, match="PAGE_AGENTS"):
+            from canopy_sdk.django.pages import panel_context
+
+            panel_context(None, agent="labsdata")
+    payload = mint.call_args.args[1]
+    assert payload["agent_slug"] == "labsdata"
+    assert _claims(payload["assertion"])[contract.AGENT_CLAIM] == "labsdata"
+
+
+def test_page_agents_must_name_registered_pages(spa):
+    settings = {**conf.raw(), "PAGE_AGENTS": {"nowhere": {"agent": "labsdata"}}}
+    with override_settings(CANOPY_HOST=settings), pytest.raises(ValueError, match="not registered"):
+        conf.page_registry()

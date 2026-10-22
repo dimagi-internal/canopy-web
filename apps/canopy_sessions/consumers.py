@@ -131,6 +131,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
         offered = await database_sync_to_async(delegation.offered_agent_ids)(
             self.scope.get("delegated_app"))
+        offered = delegation.narrowed(offered, self.scope.get("bound_agent_id"))
         return offered is None or session.agent_id in offered
 
     async def connect(self):

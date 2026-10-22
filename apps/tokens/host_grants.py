@@ -32,6 +32,7 @@ from datetime import timedelta
 
 from canopy_sdk import consumer, contract
 from django.core.cache import cache
+from django.db import models
 from django.utils import timezone
 
 from . import client_identity, outbound
@@ -150,12 +151,14 @@ def _token_request(endpoint: str, form: dict):
 
 
 def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
-           runner_requirements=()):
+           runner_requirements=(), agent=None):
     """Redeem the host's ID-JAG for a DPoP-bound access token and store it.
 
     `runner_requirements` are the arrival's (already parsed from the verified
     assertion); they are stored on the grant so the gateway can enforce them
-    whichever conversation later reaches the grant.
+    whichever conversation later reaches the grant. `agent` is the agent the
+    arrival was BOUND to (`canopy_agent`), or None: a bound grant is kept apart
+    from the visitor's other grants and only that agent reaches it.
 
     Returns the `HostGrant`. Raises `HostGrantError` for every refusal — the
     caller decides that a refusal does not fail the arrival.
@@ -188,7 +191,7 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
     scope = str(answer.scope or claims.get("scope") or "")[:500]
 
     grant, _ = HostGrant.objects.update_or_create(
-        app=app, subject=subject,
+        app=app, subject=subject, agent=agent,
         defaults={
             "contact": contact,
             "user": user,
@@ -201,6 +204,31 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
         },
     )
     return grant
+
+
+def grant_for(app, *, agent, contact=None, user=None):
+    """The visitor's grant at `app` that `agent` may use, or None — the ONE
+    lookup the gateway (a turn) and MCP Apps Views (a viewer) share.
+
+    A grant bound to `agent` first: the page that chose this agent granted those
+    scopes for it. Then an unbound one (an arrival that named no binding). Never
+    a grant bound to a DIFFERENT agent — a data page's grant, minted for
+    `labsdata`, is not ACE's to spend however recently it was redeemed."""
+    from django.db.models import Q
+
+    from .models import HostGrant
+
+    if contact is not None:
+        rows = HostGrant.objects.filter(app=app, contact=contact)
+    elif user is not None:
+        rows = HostGrant.objects.filter(app=app, user=user)
+    else:
+        return None
+    agent_id = getattr(agent, "pk", agent)
+    rows = rows.filter(Q(agent_id=agent_id) | Q(agent__isnull=True)) if agent_id else \
+        rows.filter(agent__isnull=True)
+    # Bound before unbound (NULLs last), then the latest arrival.
+    return rows.order_by(models.F("agent_id").asc(nulls_last=True), "-updated_at").first()
 
 
 def record_outcome(app, *, ok: bool, subject: str, code: str = "", detail: str = "",

@@ -99,6 +99,10 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
         .order_by("slug")
         .distinct()
     )
+    # A token the site bound to one agent (a page that chose it) offers just that.
+    bound = getattr(request, "bound_agent_id", None)
+    if bound:
+        rows = rows.filter(pk=bound)
     return [
         EmbedAgentOut(
             slug=a.slug,

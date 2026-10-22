@@ -506,3 +506,43 @@ def _reports_zdr(runner):
     runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
     _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
     return runner
+
+
+# --- a grant a page bound to one agent (`canopy_agent`) --------------------------
+
+
+def _labsdata(w):
+    agent = Agent.objects.create(slug="labsdata", name="Labs data", workspace=w["ws"],
+                                 owner=w["owner"], interface=parse(IFACE))
+    AppCredentialAgent.objects.create(app=w["app"], agent=agent)
+    return agent
+
+
+def test_a_grant_bound_to_another_agent_is_never_used(w, host):
+    # The visitor's most recent grant came from a data page that chose
+    # `labsdata`; ACE's turn must not spend it, however recent it is.
+    _grant(w, agent=_labsdata(w), scope="data:read")
+    _refused(w, host, "back on the page")
+
+
+def test_the_agents_own_bound_grant_wins_over_an_unbound_one(w):
+    from apps.tokens.host_grants import grant_for
+
+    labsdata = _labsdata(w)
+    unbound = _grant(w)
+    bound = _grant(w, agent=labsdata, scope="data:read")
+    assert grant_for(w["app"], agent=labsdata, contact=w["contact"]) == bound
+    assert grant_for(w["app"], agent=w["agent"], contact=w["contact"]) == unbound
+    assert grant_for(w["app"], agent=None, contact=w["contact"]) == unbound
+
+
+def test_one_visitor_may_hold_one_grant_per_bound_agent_and_one_unbound(w):
+    from django.db import IntegrityError, transaction
+
+    labsdata = _labsdata(w)
+    _grant(w)
+    _grant(w, agent=labsdata)
+    _grant(w, agent=w["agent"])
+    for agent in (None, labsdata):
+        with pytest.raises(IntegrityError), transaction.atomic():
+            _grant(w, agent=agent)
