@@ -490,7 +490,8 @@ def _session_or_404(request: HttpRequest, session_id):
 
 
 def _session_out(s) -> ContactSessionOut:
-    from apps.canopy_sessions.services import SERVER_OWNED_METADATA, opening_of
+    from apps.canopy_sessions.services import SERVER_OWNED_METADATA
+    from apps.canopy_sessions.transcript_read import opening_of
 
     return ContactSessionOut(
         id=str(s.id),
@@ -571,7 +572,8 @@ def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
         rows = rows.filter(status=Session.ACTIVE)
     elif state == "archived":
         rows = rows.filter(status=Session.ARCHIVED)
-    from apps.canopy_sessions.services import host_filters, with_opening
+    from apps.canopy_sessions.services import host_filters
+    from apps.canopy_sessions.transcript_read import with_opening
 
     rows = host_filters(rows, source=source, origin_key=origin_key, opp_slug=opp_slug,
                         opp_run_id=opp_run_id, resource=resource, page_path=page_path)
@@ -634,11 +636,11 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
     every call on a conversation with a message in it was a 500.)
     """
     from apps.api.pagination import clamp_limit
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import transcript_read as session_transcript_read
     from apps.canopy_sessions.schemas import MessageOut
 
     session = _session_or_404(request, session_id)
-    rows, has_more = session_services.messages_before(
+    rows, has_more = session_transcript_read.messages_before(
         session, before=before, limit=clamp_limit(limit)
     )
     # A contact only ever talks through a widget, which never shows tool calls
@@ -646,7 +648,7 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
     from apps.tokens import mcp_apps_views
 
     mcp_apps_views.annotate(session, rows)
-    rows = session_services.for_widget(rows)
+    rows = session_transcript_read.for_widget(rows)
     return {"messages": [MessageOut.from_orm(m) for m in rows], "has_more_before": has_more}
 
 
@@ -655,17 +657,17 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
 def attach(request: HttpRequest, session_id: str) -> dict:
     """The same viewer signal a user's chat sends, so a contact watching their
     own conversation sees the agent's reply as it is written, not when it lands."""
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
 
-    return {"streaming": session_services.attach_session(_session_or_404(request, session_id))}
+    return {"streaming": session_transcript_ingest.attach_session(_session_or_404(request, session_id))}
 
 
 @contact_router.post("/sessions/{session_id}/detach", response=dict,
                      summary="I stopped watching")
 def detach(request: HttpRequest, session_id: str) -> dict:
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
 
-    return {"streaming": session_services.detach_session(_session_or_404(request, session_id))}
+    return {"streaming": session_transcript_ingest.detach_session(_session_or_404(request, session_id))}
 
 
 # --- the page this contact is looking at --------------------------------------------
@@ -777,9 +779,9 @@ def _turn_or_404(request: HttpRequest, turn_id: str):
 @contact_router.post("/sessions/{session_id}/stop", response=dict,
                      summary="Cancel every unfinished turn in my conversation")
 def stop(request: HttpRequest, session_id: str) -> dict:
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import control as session_control
 
-    return {"cancelled": session_services.cancel_session_turns(_session_or_404(request, session_id))}
+    return {"cancelled": session_control.cancel_session_turns(_session_or_404(request, session_id))}
 
 
 @contact_router.get("/turns/unclaimable", response=list[dict],

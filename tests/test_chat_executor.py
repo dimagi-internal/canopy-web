@@ -6,6 +6,7 @@ from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.executor import execute_turn_stub
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -26,7 +27,7 @@ def _ctx():
 
 def test_stub_executes_queued_session_turn_end_to_end():
     user, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user)
     assert turn.status == Turn.QUEUED
 
     result = execute_turn_stub(turn, reply="hello back")
@@ -46,7 +47,7 @@ def test_stub_executes_queued_session_turn_end_to_end():
 
 def test_stub_is_a_noop_on_an_already_finished_turn():
     user, session = _ctx()
-    _msg, turn = chat.send_message(session=session, text="hi", user=user)
+    _msg, turn = session_send.send_message(session=session, text="hi", user=user)
     execute_turn_stub(turn)
     count_after_first = session.messages.count()
     execute_turn_stub(turn)  # already DONE -> no-op

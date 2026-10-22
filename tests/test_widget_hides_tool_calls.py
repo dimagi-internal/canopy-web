@@ -20,7 +20,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent
-from apps.canopy_sessions import services
+from apps.canopy_sessions import transcript_read
 from apps.canopy_sessions.api import EMBED_APP_KEY
 from apps.canopy_sessions.models import Message, Session
 from apps.realtime.channels_auth import RealtimeAuthMiddleware
@@ -125,6 +125,6 @@ def test_a_long_opening_is_trimmed():
     class S:
         _opening = "word " * 100
 
-    text = services.opening_of(S())
-    assert len(text) <= services.OPENING_CHARS
+    text = transcript_read.opening_of(S())
+    assert len(text) <= transcript_read.OPENING_CHARS
     assert text.endswith("…")

@@ -95,9 +95,9 @@ def status(
 
 def driving_turn(session) -> tuple[str, str]:
     """(mode, origin) of the first claimed turn that drove `session` — the one-row
-    form of `services.with_driving_turn`, for a caller holding a single session."""
+    form of `transcript_read.with_driving_turn`, for a caller holding a single session."""
     from .models import Session
-    from .services import with_driving_turn
+    from .transcript_read import with_driving_turn
 
     row = (
         with_driving_turn(Session.objects.filter(pk=session.pk))

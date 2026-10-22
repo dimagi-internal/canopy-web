@@ -7,7 +7,7 @@ that came back would still say who wrote it. That broke on the laptop runner
 (the marker's trailing newline was lost typing into emdash as one line) and
 was redundant besides — the agent already learns who is asking from the
 caller envelope, which never touches the prompt. Attribution moved
-server-side (`apps.canopy_sessions.services.persist_transcript_rows`); the
+server-side (`apps.canopy_sessions.transcript_ingest.persist_transcript_rows`); the
 claim now just hands over the bare words, unconditionally.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent
-from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.models import Session
 from apps.harness.models import RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -86,7 +86,7 @@ def _claim(client) -> dict:
 
 
 def test_claimed_chat_prompt_is_delivered_unchanged(paired_runner_client, chat_session_with_agent, owner):
-    _msg, turn = chat.send_message(session=chat_session_with_agent, text="ship it", user=owner, client_id="c1")
+    _msg, turn = session_send.send_message(session=chat_session_with_agent, text="ship it", user=owner, client_id="c1")
     body = _claim(paired_runner_client)
     assert body["id"] == str(turn.id)
     assert body["prompt"] == "ship it"
@@ -125,7 +125,7 @@ def test_claimed_email_turn_on_a_chat_session_is_unchanged(paired_runner_client,
 
 
 def test_claimed_chat_slash_command_is_delivered_unchanged(paired_runner_client, chat_session_with_agent, owner):
-    _msg, turn = chat.send_message(session=chat_session_with_agent, text="/compact", user=owner, client_id="c1")
+    _msg, turn = session_send.send_message(session=chat_session_with_agent, text="/compact", user=owner, client_id="c1")
     body = _claim(paired_runner_client)
     assert body["id"] == str(turn.id)
     assert body["prompt"] == "/compact"
@@ -137,7 +137,7 @@ def test_the_websocket_claim_payload_matches_the_rest_claim(chat_session_with_ag
     deliver the exact same prompt."""
     from apps.harness.claiming import claim_payload
 
-    _msg, turn = chat.send_message(session=chat_session_with_agent, text="over the socket",
+    _msg, turn = session_send.send_message(session=chat_session_with_agent, text="over the socket",
                                    user=owner, client_id="ws1")
     turn = Turn.objects.select_related("initiator_user", "chat_session").get(pk=turn.pk)
     payload = claim_payload(turn)

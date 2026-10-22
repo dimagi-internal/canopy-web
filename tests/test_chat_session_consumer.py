@@ -17,6 +17,8 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.canopy_sessions import attach as attach_registry
 from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
+from apps.canopy_sessions import transcript_read as session_transcript_read
 from apps.canopy_sessions.consumers import SessionConsumer
 from apps.canopy_sessions.models import Message, SessionParticipant
 from apps.harness.models import Turn
@@ -472,7 +474,7 @@ async def test_snapshot_ships_tail_not_head():
 
     @database_sync_to_async
     def _fill():
-        for i in range(chat.SESSION_TAIL_DEFAULT + 15):
+        for i in range(session_transcript_read.SESSION_TAIL_DEFAULT + 15):
             Message.objects.create(
                 session=session, turn_index=i, role=Message.USER, plaintext=f"m{i}",
             )
@@ -483,12 +485,12 @@ async def test_snapshot_ships_tail_not_head():
     assert connected is True
     snap = await _recv_match(comm, lambda f: f.get("event") == "session.state")
     msgs = snap["data"]["messages"]
-    assert len(msgs) == chat.SESSION_TAIL_DEFAULT
+    assert len(msgs) == session_transcript_read.SESSION_TAIL_DEFAULT
     # The LAST N, chronological — i.e. the tail, not messages[:200] (the head).
     # Derived from the constant so a retuned tail size can't silently stale it.
-    total = chat.SESSION_TAIL_DEFAULT + 15
+    total = session_transcript_read.SESSION_TAIL_DEFAULT + 15
     assert [m["turn_index"] for m in msgs] == list(
-        range(total - chat.SESSION_TAIL_DEFAULT, total)
+        range(total - session_transcript_read.SESSION_TAIL_DEFAULT, total)
     )
     await comm.disconnect()
 
@@ -605,8 +607,8 @@ async def test_unqueue_withdraws_only_my_queued_send():
     def _two_sends():
         session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
         session.save(update_fields=["metadata"])
-        _m, first = chat.send_message(session=session, text="first", user=owner, client_id="c1")
-        _m, second = chat.send_message(session=session, text="second", user=owner, client_id="c2")
+        _m, first = session_send.send_message(session=session, text="first", user=owner, client_id="c1")
+        _m, second = session_send.send_message(session=session, text="second", user=owner, client_id="c2")
         return first, second
 
     first, second = await database_sync_to_async(_two_sends)()

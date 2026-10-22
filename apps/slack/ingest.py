@@ -109,7 +109,7 @@ def _record(ingest: SlackChannelIngest, kind: str, summary: str, *, level: str =
 
 
 def _who(user) -> str:
-    from apps.canopy_sessions.services import person_name
+    from apps.canopy_sessions.control import person_name
 
     return person_name(user) or "someone"
 

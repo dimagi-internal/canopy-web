@@ -259,12 +259,12 @@ def _pending(session, user, name="shot.png"):
 
 
 def test_sending_carries_pending_attachments_to_the_runner():
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, _ws, session, _c = _ctx()
     _pending(session, user, "shot.png")
 
-    _msg, turn = services.send_message(session=session, text="what is this?", user=user)
+    _msg, turn = send.send_message(session=session, text="what is this?", user=user)
 
     refs = turn.origin_ref.get("attachments")
     assert refs and [r["filename"] for r in refs] == ["shot.png"]
@@ -274,32 +274,32 @@ def test_sending_carries_pending_attachments_to_the_runner():
 def test_a_sent_attachment_does_not_ride_along_on_the_next_send():
     """sent_at is what stops this. `message` alone cannot: a runner-origin
     session writes no user Message row, so those rows stay message=NULL."""
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, _ws, session, _c = _ctx()
     _pending(session, user)
 
-    services.send_message(session=session, text="first", user=user)
-    _msg2, turn2 = services.send_message(session=session, text="second", user=user, client_id="c2")
+    send.send_message(session=session, text="first", user=user)
+    _msg2, turn2 = send.send_message(session=session, text="second", user=user, client_id="c2")
 
     assert "attachments" not in turn2.origin_ref
 
 
 def test_a_send_with_nothing_attached_adds_no_key():
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, _ws, session, _c = _ctx()
-    _msg, turn = services.send_message(session=session, text="hi", user=user)
+    _msg, turn = send.send_message(session=session, text="hi", user=user)
     assert "attachments" not in turn.origin_ref
 
 
 def test_sending_binds_the_attachment_to_the_message_on_a_web_session():
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, _ws, session, _c = _ctx()
     row = _pending(session, user)
 
-    message, _turn = services.send_message(session=session, text="look", user=user)
+    message, _turn = send.send_message(session=session, text="look", user=user)
 
     row.refresh_from_db()
     assert row.message_id == message.pk
@@ -309,7 +309,7 @@ def test_sending_binds_the_attachment_to_the_message_on_a_web_session():
 def test_a_runner_session_stamps_sent_at_without_a_message():
     """The runner path writes no durable user row, so message stays NULL — but
     the attachment must still be consumed."""
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, ws, _s, _c = _ctx()
     runner_session = Session.objects.create(
@@ -317,7 +317,7 @@ def test_a_runner_session_stamps_sent_at_without_a_message():
     )
     row = _pending(runner_session, user)
 
-    _msg, turn = services.send_message(session=runner_session, text="look", user=user)
+    _msg, turn = send.send_message(session=runner_session, text="look", user=user)
 
     row.refresh_from_db()
     assert row.sent_at is not None
@@ -328,7 +328,7 @@ def test_a_runner_session_stamps_sent_at_without_a_message():
 def test_a_send_claims_only_the_senders_pending_attachments():
     """Each person composes in their own box (spec 2026-09-26), so A's send must
     not carry the attachment B has put in B's half-written message."""
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     a, ws, session, _c = _ctx()
     b = User.objects.create_user("b", "b@dimagi.com", "pw")
@@ -336,7 +336,7 @@ def test_a_send_claims_only_the_senders_pending_attachments():
     mine = _pending(session, a, "mine.png")
     theirs = _pending(session, b, "theirs.png")
 
-    _msg, turn = services.send_message(session=session, text="look", user=a)
+    _msg, turn = send.send_message(session=session, text="look", user=a)
 
     assert [r["filename"] for r in turn.origin_ref["attachments"]] == ["mine.png"]
     mine.refresh_from_db()
@@ -348,12 +348,12 @@ def test_a_send_claims_only_the_senders_pending_attachments():
 def test_a_send_with_no_user_claims_nobodys_attachments():
     """A contact (or any send with no canopy user) cannot upload, so it has no
     attachments of its own — and must not sweep up a member's."""
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, _ws, session, _c = _ctx()
     row = _pending(session, user)
 
-    assert services.claim_pending_attachments(session, None, None) == []
+    assert send.claim_pending_attachments(session, None, None) == []
     row.refresh_from_db()
     assert row.sent_at is None
 
@@ -376,13 +376,13 @@ def _age(row, *, hours):
 def test_sweep_deletes_an_old_unclaimed_attachment_and_its_bytes():
     import datetime as dt
 
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, _ws, session, _c = _ctx()
     row = _age(_pending(session, user), hours=48)
 
     with mock.patch(f"{STORAGE}.delete") as delete:
-        n = services.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
+        n = send.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
 
     assert n == 1
     delete.assert_called_once_with(row.storage_key)
@@ -394,13 +394,13 @@ def test_sweep_leaves_a_fresh_unclaimed_attachment_alone():
     from under it just because the cutoff math is close."""
     import datetime as dt
 
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, _ws, session, _c = _ctx()
     row = _pending(session, user)
 
     with mock.patch(f"{STORAGE}.delete") as delete:
-        n = services.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
+        n = send.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
 
     delete.assert_not_called()
     assert n == 0
@@ -410,7 +410,7 @@ def test_sweep_leaves_a_fresh_unclaimed_attachment_alone():
 def test_sweep_never_touches_a_sent_attachment():
     import datetime as dt
 
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, _ws, session, _c = _ctx()
     message = Message.objects.create(
@@ -420,7 +420,7 @@ def test_sweep_never_touches_a_sent_attachment():
     Attachment.objects.filter(pk=row.pk).update(message=message, sent_at=dt.datetime.now(dt.UTC))
 
     with mock.patch(f"{STORAGE}.delete") as delete:
-        n = services.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
+        n = send.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
 
     delete.assert_not_called()
     assert n == 0
@@ -432,13 +432,13 @@ def test_sweep_deletes_the_row_even_when_the_byte_delete_fails():
     retry); a blob that outlives its row is not — so the row still goes."""
     import datetime as dt
 
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     user, _ws, session, _c = _ctx()
     row = _age(_pending(session, user), hours=48)
 
     with mock.patch(f"{STORAGE}.delete", side_effect=RuntimeError("s3 is down")):
-        n = services.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
+        n = send.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
 
     assert n == 1
     assert not Attachment.objects.filter(pk=row.pk).exists()

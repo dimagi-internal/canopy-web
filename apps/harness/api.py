@@ -1932,6 +1932,7 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     seq:<n> message ids). User events are persisted but never live-pushed — the
     sender's client already echoed them optimistically."""
     from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
     from apps.realtime import groups
 
     runner = _runner_or_404(request, runner_id)
@@ -1952,9 +1953,9 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # swallowed). If a closed session's NAME was reused, these rows are a new
         # conversation's and go to a new session, leaving the old one whole;
         # otherwise the new transcript opens a new epoch above the held rows.
-        if chat_services.fork_if_name_reused(binding.session, payload.transcript_id):
+        if chat_transcript_ingest.fork_if_name_reused(binding.session, payload.transcript_id):
             binding = RunnerBinding.objects.select_related("session").get(pk=binding.pk)
-        chat_services.ensure_transcript_identity(binding.session, payload.transcript_id)
+        chat_transcript_ingest.ensure_transcript_identity(binding.session, payload.transcript_id)
         # Not "was this session discovered in emdash?" — where a conversation
         # started says nothing about where its record belongs. A phone-created chat
         # is driven by the same runner, in the same emdash session, writing the same
@@ -1968,7 +1969,7 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # {tool_use_id,is_error} are what the client pairs and renders on, so
         # flattening to text here would strip exactly the half that makes a tool
         # call legible.
-        created = chat_services.persist_transcript_rows(binding.session, [
+        created = chat_transcript_ingest.persist_transcript_rows(binding.session, [
             {"index": e.index, "role": e.kind,
              "text": (e.payload or {}).get("text", ""), "content": e.payload or {},
              "cwd": e.cwd, "git_branch": e.git_branch}
@@ -2224,19 +2225,19 @@ def report_admission_notice(request: HttpRequest, runner_id: uuid.UUID, notice_i
 def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: SessionBackfillIn):
     """The runner ships a session's full transcript; the server writes Message rows
     once and clears the request. Runner-owned-binding gated."""
-    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 
     runner = _runner_or_404(request, runner_id)
     binding = RunnerBinding.objects.filter(session_id=payload.session_id, runner=runner).first()
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
     session = Session.objects.get(pk=payload.session_id)
-    session = chat_services.fork_if_name_reused(session, payload.transcript_id) or session
+    session = chat_transcript_ingest.fork_if_name_reused(session, payload.transcript_id) or session
     # Same guard as the live path: history from a different transcript lands in
     # its own epoch rather than merging into what is held. Idempotent across chunks — the
     # first one records the id, so the rest of the ship matches and writes through.
-    chat_services.ensure_transcript_identity(session, payload.transcript_id)
-    written = chat_services.write_backfill(session, [m.dict() for m in payload.messages])
+    chat_transcript_ingest.ensure_transcript_identity(session, payload.transcript_id)
+    written = chat_transcript_ingest.write_backfill(session, [m.dict() for m in payload.messages])
     # Only the LAST chunk clears the ask. A transcript is shipped in byte-budgeted
     # chunks (see SessionBackfillIn.final), and clearing on the first one would
     # retire the request while most of the history was still in flight — a ship

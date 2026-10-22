@@ -554,7 +554,7 @@ class ReportedSessionIn(Schema):
     emdash_task: str  # the emdash task NAME
     # emdash's `tasks.id` — the task's IDENTITY, which the name is not (names are
     # reused over time). A change behind the same name forks a new session record
-    # (canopy_sessions.services.fork_if_task_changed). "" = an old runner or a
+    # (canopy_sessions.transcript_ingest.fork_if_task_changed). "" = an old runner or a
     # session with no emdash task, which makes no claim.
     task_uid: str = ""
     project: str = ""
@@ -1168,7 +1168,7 @@ class SessionStreamIn(Schema):
     # The transcript these ordinals index into (the Claude session uuid). When it
     # differs from what the binding recorded, the session's derived rows belong to
     # a DIFFERENT conversation and are dropped before this batch is written — see
-    # canopy_sessions.services.ensure_transcript_identity. "" = an old runner,
+    # canopy_sessions.transcript_ingest.ensure_transcript_identity. "" = an old runner,
     # which makes no provenance claim and is left alone.
     transcript_id: str = ""
 

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def publish_queued(session_id) -> None:
     from .models import Session
-    from .services import queued_messages
+    from .send import queued_messages
 
     try:
         session = Session.objects.get(pk=session_id)

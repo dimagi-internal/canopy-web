@@ -270,7 +270,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   30 days beside its setup, since an agent with steps left can be in use — turns
   started and how many failed, the people who used it, the runners its turns ran
   on (`analytics.agent_turns`, from the fact log), and a "Used" tile; open sessions and
-  last session activity (`staleness.active`, `services.with_activity`) with its
+  last session activity (`staleness.active`, `transcript_read.with_activity`) with its
   latest sessions the viewer may open (`access.readable_sessions`); every
   workspace's shared vault; the runners its agents route to or that live in it
   (the topology's rows: status, whether it runs current code, its own failing

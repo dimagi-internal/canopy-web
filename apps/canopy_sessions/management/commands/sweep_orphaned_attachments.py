@@ -12,7 +12,7 @@ import datetime as dt
 
 from django.core.management.base import BaseCommand
 
-from apps.canopy_sessions import services
+from apps.canopy_sessions import send
 
 
 class Command(BaseCommand):
@@ -39,5 +39,5 @@ class Command(BaseCommand):
             ).count()
             self.stdout.write(f"would delete {n} orphaned attachment(s) older than {hours}h")
             return
-        n = services.sweep_orphaned_attachments(older_than=window)
+        n = send.sweep_orphaned_attachments(older_than=window)
         self.stdout.write(self.style.SUCCESS(f"deleted {n} orphaned attachment(s) older than {hours}h"))

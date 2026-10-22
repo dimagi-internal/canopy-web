@@ -17,6 +17,8 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 from apps.canopy_sessions import services
+from apps.canopy_sessions import send
+from apps.canopy_sessions import transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.harness import ledger
 from apps.harness.models import Runner, Turn
@@ -86,7 +88,7 @@ def test_the_agent_speaking_after_its_turn_ends_still_reaches_a_phone_chat(setti
         session=session, runner=runner, session_key="canopy-web-1", host="jj@mbp",
     )
     # What the runner ships from the transcript after the turn is over.
-    services.persist_transcript_rows(session, [
+    transcript_ingest.persist_transcript_rows(session, [
         {"index": 36, "role": "assistant", "text": "The background job finished."},
         {"index": 38, "role": "assistant", "text": "It printed SENTINEL-READY."},
     ])
@@ -103,11 +105,11 @@ def test_a_turns_events_are_not_projected_for_a_transcript_sourced_chat(settings
     settings.CHAT_STUB_EXECUTOR = False
     user, ws, runner = _ctx()
     session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
-    _msg, turn = services.send_message(session=session, text="hi", user=user)
+    _msg, turn = send.send_message(session=session, text="hi", user=user)
     ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "hello"}}])
     # Called directly: the signal that normally drives it fires post-commit, which
     # a test transaction never reaches.
-    written = services.project_events(turn, list(turn.events.all()))
+    written = transcript_ingest.project_events(turn, list(turn.events.all()))
     assert written == 0
     assert session.messages.count() == 0, "the transcript is the record, not the ledger"
     assert turn.events.filter(kind="assistant").exists(), "but it still streams live"
@@ -117,9 +119,9 @@ def test_the_stub_path_still_projects_its_ledger(settings):
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, _runner = _ctx()
     session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
-    _msg, turn = services.send_message(session=session, text="hi", user=user)
+    _msg, turn = send.send_message(session=session, text="hi", user=user)
     ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "hello"}}])
-    services.project_events(turn, list(turn.events.all()))
+    transcript_ingest.project_events(turn, list(turn.events.all()))
     roles = [m.role for m in session.messages.order_by("turn_index")]
     assert roles == [Message.USER, Message.ASSISTANT]
 
@@ -128,7 +130,7 @@ def test_a_transcript_sourced_send_writes_no_row_but_keeps_the_text(settings):
     settings.CHAT_STUB_EXECUTOR = False
     user, ws, _runner = _ctx()
     session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
-    msg, turn = services.send_message(session=session, text="what changed?", user=user)
+    msg, turn = send.send_message(session=session, text="what changed?", user=user)
     assert session.messages.count() == 0
     assert msg.plaintext == "what changed?"        # echoed to the sender
     assert turn.prompt == "what changed?"          # and recoverable while it waits
@@ -159,7 +161,7 @@ def test_reset_drops_derived_rows_and_asks_the_runner_to_re_derive(settings):
     settings.CHAT_STUB_EXECUTOR = True          # created legacy / ledger-sourced
     user, ws, runner = _ctx()
     session = _bound_session(ws, user, runner)
-    services.persist_transcript_rows(session, [
+    transcript_ingest.persist_transcript_rows(session, [
         {"index": 2, "role": "user", "text": "hi"},
         {"index": 3, "role": "assistant", "text": "hello"},
     ])
@@ -178,7 +180,7 @@ def test_reset_dry_run_changes_nothing(settings):
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, runner = _ctx()
     session = _bound_session(ws, user, runner)
-    services.persist_transcript_rows(session, [{"index": 2, "role": "user", "text": "hi"}])
+    transcript_ingest.persist_transcript_rows(session, [{"index": 2, "role": "user", "text": "hi"}])
     out = _reset(dry_run=True)
     session.refresh_from_db()
     assert "would reset 1 session" in out
@@ -193,8 +195,8 @@ def test_reset_skips_a_session_with_no_pointer_to_a_transcript(settings):
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, _runner = _ctx()
     session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
-    _msg, turn = services.send_message(session=session, text="hi", user=user)
-    services.project_events(turn, list(turn.events.all()))
+    _msg, turn = send.send_message(session=session, text="hi", user=user)
+    transcript_ingest.project_events(turn, list(turn.events.all()))
     before = session.messages.count()
 
     out = _reset()
@@ -227,7 +229,7 @@ def test_reset_can_be_scoped_to_one_session_or_workspace(settings):
     a = _bound_session(ws, user, runner, key="task-a")
     b = _bound_session(ws, user, runner, key="task-b")
     for s in (a, b):
-        services.persist_transcript_rows(s, [{"index": 2, "role": "user", "text": "hi"}])
+        transcript_ingest.persist_transcript_rows(s, [{"index": 2, "role": "user", "text": "hi"}])
 
     _reset(session=str(a.id))
 
@@ -240,7 +242,7 @@ def test_reset_never_touches_turns(settings):
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, runner = _ctx()
     session = _bound_session(ws, user, runner)
-    _msg, turn = services.send_message(session=session, text="hi", user=user)
+    _msg, turn = send.send_message(session=session, text="hi", user=user)
     _reset()
     assert Turn.objects.filter(pk=turn.pk).exists()
 
@@ -259,7 +261,7 @@ def test_reset_endpoint_rebuilds_one_session(settings):
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, runner = _ctx()
     session = _bound_session(ws, user, runner)
-    services.persist_transcript_rows(session, [{"index": 2, "role": "user", "text": "hi"}])
+    transcript_ingest.persist_transcript_rows(session, [{"index": 2, "role": "user", "text": "hi"}])
 
     resp = _api(user).post(f"/api/canopy-sessions/{session.id}/reset")
 
@@ -303,7 +305,7 @@ def test_bulk_reset_endpoint_dry_run_reports_without_changing(settings):
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, runner = _ctx()
     a = _bound_session(ws, user, runner, key="task-a")
-    services.persist_transcript_rows(a, [{"index": 2, "role": "user", "text": "hi"}])
+    transcript_ingest.persist_transcript_rows(a, [{"index": 2, "role": "user", "text": "hi"}])
 
     resp = _api(user).post(
         "/api/canopy-sessions/reset", data={"dry_run": True},
@@ -322,13 +324,13 @@ def test_bulk_reset_endpoint_only_touches_visible_workspaces(settings):
     settings.CHAT_STUB_EXECUTOR = True
     user, ws, runner = _ctx()
     mine = _bound_session(ws, user, runner, key="mine")
-    services.persist_transcript_rows(mine, [{"index": 2, "role": "user", "text": "hi"}])
+    transcript_ingest.persist_transcript_rows(mine, [{"index": 2, "role": "user", "text": "hi"}])
     other_user = User.objects.create_user("other", "other@dimagi.com", "pw")
     other_ws = Workspace.objects.create(slug="w2", display_name="W2", created_by=other_user)
     theirs = Session.objects.create(
         workspace=other_ws, origin=Session.ORIGIN_WEB, project="p", title="theirs",
     )
-    services.persist_transcript_rows(theirs, [{"index": 2, "role": "user", "text": "secret"}])
+    transcript_ingest.persist_transcript_rows(theirs, [{"index": 2, "role": "user", "text": "secret"}])
 
     resp = _api(user).post("/api/canopy-sessions/reset", data={},
                            content_type="application/json")

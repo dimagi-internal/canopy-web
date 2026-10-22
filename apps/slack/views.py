@@ -447,7 +447,7 @@ def _stopper_name(installation, slack_user_id: str) -> str:
     try:
         user, _, info = services.slack_user(installation, slack_user_id)
         if user is not None:
-            from apps.canopy_sessions.services import person_name
+            from apps.canopy_sessions.control import person_name
             return person_name(user)
         info = info or services.slack_profile(installation, slack_user_id)
         return client.display_name(info)
@@ -463,9 +463,9 @@ def _stop_from_slack(body: dict) -> HttpResponse:
     the one control the native indicator carries. Stop the same way canopy's own
     stop does — cancel the turns, then interrupt the terminal, since an agent
     turn is fire-and-continue and a turn-shaped cancel alone would find nothing
-    (see canopy_sessions.services.interrupt_session).
+    (see canopy_sessions.control.interrupt_session).
     """
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import control as session_control
 
     from . import status
 
@@ -485,8 +485,8 @@ def _stop_from_slack(body: dict) -> HttpResponse:
     by = _stopper_name(installation, str(event.get("user") or event.get("user_id") or ""))
     interrupted = ""
     try:
-        cancelled = session_services.cancel_session_turns(session, by=by)
-        interrupted = session_services.interrupt_session(session)
+        cancelled = session_control.cancel_session_turns(session, by=by)
+        interrupted = session_control.interrupt_session(session)
     except Exception:  # noqa: BLE001 — a stop that half-lands must still settle the indicator
         logger.exception("slack stop failed")
         cancelled = False

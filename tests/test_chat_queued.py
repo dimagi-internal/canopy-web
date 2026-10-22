@@ -7,6 +7,8 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
 from apps.canopy_sessions import services as chat
+from apps.canopy_sessions import send as session_send
+from apps.canopy_sessions import transcript_ingest as session_transcript_ingest
 from apps.canopy_sessions.models import Message
 from apps.canopy_sessions.testing import legacy_marker
 from apps.harness.models import Turn
@@ -30,9 +32,9 @@ def _runner_session():
 
 def test_queued_lists_every_pending_send_in_order():
     owner, session = _runner_session()
-    chat.send_message(session=session, text="first", user=owner, client_id="c1")
-    chat.send_message(session=session, text="second", user=owner, client_id="c2")
-    q = chat.queued_messages(session)
+    session_send.send_message(session=session, text="first", user=owner, client_id="c1")
+    session_send.send_message(session=session, text="second", user=owner, client_id="c2")
+    q = session_send.queued_messages(session)
     assert [e["text"] for e in q] == ["first", "second"]
     assert [e["client_id"] for e in q] == ["c1", "c2"]
     assert q[0]["author"] == {"name": "Jon", "user_id": owner.id}
@@ -41,24 +43,24 @@ def test_queued_lists_every_pending_send_in_order():
 
 def test_a_send_leaves_the_list_when_its_transcript_row_lands():
     owner, session = _runner_session()
-    _m, turn = chat.send_message(session=session, text="first", user=owner, client_id="c1")
-    chat.persist_transcript_rows(session, [{"index": 10, "role": "user",
+    _m, turn = session_send.send_message(session=session, text="first", user=owner, client_id="c1")
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user",
         "text": legacy_marker("first", name="Jon", user_id=owner.id, turn_id=turn.pk)}])
-    assert chat.queued_messages(session) == []
+    assert session_send.queued_messages(session) == []
 
 
 def test_terminal_turns_are_not_queued():
     owner, session = _runner_session()
-    _m, turn = chat.send_message(session=session, text="first", user=owner, client_id="c1")
+    _m, turn = session_send.send_message(session=session, text="first", user=owner, client_id="c1")
     Turn.objects.filter(pk=turn.pk).update(status=Turn.CANCELLED)
-    assert chat.queued_messages(session) == []
+    assert session_send.queued_messages(session) == []
 
 
 def test_claimed_turn_is_delivering():
     owner, session = _runner_session()
-    _m, turn = chat.send_message(session=session, text="first", user=owner, client_id="c1")
+    _m, turn = session_send.send_message(session=session, text="first", user=owner, client_id="c1")
     Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED)
-    assert chat.queued_messages(session)[0]["state"] == "delivering"
+    assert session_send.queued_messages(session)[0]["state"] == "delivering"
 
 
 def test_query_count_does_not_grow_with_session_history():
@@ -68,10 +70,10 @@ def test_query_count_does_not_grow_with_session_history():
     owner, session = _runner_session()
     # One turn currently queued — kept out of `landed` — so both measurements
     # exercise the real query path rather than the `turns` empty-list shortcut.
-    chat.send_message(session=session, text="active", user=owner, client_id="active")
+    session_send.send_message(session=session, text="active", user=owner, client_id="active")
 
     with CaptureQueriesContext(connection) as ctx:
-        chat.queued_messages(session)
+        session_send.queued_messages(session)
     baseline = len(ctx.captured_queries)
 
     # ~20 already-landed historical rows. The old implementation's `landed`
@@ -85,7 +87,7 @@ def test_query_count_does_not_grow_with_session_history():
         )
 
     with CaptureQueriesContext(connection) as ctx:
-        chat.queued_messages(session)
+        session_send.queued_messages(session)
     assert len(ctx.captured_queries) == baseline
 
 
@@ -104,35 +106,35 @@ def test_an_email_turn_on_the_session_is_not_a_queued_human_line():
     )
     email_session = turn.chat_session
     assert email_session is not None
-    assert chat.queued_messages(email_session) == []
+    assert session_send.queued_messages(email_session) == []
 
 
 def test_a_send_without_a_client_id_reports_none():
     """The key suffix of a no-nonce send is an index or a server nonce, not
     anything a client sent — reporting it as `client_id` would never match."""
     owner, session = _runner_session()
-    chat.send_message(session=session, text="first", user=owner)
-    assert chat.queued_messages(session)[0]["client_id"] == ""
+    session_send.send_message(session=session, text="first", user=owner)
+    assert session_send.queued_messages(session)[0]["client_id"] == ""
 
 
 # ── withdrawing one queued send ────────────────────────────────────────────────
 
 def test_you_can_withdraw_your_own_queued_send_and_only_that_one():
     owner, session = _runner_session()
-    _m, first = chat.send_message(session=session, text="first", user=owner, client_id="c1")
-    chat.send_message(session=session, text="second", user=owner, client_id="c2")
-    assert chat.unqueue_send(session, first.pk, owner, by="Jon") is True
+    _m, first = session_send.send_message(session=session, text="first", user=owner, client_id="c1")
+    session_send.send_message(session=session, text="second", user=owner, client_id="c2")
+    assert session_send.unqueue_send(session, first.pk, owner, by="Jon") is True
     first.refresh_from_db()
     assert first.status == Turn.CANCELLED
-    assert [e["text"] for e in chat.queued_messages(session)] == ["second"]
+    assert [e["text"] for e in session_send.queued_messages(session)] == ["second"]
 
 
 def test_a_claimed_send_cannot_be_withdrawn():
     """Once a runner holds it the words may already be in the agent's input."""
     owner, session = _runner_session()
-    _m, turn = chat.send_message(session=session, text="first", user=owner, client_id="c1")
+    _m, turn = session_send.send_message(session=session, text="first", user=owner, client_id="c1")
     Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED)
-    assert chat.unqueue_send(session, turn.pk, owner) is False
+    assert session_send.unqueue_send(session, turn.pk, owner) is False
     turn.refresh_from_db()
     assert turn.status == Turn.CLAIMED
 
@@ -142,9 +144,9 @@ def test_a_teammates_queued_send_is_theirs_to_withdraw():
     mate = User.objects.create_user("mate", "mate@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=mate, workspace=session.workspace,
                                        role=WorkspaceMembership.OWNER)
-    _m, turn = chat.send_message(session=session, text="first", user=owner, client_id="c1")
-    assert chat.unqueue_send(session, turn.pk, mate) is False
-    assert chat.unqueue_send(session, "not-a-uuid", owner) is False
-    assert chat.unqueue_send(session, uuid.uuid4(), owner) is False
+    _m, turn = session_send.send_message(session=session, text="first", user=owner, client_id="c1")
+    assert session_send.unqueue_send(session, turn.pk, mate) is False
+    assert session_send.unqueue_send(session, "not-a-uuid", owner) is False
+    assert session_send.unqueue_send(session, uuid.uuid4(), owner) is False
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED

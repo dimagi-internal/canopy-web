@@ -21,7 +21,7 @@ from apps.harness.signals import (
 def _project_messages(sender, turn, rows, **kwargs):
     if not turn.chat_session_id:
         return
-    from .services import project_events
+    from .transcript_ingest import project_events
 
     project_events(turn, rows)
     # The turn moved. Same signal, same reason as the Slack status line: a

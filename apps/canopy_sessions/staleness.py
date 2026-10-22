@@ -64,7 +64,7 @@ def driving_turns():
     """The turns that drove a session, for use under a Session queryset: a chat
     send carries the session itself (`chat_session`), an agent turn the runner
     opened a session for carries its key (`Turn.session_key`, the binding's).
-    Defined once for `services.with_driving_turn` (the mode badge and the feed)
+    Defined once for `transcript_read.with_driving_turn` (the mode badge and the feed)
     and `unseen_q` (the auto-retire leg), so the two cannot disagree about which
     turn started a session."""
     Turn = apps.get_model("harness", "Turn")

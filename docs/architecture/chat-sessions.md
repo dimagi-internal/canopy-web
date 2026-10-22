@@ -6,6 +6,10 @@ pushed about it, and how a session's liveness and transcript location are known.
 Blocked-agent dialogs (menus, taps, answers) are covered in
 [`blocked-agent-menus.md`](blocked-agent-menus.md); who may read or act in a session
 is `apps/canopy_sessions/access.py` (see `docs/architecture/tenancy.md`).
+The services are split by responsibility: `services` (lifecycle: create, host
+metadata, transcript-sourced, reset), `transcript_read`, `transcript_ingest`,
+`placement` (placement, transfer, fork), `send` and `control` (dialogs, stop,
+close).
 
 ## Turn status: derived once, rendered by every channel
 
@@ -47,7 +51,7 @@ is `apps/canopy_sessions/access.py` (see `docs/architecture/tenancy.md`).
     unrecognised frame is dropped silently there, and both the chat page and the
     widget use `ag-ui`.
 - A channel that needs something from the originating REQUEST at post time writes
-  it onto the turn (`services.send_message(origin_ref=...)`, merged under the
+  it onto the turn (`send.send_message(origin_ref=...)`, merged under the
   harness's own keys): a signal hands a receiver only the turn. Worked example:
   Slack's slash-command anchor, `apps/slack/status.py::adoption`.
 - Spec: `docs/superpowers/specs/2026-09-20-unified-turn-status-design.md`.
@@ -62,7 +66,7 @@ is `apps/canopy_sessions/access.py` (see `docs/architecture/tenancy.md`).
   `Message.turn_index`. A send authors **no** second copy of the user's line — it
   becomes durable as the transcript record the agent read; until then it lives in
   `Turn.prompt` and the client's optimistic echo. Streamed transcript rows persist
-  through `services.persist_transcript_rows`.
+  through `transcript_ingest.persist_transcript_rows`.
 - **Ledger-sourced** (no transcript: the dev stub, and sessions predating the flag
   until reset): rows are projected from the turn's event ledger with a dense
   counter. Don't mix the two in one session — the dense counter collides with
@@ -91,11 +95,11 @@ an emdash task name alone is not an identity.
 
 ## Forking a session from a message
 
-- Right-click a message in a chat (also /ide's pane) → "Fork from here" → `POST /api/canopy-sessions/{id}/fork` (`services.fork_session`). The fork keeps everything up to the end of that message's turn — the cut is always just before the next prompt a person sent, so it never holds a tool call without its result.
+- Right-click a message in a chat (also /ide's pane) → "Fork from here" → `POST /api/canopy-sessions/{id}/fork` (`placement.fork_session`). The fork keeps everything up to the end of that message's turn — the cut is always just before the next prompt a person sent, so it never holds a tool call without its result.
 - The server copies the rows (rebased below `index_offset`) and stamps `metadata.fork` = `{session_key, records, from_session}`; `resolve_session` returns `fork` until the fork records a Claude session of its own. The runner then writes the first `records` records (as `canopy_transcript.read_records` counts them) beside the source as a new session id and resumes it (laptop `desktop.fork_session`, cloud `cloud_runner._cut_fork`); its first ship replaces the copied rows.
 - **Same worktree.** Files are shared, not forked. The app channel (`.canopy-desktop`) belongs to the session named in `seeded`, so a fork never takes the source's channel (`desktop.channel_held_for`), and closing one keeps a worktree another open session still uses.
 - On a cloud runner every turn of a fork runs in its SOURCE's directory: `resolve_session` returns `worktree_of` (the root of a chain of forks) and `_turn_cwd` keys on it. The stream finds a fork's transcript by its session uuid, since it is not in the fork's own directory.
-- Cloud runners and the laptop `claude-cli` runtime only (`services.fork_runner_supported`): emdash and the Claude app own their sessions. The menu is offered only there (`MessageContextMenu.canFork`); elsewhere a right-click is the browser's own.
+- Cloud runners and the laptop `claude-cli` runtime only (`placement.fork_runner_supported`): emdash and the Claude app own their sessions. The menu is offered only there (`MessageContextMenu.canFork`); elsewhere a right-click is the browser's own.
 - The fork opens at once. In /ide every session sits in its own place; a session another was started from (`parent_session_id`: a fork, a Slack branch, a dispatched turn's session) also shows each child as a grey link row underneath, foldable per parent, that opens the real session (`ideTree.childLinks`). Links come from the viewer's own session list, so a child they cannot read is never linked. A runner-made session for a dispatched turn takes the turn's parent and the parent chat's people (`harness.services._thread_session`).
 
 ## Several people in one chat: drafts and authorship
@@ -120,12 +124,12 @@ an emdash task name alone is not an identity.
   every door a site's token can reach passes the token's requirements (ZDR),
   so a turn sent there routes under the site's floor; a door no site reaches
   (Slack) passes `()` explicitly.
-- **A send only enqueues.** `services.queued_messages` (derived, never stored) shows
+- **A send only enqueues.** `send.queued_messages` (derived, never stored) shows
   every watcher the sends not yet in the transcript; REST and contact sends carry a
   `client_id` so the sender's optimistic row dedupes against the queued entry.
 - **Stop cancels every live turn; Cancel withdraws one send.** Stop (the button, or
-  Esc in the composer while the agent has the floor) is `services.stop_session`.
-  The socket action `chat.unqueue {turn_id}` is `services.unqueue_send`: your OWN
+  Esc in the composer while the agent has the floor) is `control.stop_session`.
+  The socket action `chat.unqueue {turn_id}` is `send.unqueue_send`: your OWN
   send, only while still `QUEUED` (a claimed one may already be in the agent's
   input), finished CANCELLED and the queued list re-sent; anything else is refused
   with `session.error` `unqueue_refused`. The Cancel sits on your queued line
@@ -158,7 +162,7 @@ an emdash task name alone is not an identity.
 - `authorship.parse` still reads the legacy `[canopy from="…" user=N turn=<hex>]`
   marker (newline optional) for old and backfilled rows; don't emit it.
 - A ledger-sourced session fans `chat.user_message` out on commit
-  (`services._publish_user_message` → `consumers.chat_user_message`) so peers see a
+  (`send._publish_user_message` → `consumers.chat_user_message`) so peers see a
   send live; transcript-sourced sessions get this from the streamed rows.
 - `onTakeOver` / `takeOverDraft` stay in `canopy-ui`'s public API as deprecated
   no-ops — ace-web still passes them.
@@ -176,7 +180,7 @@ an emdash task name alone is not an identity.
   unclaimable report says "no runner order in <ws>, and <person> administers no box
   with <repo>" (`runners.md` → "Project chats"). A chat with neither an agent nor a
   repo follows the same order-or-your-box rule.
-- **Picking a box** for a chat is one rule, `canopy_sessions.services.may_place`,
+- **Picking a box** for a chat is one rule, `canopy_sessions.placement.may_place`,
   asked by every door that chooses: the "Run on" picker's `runner_id`, a send's
   `placement`, the banner's `/place`, a move of queued turns (`move_queued_turns`,
   Slack's move-to-cloud) and the cloud-box offer. For a chat with an agent it is

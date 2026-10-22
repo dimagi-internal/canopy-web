@@ -11,14 +11,15 @@ from apps.attention import types as att
 from apps.attention.types import AttentionRow
 from apps.workspaces.links import scoped_path
 
-from . import feed, services
+from . import feed
+from . import transcript_read
 from .api import _filtered_sessions, _out
 
 
 def items(request, *, slugs: set[str]) -> list[AttentionRow]:
     # `_filtered_sessions` scopes by the request's read rule — the same slugs.
-    rows = services.with_driving_turn(_filtered_sessions(request, state="active"))
-    rows = services.with_open_turn(services.with_last_reply(rows))
+    rows = transcript_read.with_driving_turn(_filtered_sessions(request, state="active"))
+    rows = transcript_read.with_open_turn(transcript_read.with_last_reply(rows))
     out = []
     for s in rows:
         row = _out(s, reply=True, viewer=request.user)

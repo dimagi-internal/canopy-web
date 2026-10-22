@@ -12,7 +12,8 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.canopy_sessions import services
+from apps.canopy_sessions import send
+from apps.canopy_sessions import transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -56,9 +57,9 @@ def test_persist_rows_keys_on_the_transcript_ordinal_idempotently():
         {"index": 5, "role": "user", "text": "q1"},
         {"index": 7, "role": "assistant", "text": "a1"},
     ]
-    assert services.persist_transcript_rows(s, rows) == 2
+    assert transcript_ingest.persist_transcript_rows(s, rows) == 2
     # Re-shipping the same records (stream retry, backfill overlap) is a no-op.
-    assert services.persist_transcript_rows(s, rows) == 0
+    assert transcript_ingest.persist_transcript_rows(s, rows) == 0
     assert _rows(s) == [(5, "user", "q1"), (7, "assistant", "a1")]
 
 
@@ -69,7 +70,7 @@ def test_persist_rows_assigns_sequentially_when_no_ordinal():
         {"index": -1, "role": "user", "text": "q1"},
         {"index": -1, "role": "assistant", "text": "a1"},
     ]
-    assert services.persist_transcript_rows(s, rows) == 2
+    assert transcript_ingest.persist_transcript_rows(s, rows) == 2
     assert _rows(s) == [(0, "user", "q1"), (1, "assistant", "a1")]
 
 
@@ -79,7 +80,7 @@ def test_persist_rows_skips_unknown_roles():
         {"index": 3, "role": "status", "text": "nope"},
         {"index": 4, "role": "assistant", "text": "a"},
     ]
-    assert services.persist_transcript_rows(s, rows) == 1
+    assert transcript_ingest.persist_transcript_rows(s, rows) == 1
     assert _rows(s) == [(4, "assistant", "a")]
 
 
@@ -169,18 +170,18 @@ def test_streams_descriptor_carries_last_index():
 
 def test_write_backfill_upserts_older_rows_around_streamed_ones():
     _u, _w, _r, s, _c = _ctx()
-    services.persist_transcript_rows(s, [{"index": 7, "role": "assistant", "text": "a2"}])
+    transcript_ingest.persist_transcript_rows(s, [{"index": 7, "role": "assistant", "text": "a2"}])
     full = [
         {"index": 1, "role": "user", "text": "q1"},
         {"index": 3, "role": "assistant", "text": "a1"},
         {"index": 5, "role": "user", "text": "q2"},
         {"index": 7, "role": "assistant", "text": "a2"},
     ]
-    assert services.write_backfill(s, full) == 3          # 7 already exists
+    assert transcript_ingest.write_backfill(s, full) == 3          # 7 already exists
     assert _rows(s) == [
         (1, "user", "q1"), (3, "assistant", "a1"), (5, "user", "q2"), (7, "assistant", "a2"),
     ]
-    assert services.write_backfill(s, full) == 0          # idempotent re-ship
+    assert transcript_ingest.write_backfill(s, full) == 0          # idempotent re-ship
 
 
 def test_write_backfill_without_ordinals_keeps_the_write_once_contract():
@@ -188,8 +189,8 @@ def test_write_backfill_without_ordinals_keeps_the_write_once_contract():
     session, exactly as before."""
     _u, _w, _r, s, _c = _ctx()
     msgs = [{"role": "user", "text": "q"}, {"role": "assistant", "text": "a"}]
-    assert services.write_backfill(s, msgs) == 2
-    assert services.write_backfill(s, msgs) == 0
+    assert transcript_ingest.write_backfill(s, msgs) == 2
+    assert transcript_ingest.write_backfill(s, msgs) == 0
     assert _rows(s) == [(0, "user", "q"), (1, "assistant", "a")]
 
 
@@ -219,7 +220,7 @@ def test_request_backfill_always_asks_a_reachable_runner(monkeypatch):
 
 def test_runner_session_send_writes_no_durable_user_row():
     user, _w, _r, s, _c = _ctx()
-    msg, turn = services.send_message(session=s, text="hello", user=user, client_id="c1")
+    msg, turn = send.send_message(session=s, text="hello", user=user, client_id="c1")
     assert s.messages.count() == 0                        # durable copy = transcript
     assert turn is not None and turn.status == Turn.QUEUED
     # The send contract still returns a message the client can render.
@@ -230,8 +231,8 @@ def test_runner_session_send_writes_no_durable_user_row():
 
 def test_runner_session_send_is_idempotent_per_client_id():
     user, _w, _r, s, _c = _ctx()
-    _m1, turn1 = services.send_message(session=s, text="hello", user=user, client_id="c1")
-    _m2, turn2 = services.send_message(session=s, text="hello", user=user, client_id="c1")
+    _m1, turn1 = send.send_message(session=s, text="hello", user=user, client_id="c1")
+    _m2, turn2 = send.send_message(session=s, text="hello", user=user, client_id="c1")
     assert turn1.id == turn2.id
     assert Turn.objects.filter(chat_session=s).count() == 1
 
@@ -240,8 +241,8 @@ def test_runner_session_sends_without_client_id_stay_distinct():
     """The WS path sends no client_id. Without a durable row, _next_index no longer
     advances between sends — the fallback key must still differ per send."""
     user, _w, _r, s, _c = _ctx()
-    _m1, turn1 = services.send_message(session=s, text="one", user=user)
-    _m2, turn2 = services.send_message(session=s, text="two", user=user)
+    _m1, turn1 = send.send_message(session=s, text="one", user=user)
+    _m2, turn2 = send.send_message(session=s, text="two", user=user)
     assert turn1.id != turn2.id
     assert Turn.objects.filter(chat_session=s).count() == 2
 
@@ -249,7 +250,7 @@ def test_runner_session_sends_without_client_id_stay_distinct():
 def test_web_session_send_still_writes_the_user_row():
     user, ws, _r, _s, _c = _ctx()
     s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="w")
-    msg, _turn = services.send_message(session=s, text="hello", user=user, client_id="c1")
+    msg, _turn = send.send_message(session=s, text="hello", user=user, client_id="c1")
     assert s.messages.count() == 1
     assert msg.pk == s.messages.get().pk
 
@@ -279,7 +280,7 @@ def test_project_events_skips_runner_sessions():
     turn, _ = harness.enqueue_turn(session=s, origin=Turn.ORIGIN_API,
                                    idempotency_key="t1", prompt="hi")
     ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "reply"}}])
-    assert services.project_events(turn, list(turn.events.all())) == 0
+    assert transcript_ingest.project_events(turn, list(turn.events.all())) == 0
     assert s.messages.count() == 0
 
 
@@ -292,7 +293,7 @@ def test_project_events_still_materializes_web_sessions():
     turn, _ = harness.enqueue_turn(session=s, origin=Turn.ORIGIN_API,
                                    idempotency_key="t2", prompt="hi")
     ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "reply"}}])
-    assert services.project_events(turn, list(turn.events.all())) == 1
+    assert transcript_ingest.project_events(turn, list(turn.events.all())) == 1
     assert s.messages.count() == 1
 
 
@@ -328,7 +329,7 @@ async def test_catch_up_fills_the_gap_and_both_transports_agree(monkeypatch):
         # Viewer attaches; the runner streams the live exchange with ordinals.
         assert c.post(f"/api/canopy-sessions/{s.id}/attach").json()["streaming"] is True
         # The human sends from the phone: optimistic echo only, no durable row.
-        services.send_message(session=s, text="q1", user=user, client_id="n1")
+        send.send_message(session=s, text="q1", user=user, client_id="n1")
         _post_stream(c, runner, s, [
             {"kind": "user", "seq": 5, "index": 5, "payload": {"text": "q1"}},
             {"kind": "assistant", "seq": 7, "index": 7, "payload": {"text": "a1"}},
@@ -372,13 +373,13 @@ def test_rows_written_under_a_superseded_ordinal_scheme_are_rebuilt():
                            plaintext="old a", content={"text": "old a"})
     assert s.ordinal_scheme == 0
 
-    services.persist_transcript_rows(s, [
+    transcript_ingest.persist_transcript_rows(s, [
         {"index": 0, "role": "user", "text": "new q", "content": {"text": "new q"}},
         {"index": 64, "role": "assistant", "text": "new a", "content": {"text": "new a"}},
     ])
 
     s.refresh_from_db()
-    assert s.ordinal_scheme == services.ORDINAL_SCHEME
+    assert s.ordinal_scheme == transcript_ingest.ORDINAL_SCHEME
     assert _rows(s) == [(0, "user", "new q"), (64, "assistant", "new a")]
 
 
@@ -386,10 +387,10 @@ def test_the_rebuild_happens_once_not_on_every_write():
     """It is a scheme migration, not a truncate-on-write: the second batch must
     add to the first, or a session would only ever hold its newest post."""
     _u, _ws, _r, s, _c = _ctx()
-    services.persist_transcript_rows(s, [
+    transcript_ingest.persist_transcript_rows(s, [
         {"index": 0, "role": "user", "text": "q", "content": {"text": "q"}},
     ])
-    services.persist_transcript_rows(s, [
+    transcript_ingest.persist_transcript_rows(s, [
         {"index": 64, "role": "assistant", "text": "a", "content": {"text": "a"}},
     ])
     assert _rows(s) == [(0, "user", "q"), (64, "assistant", "a")]
@@ -401,7 +402,7 @@ def test_a_legacy_ordinal_less_payload_never_triggers_a_rebuild():
     _u, _ws, _r, s, _c = _ctx()
     Message.objects.create(session=s, turn_index=0, role=Message.USER,
                            plaintext="kept", content={"text": "kept"})
-    services.persist_transcript_rows(s, [{"index": -1, "role": "assistant", "text": "next"}])
+    transcript_ingest.persist_transcript_rows(s, [{"index": -1, "role": "assistant", "text": "next"}])
     s.refresh_from_db()
     assert s.ordinal_scheme == 0
     assert [t for _i, _r2, t in _rows(s)] == ["kept", "next"]
@@ -409,7 +410,7 @@ def test_a_legacy_ordinal_less_payload_never_triggers_a_rebuild():
 
 def test_tool_rows_persist_their_structured_content():
     _u, _ws, _r, s, _c = _ctx()
-    services.persist_transcript_rows(s, [
+    transcript_ingest.persist_transcript_rows(s, [
         {"index": 64, "role": "tool_use", "text": "",
          "content": {"id": "t1", "name": "Read", "input": {"file_path": "/x"}}},
         {"index": 128, "role": "tool_result", "text": "contents",
@@ -430,7 +431,7 @@ def test_a_nul_byte_cannot_take_down_the_whole_batch():
     Scrubbed server-side because the runner's own copy only covers runners that
     have been updated, and this is the single durable write path."""
     _u, _ws, _r, s, _c = _ctx()
-    written = services.persist_transcript_rows(s, [
+    written = transcript_ingest.persist_transcript_rows(s, [
         {"index": 0, "role": "user", "text": "before\x00after",
          "content": {"text": "before\x00after"}},
         {"index": 64, "role": "tool_result", "text": "bin\x00ary",
@@ -451,7 +452,7 @@ def test_content_does_not_duplicate_plaintext():
     the render path reads content["text"]. Keeping it cost 36% of all stored
     transcript bytes (20,585 rows measured, 2026-07-26)."""
     _u, _ws, _r, s, _c = _ctx()
-    services.persist_transcript_rows(s, [
+    transcript_ingest.persist_transcript_rows(s, [
         {"index": 0, "role": "assistant", "text": "hello", "content": {"text": "hello"}},
         {"index": 64, "role": "tool_result", "text": "a.txt",
          "content": {"tool_use_id": "t1", "is_error": False, "text": "a.txt"}},
@@ -467,7 +468,7 @@ def test_a_text_that_differs_from_plaintext_is_kept():
     """Only the redundant copy is dropped. A `text` that disagrees is real data
     and losing it would be a silent edit, not a saving."""
     _u, _ws, _r, s, _c = _ctx()
-    services.persist_transcript_rows(s, [
+    transcript_ingest.persist_transcript_rows(s, [
         {"index": 0, "role": "assistant", "text": "shown",
          "content": {"text": "different", "id": "x"}},
     ])
@@ -495,7 +496,7 @@ def test_persist_rows_costs_a_bounded_number_of_queries():
     from django.test.utils import CaptureQueriesContext
 
     with CaptureQueriesContext(connection) as ctx:
-        assert services.persist_transcript_rows(s, rows) == 200
+        assert transcript_ingest.persist_transcript_rows(s, rows) == 200
     assert len(ctx.captured_queries) < 20, (
         f"{len(ctx.captured_queries)} queries for 200 rows — the write is still row-at-a-time"
     )
@@ -509,7 +510,7 @@ def test_persist_rows_dedupes_repeats_inside_one_batch():
     dedupe has to become explicit or the whole batch fails.
     """
     _u, _w, _r, s, _c = _ctx()
-    written = services.persist_transcript_rows(s, [
+    written = transcript_ingest.persist_transcript_rows(s, [
         {"index": 4, "role": "assistant", "text": "first"},
         {"index": 4, "role": "assistant", "text": "second"},
     ])

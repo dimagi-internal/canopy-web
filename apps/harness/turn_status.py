@@ -352,13 +352,13 @@ def reach_and_cloud(turn: Turn):
     level, and both are framework, so the dependency only works one way at
     import time.
     """
-    from apps.canopy_sessions import services as session_services
+    from apps.canopy_sessions import send as session_send
 
     from . import claim
 
     if turn.status != Turn.QUEUED:
         if turn.chat_session_id and (runner_gone(turn) or movable_lost(turn)):
-            return None, session_services.available_cloud_runner(turn.chat_session,
+            return None, session_send.available_cloud_runner(turn.chat_session,
                                                                   user=turn.enqueued_by)
         return None, None
     reach = claim.turn_reach(turn)
@@ -367,7 +367,7 @@ def reach_and_cloud(turn: Turn):
     # click re-checks the clicker (`services.may_place`).
     cloud = None
     if reach.kind != claim.LIVE and turn.chat_session_id:
-        cloud = session_services.available_cloud_runner(turn.chat_session, user=turn.enqueued_by)
+        cloud = session_send.available_cloud_runner(turn.chat_session, user=turn.enqueued_by)
     return reach, cloud
 
 

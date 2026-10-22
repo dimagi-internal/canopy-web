@@ -388,7 +388,7 @@ predicates without the clock. A turn no box will take reads
 `project_session_waits_why`: "no runner order in <ws>, and <person> administers no
 box with <repo>". Choosing a box for a project chat — `runner_id` at creation, a
 placement on send, `/place`, a move — needs you to administer it
-(`canopy_sessions.services.may_place`, the one placement rule).
+(`canopy_sessions.placement.may_place`, the one placement rule).
 
 The topology screens and `GET /api/workspaces/{slug}/runner-topology`
 (`apps/harness/topology.py`) are computed from these same predicates. A

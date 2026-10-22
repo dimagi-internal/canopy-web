@@ -17,7 +17,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions import services as chat_services
+from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 from apps.canopy_sessions.models import Draft, Message, RunnerBinding, Session
 from apps.harness.models import Turn, TurnEvent, TurnTranscript
 from apps.retention import policy, services
@@ -245,7 +245,7 @@ def test_purged_history_cannot_be_written_back_by_a_reship(world):
     # The runner re-ships the whole transcript (backfill / reset), plus one new row.
     rows = [{"index": i, "role": "assistant", "text": f"line {i}"} for i in (0, 10, 20, 30)]
     rows.append({"index": 40, "role": "assistant", "text": "new"})
-    assert chat_services.write_backfill(session, rows) == 1
+    assert chat_transcript_ingest.write_backfill(session, rows) == 1
     assert list(session.messages.values_list("plaintext", flat=True)) == ["new"]
 
 
@@ -254,9 +254,9 @@ def test_server_assigned_indices_start_at_the_floor(world):
     session = a_chat(world, age_days=40)
     services.sweep(apply=True, now=NOW)
     session.refresh_from_db()
-    assert chat_services._next_index(session) == session.retention_floor_index
+    assert chat_transcript_ingest._next_index(session) == session.retention_floor_index
     # An ordinal-less (legacy) backfill would renumber old history from the floor up.
-    assert chat_services.write_backfill(session, [{"role": "assistant", "text": "old"}]) == 0
+    assert chat_transcript_ingest.write_backfill(session, [{"role": "assistant", "text": "old"}]) == 0
 
 
 def test_a_kept_forever_agent_is_untouched(world):

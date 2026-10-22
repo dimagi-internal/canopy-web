@@ -16,7 +16,10 @@ from apps.harness import initiator as who
 from apps.realtime.groups import chat_user_group, session_group
 
 from . import access, agui, attach, doors, drafts, presence, serializers, stream_map
-from . import services as chat_services
+from . import control as chat_control
+from . import send as chat_send
+from . import transcript_ingest as chat_transcript_ingest
+from . import transcript_read as chat_transcript_read
 from .models import Draft, Message, Session, SessionParticipant
 
 _EDIT_ROLES = {SessionParticipant.OWNER, SessionParticipant.EDITOR}
@@ -35,7 +38,7 @@ _EDIT_ACTIONS = (
 #: does not ask must not be able to notice this exists.
 AGUI_PROTOCOL = "ag-ui"
 
-#: Frames an embedded widget never receives (see `services.WIDGET_HIDDEN_ROLES`).
+#: Frames an embedded widget never receives (see `transcript_read.WIDGET_HIDDEN_ROLES`).
 #: Dropped on canopy's frame BEFORE the AG-UI projection, because the projected
 #: snapshot carries the original frame verbatim and would otherwise leak the
 #: rows back. `session.activity` is untouched, so the panel still says the agent
@@ -48,7 +51,7 @@ def without_tools(frame: dict) -> dict | None:
 
     A tool result that carries an MCP Apps View (`app`) still goes through,
     stripped to its call id — the View is the host's UI for this person; its raw
-    result is not (`services.for_widget` is the REST twin)."""
+    result is not (`transcript_read.for_widget` is the REST twin)."""
     event = frame.get("event")
     if event == "chat.tool_result" and (frame.get("data") or {}).get("app"):
         data = frame["data"]
@@ -61,7 +64,7 @@ def without_tools(frame: dict) -> dict | None:
         messages = data.get("messages")
         if messages:
             kept = [_stripped_view_row(m) if m.get("app") else m for m in messages
-                    if m.get("role") not in chat_services.WIDGET_HIDDEN_ROLES or m.get("app")]
+                    if m.get("role") not in chat_transcript_read.WIDGET_HIDDEN_ROLES or m.get("app")]
             if kept != messages:
                 return {**frame, "data": {**data, "messages": kept}}
     return frame
@@ -166,7 +169,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             self.group = session_group(session.id)
             await self.channel_layer.group_add(self.group, self.channel_name)
             await self.accept()
-            await database_sync_to_async(chat_services.attach_session)(session)
+            await database_sync_to_async(chat_transcript_ingest.attach_session)(session)
             await self.send_json(await self._snapshot())
             return
 
@@ -188,7 +191,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(self.user_group, self.channel_name)
         await self.accept()
         await database_sync_to_async(presence.touch)(session.id, user.id)
-        await database_sync_to_async(chat_services.attach_session)(session)
+        await database_sync_to_async(chat_transcript_ingest.attach_session)(session)
         await self.send_json(await self._snapshot())
         # Carry WHO joined, not just their id.
         #
@@ -219,14 +222,14 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             # No presence row to leave and nobody to tell — a contact never
             # announced itself. The attach count still has to come down, or a
             # closed panel keeps the runner streaming forever.
-            await database_sync_to_async(chat_services.detach_session)(self.session)
+            await database_sync_to_async(chat_transcript_ingest.detach_session)(self.session)
             await self.channel_layer.group_discard(group, self.channel_name)
             return
         user_group = getattr(self, "user_group", None)
         if user_group:
             await self.channel_layer.group_discard(user_group, self.channel_name)
         await database_sync_to_async(presence.leave)(self.session.id, self.user.id)
-        await database_sync_to_async(chat_services.detach_session)(self.session)
+        await database_sync_to_async(chat_transcript_ingest.detach_session)(self.session)
         await self._broadcast({"type": "presence.left", "user_id": self.user.id})
         await self.channel_layer.group_discard(group, self.channel_name)
 
@@ -392,14 +395,14 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         })
 
     async def _chat_unqueue(self, data):
-        # Withdraw one of your own queued sends (services.unqueue_send). The
+        # Withdraw one of your own queued sends (send.unqueue_send). The
         # refreshed queued list reaches everyone through session.queued; only a
         # refusal (already claimed, not yours) is answered here, so the sender's
         # row can say it went to the agent after all.
         turn_id = str(data.get("turn_id") or "")
-        ok = await database_sync_to_async(chat_services.unqueue_send)(
+        ok = await database_sync_to_async(chat_send.unqueue_send)(
             self.session, turn_id, self.user,
-            by=chat_services.person_name((getattr(self, "scope", None) or {}).get("user")))
+            by=chat_control.person_name((getattr(self, "scope", None) or {}).get("user")))
         if not ok:
             await self._error("unqueue_refused", "That message already went to the agent.",
                               detail={"turn_id": turn_id})
@@ -446,12 +449,12 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         terminal through the bridge, and firing a second Escape at it could land
         after the agent has moved on to something else.
 
-        The logic lives in `services.stop_session`, shared with REST/MCP
+        The logic lives in `control.stop_session`, shared with REST/MCP
         `POST /canopy-sessions/{id}/stop` so the two can never disagree again
         (canopy-web#1226: REST stopped at the turns and did nothing to an agent).
         """
-        return chat_services.stop_session(
-            self.session, by=chat_services.person_name((getattr(self, "scope", None) or {}).get("user")))
+        return chat_control.stop_session(
+            self.session, by=chat_control.person_name((getattr(self, "scope", None) or {}).get("user")))
 
     def _resolve_message_id_sync(self, turn_id, seq):
         if turn_id:
@@ -511,7 +514,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             return None
 
     async def chat_user_message(self, message):
-        """A ledger-sourced send (`services._publish_user_message`), fanned out to
+        """A ledger-sourced send (`send._publish_user_message`), fanned out to
         the whole session — the peer-visibility a transcript-sourced session gets
         for free from `post_session_stream`, which this session has no runner to
         ship a transcript through. Already the exact client frame; no `stream_map`
@@ -692,10 +695,10 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # SESSION_TAIL_DEFAULT the REST load uses), never the head. Scroll-back
         # for earlier history is REST (GET /{id}/messages?before=); Plan 4 wires
         # it into the panel. The session.state frame shape is otherwise frozen.
-        # ONE policy for both transports (services.visible_transcript): tail-first,
+        # ONE policy for both transports (transcript_read.visible_transcript): tail-first,
         # falling back to the binding tail for a local session with no Message rows.
         # REST and this snapshot MUST agree — see tests/test_transcript_parity.py.
-        messages, _has_more, _oldest = chat_services.visible_transcript(self.session)
+        messages, _has_more, _oldest = chat_transcript_read.visible_transcript(self.session)
         from apps.agents.credentials import secret_requests
         from apps.tokens import mcp_apps_views
 
@@ -716,7 +719,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 draft=own,
                 peer_drafts=peers,
                 messages=messages,
-                queued=chat_services.queued_messages(self.session),
+                queued=chat_send.queued_messages(self.session),
             ),
         }
 

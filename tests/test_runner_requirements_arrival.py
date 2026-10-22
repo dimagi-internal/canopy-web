@@ -252,7 +252,7 @@ def _stale_copy_then_stamp(session):
 
 
 def test_a_transfer_from_a_stale_copy_keeps_the_stamp(site):
-    from apps.canopy_sessions import services
+    from apps.canopy_sessions import placement
     from apps.canopy_sessions.models import RunnerBinding
 
     cloud, zdr = _runners(site)
@@ -261,7 +261,7 @@ def test_a_transfer_from_a_stale_copy_keeps_the_stamp(site):
     RunnerBinding.objects.create(session=s, runner=cloud, session_key="t",
                                  emdash_project="canopy-web", host="cloud", thread_key=str(s.id))
     stale = _stale_copy_then_stamp(s)
-    services.transfer_session(session=stale, placement=str(zdr.id))
+    placement.transfer_session(session=stale, placement=str(zdr.id))
     meta = Session.objects.get(pk=s.pk).metadata
     assert meta["runner_requirements"] == ["zdr"]
     assert meta["requested_runner_id"] == str(zdr.id)
@@ -269,13 +269,14 @@ def test_a_transfer_from_a_stale_copy_keeps_the_stamp(site):
 
 def test_moving_queued_turns_from_a_stale_copy_keeps_the_stamp(site):
     from apps.canopy_sessions import services
+    from apps.canopy_sessions import send
 
     _cloud, zdr = _runners(site)
     s = services.create_session(workspace=site["ws"], created_by=site["owner"],
                                 agent=site["agent"])
-    services.send_message(session=s, text="hello", user=site["owner"])
+    send.send_message(session=s, text="hello", user=site["owner"])
     stale = _stale_copy_then_stamp(s)
-    moved = services.move_queued_turns(session=stale, placement=str(zdr.id), user=site["owner"])
+    moved = send.move_queued_turns(session=stale, placement=str(zdr.id), user=site["owner"])
     assert moved
     meta = Session.objects.get(pk=s.pk).metadata
     assert meta["runner_requirements"] == ["zdr"]

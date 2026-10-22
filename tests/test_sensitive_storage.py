@@ -17,7 +17,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions import services as chat_services
+from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.events import usage
 from apps.events.models import SessionUsage
@@ -116,7 +116,7 @@ def test_a_tool_end_event_keeps_the_call_and_status_never_the_result(
 
 
 def test_a_runner_sessions_tool_result_row_keeps_no_result(w):
-    n = chat_services.persist_transcript_rows(w["hot"], [
+    n = chat_transcript_ingest.persist_transcript_rows(w["hot"], [
         {"index": 0, "role": "user", "text": "how many visits?"},
         {"index": 64, "role": "tool_use", "text": "",
          "content": {"id": "tu1", "name": "site_call", "input": {"tool": "data_query"}}},

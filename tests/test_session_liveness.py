@@ -3,7 +3,7 @@ from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.test import Client
 
-from apps.canopy_sessions import services
+from apps.canopy_sessions import transcript_ingest
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -34,8 +34,8 @@ def test_attach_transition_sets_stream_desired_once(monkeypatch):
     monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
     s, r = _bound_session()
 
-    assert services.attach_session(s) is True   # 0 -> 1 : desired on
-    assert services.attach_session(s) is True    # 1 -> 2 : no change
+    assert transcript_ingest.attach_session(s) is True   # 0 -> 1 : desired on
+    assert transcript_ingest.attach_session(s) is True    # 1 -> 2 : no change
     b = RunnerBinding.objects.get(session=s)
     assert b.stream_desired is True
     # exactly one control frame on the 0->1 transition
@@ -49,10 +49,10 @@ def test_detach_to_zero_clears_stream_desired(monkeypatch):
     published = []
     monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
     s, r = _bound_session()
-    services.attach_session(s)
-    services.attach_session(s)
-    assert services.detach_session(s) is True    # 2 -> 1 : still desired
-    assert services.detach_session(s) is False   # 1 -> 0 : desired off
+    transcript_ingest.attach_session(s)
+    transcript_ingest.attach_session(s)
+    assert transcript_ingest.detach_session(s) is True    # 2 -> 1 : still desired
+    assert transcript_ingest.detach_session(s) is False   # 1 -> 0 : desired off
     assert RunnerBinding.objects.get(session=s).stream_desired is False
     assert published[-1][1]["desired"] is False
 
@@ -63,7 +63,7 @@ def test_attach_noop_without_binding(monkeypatch):
     owner = User.objects.create_user("owner2", "owner2@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=owner)
     s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_WEB, title="web-only")
-    assert services.attach_session(s) is False   # no binding -> nothing to stream
+    assert transcript_ingest.attach_session(s) is False   # no binding -> nothing to stream
     assert published == []
 
 

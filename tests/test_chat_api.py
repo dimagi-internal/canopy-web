@@ -496,6 +496,7 @@ def _publish_calls(monkeypatch):
 def test_send_message_publishes_chat_user_message_on_a_ledger_sourced_session(
         monkeypatch, ctx, django_capture_on_commit_callbacks):
     from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions import send as chat_send
 
     user, ws, agent = ctx
     session = chat_services.create_session(workspace=ws, created_by=user, agent=agent)
@@ -503,7 +504,7 @@ def test_send_message_publishes_chat_user_message_on_a_ledger_sourced_session(
 
     calls = _publish_calls(monkeypatch)
     with django_capture_on_commit_callbacks(execute=True):
-        message, _turn = chat_services.send_message(session=session, text="hi there", user=user)
+        message, _turn = chat_send.send_message(session=session, text="hi there", user=user)
 
     user_message_calls = [m for _g, m in calls if m.get("type") == "chat.user_message"]
     assert len(user_message_calls) == 1
@@ -516,6 +517,7 @@ def test_send_message_publishes_chat_user_message_on_a_ledger_sourced_session(
 def test_send_message_does_not_publish_chat_user_message_on_a_transcript_sourced_session(
         monkeypatch, ctx, django_capture_on_commit_callbacks):
     from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions import send as chat_send
 
     user, ws, agent = ctx
     session = chat_services.create_session(workspace=ws, created_by=user, agent=agent)
@@ -525,7 +527,7 @@ def test_send_message_does_not_publish_chat_user_message_on_a_transcript_sourced
 
     calls = _publish_calls(monkeypatch)
     with django_capture_on_commit_callbacks(execute=True):
-        chat_services.send_message(session=session, text="hi there", user=user)
+        chat_send.send_message(session=session, text="hi there", user=user)
 
     # Not merely fewer calls: NONE of them may be a chat.user_message, or the
     # line would render twice once a runner ships the same text through
