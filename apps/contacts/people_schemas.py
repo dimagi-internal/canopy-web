@@ -25,7 +25,7 @@ class PersonFactOut(StrictModel):
     project: PersonProjectRef | None = None
     instance_ref: str = ""
     created_at: str | None = None
-    # HCP v1 (apps/contacts/hcp.py): the entry this fact is a version of.
+    # HCP v1 (apps/contacts/hcp/): the entry this fact is a version of.
     entry_id: str | None = Field(default=None, description="urn:uuid:<id>, the same on every version.")
     version: int = 1
     category: str = Field(default="work_context", description="The HCP category — the grant scope.")

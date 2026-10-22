@@ -677,7 +677,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_memory_page_audit": ("page-viewer",),
     "get_memory_page_searches": ("page-viewer",),
     "set_my_grant_collection": ("self",),
-    # --- apps/contacts/hcp_api.py  (HCP v1 over the people brain; apps/contacts/hcp.py)
+    # --- apps/contacts/hcp_api.py  (HCP v1 over the people brain; apps/contacts/hcp/)
     # `self` = the person's own instance; `hcp-grant` = an agent, for the person
     # who started its turn, under that client's grant. A missing entry is 403.
     "hcp_configuration": ("anonymous",),  # the discovery document; names no person

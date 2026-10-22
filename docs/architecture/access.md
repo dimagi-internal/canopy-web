@@ -750,7 +750,7 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
 ### The HCP service
 
 The fleet brain is each person's Human Context Protocol instance
-(`apps/contacts/hcp.py`, `hcp_api.py`, discovery `/.well-known/hcp-configuration`),
+(`apps/contacts/hcp/`, `hcp_api.py`, discovery `/.well-known/hcp-configuration`),
 and apps canopy does not operate may ask a person for parts of it through
 canopy's own OAuth 2.0 authorization server (`hcp_oauth.py`, issuer
 `<origin>/api/hcp` — separate from the `/oauth/*` MCP sign-in server). `hcpat_`

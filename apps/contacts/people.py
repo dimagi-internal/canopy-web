@@ -187,7 +187,7 @@ def fact_dict(fact: PersonFact) -> dict:
         "project": project,
         "instance_ref": fact.instance_ref,
         "created_at": fact.created_at.isoformat() if fact.created_at else None,
-        # HCP v1 (apps/contacts/hcp.py), additive.
+        # HCP v1 (apps/contacts/hcp/), additive.
         "entry_id": f"urn:uuid:{fact.entry_id}",
         "version": fact.version,
         "category": fact.category,

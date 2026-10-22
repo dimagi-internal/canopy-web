@@ -491,7 +491,7 @@ class PersonFact(models.Model):
     enforced by a CHECK constraint, not only by the API.
 
     **Each row is one VERSION of an HCP entry** (Human Context Protocol v1,
-    draft 4 — `apps/contacts/hcp.py`). Rows sharing `entry_id` are one entry's
+    draft 4 — `apps/contacts/hcp/`). Rows sharing `entry_id` are one entry's
     revision history: `version` counts up from 1, a new version supersedes the
     previous row, and the live row carries the entry's lifecycle `status`. The
     HCP `category` is the grant scope; it is limited to work-context categories
@@ -696,7 +696,7 @@ class PersonAccess(models.Model):
         indexes = [models.Index(fields=["person", "created_at"])]
 
 
-# --- HCP v1 grants and the person's audit log (apps/contacts/hcp.py) -------------
+# --- HCP v1 grants and the person's audit log (apps/contacts/hcp/) -------------
 
 
 class PersonGrant(models.Model):
