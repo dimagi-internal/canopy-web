@@ -348,6 +348,29 @@ def test_envelope_cannot_be_declared_by_hand(w, claimable):
     assert r.status_code == 422
 
 
+def test_turning_sessions_off_round_trips_what_the_box_reported(w, claimable):
+    # The Slack & chat toggle sends back the capabilities it read: the box's own
+    # report, unchanged, is an echo and must not 422 the write.
+    c, rid = claimable
+    _beat(c, rid, profiles=3, envelope=2)
+    from apps.harness.models import Runner
+    caps = dict(Runner.objects.get(pk=rid).capabilities)
+    caps.pop("profiles", None)
+    r = c.patch(f"/api/harness/runners/{rid}", {"capabilities": {**caps, "sessions": False}},
+                content_type="application/json")
+    assert r.status_code == 200, r.content
+    after = Runner.objects.get(pk=rid).capabilities
+    assert after["sessions"] is False and after["envelope"] == 2 and after["profiles"] == 3
+
+
+def test_a_changed_reported_value_is_still_refused(w, claimable):
+    c, rid = claimable
+    _beat(c, rid, profiles=3, envelope=2)
+    r = c.patch(f"/api/harness/runners/{rid}", {"capabilities": {"agents": ["ace"], "envelope": 3}},
+                content_type="application/json")
+    assert r.status_code == 422
+
+
 @pytest.mark.parametrize("key", ["data_mode", "data_mode_hash"])
 def test_the_data_mode_cannot_be_declared_by_hand(w, claimable, key):
     # A `zdr` declaration counts only while the box itself reports ZDR mode
