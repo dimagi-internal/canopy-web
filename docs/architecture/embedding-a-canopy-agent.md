@@ -90,10 +90,9 @@ what you get from an address bar.
 `PATCH /api/workspaces/<ws>/connected-apps/<id>` (MCP `update_connected_app`), which take
 the same fields — `origins`, `agents`, `public_keys` or `jwks_url` — with the
 same validation, and record each change in the settings audit
-(`settings-audit.md`). There is no management command for origins or agents: a
-command would skip both. `manage.py create_app_credential --workspace connect
---name connect-labs` still registers a bare site (it grants nothing) for local
-setup.
+(`settings-audit.md`). There is no management command for any of it: a command
+would skip both. For local setup, sign in and use the page, or call the routes
+with a personal access token.
 
 ### Serving more than one canopy workspace
 
