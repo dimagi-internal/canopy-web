@@ -9,6 +9,7 @@ from django.db.models import Q
 from apps.agents import services as agent_services
 from apps.agents.models import AgentTask
 from apps.harness.models import Runner
+from apps.harness.runner_protocol import acting_runner_q
 from apps.workspaces import services as wsvc
 
 
@@ -42,9 +43,11 @@ def supervisor_snapshot(user) -> dict:
     }
 
     # A computer's key holder (`Runner.COMPUTER`) is no fleet runner.
-    runners = Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER).filter(
+    # Your own runners in your workspaces (`acting_runner_q`): a runner nobody
+    # owns is shown to nobody — a NULL owner fails closed, as over REST.
+    runners = Runner.objects.exclude(status=Runner.RETIRED).filter(
         (Q(workspace_id__in=slugs) | Q(workspace_id__isnull=True))
-        & (Q(owner=user) | Q(owner__isnull=True))
+        & acting_runner_q(user)
     )
 
     return {

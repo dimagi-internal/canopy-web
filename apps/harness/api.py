@@ -219,7 +219,9 @@ def _runner_owned_q(request: HttpRequest) -> Q:
     nobody — it used to be acted on by everyone (heartbeat, claim, retire, and
     its plaintext credential bundle), the NULL-means-allow shape this repo has
     removed everywhere else. Every live runner on labs has a owner (2026-10-02)."""
-    return Q(owner=request.user)
+    from .runner_protocol import owned_runner_q
+
+    return owned_runner_q(request.user)
 
 
 #: Fleet runners only: a computer's key holder (`Runner.COMPUTER` — a person's
@@ -1631,31 +1633,11 @@ def release_fleet_hold(request: HttpRequest):
 
 @router.post("/runners/{runner_id}/heartbeat", response=RunnerOut)
 def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: HeartbeatIn):
-    runner = _runner_or_404(request, runner_id)
-    if payload.host and payload.host != runner.host:
-        runner.host = payload.host
-        runner.save(update_fields=["host"])
+    from . import runner_protocol
     from .api_device_keys import waiting_approval_url
 
-    beat = services.heartbeat(
-        runner,
-        active_turn_ids=payload.active_turn_ids,
-        degraded=payload.degraded,
-        note=payload.note,
-        ready=payload.ready,
-        ready_note=payload.ready_note,
-        code_branch=payload.code_branch,
-        code_version=payload.code_version,
-        code_sha=payload.code_sha,
-        code_committed_at=payload.code_committed_at,
-        projects=payload.projects,
-        profiles=payload.profiles,
-        envelope=payload.envelope,
-        midturn=payload.midturn,
-        health=payload.health.model_dump() if payload.health is not None else None,
-        mailboxes_readable=payload.mailboxes_readable,
-        agents_unprepared=payload.agents_unprepared,
-    )
+    runner = _runner_or_404(request, runner_id)
+    beat = runner_protocol.heartbeat(runner, payload)
     beat.key_waiting_url = waiting_approval_url(runner)
     return beat
 
@@ -2817,31 +2799,15 @@ def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
 
 @router.post("/turns/{turn_id}/finish", response=TurnOut)
 def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn):
+    from . import runner_protocol
+
     turn = _reporting_turn_or_404(request, turn_id)
-    if payload.status not in (Turn.DONE, Turn.FAILED, Turn.CANCELLED):
-        raise HttpError(422, "finish status must be done|failed|cancelled")
-    # Record the session BEFORE the terminal check: a re-reported finish is otherwise
-    # a no-op, and this is the only moment the runner tells us which emdash session
-    # the turn drove. Never blank an existing value — the first report wins.
-    if payload.session_key and not turn.session_key:
-        turn.session_key = payload.session_key[:200]
-        turn.save(update_fields=["session_key"])
-    if turn.status in Turn.TERMINAL:
-        return turn  # idempotent finish
-    # Read the state BEFORE finishing: a non-terminal result is now ambiguous. It
-    # means either "you tried to finish a turn you never claimed" (the 409 this guard
-    # was written for) or "your sessionless failure was put back on the queue"
-    # (services.finish_turn's requeue — a SUCCESSFUL finish that legitimately lands on
-    # QUEUED). Only the executing case can produce the second, so that is what tells
-    # them apart; keying on the result status alone would 409 every retry.
-    was_executing = turn.status in services.EXECUTING
-    result = services.finish_turn(turn, status=payload.status, result_note=payload.result_note)
-    if result.status not in Turn.TERMINAL and not was_executing:
-        # services.finish_turn only transitions claimed/running/needs_human — a
-        # queued turn is a silent no-op there. Surface that as a 409 instead of
-        # returning a turn that looks unchanged.
-        raise ProblemError(409, "Turn not finishable", detail=f"status={result.status}")
-    return result
+    try:
+        return runner_protocol.finish(turn, payload)
+    except runner_protocol.ProtocolError as exc:
+        if exc.status == 422:
+            raise HttpError(422, exc.detail) from exc
+        raise ProblemError(exc.status, exc.title, detail=exc.detail) from exc
 
 
 def _cancel_refusal(user, turn: Turn) -> str:
