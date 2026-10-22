@@ -279,4 +279,38 @@ describe('AgentCredentialsPanel', () => {
     await screen.findByTestId('cred-nova-api-key')
     expect(screen.queryByTestId('reveal-nova-api-key')).toBeNull()
   })
+
+  it('stores a file from disk as a value, without a trailing newline', async () => {
+    getAgentCredentialStatus.mockResolvedValue([
+      { name: 'GOOGLE_PROVISIONER_KEY', declared: true, set: false, source: 'unset', updated_at: null },
+    ])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 1, locatable: 0 })
+    setAgentCredentials.mockResolvedValue([])
+    render(
+      <MemoryRouter>
+        <AgentCredentialsPanel agent={{ ...AGENT, credential_source: 'canopy-web' }} />
+      </MemoryRouter>,
+    )
+    const input = await screen.findByTestId('upload-GOOGLE_PROVISIONER_KEY')
+    const key = '{\n  "type": "service_account"\n}\n'
+    fireEvent.change(input, { target: { files: [new File([key], 'key.json')] } })
+    await waitFor(() => expect(setAgentCredentials).toHaveBeenCalledWith(
+      'echo', { GOOGLE_PROVISIONER_KEY: '{\n  "type": "service_account"\n}' }))
+  })
+
+  it('leads with an unset ref on canopy vault instead of filing it under 1Password', async () => {
+    getAgentCredentialStatus.mockResolvedValue([
+      { name: 'GOOGLE_PROVISIONER_KEY', declared: true, set: false, source: 'unset', updated_at: null },
+    ])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 1, locatable: 0 })
+    render(
+      <MemoryRouter>
+        <AgentCredentialsPanel agent={{ ...AGENT, credential_source: 'canopy-web' }} />
+      </MemoryRouter>,
+    )
+    const section = await screen.findByTestId('not-set')
+    expect(within(section).getByTestId('cred-GOOGLE_PROVISIONER_KEY')).toBeTruthy()
+    expect(screen.queryByTestId('toggle-vault-refs')).toBeNull()
+    expect(screen.getByTestId('agent-credentials-summary').textContent).toMatch(/not set yet/)
+  })
 })
