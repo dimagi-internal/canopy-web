@@ -4,13 +4,13 @@ import { WorkspaceBadge } from "@/components/WorkspaceBadge";
 import { listTurns } from "@/api/turns";
 import { EventLedger } from "@/components/activity/EventLedger";
 import { EventLogTable, McpCallsTable } from "@/components/activity/WorkspaceLogs";
+import { relativeAge } from "@/lib/relativeAge";
 import {
   type Turn,
   type TurnFilters,
   agentLabel,
   originLabel,
   matchesTurnFilters,
-  relativeTime,
   statusToken,
 } from "@/components/activity/turnLog";
 
@@ -147,7 +147,7 @@ function TurnRow({ turn, now, open, onToggle }: {
       <tr onClick={onToggle}
         className="cursor-pointer border-b border-border last:border-0 hover:bg-muted">
         <td className="px-3 py-2 text-foreground-secondary" title={new Date(turn.created_at).toLocaleString()}>
-          {relativeTime(turn.created_at, now)}
+          {relativeAge(turn.created_at, now, { seconds: false })}
         </td>
         <td className="px-3 py-2 text-foreground">
           <span className="inline-flex items-center gap-1.5">

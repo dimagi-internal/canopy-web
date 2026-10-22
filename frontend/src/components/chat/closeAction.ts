@@ -1,4 +1,5 @@
 import type { ChatSession, CloseResult } from '@/api/chat'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /**
  * Can this session be closed right now, and should we ask first?
@@ -59,7 +60,7 @@ export function closeResultMessage(r: CloseResult, s: CloseSubject): string | nu
  * the app, so it falls back to the workspace's chat list.
  */
 export function closeDestination(historyIdx: unknown, workspace: string): -1 | string {
-  return typeof historyIdx === 'number' && historyIdx > 0 ? -1 : `/w/${workspace}/chat`
+  return typeof historyIdx === 'number' && historyIdx > 0 ? -1 : scopedPath(workspace, '/chat')
 }
 
 /** How often, and for how long, the page checks whether a close relayed to a

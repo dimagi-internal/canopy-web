@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
 import { startDrill, listDrills, type RunnerDrillOut } from '@/api/drills'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 
 // Per-agent readiness grid for one runner — the drill-down behind the
 // RunnerStatus badge. Loads the runner's drill outcomes, offers a "Drill
@@ -36,7 +36,7 @@ function chipFor(d: RunnerDrillOut, now: Date): ChipInfo {
 }
 
 function ageFor(d: RunnerDrillOut, now: Date): string {
-  return relativeTime(d.finished_at ?? d.started_at, now)
+  return relativeAge(d.finished_at ?? d.started_at, now, { seconds: false })
 }
 
 // Best-effort extraction of a readable message from the generic Error thrown

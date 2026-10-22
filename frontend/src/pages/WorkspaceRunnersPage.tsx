@@ -15,6 +15,7 @@ import { RunnersTable } from '@/components/runners/RunnersTable'
 import { relativeAge } from '@/lib/relativeAge'
 import { TopologyViews } from './topology/TopologyViews'
 import { agentHealth, defaultRoutes, dependsSolelyOn, ruleRoutes, statusTone } from './runnerTopology'
+import { scopedPath } from '../lib/scopedLinks'
 
 // THE RUNNER TOPOLOGY of this workspace and every workspace below it: which box
 // each agent's turns land on, and what stops if a box goes dark.
@@ -154,7 +155,7 @@ function Topology({ slug }: { slug: string }): JSX.Element {
                     >
                       <td className="py-1.5 pr-3" style={{ paddingLeft: `${ws.depth * 16 + 16}px` }}>
                         <Link
-                          to={`/w/${ws.slug}/agents/${a.slug}/settings`}
+                          to={scopedPath(ws.slug, `/agents/${a.slug}/settings`)}
                           className={clsx('hover:underline', sole ? 'font-semibold text-destructive' : 'text-foreground')}
                         >
                           {a.name}

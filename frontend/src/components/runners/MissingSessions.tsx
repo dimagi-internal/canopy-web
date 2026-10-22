@@ -6,7 +6,7 @@ import {
   sendUpMissingSessions,
   type MissingSessionsOut,
 } from '@/api/harness'
-import { relativeTime } from '@/components/activity/turnLog'
+import { relativeAge } from '@/lib/relativeAge'
 
 const compact = (n: number) => Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(n)
 
@@ -52,7 +52,7 @@ export function MissingSessions({ runnerId }: { runnerId: string }): JSX.Element
     <div className="space-y-2 text-[12px]" data-testid="missing-sessions">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-muted-foreground">
-          {data?.usage_reported_at ? `Last usage report ${relativeTime(data.usage_reported_at, now)}` : 'No usage report yet'}
+          {data?.usage_reported_at ? `Last usage report ${relativeAge(data.usage_reported_at, now, { seconds: false })}` : 'No usage report yet'}
           {data?.usage_scan_requested_at && ' · rescan asked, waiting for the box'}
         </span>
         <button type="button" onClick={() => void check()} disabled={busy || !!data?.usage_scan_requested_at}
@@ -96,7 +96,7 @@ export function MissingSessions({ runnerId }: { runnerId: string }): JSX.Element
                 </td>
                 <td className="font-mono text-foreground">{r.repo}</td>
                 <td className="max-w-[320px] truncate text-foreground-secondary" title={r.title}>{r.title || r.claude_session}</td>
-                <td className="text-foreground-secondary">{r.last_at ? relativeTime(r.last_at, now) : '—'}</td>
+                <td className="text-foreground-secondary">{r.last_at ? relativeAge(r.last_at, now, { seconds: false }) : '—'}</td>
                 <td className="text-right tabular-nums">{compact(r.cache_read_tokens)}</td>
                 <td className="text-right tabular-nums">{compact(r.input_tokens)} · {compact(r.output_tokens)}</td>
                 <td className="font-mono text-foreground-secondary">{r.agent || r.files_in}</td>

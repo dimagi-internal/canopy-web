@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { listEvents, listMcpCalls, type LogEvent, type McpCall } from "@/api/logs";
-import { relativeTime } from "@/components/activity/turnLog";
+import { relativeAge } from "@/lib/relativeAge";
 
 // The two logs beside the turn log on Activity. Both are the workspace
 // ADMIN's (apps/workspaces/permissions.py, LOGS_READ): an admin or owner sees
@@ -56,7 +56,7 @@ export function EventLogTable() {
           {rows.map((e) => (
             <tr key={e.id} className="border-b border-border last:border-0">
               <td className="px-3 py-2 text-foreground-secondary" title={new Date(e.last_seen_at).toLocaleString()}>
-                {relativeTime(e.last_seen_at, now)}
+                {relativeAge(e.last_seen_at, now, { seconds: false })}
               </td>
               <td className="px-3 py-2">
                 <span className={`inline-block rounded border px-1.5 py-0.5 text-xs ${LEVEL_TOKEN[e.level] ?? "border-border text-muted-foreground"}`}>
@@ -108,7 +108,7 @@ export function McpCallsTable() {
               {rows.map((c) => (
                 <tr key={c.id} className="border-b border-border last:border-0">
                   <td className="px-3 py-2 text-foreground-secondary" title={new Date(c.created_at).toLocaleString()}>
-                    {relativeTime(c.created_at, now)}
+                    {relativeAge(c.created_at, now, { seconds: false })}
                   </td>
                   <td className="px-3 py-2 text-foreground">{c.user_email || "—"}</td>
                   <td className="px-3 py-2 font-mono text-xs text-foreground">{c.tool}</td>

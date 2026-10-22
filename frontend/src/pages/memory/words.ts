@@ -3,6 +3,7 @@
  *  heard of HCP can read. Nothing here calls the API. */
 import type { HcpAuditEvent, HcpGrant, PersonFactDetail } from '../../api/people'
 import { MY_CATEGORIES } from '../../api/people'
+import { relativeAge, type RelativeAgeOptions } from '../../lib/relativeAge'
 
 const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(MY_CATEGORIES.map((c) => [c.value, c.label]))
 
@@ -11,20 +12,9 @@ export function categoryLabel(category: string | null | undefined): string {
   return CATEGORY_LABEL[category] ?? category.replace(/_/g, ' ')
 }
 
-/** "3 min ago", "5 h ago", "yesterday", "Oct 7". Future times read "in 5 h". */
-export function relTime(iso: string, now: Date = new Date()): string {
-  const t = new Date(iso).getTime()
-  const diff = now.getTime() - t
-  const ahead = diff < 0
-  const s = Math.abs(diff) / 1000
-  const say = (n: number, unit: string) => (ahead ? `in ${n} ${unit}` : `${n} ${unit} ago`)
-  if (s < 60) return ahead ? 'in a moment' : 'just now'
-  if (s < 3600) return say(Math.round(s / 60), 'min')
-  if (s < 86400) return say(Math.round(s / 3600), 'h')
-  if (!ahead && s < 2 * 86400) return 'yesterday'
-  if (s < 7 * 86400) return say(Math.round(s / 86400), 'days')
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' })
-}
+/** The /people/me reading of `relativeAge`: "3 min ago", "5 h ago", "yesterday",
+ *  "Oct 7"; future times read "in 5 h". */
+export const IN_WORDS: RelativeAgeOptions = { words: true, future: true, seconds: false, dateAfterDays: 7 }
 
 /** The agent half of a grant's name: "ACE over Slack:t02…" → "ACE". */
 export function agentName(g: HcpGrant): string {
@@ -58,7 +48,7 @@ export function placeOf(g: HcpGrant): string {
 /** How long a grant lasts, as a promise: "Until you take it back" / "This conversation · ends in 5 h". */
 export function durationOf(g: HcpGrant, now: Date = new Date()): string {
   if (g.grantType === 'persistent') return 'Until you take it back'
-  if (g.expiresAt) return `For one conversation · ends ${relTime(g.expiresAt, now)}`
+  if (g.expiresAt) return `For one conversation · ends ${relativeAge(g.expiresAt, now, IN_WORDS)}`
   return 'For one conversation'
 }
 

@@ -5,6 +5,7 @@ import { useAuth } from '@/auth/AuthProvider'
 import { loginHref } from '@/auth/loginHref'
 import { getCsrfToken } from '@/api/base'
 import { acceptInvite, previewInvite, WorkspaceApiError, type InvitePreviewOut } from '@/api/workspaces'
+import { scopedPath } from '../lib/scopedLinks'
 
 type ViewState =
   | { kind: 'loading' }
@@ -57,7 +58,7 @@ export function InviteAcceptPage(): JSX.Element | null {
     setAccepting(true)
     try {
       const ws = await acceptInvite(token)
-      navigate(`/w/${ws.slug}`, { replace: true })
+      navigate(scopedPath(ws.slug, ''), { replace: true })
     } catch (e) {
       if (e instanceof WorkspaceApiError && e.status === 403) {
         setState({ kind: 'mismatch' })

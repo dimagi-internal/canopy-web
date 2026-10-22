@@ -16,6 +16,7 @@ import { GitHubTokenSteps } from '@/components/agents/GitHubTokenSteps'
 import { mailboxHint, useHostedDomains } from '@/components/agents/hostedMail'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /**
  * Create an agent — the web half of `/canopy:create-agent`.
@@ -127,7 +128,7 @@ export function NewAgentPage(): JSX.Element {
       setCreating('Registering the agent…')
       await registerAgent(agent, pushed)
       setCreating('Saving the token as its GitHub identity…')
-      const setup = `/w/${workspace}/agents/${agent.slug}/settings?created=${encodeURIComponent(pushed.repo)}#setup`
+      const setup = scopedPath(workspace, `/agents/${agent.slug}/settings?created=${encodeURIComponent(pushed.repo)}#setup`)
       // Not fatal: the agent exists now, and its setup checklist shows the GitHub
       // step as still to do, with the same control. But say it was refused, and why.
       try {

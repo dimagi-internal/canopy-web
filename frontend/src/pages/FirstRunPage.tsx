@@ -93,7 +93,7 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
         // Auto-approved: they are in. WorkspaceProvider's membership list never
         // invalidates itself, so refresh before the redirect resolves.
         await refresh()
-        navigate(`/w/${ws.slug}`)
+        navigate(scopedPath(ws.slug, ''))
         return
       }
       setPendingSlugs((prev) => new Set(prev).add(ws.slug))
@@ -120,7 +120,7 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
     // this ("a page that mutates the CALLER's own role in a workspace must call
     // this afterward") — use it rather than a full page reload.
     await refresh()
-    navigate(`/w/${res.slug}`)
+    navigate(scopedPath(res.slug, ''))
   }
 
   // `state === 'ready'` means the caller already belongs to a workspace —

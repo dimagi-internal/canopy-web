@@ -13,6 +13,7 @@ import {
 } from '@/api/betaRequests'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { approvableRoles } from './accessRequests'
+import { scopedPath } from '../lib/scopedLinks'
 
 const NOT_YOURS = 'Requests for access to Canopy are answered by the person they are emailed to.'
 
@@ -237,7 +238,7 @@ export function BetaRequestPage(): JSX.Element {
           )}
           {req.status === 'invited' && req.workspace && (
             <p className="mt-2 text-[13px]">
-              <Link to={`/w/${req.workspace}/settings/members`} className="text-primary hover:underline">
+              <Link to={scopedPath(req.workspace, '/settings/members')} className="text-primary hover:underline">
                 See the invite in Members →
               </Link>
             </p>

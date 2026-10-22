@@ -69,6 +69,7 @@ import {
   shouldShowLoadFull,
   withFreshLiveness,
 } from './chatPageLogic'
+import { scopedPath } from '../lib/scopedLinks'
 
 
 /**
@@ -330,7 +331,7 @@ export function ChatPage({
       navigate(
         sessionPath
           ? sessionPath(fork)
-          : `/w/${encodeURIComponent(fork.workspace)}/chat/${encodeURIComponent(fork.id)}`,
+          : scopedPath(fork.workspace, `/chat/${encodeURIComponent(fork.id)}`),
       )
     } catch (err) {
       setForkError(err instanceof ChatApiError ? err.message : 'Could not fork this session')
@@ -888,7 +889,7 @@ export function ChatPage({
     setMeta((prev) => (prev ? { ...prev, workspace: moved.workspace } : prev))
     if (onLeave) return
     // The URL names the workspace; keep it true so a reload lands here.
-    navigate(`/w/${encodeURIComponent(moved.workspace)}/chat/${encodeURIComponent(id)}`, {
+    navigate(scopedPath(moved.workspace, `/chat/${encodeURIComponent(id)}`), {
       replace: true,
     })
   }

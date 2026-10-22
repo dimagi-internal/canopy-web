@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { NavLink, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /** One dashboard: is everything set up right, how is it used, and who works with whom. */
 const VIEWS = [
@@ -21,7 +22,7 @@ export function HealthViews({ title }: { title: string }): JSX.Element {
         {VIEWS.map((v) => (
           <NavLink
             key={v.to}
-            to={`/w/${workspace}/${v.to}`}
+            to={scopedPath(workspace, `/${v.to}`)}
             end
             className={({ isActive }) =>
               clsx(

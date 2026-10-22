@@ -43,18 +43,6 @@ export function matchesTurnFilters(turn: Turn, filters: TurnFilters): boolean {
   return true;
 }
 
-/** Compact relative age. `now` is injected so the function is pure/testable. */
-export function relativeTime(iso: string, now: Date): string {
-  const secs = Math.floor((now.getTime() - new Date(iso).getTime()) / 1000);
-  if (secs < 60) return "just now";
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
 /** Status → tinted-badge className, built only from semantic tokens. Unknown
  * statuses fall back to the muted style. */
 export const STATUS_TOKEN: Record<string, string> = {

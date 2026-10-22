@@ -33,6 +33,7 @@ import {
   type MapAgent,
   type MapWorkspace,
 } from './topologyMap'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // THE FLEET MAP: workspaces as nested boxes, each holding a lane per owner with
 // that owner's runners and agents, and — for the selected agent — arrows to
@@ -878,7 +879,7 @@ function AgentPanel({
       <div className="flex flex-col gap-1">
         <div className="flex items-baseline justify-between gap-2">
           <h3 className="m-0 text-[18px] font-semibold text-foreground">{agent.name}</h3>
-          <Link to={`/w/${agent.workspace}/agents/${agent.slug}/settings`} className="text-[12px] text-primary hover:underline">
+          <Link to={scopedPath(agent.workspace, `/agents/${agent.slug}/settings`)} className="text-[12px] text-primary hover:underline">
             Settings →
           </Link>
         </div>

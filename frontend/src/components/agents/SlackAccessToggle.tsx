@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { setAgentSlackEnabled } from '@/api/agents'
+import { scopedPath } from '../../lib/scopedLinks'
 
 // Owner-only switch for Slack access (apps/slack). Off by default: turning it
 // on opens the agent to everyone in the connected Slack who has linked their
@@ -68,7 +69,7 @@ export function SlackAccessToggle({
       {command && (
         <p className={`mt-1 text-[11px] ${command.ok ? 'text-success' : 'text-warning'}`} data-testid="slack-command-note">
           {command.text}{' '}
-          {!command.ok && <Link to={`/w/${workspace}/settings/slack`} className="underline">Slack settings</Link>}
+          {!command.ok && <Link to={scopedPath(workspace, '/settings/slack')} className="underline">Slack settings</Link>}
         </p>
       )}
     </div>

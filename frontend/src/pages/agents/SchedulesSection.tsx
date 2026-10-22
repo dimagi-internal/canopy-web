@@ -3,7 +3,8 @@ import { useOutletContext } from 'react-router-dom'
 import type { Schedule } from '@/api/schedules'
 import { listSchedules, runScheduleNow, updateSchedule } from '@/api/schedules'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
-import { describeCron, relative } from '@/components/agents/cronDescribe'
+import { describeCron } from '@/components/agents/cronDescribe'
+import { relativeAge } from '@/lib/relativeAge'
 import { ScheduleEditor } from '@/components/agents/ScheduleEditor'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 
@@ -125,7 +126,7 @@ export function SchedulesSection(): JSX.Element {
                   </td>
                   <td className="px-3 py-2 text-muted-foreground">
                     {row.enabled
-                      ? relative(row.next_runs?.[0])
+                      ? row.next_runs?.[0] ? relativeAge(row.next_runs[0], new Date(), { future: true, seconds: false }) : '—'
                       : row.run_once_at && row.last_slot
                         ? 'done'
                         : 'paused'}

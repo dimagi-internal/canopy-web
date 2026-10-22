@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { Button, Input } from 'canopy-ui/ui'
 import { getAgentMailbox, setAgentMailbox, type AgentMailboxOut } from '@/api/mail'
 import { AgentAddressList } from './AgentAddressList'
+import { scopedPath } from '../../lib/scopedLinks'
 
 /**
  * The agent's email address, and where it lives. On one of the workspace's
@@ -41,7 +42,7 @@ export function AgentMailboxControl({ slug, workspace, canEdit }: {
     }
   }
 
-  const emailPage = `/w/${workspace}/settings/email`
+  const emailPage = scopedPath(workspace, '/settings/email')
   const status = (() => {
     if (box.kind === 'none') return <span className="text-muted-foreground">No address.</span>
     if (box.kind === 'google') {
