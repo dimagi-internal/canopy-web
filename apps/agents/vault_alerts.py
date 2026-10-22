@@ -170,7 +170,7 @@ def unrouted_box_refused(agent, request, *, runner) -> None:
         logger.exception("unrouted-box event failed for %s", agent.slug)
 
 
-#: The resolve extras (RESOLVE_SECRET_EXTRAS in api.py) are fields, not refs a
+#: The resolve extras (credential_resolve.RESOLVE_SECRET_EXTRAS) are fields, not refs a
 #: runtime.yaml declares, so naming them is never "undeclared".
 _EXTRAS = {"op_sa_token", "shared_op_sa_token", "github_token", "salesforce_creds"}
 
