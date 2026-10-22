@@ -41,6 +41,7 @@ import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { TitleInput } from '@/components/chat/TitleInput'
 import { SessionContextMenu, type IdeAction } from './SessionContextMenu'
+import { scopedPath } from '@/lib/scopedLinks'
 import { SessionInfoPanel } from '@/components/chat/SessionInfoPanel'
 import { useCloseReview } from './useCloseReview'
 import {
@@ -443,6 +444,13 @@ export function IdePage() {
           setNote(
             (await copyText(url))
               ? { text: 'Link copied', error: false }
+              : { text: 'Could not copy — the clipboard is blocked here', error: true },
+          )
+          return
+        case 'copy-join-link':
+          setNote(
+            (await copyText(`${window.location.origin}${scopedPath(s.workspace, `/chat/${s.id}`)}`))
+              ? { text: `Join link for “${label(s)}” copied`, error: false }
               : { text: 'Could not copy — the clipboard is blocked here', error: true },
           )
           return

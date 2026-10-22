@@ -17,6 +17,9 @@ import type { JSX } from 'react'
 // Token-based prose styling. The caller's `className` sets the base text size and
 // color (e.g. `text-[12px] text-foreground-secondary`); block children inherit it.
 // First/last margins are collapsed so a card body sits flush.
+// Table cells reset the chat bubble's `overflow-wrap:anywhere`, which lets a
+// column shrink to one character (a label column read "Imp/lem/ent/er");
+// `break-word` still breaks a long token, but only once it overflows.
 const PROSE = `
   [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
   [&_p]:my-1.5
@@ -35,8 +38,9 @@ const PROSE = `
   [&_blockquote]:my-1.5 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground
   [&_hr]:my-3 [&_hr]:border-border
   [&_table]:my-2 [&_table]:block [&_table]:overflow-x-auto [&_table]:text-[0.9em]
-  [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold
-  [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1
+  [&_th]:border [&_th]:border-border [&_th]:bg-muted/50 [&_th]:px-2.5 [&_th]:py-1.5 [&_th]:text-left [&_th]:align-bottom [&_th]:font-semibold
+  [&_td]:border [&_td]:border-border [&_td]:px-2.5 [&_td]:py-1.5 [&_td]:align-top
+  [&_th]:[overflow-wrap:normal] [&_td]:[overflow-wrap:break-word]
   [&_img]:my-2 [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-border
 `
 

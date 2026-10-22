@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 import {
   Dialog,
@@ -15,6 +15,8 @@ import {
   DropdownMenuTrigger,
 } from "canopy-ui/ui";
 import type { TypingVisibility } from "canopy-ui/chat";
+import { copyText } from "canopy-ui/lib";
+import { scopedPath } from "@/lib/scopedLinks";
 import { ChatPeoplePanel } from "./ChatPeople";
 import { ShareToSlackForm } from "./ShareToSlack";
 import { ShareSecretForm } from "./ShareSecret";
@@ -44,7 +46,9 @@ import { SessionInfoPanel } from "./SessionInfoPanel";
  * carries its dots (green working, red not) so the state is one tap away.
  *
  * Session info sits with People: both are about the conversation rather than
- * something you do to it — who is in it, and where it came from.
+ * something you do to it — who is in it, and where it came from. "Copy join
+ * link" sits with them too: the chat's workspace address, which a teammate opens
+ * to join live. The link is no grant — People decides who it lets in.
  *
  * Ordered by how often each is used. Close is last and set apart, because it
  * is the one that cannot be undone (it deletes the emdash task).
@@ -117,6 +121,13 @@ export function ChatSessionMenu({
   memory?: SessionMemoryControl | null;
 }) {
   const [panel, setPanel] = useState<"people" | "info" | "slack" | "secret" | "move" | "memory" | null>(null);
+  const [copied, setCopied] = useState<"yes" | "blocked" | null>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const t = window.setTimeout(() => setCopied(null), 1500);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+  const joinUrl = workspace ? `${window.location.origin}${scopedPath(workspace, `/chat/${sessionId}`)}` : null;
   const canMove = Boolean(onMove && workspace && moveTargets && moveTargets.some((t) => t.slug !== workspace));
   // Every item is inset to the checkbox item's gutter, so the list is one column.
 
@@ -158,6 +169,18 @@ export function ChatSessionMenu({
             </>
           )}
           <DropdownMenuItem inset onClick={() => setPanel("people")}>People…</DropdownMenuItem>
+          {joinUrl && (
+            <DropdownMenuItem
+              inset
+              data-testid="copy-join-link"
+              title="The link a teammate opens to join this chat live. It lets in only the people this chat is given to (People…)."
+              // Stays open so the item can say it worked.
+              closeOnClick={false}
+              onClick={() => void copyText(joinUrl).then((ok) => setCopied(ok ? "yes" : "blocked"))}
+            >
+              {copied === "yes" ? "Join link copied" : copied === "blocked" ? "Clipboard blocked here" : "Copy join link"}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem inset data-testid="session-info-item" onClick={() => setPanel("info")}>
             Session info…
           </DropdownMenuItem>
