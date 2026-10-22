@@ -282,6 +282,25 @@ Deliberately off the ladder:
 - **`PATCH /{slug}/credential-source`** (`1password` | `canopy-web`) is agent-admin, like the
   credentials and vault pointer it governs.
 
+### A view that judges many pairs reads once
+
+A view that asks the same question of many (person, workspace) or (person, agent) pairs — the
+agent topology, an agent's roster, a list filtered by what the viewer may do — reads the facts
+once and answers every pair from them. It never calls `member_role`, `perms.can`,
+`Agent.is_admin` or `access.decide` per pair in a loop: each of those reads memberships and walks
+the tree, so a loop over pairs is N² queries (the agent topology was 6,000+ for 24 agents).
+
+- **One person, many workspaces:** `perms.slugs_with(user, capability, within=…)` — one
+  `wsvc.member_roles` read.
+- **Many people, their roles:** `wsvc.member_roles_of(users)`, then `perms.role_allows`.
+- **Many people × agents:** `access.Standings(users, agents)` (every role and every agent grant,
+  in a fixed number of queries), passed to `access.decide(…, standing=)`,
+  `Agent.is_admin(user, role=, granted=)` or `access.roster(…)`.
+
+The rule is still one function: a bulk read only supplies its inputs, read per request and dropped
+with it — nothing is cached. `tests/test_bulk_authz_parity.py` holds every bulk read to the
+one-at-a-time answer, and `test_agent_topology.py` to a query count that does not grow with agents.
+
 ### A token can do whatever its person can
 
 A PAT, or an MCP client signed in through OAuth, acts as its user with exactly that user's

@@ -81,11 +81,47 @@ class Decision:
         return None
 
 
-def _is_editor(user, agent) -> bool:
+@dataclass(frozen=True)
+class Standing:
+    """What the database says about one person and one agent — all `decide` reads
+    about them: their role in the agent's workspace (`wsvc.member_role`, None =
+    not a member) and whether they hold an explicit `AgentAdmin` grant (None =
+    not read; `Agent.is_admin` reads it if it needs it)."""
+
+    role: str | None
+    granted: bool | None = None
+
+
+def standing_of(user, agent) -> Standing:
+    return Standing(wsvc.member_role(user, agent.workspace_id))
+
+
+class Standings:
+    """`standing_of` for many people and many agents, read at once: every role of
+    every person (`wsvc.member_roles_of`) and every agent's grants, in a fixed
+    number of queries however many pairs are then asked. For a view that judges
+    many (person, agent) pairs — the agent topology, the roster — so it asks
+    `decide` per pair without a membership read per pair.
+
+    Read per request and dropped with it: not a cache, nothing to invalidate.
+    Asking about a person it was not given raises, rather than reading them as
+    a non-member."""
+
+    def __init__(self, users, agents) -> None:
+        self._roles = wsvc.member_roles_of(users)
+        self.grants: dict[int, dict[int, AgentAdmin]] = {a.pk: {} for a in agents}
+        for g in AgentAdmin.objects.filter(agent__in=self.grants).select_related("granted_by"):
+            self.grants[g.agent_id][g.user_id] = g
+
+    def of(self, user, agent) -> Standing:
+        return Standing(self._roles[user.pk].get(agent.workspace_id), user.pk in self.grants[agent.pk])
+
+
+def _is_editor(user, role: str | None) -> bool:
     """Workspace editor or above: may reshape the agent and dispatch to it."""
 
     return bool(user is not None and getattr(user, "is_authenticated", False)
-                and perms.can(user, agent.workspace_id, perms.AGENT_WORK))
+                and perms.role_allows(role, perms.AGENT_WORK))
 
 
 def _offered(classes: set[str], iface: dict) -> list[str]:
@@ -118,15 +154,18 @@ def _refusal(agent, iface: dict, classes: set[str], requested: str | None) -> st
 
 
 def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
-           turn=None) -> Decision:
+           turn=None, standing: Standing | None = None) -> Decision:
     """THE rule: what `who` (a canopy User, a Contact, or None) may make `agent` do.
 
     The decision table (`_decide`), then the PHI rule over it (`_phi_rule`): a
     capability declared `data: phi`, and any turn in a conversation that requires
     ZDR runners, is confined for everyone — owner, admin and canopy included.
+
+    `standing` is what the database says about a canopy user and this agent, when
+    the caller read it in bulk (`Standings`); else it is read here.
     """
     decision = _decide(agent, who, verified=verified, origin=origin, capability=capability,
-                       turn=turn)
+                       turn=turn, st=standing)
     return _phi_rule(agent, decision, capability=capability, turn=turn)
 
 
@@ -190,7 +229,7 @@ def _phi_rule(agent, d: Decision, *, capability: str | None, turn) -> Decision:
 
 
 def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
-            turn=None) -> Decision:
+            turn=None, st: Standing | None = None) -> Decision:
     """The decision table (docs/architecture/access.md), before the PHI rule.
 
     `verified` is about THIS message (a signed-in request always is). `origin`
@@ -212,12 +251,15 @@ def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: st
 
         if isinstance(who, get_user_model()):
             user = who
-            rel = cc.relationship_for_user(user, agent)
+            st = st or standing_of(user, agent)
+            rel = cc.relationship_for_user(user, agent, role=st.role, granted=st.granted)
         else:
             rel = CONTACT
         classes = _classes_for(rel, who, verified)
 
-    is_admin = user is not None and agent.is_admin(user)
+    if user is not None and st is None:
+        st = standing_of(user, agent)
+    is_admin = user is not None and agent.is_admin(user, role=st.role, granted=st.granted)
     may_auto = bool(is_admin and verified)
 
     if rel in (OWNER, ADMIN, SYSTEM):
@@ -230,7 +272,7 @@ def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: st
         role = iface_mod.session_writer(turn, agent)
         if role:
             return _full(f"session:{role}")
-    editor = rel == MEMBER and _is_editor(user, agent)
+    editor = rel == MEMBER and _is_editor(user, st.role if st else None)
     if iface_mod.published(iface):
         rule = iface_mod.full_rule(classes, iface)
         if rule:
@@ -308,19 +350,23 @@ def _routed_to(agent, runner) -> bool:
     return True
 
 
-def roster(agent) -> list[dict]:
+def roster(agent, members=None, standings: Standings | None = None) -> list[dict]:
     """One row per member of the agent's workspace: their workspace role, their
     role on this agent, why they have it, and what they reach signed in — by
-    `decide`, so the roster cannot say something the harness would not do."""
-    grants = {
-        g.user_id: g
-        for g in AgentAdmin.objects.filter(agent=agent).select_related("granted_by")
-    }
+    `decide`, so the roster cannot say something the harness would not do.
+
+    A view listing many agents' rosters passes each workspace's `members`
+    (`wsvc.effective_memberships`) and the `standings` of everyone in them."""
+    if members is None:
+        members = wsvc.effective_memberships(agent.workspace_id)
+    if standings is None:
+        standings = Standings([m.user for m in members], [agent])
+    grants = standings.grants[agent.pk]
     rows = []
     # Everyone in the workspace as the authorizer sees them — owners of an
     # ancestor workspace included, since they are owners (and so admins) here.
 
-    for m in wsvc.effective_memberships(agent.workspace_id):
+    for m in members:
         user = m.user
         grant = grants.get(user.pk)
         if agent.owner_id == user.pk:
@@ -334,7 +380,7 @@ def roster(agent) -> list[dict]:
         else:
             role, basis = MEMBER, "Workspace member"
         if role == MEMBER:
-            d = decide(agent, user, verified=True, origin="canopy_web")
+            d = decide(agent, user, verified=True, origin="canopy_web", standing=standings.of(user, agent))
             iface = agent.interface or {}
             if d.access == CONFINED:
                 # Every door listed for them, not just the free-form one.

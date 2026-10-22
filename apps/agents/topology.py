@@ -32,7 +32,7 @@ from apps.workspaces.models import Workspace
 
 from . import access
 from . import interface as iface_mod
-from .models import Agent, AgentAdmin
+from .models import Agent
 from .tree import agents_in_tree
 
 #: Why an edge has the access it has. `editor`: full, but manual only.
@@ -43,20 +43,21 @@ OWNER, WS_OWNER, ADMIN, FULL_RULE, EDITOR, NO_INTERFACE, CAPABILITIES, NOTHING, 
 )
 
 
-def _edge(src: Agent, dst: Agent, admin_ids: set[int], viewer) -> dict:
+def _edge(src: Agent, dst: Agent, standings: access.Standings, may_manage: bool) -> dict:
+    """One ordered pair's cell, from what `standings` read about the sending
+    agent's login (`may_manage`: the viewer owns `dst` or its workspace)."""
     login = src.user
     out = {"source": src.slug, "target": dst.slug, "access": "none", "basis": NO_LOGIN,
            "capabilities": [], "full_rule": None, "explicit_admin": False,
            "can_grant": False, "can_revoke": False}
     if login is None:
         return out
-    may_manage = (dst.owner_id == getattr(viewer, "pk", None)
-                  or perms.can(viewer, dst.workspace_id, perms.OWN))
-    role = wsvc.member_role(login, dst.workspace_id)  # a question about the sending agent's login
+    st = standings.of(login, dst)
+    role = st.role
     if role is None:
         out["basis"] = NOT_MEMBER
         return out
-    explicit = login.pk in admin_ids
+    explicit = bool(st.granted)
     out["explicit_admin"] = explicit
     if dst.owner_id == login.pk:
         out.update(access="full", basis=OWNER)
@@ -65,7 +66,7 @@ def _edge(src: Agent, dst: Agent, admin_ids: set[int], viewer) -> dict:
     elif explicit:
         out.update(access="full", basis=ADMIN, can_revoke=may_manage)
     else:
-        d = access.decide(dst, login, verified=True)
+        d = access.decide(dst, login, verified=True, standing=st)
         iface = dst.interface or {}
         if d.access == access.FULL and d.basis.startswith("full:"):
             out.update(access="full", basis=FULL_RULE, full_rule=d.basis.split(":", 1)[1])
@@ -88,10 +89,15 @@ def _edge(src: Agent, dst: Agent, admin_ids: set[int], viewer) -> dict:
 RUNS = frozenset({OWNER, WS_OWNER, ADMIN})
 
 
+def _may_manage(dst: Agent, viewer, owned: set[str]) -> bool:
+    return dst.owner_id == getattr(viewer, "pk", None) or dst.workspace_id in owned
+
+
 def edge(src: Agent, dst: Agent, viewer=None) -> dict:
     """One ordered pair's cell, exactly as `build` computes it."""
-    admin_ids = set(AgentAdmin.objects.filter(agent=dst).values_list("user_id", flat=True))
-    return _edge(src, dst, admin_ids, viewer)
+    standings = access.Standings([src.user] if src.user_id else [], [dst])
+    owned = perms.slugs_with(viewer, perms.OWN, within={dst.workspace_id})
+    return _edge(src, dst, standings, _may_manage(dst, viewer, owned))
 
 
 def can_run(src: Agent, dst: Agent) -> bool:
@@ -104,14 +110,19 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
     tree = wsvc.subtree(root, visible)
     ordered = agents_in_tree(tree, "user", "owner")
 
-    admins: dict[int, set[int]] = {}
-    for agent_id, user_id in AgentAdmin.objects.filter(agent__in=ordered).values_list("agent_id", "user_id"):
-        admins.setdefault(agent_id, set()).add(user_id)
+    # Every fact the cells are decided from, read once: each workspace's members,
+    # then the roles and agent grants of everyone judged — the agents' logins
+    # (every edge) and the members (every roster). Each cell is then `decide`
+    # over these, with no read of its own; the per-pair reads made this N² queries.
+    members = {slug: wsvc.effective_memberships(slug) for slug in {a.workspace_id for a in ordered}}
+    people = {a.user for a in ordered if a.user_id} | {m.user for ms in members.values() for m in ms}
+    standings = access.Standings(people, ordered)
+    owned = perms.slugs_with(viewer, perms.OWN, within={ws.slug for ws, _ in tree})
 
     agent_rows = []
     for a in ordered:
         iface = a.interface or {}
-        full = [r["email"] for r in access.roster(a) if r["access"] == "full"]
+        full = [r["email"] for r in access.roster(a, members[a.workspace_id], standings) if r["access"] == "full"]
         agent_rows.append({
             "slug": a.slug,
             "name": a.name,
@@ -124,7 +135,7 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
         })
 
     edges = [
-        _edge(src, dst, admins.get(dst.pk, set()), viewer)
+        _edge(src, dst, standings, _may_manage(dst, viewer, owned))
         for src in ordered for dst in ordered if src.pk != dst.pk
     ]
     return {

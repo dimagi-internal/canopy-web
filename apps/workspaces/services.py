@@ -27,6 +27,7 @@ from django.db import transaction
 from apps.api.errors import ProblemError
 
 from .models import (
+    MAX_DEPTH,
     Workspace,
     WorkspaceMembership,
 )
@@ -105,8 +106,6 @@ def descendant_slugs(slugs: set[str]) -> set[str]:
 
     Breadth-first, one query per level, bounded by `MAX_DEPTH` and a seen-set
     so a corrupted cycle terminates."""
-    from .models import MAX_DEPTH
-
     out: set[str] = set()
     frontier = set(slugs)
     for _ in range(MAX_DEPTH):
@@ -158,31 +157,43 @@ def inherited_roles(user, direct: dict[str, str] | None = None) -> dict[str, str
     any of its ancestors. What the tree grants — see `Workspace.parent`.
 
     `direct` is the caller's {slug: role} rows when already in hand (saves the
-    query). Breadth-first, one query per level, bounded by `MAX_DEPTH` and a
-    seen-set so a corrupted cycle terminates."""
-    from .models import MAX_DEPTH
-
+    query)."""
     if direct is None:
         direct = dict(WorkspaceMembership.objects.filter(user=user)
                       .values_list("workspace_id", "role"))
-    # What each workspace passes to its children: its own inheriting role, or
-    # what it inherited, whichever ranks higher.
-    carry = {s: r for s, r in direct.items() if r in WorkspaceMembership.INHERITS_DOWN}
-    out: dict[str, str] = {}
-    frontier = dict(carry)
-    seen = set(frontier)
+    return _inherited_roles_of({user.pk: direct})[user.pk]
+
+
+def _inherited_roles_of(direct: dict[int, dict[str, str]]) -> dict[int, dict[str, str]]:
+    """`inherited_roles` for many users at once, from each one's direct
+    {slug: role} rows: one walk down the tree for all of them.
+
+    Breadth-first, one query per level, bounded by `MAX_DEPTH` and a seen-set
+    per user so a corrupted cycle terminates."""
+    inherits = WorkspaceMembership.INHERITS_DOWN
+    out: dict[int, dict[str, str]] = {uid: {} for uid in direct}
+    # What each workspace passes to its children, per user: its own inheriting
+    # role, or what it inherited, whichever ranks higher.
+    frontier = {uid: {s: r for s, r in rows.items() if r in inherits} for uid, rows in direct.items()}
+    seen = {uid: set(f) for uid, f in frontier.items()}
     for _ in range(MAX_DEPTH):
-        if not frontier:
+        parents = set().union(*frontier.values()) if frontier else set()
+        if not parents:
             break
-        nxt: dict[str, str] = {}
-        for slug, parent in Workspace.objects.filter(parent_id__in=frontier).values_list("slug", "parent_id"):
-            if slug in seen:
-                continue
-            got = frontier[parent]
-            out[slug] = got
-            own = direct.get(slug)
-            nxt[slug] = _better(got, own if own in WorkspaceMembership.INHERITS_DOWN else None)
-        seen |= set(nxt)
+        children = list(Workspace.objects.filter(parent_id__in=parents).values_list("slug", "parent_id"))
+        nxt: dict[int, dict[str, str]] = {}
+        for uid, carry in frontier.items():
+            step: dict[str, str] = {}
+            for slug, parent in children:
+                if parent not in carry or slug in seen[uid]:
+                    continue
+                got = carry[parent]
+                out[uid][slug] = got
+                own = direct[uid].get(slug)
+                step[slug] = _better(got, own if own in inherits else None)
+            seen[uid] |= set(step)
+            if step:
+                nxt[uid] = step
         frontier = nxt
     return out
 
@@ -286,16 +297,33 @@ def member_roles(user) -> dict[str, str]:
     (`runner_tenant_slugs`)."""
     if not getattr(user, "is_authenticated", False) and not getattr(user, "pk", None):
         return {}
-    roles = dict(WorkspaceMembership.objects.filter(user=user)
-                 .values_list("workspace_id", "role"))
-    for slug, role in inherited_roles(user, roles).items():
-        roles[slug] = _better(roles.get(slug), role)
+    return member_roles_of([user])[user.pk]
+
+
+def member_roles_of(users) -> dict[int, dict[str, str]]:
+    """`member_roles` for MANY users at once: {user_id: {slug: role}}, in one
+    query for the direct rows and one per tree level — however many users.
+
+    For a view that judges many people at once (the agent topology asks every
+    agent's login about every other agent, the roster every member): read every
+    role here once, then answer each question from the result with
+    `permissions.role_allows`, instead of asking `member_role` per pair.
+    `tests/test_member_roles_parity.py` holds it to `membership()`'s answers."""
     from . import role_cap
 
-    cap = role_cap.cap_of(user)
-    if cap:
-        roles = {slug: role_cap.capped_role(role, cap) for slug, role in roles.items()}
-    return roles
+    users = {u.pk: u for u in users if getattr(u, "pk", None)}
+    direct: dict[int, dict[str, str]] = {uid: {} for uid in users}
+    for uid, slug, role in (WorkspaceMembership.objects.filter(user_id__in=users)
+                            .values_list("user_id", "workspace_id", "role")):
+        direct[uid][slug] = role
+    out: dict[int, dict[str, str]] = {}
+    for uid, inherited in _inherited_roles_of(direct).items():
+        roles = dict(direct[uid])
+        for slug, role in inherited.items():
+            roles[slug] = _better(roles.get(slug), role)
+        cap = role_cap.cap_of(users[uid])
+        out[uid] = {slug: role_cap.capped_role(role, cap) for slug, role in roles.items()} if cap else roles
+    return out
 
 
 def member_role(user, workspace) -> str | None:
@@ -335,8 +363,6 @@ def tree_roots(slugs) -> dict[str, str]:
     One query per tree level, bounded by `MAX_DEPTH` like `ancestor_slugs`, so
     a corrupted cycle degrades to a truncated walk rather than a hang. A slug
     with no row is its own root (fails toward "a separate tenant")."""
-    from .models import MAX_DEPTH
-
     slugs = set(slugs)
     parent: dict[str, str | None] = {}
     frontier = set(slugs)
