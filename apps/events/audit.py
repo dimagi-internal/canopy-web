@@ -12,10 +12,14 @@ where the handler reports it, the state before and after.
     one transaction and writes the row inside it, so a row that fails to write
     rolls the change back: there is no unrecorded change.
 
-A route that knows its before/after reports it with `note_change` (routing does,
-`apps/harness/routing_audit.py`). When every change it noted was a no-op —
-re-sending a rule unchanged — nothing is recorded. A refused write (an HttpError,
-or a 4xx/5xx `Status`) records nothing either.
+Before and after come with every setting route without a line of its own: while
+the route runs, each model row it saves or deletes is recorded as one change,
+`"<app_label>.<model>:<pk>"` with the fields that changed (`apps/api/change_capture.py`). A handler
+that knows better reports with `note_change` (routing does,
+`apps/harness/routing_audit.py`), and its notes replace the captured rows. When
+every change it noted was a no-op — re-sending a rule unchanged — nothing is
+recorded. A refused write (an HttpError, or a 4xx/5xx `Status`) records nothing
+either.
 
 Reading: `GET /api/events/setting-changes` — a workspace admin (`logs.read`) sees
 their workspace's changes, and anyone sees the changes they made themselves.
@@ -23,13 +27,17 @@ their workspace's changes, and anyone sees the changes they made themselves.
 from __future__ import annotations
 
 import contextvars
+import datetime
+import decimal
 import functools
 import inspect
 import re
+import uuid
 from typing import Any
 
-from django.db import transaction
+from django.db import models, transaction
 
+from apps.api import change_capture
 from apps.api.route_gates import gate_of
 
 #: Body keys whose VALUES are withheld. Matched against each key, at any depth.
@@ -43,6 +51,18 @@ _SECRET_KEY = re.compile(
 )
 REDACTED = "[redacted]"
 _MAX_STR = 2000
+
+#: Model fields whose stored values are withheld, beyond `_SECRET_KEY`: ciphertext
+#: (`*_enc`) and anything that hashes or salts a secret.
+_SECRET_FIELD = re.compile(r"(_enc$|hash|digest|salt|cipher)", re.IGNORECASE)
+#: Rows a setting route writes that are not settings: the audit's own tables, the
+#: logs, and the rolling session (written on every request).
+_NOT_SETTINGS = frozenset({
+    "events.settingchange", "events.activity", "events.event", "events.sessionusage",
+    "mcp.mcpauditlog", "agents.agentcredentialread", "sessions.session",
+})
+#: At most this many captured rows per request; the rest are counted.
+_MAX_CAPTURED = 100
 
 _notes: contextvars.ContextVar[list | None] = contextvars.ContextVar("canopy_audit_notes", default=None)
 
@@ -64,6 +84,29 @@ def note_change(*, scope: str, before: Any, after: Any, workspace=None, summary:
         notes.append({"scope": scope, "before": before, "after": after, "changed": changed,
                       "workspace": workspace, "summary": summary})
     return changed
+
+
+# ---- what a route wrote, when it reports nothing ----
+
+def _plain(field, value):
+    """A stored value as the row records it (`change_capture`): secrets
+    withheld, JSON-safe."""
+    secret = (_SECRET_KEY.search(field.name) or _SECRET_FIELD.search(field.name)
+              or isinstance(field, models.BinaryField))
+    # A secret-named flag or count is not a secret (`Runner.private`).
+    if secret and value not in (None, "", b"") and not isinstance(value, (bool, int, float)):
+        return REDACTED
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, (uuid.UUID, decimal.Decimal, datetime.timedelta)):
+        return str(value)
+    if isinstance(value, (bytes, memoryview)):
+        return REDACTED
+    return redact(value)
+
+
+def _captured(capture: change_capture.Capture) -> list[dict]:
+    return [{**n, "changed": True, "workspace": None, "summary": ""} for n in capture.result()]
 
 
 # ---- the wrapper ----
@@ -97,12 +140,15 @@ def audited(func):
         op = operation_id(func)
 
         notes: list = []
+        capture = change_capture.Capture(plain=_plain, skip=_NOT_SETTINGS, limit=_MAX_CAPTURED)
         token = _notes.set(notes)
         try:
             with transaction.atomic():
-                result = func(request, *args, **kwargs)
+                with change_capture.capturing(capture):
+                    result = func(request, *args, **kwargs)
+                # The handler's own notes win; else what it wrote.
                 if not _refused(result) and (not notes or any(n["changed"] for n in notes)):
-                    _record(request, op, kwargs, notes)
+                    _record(request, op, kwargs, notes or _captured(capture))
         finally:
             _notes.reset(token)
         return result
@@ -156,7 +202,9 @@ def _record(request, op: str, kwargs: dict, notes: list) -> None:
         target=target[:300],
         summary=summary[:500],
         request={"path": path_args, "body": redact(body)},
-        changes=[{"scope": n["scope"], "before": n["before"], "after": n["after"]} for n in changed],
+        changes=[{"scope": n["scope"], "before": n["before"], "after": n["after"],
+                  **({"also_deleted": n["also_deleted"]} if n.get("also_deleted") else {})}
+                 for n in changed],
     )
     if workspace is not None:
         from . import activity
