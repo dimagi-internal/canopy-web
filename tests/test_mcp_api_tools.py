@@ -358,3 +358,63 @@ def test_an_omitted_body_field_is_not_sent_as_null(tenancy):
         out = _call("patch_task", {"slug": "hal", "ref": "T1", "next_action": "go"})
     assert out["waiting_on_email"] == "jj@dimagi.com"
     assert out["next_action"] == "go"
+
+
+# -- acting as a lower role (apps/workspaces/role_cap.py) ------------------
+
+def _send_headers(monkeypatch, **headers):
+    """The MCP client's own HTTP request headers, as `get_http_headers` reads them."""
+    sent = {k.replace("_", "-"): v for k, v in headers.items()}
+    monkeypatch.setattr(api_tools, "get_http_headers", lambda include_all=False: dict(sent))
+
+
+@pytest.mark.parametrize("cap", ["viewer", "editor"])
+def test_an_acts_as_header_caps_an_mcp_call(tenancy, monkeypatch, cap):
+    """`X-Canopy-Acts-As` on the MCP request caps the tool call exactly as it caps
+    the same REST call: an owner acting as an editor or viewer is no agent admin."""
+    _send_headers(monkeypatch, x_canopy_acts_as=cap)
+    with as_user(tenancy["jj"]), pytest.raises(ToolError, match="403"):
+        _call("set_turn_mode", {"slug": "hal", "turn_mode": "auto"})
+    assert Agent.objects.get(slug="hal").turn_mode != "auto"
+
+
+def test_an_mcp_call_without_a_cap_runs_at_the_callers_role(tenancy, monkeypatch):
+    _send_headers(monkeypatch, user_agent="claude-code")
+    with as_user(tenancy["jj"]):
+        assert _call("set_turn_mode", {"slug": "hal", "turn_mode": "auto"})["turn_mode"] == "auto"
+
+
+def test_an_acts_as_header_never_raises_a_role(tenancy, monkeypatch):
+    """A cap only lowers: `other` is no member of connect, and acting as an editor
+    does not make them one."""
+    _send_headers(monkeypatch, x_canopy_acts_as="editor")
+    with as_user(tenancy["other"]), pytest.raises(ToolError):
+        _call("set_turn_mode", {"slug": "hal", "turn_mode": "auto"})
+    assert Agent.objects.get(slug="hal").turn_mode != "auto"
+
+
+def _capped_turn(user, cap):
+    from apps.harness.models import Turn
+
+    return Turn.objects.create(agent=Agent.objects.get(slug="hal"), prompt="ping",
+                               initiator_user=user, origin_ref={"acts_as": cap})
+
+
+def test_a_capped_turns_mcp_call_keeps_its_cap(tenancy, monkeypatch):
+    """A session cannot shed its turn's cap by calling canopy through MCP: the turn
+    named in `X-Canopy-Turn-Id`, started by this caller as a viewer, caps the call."""
+    turn = _capped_turn(tenancy["jj"], "viewer")
+    _send_headers(monkeypatch, x_canopy_turn_id=str(turn.pk))
+    with as_user(tenancy["jj"]), pytest.raises(ToolError, match="403"):
+        _call("set_turn_mode", {"slug": "hal", "turn_mode": "auto"})
+    assert Agent.objects.get(slug="hal").turn_mode != "auto"
+
+
+def test_a_caller_tokens_own_turn_caps_the_call(tenancy):
+    """A caller token names its turn itself: no header is needed for the cap to hold."""
+    turn = _capped_turn(tenancy["jj"], "viewer")
+    with as_claims(sub=f"turn:{turn.pk}", user_id=tenancy["jj"].pk, auth_method="caller_token",
+                   turn_id=str(turn.pk), turn_ids=[str(turn.pk)], all_tools=True,
+                   tool_globs=["*"]), pytest.raises(ToolError, match="403"):
+        _call("set_turn_mode", {"slug": "hal", "turn_mode": "auto"})
+    assert Agent.objects.get(slug="hal").turn_mode != "auto"

@@ -343,11 +343,14 @@ def _client() -> httpx2.AsyncClient:
 # -- the tool --------------------------------------------------------------
 
 #: Headers of the MCP client's HTTP request carried into the in-process call:
-#: provenance only (apps/common/request_context.py) — never a credential.
+#: provenance (apps/common/request_context.py) and the acting cap the client put
+#: itself in (`x-canopy-acts-as`, `x-canopy-turn-id` — apps/workspaces/role_cap.py,
+#: which only ever lowers) — never a credential.
 FORWARDED_HEADERS = (
     "user-agent", "x-canopy-client", "x-request-id", "x-forwarded-for",
     "x-canopy-parent-turn", "x-canopy-parent-session", "x-canopy-parent-task",
     "x-canopy-parent-host", "x-canopy-claude-session",
+    "x-canopy-acts-as", "x-canopy-turn-id",
 )
 
 

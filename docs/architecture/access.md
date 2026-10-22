@@ -300,7 +300,8 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   - a turn started with it (`TurnIn.acts_as`, `canopy agent dispatch --as editor`;
     `LocalTurnIn.acts_as` for a local session) is judged at that role from start to
     finish — whether it may start at all, its mode (`auto` becomes `manual`), its
-    envelope, and every read made during it (`X-Canopy-Turn-Id` by its initiator).
+    envelope, and every read made during it (`X-Canopy-Turn-Id` by its initiator,
+    or the turn of the caller token it calls MCP with — REST and MCP alike).
     The server stamps `origin_ref.acts_as`; a client's own `origin_ref` cannot.
   - a client puts ITSELF in a lower mode with `X-Canopy-Acts-As` on each request —
     the canopy CLI and the runner send it when started with `CANOPY_ACTS_AS`. A
