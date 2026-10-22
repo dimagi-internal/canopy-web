@@ -34,7 +34,10 @@ import logging
 import re
 import uuid
 
+from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.common import request_context
+
+from .models import Turn
 
 logger = logging.getLogger("canopy.provenance")
 
@@ -79,9 +82,7 @@ def _as_uuid(value):
         return None
 
 
-def _turn(value):
-    from .models import Turn
-
+def resolve_turn(value):
     if isinstance(value, Turn):
         return value
     pk = _as_uuid(value)
@@ -89,8 +90,6 @@ def _turn(value):
 
 
 def _session(value):
-    from apps.canopy_sessions.models import Session
-
     if isinstance(value, Session):
         return value
     pk = _as_uuid(value)
@@ -99,8 +98,6 @@ def _session(value):
 
 def _session_for_key(key: str):
     """The session a runner binding maps a Claude session id to."""
-    from apps.canopy_sessions.models import RunnerBinding
-
     if not key:
         return None
     binding = (RunnerBinding.objects.select_related("session").filter(session_key=key)
@@ -124,7 +121,7 @@ def parent_fields(explicit=None) -> tuple[dict, dict]:
     record = {k: _raw(v) for k, v in raw.items()}
     unresolved = []
     try:
-        turn = _turn(raw["turn"]) if raw.get("turn") else None
+        turn = resolve_turn(raw["turn"]) if raw.get("turn") else None
         if raw.get("turn") and turn is None:
             unresolved.append("turn")
         session = _session(raw["session"]) if raw.get("session") else None
@@ -331,8 +328,6 @@ def format_line(event: str, record: dict) -> str:
 
 def log_created(obj) -> None:
     """THE creation log line. Never raises — logging must not undo a creation."""
-    from .models import Turn
-
     try:
         if isinstance(obj, Turn):
             event, record = "TURN_CREATED", turn_record(obj)

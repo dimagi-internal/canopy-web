@@ -21,7 +21,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness import routing, services
+from apps.harness import routing
+from apps.harness import claim, runners as harness_runners
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey, Turn, WorkspaceRunnerOrder
 from apps.harness.runners import backfill_machine_ids, set_runner_machine
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -101,13 +102,13 @@ def test_an_agent_unit_claims_only_its_agent(box):
     RunnerAssignment.objects.create(agent=ace, runner=eva_unit, rank=0)
     RunnerAssignment.objects.create(agent=eva, runner=eva_unit, rank=0)
     t_ace = _turn(ace, "ace")
-    assert services.claim_next_turn(eva_unit) is None
+    assert claim.claim_next_turn(eva_unit) is None
     t_eva = _turn(eva, "eva")
-    claimed = services.claim_next_turn(eva_unit)
+    claimed = claim.claim_next_turn(eva_unit)
     assert claimed is not None and claimed.pk == t_eva.pk
     assert Turn.objects.get(pk=t_ace.pk).status == Turn.QUEUED
 
-    rows = {r["turn_id"]: r for r in services.unclaimable_queued_turns(box["jj"])}
+    rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     assert rows[str(t_ace.pk)]["kind"] == "config"
     assert "agent unit for eva" in rows[str(t_ace.pk)]["reason"]
 
@@ -116,12 +117,12 @@ def test_an_agent_with_its_own_unit_is_claimed_by_no_other_unit_on_the_machine(b
     tree, eva_unit, eva = box["tree"], box["eva_unit"], box["eva"]
     RunnerAssignment.objects.create(agent=eva, runner=tree, rank=0)
     t = _turn(eva, "eva")
-    assert services.claim_next_turn(tree) is None
-    rows = {r["turn_id"]: r for r in services.unclaimable_queued_turns(box["jj"])}
+    assert claim.claim_next_turn(tree) is None
+    rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     assert "eva has its own unit on this machine" in rows[str(t.pk)]["reason"]
 
     RunnerAssignment.objects.create(agent=eva, runner=eva_unit, rank=1)
-    assert services.claim_next_turn(eva_unit).pk == t.pk
+    assert claim.claim_next_turn(eva_unit).pk == t.pk
 
 
 def test_a_workspace_order_naming_both_units_routes_each_agent_to_its_own(box):
@@ -130,18 +131,18 @@ def test_a_workspace_order_naming_both_units_routes_each_agent_to_its_own(box):
     WorkspaceRunnerOrder.objects.create(workspace=box["dimagi"], runner=tree, rank=1)
     t_ace, t_eva = _turn(box["ace"], "ace", age=0), _turn(box["eva"], "eva", age=0)
     # The eva unit is not a better-ranked blocker for ace: it is not in ace's list.
-    assert services.claim_next_turn(tree).pk == t_ace.pk
-    assert services.claim_next_turn(tree) is None
-    assert services.claim_next_turn(eva_unit).pk == t_eva.pk
+    assert claim.claim_next_turn(tree).pk == t_ace.pk
+    assert claim.claim_next_turn(tree) is None
+    assert claim.claim_next_turn(eva_unit).pk == t_eva.pk
 
 
 def test_a_pin_does_not_get_past_the_unit(box):
     eva_unit, tree = box["eva_unit"], box["tree"]
     t_ace = _turn(box["ace"], "ace", pinned_runner=eva_unit)
     t_eva = _turn(box["eva"], "eva", pinned_runner=tree)
-    assert services.claim_next_turn(eva_unit) is None
-    assert services.claim_next_turn(tree) is None
-    rows = {r["turn_id"]: r for r in services.unclaimable_queued_turns(box["jj"])}
+    assert claim.claim_next_turn(eva_unit) is None
+    assert claim.claim_next_turn(tree) is None
+    rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     assert "agent unit for eva" in rows[str(t_ace.pk)]["reason"]
     assert "eva has its own unit on this machine" in rows[str(t_eva.pk)]["reason"]
 
@@ -268,21 +269,21 @@ def test_an_agent_unit_takes_no_repo_turn_and_no_agentless_chat(box):
                                  origin=Turn.ORIGIN_API, idempotency_key="pinned",
                                  routing=Turn.ANY, prompt="drill", pinned_runner=eva_unit)
     Turn.objects.filter(pk=pinned.pk).update(created_at=timezone.now() - dt.timedelta(hours=1))
-    assert services.claim_next_turn(eva_unit) is None
-    rows = {r["turn_id"]: r for r in services.unclaimable_queued_turns(box["jj"])}
+    assert claim.claim_next_turn(eva_unit) is None
+    rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     for t in (repo, chat, pinned):
         assert "agent unit for eva" in rows[str(t.pk)]["reason"], rows[str(t.pk)]
     # Its own agent's chat it takes.
     own = _chat(box, agent=box["eva"], key="eva-chat")
     RunnerAssignment.objects.create(agent=box["eva"], runner=eva_unit, rank=0)
-    assert services.claim_next_turn(eva_unit).pk == own.pk
+    assert claim.claim_next_turn(eva_unit).pk == own.pk
 
 
 def test_a_tree_unit_still_takes_agentless_chats(box):
     tree = box["tree"]
     _session_capable(tree)
     chat = _chat(box)
-    assert services.claim_next_turn(tree).pk == chat.pk
+    assert claim.claim_next_turn(tree).pk == chat.pk
 
 
 def test_a_bound_chat_the_unit_refuses_reads_the_same_everywhere(box):
@@ -294,11 +295,11 @@ def test_a_bound_chat_the_unit_refuses_reads_the_same_everywhere(box):
     _session_capable(tree, eva_unit)
     ace_chat = _chat(box, agent=box["ace"], bound_to=eva_unit, key="ace")
     eva_chat = _chat(box, agent=box["eva"], bound_to=tree, key="eva")
-    assert services.claim_next_turn(eva_unit) is None
-    assert services.claim_next_turn(tree) is None
+    assert claim.claim_next_turn(eva_unit) is None
+    assert claim.claim_next_turn(tree) is None
     assert turn_reach(Turn.objects.get(pk=ace_chat.pk)).kind != "live"
     assert turn_reach(Turn.objects.get(pk=eva_chat.pk)).kind != "live"
-    rows = {r["turn_id"]: r for r in services.unclaimable_queued_turns(box["jj"])}
+    rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     assert "agent unit for eva" in rows[str(ace_chat.pk)]["reason"]
     assert "eva has its own unit on this machine" in rows[str(eva_chat.pk)]["reason"]
 
@@ -315,7 +316,7 @@ def test_every_runner_route_stamps_roots_for_its_caller(box):
     family = Workspace.objects.create(slug="marshellis", display_name="M", created_by=jj)
     WorkspaceMembership.objects.create(workspace=family, user=jj, role=WorkspaceMembership.OWNER)
     laptop = _runner(jj, "jj-mbp", dimagi, kind=Runner.EMDASH)
-    services.enroll_runner(laptop, "marshellis")
+    harness_runners.enroll_runner(laptop, "marshellis")
     ada = get_user_model().objects.create_user(username="ada", email="ada@dimagi.com")
     WorkspaceMembership.objects.create(workspace=connect, user=ada, role=WorkspaceMembership.EDITOR)
     RunnerAdmin.objects.create(runner=laptop, user=ada, granted_by=jj)
@@ -378,7 +379,7 @@ def test_the_fleet_list_reads_roots_in_constant_queries(box, monkeypatch):
     few = cost()
     for i in range(5):
         laptop = _runner(jj, f"laptop-{i}", dimagi, kind=Runner.EMDASH)
-        services.enroll_runner(laptop, "marshellis")
+        harness_runners.enroll_runner(laptop, "marshellis")
     many = cost()
     assert many == few, (few, many)
     rows = {r["name"]: r for r in c.get("/api/harness/runners/").json()}

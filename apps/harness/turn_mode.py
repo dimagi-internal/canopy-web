@@ -17,7 +17,7 @@ so a rule that only moves work to another box leaves the agent's posture alone.
 **An `auto` that names a person needs a verified message.** Routing on a forged
 `From:` is harmless — it only chooses which machine runs the turn. Auto on one
 would hand whoever forged Beth's address an agent that sends without review. So
-an actor rule's `auto` applies only when `caller_context._verified(turn)` holds
+an actor rule's `auto` applies only when `caller_context.is_verified(turn)` holds
 for THIS message; otherwise the turn runs MANUAL and the basis says why. Not
 "fall through to the agent's mode": the rule was written about Beth, and a
 message that may not be Beth is exactly the case to slow down on. A `manual`
@@ -66,6 +66,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from . import actors
+from .models import Turn
 
 MANUAL, AUTO = "manual", "auto"
 MODES = (MANUAL, AUTO)
@@ -178,8 +179,6 @@ def session_started_manual(turn) -> Resolved | None:
     agent + Claude session id a runner recorded it under (a dispatch re-run)."""
     from django.db.models import Q
 
-    from .models import Turn
-
     same = Q()
     if turn.chat_session_id:
         same |= Q(chat_session_id=turn.chat_session_id)
@@ -230,9 +229,9 @@ def _carried(started: Resolved, turn, agent, priorities: dict | None) -> Resolve
     turn ends `done` having sent nothing."""
     if getattr(turn, "capability", ""):
         return started
-    from .caller_context import _verified
+    from .caller_context import is_verified
 
-    if not _verified(turn):
+    if not is_verified(turn):
         return started
     if not _own_posture(turn, agent, priorities).raisable:
         return started
@@ -249,12 +248,12 @@ def _own_posture(turn, agent, priorities: dict | None) -> Resolved:
     if capped is not None:
         return capped
     if priorities is None:
-        from .services import load_assignment_rows
+        from .routing import load_assignment_rows
 
         _defaults, priorities = load_assignment_rows([agent.id])
-    from .caller_context import _verified
+    from .caller_context import is_verified
 
     return resolve(
         agent=agent, origin=turn.origin, actor=actors.actor_of(turn),
-        verified=_verified(turn), priorities=priorities,
+        verified=is_verified(turn), priorities=priorities,
     )

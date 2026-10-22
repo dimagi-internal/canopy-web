@@ -10,7 +10,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.common.encryption import decrypt_secret, encrypt_secret
-from apps.harness import services
+from apps.harness import runners
 from apps.harness.models import Runner, RunnerCredential
 
 pytestmark = pytest.mark.django_db
@@ -71,11 +71,11 @@ def test_set_then_runner_fetches_actual_values(client, runner):
 
 
 def test_set_is_non_clobbering_per_field(client, runner):
-    services.set_runner_credential(runner, claude_token="C", claude_api_key="K")
+    runners.set_runner_credential(runner, claude_token="C", claude_api_key="K")
     # Update only the Claude token; the other two must survive.
     client.post(_cred_url(runner), data={"claude_token": "C2"}, content_type="application/json")
     # Re-fetch fresh (the fixture instance cached its reverse credential relation).
-    v = services.get_runner_credential(Runner.objects.get(pk=runner.pk))
+    v = runners.get_runner_credential(Runner.objects.get(pk=runner.pk))
     assert v == {"claude_token": "C2", "claude_token_secondary": "",
                  "claude_api_key": "K", "logins": [], "updated_at": v["updated_at"]}
 
@@ -177,7 +177,7 @@ def test_an_empty_value_removes_a_backup_token_and_its_name(client, runner):
     """The credentials page's Remove button: an empty token clears the slot (the
     runner's cascade skips an empty slot) and an empty label clears the name; the
     other slot survives."""
-    services.set_runner_credential(runner, claude_token="C", claude_token_label="ACE",
+    runners.set_runner_credential(runner, claude_token="C", claude_token_label="ACE",
                                    claude_token_secondary="S", claude_token_secondary_label="JJ")
     resp = client.post(_cred_url(runner), data={"claude_token": "", "claude_token_label": ""},
                        content_type="application/json")
@@ -185,7 +185,7 @@ def test_an_empty_value_removes_a_backup_token_and_its_name(client, runner):
     masked = resp.json()
     assert masked["has_claude_token"] is False and masked["claude_token_label"] == ""
     assert masked["has_claude_token_secondary"] is True and masked["claude_token_secondary_label"] == "JJ"
-    v = services.get_runner_credential(Runner.objects.get(pk=runner.pk))
+    v = runners.get_runner_credential(Runner.objects.get(pk=runner.pk))
     assert v["claude_token"] == "" and v["claude_token_secondary"] == "S"
 
 
@@ -193,7 +193,7 @@ def test_the_last_backup_token_cannot_be_removed(client, runner):
     """A backup token is the one credential that never needs renewing. cloud-ec2-2
     had both removed, and when its full sign-in stopped renewing the box stopped
     (2026-10-15). Replacing one is fine; taking the last one away is refused."""
-    services.set_runner_credential(runner, claude_token="C", claude_token_secondary="S")
+    runners.set_runner_credential(runner, claude_token="C", claude_token_secondary="S")
     ok = client.post(_cred_url(runner), data={"claude_token": ""}, content_type="application/json")
     assert ok.status_code == 200, ok.content
     last = client.post(_cred_url(runner), data={"claude_token_secondary": ""},
@@ -203,7 +203,7 @@ def test_the_last_backup_token_cannot_be_removed(client, runner):
     both = client.post(_cred_url(runner), data={"claude_token": "", "claude_token_secondary": ""},
                        content_type="application/json")
     assert both.status_code == 422
-    v = services.get_runner_credential(Runner.objects.get(pk=runner.pk))
+    v = runners.get_runner_credential(Runner.objects.get(pk=runner.pk))
     assert v["claude_token_secondary"] == "S"
     replaced = client.post(_cred_url(runner), data={"claude_token_secondary": "S2"},
                            content_type="application/json")

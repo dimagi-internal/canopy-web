@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import initiator, services
+from apps.harness import drills, claim
 from apps.harness.drills import DRILL_EXPIRY, expire_stale_drills
 from apps.harness.models import Runner, RunnerDrill, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -50,8 +51,8 @@ def _stuck(user):
 
 
 def _drill(f):
-    [drill] = services.start_drill(f["box"], [f["hal"]])
-    _age(drill.turn, services.UNCLAIMABLE_GRACE + dt.timedelta(seconds=5))
+    [drill] = drills.start_drill(f["box"], [f["hal"]])
+    _age(drill.turn, claim.UNCLAIMABLE_GRACE + dt.timedelta(seconds=5))
     return drill
 
 
@@ -94,7 +95,7 @@ def test_a_drill_that_waits_a_day_expires_with_the_runners_situation(fleet):
     stale = _drill(fleet)
     _age(stale.turn, DRILL_EXPIRY + dt.timedelta(minutes=1))
     other = Agent.objects.create(slug="eva", name="Eva", workspace=fleet["ws"], owner=fleet["jj"])
-    [fresh] = services.start_drill(fleet["box"], [other])
+    [fresh] = drills.start_drill(fleet["box"], [other])
     Runner.objects.filter(pk=fleet["box"].pk).update(paused=True, paused_at=timezone.now())
     assert expire_stale_drills() == 1
     stale.refresh_from_db()
@@ -118,7 +119,7 @@ def test_an_ordinary_pinned_turn_never_expires(fleet):
 def test_a_re_drill_replaces_the_one_still_waiting(fleet):
     first = _drill(fleet)
     first_turn = first.turn
-    services.start_drill(fleet["box"], [fleet["hal"]])
+    drills.start_drill(fleet["box"], [fleet["hal"]])
     first_turn.refresh_from_db()
     assert first_turn.status == Turn.CANCELLED
     assert Turn.objects.filter(status=Turn.QUEUED, pinned_runner=fleet["box"]).count() == 1

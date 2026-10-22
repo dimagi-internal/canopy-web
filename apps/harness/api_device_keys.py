@@ -29,6 +29,7 @@ from django.utils import timezone
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.events import audit
 from apps.passkeys import stepup
@@ -111,7 +112,7 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
     _may_trust_or_403(request, runner)
     role_arn = ""
     if payload.kind == RunnerDeviceKey.AWS_IAM:
-        role_arn, jkt = _verified_role(request, payload)
+        role_arn, jkt = verified_role(request, payload)
         jwk: dict = {}
     else:
         try:
@@ -119,15 +120,15 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
         except device_keys.KeyError_ as exc:
             raise HttpError(422, str(exc)) from exc
         jkt = device_keys.thumbprint(jwk)
-    ecdh_jwk, ecdh_jkt = _ecdh(payload)
+    ecdh_jwk, ecdh_jkt = checked_ecdh(payload)
     store = payload.ecdh_store if ecdh_jwk is not None and payload.ecdh_store in ECDH_STORES else ""
 
     existing = RunnerDeviceKey.objects.filter(jkt=jkt).first()
     if existing is not None:
         if existing.runner_id != runner.pk:
             raise HttpError(409, "this key is already registered to a different runner")
-        _set_ecdh_and_store(existing, ecdh_jwk, ecdh_jkt, store)
-        return 200, _created(existing)
+        set_ecdh_and_store(existing, ecdh_jwk, ecdh_jkt, store)
+        return 200, created_out(existing)
     try:
         with transaction.atomic():
             key = RunnerDeviceKey.objects.create(
@@ -137,10 +138,10 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
             )
     except IntegrityError:  # a concurrent identical POST won the race
         key = RunnerDeviceKey.objects.get(jkt=jkt)
-        _set_ecdh_and_store(key, ecdh_jwk, ecdh_jkt, store)
-        return 200, _created(key)
+        set_ecdh_and_store(key, ecdh_jwk, ecdh_jkt, store)
+        return 200, created_out(key)
     device_key_notify.notify_pending_on_commit(key)
-    return 201, _created(key)
+    return 201, created_out(key)
 
 
 #: Where a box may say its ECDH private key lives (`RunnerDeviceKey.ecdh_store`).
@@ -148,13 +149,13 @@ def register_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyIn)
 ECDH_STORES = frozenset({"secure-enclave", "tpm", "aws-kms", "software", "kms-broker"})
 
 
-def _set_ecdh_and_store(key: RunnerDeviceKey, jwk: dict | None, jkt: str, store: str) -> None:
-    """`_set_ecdh`, then record where the box says the key's CURRENT ECDH key
+def set_ecdh_and_store(key: RunnerDeviceKey, jwk: dict | None, jkt: str, store: str) -> None:
+    """`set_ecdh`, then record where the box says the key's CURRENT ECDH key
     lives. Display only, so it changes no status and needs no approval. A new
     ECDH key without a word about it clears the old label rather than inherit
     it; a claim is only ever taken alongside the ECDH key it describes."""
     before = key.ecdh_jkt
-    _set_ecdh(key, jwk, jkt)
+    set_ecdh(key, jwk, jkt)
     if key.ecdh_jkt != before:
         new = store
     elif store and jkt and jkt == key.ecdh_jkt:
@@ -166,12 +167,12 @@ def _set_ecdh_and_store(key: RunnerDeviceKey, jwk: dict | None, jkt: str, store:
         key.save(update_fields=["ecdh_store"])
 
 
-def _created(key: RunnerDeviceKey) -> RunnerDeviceKeyCreatedOut:
+def created_out(key: RunnerDeviceKey) -> RunnerDeviceKeyCreatedOut:
     return RunnerDeviceKeyCreatedOut(id=key.pk, jkt=key.jkt, status=key.status,
                                      approve_url=approve_url(key), ecdh_jkt=key.ecdh_jkt)
 
 
-def _ecdh(payload: RunnerDeviceKeyIn) -> tuple[dict | None, str]:
+def checked_ecdh(payload: RunnerDeviceKeyIn) -> tuple[dict | None, str]:
     """The registration's ECDH public key, checked, and its thumbprint."""
     if not payload.ecdh_public_jwk:
         return None, ""
@@ -182,7 +183,7 @@ def _ecdh(payload: RunnerDeviceKeyIn) -> tuple[dict | None, str]:
     return jwk, device_keys.thumbprint(jwk)
 
 
-def _set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
+def set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
     """Attach or change a known key's ECDH key (canopy-web#1550). The new ECDH
     key waits for a person (`ecdh_approved_at` cleared): which key receives an
     agent's vault key is a trust decision a person makes, not one the box makes
@@ -206,7 +207,7 @@ def _set_ecdh(key: RunnerDeviceKey, jwk: dict | None, jkt: str) -> None:
         device_key_notify.notify_pending_on_commit(key, reapproval=True)
 
 
-def _verified_role(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[str, str]:
+def verified_role(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[str, str]:
     """`(canonical role ARN, jkt)` for an aws-iam registration, after its proof
     — signed for THIS URL — came back from STS as `role_arn` (canopy-web#1549).
     Registering a role you cannot sign as is refused, so a pending row always
@@ -311,7 +312,6 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
     if not key.ecdh_jkt or key.status == RunnerDeviceKey.REVOKED or not (assume_active or key.ecdh_ready):
         return []
     from apps.agents import zk
-    from apps.agents.models import Agent
 
     return sorted(
         agent.slug for agent in Agent.objects.filter(zk_enabled=True).select_related("workspace", "owner")
@@ -323,8 +323,6 @@ def zk_agents_waiting_on(user, key: RunnerDeviceKey, *, assume_active: bool = Fa
 def vault_agents_of(user) -> list:
     """The agents whose secrets live in the canopy-web vault that `user`
     administers — what a key's `can_open` is drawn from."""
-    from apps.agents.models import Agent
-
     return [a for a in Agent.objects.filter(zk_enabled=True, credential_source="canopy-web")
             .select_related("workspace", "owner").order_by("name", "slug") if a.is_admin(user)]
 

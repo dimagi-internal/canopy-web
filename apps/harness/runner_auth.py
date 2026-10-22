@@ -6,14 +6,14 @@ runner protocol and the few reads a box makes to prepare its agents, and nothing
 else: a box cannot use it to read a workspace's content, change a setting, or act
 in a chat as its owner.
 
-Paths are matched FLAT (`device_keys._strip_to_flat`): no legacy `/canopy`
+Paths are matched FLAT (`device_keys.strip_to_flat`): no legacy `/canopy`
 prefix, no `/api/w/<ws>` segment, no trailing slash.
 """
 from __future__ import annotations
 
 import re
 
-from .device_keys import _strip_to_flat
+from .device_keys import strip_to_flat
 
 _SLUG = r"[a-z0-9][a-z0-9_-]*"
 
@@ -91,7 +91,7 @@ def reaches(method: str, path: str, runner_id, *, private: bool = False,
     its owner's private runner, which also opens its owner's local sessions.
     `computer`: the runner is a computer with no runner app — only its local
     sessions and their license reads (`_COMPUTER_RULES`), never the protocol."""
-    flat = _strip_to_flat(path)
+    flat = strip_to_flat(path)
     rid = re.escape(str(runner_id))
     if computer:
         rules = _COMPUTER_RULES

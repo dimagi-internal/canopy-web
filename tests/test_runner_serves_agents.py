@@ -24,7 +24,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness import device_keys, routing, services
+from apps.harness import device_keys, routing
+from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -136,7 +137,7 @@ def test_the_rule_is_what_claiming_does(fleet):
                                    routing=Turn.ANY)
         Turn.objects.filter(pk=turn.pk).update(
             created_at=timezone.now() - dt.timedelta(seconds=3600))
-        got = services.claim_next_turn(box)
+        got = claim.claim_next_turn(box)
         claimed = got is not None and got.pk == turn.pk
         Turn.objects.filter(pk=turn.pk).delete()
         expected = routing.runner_routes_agent(box, agent)

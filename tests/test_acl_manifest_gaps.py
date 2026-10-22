@@ -13,7 +13,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness import services as hsvc
+from apps.harness import routing, runners
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member, a_workspace
@@ -65,15 +65,15 @@ def test_a_viewers_box_serves_no_workspace(gap):
     box = Runner.objects.create(name="viewer-box", kind=Runner.EMDASH, owner=gap["viewer"],
                                 workspace=gap["ws"], status=Runner.ONLINE,
                                 last_heartbeat_at=timezone.now(), capabilities={"sessions": True})
-    assert hsvc.runner_tenant_slugs(box) == set()
+    assert routing.runner_tenant_slugs(box) == set()
     editor_box = Runner.objects.create(name="editor-box", kind=Runner.EMDASH,
                                        owner=gap["editor"], workspace=gap["ws"])
-    assert hsvc.runner_tenant_slugs(editor_box) == {WS}
+    assert routing.runner_tenant_slugs(editor_box) == {WS}
 
 
 def test_nobody_acts_on_a_runner_nobody_paired(gap):
     orphan = Runner.objects.create(name="orphan", kind=Runner.EMDASH, workspace=gap["ws"])
-    assert not hsvc.can_administer_runner(gap["owner"], orphan)
+    assert not runners.can_administer_runner(gap["owner"], orphan)
     r = _post(gap["owner"], f"/api/harness/runners/{orphan.id}/heartbeat", {})
     assert r.status_code == 404
 

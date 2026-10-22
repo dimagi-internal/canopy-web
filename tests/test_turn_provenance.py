@@ -26,6 +26,7 @@ from apps.common import request_context
 from apps.common.log_format import JsonFormatter
 from apps.harness import initiator as who
 from apps.harness import provenance, services
+from apps.harness import schedule_turns
 from apps.harness.models import AgentSchedule, Runner, Turn
 from apps.mcp.server import mcp
 from apps.tokens.models import PersonalToken
@@ -280,7 +281,7 @@ def test_run_now_records_who_clicked(ctx):
     owner, _ws, agent, _raw, _pat = ctx
     schedule = AgentSchedule.objects.create(agent=agent, name="digest", cron="0 9 * * 1",
                                             prompt="/hal:turn", created_by=owner)
-    turn = services.run_schedule_now(schedule, clicked_by=owner)
+    turn = schedule_turns.run_schedule_now(schedule, clicked_by=owner)
     assert turn.provenance["clicked_by"] == "jj@dimagi.com"
 
 

@@ -13,6 +13,7 @@ from django.test import Client
 from apps.agents.interface import ASK, FULL, InterfaceError, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import caller_context, services
+from apps.harness import claim
 from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -386,7 +387,7 @@ def test_a_stuck_callers_turn_says_why(w, claimable):
     _beat(c, rid)
     t = _email(w["agent"], "e1", headers=DMARC)
     Turn.objects.filter(pk=t.pk).update(created_at=timezone.now() - timedelta(hours=1))
-    rows = services.unclaimable_queued_turns(w["op"])
+    rows = claim.unclaimable_queued_turns(w["op"])
     assert [r["turn_id"] for r in rows] == [str(t.pk)]
     assert "confine" in rows[0]["reason"] and rows[0]["kind"] == "config"
 

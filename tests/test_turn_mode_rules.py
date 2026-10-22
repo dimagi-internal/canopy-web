@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import caller_context, services
+from apps.harness import claim
 from apps.harness import turn_mode as modes
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -159,7 +160,7 @@ def test_claiming_stamps_the_mode_and_the_envelope_carries_it(fleet):
     _rule(a, cloud, actor=BETH, mode="auto", strict=True)
     turn = _mail(a, headers=VERIFIED)
 
-    claimed = services.claim_next_turn(cloud)
+    claimed = claim.claim_next_turn(cloud)
 
     assert claimed.pk == turn.pk
     assert (claimed.turn_mode, claimed.turn_mode_basis) == ("auto", f"rule email/{BETH}")
@@ -171,7 +172,7 @@ def test_a_rule_edited_mid_turn_does_not_change_the_running_turns_mode(fleet):
     a, cloud = fleet["agent"], fleet["cloud"]
     _rule(a, cloud, actor=BETH, mode="auto", strict=True)
     _mail(a, headers=VERIFIED)
-    claimed = services.claim_next_turn(cloud)
+    claimed = claim.claim_next_turn(cloud)
 
     RunnerAssignment.objects.filter(agent=a, actor=BETH).update(turn_mode="manual")
 
@@ -182,12 +183,12 @@ def test_a_reclaimed_turn_decides_its_mode_again(fleet):
     a, cloud = fleet["agent"], fleet["cloud"]
     _rule(a, cloud, actor=BETH, mode="auto", strict=True)
     turn = _mail(a, headers=VERIFIED)
-    services.claim_next_turn(cloud)
+    claim.claim_next_turn(cloud)
     # Lease lost: back to the queue, still carrying the old stamp.
     Turn.objects.filter(pk=turn.pk).update(status=Turn.QUEUED, claimed_by=None)
     RunnerAssignment.objects.filter(agent=a, actor=BETH).update(turn_mode="manual")
 
-    again = services.claim_next_turn(cloud)
+    again = claim.claim_next_turn(cloud)
 
     assert again.turn_mode == "manual"
 

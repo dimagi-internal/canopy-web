@@ -60,12 +60,12 @@ def _project_asker(turn: Turn):
     A project has no agent to act as, so its session acts as whoever asked,
     exactly as a colleague's full turn does: what they can see is what it can see
     (access.md → "Projects run as the person who asked")."""
-    from .caller_context import _verified
+    from .caller_context import is_verified
 
     if not _project_repo(turn) or not turn.initiator_user_id:
         return None
     user = turn.initiator_user
-    if not user.is_active or not _verified(turn):
+    if not user.is_active or not is_verified(turn):
         return None
     return user
 

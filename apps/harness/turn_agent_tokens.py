@@ -20,6 +20,8 @@ from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from apps.tokens.models import PersonalToken
+
 from .models import Turn, TurnAgentToken
 from .routing import EXECUTING
 
@@ -71,8 +73,6 @@ def issue(turn: Turn, runner) -> dict:
     The caller has already checked that `runner` holds the turn and may hold its
     agent. Each call mints a new token; earlier ones for the turn stay valid until
     the turn ends (a runner that lost its copy just asks again)."""
-    from apps.tokens.models import PersonalToken
-
     why = refusal(turn)
     if why:
         raise Refused(why)
@@ -120,8 +120,6 @@ def _audit(turn: Turn, runner, agent) -> None:
 
 
 def _revoke(qs) -> int:
-    from apps.tokens.models import PersonalToken
-
     ids = list(qs.filter(token__revoked_at__isnull=True).values_list("token_id", flat=True))
     if not ids:
         return 0

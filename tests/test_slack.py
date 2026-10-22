@@ -121,7 +121,7 @@ def test_a_routed_runner_without_sessions_is_named_not_reported_as_no_runner(sla
 def test_unrouted_line_names_a_zdr_requirement(slack, linked, hal):
     from types import SimpleNamespace
 
-    from apps.harness import services as harness_services
+    from apps.harness import claim
     from apps.slack import status as slack_status
 
     mention(f"<@{BOT}> hal summarise this thread")
@@ -129,11 +129,11 @@ def test_unrouted_line_names_a_zdr_requirement(slack, linked, hal):
     turn.chat_session.metadata = {**turn.chat_session.metadata, "runner_requirements": ["zdr"]}
     turn.chat_session.save(update_fields=["metadata"])
     text, _ = slack_status.render(turn, reach=SimpleNamespace(
-        kind=harness_services.UNROUTED, runners=[], blocked_by_requirements=True))
+        kind=claim.UNROUTED, runners=[], blocked_by_requirements=True))
     assert "needs a ZDR runner" in text and "none of `hal`'s runners is declared ZDR" in text
     # Not the blocker (the routing is): the ordinary unrouted line, no ZDR.
     text, _ = slack_status.render(turn, reach=SimpleNamespace(
-        kind=harness_services.UNROUTED, runners=[], blocked_by_requirements=False))
+        kind=claim.UNROUTED, runners=[], blocked_by_requirements=False))
     assert "ZDR" not in text and "no runner is set up" in text
 
 
@@ -618,13 +618,14 @@ def test_only_an_owner_turns_slack_on(ws, alice):
 # on_commit callbacks executed — the signal is post-commit, so a test that did
 # not run them would pass with the relay disconnected.
 
-from apps.harness import services as harness_services  # noqa: E402
+from apps.harness import services as harness_services
+from apps.harness import claim, ledger  # noqa: E402
 from apps.slack.models import SlackRelayPost  # noqa: E402
 
 
 def _reply(turn, *events, capture):
     with capture(execute=True):
-        harness_services.append_events(turn, list(events))
+        ledger.append_events(turn, list(events))
 
 
 def test_the_agents_reply_is_posted_into_the_thread(slack, linked, hal, django_capture_on_commit_callbacks):
@@ -1267,7 +1268,7 @@ def test_the_line_is_edited_as_the_turn_moves(slack, linked, hal, alice, django_
     runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal summarise")
     with django_capture_on_commit_callbacks(execute=True):
-        turn = harness_services.claim_next_turn(runner)
+        turn = claim.claim_next_turn(runner)
     assert turn is not None
     assert "working on this on *jj-mbp*" in slack.said("chat.update")[-1]["text"]
     with django_capture_on_commit_callbacks(execute=True):
@@ -1286,7 +1287,7 @@ def test_a_follow_up_sent_mid_turn_says_it_is_queued_behind_then_moves(
     runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal first", ts="1700000000.000100")
     with django_capture_on_commit_callbacks(execute=True):
-        first = harness_services.claim_next_turn(runner)
+        first = claim.claim_next_turn(runner)
     with django_capture_on_commit_callbacks(execute=True):
         mention("and a follow-up", ts="1700000050.000100", thread_ts="1700000000.000100")
     follow_up = Turn.objects.get(status=Turn.QUEUED)
@@ -1296,13 +1297,13 @@ def test_a_follow_up_sent_mid_turn_says_it_is_queued_behind_then_moves(
 
     assert "still finishing the previous message in this thread on *jj-mbp*" in line()
     assert "picking this up" not in line()
-    assert harness_services.claim_next_turn(runner) is None      # the claim agrees
+    assert claim.claim_next_turn(runner) is None      # the claim agrees
 
     with django_capture_on_commit_callbacks(execute=True):
         harness_services.finish_turn(first, status=Turn.DONE)
     assert "is picking this up on *jj-mbp*" in line()
     with django_capture_on_commit_callbacks(execute=True):
-        assert harness_services.claim_next_turn(runner) == follow_up
+        assert claim.claim_next_turn(runner) == follow_up
     assert "working on this on *jj-mbp*" in line()
 
 
@@ -1316,7 +1317,7 @@ def test_a_follow_up_mid_turn_is_delivered_into_the_running_turn(
     runner.save(update_fields=["capabilities"])
     mention("hal first", ts="1700000000.000100")
     with django_capture_on_commit_callbacks(execute=True):
-        first = harness_services.claim_next_turn(runner)
+        first = claim.claim_next_turn(runner)
     with django_capture_on_commit_callbacks(execute=True):
         mention("and a follow-up", ts="1700000050.000100", thread_ts="1700000000.000100")
     follow_up = Turn.objects.get(status=Turn.QUEUED)
@@ -1326,7 +1327,7 @@ def test_a_follow_up_mid_turn_is_delivered_into_the_running_turn(
 
     assert "is picking this up on *jj-mbp*" in line()
     with django_capture_on_commit_callbacks(execute=True):
-        assert harness_services.claim_next_turn(runner) == follow_up
+        assert claim.claim_next_turn(runner) == follow_up
     assert "working on this on *jj-mbp*" in line()
     with django_capture_on_commit_callbacks(execute=True):
         harness_services.finish_turn(first, status=Turn.DONE)
@@ -1337,7 +1338,7 @@ def test_a_follow_up_mid_turn_is_delivered_into_the_running_turn(
 def test_queued_behind_renders_for_the_session_and_for_the_agent(slack, linked, hal):
     from types import SimpleNamespace
 
-    from apps.harness import services as harness_services
+    from apps.harness import claim
     from apps.slack import status as slack_status
 
     mention("hal summarise this thread")
@@ -1345,13 +1346,13 @@ def test_queued_behind_renders_for_the_session_and_for_the_agent(slack, linked, 
     box = SimpleNamespace(name="acedimagi-mbp-cdp")
     ahead = SimpleNamespace(claimed_by_id=1, claimed_by=box, chat_session_id=turn.chat_session_id)
     text, blocks = slack_status.render(turn, reach=SimpleNamespace(
-        kind=harness_services.LIVE, runners=[box], blocked_by_requirements=False, behind=ahead))
+        kind=claim.LIVE, runners=[box], blocked_by_requirements=False, behind=ahead))
     assert ":hourglass: Queued — `hal` is still finishing the previous message in this thread " \
            "on *acedimagi-mbp-cdp*, and this one runs next." in text
     assert blocks is None and "picking this up" not in text
     ahead.chat_session_id = None
     text, _ = slack_status.render(turn, reach=SimpleNamespace(
-        kind=harness_services.LIVE, runners=[box], blocked_by_requirements=False, behind=ahead))
+        kind=claim.LIVE, runners=[box], blocked_by_requirements=False, behind=ahead))
     assert "`hal` is busy with another turn on *acedimagi-mbp-cdp*" in text
 
 
@@ -1403,7 +1404,7 @@ def test_an_admin_sends_an_unbound_conversation_to_the_cloud(slack, linked, hal,
     assert "Sent to *cloud-ec2-1*" in slack.said("chat.update")[-1]["text"]
     assert not [b for b in slack.said("chat.update")[-1]["blocks"] if b["type"] == "actions"]
     # And the cloud box really claims it.
-    assert harness_services.claim_next_turn(cloud) == turn
+    assert claim.claim_next_turn(cloud) == turn
 
 
 def test_a_bound_conversation_is_transferred_and_the_handoff_runs_first(
@@ -1417,7 +1418,7 @@ def test_a_bound_conversation_is_transferred_and_the_handoff_runs_first(
     mention("and then this", ts="1700000050.000100", thread_ts="1700000000.000100")
     click("route_cloud", _route_button(_line(slack))["value"])
     assert RunnerBinding.objects.get(session=session).runner == cloud
-    first = harness_services.claim_next_turn(cloud)
+    first = claim.claim_next_turn(cloud)
     assert "transferred from jj-mbp to cloud-ec2-1" in first.prompt
     assert "2 message(s) waiting" in first.prompt
 
@@ -1451,11 +1452,11 @@ def test_a_turn_sent_from_canopy_web_is_announced_in_the_thread(
     mention("hal first")
     session = Session.objects.get()
     with django_capture_on_commit_callbacks(execute=True):
-        harness_services.finish_turn(harness_services.claim_next_turn(runner), status=Turn.DONE)
+        harness_services.finish_turn(claim.claim_next_turn(runner), status=Turn.DONE)
     slack.calls.clear()
     session_services.send_message(session=session, text="now do the second half", user=alice)
     with django_capture_on_commit_callbacks(execute=True):
-        harness_services.claim_next_turn(runner)
+        claim.claim_next_turn(runner)
     (line,) = slack.said("chat.postMessage")
     assert line["thread_ts"] == "1700000000.000100"
     assert "continued this in canopy: _now do the second half_" in line["text"]
@@ -1560,7 +1561,7 @@ def _claimed(slack, hal, alice, capture, text="hal summarise"):
     runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention(text)
     with capture(execute=True):
-        turn = harness_services.claim_next_turn(runner)
+        turn = claim.claim_next_turn(runner)
     assert turn is not None
     return runner, turn
 
@@ -1606,7 +1607,7 @@ def test_a_working_turn_that_goes_quiet_says_so_and_recovers(slack, linked, hal,
     assert len(slack.said("chat.update")) == n, "a quiet line must not be edited every sweep"
 
     # Something comes back: the line is a working line again …
-    harness_services.append_events(turn, [{"kind": "assistant", "payload": {"text": "on it"}}])
+    ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "on it"}}])
     slack_status.sweep(force=True)
     assert "working on this on *jj-mbp*" in slack.said("chat.update")[-1]["text"]
     # … until that, too, is a while ago.
@@ -1666,7 +1667,7 @@ def test_an_admin_moves_a_stranded_turn_to_the_cloud(slack, linked, hal, alice, 
                 .values_list("meta__status", flat=True)) == [Turn.LOST]
     again = Turn.objects.exclude(pk=turn.pk).get(prompt="summarise")
     assert again.pinned_runner == cloud                       # the same ask, on the cloud
-    assert harness_services.claim_next_turn(cloud) == again
+    assert claim.claim_next_turn(cloud) == again
     # The thread sees the new attempt, and the old line loses its button.
     assert SlackTurnPost.objects.filter(turn=again).exclude(slack_ts="").exists()
     old = [u for u in slack.said("chat.update") if u["ts"] == SlackTurnPost.objects.get(turn=turn).slack_ts][-1]
@@ -1705,7 +1706,7 @@ def test_a_lost_turn_can_be_run_again_on_the_cloud(slack, linked, hal, alice, cl
     _lapse(runner)
     Turn.objects.filter(pk=turn.pk).update(lease_expires_at=timezone.now() - _dt.timedelta(seconds=1))
     with django_capture_on_commit_callbacks(execute=True):
-        harness_services.sweep_expired_leases()               # what the fleet does 15 min later
+        claim.sweep_expired_leases()               # what the fleet does 15 min later
     line = slack.said("chat.update")[-1]
     assert "went away before it was done" in line["text"]
     with django_capture_on_commit_callbacks(execute=True):
@@ -2055,7 +2056,7 @@ def test_the_indicator_follows_the_turn(slack, linked, hal, alice, django_captur
     assert call["channel_id"] == "C1" and call["thread_ts"] == "1700000000.000100"
 
     with django_capture_on_commit_callbacks(execute=True):
-        turn = harness_services.claim_next_turn(runner)
+        turn = claim.claim_next_turn(runner)
     assert _statuses(slack)[-1] == "processing"
     with django_capture_on_commit_callbacks(execute=True):
         harness_services.finish_turn(turn, status=Turn.DONE)

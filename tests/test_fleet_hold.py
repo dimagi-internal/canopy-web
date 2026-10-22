@@ -20,7 +20,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
-from apps.harness import claim, services
+from apps.harness import claim
 from apps.harness.models import FleetHold, Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -53,7 +53,7 @@ def test_a_held_fleet_claims_nothing_and_the_turn_waits():
     assert c.post("/api/harness/fleet-hold", data={"note": "tracing digests"},
                   content_type="application/json").status_code == 200
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
 
@@ -63,19 +63,19 @@ def test_a_pin_does_not_punch_through_the_hold():
     _queued(ws, pinned_runner=runner)
     FleetHold.objects.update_or_create(pk=FleetHold.SINGLETON_PK, defaults={"held": True})
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
 
 def test_release_lets_the_backlog_through():
     _u, ws, c, runner = _ctx()
     turn = _queued(ws)
     c.post("/api/harness/fleet-hold", data={}, content_type="application/json")
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
     resp = c.post("/api/harness/fleet-hold/release")
 
     assert resp.status_code == 200 and resp.json()["held"] is False
-    claimed = services.claim_next_turn(runner)
+    claimed = claim.claim_next_turn(runner)
     assert claimed is not None and claimed.pk == turn.pk
 
 
@@ -126,7 +126,7 @@ def test_a_named_holder_may_hold_but_never_release(settings):
 
     assert c.post("/api/harness/fleet-hold", data={"note": "leak"},
                   content_type="application/json").status_code == 200
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
     assert c.post("/api/harness/fleet-hold/release").status_code == 403
     assert FleetHold.current().held is True

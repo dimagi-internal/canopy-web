@@ -30,6 +30,7 @@ from apps.agents import delegations
 from apps.agents.models import Agent, AgentAdmin, AgentDelegation
 from apps.common.encryption import decrypt_secret
 from apps.harness import services
+from apps.harness import drills
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
@@ -425,7 +426,7 @@ def test_bootstrap_resolve_carries_the_owners_token_for_private_clones(agent, ow
 # ---- the drill proves shipping, not login ---------------------------------------
 
 def test_the_drill_probes_pull_request_permission_on_the_agents_repo(agent, runner):
-    [drill] = services.start_drill(runner, [agent])
+    [drill] = drills.start_drill(runner, [agent])
     prompt = drill.turn.prompt
     assert "https://api.github.com/repos/dimagi-internal/echo/pulls" in prompt
     assert "422 = PASS" in prompt and "403 = FAIL" in prompt

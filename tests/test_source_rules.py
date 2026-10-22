@@ -10,7 +10,7 @@ import pytest
 from django.db import IntegrityError
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import routing
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.testing import a_workspace
 
@@ -28,9 +28,9 @@ def _runner(name):
 def _rows(agent, origin, actor=""):
     """Every assertion in this file passes actor="" — which is the point: a rule
     with no actor must behave exactly as it did before actors existed."""
-    defaults, priorities = services.load_assignment_rows([agent.id])
+    defaults, priorities = routing.load_assignment_rows([agent.id])
     return [
-        r for _rank, r in services.assignment_rows_for(agent.id, origin, actor, defaults, priorities)
+        r for _rank, r in routing.assignment_rows_for(agent.id, origin, actor, defaults, priorities)
     ]
 
 
@@ -94,8 +94,8 @@ def test_the_composed_list_is_renumbered_from_zero():
     a, laptop, cloud = _agent(), _runner("jj-mbp"), _runner("cloud-1")
     RunnerAssignment.objects.create(agent=a, runner=laptop, rank=0)
     RunnerAssignment.objects.create(agent=a, runner=cloud, rank=0, source=Turn.ORIGIN_ACE_WEB)
-    defaults, priorities = services.load_assignment_rows([a.id])
-    composed = services.assignment_rows_for(a.id, Turn.ORIGIN_ACE_WEB, "", defaults, priorities)
+    defaults, priorities = routing.load_assignment_rows([a.id])
+    composed = routing.assignment_rows_for(a.id, Turn.ORIGIN_ACE_WEB, "", defaults, priorities)
     assert [rank for rank, _r in composed] == [0, 1]
 
 
@@ -141,4 +141,4 @@ def test_a_rule_routes_to_a_runner_switched_off_in_the_default_list():
 
 
 def test_no_agents_loads_nothing():
-    assert services.load_assignment_rows([]) == ({}, {})
+    assert routing.load_assignment_rows([]) == ({}, {})

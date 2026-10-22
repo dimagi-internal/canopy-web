@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -53,7 +53,7 @@ def fleet():
 
 def _age(turn):
     Turn.objects.filter(pk=turn.pk).update(
-        created_at=timezone.now() - services.UNCLAIMABLE_GRACE - dt.timedelta(seconds=30)
+        created_at=timezone.now() - claim.UNCLAIMABLE_GRACE - dt.timedelta(seconds=30)
     )
     return turn
 
@@ -89,7 +89,7 @@ def test_a_non_zdr_runner_does_not_claim_a_zdr_turn(fleet):
     RunnerAssignment.objects.create(agent=a, runner=laptop, rank=0)
     _zdr_turn(a)
 
-    assert services.claim_next_turn(laptop) is None
+    assert claim.claim_next_turn(laptop) is None
 
 
 def test_a_zdr_runner_claims_it(fleet):
@@ -99,7 +99,7 @@ def test_a_zdr_runner_claims_it(fleet):
     RunnerAssignment.objects.create(agent=a, runner=cloud, rank=0)
     turn, _s = _zdr_turn(a)
 
-    claimed = services.claim_next_turn(cloud)
+    claimed = claim.claim_next_turn(cloud)
 
     assert claimed is not None and claimed.pk == turn.pk
 
@@ -115,7 +115,7 @@ def test_a_non_zdr_better_rank_does_not_block_the_zdr_runner(fleet):
     RunnerAssignment.objects.create(agent=a, runner=cloud, rank=1)
     turn, _s = _zdr_turn(a)  # FRESH: no _age, so the grace has not opened
 
-    claimed = services.claim_next_turn(cloud)
+    claimed = claim.claim_next_turn(cloud)
 
     assert claimed is not None and claimed.pk == turn.pk
 
@@ -131,8 +131,8 @@ def test_an_actor_rule_to_a_non_zdr_box_falls_to_a_zdr_default(fleet):
     )
     turn, _s = _zdr_turn(a, enqueued_by=fleet["user"])
 
-    assert services.claim_next_turn(laptop) is None
-    claimed = services.claim_next_turn(cloud)
+    assert claim.claim_next_turn(laptop) is None
+    claimed = claim.claim_next_turn(cloud)
     assert claimed is not None and claimed.pk == turn.pk
 
 
@@ -148,8 +148,8 @@ def test_a_strict_rule_to_a_non_zdr_box_waits(fleet):
     )
     _zdr_turn(a)
 
-    assert services.claim_next_turn(laptop) is None
-    assert services.claim_next_turn(cloud) is None
+    assert claim.claim_next_turn(laptop) is None
+    assert claim.claim_next_turn(cloud) is None
 
 
 def test_a_pin_to_a_non_zdr_runner_does_not_claim(fleet):
@@ -157,7 +157,7 @@ def test_a_pin_to_a_non_zdr_runner_does_not_claim(fleet):
     _sessions(laptop)
     _zdr_turn(a, pinned_runner=laptop)
 
-    assert services.claim_next_turn(laptop) is None
+    assert claim.claim_next_turn(laptop) is None
 
 
 def test_a_session_bound_to_a_non_zdr_runner_waits(fleet):
@@ -168,9 +168,9 @@ def test_a_session_bound_to_a_non_zdr_runner_waits(fleet):
     _turn, s = _zdr_turn(a)
     RunnerBinding.objects.create(session=s, runner=laptop)
 
-    assert services.claim_next_turn(laptop) is None
+    assert claim.claim_next_turn(laptop) is None
     # Stickiness is unchanged: a bound session does not fail over on its own.
-    assert services.claim_next_turn(cloud) is None
+    assert claim.claim_next_turn(cloud) is None
 
 
 def test_the_grace_never_promotes_a_non_zdr_runner(fleet):
@@ -183,7 +183,7 @@ def test_the_grace_never_promotes_a_non_zdr_runner(fleet):
     turn, _s = _zdr_turn(a)
     _age(turn)
 
-    assert services.claim_next_turn(laptop) is None
+    assert claim.claim_next_turn(laptop) is None
 
 
 def test_a_turn_without_requirements_is_unaffected(fleet):
@@ -195,7 +195,7 @@ def test_a_turn_without_requirements_is_unaffected(fleet):
     turn = Turn.objects.create(chat_session=s, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
                                idempotency_key="plain", routing=Turn.ANY)
 
-    claimed = services.claim_next_turn(laptop)
+    claimed = claim.claim_next_turn(laptop)
 
     assert claimed is not None and claimed.pk == turn.pk
 
@@ -207,7 +207,7 @@ def test_unclaimable_reports_a_zdr_turn_with_no_zdr_runner_as_config(fleet):
     turn, _s = _zdr_turn(a)
     _age(turn)
 
-    stuck = services.unclaimable_queued_turns(fleet["user"])
+    stuck = claim.unclaimable_queued_turns(fleet["user"])
 
     assert len(stuck) == 1
     assert stuck[0]["kind"] == "config" and "ZDR" in stuck[0]["reason"]
@@ -222,7 +222,7 @@ def test_unclaimable_reports_an_offline_zdr_runner_as_offline(fleet):
     turn, _s = _zdr_turn(a)
     _age(turn)
 
-    stuck = services.unclaimable_queued_turns(fleet["user"])
+    stuck = claim.unclaimable_queued_turns(fleet["user"])
 
     assert len(stuck) == 1
     assert stuck[0]["kind"] == "offline"
@@ -234,8 +234,8 @@ def test_turn_reach_agrees_with_claiming(fleet):
     RunnerAssignment.objects.create(agent=a, runner=laptop, rank=0)
     turn, _s = _zdr_turn(a)
 
-    assert services.turn_reach(turn).kind == services.UNROUTED
-    assert services.claim_next_turn(laptop) is None
+    assert claim.turn_reach(turn).kind == claim.UNROUTED
+    assert claim.claim_next_turn(laptop) is None
 
 
 # --- ZDR is named only when it is the blocker ----------------------------------------
@@ -253,12 +253,12 @@ def test_a_zdr_box_that_cannot_confine_reports_the_profile_reason_not_zdr(fleet)
     turn, _s = _zdr_turn(a, capability="ask")
     _age(turn)
 
-    [stuck] = services.unclaimable_queued_turns(fleet["user"])
+    [stuck] = claim.unclaimable_queued_turns(fleet["user"])
     assert stuck["kind"] == "config"
     assert "confined" in stuck["reason"] and "ZDR" not in stuck["reason"]
 
-    reach = services.turn_reach(turn)
-    assert reach.kind == services.UNROUTED and not reach.blocked_by_requirements
+    reach = claim.turn_reach(turn)
+    assert reach.kind == claim.UNROUTED and not reach.blocked_by_requirements
     assert ts.resolve(turn).requires == ()
 
 
@@ -267,9 +267,9 @@ def test_no_routing_at_all_reports_the_routing_reason_not_zdr(fleet):
     turn, _s = _zdr_turn(a)
     _age(turn)
 
-    [stuck] = services.unclaimable_queued_turns(fleet["user"])
+    [stuck] = claim.unclaimable_queued_turns(fleet["user"])
     assert stuck["kind"] == "config" and "ZDR" not in stuck["reason"]
-    assert not services.turn_reach(turn).blocked_by_requirements
+    assert not claim.turn_reach(turn).blocked_by_requirements
 
 
 def test_a_non_zdr_box_that_would_cover_it_names_zdr_as_the_blocker(fleet):
@@ -281,10 +281,10 @@ def test_a_non_zdr_box_that_would_cover_it_names_zdr_as_the_blocker(fleet):
     turn, _s = _zdr_turn(a)
     _age(turn)
 
-    [stuck] = services.unclaimable_queued_turns(fleet["user"])
+    [stuck] = claim.unclaimable_queued_turns(fleet["user"])
     assert stuck["kind"] == "config" and "ZDR" in stuck["reason"]
-    reach = services.turn_reach(turn)
-    assert reach.kind == services.UNROUTED and reach.blocked_by_requirements
+    reach = claim.turn_reach(turn)
+    assert reach.kind == claim.UNROUTED and reach.blocked_by_requirements
     assert ts.resolve(turn).requires == ("zdr",)
 
 
@@ -296,12 +296,12 @@ def test_an_offline_zdr_box_names_zdr_only_when_a_non_zdr_box_is_live(fleet):
     _offline(cloud)
     turn, _s = _zdr_turn(a)
     # Only the ZDR box serves it: it is simply offline, and waiting fixes that.
-    reach = services.turn_reach(turn)
-    assert reach.kind == services.OFFLINE and not reach.blocked_by_requirements
+    reach = claim.turn_reach(turn)
+    assert reach.kind == claim.OFFLINE and not reach.blocked_by_requirements
     # A live non-ZDR box WOULD take it: the requirement is why it waits.
     RunnerAssignment.objects.create(agent=a, runner=laptop, rank=1)
-    reach = services.turn_reach(turn)
-    assert reach.kind == services.OFFLINE and reach.blocked_by_requirements
+    reach = claim.turn_reach(turn)
+    assert reach.kind == claim.OFFLINE and reach.blocked_by_requirements
 
 
 # ---- inheritance (spec 2026-10-22-phi-agents-on-zdr-runners §3) ------------------
@@ -321,7 +321,7 @@ def test_a_turn_started_from_a_zdr_turn_inherits_its_requirement(fleet):
                                 routing=Turn.ANY, parent_turn=parent)
 
     assert rr.requirements_of(child) == {"zdr"}
-    assert services.claim_next_turn(laptop) is None
+    assert claim.claim_next_turn(laptop) is None
 
 
 def test_a_turn_started_from_a_zdr_conversation_inherits_its_requirement(fleet):

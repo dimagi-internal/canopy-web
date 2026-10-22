@@ -12,7 +12,7 @@ from channels.testing import WebsocketCommunicator
 from django.contrib.auth.models import AnonymousUser, User
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import ledger
 from apps.harness.models import Turn
 from apps.realtime.consumers import TurnConsumer
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -59,7 +59,7 @@ async def test_non_member_forbidden():
 async def test_member_gets_replay_then_live_tail():
     user, turn = await database_sync_to_async(_member_turn)()
     # A pre-existing event should be replayed on connect.
-    await database_sync_to_async(services.append_events)(
+    await database_sync_to_async(ledger.append_events)(
         turn, [{"kind": "assistant", "payload": {"text": "old"}}]
     )
     comm = await _connect(turn, user)
@@ -71,7 +71,7 @@ async def test_member_gets_replay_then_live_tail():
     assert replayed["event"]["payload"]["text"] == "old"
 
     # A new append after connect should arrive live over the group.
-    await database_sync_to_async(services.append_events)(
+    await database_sync_to_async(ledger.append_events)(
         turn, [{"kind": "assistant", "payload": {"text": "new"}}]
     )
     live = await comm.receive_json_from(timeout=2)
@@ -84,7 +84,7 @@ async def test_replay_pages_beyond_500_events():
     # A turn with more than one replay page (500) must deliver ALL unseen events
     # on connect — no silent truncation (the SP2 chat path routinely exceeds it).
     user, turn = await database_sync_to_async(_member_turn)()
-    await database_sync_to_async(services.append_events)(
+    await database_sync_to_async(ledger.append_events)(
         turn, [{"kind": "assistant", "payload": {"i": i}} for i in range(600)]
     )
     comm = await _connect(turn, user)
@@ -100,7 +100,7 @@ async def test_replay_pages_beyond_500_events():
 
 async def test_cursor_replay_skips_seen_events():
     user, turn = await database_sync_to_async(_member_turn)()
-    await database_sync_to_async(services.append_events)(
+    await database_sync_to_async(ledger.append_events)(
         turn, [{"kind": "assistant", "payload": {}}, {"kind": "assistant", "payload": {}}]
     )
     comm = await _connect(turn, user, after=1)  # already saw seq 1

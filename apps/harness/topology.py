@@ -23,11 +23,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from apps.events.models import SessionUsage
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from .models import Runner, RunnerAssignment, WorkspaceRunnerOrder
-from .services import inherited_orders, runner_tenant_slugs
+from .routing import inherited_orders, runner_tenant_slugs
 
 
 def code_current(runner) -> bool | None:
@@ -69,8 +70,6 @@ def _usage(rows: list[dict], viewer) -> None:
     local sessions canopy has no record of (a count — the list is its admins'
     alone), and whether the viewer administers it."""
     from django.db.models import Count
-
-    from apps.events.models import SessionUsage
 
     from .runners import can_administer_runner
 

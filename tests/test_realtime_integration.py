@@ -18,7 +18,7 @@ from django.conf import settings
 from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import ledger
 from apps.harness.models import Turn
 from apps.realtime.channels_auth import RealtimeAuthMiddleware
 from apps.realtime.routing import websocket_urlpatterns
@@ -76,7 +76,7 @@ async def test_authenticated_turn_tail_replay_then_live():
     def setup():
         user, agent = _seed()
         turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k1")
-        services.append_events(turn, [{"kind": "assistant", "payload": {"text": "old"}}])
+        ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "old"}}])
         return turn, _make_session(user)
 
     turn, key = await database_sync_to_async(setup)()
@@ -88,7 +88,7 @@ async def test_authenticated_turn_tail_replay_then_live():
     assert replayed["event"]["seq"] == 1
     assert replayed["event"]["payload"]["text"] == "old"
 
-    await database_sync_to_async(services.append_events)(
+    await database_sync_to_async(ledger.append_events)(
         turn, [{"kind": "assistant", "payload": {"text": "new"}}]
     )
     live = await comm.receive_json_from(timeout=2)

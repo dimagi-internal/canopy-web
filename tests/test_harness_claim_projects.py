@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
@@ -51,7 +51,7 @@ def test_a_projects_only_runner_claims_a_project_turn():
         idempotency_key="p1", prompt="fix the header",
     )
 
-    claimed = services.claim_next_turn(runner)
+    claimed = claim.claim_next_turn(runner)
 
     assert claimed is not None and claimed.pk == turn.pk
     assert claimed.status == Turn.CLAIMED
@@ -81,7 +81,7 @@ def test_a_runner_owner_a_non_member_cannot_claim_another_tenants_project_turn()
         idempotency_key="p1",
     )
 
-    assert services.claim_next_turn(attacker) is None
+    assert claim.claim_next_turn(attacker) is None
 
 
 def test_a_project_turn_with_no_workspace_is_not_claimable():
@@ -95,7 +95,7 @@ def test_a_project_turn_with_no_workspace_is_not_claimable():
         idempotency_key="p1",
     )
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
 
 def test_a_busy_agent_does_not_block_a_project_turn():
@@ -115,7 +115,7 @@ def test_a_busy_agent_does_not_block_a_project_turn():
         project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API, idempotency_key="p1"
     )
 
-    claimed = services.claim_next_turn(runner)
+    claimed = claim.claim_next_turn(runner)
 
     assert claimed is not None, "a busy agent swallowed an unrelated repo turn"
     assert claimed.pk == project_turn.pk
@@ -132,7 +132,7 @@ def test_pausing_an_agent_does_not_pause_the_repos():
         project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API, idempotency_key="p1"
     )
 
-    claimed = services.claim_next_turn(runner, exclude_slugs=["echo"])
+    claimed = claim.claim_next_turn(runner, exclude_slugs=["echo"])
 
     assert claimed is not None and claimed.pk == project_turn.pk
 
@@ -146,7 +146,7 @@ def test_a_runner_not_declaring_a_project_does_not_claim_it():
         project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API, idempotency_key="p1"
     )
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
 
 def test_an_executing_project_turn_does_not_block_every_agent_turn():
@@ -179,7 +179,7 @@ def test_an_executing_project_turn_does_not_block_every_agent_turn():
         idempotency_key="drill-hal-1", status=Turn.QUEUED, pinned_runner=runner,
     )
 
-    got = services.claim_next_turn(runner)
+    got = claim.claim_next_turn(runner)
     assert got is not None, "an executing PROJECT turn must not block agent turns"
     assert got.pk == queued.pk
 
@@ -201,4 +201,4 @@ def test_an_executing_agent_turn_still_blocks_that_same_agent():
         idempotency_key="hal-second", status=Turn.QUEUED, pinned_runner=runner,
     )
 
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None

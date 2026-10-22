@@ -5,7 +5,7 @@ A box registering a key prints `approve_url` — to a terminal nobody may be
 watching. A runner coming back from a pause, or a laptop re-enrolling, sat
 with a pending key and every bound agent's turn failing until someone happened
 to open Settings. So a NEW pending key, and an active key sent back to pending
-by a new encryption key (`_set_ecdh`), mails and Web-Pushes everyone who can
+by a new encryption key (`set_ecdh`), mails and Web-Pushes everyone who can
 approve it — the runner's owner and its explicit admins
 (`can_administer_runner`) — deep-linking to Settings → Your machines with that
 key highlighted, where approving (and giving it access) is one passkey touch.
@@ -20,6 +20,8 @@ import logging
 import re
 from html import escape
 
+from .models import RunnerAdmin
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,8 +29,6 @@ def approvers(runner) -> list:
     """The owner and every explicit runner admin, active, de-duplicated — the
     owner alone on a private runner, the only person who may approve there
     (`runners.may_trust_device_keys`)."""
-    from .models import RunnerAdmin
-
     people = []
     if runner.owner_id and runner.owner.is_active:
         people.append(runner.owner)

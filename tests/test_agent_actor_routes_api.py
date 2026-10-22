@@ -12,7 +12,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import Runner, RunnerAdmin, RunnerAssignment, Turn, TurnEvent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -143,11 +143,11 @@ def test_a_routed_persons_slack_turn_claims_on_their_box_and_others_stay_on_the_
     Turn.objects.create(agent=fleet["ace"], origin=Turn.ORIGIN_SLACK, idempotency_key="j1",
                         routing=Turn.ANY, enqueued_by=fleet["jj"])
 
-    jj_claim = services.claim_next_turn(fleet["jj_laptop"])
+    jj_claim = claim.claim_next_turn(fleet["jj_laptop"])
     assert jj_claim is not None and jj_claim.idempotency_key == "j1"
-    assert services.claim_next_turn(fleet["jj_laptop"]) is None  # Sarvesh's is not his to take
+    assert claim.claim_next_turn(fleet["jj_laptop"]) is None  # Sarvesh's is not his to take
     Turn.objects.filter(pk=jj_claim.pk).update(status=Turn.DONE)
-    st_claim = services.claim_next_turn(fleet["st_laptop"])
+    st_claim = claim.claim_next_turn(fleet["st_laptop"])
     assert st_claim is not None and st_claim.idempotency_key == "s1"
 
     # The claim event says WHY, so a routing audit needn't re-derive the ladder.
@@ -171,8 +171,8 @@ def test_a_contact_who_is_not_a_member_can_be_routed(fleet):
     Turn.objects.create(agent=fleet["ace"], origin=Turn.ORIGIN_SLACK, idempotency_key="c1",
                         routing=Turn.ANY, initiator_contact=jeremy)
 
-    assert services.claim_next_turn(fleet["jj_laptop"]) is None
-    claimed = services.claim_next_turn(fleet["st_laptop"])
+    assert claim.claim_next_turn(fleet["jj_laptop"]) is None
+    claimed = claim.claim_next_turn(fleet["st_laptop"])
     assert claimed is not None and claimed.idempotency_key == "c1"
 
 
@@ -199,4 +199,4 @@ def test_a_box_owned_by_the_agents_own_login_cannot_hold_the_agent(fleet):
     RunnerAssignment.objects.create(agent=fleet["ace"], runner=legacy, rank=1)
     Turn.objects.create(agent=fleet["ace"], origin=Turn.ORIGIN_SLACK, idempotency_key="l1",
                         routing=Turn.ANY, enqueued_by=fleet["jj"])
-    assert services.claim_next_turn(legacy) is None
+    assert claim.claim_next_turn(legacy) is None

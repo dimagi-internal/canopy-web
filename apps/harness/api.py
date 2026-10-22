@@ -4,15 +4,15 @@ from __future__ import annotations
 import logging
 import uuid
 
+from canopy_sdk import contract
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import models, transaction
 from django.db.models import Q
 from django.http import HttpRequest, StreamingHttpResponse
-from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from ninja import Router, Status
-from canopy_sdk import contract
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read, agent_for_work
@@ -20,61 +20,69 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.canopy_sessions.models import Attachment, Message, RunnerBinding, Session
+from apps.huddles.models import CheckinRun
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import claim, drills, ledger, routing, schedule_turns, services
 from . import initiator as who
-from . import services
+from . import runners as harness_runners
 from . import turn_mode as turn_modes
-from .models import AgentSchedule, FleetHold, PrivateRunner, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder, agent_turns_q
+from .models import (
+    AgentSchedule,
+    FleetHold,
+    PrivateRunner,
+    Runner,
+    RunnerAssignment,
+    RunnerDrill,
+    Turn,
+    WorkspaceRunnerOrder,
+    agent_turns_q,
+)
 from .schedule_services import serialize_schedule
 from .schemas import (
-    RunnerPrivateIn,
-    CallerContextOut,
-    ClaimedTurnOut,
-    BackfillSyncOut,
-    BackfillWriteOut,
-    CloseResultsIn,
-    CloseResultsOut,
-    CloseSyncOut,
     AdmissionNoticeClaimIn,
     AdmissionNoticeClaimOut,
     AdmissionNoticeReportIn,
-    MenuAnswerResultIn,
-    MenuAnswerResultOut,
-    MenuAnswerSyncOut,
-    SessionMenuIn,
-    SessionMenuOut,
+    BackfillSyncOut,
+    BackfillWriteOut,
+    CallerContextOut,
+    ClaimedTurnOut,
+    CloseResultsIn,
+    CloseResultsOut,
+    CloseSyncOut,
     DrillIn,
     DrillReportIn,
     EmdashSessionOut,
-    UnclaimableTurnOut,
-    HeartbeatIn,
     FleetHoldIn,
     FleetHoldOut,
+    HeartbeatIn,
+    MenuAnswerResultIn,
+    MenuAnswerResultOut,
+    MenuAnswerSyncOut,
+    MissingSessionsOut,
+    OpenSignInRequestOut,
     PauseIn,
     RecordSessionIn,
     ReportSessionsIn,
-    MissingSessionsOut,
-    SendUpIn,
-    SendUpOut,
-    UsageReportIn,
-    UsageReportOut,
-    UsageScopeOut,
     ResolveSessionIn,
     ResolveSessionOut,
-    RunnerCapabilitiesIn,
-    RunnerCredentialIn,
-    RunnerCredentialOut,
     RetireOut,
     RunnerAdminIn,
     RunnerAdminOut,
+    RunnerCapabilitiesIn,
+    RunnerCredentialIn,
+    RunnerCredentialOut,
+    RunnerCredentialStatusOut,
+    RunnerDrillOut,
+    RunnerEngineIn,
     RunnerEnrollmentIn,
     RunnerEnrollmentOut,
     RunnerFlagsIn,
-    RunnerEngineIn,
-    RunnerCredentialStatusOut,
+    RunnerGitHubReadinessOut,
+    RunnerIn,
     RunnerLoginOrderIn,
     RunnerLoginReportIn,
     RunnerMintClaimOut,
@@ -83,22 +91,22 @@ from .schemas import (
     RunnerMintResultIn,
     RunnerMintStartIn,
     RunnerMintUrlIn,
-    OpenSignInRequestOut,
+    RunnerOut,
+    RunnerPrivateIn,
+    ScheduleAnnouncedOut,
+    ScheduleFireIn,
+    ScheduleOut,
+    SendUpIn,
+    SendUpOut,
+    SessionBackfillIn,
+    SessionMenuIn,
+    SessionMenuOut,
+    SessionReportOut,
+    SessionStreamIn,
     SignInRequestIn,
     SignInRequestOut,
     SignInResultIn,
     SignInResultOut,
-    RunnerDrillOut,
-    RunnerGitHubReadinessOut,
-    TurnGitHubTokenOut,
-    RunnerIn,
-    RunnerOut,
-    ScheduleAnnouncedOut,
-    ScheduleFireIn,
-    ScheduleOut,
-    SessionBackfillIn,
-    SessionReportOut,
-    SessionStreamIn,
     StreamPostOut,
     StreamSyncOut,
     TranscriptAppendIn,
@@ -107,10 +115,15 @@ from .schemas import (
     TurnEventsIn,
     TurnEventsOut,
     TurnFinishIn,
+    TurnGitHubTokenOut,
     TurnIn,
     TurnMessagesOut,
     TurnOut,
     TurnStartIn,
+    UnclaimableTurnOut,
+    UsageReportIn,
+    UsageReportOut,
+    UsageScopeOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -180,7 +193,7 @@ def _runner_owned_q(request: HttpRequest) -> Q:
 _FLEET_Q = ~Q(kind=Runner.COMPUTER)
 
 
-def _runner_read_q(request: HttpRequest) -> Q:
+def runner_read_q(request: HttpRequest) -> Q:
     """'Runners this caller can SEE' — derived from the TENANT, like claim time.
 
     Seeing a runner and acting on one are different questions that one predicate
@@ -248,7 +261,7 @@ def _runners_serving_q(slugs) -> Q:
     candidates = (Runner.objects.exclude(status=Runner.RETIRED).filter(_FLEET_Q)
                   .filter(owner__isnull=False, workspace__isnull=False)
                   .select_related("owner").prefetch_related("enrollments"))
-    return Q(pk__in=[r.pk for r in candidates if services.runner_tenant_slugs(r) & slugs])
+    return Q(pk__in=[r.pk for r in candidates if routing.runner_tenant_slugs(r) & slugs])
 
 
 def _runner_visibility_q(request: HttpRequest) -> Q:
@@ -259,7 +272,7 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
     `owner` is what `claim_next_turn` derives a tenant from, so acting as
     someone else's runner is acting with their memberships.
 
-    `_runner_read_q` is deliberately WIDER, which gives up the invariant these two
+    `runner_read_q` is deliberately WIDER, which gives up the invariant these two
     used to share by being one function ("never list a runner every action then
     404s on"). That invariant is now carried explicitly instead of structurally,
     by `RunnerOut.can_manage`: a client can say "runner X serves this repo, ask
@@ -275,7 +288,6 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
         # tenant-scoped routing save — the agent's Settings page and the fleet
         # map — while the flat route took it. Ownership still applies below; this
         # widens only where the caller's own box may live, never whose it is.
-        from apps.workspaces.models import Workspace
 
         here = Workspace.objects.filter(slug=ws).first()
         wq = Q(workspace_id__in=[ws, *(here.ancestor_slugs() if here else [])])
@@ -302,13 +314,13 @@ def _runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
     """
     runner = (
         Runner.objects.exclude(status=Runner.RETIRED)
-        .filter(_runner_read_q(request))
+        .filter(runner_read_q(request))
         .filter(pk=runner_id)
         .first()
     )
     # 404 rather than 403, matching _runner_or_404: the harness must not leak
     # which runners exist to someone who may not act on them.
-    if runner is None or not services.can_administer_runner(request.user, runner):
+    if runner is None or not harness_runners.can_administer_runner(request.user, runner):
         raise HttpError(404, "runner not found")
     return runner
 
@@ -357,8 +369,6 @@ def _agents_own_thread_q():
     them from everyone but the agent's admins, and a member's routing audit read
     the silence as "0 turns" (#1087). Their CONTENT stays gated by the session
     (`turn_access.redact`), and a person's own chat is not one of these."""
-    from apps.canopy_sessions.models import Session
-
     return Q(chat_session__origin=Session.ORIGIN_RUNNER, chat_session__created_by__isnull=True,
              chat_session__agent__isnull=False)
 
@@ -368,7 +378,6 @@ def _visible_sessions(request: HttpRequest):
     every harness listing that would otherwise show a session turn's prompt or
     a session's messages to the whole tenant."""
     from apps.canopy_sessions import access as session_access
-    from apps.canopy_sessions.models import Session
 
     return Session.objects.filter(session_access.visible_session_q(request.user)).values("pk")
 
@@ -598,11 +607,11 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
     like heartbeat/claim (owner == caller). Non-clobbering per field. Encrypted
     at rest; the response is masked (booleans, never values)."""
     runner = _runner_admin_or_404(request, runner_id)
-    if services.would_remove_last_backup_token(
+    if harness_runners.would_remove_last_backup_token(
             runner, claude_token=payload.claude_token,
             claude_token_secondary=payload.claude_token_secondary):
-        raise HttpError(422, services.LAST_BACKUP_TOKEN_REFUSAL)
-    services.set_runner_credential(
+        raise HttpError(422, harness_runners.LAST_BACKUP_TOKEN_REFUSAL)
+    harness_runners.set_runner_credential(
         runner,
         claude_token=payload.claude_token,
         claude_token_secondary=payload.claude_token_secondary,
@@ -611,7 +620,7 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
         claude_token_secondary_label=payload.claude_token_secondary_label,
         updated_by=request.user,
     )
-    return services.runner_credential_status(runner)
+    return harness_runners.runner_credential_status(runner)
 
 
 @router.post("/runners/{runner_id}/credential/swap", response=RunnerCredentialStatusOut,
@@ -621,8 +630,8 @@ def swap_runner_logins(request: HttpRequest, runner_id: uuid.UUID):
     login keeps its name. The runner reads the new order the next time it
     re-reads its bundle."""
     runner = _runner_admin_or_404(request, runner_id)
-    services.swap_runner_logins(runner, updated_by=request.user)
-    return services.runner_credential_status(runner)
+    harness_runners.swap_runner_logins(runner, updated_by=request.user)
+    return harness_runners.runner_credential_status(runner)
 
 
 @router.post("/runners/{runner_id}/logins", response=RunnerCredentialStatusOut,
@@ -632,8 +641,8 @@ def add_runner_login(request: HttpRequest, runner_id: uuid.UUID):
     the sign-in on its next poll (see `get_runner_mint`); the login reads
     "not signed in" until it finishes."""
     runner = _runner_admin_or_404(request, runner_id)
-    services.add_runner_login(runner, by=request.user)
-    return services.runner_credential_status(runner)
+    harness_runners.add_runner_login(runner, by=request.user)
+    return harness_runners.runner_credential_status(runner)
 
 
 # The fixed paths are declared before `/logins/{key}`, which would match them.
@@ -644,10 +653,10 @@ def order_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: Run
     its usage cap the runner moves to the next."""
     runner = _runner_admin_or_404(request, runner_id)
     try:
-        services.order_runner_logins(runner, payload.keys)
-    except services.LoginOrderRefused as exc:
+        harness_runners.order_runner_logins(runner, payload.keys)
+    except harness_runners.LoginOrderRefused as exc:
         raise HttpError(422, str(exc)) from exc
-    return services.runner_credential_status(runner)
+    return harness_runners.runner_credential_status(runner)
 
 
 @router.post("/runners/{runner_id}/logins/report", response=RunnerCredentialStatusOut,
@@ -655,9 +664,9 @@ def order_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: Run
 def report_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerLoginReportIn):
     """Which logins the box holds and as which account."""
     runner = _runner_or_404(request, runner_id)
-    services.report_runner_logins(
+    harness_runners.report_runner_logins(
         runner, [r.dict() for r in payload.logins], adopt_default=payload.adopt_default)
-    return services.runner_credential_status(runner)
+    return harness_runners.runner_credential_status(runner)
 
 
 @router.delete("/runners/{runner_id}/logins/{key}", response=RunnerCredentialStatusOut,
@@ -666,9 +675,9 @@ def remove_runner_login(request: HttpRequest, runner_id: uuid.UUID, key: str):
     """The runner signs the login out on the box the next time it re-reads its
     credentials, within a few minutes."""
     runner = _runner_admin_or_404(request, runner_id)
-    if not services.remove_runner_login(runner, key):
+    if not harness_runners.remove_runner_login(runner, key):
         raise HttpError(404, "no such login on this runner")
-    return services.runner_credential_status(runner)
+    return harness_runners.runner_credential_status(runner)
 
 
 @router.get("/runners/{runner_id}/credential/status", response=RunnerCredentialStatusOut,
@@ -682,7 +691,7 @@ def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
     WROTE, bumping `updated_at`/`updated_by` and destroying the one signal that
     says when a credential was last actually rotated."""
     runner = _runner_admin_or_404(request, runner_id)
-    return services.runner_credential_status(runner)
+    return harness_runners.runner_credential_status(runner)
 
 
 @router.get("/runners/{runner_id}/credential", response=RunnerCredentialOut,
@@ -693,7 +702,7 @@ def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerC
     caller) — the same trust boundary that lets that caller claim turns as the
     runner. Laptop/emdash runners never call this (they use ambient auth)."""
     runner = _runner_or_404(request, runner_id)
-    return RunnerCredentialOut(**services.get_runner_credential(runner))
+    return RunnerCredentialOut(**harness_runners.get_runner_credential(runner))
 
 
 @router.post("/runners/{runner_id}/turns/{turn_id}/github-token",
@@ -713,7 +722,7 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
     turn = (
         Turn.objects.select_related("agent__owner", "chat_session__agent__owner",
                                     "initiator_user", "initiator_contact")
-        .filter(pk=turn_id, claimed_by=runner, status__in=services.EXECUTING)
+        .filter(pk=turn_id, claimed_by=runner, status__in=routing.EXECUTING)
         .first()
     )
     if turn is None:
@@ -767,12 +776,11 @@ def turn_attachment_content(request: HttpRequest, runner_id: uuid.UUID, turn_id:
     from apps.agents import delegations
     from apps.agents.services import runner_may_hold_agent
     from apps.canopy_sessions import attachment_storage
-    from apps.canopy_sessions.models import Attachment
 
     runner = _runner_or_404(request, runner_id)
     turn = (
         Turn.objects.select_related("agent", "chat_session__agent")
-        .filter(pk=turn_id, claimed_by=runner, status__in=services.EXECUTING)
+        .filter(pk=turn_id, claimed_by=runner, status__in=routing.EXECUTING)
         .first()
     )
     if turn is None or turn.chat_session_id is None:
@@ -803,7 +811,7 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
 
     runner = _runner_or_404(request, runner_id)
     out = []
-    for agent in services.agents_routed_to(runner):
+    for agent in routing.agents_routed_to(runner):
         delegations.check_github(agent)
         status, detail = delegations.readiness(agent)
         st = delegations.status(agent)
@@ -855,7 +863,7 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
     login_key = (payload.login_key if payload else "") if slot == "box" else ""
     if login_key and not runner.logins.filter(key=login_key).exists():
         raise HttpError(404, "no such login on this runner")
-    return services.start_runner_mint(runner, requested_by=request.user, slot=slot,
+    return harness_runners.start_runner_mint(runner, requested_by=request.user, slot=slot,
                                       login_key=login_key)
 
 
@@ -865,7 +873,7 @@ def get_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
     """What the waiting human's screen renders: whether the URL is up yet, and
     how the attempt ended. Null when no sign-in has ever been started."""
     runner = _runner_admin_or_404(request, runner_id)
-    return services.current_runner_mint(runner)
+    return harness_runners.current_runner_mint(runner)
 
 
 @router.get("/runners/{runner_id}/mint/claim", response=RunnerMintClaimOut,
@@ -885,10 +893,10 @@ def claim_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
     credential nobody is accounting for.
     """
     runner = _runner_or_404(request, runner_id)
-    mint = services.claim_runner_mint(runner)
+    mint = harness_runners.claim_runner_mint(runner)
     if mint is None:
         return {"mint": None, "code": ""}
-    return {"mint": mint, "code": services.take_mint_code(mint)}
+    return {"mint": mint, "code": harness_runners.take_mint_code(mint)}
 
 
 @router.post("/runners/{runner_id}/mint/url", response=RunnerMintOut,
@@ -896,10 +904,10 @@ def claim_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
 def post_runner_mint_url(request: HttpRequest, runner_id: uuid.UUID,
                          payload: RunnerMintUrlIn):
     runner = _runner_or_404(request, runner_id)
-    mint = services.current_runner_mint(runner)
+    mint = harness_runners.current_runner_mint(runner)
     if mint is None or mint.status in mint.FINISHED:
         raise HttpError(409, "no sign-in is in progress for this runner")
-    return services.record_mint_url(mint, payload.url)
+    return harness_runners.record_mint_url(mint, payload.url)
 
 
 @router.post("/runners/{runner_id}/mint/code", response=RunnerMintOut,
@@ -908,12 +916,12 @@ def post_runner_mint_code(request: HttpRequest, runner_id: uuid.UUID,
                           payload: RunnerMintCodeIn):
     """The one secret a human handles in this flow, and it is single-use."""
     runner = _runner_admin_or_404(request, runner_id)
-    mint = services.current_runner_mint(runner)
+    mint = harness_runners.current_runner_mint(runner)
     if mint is None or mint.status != mint.AWAITING_CODE:
         raise HttpError(409, "this runner is not waiting for a code")
     if not payload.code.strip():
         raise HttpError(422, "the authorization code is empty")
-    return services.submit_mint_code(mint, payload.code)
+    return harness_runners.submit_mint_code(mint, payload.code)
 
 
 @router.post("/runners/{runner_id}/mint/result", response=RunnerMintOut,
@@ -924,10 +932,10 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
     into the encrypted credential bundle, so the only secret that ever reaches a
     human's screen is the single-use authorization code."""
     runner = _runner_or_404(request, runner_id)
-    mint = services.current_runner_mint(runner)
+    mint = harness_runners.current_runner_mint(runner)
     if mint is None:
         raise HttpError(409, "no sign-in is in progress for this runner")
-    return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
+    return harness_runners.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
                                        logged_in=payload.logged_in, account=payload.account)
 
 
@@ -1006,7 +1014,7 @@ def list_runner_admins(request: HttpRequest, runner_id: uuid.UUID):
     """Visible to anyone who can already administer the box — the answer to
     "who else can fix this", which is the question a stuck box raises."""
     runner = _runner_admin_or_404(request, runner_id)
-    return [_admin_row(a) for a in services.list_runner_admins(runner)]
+    return [_admin_row(a) for a in harness_runners.list_runner_admins(runner)]
 
 
 @router.post("/runners/{runner_id}/admins", response=RunnerAdminOut,
@@ -1032,7 +1040,7 @@ def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
             422,
             f"{user.email} is not a member of the workspace this runner belongs to",
         )
-    return _admin_row(services.grant_runner_admin(runner, user, granted_by=request.user))
+    return _admin_row(harness_runners.grant_runner_admin(runner, user, granted_by=request.user))
 
 
 @router.delete("/runners/{runner_id}/admins/{user_id}", response={204: None},
@@ -1040,7 +1048,7 @@ def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
 def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int):
     runner = _runner_or_404(request, runner_id)
     user = User.objects.filter(pk=user_id).first()
-    if user is None or not services.revoke_runner_admin(runner, user):
+    if user is None or not harness_runners.revoke_runner_admin(runner, user):
         raise HttpError(404, "no such grant on this runner")
     return Status(204, None)
 
@@ -1070,8 +1078,8 @@ def list_runner_workspaces(request: HttpRequest, runner_id: uuid.UUID):
     later (`covers` lists those it serves). Pairing enrolls a box only in the workspace it paired into; joining another
     workspace does not enroll your existing boxes."""
     runner = _runner_admin_or_404(request, runner_id)
-    serving = services.runner_tenant_slugs(runner)
-    return [_enrollment_row(request, runner, e, serving) for e in services.list_runner_enrollments(runner)
+    serving = routing.runner_tenant_slugs(runner)
+    return [_enrollment_row(request, runner, e, serving) for e in harness_runners.list_runner_enrollments(runner)
             if _sees_enrollment(request, runner, e.workspace_id)]
 
 
@@ -1095,10 +1103,10 @@ def enroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID,
     if not slug or not wsvc.is_member(request.user, slug):
         raise HttpError(404, f"workspace '{slug}' not found")
     try:
-        row = services.enroll_runner(runner, slug, by=request.user)
-    except services.EnrollmentRefused as exc:
+        row = harness_runners.enroll_runner(runner, slug, by=request.user)
+    except harness_runners.EnrollmentRefused as exc:
         raise HttpError(422, str(exc))
-    return _enrollment_row(request, runner, row, services.runner_tenant_slugs(runner))
+    return _enrollment_row(request, runner, row, routing.runner_tenant_slugs(runner))
 
 
 @router.delete("/runners/{runner_id}/workspaces/{workspace}", response={204: None},
@@ -1108,7 +1116,7 @@ def unenroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID, worksp
     workspace above it is still enrolled, which covers it; a turn it already
     holds runs to completion. Owner or a runner administrator."""
     runner = _runner_admin_or_404(request, runner_id)
-    if not _sees_enrollment(request, runner, workspace) or not services.unenroll_runner(
+    if not _sees_enrollment(request, runner, workspace) or not harness_runners.unenroll_runner(
             runner, workspace):
         raise HttpError(404, "this runner is not enrolled in that workspace")
     return Status(204, None)
@@ -1134,7 +1142,7 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
         wanted = set(contract.parse_runner_requirements(payload.flags))
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    added, removed = services.set_runner_flags(runner, wanted, by=request.user)
+    added, removed = harness_runners.set_runner_flags(runner, wanted, by=request.user)
     if runner.workspace_id and (added or removed):
         from apps.events import services as events
 
@@ -1151,7 +1159,7 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
     # to True, so an unstamped reply would show an admin who is not the owner
     # controls that then 404.
     out.can_manage = out.owner_id in (request.user.id, None)
-    out.can_administer = services.can_administer_runner(request.user, out)
+    out.can_administer = harness_runners.can_administer_runner(request.user, out)
     return _with_roots(request, out)
 
 
@@ -1190,7 +1198,7 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
                       workspace=runner.workspace)
     out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
     out.can_manage = True
-    out.can_administer = services.can_administer_runner(request.user, out)
+    out.can_administer = harness_runners.can_administer_runner(request.user, out)
     return _with_roots(request, out)
 
 
@@ -1227,14 +1235,13 @@ def set_runner_engine(request: HttpRequest, runner_id: uuid.UUID, payload: Runne
             }], workspace=runner.workspace)
     out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
     out.can_manage = out.owner_id in (request.user.id, None)
-    out.can_administer = services.can_administer_runner(request.user, out)
+    out.can_administer = harness_runners.can_administer_runner(request.user, out)
     return _with_roots(request, out)
 
 
 def _open_sessions_by_runner(runner_ids) -> dict:
     """{runner id: sessions open on it} — active and still reported, the session
     list's own `state=active` rule (`unseen_q`), so the two counts cannot drift."""
-    from apps.canopy_sessions.models import Session
     from apps.canopy_sessions.staleness import active
 
     if not runner_ids:
@@ -1277,7 +1284,7 @@ def _with_roots(request: HttpRequest, runners):
 def list_runners(request: HttpRequest):
     """The supervisor's runner status, and the fleet read every preflight makes.
 
-    Scoped by TENANT (`_runner_read_q`), not by who owns what: a member who
+    Scoped by TENANT (`runner_read_q`), not by who owns what: a member who
     paired nothing used to list nothing, which reads identically to "this
     workspace has no runners" and is the wrong answer to draw a conclusion from.
     Each row carries `can_manage` for the ownership half. Retired runners are
@@ -1285,7 +1292,7 @@ def list_runners(request: HttpRequest):
     """
     qs = (
         Runner.objects.exclude(status=Runner.RETIRED)
-        .filter(_runner_read_q(request))
+        .filter(runner_read_q(request))
         .prefetch_related("declared_flags", "enrollments")
         .order_by(models.F("last_heartbeat_at").desc(nulls_last=True))
     )
@@ -1295,7 +1302,7 @@ def list_runners(request: HttpRequest):
     if offered is not None:
         # A site sees only the runners that serve its own agents — enough for a
         # "continue on…" picker, and nothing about the rest of the fleet.
-        following = {r.pk for r in qs if services.agents_following_runner(r) & set(offered)}
+        following = {r.pk for r in qs if routing.agents_following_runner(r) & set(offered)}
         qs = qs.filter(Q(agent_assignments__agent_id__in=offered) | Q(pk__in=following)).distinct()
     rows = list(qs[:50])
     open_by_runner = _open_sessions_by_runner([r.pk for r in rows])
@@ -1307,7 +1314,7 @@ def list_runners(request: HttpRequest):
         # Administration is a WIDER tier than acting as the runner, so it gets
         # its own flag rather than overloading can_manage — the credentials block
         # and the drill panel are gated by different routes.
-        r.can_administer = services.can_administer_runner(request.user, r)
+        r.can_administer = harness_runners.can_administer_runner(request.user, r)
     return _with_roots(request, rows)
 
 
@@ -1607,7 +1614,7 @@ def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
     # The administer tier, not the act-as tier: this changes what the box runs
     # on, the same class of operation as setting its credentials.
     runner = _runner_admin_or_404(request, runner_id)
-    return _with_roots(request, services.request_refresh(runner))
+    return _with_roots(request, harness_runners.request_refresh(runner))
 
 
 @router.get("/runners/{runner_id}/usage-scope", response=UsageScopeOut)
@@ -1694,7 +1701,7 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     from apps.workspaces import role_cap
 
     # A runner may claim in a lower mode it put itself in (X-Canopy-Acts-As).
-    turn = services.claim_next_turn(runner, exclude_slugs=exclude or None,
+    turn = claim.claim_next_turn(runner, exclude_slugs=exclude or None,
                                     acts_as=role_cap.header_cap(request))
     if turn is None:
         return Status(204, None)
@@ -1850,9 +1857,9 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     "ship only what is new" from "ship the history I am missing" — a Max alone can
     only ever append above the high-water mark and so can never fill a hole below
     it, which is how a session ended up stuck at 8.6% with no way to self-heal."""
-    from django.db.models import F, Max as _Max, Min as _Min
-
-    from apps.canopy_sessions.models import RunnerBinding, Session
+    from django.db.models import F
+    from django.db.models import Max as _Max
+    from django.db.models import Min as _Min
 
     runner = _runner_or_404(request, runner_id)
     bindings = (
@@ -1927,7 +1934,6 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
     seq:<n> message ids). User events are persisted but never live-pushed — the
     sender's client already echoed them optimistically."""
     from apps.canopy_sessions import services as chat_services
-    from apps.canopy_sessions.models import RunnerBinding
     from apps.realtime import groups
 
     runner = _runner_or_404(request, runner_id)
@@ -1992,8 +1998,6 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
             for e in payload.events if e.index >= 0 and e.kind == "user"
         ]
         if user_indices:
-            from apps.canopy_sessions.models import Message
-
             authors_by_index = {
                 turn_index - binding.index_offset: author
                 for turn_index, author in Message.objects.filter(
@@ -2055,8 +2059,6 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
 @router.get("/runners/{runner_id}/backfills", response=BackfillSyncOut)
 def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
     """Sessions this runner has been asked to ship full history for."""
-    from apps.canopy_sessions.models import RunnerBinding
-
     runner = _runner_or_404(request, runner_id)
     bindings = (
         RunnerBinding.objects.select_related("session")
@@ -2078,8 +2080,6 @@ def list_closes(request: HttpRequest, runner_id: uuid.UUID):
     API answers `ok:true`. Drained on the poll tick, so a lost frame costs a tick
     rather than leaving the emdash task open and the session active forever.
     """
-    from apps.canopy_sessions.models import RunnerBinding
-
     runner = _runner_or_404(request, runner_id)
     bindings = (
         RunnerBinding.objects.select_related("session")
@@ -2105,8 +2105,6 @@ def post_close_results(request: HttpRequest, runner_id: uuid.UUID, payload: Clos
     server-side request behind it. Matched on (this runner, project, task name);
     a result for a task the server does not know is ignored.
     """
-    from apps.canopy_sessions.models import RunnerBinding
-
     runner = _runner_or_404(request, runner_id)
     now = timezone.now()
     updated = 0
@@ -2141,8 +2139,6 @@ def list_menu_answers(request: HttpRequest, runner_id: uuid.UUID):
 
     Drained on the poll tick the runner already runs, same as `/backfills`.
     """
-    from apps.canopy_sessions.models import RunnerBinding
-
     runner = _runner_or_404(request, runner_id)
     bindings = (
         RunnerBinding.objects.select_related("session")
@@ -2170,8 +2166,6 @@ def post_menu_answer_result(request: HttpRequest, runner_id: uuid.UUID,
     a session that has already moved on, so a result for an answer that has since
     been replaced must NOT clear the newer one.
     """
-    from apps.canopy_sessions.models import RunnerBinding
-
     runner = _runner_or_404(request, runner_id)
     binding = RunnerBinding.objects.filter(
         session_id=payload.session_id, runner=runner).first()
@@ -2225,7 +2219,6 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     """The runner ships a session's full transcript; the server writes Message rows
     once and clears the request. Runner-owned-binding gated."""
     from apps.canopy_sessions import services as chat_services
-    from apps.canopy_sessions.models import RunnerBinding, Session
 
     runner = _runner_or_404(request, runner_id)
     binding = RunnerBinding.objects.filter(session_id=payload.session_id, runner=runner).first()
@@ -2258,9 +2251,9 @@ def list_unclaimable_turns(request: HttpRequest):
     # a caller in two trees who names none gets a 422).
     ws_slugs = wsvc.request_workspace_slugs(request)
     site_q = _site_turn_q(request)
-    rows = (services.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs, turn_q=site_q)
+    rows = (claim.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs, turn_q=site_q)
             if site_q is not None else
-            services.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs))
+            claim.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs))
     # Each row says whether the caller may cancel it, so the warning offers the
     # one fix that always works right where it is shown.
     turns = Turn.objects.select_related("agent", "chat_session").in_bulk([r["turn_id"] for r in rows])
@@ -2364,7 +2357,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         # forever, since nothing can claim it.
         pinned = (
             Runner.objects.exclude(status=Runner.RETIRED)
-            .filter(_runner_read_q(request))
+            .filter(runner_read_q(request))
             .filter(id=payload.runner_id)
             .first()
         )
@@ -2614,7 +2607,6 @@ def list_turns(
 def list_sessions(request: HttpRequest):
     """Open emdash sessions the caller can see — across their workspaces, live runners
     only, newest-first. Drives the phone's Open Sessions list."""
-    from apps.agents.models import Agent
     from apps.tokens import delegation
 
     rows = services.list_visible_sessions(request.user, wsvc.request_workspace_slugs(request))
@@ -2651,7 +2643,7 @@ def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEv
     for event in payload.events:
         if event.kind not in ALLOWED_EVENT_KINDS:
             raise HttpError(422, f"unknown event kind '{event.kind}'")
-    count = services.append_events(turn, [e.dict() for e in payload.events])
+    count = ledger.append_events(turn, [e.dict() for e in payload.events])
     from . import owner_ask
 
     for event in payload.events:
@@ -2694,7 +2686,7 @@ def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: Tr
             f"transcript batch too large ({total_bytes} bytes; "
             f"limit is {TRANSCRIPT_APPEND_MAX_BYTES} bytes per request)",
         )
-    transcript = services.append_transcript(turn, payload.lines, batch_id=payload.batch_id)
+    transcript = ledger.append_transcript(turn, payload.lines, batch_id=payload.batch_id)
     return {
         "line_count": transcript.line_count,
         "bytes_raw": transcript.bytes_raw,
@@ -2714,7 +2706,7 @@ def read_turn_messages(request: HttpRequest, turn_id: uuid.UUID):
     # (turn_access.can_read_turn_content). Parsing is bounded
     # (services.TRANSCRIPT_VIEW_MAX_MESSAGES) and reads the blob incrementally.
     turn = _turn_content_or_404(request, turn_id)
-    messages, truncated = services.transcript_messages(turn)
+    messages, truncated = ledger.transcript_messages(turn)
     return {"messages": messages, "truncated": truncated}
 
 
@@ -2746,7 +2738,7 @@ def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
     """
     turn = _turn_content_or_404(request, turn_id)
     return StreamingHttpResponse(
-        services.iter_transcript(turn), content_type="application/x-ndjson"
+        ledger.iter_transcript(turn), content_type="application/x-ndjson"
     )
 
 
@@ -2878,7 +2870,7 @@ def _runner_schedule_qs(runner: Runner):
     can drift.
     """
     qs = AgentSchedule.objects.filter(enabled=True).select_related("agent")
-    return qs.filter(services.agent_tenant_q(services.runner_tenant_slugs(runner)))
+    return qs.filter(routing.agent_tenant_q(routing.runner_tenant_slugs(runner)))
 
 
 @router.get("/schedules/", response=Page[ScheduleOut],
@@ -2915,14 +2907,13 @@ def fire_schedule_route(
     # exists, but release would already have killed the turn this route returns).
     # Release runs on the CLAIM tick instead — see claim_next_turn.
     try:
-        turn, _ = services.fire_schedule(schedule, payload.slot)
-    except services.OneOffSlotMismatch as exc:
+        turn, _ = schedule_turns.fire_schedule(schedule, payload.slot)
+    except schedule_turns.OneOffSlotMismatch as exc:
         raise HttpError(409, str(exc)) from None
     if turn is None:
         # A project check-in's schedule makes a run instead: with a channel it is
         # announced there and the turn comes once the lead confirms; without one
         # the check-in queued the turn itself (the run reads "running").
-        from apps.huddles.models import CheckinRun
 
         run = CheckinRun.objects.filter(checkin__schedule=schedule, slot=payload.slot).first()
         return Status(202, ScheduleAnnouncedOut(announced=True, run_id=getattr(run, "pk", None),
@@ -2957,7 +2948,7 @@ def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: Dril
     # No enabled=True filter here on purpose — see the docstring above.
     # An agent following a workspace order that lists this runner counts too.
     assigned = Agent.objects.filter(
-        Q(runner_assignments__runner=runner) | Q(id__in=services.agents_following_runner(runner))
+        Q(runner_assignments__runner=runner) | Q(id__in=routing.agents_following_runner(runner))
     ).distinct()
     # `is not None` (not truthy) so an explicit [] narrows to "drill nothing" and
     # hits the 422 below, rather than being treated the same as "drill everyone".
@@ -2977,7 +2968,7 @@ def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: Dril
     if not agents:
         raise HttpError(422, "no assigned agents to drill — assign this runner to an agent first"
                              " (a runner admin drills only agents they administer)")
-    return services.start_drill(runner, agents, started_by=request.user)
+    return drills.start_drill(runner, agents, started_by=request.user)
 
 
 @router.get("/runners/{runner_id}/drills", response=list[RunnerDrillOut])
@@ -2988,9 +2979,9 @@ def list_runner_drills(request: HttpRequest, runner_id: uuid.UUID):
     # to be the owner alone, so nobody operating the fleet could see why a box
     # was failing its drills. A plain member/viewer gets the no-leak 404.
     runner = (Runner.objects.exclude(status=Runner.RETIRED)
-              .filter(_runner_read_q(request)).filter(pk=runner_id).first())
+              .filter(runner_read_q(request)).filter(pk=runner_id).first())
     if runner is None or not (
-        services.can_administer_runner(request.user, runner)
+        harness_runners.can_administer_runner(request.user, runner)
         or (runner.workspace_id and perms.can(request.user, runner.workspace_id, perms.LOGS_READ))
     ):
         raise HttpError(404, "runner not found")
@@ -3013,8 +3004,8 @@ def report_drill(request: HttpRequest, drill_id: int, payload: DrillReportIn, t:
     # The signed link comes first and is sufficient: it names this one run, so
     # it lets its holder report that run and nothing else — whichever canopy
     # login the agent happens to authenticate with.
-    if not services.drill_report_token_ok(drill, t):
+    if not drills.drill_report_token_ok(drill, t):
         agent_user_id = drill.agent.user_id
         if agent_user_id is None or agent_user_id != request.user.id:
             _runner_or_404(request, drill.runner_id)  # the owner gate; 404 on non-owner
-    return services.report_drill(drill, outcome=payload.outcome, summary=payload.summary)
+    return drills.report_drill(drill, outcome=payload.outcome, summary=payload.summary)

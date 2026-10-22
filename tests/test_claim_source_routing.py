@@ -13,7 +13,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import claim, routing
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -59,8 +59,8 @@ def test_a_source_rule_sends_its_work_to_the_priority_runner(fleet):
 
     _turn(a, Turn.ORIGIN_ACE_WEB, "k-ace")
 
-    assert services.claim_next_turn(laptop) is None
-    claimed = services.claim_next_turn(cloud)
+    assert claim.claim_next_turn(laptop) is None
+    claimed = claim.claim_next_turn(cloud)
     assert claimed is not None and claimed.origin == Turn.ORIGIN_ACE_WEB
 
 
@@ -72,8 +72,8 @@ def test_other_sources_still_follow_the_default_order(fleet):
 
     _turn(a, Turn.ORIGIN_EMAIL, "k-mail")
 
-    assert services.claim_next_turn(cloud) is None
-    assert services.claim_next_turn(laptop) is not None
+    assert claim.claim_next_turn(cloud) is None
+    assert claim.claim_next_turn(laptop) is not None
 
 
 def test_a_non_strict_rule_degrades_when_its_runner_is_gone(fleet):
@@ -86,7 +86,7 @@ def test_a_non_strict_rule_degrades_when_its_runner_is_gone(fleet):
 
     _turn(a, Turn.ORIGIN_ACE_WEB, "k-ace")
 
-    assert services.claim_next_turn(laptop) is not None
+    assert claim.claim_next_turn(laptop) is not None
 
 
 def test_a_strict_rule_parks_the_turn_rather_than_degrading(fleet):
@@ -101,7 +101,7 @@ def test_a_strict_rule_parks_the_turn_rather_than_degrading(fleet):
 
     turn = _turn(a, Turn.ORIGIN_EMAIL, "k-mail")
 
-    assert services.claim_next_turn(cloud) is None
+    assert claim.claim_next_turn(cloud) is None
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
 
@@ -118,9 +118,9 @@ def test_strictness_survives_the_cascade_grace(fleet):
         last_heartbeat_at=timezone.now() - dt.timedelta(hours=1)
     )
 
-    _turn(a, Turn.ORIGIN_EMAIL, "k-mail", age_seconds=services.CASCADE_GRACE_SECONDS + 30)
+    _turn(a, Turn.ORIGIN_EMAIL, "k-mail", age_seconds=routing.CASCADE_GRACE_SECONDS + 30)
 
-    assert services.claim_next_turn(cloud) is None
+    assert claim.claim_next_turn(cloud) is None
 
 
 def test_a_pin_beats_a_contradicting_rule(fleet):
@@ -135,7 +135,7 @@ def test_a_pin_beats_a_contradicting_rule(fleet):
         pinned_runner=laptop, routing=Turn.ANY,
     )
 
-    assert services.claim_next_turn(laptop) is not None
+    assert claim.claim_next_turn(laptop) is not None
 
 
 def test_a_runner_named_only_by_a_rule_can_claim_that_source(fleet):
@@ -146,7 +146,7 @@ def test_a_runner_named_only_by_a_rule_can_claim_that_source(fleet):
 
     _turn(a, Turn.ORIGIN_ACE_WEB, "k-ace")
 
-    assert services.claim_next_turn(cloud) is not None
+    assert claim.claim_next_turn(cloud) is not None
 
 
 def test_a_rule_never_crosses_the_tenant_boundary(fleet):
@@ -162,4 +162,4 @@ def test_a_rule_never_crosses_the_tenant_boundary(fleet):
 
     _turn(a, Turn.ORIGIN_ACE_WEB, "k-ace")
 
-    assert services.claim_next_turn(theirs) is None
+    assert claim.claim_next_turn(theirs) is None

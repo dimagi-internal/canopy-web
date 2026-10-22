@@ -17,6 +17,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.events.models import Event
 from apps.harness import auto_debug, services
+from apps.harness import claim
 from apps.harness import initiator as who
 from apps.harness.models import FailureInvestigation, Runner, RunnerDrill, Turn
 from apps.workspaces.models import WorkspaceMembership
@@ -317,14 +318,14 @@ def _expired(agent, runner):
 
 def test_a_lost_turn_does_not_trigger_by_default(ada, ws, runner):
     _expired(_agent(ws, "ace"), runner)
-    services.sweep_expired_leases()
+    claim.sweep_expired_leases()
     assert not FailureInvestigation.objects.exists()
 
 
 def test_a_lost_turn_triggers_when_opted_in(ada, ws, runner):
     _expired(_agent(ws, "ace"), runner)
     with override_settings(CANOPY_AUTO_DEBUG_LOST=True):
-        services.sweep_expired_leases()
+        claim.sweep_expired_leases()
     inv = FailureInvestigation.objects.get()
     assert "lease expired" in inv.sample_note and _debug_turns().count() == 1
 

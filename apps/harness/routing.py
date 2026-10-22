@@ -19,13 +19,17 @@ from dataclasses import dataclass, field
 
 from django.db.models import Q
 
+from apps.agents.models import Agent
+from apps.canopy_sessions.models import RunnerBinding
 from apps.harness import actors
 from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import MAX_DEPTH, Workspace
 
 from .models import (
     Runner,
     RunnerAssignment,
+    RunnerEnrollment,
     Turn,
     WorkspaceRunnerOrder,
 )
@@ -118,7 +122,7 @@ def cannot_serve(runner: Runner, slug: str) -> str:
     return ""
 
 
-# ---- isolation units (spec 2026-10-19 §3) -------------------------------------
+# ---- isolation units (docs/architecture/runners.md § Isolation units) --------
 #
 # A cloud box runs one runner per isolation unit: a workspace tree, or a single
 # agent that has a unit of its own. Each unit is its own Unix user with its own
@@ -210,8 +214,6 @@ def agents_following_runner(runner: Runner, among=None) -> set:
     `among` narrows the question to those agent ids — the claim passes the agents
     with queued work, so an idle poll (the common case, every box every few
     seconds) asks it of nobody rather than of the whole tree."""
-    from apps.agents.models import Agent
-
     if among is not None and not among:
         return set()
     if runner.directed_only():
@@ -267,7 +269,6 @@ def runner_routes_agent(runner: Runner, agent) -> bool:
 
 def agents_routed_to(runner: Runner):
     """Every agent `runner_routes_agent` holds for, by slug."""
-    from apps.agents.models import Agent
     from apps.agents.services import runner_may_hold_agent
 
     if runner.status == Runner.RETIRED or not runner.owner_id or runner.directed_only():
@@ -298,8 +299,6 @@ def default_order_source(agent) -> str | None:
 def _ancestor_chains(slugs) -> dict:
     """{slug: [slug, parent, grandparent, …]} from ONE read of the workspace tree
     (a small table), instead of a query per level per workspace."""
-    from apps.workspaces.models import MAX_DEPTH, Workspace
-
     parent = dict(Workspace.objects.values_list("slug", "parent_id"))
     out: dict = {}
     for slug in slugs:
@@ -339,8 +338,6 @@ def inherited_orders(agent_ids) -> dict:
       - a box whose owner is not one of the agent's admins
         (`runner_may_hold_agent`) — the claim would refuse it anyway.
     Both are returned so a screen can say why."""
-    from apps.agents.models import Agent
-
     agent_ids = set(agent_ids or ())
     if not agent_ids:
         return {}
@@ -449,7 +446,7 @@ def assignment_rows_for(
     return list(enumerate(out))
 
 
-def _kind_allows(runner: Runner, routing: str) -> bool:
+def kind_allows(runner: Runner, routing: str) -> bool:
     if routing == Turn.LOCAL_ONLY:
         return runner.kind in (Runner.EMDASH, Runner.REMOTE)
     return True
@@ -463,7 +460,7 @@ def _kind_allows(runner: Runner, routing: str) -> bool:
 CASCADE_GRACE_SECONDS = 60
 
 
-def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
+def assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
                                  defaults: dict, priorities: dict, now) -> bool:
     """False when this runner is not in the agent's list FOR THIS TURN'S SOURCE;
     True when it is and either every better rank is unavailable or the turn has
@@ -495,11 +492,11 @@ def routed_slug(turn: Turn, agent_id) -> str:
     return ""
 
 
-def _assignment_allows(runner: Runner, turn: Turn, defaults: dict, priorities: dict, now) -> bool:
-    return _assignment_allows_for_agent(runner, turn.agent_id, turn, defaults, priorities, now)
+def assignment_allows(runner: Runner, turn: Turn, defaults: dict, priorities: dict, now) -> bool:
+    return assignment_allows_for_agent(runner, turn.agent_id, turn, defaults, priorities, now)
 
 
-def _is_repo_turn(turn: Turn) -> bool:
+def is_repo_turn(turn: Turn) -> bool:
     """A project dispatch: no agent, no chat session. The one turn kind the
     workspace runner order routes."""
     return not turn.agent_id and not turn.chat_session_id and bool(turn.project)
@@ -560,7 +557,7 @@ def repo_order_for(turn: Turn, orders: dict, *, requires: frozenset | None = Non
 def _cascade_allows(runner: Runner, rows: list, turn: Turn, now) -> bool:
     """The availability cascade over a workspace order: this runner is listed,
     and either every better rank is unavailable or the turn has aged past the
-    grace — `_assignment_allows_for_agent`'s rule over an order."""
+    grace — `assignment_allows_for_agent`'s rule over an order."""
     mine = next((i for i, r in enumerate(rows) if r.id == runner.id), None)
     if mine is None:
         return False
@@ -569,8 +566,8 @@ def _cascade_allows(runner: Runner, rows: list, turn: Turn, now) -> bool:
     return not any(r.is_available for r in rows[:mine])
 
 
-def _repo_order_allows(runner: Runner, turn: Turn, orders: dict, now) -> bool:
-    """The availability cascade for a repo turn — `_assignment_allows_for_agent`
+def repo_order_allows(runner: Runner, turn: Turn, orders: dict, now) -> bool:
+    """The availability cascade for a repo turn — `assignment_allows_for_agent`
     over the workspace order instead of an agent's list, with the same grace."""
     rows = repo_order_for(turn, orders)
     if rows is None:
@@ -712,8 +709,6 @@ def _dialog_up(session_id) -> bool:
     — it waits for the dialog to be answered, as a person's typing would. An
     option-less notification marker does not count: nothing was parsed to
     produce it (the composer's own rule, `menuBlocksComposer`)."""
-    from apps.canopy_sessions.models import RunnerBinding
-
     menu = (RunnerBinding.objects.filter(session_id=session_id)
             .values_list("pending_question", flat=True).first())
     return bool(isinstance(menu, dict) and menu.get("options"))
@@ -922,7 +917,6 @@ def enrolled_slugs(runner: Runner) -> set[str]:
     cache = getattr(runner, "_prefetched_objects_cache", {})
     if "enrollments" in cache:
         return {e.workspace_id for e in cache["enrollments"]}
-    from .models import RunnerEnrollment
 
     return set(RunnerEnrollment.objects.filter(runner_id=runner.pk)
                .values_list("workspace_id", flat=True))

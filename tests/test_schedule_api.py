@@ -137,10 +137,10 @@ def test_delete_supersedes_open_occurrences_so_the_agent_is_not_wedged(client, a
     unreleasable: every subsequent turn for the agent is unclaimable forever,
     and the nag that would surface it is gone too.
     """
-    from apps.harness import services
+    from apps.harness import schedule_turns
 
     schedule = AgentSchedule.objects.get(pk=_create(client).json()["id"])
-    turn, _ = services.fire_schedule(schedule, dt.datetime(2026, 7, 17, 13, tzinfo=dt.UTC))
+    turn, _ = schedule_turns.fire_schedule(schedule, dt.datetime(2026, 7, 17, 13, tzinfo=dt.UTC))
     # Drive it to the state a runner's claim leaves it in — QUEUED holds nothing.
     Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING)
 
@@ -160,10 +160,10 @@ def test_delete_supersedes_open_occurrences_so_the_agent_is_not_wedged(client, a
 def test_delete_retires_queued_occurrences_too(client, agent):
     """A queued occurrence outlives its schedule otherwise — and would later
     execute a prompt for a schedule that no longer exists."""
-    from apps.harness import services
+    from apps.harness import schedule_turns
 
     schedule = AgentSchedule.objects.get(pk=_create(client).json()["id"])
-    turn, _ = services.fire_schedule(schedule, dt.datetime(2026, 7, 17, 13, tzinfo=dt.UTC))
+    turn, _ = schedule_turns.fire_schedule(schedule, dt.datetime(2026, 7, 17, 13, tzinfo=dt.UTC))
 
     client.delete(f"/api/agents/echo/schedules/{schedule.id}")
 
@@ -228,11 +228,11 @@ def test_fire_after_defaults_to_created_at_not_null(client, agent):
 
 
 def test_fire_after_tracks_last_slot_once_fired(client, agent):
-    from apps.harness import services
+    from apps.harness import schedule_turns
 
     schedule = AgentSchedule.objects.get(pk=_create(client).json()["id"])
     slot = dt.datetime(2026, 7, 17, 13, tzinfo=dt.UTC)
-    services.fire_schedule(schedule, slot)
+    schedule_turns.fire_schedule(schedule, slot)
 
     body = client.get("/api/agents/echo/schedules/").json()["items"][0]
 

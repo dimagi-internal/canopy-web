@@ -12,7 +12,7 @@ def backfill(apps, schema_editor):
     # `marshellis` (and anything below it), Jonathan's family workspace created
     # 2026-10-11, which no existing box should serve. HISTORICAL models, for the
     # reason 0024_seed_runner_assignments gives.
-    from apps.harness.services import backfill_runner_enrollments
+    from apps.harness.runners import backfill_runner_enrollments
 
     backfill_runner_enrollments(
         runner_model=apps.get_model("harness", "Runner"),

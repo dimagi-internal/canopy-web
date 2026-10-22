@@ -273,23 +273,25 @@ def test_project_events_skips_runner_sessions():
     """A bridged chat reply reaches the DB via the transcript stream (ordinal-keyed);
     projecting it AGAIN from the TurnEvent ledger would double-persist it."""
     from apps.harness import services as harness
+    from apps.harness import ledger
 
     user, _w, _r, s, _c = _ctx()
     turn, _ = harness.enqueue_turn(session=s, origin=Turn.ORIGIN_API,
                                    idempotency_key="t1", prompt="hi")
-    harness.append_events(turn, [{"kind": "assistant", "payload": {"text": "reply"}}])
+    ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "reply"}}])
     assert services.project_events(turn, list(turn.events.all())) == 0
     assert s.messages.count() == 0
 
 
 def test_project_events_still_materializes_web_sessions():
     from apps.harness import services as harness
+    from apps.harness import ledger
 
     user, ws, _r, _s, _c = _ctx()
     s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="w")
     turn, _ = harness.enqueue_turn(session=s, origin=Turn.ORIGIN_API,
                                    idempotency_key="t2", prompt="hi")
-    harness.append_events(turn, [{"kind": "assistant", "payload": {"text": "reply"}}])
+    ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "reply"}}])
     assert services.project_events(turn, list(turn.events.all())) == 1
     assert s.messages.count() == 1
 

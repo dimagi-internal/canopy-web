@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions import services
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
-from apps.harness import services as harness_services
+from apps.harness import ledger
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -104,7 +104,7 @@ def test_a_turns_events_are_not_projected_for_a_transcript_sourced_chat(settings
     user, ws, runner = _ctx()
     session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
     _msg, turn = services.send_message(session=session, text="hi", user=user)
-    harness_services.append_events(turn, [{"kind": "assistant", "payload": {"text": "hello"}}])
+    ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "hello"}}])
     # Called directly: the signal that normally drives it fires post-commit, which
     # a test transaction never reaches.
     written = services.project_events(turn, list(turn.events.all()))
@@ -118,7 +118,7 @@ def test_the_stub_path_still_projects_its_ledger(settings):
     user, ws, _runner = _ctx()
     session = services.create_session(workspace=ws, created_by=user, project="canopy-web")
     _msg, turn = services.send_message(session=session, text="hi", user=user)
-    harness_services.append_events(turn, [{"kind": "assistant", "payload": {"text": "hello"}}])
+    ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "hello"}}])
     services.project_events(turn, list(turn.events.all()))
     roles = [m.role for m in session.messages.order_by("turn_index")]
     assert roles == [Message.USER, Message.ASSISTANT]

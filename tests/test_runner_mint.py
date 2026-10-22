@@ -192,13 +192,13 @@ def test_a_sign_in_left_open_too_long_expires(client, runner, monkeypatch):
     clock. An aged-out mint now says what happened."""
     from django.utils import timezone
 
-    from apps.harness import services
+    from apps.harness import runners
     from apps.harness.models import RunnerMint
 
     _post(client, _base(runner))
     _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
 
-    stale = timezone.now() + dt.timedelta(seconds=services.MINT_TTL_SECONDS + 60)
+    stale = timezone.now() + dt.timedelta(seconds=runners.MINT_TTL_SECONDS + 60)
     monkeypatch.setattr(timezone, "now", lambda: stale)
 
     body = client.get(_base(runner)).json()
@@ -211,13 +211,13 @@ def test_an_expired_mint_is_not_handed_to_the_runner(client, runner, monkeypatch
     verifier is already dead — it can only fail, slowly."""
     from django.utils import timezone
 
-    from apps.harness import services
+    from apps.harness import runners
 
     _post(client, _base(runner))
     _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
     _post(client, f"{_base(runner)}/code", {"code": "the-code"})
 
-    stale = timezone.now() + dt.timedelta(seconds=services.MINT_TTL_SECONDS + 60)
+    stale = timezone.now() + dt.timedelta(seconds=runners.MINT_TTL_SECONDS + 60)
     monkeypatch.setattr(timezone, "now", lambda: stale)
     assert client.get(f"{_base(runner)}/claim").json()["mint"] is None
 

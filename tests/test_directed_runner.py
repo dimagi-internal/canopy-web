@@ -18,7 +18,8 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import routing, services, topology
+from apps.harness import routing, topology
+from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
@@ -56,7 +57,7 @@ def _chat(ws, person, key, project="canopy-web"):
 
 
 def _claimed(runner):
-    t = services.claim_next_turn(runner)
+    t = claim.claim_next_turn(runner)
     return t.pk if t else None
 
 

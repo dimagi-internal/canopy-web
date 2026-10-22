@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import claim, ledger, drills
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.testing import a_member, a_workspace, enrolled
 
@@ -65,12 +66,12 @@ def test_claim_serializes_execution_per_agent():
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="slack", idempotency_key="k2")
     r = _runner(a)
-    first = services.claim_next_turn(r)
+    first = claim.claim_next_turn(r)
     assert first is not None
     # second queued turn must NOT be claimed while the first is executing
-    assert services.claim_next_turn(r) is None
+    assert claim.claim_next_turn(r) is None
     services.finish_turn(first, status="done")
-    second = services.claim_next_turn(r)
+    second = claim.claim_next_turn(r)
     assert second is not None and second.idempotency_key == "k2"
 
 
@@ -81,18 +82,18 @@ def test_claim_excludes_paused_agents():
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
     # echo paused → nothing to claim, and the turn is untouched
-    assert services.claim_next_turn(r, exclude_slugs=["echo"]) is None
+    assert claim.claim_next_turn(r, exclude_slugs=["echo"]) is None
     t.refresh_from_db()
     assert t.status == Turn.QUEUED
     # excluding an unrelated agent doesn't block echo
-    assert services.claim_next_turn(r, exclude_slugs=["hal"]).pk == t.pk
+    assert claim.claim_next_turn(r, exclude_slugs=["hal"]).pk == t.pk
 
 
 def test_claim_next_turn_happy_path():
     a = _agent()
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
-    claimed = services.claim_next_turn(r)
+    claimed = claim.claim_next_turn(r)
     assert claimed.pk == t.pk
     claimed.refresh_from_db()
     assert claimed.status == Turn.CLAIMED
@@ -108,11 +109,11 @@ def test_claim_requires_assignment():
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     # Runner has eva in capabilities but no RunnerAssignment
     r = _runner(agent=None, capabilities={"agents": ["eva"]})
-    assert services.claim_next_turn(r) is None
+    assert claim.claim_next_turn(r) is None
 
     # After adding a RunnerAssignment, the claim succeeds
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
-    claimed = services.claim_next_turn(r)
+    claimed = claim.claim_next_turn(r)
     assert claimed is not None and claimed.pk == t.pk
 
 
@@ -120,7 +121,7 @@ def test_local_only_never_claimed_by_cloud():
     a = _agent()
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1", routing="local_only")
     r = _runner(kind=Runner.CLOUD)
-    assert services.claim_next_turn(r) is None
+    assert claim.claim_next_turn(r) is None
 
 
 def test_the_session_runtime_does_not_change_routing():
@@ -130,7 +131,7 @@ def test_the_session_runtime_does_not_change_routing():
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board",
                                  idempotency_key="k1", routing="local_only")
     r = _runner(a, engine=Runner.ENGINE_CLAUDE_DESKTOP)
-    claimed = services.claim_next_turn(r)
+    claimed = claim.claim_next_turn(r)
     assert claimed is not None and claimed.pk == t.pk
 
 
@@ -138,8 +139,8 @@ def test_claim_is_exclusive():
     a = _agent()
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r1, r2 = _runner(a), _runner(a, name="jj-mbp-2")
-    first = services.claim_next_turn(r1)
-    second = services.claim_next_turn(r2)
+    first = claim.claim_next_turn(r1)
+    second = claim.claim_next_turn(r2)
     assert first is not None and second is None
 
 
@@ -147,21 +148,21 @@ def test_expired_lease_goes_lost_and_is_reclaimable():
     a = _agent()
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
-    t = services.claim_next_turn(r)
+    t = claim.claim_next_turn(r)
     Turn.objects.filter(pk=t.pk).update(lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
-    assert services.sweep_expired_leases() == 1
+    assert claim.sweep_expired_leases() == 1
     t.refresh_from_db()
     assert t.status == Turn.LOST
     # lost is terminal -> lane free -> a re-enqueue with a new key claims fine
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k2")
-    assert services.claim_next_turn(r) is not None
+    assert claim.claim_next_turn(r) is not None
 
 
 def test_heartbeat_renews_lease_and_status():
     a = _agent()
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
-    t = services.claim_next_turn(r)
+    t = claim.claim_next_turn(r)
     old_expiry = t.lease_expires_at
     services.heartbeat(r, active_turn_ids=[str(t.pk)])
     t.refresh_from_db()
@@ -175,14 +176,14 @@ def test_degraded_runner_claims_nothing():
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner()
     services.heartbeat(r, active_turn_ids=[], degraded=True, note="emdash schema drift")
-    assert services.claim_next_turn(r) is None
+    assert claim.claim_next_turn(r) is None
 
 
 def test_append_events_assigns_monotonic_seq():
     a = _agent()
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
-    n = services.append_events(t, [{"kind": "status", "payload": {"s": "claimed"}}])
-    n += services.append_events(t, [{"kind": "status", "payload": {"s": "running"}}])
+    n = ledger.append_events(t, [{"kind": "status", "payload": {"s": "claimed"}}])
+    n += ledger.append_events(t, [{"kind": "status", "payload": {"s": "running"}}])
     assert n == 2
     assert list(t.events.values_list("seq", flat=True)) == [1, 2]
 
@@ -191,7 +192,7 @@ def test_finish_turn_sets_terminal_state():
     a = _agent()
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
-    claimed = services.claim_next_turn(r)
+    claimed = claim.claim_next_turn(r)
     services.finish_turn(claimed, status="done", result_note="2 commands applied")
     t.refresh_from_db()
     assert t.status == Turn.DONE and t.finished_at is not None
@@ -201,11 +202,11 @@ def test_finish_turn_does_not_resurrect_lost_turn():
     a = _agent()
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
-    claimed = services.claim_next_turn(r)
+    claimed = claim.claim_next_turn(r)
     # simulate a lease sweep declaring the turn lost while the runner is
     # still (unknowingly) working on it
     Turn.objects.filter(pk=claimed.pk).update(lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
-    services.sweep_expired_leases()
+    claim.sweep_expired_leases()
     claimed.refresh_from_db()
     assert claimed.status == Turn.LOST
     events_before = claimed.events.count()
@@ -221,9 +222,9 @@ def test_mark_running_does_not_resurrect_lost_turn():
     a = _agent()
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
-    claimed = services.claim_next_turn(r)
+    claimed = claim.claim_next_turn(r)
     Turn.objects.filter(pk=claimed.pk).update(lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
-    services.sweep_expired_leases()
+    claim.sweep_expired_leases()
     claimed.refresh_from_db()
     assert claimed.status == Turn.LOST
     events_before = claimed.events.count()
@@ -246,7 +247,7 @@ def test_finish_turn_idempotent_on_terminal():
     a = _agent()
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")
     r = _runner(a)
-    claimed = services.claim_next_turn(r)
+    claimed = claim.claim_next_turn(r)
     services.finish_turn(claimed, status="done", result_note="first")
     t.refresh_from_db()
     events_after_first = t.events.count()
@@ -270,7 +271,7 @@ def _claimed_turn(origin="email", key="k1", slug="echo"):
     a = _agent(slug)
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin=origin, idempotency_key=key)
     r = _runner(a)
-    return services.claim_next_turn(r), r
+    return claim.claim_next_turn(r), r
 
 
 def test_failed_turn_with_no_session_goes_back_on_the_queue():
@@ -298,7 +299,7 @@ def test_failed_turn_with_no_session_goes_back_on_the_queue():
 def test_requeued_turn_is_claimable_again():
     claimed, r = _claimed_turn()
     services.finish_turn(claimed, status="failed", result_note="emdash create failed: boom")
-    again = services.claim_next_turn(r)
+    again = claim.claim_next_turn(r)
     assert again is not None and again.pk == claimed.pk
 
 
@@ -318,13 +319,13 @@ def test_failed_turn_that_HAD_a_session_stays_terminal():
 def test_requeue_gives_up_after_the_cap():
     claimed, r = _claimed_turn()
     for expected in range(1, services.MAX_SESSIONLESS_RETRIES + 1):
-        t = services.claim_next_turn(r) if expected > 1 else claimed
+        t = claim.claim_next_turn(r) if expected > 1 else claimed
         services.finish_turn(t, status="failed", result_note="emdash create failed: still down")
         t.refresh_from_db()
         assert t.status == Turn.QUEUED and t.attempts == expected
 
     # one more failure exhausts the budget and the turn stays dead + visible
-    final = services.claim_next_turn(r)
+    final = claim.claim_next_turn(r)
     services.finish_turn(final, status="failed", result_note="emdash create failed: still down")
     final.refresh_from_db()
     assert final.status == Turn.FAILED
@@ -346,7 +347,7 @@ def test_requeue_does_not_resurrect_a_lost_turn():
     claimed, _ = _claimed_turn()
     Turn.objects.filter(pk=claimed.pk).update(
         lease_expires_at=timezone.now() - dt.timedelta(minutes=1))
-    services.sweep_expired_leases()
+    claim.sweep_expired_leases()
     claimed.refresh_from_db()
     assert claimed.status == Turn.LOST
 
@@ -365,7 +366,7 @@ def test_a_failed_drill_is_never_requeued():
     r = _runner(a)
     Runner.objects.filter(pk=r.pk).update(status=Runner.ONLINE, last_heartbeat_at=timezone.now())
     r.refresh_from_db()
-    [drill] = services.start_drill(r, [a])
+    [drill] = drills.start_drill(r, [a])
     turn = drill.turn
     Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, claimed_by=r)
     turn.refresh_from_db()

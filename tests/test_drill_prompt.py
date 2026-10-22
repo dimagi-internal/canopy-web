@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from apps.harness.services import DRILL_PROMPT, _drill_github_check
+from apps.harness.drills import DRILL_PROMPT, _drill_github_check
 
 
 class _Eva:

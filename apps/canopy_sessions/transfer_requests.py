@@ -27,7 +27,7 @@ from django.db.models import Q
 from django.dispatch import Signal
 from django.utils import timezone
 
-from apps.harness import services as harness_services
+from apps.harness import runners
 from apps.harness.models import Runner, RunnerAdmin
 
 from . import services
@@ -111,7 +111,7 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
     same_owner = (binding.runner_id is not None
                   and binding.runner.owner_id is not None
                   and binding.runner.owner_id == target.owner_id)
-    if same_owner or harness_services.can_administer_runner(user, target):
+    if same_owner or runners.can_administer_runner(user, target):
         binding_after, turn = services.transfer_session(
             session=session, placement=str(target.id), brief=brief, user=user,
             initiator=initiator)
@@ -151,7 +151,7 @@ def visible_to(user):
 def approve(*, req: TransferRequest, user, initiator=None):
     """Approve and carry out. Admin is re-checked HERE, at decision time — a grant
     revoked since the request was made must not still be honoured."""
-    if not harness_services.can_administer_runner(user, req.to_runner):
+    if not runners.can_administer_runner(user, req.to_runner):
         raise PermissionError(f"you don't administer runner '{req.to_runner.name}'")
     if _expire_if_stale(req):
         raise ValueError("this request expired unanswered — ask again")
@@ -166,7 +166,7 @@ def approve(*, req: TransferRequest, user, initiator=None):
 
 
 def decline(*, req: TransferRequest, user, note: str = ""):
-    if not harness_services.can_administer_runner(user, req.to_runner):
+    if not runners.can_administer_runner(user, req.to_runner):
         raise PermissionError(f"you don't administer runner '{req.to_runner.name}'")
     return _close(req, user, TransferRequest.DECLINED, note)
 

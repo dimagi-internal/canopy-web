@@ -19,6 +19,7 @@ from django.utils import timezone
 from apps.agents.models import Agent, AgentTask
 from apps.harness import initiator as who
 from apps.harness import services
+from apps.harness import schedule_turns
 from apps.harness.models import AgentSchedule, Turn
 from apps.tokens.models import AppCredential, DelegatedToken, PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -223,7 +224,7 @@ def test_a_schedule_is_system_with_its_creator_accountable(ctx):
         agent=agent, name="digest", cron="0 9 * * 1", prompt="/echo:turn",
         created_by=owner,
     )
-    turn, _ = services.fire_schedule(schedule, timezone.now().replace(microsecond=0))
+    turn, _ = schedule_turns.fire_schedule(schedule, timezone.now().replace(microsecond=0))
 
     assert (turn.initiator_kind, turn.initiator_assurance) == (who.SYSTEM, who.INTERNAL)
     assert turn.initiator_user == owner          # accountable, per spec D3
@@ -373,7 +374,7 @@ def test_an_embedded_visitor_is_never_verified():
     from types import SimpleNamespace
 
     from apps.contacts.models import Contact
-    from apps.harness.caller_context import _verified
+    from apps.harness.caller_context import is_verified
 
     owner = User.objects.create_user("o2", "o2@dimagi.com", "pw")
     workspace = Workspace.objects.create(slug="w9", display_name="W9", created_by=owner)
@@ -386,22 +387,22 @@ def test_an_embedded_visitor_is_never_verified():
 
     turn = SimpleNamespace(initiator_kind=who.CONTACT,
                            initiator_assurance=contact.last_auth_result)
-    assert _verified(turn) is False
+    assert is_verified(turn) is False
 
     # And a contact graded by MAIL still is, so this is a ceiling on the embed
     # channel rather than on contacts.
     mailed = SimpleNamespace(initiator_kind=who.CONTACT,
                              initiator_assurance=Contact.AUTH_DMARC)
-    assert _verified(mailed) is True
+    assert is_verified(mailed) is True
 
 
 def test_a_grade_that_is_no_longer_on_the_ladder_reads_as_unverified():
     """The fail-closed direction, for a value stored before a grade was dropped."""
     from types import SimpleNamespace
 
-    from apps.harness.caller_context import _verified
+    from apps.harness.caller_context import is_verified
 
     turn = SimpleNamespace(initiator_kind=who.CONTACT,
                            initiator_assurance="app_signed_origin")
 
-    assert _verified(turn) is False
+    assert is_verified(turn) is False

@@ -26,6 +26,8 @@ from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 
+from .models import Runner, RunnerDeviceKey, Turn
+
 ALG = "ES256"
 IAT_WINDOW_SECONDS = 120
 #: How long a seen jti is remembered: the whole window it could be fresh in,
@@ -65,7 +67,7 @@ def thumbprint(jwk: dict) -> str:
     return jwk_thumbprint(jwk)
 
 
-def _strip_to_flat(path: str) -> str:
+def strip_to_flat(path: str) -> str:
     """The path as the flat API route sees it: no legacy `/canopy` prefix, no
     `/w/<workspace>` tenant segment (WorkspaceResolveMiddleware strips it on the
     way in, so `request.path` never has it), no trailing slash."""
@@ -98,7 +100,7 @@ def htu_matches(htu: str, request) -> bool:
         allowed.add(base.lower())
     if host not in allowed:
         return False
-    return _strip_to_flat(parts.path) == _strip_to_flat(request.path)
+    return strip_to_flat(parts.path) == strip_to_flat(request.path)
 
 
 def verify_proof(request, *, now: float | None = None) -> str:
@@ -160,7 +162,6 @@ def runner_serves_agent(runner, agent) -> bool:
     it runs (canopy-web#1563)."""
     from django.db.models import Q
 
-    from .models import Runner, Turn
     from .routing import runner_routes_agent
 
     if runner.status == Runner.RETIRED:
@@ -208,16 +209,12 @@ def known_key(jkt: str):
     """The ACTIVE device key with this thumbprint, whichever agents it serves —
     so a refusal can tell an approved box that does not run the agent from a
     proof nobody approved."""
-    from .models import RunnerDeviceKey
-
     return (RunnerDeviceKey.objects.select_related("runner")
             .filter(jkt=jkt, status=RunnerDeviceKey.ACTIVE).first())
 
 
 def active_key_for_agent(agent, jkt: str):
     """The ACTIVE device key with this thumbprint, if its runner serves `agent`."""
-    from .models import RunnerDeviceKey
-
     key = known_key(jkt)
     if key is None or not runner_serves_agent(key.runner, agent):
         return None
@@ -227,8 +224,6 @@ def active_key_for_agent(agent, jkt: str):
 
 def keys_for_agent(agent):
     """Every device key on a runner that serves this agent (for its Settings)."""
-    from .models import Runner, RunnerDeviceKey
-
     runners = [r for r in Runner.objects.exclude(status=Runner.RETIRED)
                .filter(device_keys__isnull=False).distinct()
                if runner_serves_agent(r, agent)]

@@ -190,10 +190,10 @@ def _classes_for(rel: str, who, verified: bool) -> set[str]:
 
 def decide_for_turn(turn, agent, requested: str | None = None) -> Decision:
     """`decide` for a turn already written, from its own initiator."""
-    from apps.harness.caller_context import _verified
+    from apps.harness.caller_context import is_verified
 
     who = turn.initiator_user or turn.initiator_contact
-    return decide(agent, who, verified=_verified(turn), origin=turn.origin,
+    return decide(agent, who, verified=is_verified(turn), origin=turn.origin,
                   capability=requested, turn=turn)
 
 
@@ -208,7 +208,7 @@ def may_pin_runner(user, agent, runner) -> bool:
         return True
     if agent.is_own_login(user) and _routed_to(agent, runner):
         return True
-    from apps.harness.services import can_administer_runner
+    from apps.harness.runners import can_administer_runner
 
     return can_administer_runner(user, runner)
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 from django.utils import timezone
 
 from apps.harness import services as harness_services
+from apps.harness import ledger
 from apps.harness.models import Turn
 
 
@@ -29,5 +30,5 @@ def execute_turn_stub(turn: Turn, *, reply: str = "(stub reply) received.") -> T
         return turn  # already handled / not runnable
 
     harness_services.mark_running(turn, session_id=f"stub-{turn.id.hex[:8]}")
-    harness_services.append_events(turn, [{"kind": "assistant", "payload": {"text": reply}}])
+    ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": reply}}])
     return harness_services.finish_turn(turn, status=Turn.DONE, result_note="stub")

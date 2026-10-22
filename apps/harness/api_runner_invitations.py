@@ -15,7 +15,7 @@ through pairing; when it expired, nothing said so. Now (spec
   BROWSER, behind a fresh passkey step-up. A token cannot (403), so neither
   `up.sh` nor the box can approve its own invitation.
 
-A box of isolation units (spec 2026-10-19-runner-isolation-units §2) is invited
+A box of isolation units (`docs/architecture/runners.md § Isolation units`) is invited
 with `units`, and its one approval pairs every unit: `pair-by-role` with `units`
 is `unit_pairing.pair_units`.
 
@@ -34,6 +34,7 @@ from django.utils import timezone
 from ninja import Router, Status
 from ninja.errors import HttpError
 
+from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_AUTH, ProblemError
 from apps.events import activity
@@ -46,8 +47,14 @@ from . import aws_iam_proof, device_key_notify, device_keys, unit_pairing
 from .api_device_keys import ECDH_STORES
 from .models import Runner, RunnerDeviceKey, RunnerInvitation
 from .runners import set_runner_machine
-from .schemas import (RunnerInvitationCheckOut, RunnerInvitationIn, RunnerInvitationOut,
-                      RunnerInvitationUnitOut, RunnerPairByRoleIn, RunnerPairByRoleOut)
+from .schemas import (
+    RunnerInvitationCheckOut,
+    RunnerInvitationIn,
+    RunnerInvitationOut,
+    RunnerInvitationUnitOut,
+    RunnerPairByRoleIn,
+    RunnerPairByRoleOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +96,6 @@ def _invited_units(request: HttpRequest, payload: RunnerInvitationIn) -> list[di
     pairs as one runner."""
     if not payload.units:
         return []
-    from apps.agents.models import Agent
 
     out: list[dict] = []
     seen: set[str] = set()

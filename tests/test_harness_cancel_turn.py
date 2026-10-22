@@ -84,7 +84,7 @@ def test_cancel_is_idempotent(cli, canopy):
 
 def test_a_cancelled_turn_is_not_claimable(cli, canopy, jj):
     """The point of cancel: the turn must never be picked up after."""
-    from apps.harness import services
+    from apps.harness import claim
     from django.utils import timezone
 
     turn = Turn.objects.create(
@@ -96,7 +96,7 @@ def test_a_cancelled_turn_is_not_claimable(cli, canopy, jj):
         name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={"projects": ["canopy-web"]},
     )
-    assert services.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
 
 def test_cannot_cancel_another_tenants_turn(client, canopy, jj):
@@ -160,7 +160,7 @@ def test_sweep_finishes_cancel_requested_as_cancelled(canopy):
 
     from django.utils import timezone
 
-    from apps.harness import services
+    from apps.harness import ledger, claim
 
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
@@ -172,8 +172,8 @@ def test_sweep_finishes_cancel_requested_as_cancelled(canopy):
         lease_expires_at=timezone.now() - dt.timedelta(minutes=1),
     )
 
-    services.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
-    services.sweep_expired_leases()
+    ledger.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+    claim.sweep_expired_leases()
 
     turn.refresh_from_db()
     assert turn.status == Turn.CANCELLED
@@ -190,6 +190,7 @@ def test_a_turn_that_completed_despite_a_cancel_stays_done_and_says_so(canopy, j
     from django.utils import timezone
 
     from apps.harness import services
+    from apps.harness import ledger
 
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
@@ -200,7 +201,7 @@ def test_a_turn_that_completed_despite_a_cancel_stays_done_and_says_so(canopy, j
         agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-i2-1",
         status=Turn.RUNNING, claimed_by=runner,
     )
-    services.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+    ledger.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
 
     out = services.finish_turn(turn, status=Turn.DONE, result_note="all done")
 
@@ -222,6 +223,7 @@ def test_a_completed_scheduled_turn_discharges_its_nag_even_after_a_cancel(canop
     from django.utils import timezone
 
     from apps.harness import services
+    from apps.harness import ledger, schedule_turns
 
     agent = Agent.objects.create(slug="echo-nag", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
@@ -232,10 +234,10 @@ def test_a_completed_scheduled_turn_discharges_its_nag_even_after_a_cancel(canop
         agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-i2-nag",
         status=Turn.RUNNING, claimed_by=runner, origin_ref={"schedule_id": "sched-1"},
     )
-    services.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+    ledger.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
 
     discharged = []
-    monkeypatch.setattr(services, "resolve_schedule_nags", discharged.append)
+    monkeypatch.setattr(schedule_turns, "resolve_schedule_nags", discharged.append)
 
     out = services.finish_turn(turn, status=Turn.DONE, result_note="done")
 
@@ -253,6 +255,7 @@ def test_a_drill_whose_stop_was_ignored_still_resolves(canopy, jj):
     from django.utils import timezone
 
     from apps.harness import services
+    from apps.harness import ledger, drills
     from apps.harness.models import RunnerDrill
 
     agent = Agent.objects.create(slug="echo-drill-ignored", name="Echo", workspace=canopy)
@@ -260,11 +263,11 @@ def test_a_drill_whose_stop_was_ignored_still_resolves(canopy, jj):
         name="jj-mbp3", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
-    [drill] = services.start_drill(runner, [agent])
+    [drill] = drills.start_drill(runner, [agent])
     turn = drill.turn
     Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING, claimed_by=runner)
     turn.refresh_from_db()
-    services.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+    ledger.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
 
     out = services.finish_turn(turn, status=Turn.DONE, result_note="done")
 
@@ -337,7 +340,7 @@ def test_sweep_finishes_cancel_requested_drill_as_cancelled_not_stranded(canopy,
 
     from django.utils import timezone
 
-    from apps.harness import services
+    from apps.harness import ledger, claim, drills
     from apps.harness.models import RunnerDrill
 
     agent = Agent.objects.create(slug="echo-drill-sweep", name="Echo", workspace=canopy)
@@ -345,15 +348,15 @@ def test_sweep_finishes_cancel_requested_drill_as_cancelled_not_stranded(canopy,
         name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
-    [drill] = services.start_drill(runner, [agent])
+    [drill] = drills.start_drill(runner, [agent])
     turn = drill.turn
     Turn.objects.filter(pk=turn.pk).update(
         status=Turn.CLAIMED, claimed_by=runner,
         lease_expires_at=timezone.now() - dt.timedelta(minutes=1),
     )
-    services.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+    ledger.append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
 
-    swept = services.sweep_expired_leases()
+    swept = claim.sweep_expired_leases()
 
     assert swept == 1
     turn.refresh_from_db()
@@ -371,6 +374,7 @@ def test_cancel_queued_drill_turn_resolves_runner_drill(canopy, jj):
     from django.utils import timezone
 
     from apps.harness import services
+    from apps.harness import drills
     from apps.harness.models import RunnerDrill
 
     agent = Agent.objects.create(slug="echo-drill", name="Echo", workspace=canopy)
@@ -378,7 +382,7 @@ def test_cancel_queued_drill_turn_resolves_runner_drill(canopy, jj):
         name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
-    [drill] = services.start_drill(runner, [agent])
+    [drill] = drills.start_drill(runner, [agent])
     turn = drill.turn
     assert turn.status == Turn.QUEUED
 

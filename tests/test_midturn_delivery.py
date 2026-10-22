@@ -23,6 +23,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.harness import initiator as _initiator
 from apps.harness import services as harness
+from apps.harness import claim, routing
 from apps.harness import turn_status as ts
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -54,7 +55,7 @@ def _send(session, key, prompt):
 
 def _running(session, runner):
     first = _send(session, "k1", "make the slide")
-    assert harness.claim_next_turn(runner) == first
+    assert claim.claim_next_turn(runner) == first
     return first
 
 
@@ -64,10 +65,10 @@ def test_a_follow_up_is_claimed_into_the_running_turn():
     follow_up = _send(session, "k2", "skip the PR checks")
 
     # Not "queued behind": the runner holding the turn takes it on its next tick.
-    assert harness.blocking_turn(follow_up) is None
+    assert routing.blocking_turn(follow_up) is None
     assert ts.resolve(follow_up).state == ts.PICKING_UP
 
-    claimed = harness.claim_next_turn(runner)
+    claimed = claim.claim_next_turn(runner)
     assert claimed == follow_up
     assert claimed.rides_turn_id == first.pk
     first.refresh_from_db()
@@ -83,7 +84,7 @@ def test_the_claimed_turn_tells_the_runner_what_it_rides():
     _user, _ws, _agent, session, runner = _ctx()
     first = _running(session, runner)
     _send(session, "k2", "and the other deck")
-    out = issue_credentials(harness.claim_next_turn(runner))
+    out = issue_credentials(claim.claim_next_turn(runner))
     rides = out["rides_turn_id"] if isinstance(out, dict) else out.rides_turn_id
     assert str(rides) == str(first.pk)
 
@@ -93,9 +94,9 @@ def test_a_runner_that_does_not_report_midturn_still_queues_it():
     _user, _ws, _agent, session, runner = _ctx(midturn=False)
     first = _running(session, runner)
     follow_up = _send(session, "k2", "skip the PR checks")
-    assert harness.blocking_turn(follow_up) == first
+    assert routing.blocking_turn(follow_up) == first
     assert ts.resolve(follow_up).state == ts.QUEUED_BEHIND
-    assert harness.claim_next_turn(runner) is None
+    assert claim.claim_next_turn(runner) is None
 
 
 def test_a_confined_follow_up_never_rides_into_the_owners_session():
@@ -106,8 +107,8 @@ def test_a_confined_follow_up_never_rides_into_the_owners_session():
     follow_up = _send(session, "k2", "what is this?")
     Turn.objects.filter(pk=follow_up.pk).update(capability="ask")
     follow_up.refresh_from_db()
-    assert not harness.may_ride(follow_up, Turn.objects.get(pk=first.pk))
-    assert harness.claim_next_turn(runner) is None
+    assert not routing.may_ride(follow_up, Turn.objects.get(pk=first.pk))
+    assert claim.claim_next_turn(runner) is None
 
 
 def test_another_runner_cannot_ride_a_turn_it_does_not_hold():
@@ -119,14 +120,14 @@ def test_another_runner_cannot_ride_a_turn_it_does_not_hold():
         capabilities={"sessions": True, "midturn": 1})
     RunnerAssignment.objects.create(agent=agent, runner=other, rank=1)
     _send(session, "k2", "skip the PR checks")
-    assert harness.claim_next_turn(other) is None
+    assert claim.claim_next_turn(other) is None
 
 
 def test_riders_finish_with_the_turn_they_rode():
     _user, _ws, _agent, session, runner = _ctx()
     first = _running(session, runner)
     _send(session, "k2", "skip the PR checks")
-    rider = harness.claim_next_turn(runner)
+    rider = claim.claim_next_turn(runner)
 
     harness.finish_turn(first, status=Turn.DONE, result_note="chat reply bridged")
     rider.refresh_from_db()
@@ -140,7 +141,7 @@ def test_a_rider_is_not_requeued_when_its_turn_fails_sessionless():
     _user, _ws, _agent, session, runner = _ctx()
     first = _running(session, runner)
     _send(session, "k2", "skip the PR checks")
-    rider = harness.claim_next_turn(runner)
+    rider = claim.claim_next_turn(runner)
     harness.finish_turn(first, status=Turn.FAILED, result_note="cdp down")
     first.refresh_from_db()
     rider.refresh_from_db()
@@ -154,7 +155,7 @@ def test_stopping_a_rider_stops_the_turn_it_rode(monkeypatch):
     _user, _ws, _agent, session, runner = _ctx()
     first = _running(session, runner)
     _send(session, "k2", "skip the PR checks")
-    rider = harness.claim_next_turn(runner)
+    rider = claim.claim_next_turn(runner)
 
     harness.cancel_turn(rider)
     assert first.events.filter(kind="cancel_requested").exists()
@@ -165,7 +166,7 @@ def test_a_rider_lease_is_renewed_with_its_turn():
     _user, _ws, _agent, session, runner = _ctx()
     first = _running(session, runner)
     _send(session, "k2", "skip the PR checks")
-    rider = harness.claim_next_turn(runner)
+    rider = claim.claim_next_turn(runner)
     past = timezone.now() - _dt.timedelta(seconds=5)
     Turn.objects.filter(pk__in=[first.pk, rider.pk]).update(lease_expires_at=past)
 
@@ -178,10 +179,10 @@ def test_midturn_is_reported_on_the_heartbeat_not_declared():
     _user, _ws, _agent, _session, runner = _ctx(midturn=False)
     harness.heartbeat(runner, active_turn_ids=[], midturn=1)
     runner.refresh_from_db()
-    assert harness.delivers_midturn(runner)
+    assert routing.delivers_midturn(runner)
     harness.heartbeat(runner, active_turn_ids=[])          # older code: absent = 0
     runner.refresh_from_db()
-    assert not harness.delivers_midturn(runner)
+    assert not routing.delivers_midturn(runner)
 
 
 def test_a_follow_up_waits_while_a_dialog_is_up():
@@ -196,12 +197,12 @@ def test_a_follow_up_waits_while_a_dialog_is_up():
     binding, _ = RunnerBinding.objects.get_or_create(session=session, defaults={"runner": runner})
     binding.pending_question = {"question": "Proceed?", "options": [{"label": "Yes"}]}
     binding.save(update_fields=["pending_question"])
-    assert harness.blocking_turn(follow_up) == first
-    assert harness.claim_next_turn(runner) is None
+    assert routing.blocking_turn(follow_up) == first
+    assert claim.claim_next_turn(runner) is None
 
     binding.pending_question = {"question": "Claude needs your attention", "options": []}
     binding.save(update_fields=["pending_question"])
-    assert harness.claim_next_turn(runner) == follow_up
+    assert claim.claim_next_turn(runner) == follow_up
 
 
 def test_a_follow_up_that_cannot_be_typed_mid_turn_waits_for_the_turn_instead():
@@ -212,7 +213,7 @@ def test_a_follow_up_that_cannot_be_typed_mid_turn_waits_for_the_turn_instead():
     _user, _ws, _agent, session, runner = _ctx()
     first = _running(session, runner)
     _send(session, "k2", "skip the PR checks")
-    rider = harness.claim_next_turn(runner)
+    rider = claim.claim_next_turn(runner)
     attempts = rider.attempts
 
     harness.finish_turn(rider, status=Turn.FAILED,
@@ -220,15 +221,15 @@ def test_a_follow_up_that_cannot_be_typed_mid_turn_waits_for_the_turn_instead():
     rider.refresh_from_db()
     assert rider.status == Turn.QUEUED
     assert rider.rides_turn_id is None and rider.attempts == attempts
-    assert rider.origin_ref.get(harness.MIDTURN_FAILED) is True
+    assert rider.origin_ref.get(routing.MIDTURN_FAILED) is True
 
     # It does not ride again — it waits, and says so.
-    assert harness.claim_next_turn(runner) is None
-    assert harness.blocking_turn(rider) == first
+    assert claim.claim_next_turn(runner) is None
+    assert routing.blocking_turn(rider) == first
     assert ts.resolve(rider).state == ts.QUEUED_BEHIND
 
     harness.finish_turn(first, status=Turn.DONE)
-    again = harness.claim_next_turn(runner)
+    again = claim.claim_next_turn(runner)
     assert again == rider and again.rides_turn_id is None
 
 
@@ -238,7 +239,7 @@ def test_a_rider_whose_keystrokes_went_out_is_never_requeued():
     _user, _ws, _agent, session, runner = _ctx()
     _running(session, runner)
     _send(session, "k2", "skip the PR checks")
-    rider = harness.claim_next_turn(runner)
+    rider = claim.claim_next_turn(runner)
     Turn.objects.filter(pk=rider.pk).update(session_key="ace-chat-1")
     rider.refresh_from_db()
     harness.finish_turn(rider, status=Turn.FAILED, result_note="couldn't confirm delivery")

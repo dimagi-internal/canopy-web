@@ -10,6 +10,8 @@ from canopy_sdk import contract
 from ninja import Schema
 from pydantic import Field, WithJsonSchema, field_validator, model_validator
 
+from .models import Runner, Turn
+
 # Kept in lockstep with Turn.ORIGIN_CHOICES / Turn.ROUTING_CHOICES (models.py).
 # These are the values the DB columns accept (origin max_length=32, routing
 # max_length=15); typing the INPUT schemas as Literals turns an out-of-set value
@@ -49,8 +51,6 @@ def normalize_origin(value: str) -> str:
     parses stored Item JSON with no schema in the path, so a request-boundary-only
     rule would miss every Item raised before this shipped.
     """
-    from apps.harness.models import Turn
-
     return Turn.LEGACY_ORIGIN_ALIASES.get(value, value)
 
 
@@ -296,7 +296,7 @@ class RunnerOut(Schema):
         # 2026-10-03). So it is answered here, from the rows, on every read.
         from apps.agents import delegations
 
-        from .services import agents_routed_to
+        from .routing import agents_routed_to
 
         checks = {n: c for n, c in checks.items() if n != "github" and not n.startswith("github.")}
         for agent in agents_routed_to(obj):
@@ -339,7 +339,6 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_expected_code_committed_at(obj) -> int:
         from django.conf import settings
-        from .models import Runner
 
         setting = (
             "RUNNER_CLOUD_CODE_COMMITTED_AT" if obj.kind == Runner.CLOUD

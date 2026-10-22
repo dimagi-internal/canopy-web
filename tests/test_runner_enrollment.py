@@ -16,7 +16,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.canopy_sessions.models import Session
-from apps.harness import services
+from apps.harness import runners, routing, claim
 from apps.harness.models import Runner, RunnerAdmin, RunnerEnrollment, Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -82,8 +82,8 @@ def family():
 # --- claiming -----------------------------------------------------------------
 def test_a_new_box_serves_only_its_pairing_workspace(family):
     box = _box(family["jj"], family["dimagi"])
-    assert services.enrolled_slugs(box) == {"dimagi"}
-    assert services.runner_tenant_slugs(box) == {"dimagi"}
+    assert routing.enrolled_slugs(box) == {"dimagi"}
+    assert routing.runner_tenant_slugs(box) == {"dimagi"}
 
 
 def test_an_unenrolled_workspace_is_not_claimable_even_for_its_owner(family):
@@ -92,19 +92,19 @@ def test_an_unenrolled_workspace_is_not_claimable_even_for_its_owner(family):
     _repo_turn(marshellis, "family-repo")
     _chat_turn(marshellis, jj, "family-chat")
 
-    assert services.claim_next_turn(box) is None
+    assert claim.claim_next_turn(box) is None
 
     mine = _repo_turn(dimagi, "dimagi-repo")
-    assert services.claim_next_turn(box).pk == mine.pk
+    assert claim.claim_next_turn(box).pk == mine.pk
 
 
 def test_a_family_box_does_not_claim_dimagi_work(family):
     jj, dimagi, marshellis = family["jj"], family["dimagi"], family["marshellis"]
     family_box = _box(jj, marshellis, name="family-mini")
     _repo_turn(dimagi, "dimagi-repo")
-    assert services.claim_next_turn(family_box) is None
+    assert claim.claim_next_turn(family_box) is None
     t = _chat_turn(marshellis, jj, "family-chat")
-    assert services.claim_next_turn(family_box).pk == t.pk
+    assert claim.claim_next_turn(family_box).pk == t.pk
 
 
 def test_enrolled_but_owner_demoted_below_editor_is_not_claimable(family):
@@ -114,17 +114,17 @@ def test_enrolled_but_owner_demoted_below_editor_is_not_claimable(family):
     _member(team, boss, OWNER)
     m = _member(team, jj, EDITOR)
     box = _box(jj, family["dimagi"])
-    services.enroll_runner(box, "team")
+    runners.enroll_runner(box, "team")
     _repo_turn(team, "team-repo")
 
     m.role = VIEWER
     m.save()
-    assert services.claim_next_turn(box) is None
-    assert "team" in services.enrolled_slugs(box)  # kept, but serving nothing
+    assert claim.claim_next_turn(box) is None
+    assert "team" in routing.enrolled_slugs(box)  # kept, but serving nothing
 
     m.role = EDITOR
     m.save()
-    assert services.claim_next_turn(box) is not None
+    assert claim.claim_next_turn(box) is not None
 
 
 def test_joining_a_workspace_does_not_enroll_existing_boxes(family):
@@ -134,8 +134,8 @@ def test_joining_a_workspace_does_not_enroll_existing_boxes(family):
     later = _ws("later", boss)
     wsvc.ensure_member(later, jj, EDITOR)
     _repo_turn(later, "later-repo")
-    assert "later" not in services.enrolled_slugs(box)
-    assert services.claim_next_turn(box) is None
+    assert "later" not in routing.enrolled_slugs(box)
+    assert claim.claim_next_turn(box) is None
 
 
 def test_leaving_a_workspace_drops_the_enrollment(family):
@@ -145,7 +145,7 @@ def test_leaving_a_workspace_drops_the_enrollment(family):
     _member(team, boss, OWNER)
     _member(team, jj, EDITOR)
     box = _box(jj, family["dimagi"])
-    services.enroll_runner(box, "team")
+    runners.enroll_runner(box, "team")
 
     wsvc.remove_member(workspace=team, user_id=jj.pk, by=boss)
 
@@ -166,7 +166,7 @@ def test_owner_lists_adds_and_removes_enrollments(family):
 
     assert c.delete(f"{url}/marshellis").status_code == 204
     assert c.delete(f"{url}/marshellis").status_code == 404
-    assert services.enrolled_slugs(box) == {"dimagi"}
+    assert routing.enrolled_slugs(box) == {"dimagi"}
 
 
 def test_adding_requires_the_owner_be_an_editor_there(family):
@@ -183,7 +183,7 @@ def test_adding_requires_the_owner_be_an_editor_there(family):
     assert c.post(url, {"workspace": nowhere.slug},
                   content_type="application/json").status_code == 404
     assert c.post(url, {"workspace": "no-such"}, content_type="application/json").status_code == 404
-    assert services.enrolled_slugs(box) == {"dimagi"}
+    assert routing.enrolled_slugs(box) == {"dimagi"}
 
 
 def test_a_runner_admin_may_manage_enrollments_where_they_are_a_member(family):
@@ -194,7 +194,7 @@ def test_a_runner_admin_may_manage_enrollments_where_they_are_a_member(family):
     _member(team, jj, OWNER)
     _member(team, ada, EDITOR)
     box = _box(jj, dimagi)
-    services.enroll_runner(box, "marshellis")
+    runners.enroll_runner(box, "marshellis")
     RunnerAdmin.objects.create(runner=box, user=ada, granted_by=jj)
     c = _client(ada)
     url = f"/api/harness/runners/{box.pk}/workspaces"
@@ -207,7 +207,7 @@ def test_a_runner_admin_may_manage_enrollments_where_they_are_a_member(family):
                   content_type="application/json").status_code == 404
     assert c.delete(f"{url}/marshellis").status_code == 404
     assert c.delete(f"{url}/team").status_code == 204
-    assert services.enrolled_slugs(box) == {"dimagi", "marshellis"}
+    assert routing.enrolled_slugs(box) == {"dimagi", "marshellis"}
 
 
 def test_a_member_who_is_not_an_administrator_cannot_touch_enrollments(family):
@@ -221,7 +221,7 @@ def test_a_member_who_is_not_an_administrator_cannot_touch_enrollments(family):
     assert c.get(url).status_code == 404
     assert c.post(url, {"workspace": "dimagi"}, content_type="application/json").status_code == 404
     assert c.delete(f"{url}/dimagi").status_code == 404
-    assert services.enrolled_slugs(box) == {"dimagi"}
+    assert routing.enrolled_slugs(box) == {"dimagi"}
 
 
 def test_a_workspace_runner_order_refuses_an_unenrolled_box(family):
@@ -240,9 +240,9 @@ def test_a_division_created_after_enrolling_is_served(family):
     later = _ws("dimagi-later", jj, parent=dimagi)  # jj owns it by inheritance
     t = _repo_turn(later, "later-repo")
 
-    assert "dimagi-later" in services.runner_tenant_slugs(box)
-    assert services.enrolled_slugs(box) == {"dimagi"}  # no row was added
-    assert services.claim_next_turn(box).pk == t.pk
+    assert "dimagi-later" in routing.runner_tenant_slugs(box)
+    assert routing.enrolled_slugs(box) == {"dimagi"}  # no row was added
+    assert claim.claim_next_turn(box).pk == t.pk
 
 
 def test_a_sibling_root_is_never_covered(family):
@@ -252,8 +252,8 @@ def test_a_sibling_root_is_never_covered(family):
     _repo_turn(marshellis, "family-repo")
     _chat_turn(marshellis, jj, "family-chat")
 
-    assert services.runner_tenant_slugs(box) == {"dimagi"}
-    assert services.claim_next_turn(box) is None
+    assert routing.runner_tenant_slugs(box) == {"dimagi"}
+    assert claim.claim_next_turn(box) is None
 
 
 def test_coverage_still_needs_the_owner_to_be_an_editor_in_the_division():
@@ -264,19 +264,19 @@ def test_coverage_still_needs_the_owner_to_be_an_editor_in_the_division():
     box = _box(jj, org)
     division = _ws("division", boss, parent=org)
     _repo_turn(division, "division-repo")
-    assert services.claim_next_turn(box) is None
+    assert claim.claim_next_turn(box) is None
 
     _member(division, jj, EDITOR)
-    assert services.claim_next_turn(box) is not None
+    assert claim.claim_next_turn(box) is not None
 
 
 def test_removing_a_divisions_row_does_not_stop_coverage_from_above(family):
     jj, dimagi = family["jj"], family["dimagi"]
     box = _box(jj, dimagi)
     child = _ws("dimagi-child", jj, parent=dimagi)
-    services.enroll_runner(box, child.slug)
-    services.unenroll_runner(box, child.slug)
-    assert "dimagi-child" in services.runner_tenant_slugs(box)
+    runners.enroll_runner(box, child.slug)
+    runners.unenroll_runner(box, child.slug)
+    assert "dimagi-child" in routing.runner_tenant_slugs(box)
 
 
 def test_the_listing_says_what_each_enrollment_covers(family):
@@ -292,12 +292,12 @@ def test_the_listing_says_what_each_enrollment_covers(family):
 def test_cloud_runner_cannot_span_roots(family):
     jj = family["jj"]
     box = _box(jj, family["dimagi"], kind=Runner.CLOUD)
-    with pytest.raises(services.EnrollmentRefused, match="one workspace tree"):
-        services.enroll_runner(box, "marshellis")
+    with pytest.raises(runners.EnrollmentRefused, match="one workspace tree"):
+        runners.enroll_runner(box, "marshellis")
     resp = _client(jj).post(f"/api/harness/runners/{box.pk}/workspaces",
                             {"workspace": "marshellis"}, content_type="application/json")
     assert resp.status_code == 422 and "one workspace tree" in resp.json()["detail"]
-    assert services.enrolled_slugs(box) == {"dimagi"}
+    assert routing.enrolled_slugs(box) == {"dimagi"}
 
 
 def test_cloud_runner_may_enroll_a_division_of_its_root(family):
@@ -305,31 +305,31 @@ def test_cloud_runner_may_enroll_a_division_of_its_root(family):
     box = _box(jj, dimagi, kind=Runner.CLOUD)
     connect = _ws("connect", jj, parent=dimagi)
     deep = _ws("connect-labs", jj, parent=connect)
-    services.enroll_runner(box, connect.slug)
-    services.enroll_runner(box, deep.slug)
-    assert services.enrolled_slugs(box) == {"dimagi", "connect", "connect-labs"}
+    runners.enroll_runner(box, connect.slug)
+    runners.enroll_runner(box, deep.slug)
+    assert routing.enrolled_slugs(box) == {"dimagi", "connect", "connect-labs"}
     # Enrolled in a division only, the box's tree is that division's root.
     other = _box(jj, connect, name="cloud-connect", kind=Runner.CLOUD)
-    with pytest.raises(services.EnrollmentRefused):
-        services.enroll_runner(other, "marshellis")
-    services.enroll_runner(other, "dimagi")
+    with pytest.raises(runners.EnrollmentRefused):
+        runners.enroll_runner(other, "marshellis")
+    runners.enroll_runner(other, "dimagi")
 
 
 def test_laptop_may_span_roots(family):
     jj = family["jj"]
     laptop = _box(jj, family["dimagi"], kind=Runner.EMDASH)
-    services.enroll_runner(laptop, "marshellis")
-    assert services.enrolled_slugs(laptop) == {"dimagi", "marshellis"}
-    assert services.runner_tenant_slugs(laptop) == {"dimagi", "marshellis"}
+    runners.enroll_runner(laptop, "marshellis")
+    assert routing.enrolled_slugs(laptop) == {"dimagi", "marshellis"}
+    assert routing.runner_tenant_slugs(laptop) == {"dimagi", "marshellis"}
 
 
 def test_runner_out_reports_roots(family):
     jj, dimagi = family["jj"], family["dimagi"]
     laptop = _box(jj, dimagi, kind=Runner.EMDASH)
-    services.enroll_runner(laptop, "marshellis")
+    runners.enroll_runner(laptop, "marshellis")
     cloud = _box(jj, dimagi, name="cloud-ec2-2", kind=Runner.CLOUD)
     _ws("connect", jj, parent=dimagi)
-    services.enroll_runner(cloud, "connect")
+    runners.enroll_runner(cloud, "connect")
 
     rows = {r["name"]: r for r in _client(jj).get("/api/harness/runners/").json()}
     assert rows["jj-mbp"]["roots"] == ["dimagi", "marshellis"]
@@ -352,5 +352,5 @@ def test_re_enrolling_an_existing_enrollment_of_a_spanning_cloud_box_is_a_no_op(
     jj = family["jj"]
     box = _box(jj, family["dimagi"], kind=Runner.CLOUD)
     RunnerEnrollment.objects.create(runner=box, workspace=family["marshellis"])
-    assert services.enroll_runner(box, "marshellis").workspace_id == "marshellis"
-    assert services.enroll_runner(box, "dimagi").workspace_id == "dimagi"
+    assert runners.enroll_runner(box, "marshellis").workspace_id == "marshellis"
+    assert runners.enroll_runner(box, "dimagi").workspace_id == "dimagi"

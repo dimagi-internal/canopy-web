@@ -9,7 +9,7 @@ from django.contrib.auth.models import User
 from apps.agents.models import Agent
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import services as harness
+from apps.harness import ledger
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -59,7 +59,7 @@ def test_send_with_client_nonce_is_idempotent():
 def test_projection_materializes_assistant_events():
     user, _ws, _agent, session = _ctx()
     _msg, turn = chat.send_message(session=session, text="hello", user=user)
-    harness.append_events(turn, [{"kind": "assistant", "payload": {"text": "hi there"}}])
+    ledger.append_events(turn, [{"kind": "assistant", "payload": {"text": "hi there"}}])
     rows = list(session.messages.order_by("turn_index"))
     assert [m.role for m in rows] == ["user", "assistant"]
     assert rows[1].plaintext == "hi there"
@@ -69,7 +69,7 @@ def test_projection_materializes_assistant_events():
 def test_projection_maps_tool_events_and_is_idempotent():
     user, _ws, _agent, session = _ctx()
     _msg, turn = chat.send_message(session=session, text="do it", user=user)
-    harness.append_events(
+    ledger.append_events(
         turn,
         [
             {"kind": "tool_start", "payload": {"name": "grep"}},
@@ -89,7 +89,7 @@ def test_projection_maps_tool_events_and_is_idempotent():
 def test_status_events_are_not_transcript_rows():
     user, _ws, _agent, session = _ctx()
     _msg, turn = chat.send_message(session=session, text="hi", user=user)
-    harness.append_events(turn, [{"kind": "status", "payload": {"status": "running"}}])
+    ledger.append_events(turn, [{"kind": "status", "payload": {"status": "running"}}])
     # Only the user message exists; status is not a transcript row.
     assert [m.role for m in session.messages.all()] == ["user"]
 

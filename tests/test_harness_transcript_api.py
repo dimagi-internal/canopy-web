@@ -18,7 +18,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
-from apps.harness import ledger, services
+from apps.harness import ledger
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -324,7 +324,7 @@ def test_messages_is_cut_short_and_says_so(owner_client, agent):
     lines = [f'{{"type": "user", "message": {{"content": "q{i}"}}}}' for i in range(7)]
     _post_lines(owner_client, turn_id, lines)
     turn = Turn.objects.get(pk=turn_id)
-    messages, truncated = services.transcript_messages(turn, max_messages=3)
+    messages, truncated = ledger.transcript_messages(turn, max_messages=3)
     assert [m["plaintext"] for m in messages] == ["q0", "q1", "q2"]
     assert truncated is True
 

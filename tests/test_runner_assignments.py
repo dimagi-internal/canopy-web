@@ -52,7 +52,7 @@ def test_turn_pinned_runner_degrades_to_normal_routing_on_delete():
 
 
 def test_seed_assignments_from_capabilities():
-    from apps.harness.services import seed_assignments_from_capabilities
+    from apps.harness.routing import seed_assignments_from_capabilities
 
     echo = _agent("echo")
     echo.runner_preference = ["cloud", "emdash"]

@@ -58,7 +58,7 @@ def _parent_is_thread_message() -> bool:
     """Depth limit 1 (v1): the turn the caller is running inside — its
     X-Canopy-Parent-Turn header, or a caller token's turn — is a thread message."""
     raw = provenance.requested_parent().get("turn")
-    turn = provenance._turn(raw) if raw else None
+    turn = provenance.resolve_turn(raw) if raw else None
     ref = turn.origin_ref if turn is not None and isinstance(turn.origin_ref, dict) else {}
     return ref.get("kind") == services.MESSAGE_KIND
 

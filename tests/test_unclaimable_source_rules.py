@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -51,7 +51,7 @@ def fleet():
 
 def _age(turn):
     Turn.objects.filter(pk=turn.pk).update(
-        created_at=timezone.now() - services.UNCLAIMABLE_GRACE - dt.timedelta(seconds=30)
+        created_at=timezone.now() - claim.UNCLAIMABLE_GRACE - dt.timedelta(seconds=30)
     )
     return turn
 
@@ -77,7 +77,7 @@ def test_a_strict_rule_with_an_offline_runner_reads_offline_not_config(fleet):
     _offline(laptop)
     _stuck_turn(a, Turn.ORIGIN_EMAIL, "k-mail")
 
-    stuck = services.unclaimable_queued_turns(fleet["user"])
+    stuck = claim.unclaimable_queued_turns(fleet["user"])
 
     assert len(stuck) == 1
     # `offline` means "wait, or check the runner"; `config` means "this will never
@@ -97,8 +97,8 @@ def test_an_online_runner_excluded_by_a_strict_rule_does_not_mask_the_stall(flee
     _offline(laptop)
     _stuck_turn(a, Turn.ORIGIN_EMAIL, "k-mail")
 
-    assert services.claim_next_turn(cloud) is None          # claiming says no …
-    assert len(services.unclaimable_queued_turns(fleet["user"])) == 1   # … so must the warning
+    assert claim.claim_next_turn(cloud) is None          # claiming says no …
+    assert len(claim.unclaimable_queued_turns(fleet["user"])) == 1   # … so must the warning
 
 
 def test_a_turn_its_rule_can_run_is_not_reported(fleet):
@@ -109,7 +109,7 @@ def test_a_turn_its_rule_can_run_is_not_reported(fleet):
     )
     _stuck_turn(a, Turn.ORIGIN_EMAIL, "k-mail")
 
-    assert services.unclaimable_queued_turns(fleet["user"]) == []
+    assert claim.unclaimable_queued_turns(fleet["user"]) == []
 
 
 def test_a_bound_session_turn_is_not_reported_when_its_holder_is_not_assigned(fleet):
@@ -134,8 +134,8 @@ def test_a_bound_session_turn_is_not_reported_when_its_holder_is_not_assigned(fl
         idempotency_key="c1", routing=Turn.ANY,
     ))
 
-    assert services.claim_next_turn(cloud) is not None       # claiming takes it …
-    assert services.unclaimable_queued_turns(fleet["user"]) == []  # … so the warning is silent
+    assert claim.claim_next_turn(cloud) is not None       # claiming takes it …
+    assert claim.unclaimable_queued_turns(fleet["user"]) == []  # … so the warning is silent
 
 
 def test_an_unbound_session_turn_still_follows_its_agents_rules(fleet):
@@ -157,5 +157,5 @@ def test_an_unbound_session_turn_still_follows_its_agents_rules(fleet):
     ))
 
     cloud.refresh_from_db()
-    assert services.claim_next_turn(cloud) is None
-    assert len(services.unclaimable_queued_turns(fleet["user"])) == 1
+    assert claim.claim_next_turn(cloud) is None
+    assert len(claim.unclaimable_queued_turns(fleet["user"])) == 1

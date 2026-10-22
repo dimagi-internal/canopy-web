@@ -943,14 +943,14 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
     button, whose identity is a weaker principal than a browser session.
     """
     from apps.canopy_sessions import services as session_services
-    from apps.harness import services as harness
+    from apps.harness import runners
 
     from . import status
 
     runner = session_services.available_cloud_runner(session, user=user)
     if runner is None:
         return Outcome(NO_CLOUD, "No cloud runner is online to take this right now.", session=session)
-    if not harness.can_administer_runner(user, runner):
+    if not runners.can_administer_runner(user, runner):
         return Outcome(FORBIDDEN, (
             f"Only an admin of *{runner.name}* can send work to it. Its owner can add you "
             "from the runner's page in canopy."), session=session)
@@ -992,20 +992,20 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
     A turn on a runner
     that is still there is left alone, and the move then refuses as before.
     """
-    from apps.harness import services as harness
+    from apps.harness import routing
     from apps.harness.closing import close_turn
 
     from . import status
 
     closed: list[Turn] = []
     for turn in (Turn.objects.select_related("claimed_by")
-                 .filter(chat_session=session, status__in=list(harness.EXECUTING))):
+                 .filter(chat_session=session, status__in=list(routing.EXECUTING))):
         if not status.runner_gone(turn):
             continue
         # What the lease sweep would do, minus the debugger: the words are asked
         # again below on a live box, so there is no failure to investigate.
         # Riders are left to the loop (each is a turn of this session too).
-        if close_turn(turn, Turn.LOST, from_states=harness.EXECUTING,
+        if close_turn(turn, Turn.LOST, from_states=routing.EXECUTING,
                       event={"reason": "runner_offline_moved"}, riders=False,
                       drill_summary="runner lost the turn (moved off an offline runner)",
                       auto_debug=False):
@@ -1052,7 +1052,7 @@ def route_mine_to_cloud(installation: SlackInstallation, slack_user_id: str) -> 
     """`/canopy cloud` — "anything of mine stuck behind an offline runner, run
     it on the cloud". Only the caller's own queued conversation turns, only the
     ones no live runner is about to take, and only onto a box they administer."""
-    from apps.harness import services as harness
+    from apps.harness import claim
 
     user, _assurance, _info = slack_user(installation, slack_user_id)
     mine = [ws for ws in installation.workspace_ids() if user is not None and wsvc.is_member(user, ws)]
@@ -1064,7 +1064,7 @@ def route_mine_to_cloud(installation: SlackInstallation, slack_user_id: str) -> 
               .select_related("chat_session").order_by("created_at"))
     stuck: dict = {}
     for turn in queued:
-        if turn.chat_session_id not in stuck and harness.turn_reach(turn).kind != harness.LIVE:
+        if turn.chat_session_id not in stuck and claim.turn_reach(turn).kind != claim.LIVE:
             stuck[turn.chat_session_id] = turn.chat_session
     if not stuck:
         return Outcome(NOTHING_QUEUED, "Nothing of yours is waiting on an offline runner.")

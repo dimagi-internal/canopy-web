@@ -17,7 +17,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import schedule_services as ss
-from apps.harness import services
+from apps.harness import schedule_turns
 from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
@@ -104,7 +104,7 @@ def test_firing_disables_it_so_it_drops_out_of_every_runner_sync(owner, agent):
     when = _next_week_9am_denver()
     s = _one_off(owner, when)
 
-    turn, created = services.fire_schedule(s, when)
+    turn, created = schedule_turns.fire_schedule(s, when)
 
     assert created and turn.status == Turn.QUEUED
     s.refresh_from_db()
@@ -116,8 +116,8 @@ def test_any_other_slot_is_refused(owner, agent):
     when = _next_week_9am_denver()
     s = _one_off(owner, when)
 
-    with pytest.raises(services.OneOffSlotMismatch):
-        services.fire_schedule(s, when.replace(year=when.year + 1))
+    with pytest.raises(schedule_turns.OneOffSlotMismatch):
+        schedule_turns.fire_schedule(s, when.replace(year=when.year + 1))
     assert not Turn.objects.filter(origin_ref__schedule_id=s.id).exists()
 
 
@@ -126,9 +126,9 @@ def test_a_late_one_off_still_runs(owner, agent):
     next one, so skipping would silently drop it."""
     when = _next_week_9am_denver()
     s = _one_off(owner, when)
-    turn, _ = services.fire_schedule(s, when)
+    turn, _ = schedule_turns.fire_schedule(s, when)
 
-    assert services.skip_late_scheduled_turns(now=when + dt.timedelta(hours=6)) == 0
+    assert schedule_turns.skip_late_scheduled_turns(now=when + dt.timedelta(hours=6)) == 0
     turn.refresh_from_db()
     assert turn.status == Turn.QUEUED
 
@@ -136,7 +136,7 @@ def test_a_late_one_off_still_runs(owner, agent):
 def test_re_arming_a_fired_one_off_enables_it_again(owner, agent):
     when = _next_week_9am_denver()
     s = _one_off(owner, when)
-    services.fire_schedule(s, when)
+    schedule_turns.fire_schedule(s, when)
 
     later = when + dt.timedelta(days=1)
     s = ss.update_schedule(owner, "ace", s.id, {"run_once_at": later})

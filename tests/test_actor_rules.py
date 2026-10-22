@@ -18,7 +18,7 @@ import pytest
 from django.db import IntegrityError
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import routing
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.testing import a_workspace
 
@@ -37,9 +37,9 @@ def _runner(name, kind=Runner.EMDASH):
 
 
 def _rows(agent, origin, actor=""):
-    defaults, priorities = services.load_assignment_rows([agent.id])
+    defaults, priorities = routing.load_assignment_rows([agent.id])
     return [
-        r for _rank, r in services.assignment_rows_for(agent.id, origin, actor, defaults, priorities)
+        r for _rank, r in routing.assignment_rows_for(agent.id, origin, actor, defaults, priorities)
     ]
 
 
@@ -150,9 +150,9 @@ def test_ranks_are_renumbered_from_zero_so_the_cascade_can_compare_them():
     a, mine, spare = _agent(), _runner("acedimagi-mbp"), _runner("spare")
     RunnerAssignment.objects.create(agent=a, runner=spare, rank=0)
     _rule(a, Turn.ORIGIN_EMAIL, JON, [mine])
-    defaults, priorities = services.load_assignment_rows([a.id])
+    defaults, priorities = routing.load_assignment_rows([a.id])
     assert [rank for rank, _r in
-            services.assignment_rows_for(a.id, Turn.ORIGIN_EMAIL, JON, defaults, priorities)] == [0, 1]
+            routing.assignment_rows_for(a.id, Turn.ORIGIN_EMAIL, JON, defaults, priorities)] == [0, 1]
 
 
 # --- enabled ------------------------------------------------------------------

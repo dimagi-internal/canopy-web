@@ -16,7 +16,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentCredential
-from apps.harness import services
+from apps.harness import claim
 from apps.harness.models import PrivateRunner, Runner, Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces import role_cap
@@ -106,7 +106,7 @@ def test_a_private_runner_takes_no_routed_fleet_work(world):
     _make_private(_pat(jj), box)
     _dispatch(_pat(world["other"]), key="k2")
     box.refresh_from_db()
-    assert services.claim_next_turn(box) is None
+    assert claim.claim_next_turn(box) is None
 
 
 # --- the cap --------------------------------------------------------------------
@@ -129,7 +129,7 @@ def test_a_turn_started_as_an_editor_runs_as_one(world):
     jj, box = world["jj"], world["box"]
     res = _dispatch(_pat(jj), box, acts_as="editor")
     assert res.status_code == 201, res.content
-    claimed = services.claim_next_turn(box)
+    claimed = claim.claim_next_turn(box)
     assert claimed.origin_ref["acts_as"] == "editor"
     assert claimed.turn_mode == "manual"  # auto is an agent admin's
     from apps.harness import caller_context
@@ -137,7 +137,7 @@ def test_a_turn_started_as_an_editor_runs_as_one(world):
     # The cap is the turn's: the same person's next turn acts as themselves.
     Turn.objects.filter(pk=claimed.pk).update(status=Turn.DONE)
     _dispatch(_pat(jj), box, key="k-plain")
-    plain = services.claim_next_turn(box)
+    plain = claim.claim_next_turn(box)
     assert "acts_as" not in plain.origin_ref
 
 
@@ -164,7 +164,7 @@ def test_its_reads_on_the_owners_private_runner_go_out_under_the_license(world):
     _make_private(_pat(jj), box)
     _dispatch(_pat(jj), box, acts_as="editor")
     box.refresh_from_db()
-    turn = services.claim_next_turn(box)
+    turn = claim.claim_next_turn(box)
     as_box = Client(HTTP_AUTHORIZATION=f"Bearer {_box_token(box)}")
     access = as_box.get("/api/agents/hal/credentials/access", HTTP_X_CANOPY_TURN_ID=str(turn.pk)).json()
     assert access["via"] != "admin"
@@ -185,12 +185,12 @@ def test_a_request_in_a_lower_mode_is_judged_at_it(world):
 def test_a_runner_claiming_in_a_lower_mode_runs_its_owners_turns_in_it(world):
     jj, box = world["jj"], world["box"]
     _dispatch(_pat(jj), box)
-    turn = services.claim_next_turn(box, acts_as="editor")
+    turn = claim.claim_next_turn(box, acts_as="editor")
     assert turn.origin_ref["acts_as"] == "editor" and turn.turn_mode == "manual"
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
     # Never loosens a cap the turn was started with.
     _dispatch(_pat(jj), box, key="k-capped", acts_as="editor")
-    t2 = services.claim_next_turn(box, acts_as="editor")
+    t2 = claim.claim_next_turn(box, acts_as="editor")
     assert t2.origin_ref["acts_as"] == "editor"
 
 
@@ -201,7 +201,7 @@ def test_a_runners_mode_never_reaches_someone_elses_turn(world):
     RunnerAdmin.objects.create(runner=box, user=world["other"])
     res = _dispatch(_pat(world["other"]), box, key="k-other")
     assert res.status_code == 201, res.content
-    turn = services.claim_next_turn(box, acts_as="viewer")
+    turn = claim.claim_next_turn(box, acts_as="viewer")
     assert "acts_as" not in turn.origin_ref
 
 

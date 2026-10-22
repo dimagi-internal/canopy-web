@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness import services
+from apps.harness import claim, routing
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -79,8 +80,8 @@ def test_ace_web_work_runs_on_the_cloud_runner(fleet):
     )
     assert res.status_code == 201, res.content
 
-    assert services.claim_next_turn(fleet["laptop"]) is None
-    claimed = services.claim_next_turn(fleet["cloud"])
+    assert claim.claim_next_turn(fleet["laptop"]) is None
+    claimed = claim.claim_next_turn(fleet["cloud"])
     assert claimed is not None and claimed.agent_id == fleet["ace"].id
 
 
@@ -94,8 +95,8 @@ def test_email_work_stays_on_the_laptop(fleet):
         prompt="/echo:turn --thread t1",
     )
 
-    assert services.claim_next_turn(fleet["cloud"]) is None
-    assert services.claim_next_turn(fleet["laptop"]) is not None
+    assert claim.claim_next_turn(fleet["cloud"]) is None
+    assert claim.claim_next_turn(fleet["laptop"]) is not None
 
 
 def test_scheduled_work_prefers_the_cloud_but_still_degrades(fleet):
@@ -107,8 +108,8 @@ def test_scheduled_work_prefers_the_cloud_but_still_degrades(fleet):
         prompt="/echo:turn",
     )
 
-    assert services.claim_next_turn(fleet["laptop"]) is None   # cloud is up, it goes first
-    assert services.claim_next_turn(fleet["cloud"]) is not None
+    assert claim.claim_next_turn(fleet["laptop"]) is None   # cloud is up, it goes first
+    assert claim.claim_next_turn(fleet["cloud"]) is not None
 
 
 def test_a_fall_through_rule_degrades_to_the_laptop_when_the_cloud_is_down(fleet):
@@ -119,7 +120,7 @@ def test_a_fall_through_rule_degrades_to_the_laptop_when_the_cloud_is_down(fleet
     )
     _queue(fleet["echo"], Turn.ORIGIN_CANOPY_SCHEDULER, "sched:1:0700", prompt="/echo:turn")
 
-    assert services.claim_next_turn(fleet["laptop"]) is not None
+    assert claim.claim_next_turn(fleet["laptop"]) is not None
 
 
 def test_the_three_rules_coexist_on_one_fleet(fleet):
@@ -136,8 +137,8 @@ def test_the_three_rules_coexist_on_one_fleet(fleet):
     _queue(fleet["echo"], Turn.ORIGIN_EMAIL, "m1")
     _queue(fleet["ace"], Turn.ORIGIN_ACE_WEB, "a1")
 
-    first = services.claim_next_turn(fleet["laptop"])
-    second = services.claim_next_turn(fleet["cloud"])
+    first = claim.claim_next_turn(fleet["laptop"])
+    second = claim.claim_next_turn(fleet["cloud"])
 
     assert first is not None and first.origin == Turn.ORIGIN_EMAIL
     assert second is not None and second.origin == Turn.ORIGIN_ACE_WEB
@@ -178,13 +179,13 @@ def test_one_persons_mail_goes_to_cloud_while_everyone_elses_stays_local(fleet):
     # The laptop outranks cloud in the default order and Sarvesh's turn is the
     # OLDER of the two — yet the laptop skips straight past it to the operator's
     # own mail, because the strict rule removes the laptop from Sarvesh's list.
-    assert services.claim_next_turn(fleet["laptop"]).id == mine.id
+    assert claim.claim_next_turn(fleet["laptop"]).id == mine.id
 
     # `one_executing_turn_per_agent` now holds ace's slot, so free it before
     # asking who takes Sarvesh's — otherwise this asserts the index, not routing.
     services.finish_turn(mine, status=Turn.DONE)
 
-    assert services.claim_next_turn(fleet["cloud"]).id == theirs.id
+    assert claim.claim_next_turn(fleet["cloud"]).id == theirs.id
 
 
 def test_a_strict_operator_rule_survives_one_of_the_two_accounts_being_down(fleet):
@@ -210,9 +211,9 @@ def test_a_strict_operator_rule_survives_one_of_the_two_accounts_being_down(flee
            origin_ref={"from": "Jonathan Jackson <jjackson@dimagi.com>"})
 
     # The preferred account is offline, so the rule degrades WITHIN itself …
-    assert services.claim_next_turn(fleet["laptop"]) is not None
+    assert claim.claim_next_turn(fleet["laptop"]) is not None
     # … and never to cloud, which outranks both in the default order.
-    assert services.claim_next_turn(fleet["cloud"]) is None
+    assert claim.claim_next_turn(fleet["cloud"]) is None
 
 
 def test_a_strict_rule_parks_rather_than_leaking_to_cloud_past_the_grace(fleet):
@@ -227,11 +228,11 @@ def test_a_strict_rule_parks_rather_than_leaking_to_cloud_past_the_grace(fleet):
     old = _queue(fleet["echo"], Turn.ORIGIN_EMAIL, "k-old",
                  origin_ref={"from": "jjackson@dimagi.com"})
     Turn.objects.filter(pk=old.pk).update(
-        created_at=timezone.now() - dt.timedelta(seconds=services.CASCADE_GRACE_SECONDS + 30)
+        created_at=timezone.now() - dt.timedelta(seconds=routing.CASCADE_GRACE_SECONDS + 30)
     )
 
-    assert services.claim_next_turn(fleet["cloud"]) is None
-    assert services.claim_next_turn(fleet["laptop"]).id == old.id
+    assert claim.claim_next_turn(fleet["cloud"]) is None
+    assert claim.claim_next_turn(fleet["laptop"]).id == old.id
 
 
 def test_a_scheduled_turn_matches_no_actor_rule(fleet):
@@ -248,8 +249,8 @@ def test_a_scheduled_turn_matches_no_actor_rule(fleet):
                    # (skip_late_scheduled_turns) before routing is consulted.
                    origin_ref={"schedule_id": 1, "slot": timezone.now().isoformat()})
 
-    assert services.claim_next_turn(fleet["laptop"]) is None
-    assert services.claim_next_turn(fleet["cloud"]).id == fired.id
+    assert claim.claim_next_turn(fleet["laptop"]) is None
+    assert claim.claim_next_turn(fleet["cloud"]).id == fired.id
 
 
 def test_claim_and_unclaimable_agree_per_actor(fleet):
@@ -268,16 +269,16 @@ def test_claim_and_unclaimable_agree_per_actor(fleet):
     # Age it past UNCLAIMABLE_GRACE — the warning deliberately ignores turns that
     # have only just been queued, so a fresh one reports nothing at all.
     Turn.objects.filter(pk=parked.pk).update(
-        created_at=timezone.now() - services.UNCLAIMABLE_GRACE - dt.timedelta(minutes=1)
+        created_at=timezone.now() - claim.UNCLAIMABLE_GRACE - dt.timedelta(minutes=1)
     )
 
     # Nobody can claim it right now …
-    assert services.claim_next_turn(fleet["cloud"]) is None
+    assert claim.claim_next_turn(fleet["cloud"]) is None
     # … and the warning says OFFLINE (wait for the box), never CONFIG (never runs).
     # `kind` is the classification the UI branches on; `reason` is its prose.
     reported = {
         r["turn_id"]: r["kind"]
-        for r in services.unclaimable_queued_turns(fleet["laptop"].owner)
+        for r in claim.unclaimable_queued_turns(fleet["laptop"].owner)
     }
     assert reported.get(str(parked.id)) == "offline"
 
@@ -306,8 +307,8 @@ def test_a_rule_alone_makes_a_runner_targetable_with_its_default_row_disabled(fl
     theirs = _queue(fleet["ace"], Turn.ORIGIN_EMAIL, "k-sarvesh",
                     origin_ref={"from": "Sarvesh Tewari <stewari@dimagi.com>"})
 
-    assert services.claim_next_turn(fleet["laptop"]) is None
-    assert services.claim_next_turn(fleet["cloud"]).id == theirs.id
+    assert claim.claim_next_turn(fleet["laptop"]) is None
+    assert claim.claim_next_turn(fleet["cloud"]).id == theirs.id
 
 
 def test_the_operators_own_work_is_untouched_by_a_colleagues_rule(fleet):
@@ -325,5 +326,5 @@ def test_the_operators_own_work_is_untouched_by_a_colleagues_rule(fleet):
     mine = _queue(fleet["ace"], Turn.ORIGIN_EMAIL, "k-jj",
                   origin_ref={"from": "Jonathan Jackson <jjackson@dimagi.com>"})
 
-    assert services.claim_next_turn(fleet["cloud"]) is None
-    assert services.claim_next_turn(fleet["laptop"]).id == mine.id
+    assert claim.claim_next_turn(fleet["cloud"]) is None
+    assert claim.claim_next_turn(fleet["laptop"]).id == mine.id
