@@ -91,6 +91,7 @@ import contextlib  # noqa: E402
 
 from apps.agents import pat_rotation_scheduler as _pat_rotation_scheduler  # noqa: E402
 from apps.capabilities import scheduler as _capability_scheduler  # noqa: E402
+from apps.harness import schedule_clock as _schedule_clock  # noqa: E402
 from apps.slack import ingest_scheduler as _slack_ingest_scheduler  # noqa: E402
 
 
@@ -98,13 +99,15 @@ from apps.slack import ingest_scheduler as _slack_ingest_scheduler  # noqa: E402
 async def _lifespan(app):
     """The MCP session manager, the cloud-capability sweep's own clock
     (apps/capabilities/scheduler.py), the Slack channel-ingest reader's
-    (apps/slack/ingest_scheduler.py) and the canopy-pat rotation's
-    (apps/agents/pat_rotation_scheduler.py), for the life of the process."""
+    (apps/slack/ingest_scheduler.py), the canopy-pat rotation's
+    (apps/agents/pat_rotation_scheduler.py) and the schedule clock's
+    (apps/harness/schedule_clock.py), for the life of the process."""
     async with _mcp_app.lifespan(app), _project_mcp_app.lifespan(app):
         async with _capability_scheduler.running():
             async with _slack_ingest_scheduler.running():
                 async with _pat_rotation_scheduler.running():
-                    yield
+                    async with _schedule_clock.running():
+                        yield
 
 
 application = Starlette(
