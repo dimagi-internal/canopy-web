@@ -1,7 +1,8 @@
 """What an `AgentSchedule` does to the turn queue.
 
-The runner evaluates the cron and reports a due slot; `fire_schedule` turns it
-into an ordinary Turn. Superseding a still-open occurrence, releasing one that
+canopy-web's own clock (`schedule_clock`) — and any laptop runner still doing
+it — evaluates the cron and reports a due slot; `fire_schedule` turns it into an
+ordinary Turn. Superseding a still-open occurrence, releasing one that
 held the agent past its grace window, retiring slots that could not start in
 time, and the review ask an unattended occurrence raises (and a later DONE one
 dismisses) all live here — there is no occurrence table; the Turn IS the
@@ -29,7 +30,7 @@ from .models import (
 from .routing import EXECUTING
 
 # --------------------------------------------------------------------------------------
-# AgentSchedule — recurring turns. The runner evaluates the cron and calls fire_schedule;
+# AgentSchedule — recurring turns. schedule_clock (and any runner) calls fire_schedule;
 # the server materializes a normal Turn. See models.AgentSchedule.
 # --------------------------------------------------------------------------------------
 
@@ -74,6 +75,22 @@ def checkin_of(schedule):
     return ProjectCheckin.objects.filter(schedule_id=schedule.pk).first() if schedule.pk else None
 
 
+def fire_after_of(schedule) -> dt.datetime:
+    """The lower bound a due-slot search starts from — the one anchor every firer
+    (the server's own clock, `schedule_clock`, and a runner, via
+    `ScheduleOut.fire_after`) passes to `canopy_cron.due_slot(after=...)`.
+
+    `last_slot or created_at`: last_slot is NULL until the first fire, and an
+    unbounded backward look would fire a slot that predates the schedule. A
+    one-off's anchor is pinned a minute before its instant, so the derived
+    cron's earlier-year matches can never be due (schedule_services.one_off_cron).
+    """
+    after = schedule.last_slot or schedule.created_at
+    if schedule.run_once_at:
+        after = max(after, schedule.run_once_at - dt.timedelta(minutes=1))
+    return after
+
+
 class OneOffSlotMismatch(Exception):
     """A runner reported a slot for a one-off schedule other than its one instant."""
 
@@ -82,8 +99,8 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
     """Materialize `slot` as a queued Turn. Supersedes any still-open occurrence
     of the same schedule first — you only ever owe the newest.
 
-    Safe to call concurrently from both macOS-account runners: the slot-derived
-    idempotency_key collapses the race inside enqueue_turn.
+    Safe to call concurrently from the server clock and any runner: the
+    slot-derived idempotency_key collapses the race inside enqueue_turn.
 
     A ONE-OFF (run_once_at set) fires only its own instant and then disables
     itself in the same transaction, so it drops out of every runner's sync. Its
