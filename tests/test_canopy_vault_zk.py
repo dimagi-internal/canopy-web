@@ -938,7 +938,7 @@ def test_approving_a_key_covers_a_born_agent_whose_sealed_values_it_cannot_read(
 # ---- telling vault-key holders a target is waiting (zk_notify) --------------------------
 
 def test_a_pending_device_notifies_each_holder_once_after_the_grace_then_clears(fleet, mailoutbox):
-    from apps.agents import zk_notify
+    from apps.agents.credentials import zk_notify
     from apps.agents.models import ZkGrantNotice
 
     assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
@@ -965,7 +965,7 @@ def test_a_pending_device_notifies_each_holder_once_after_the_grace_then_clears(
 
 
 def test_a_device_granted_within_the_grace_is_never_mentioned(fleet, mailoutbox):
-    from apps.agents import zk_notify
+    from apps.agents.credentials import zk_notify
 
     assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
     t0 = timezone.now()
@@ -977,7 +977,7 @@ def test_a_device_granted_within_the_grace_is_never_mentioned(fleet, mailoutbox)
 
 
 def test_a_new_admin_with_a_keyset_is_a_target_and_only_holders_are_told(fleet, mailoutbox):
-    from apps.agents import zk_notify
+    from apps.agents.credentials import zk_notify
 
     assert _enable(fleet).status_code == 200  # device wrapped too: nothing pending
     other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
@@ -992,7 +992,7 @@ def test_a_new_admin_with_a_keyset_is_a_target_and_only_holders_are_told(fleet, 
 
 
 def test_custodial_agents_are_not_swept(fleet, mailoutbox):
-    from apps.agents import zk_notify
+    from apps.agents.credentials import zk_notify
     from apps.agents.models import ZkGrantNotice
 
     assert zk_notify.sweep(timezone.now() + zk_notify.GRACE) == 0
@@ -1000,7 +1000,7 @@ def test_custodial_agents_are_not_swept(fleet, mailoutbox):
 
 
 def test_the_heartbeat_sweep_is_throttled_and_never_raises(fleet, monkeypatch):
-    from apps.agents import zk_notify
+    from apps.agents.credentials import zk_notify
 
     calls = []
     monkeypatch.setattr(zk_notify, "sweep", lambda now=None: calls.append(now) or 0)

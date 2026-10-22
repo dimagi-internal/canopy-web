@@ -69,7 +69,7 @@ def _drill_github_check(agent) -> str:
     """The drill's GitHub step for `agent`. 422 = may open pull requests there
     (GitHub checks permission before it validates the branch); 403 = the token
     lacks Pull requests: write; 404 = it cannot see the repo at all."""
-    from apps.agents.delegations import agent_repo
+    from apps.agents.credentials.delegations import agent_repo
 
     repo = agent_repo(agent)
     if not repo:

@@ -34,7 +34,7 @@ _TOKENS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation
 def scope(runner) -> list[str]:
     """The repos canopy knows for this box — the only ones it scans: the projects
     it declares, and the agents it serves (by slug and by repo name)."""
-    from apps.agents.delegations import agent_repo
+    from apps.agents.credentials.delegations import agent_repo
     from apps.harness.routing import agents_routed_to
 
     names = set(runner.project_names())

@@ -25,8 +25,8 @@ from apps.events import services as events
 from apps.harness import aws_iam_proof, device_keys
 from apps.harness.models import Runner
 
-from .. import delegations, mailbox, services
-from . import licenses, vault_alerts, zk
+from .. import mailbox, services
+from . import delegations, licenses, vault_alerts, zk
 
 logger = logging.getLogger(__name__)
 

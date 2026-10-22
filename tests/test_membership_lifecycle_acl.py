@@ -90,7 +90,7 @@ def test_an_ex_member_owner_messaging_the_agent_is_a_contact(life):
 
 
 def test_an_ex_member_owners_github_token_is_not_lent(life):
-    from apps.agents import delegations
+    from apps.agents.credentials import delegations
 
     agent, leaver = life["agent"], life["leaver"]
     AgentDelegation.objects.create(user=leaver, agent=agent, service=AgentDelegation.GITHUB,

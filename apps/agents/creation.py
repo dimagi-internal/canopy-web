@@ -2,7 +2,7 @@
 
 The design is `docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`,
 with its credential replaced by the one agents actually use: the owner's fine-grained
-token (`apps/agents/delegations.py`, spec 2026-09-24). The person makes an empty repo
+token (`apps/agents/credentials/delegations.py`, spec 2026-09-24). The person makes an empty repo
 and a token scoped to it; this pushes with that token, and the same token is then saved
 as the agent's GitHub delegation — so the push and every later turn use one credential,
 one repository selection, and no app install an org owner must approve.
@@ -36,7 +36,7 @@ from pathlib import Path
 
 import requests
 
-from . import delegations
+from .credentials import delegations
 
 GITHUB_API = delegations.GITHUB_API
 HTTP_TIMEOUT = delegations.HTTP_TIMEOUT

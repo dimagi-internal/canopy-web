@@ -509,7 +509,7 @@ Specs: `docs/superpowers/specs/2026-07-15-agent-scheduled-turns-design.md`,
 its ADMINS), through a delegation — never a box credential.** Boxes hold no GitHub token. `AgentDelegation` (person, agent,
 service) is the third credential kind beside the agent's own vault and the
 workspace's shared vault: a person lending their identity to one agent
-(`apps/agents/delegations.py`).
+(`apps/agents/credentials/delegations.py`).
 
 - The owner or an admin pastes a fine-grained PAT on the agent's Settings → Credentials →
   GitHub (canopy pre-fills GitHub's creation form, `delegations.create_url`; GitHub
