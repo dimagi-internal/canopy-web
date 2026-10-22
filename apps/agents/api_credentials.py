@@ -233,6 +233,9 @@ def _credential_refusal(refusal: credential_resolve.Refusal) -> Exception:
         return ProblemError(409, "Vault key not granted", type_=TYPE_CONFLICT, detail=refusal.detail,
                             members={"error": "zk_wrap_missing", "kv": refusal.kv,
                                      "device_key": refusal.device_key})
+    if refusal.code == cr.NOT_A_VAULT_MEMBER:
+        return ProblemError(403, "Not a vault member", type_=TYPE_AUTH, detail=refusal.detail,
+                            members={"error": "not_a_vault_member"})
     # BEARER_REQUIRED, NO_ACCESS, FOREIGN_DEVICE_PROOF
     return HttpError(403, refusal.detail)
 
@@ -436,6 +439,7 @@ def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMember
         vault_members.add_member(vault, user, role=payload.role, by=request.user)
     except vault_members.VaultMembershipError as exc:
         raise _membership_problem(exc) from exc
+    vault_members.reconcile(vault.agent)
     return _vault_out(vault, request.user)
 
 
@@ -444,13 +448,16 @@ def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMember
 @gate("vault-manage", setting=True)  # browser: + step-up; token allowed
 def remove_agent_vault_member(request: HttpRequest, slug: str, user_id: int) -> VaultMembersOut:
     """Removes only the DIRECT membership. Membership through a link stays until
-    the person leaves the linked set (e.g. loses full access to the agent)."""
+    the person leaves the linked set (e.g. loses full access to the agent). A
+    person who is no longer a member loses their copies of the vault key, and
+    their machines theirs, at once."""
 
     _, vault = _agent_vault(request, slug, manage=True)
     try:
         vault_members.remove_member(vault, user_id)
     except vault_members.VaultMembershipError as exc:
         raise _membership_problem(exc) from exc
+    vault_members.reconcile(vault.agent)
     return _vault_out(vault, request.user)
 
 
@@ -468,6 +475,7 @@ def set_agent_vault_link(request: HttpRequest, slug: str, payload: VaultAgentLin
         vault_members.set_agent_link(vault, agent, linked=payload.linked, role=payload.role, by=request.user)
     except vault_members.VaultMembershipError as exc:
         raise _membership_problem(exc) from exc
+    vault_members.reconcile(vault.agent)
     return _vault_out(vault, request.user)
 
 

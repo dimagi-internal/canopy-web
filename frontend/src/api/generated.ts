@@ -4513,7 +4513,9 @@ export interface paths {
         /**
          * Remove a person's direct membership of the agent's vault
          * @description Removes only the DIRECT membership. Membership through a link stays until
-         *     the person leaves the linked set (e.g. loses full access to the agent).
+         *     the person leaves the linked set (e.g. loses full access to the agent). A
+         *     person who is no longer a member loses their copies of the vault key, and
+         *     their machines theirs, at once.
          */
         readonly delete: operations["remove_agent_vault_member"];
         readonly options?: never;

@@ -20,6 +20,7 @@ works for is a member, so approving a machine never grants by itself.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from django.db import transaction
@@ -27,7 +28,9 @@ from django.db import transaction
 from apps.workspaces import services as wsvc
 
 from .. import access
-from ..models import Agent, AgentLicense, Vault, VaultLink, VaultMember
+from ..models import Agent, AgentLicense, AgentVaultEndorsement, AgentVaultWrap, Vault, VaultLink, VaultMember
+
+logger = logging.getLogger(__name__)
 
 MANAGE, USE = VaultMember.MANAGE, VaultMember.USE
 _RANK = {USE: 0, MANAGE: 1}
@@ -198,3 +201,60 @@ def set_agent_link(vault: Vault, agent: Agent, *, linked: bool, role: str = USE,
         link, _ = VaultLink.objects.update_or_create(vault=vault, kind=VaultLink.AGENT, agent=agent,
                                                      defaults={"role": role, "created_by": by})
     return link
+
+
+# ---- removal: key copies follow membership --------------------------------------------------
+
+@dataclass
+class Reconciled:
+    member_wraps: int = 0
+    device_wraps: int = 0
+    endorsements: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.member_wraps + self.device_wraps + self.endorsements
+
+
+def reconcile(agent: Agent) -> Reconciled:
+    """Delete every copy of the agent's vault key, and every endorsement, that no
+    longer has a member of the agent's vault behind it: a person who left, or a
+    machine whose person left. canopy-web then stops handing them the vault's
+    ciphertext (`credential_resolve` refuses a non-member's machine as well).
+
+    The vault key is NOT changed: as in 1Password, removal stops the server
+    serving the vault. A person who kept a copy while they were a member is the
+    case for "Change the key" and rotating the outside secrets themselves."""
+    out = Reconciled()
+    ids = agent_member_ids(agent)
+    with transaction.atomic():
+        out.member_wraps, _ = (AgentVaultWrap.objects.filter(agent=agent, kind=AgentVaultWrap.MEMBER)
+                               .exclude(user_id__in=ids).delete())
+        stale = [w.pk for w in AgentVaultWrap.objects.filter(agent=agent, kind=AgentVaultWrap.DEVICE)
+                 .select_related("device_key__runner") if person_of_device(w.device_key) not in ids]
+        out.device_wraps, _ = AgentVaultWrap.objects.filter(pk__in=stale).delete()
+        ends = AgentVaultEndorsement.objects.filter(agent=agent)
+        gone = list(ends.exclude(endorser_id__in=ids).values_list("pk", flat=True))
+        gone += [e.pk for e in ends.filter(kind="member") if not e.target.isdigit() or int(e.target) not in ids]
+        out.endorsements, _ = AgentVaultEndorsement.objects.filter(pk__in=gone).delete()
+    return out
+
+
+def reconcile_all() -> int:
+    """`reconcile` every zero-knowledge agent. Returns how many rows went."""
+    n = 0
+    for agent in Agent.objects.filter(zk_enabled=True, workspace__isnull=False):
+        try:
+            r = reconcile(agent)
+        except Exception:  # noqa: BLE001 — one agent's failure must not stop the rest
+            logger.exception("vault reconcile failed for %s", agent.slug)
+            continue
+        if r.total:
+            logger.info("vault reconcile %s: %s", agent.slug, r)
+        n += r.total
+    return n
+
+
+def device_works_for_a_member(agent: Agent, device_key) -> bool:
+    """Does `device_key` work for a member of the agent's vault?"""
+    return person_of_device(device_key) in agent_member_ids(agent)

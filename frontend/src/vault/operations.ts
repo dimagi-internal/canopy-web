@@ -792,9 +792,27 @@ export async function approveAndGrant(keyId: string, agents: string[], prompt: U
       granted.push(slug)
     } catch {
       failed.push(slug)
+      // I could not hand this agent's vault key over myself (I hold no copy of
+      // it yet). Still vouch for the machine with my own key: a keeper — a
+      // runner that holds the vault key — wraps only to endorsed machines, so
+      // this is what lets it pass the key on without anyone being asked
+      // (spec 2026-10-22-vault-access-follows-canopy-access-design.md §1).
+      await endorseMachine(slug, key, me!)
     }
   }
   return { key, granted, failed }
+}
+
+/** Sign "this machine may read this agent" with my own key; best effort. */
+async function endorseMachine(slug: string, key: RunnerDeviceKeyOut, me: Unlocked): Promise<void> {
+  if (!key.ecdh_jkt || !key.ecdh_public_jwk) return
+  try {
+    const state = await getZkState(slug)
+    await endorseQuietly(slug, state.agent_id, me,
+      [{ kind: 'device', target: key.ecdh_jkt, publicJwk: key.ecdh_public_jwk as Jwk }])
+  } catch {
+    // Nothing more to do here: the agent's page offers "Confirm who can read".
+  }
 }
 
 export type { PublicJwk }

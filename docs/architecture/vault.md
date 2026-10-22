@@ -23,3 +23,13 @@ A change that would leave the vault with no one who can manage it is refused (40
 - **A machine** (`zk.eligible_device_keys`): an active device key with an approved ECDH key, on a runner that serves the agent (`device_keys.runner_serves_agent`), **and** whose person is a member of the vault. The person is the runner's owner, else whoever approved the key (`vault_members.person_of_device`). The machine layer never grants on its own.
 
 `pending` (`zk.pending_targets`), every wrap write and every `zks1` seal read these two functions, so nothing else decides who may hold the key.
+
+## Removal: key copies follow membership
+
+`vault_members.reconcile(agent)` deletes every copy of the vault key, and every endorsement, that no longer has a vault member behind it: a person who left, or a machine whose person left. It runs on the off-request clock every minute (`agents.vault_reconcile`) and right after each membership write. Credential resolve also refuses a machine whose person is not a member (403 `not_a_vault_member`), whatever copies it still holds.
+
+The vault key is **not** changed on removal: as in 1Password, the server stops serving the vault. "Change the key" (rotate), together with rotating the outside secrets, is the response when someone may have kept a copy.
+
+## Granting without a person
+
+Approving a machine signs its ECDH key with the approver's own vault key (an endorsement, `approveAndGrant`), even when the approver holds no copy of the agent's vault key, so a **keeper** (a canopy runner that holds it, `canopy vault zk keep`) can pass the key on. `zk_notify` emails the key holders only after `GRACE` (15 minutes), for what no machine could pass on.

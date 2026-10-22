@@ -26,7 +26,7 @@ from apps.harness import aws_iam_proof, device_keys
 from apps.harness.models import Runner
 
 from .. import mailbox, services
-from . import delegations, licenses, vault_alerts, zk
+from . import delegations, licenses, vault_alerts, vault_members, zk
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ NO_ACCESS = "no_access"
 FOREIGN_DEVICE_PROOF = "foreign_device_proof"
 DEVICE_PROOF_REQUIRED = "device_proof_required"
 ZK_WRAP_MISSING = "zk_wrap_missing"
+NOT_A_VAULT_MEMBER = "not_a_vault_member"
 
 
 @dataclass(frozen=True)
@@ -260,6 +261,13 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
 
     wanted = parse_refs(refs)
     zk_wrap = None
+    if agent.zk_enabled and device_key is not None and not vault_members.device_works_for_a_member(agent, device_key):
+        # The machine layer never reads on its own: the person this box works for
+        # must be a member of the agent's vault (spec 2026-10-22-vault-access-
+        # follows-canopy-access-design.md), whatever copies it still holds.
+        return Refusal(NOT_A_VAULT_MEMBER,
+                       f"{device_key.runner.name} works for someone who is not a member of "
+                       f"{agent.slug}'s vault; a manager of the vault must add them")
     if agent.zk_enabled:
         values, zk_wrap = zk.resolve_payload(agent, device_key, wanted)
         # `zks1` values (server-minted, sealed to each device) open with the

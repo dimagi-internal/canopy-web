@@ -11,7 +11,10 @@ alerts (`vault_alerts`), deep-linking to the agent's Zero-knowledge section,
 where granting is one passkey touch.
 
 * After a grace period (GRACE): approving a device usually grants it in the
-  same click (`approveAndGrant`), and that must not mail anyone.
+  same click (`approveAndGrant`), and a keeper (a canopy runner that holds the
+  key, `canopy vault zk keep`) grants every endorsed target within a minute or
+  two — neither may mail anyone. The email is the fallback for what no machine
+  could pass on.
 * Once per target (`ZkGrantNotice`, unique per agent/kind/target/kv); the row
   is closed when the target is wrapped or stops qualifying.
 * Swept on the off-request clock (apps/common/ticks.py), at most once a minute.
@@ -36,7 +39,7 @@ from ..models import Agent, AgentVaultWrap, ZkGrantNotice
 
 logger = logging.getLogger(__name__)
 
-GRACE = dt.timedelta(minutes=2)
+GRACE = dt.timedelta(minutes=15)
 SWEEP_EVERY_S = 60
 _SWEEP_KEY = "zk-grant-notify:sweep"
 
