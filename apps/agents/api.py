@@ -260,7 +260,8 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
     ids = list(ids)
     already = set(already)
     added = [rid for rid in dict.fromkeys(ids) if rid not in already]
-    live = Runner.objects.filter(id__in=ids).exclude(status=Runner.RETIRED)
+    # A computer's key holder (`Runner.COMPUTER`) takes no routed work: never a pick.
+    live = Runner.objects.filter(id__in=ids).exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
     by_id = {r.id: r for r in live.filter(id__in=already)}
 
     home = [agent.workspace_id, *(agent.workspace.ancestor_slugs() if agent.workspace_id else [])]
@@ -1079,7 +1080,7 @@ def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPrefer
     harness.services.claim_next_turn."""
     from apps.harness.models import Runner
 
-    valid = {k for k, _ in Runner.KIND_CHOICES}
+    valid = {k for k, _ in Runner.KIND_CHOICES} - {Runner.COMPUTER}
     bad = [k for k in payload.runner_preference if k not in valid]
     if bad:
         raise HttpError(422, f"unknown runner kind(s): {', '.join(bad)}")
@@ -2332,7 +2333,12 @@ def _credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
     if rtok is not None:
         from apps.harness.device_keys import runner_serves_agent
 
-        if agent.is_admin(request.user) and runner_serves_agent(rtok.runner, agent):
+        from apps.harness.models import Runner
+
+        # A person's computer (no runner app) is never a `runner` reader: its token
+        # reads only under its owner's license, during their own local turn.
+        if (rtok.runner.kind != Runner.COMPUTER and agent.is_admin(request.user)
+                and runner_serves_agent(rtok.runner, agent)):
             return "runner", ""
         # A PRIVATE runner reads under its owner's license, for one of their own turns
         # it holds (canopy-web#1705) — the same principal as their local sessions.

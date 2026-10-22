@@ -288,6 +288,13 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   local sessions on it. Its device key is what those sessions prove themselves
   with, and it may read an agent's secrets while its owner holds an active license
   (`device_keys.private_runner_licensed`), for that owner's own turns only.
+* A machine **without** the runner app still gets its own key for reading the
+  agent's vault: registering it (`POST /api/private-runners/`) gives it a
+  `computer` runner (`Runner.COMPUTER`, `local.ensure_computer_runner`, returned as
+  `runner_id`) to enrol a device key on. The key is owner-approved like a private
+  runner's and serves exactly the agents its owner administers or holds an active
+  license for; its token reaches only the owner's local turns and license reads
+  (`runner_auth._COMPUTER_RULES`), and the computer appears in no fleet runner list.
 * **Acting as a lower role.** `acts_as` (`editor` or `viewer`) is a property of
   ONE turn or of one client's requests — never a setting left on a machine:
   - a turn started with it (`TurnIn.acts_as`, `canopy agent dispatch --as editor`;

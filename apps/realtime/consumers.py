@@ -348,6 +348,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             return None
         return (
             Runner.objects.exclude(status=Runner.RETIRED)
+            .exclude(kind=Runner.COMPUTER)  # no runner app, no control channel
             .filter(pk=rid)
             .filter(Q(owner=user) | Q(owner__isnull=True))
             .first()

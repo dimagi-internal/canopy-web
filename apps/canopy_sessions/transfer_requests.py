@@ -45,7 +45,7 @@ TTL = dt.timedelta(hours=24)
 def resolve_runner(value: str) -> Runner | None:
     """A runner by id or, for a person typing into an MCP client, by name."""
     value = (value or "").strip()
-    qs = Runner.objects.exclude(status=Runner.RETIRED)
+    qs = Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
     try:
         return qs.filter(pk=uuid.UUID(value)).first()
     except ValueError:

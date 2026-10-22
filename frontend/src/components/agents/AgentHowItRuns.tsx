@@ -41,8 +41,11 @@ function Dot({ light, label }: { light: Light; label: string }): JSX.Element {
 }
 
 /** Whether the person looking can use the agent in their own Claude Code now:
- *  one of THEIR computers (a private runner they own) has an approved key, and —
- *  for a zero-knowledge vault — a grant to open it. Pure, so it is tested alone. */
+ *  one of THEIR computers has an approved key, and — for a zero-knowledge vault —
+ *  a grant to open it. A computer is either a private runner app they own (in the
+ *  runner list) or a computer with no runner app, whose key holder is a `computer`
+ *  runner that no runner list shows: its keys are in theirs (only its owner holds
+ *  any). Pure, so it is tested alone. */
 export function viewerReadiness({
   slug,
   email,
@@ -62,6 +65,7 @@ export function viewerReadiness({
   const mine = new Map(
     runners.filter((r) => r.private && r.owner_email === email).map((r) => [String(r.id), r.name]),
   )
+  for (const k of keys) if (k.runner_kind === 'computer') mine.set(String(k.runner), k.runner_name)
   const myKeys = keys.filter((k) => mine.has(String(k.runner)) && k.status !== 'revoked')
   const name = (k: RunnerDeviceKeyOut) => mine.get(String(k.runner)) ?? k.runner_name
   const opens = myKeys.find((k) => k.status === 'active' && (k.can_open ?? []).some((a) => a.slug === slug))

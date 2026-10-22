@@ -7631,6 +7631,10 @@ export interface paths {
          * @description Idempotent per (you, name): registering the same machine again returns it
          *     (and brings back a retired one). A private runner is yours, not an agent's or a
          *     workspace's — one serves every agent you use locally. It never claims turns.
+         *
+         *     `runner_id` is the runner that holds this machine's device keys: the runner app
+         *     you link (`runner`), else a `computer` runner made for it — enrol a key on it
+         *     (`POST /api/runner-device-keys/`) to read a zero-knowledge agent's vault here.
          */
         readonly post: operations["register_private_runner"];
         readonly delete?: never;
@@ -7673,8 +7677,9 @@ export interface paths {
         readonly put?: never;
         /**
          * Retire one of your private runners
-         * @description Its local sessions stop opening, and a runner linked to it goes back to
-         *     being shared.
+         * @description Its local sessions stop opening, a runner app linked to it goes back to
+         *     being shared, and the runner that held its keys when it has no runner app
+         *     retires with it.
          */
         readonly post: operations["retire_private_runner"];
         readonly delete?: never;

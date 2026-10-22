@@ -1712,7 +1712,7 @@ def _eligible_runner(session: Session, runner_id):
         return None
     runner = (
         Runner.objects.filter(id=runner_id, owner__isnull=False)
-        .exclude(status=Runner.RETIRED)
+        .exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
         .first()
     )
     if runner is None:

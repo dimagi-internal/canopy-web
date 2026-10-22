@@ -362,8 +362,8 @@ def turn_reach(turn: Turn) -> Reach:
     else:
         ws = turn.workspace_id
     runners = [
-        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("owner")
-        .prefetch_related("declared_flags").order_by("name")
+        r for r in Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
+        .select_related("owner").prefetch_related("declared_flags").order_by("name")
         if ws in runner_tenant_slugs(r)
     ]
     prime_machine_units(runners)
@@ -506,8 +506,8 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     # claim_next_turn (`runner_tenant_slugs`, owner-derived, NULL-fails-closed)
     # so this warning can't disagree with what claiming actually does.
     runners = [
-        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("owner")
-        .prefetch_related("declared_flags")
+        r for r in Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
+        .select_related("owner").prefetch_related("declared_flags")
         if runner_tenant_slugs(r) & ws_slugs
     ]
     prime_machine_units(runners)
@@ -667,6 +667,10 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # turn stays QUEUED and lands on unpause (only a readiness drill expires:
     # `expire_stale_drills`).
     if runner.live_status != Runner.ONLINE:
+        return None
+    # A computer used in plain Claude Code has no runner app to run a claimed turn;
+    # it never heartbeats, so the guard above already stops it — this says so.
+    if runner.kind == Runner.COMPUTER:
         return None
     # The FLEET-WIDE hold (FleetHold): nothing is claimed, ridden or pinned anywhere
     # while it is on, and queued turns wait — visible, with their trigger — for the

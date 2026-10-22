@@ -72,7 +72,8 @@ class BearerTokenAuthMiddleware:
                 return JsonResponse({"detail": "runner token is not valid (expired, or its "
                                      "device key was revoked)"}, status=401)
             if not runner_auth.reaches(request.method, request.path_info, rtok.runner_id,
-                                       private=rtok.runner.private):
+                                       private=rtok.runner.private,
+                                       computer=rtok.runner.kind == rtok.runner.COMPUTER):
                 detail = "a runner token opens the runner protocol only"
                 return JsonResponse(
                     {"type": "about:blank", "title": detail, "status": 403, "detail": detail},

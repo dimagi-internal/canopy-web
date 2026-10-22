@@ -222,6 +222,13 @@ def _runner_owned_q(request: HttpRequest) -> Q:
     return Q(owner=request.user)
 
 
+#: Fleet runners only: a computer's key holder (`Runner.COMPUTER` — a person's
+#: computer in plain Claude Code, no runner app) is not a box anyone lists, pins,
+#: heartbeats, claims as or administers; its keys are reached through
+#: `/api/runner-device-keys/` and its machine through `/api/private-runners/`.
+_FLEET_Q = ~Q(kind=Runner.COMPUTER)
+
+
 def _runner_read_q(request: HttpRequest) -> Q:
     """'Runners this caller can SEE' — derived from the TENANT, like claim time.
 
@@ -262,13 +269,13 @@ def _runner_read_q(request: HttpRequest) -> Q:
         # here, not ungated (the property
         # test_pinned_null_workspace_runner_is_neither_listed_nor_actionable
         # pins). WorkspaceResolveMiddleware has already gated membership of `ws`.
-        return Q(workspace_id=ws) | _runners_serving_q({ws})
+        return (Q(workspace_id=ws) | _runners_serving_q({ws})) & _FLEET_Q
     slugs = wsvc.user_workspace_slugs(request.user)
     return (
         Q(workspace_id__in=slugs)
         | _runners_serving_q(slugs)
         | (Q(workspace_id__isnull=True) & _runner_owned_q(request))
-    )
+    ) & _FLEET_Q
 
 
 def _runners_serving_q(slugs) -> Q:
@@ -287,7 +294,7 @@ def _runners_serving_q(slugs) -> Q:
     slugs = set(slugs)
     if not slugs:
         return Q(pk__in=[])
-    candidates = (Runner.objects.exclude(status=Runner.RETIRED)
+    candidates = (Runner.objects.exclude(status=Runner.RETIRED).filter(_FLEET_Q)
                   .filter(owner__isnull=False, workspace__isnull=False)
                   .select_related("owner").prefetch_related("enrollments"))
     return Q(pk__in=[r.pk for r in candidates if services.runner_tenant_slugs(r) & slugs])
@@ -323,7 +330,7 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
         wq = Q(workspace_id__in=[ws, *(here.ancestor_slugs() if here else [])])
     else:
         wq = Q(workspace_id__in=wsvc.user_workspace_slugs(request.user)) | Q(workspace_id__isnull=True)
-    return wq & _runner_owned_q(request)
+    return wq & _runner_owned_q(request) & _FLEET_Q
 
 
 def _runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
@@ -446,6 +453,17 @@ def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     # acting for a visitor: a site never reports as a runner.
     from apps.tokens import delegation
 
+    rtok = getattr(request, "runner_token", None)
+    if rtok is not None and rtok.runner.kind == Runner.COMPUTER:
+        # A computer (no runner app) claims nothing: its token reports only on the
+        # local turns opened on it — never on a turn its owner's other boxes hold.
+        turn = Turn.objects.filter(pk=turn_id, origin=Turn.ORIGIN_LOCAL).select_related(
+            "private_runner").first()
+        from . import local
+
+        if turn is None or not local.may_report(turn, request):
+            raise HttpError(404, "turn not found")
+        return turn
     if delegation.offered_for(request) is None:
         mine = (Turn.objects.select_related("claimed_by")
                 .filter(pk=turn_id, claimed_by__owner_id=request.user.pk).first())

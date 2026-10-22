@@ -41,7 +41,8 @@ def supervisor_snapshot(user) -> dict:
         a.slug: AgentTask.objects.filter(waiting_q(), agent=a).count() for a in agents
     }
 
-    runners = Runner.objects.exclude(status=Runner.RETIRED).filter(
+    # A computer's key holder (`Runner.COMPUTER`) is no fleet runner.
+    runners = Runner.objects.exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER).filter(
         (Q(workspace_id__in=slugs) | Q(workspace_id__isnull=True))
         & (Q(owner=user) | Q(owner__isnull=True))
     )

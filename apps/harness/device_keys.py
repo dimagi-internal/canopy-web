@@ -153,6 +153,9 @@ def runner_serves_agent(runner, agent) -> bool:
     - it is a PRIVATE runner whose owner holds an active license for the agent
       (`private_runner_licensed`).
 
+    A `computer` runner (a person's computer with no runner app) is asked only the
+    last two, as its owner: they administer the agent, or hold its license.
+
     A cloud box the owner also owns is not a reason on its own: it reads only what
     it runs (canopy-web#1563)."""
     from django.db.models import Q
@@ -162,6 +165,12 @@ def runner_serves_agent(runner, agent) -> bool:
 
     if runner.status == Runner.RETIRED:
         return False
+    if runner.kind == Runner.COMPUTER:
+        # A computer used in plain Claude Code runs nothing of the fleet and holds
+        # no claimed turn: its key serves exactly what its owner may use there —
+        # an agent they administer, or one they hold an active license for.
+        return runner.owner is not None and (
+            agent.is_admin(runner.owner) or private_runner_licensed(runner, agent))
     if runner_routes_agent(runner, agent):
         return True
     if (Turn.objects.filter(claimed_by=runner,
