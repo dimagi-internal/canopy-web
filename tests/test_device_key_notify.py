@@ -54,6 +54,10 @@ def _register(box, key, ecdh=None):
 
 
 def test_a_new_pending_key_mails_and_pushes_the_owner_and_runner_admins(box, django_capture_on_commit_callbacks):
+    # A private runner has no workspace for the `device_key_pending` alert to
+    # live in, so its pending-key notice stays a mail (a workspace's runner's is
+    # the alert: tests/test_alerts_device_key.py).
+    Runner.objects.filter(pk=box["runner"].pk).update(workspace=None)
     key = ec.generate_private_key(ec.SECP256R1())
     with django_capture_on_commit_callbacks(execute=True):
         res = _register(box, key)
@@ -126,6 +130,7 @@ def test_the_heartbeat_tells_the_box_a_key_waits_until_it_is_approved(box):
 def test_the_notice_names_the_computer_not_its_kernel(box, django_capture_on_commit_callbacks):
     """A default label is `host (platform.system())`; "Darwin" read to a Mac owner as a
     machine they had never heard of (2026-10-21). The notice says "the Mac named …"."""
+    Runner.objects.filter(pk=box["runner"].pk).update(workspace=None)  # private: still mailed
     key = ec.generate_private_key(ec.SECP256R1())
     data = {"runner": str(box["runner"].pk), "public_jwk": _jwk(key), "kind": "secure-enclave",
             "label": "DIM-SA-A126 (Darwin)"}

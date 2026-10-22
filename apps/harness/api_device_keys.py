@@ -64,9 +64,14 @@ def _may_trust_or_403(request: HttpRequest, runner: Runner) -> None:
                              "may register or approve a device key on it")
 
 
+def approve_path(key: RunnerDeviceKey) -> str:
+    """Settings → Your machines with this key highlighted, app-relative."""
+    return f"/settings?device_key={key.pk}#device-keys"
+
+
 def approve_url(key: RunnerDeviceKey) -> str:
     base = (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").rstrip("/")
-    return f"{base}/settings?device_key={key.pk}#device-keys"
+    return f"{base}{approve_path(key)}"
 
 
 def waiting_approval_url(runner) -> str:

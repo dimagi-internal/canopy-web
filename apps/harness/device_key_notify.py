@@ -1,6 +1,9 @@
 """Tell the people who can approve a runner's device key that one is waiting
 (Canopy Vault, canopy-web#1538 / #1550).
 
+(A new pending key on a workspace's runner is now the `device_key_pending`
+alert instead of this notice; see `notify_pending`.)
+
 A box registering a key prints `approve_url` — to a terminal nobody may be
 watching. A runner coming back from a pause, or a laptop re-enrolling, sat
 with a pending key and every bound agent's turn failing until someone happened
@@ -58,11 +61,20 @@ def machine(key) -> str:
 
 
 def notify_pending(key, *, reapproval: bool = False) -> dict:
-    """Email + Web Push each approver about `key`, now pending. Never raises."""
+    """Email + Web Push each approver about `key`, now pending. Never raises.
+
+    A NEW pending key on a runner that lives in a workspace is the
+    `device_key_pending` alert (`alerts_device_key`): its own blocking notice
+    reaches the same people once, so it is not also mailed here. Still mailed:
+    a re-approval (an active key with a new ECDH key — the alert covers only
+    `pending` keys) and any key on a private runner (workspace NULL — an alert
+    needs a workspace to live in)."""
     from .api_device_keys import approve_url
 
     result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
     try:
+        if not reapproval and key.runner.workspace_id is not None:
+            return result
         runner = key.runner
         link = approve_url(key)
         where = f"{runner.name}, the canopy runner on {machine(key)},"

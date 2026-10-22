@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 SOURCES: list[str] = [
     "apps.harness.alerts_runner_credential",
     "apps.harness.alerts_turn_failure",
+    "apps.harness.alerts_unclaimable",
+    "apps.harness.alerts_device_key",
 ]
 
 
