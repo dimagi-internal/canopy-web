@@ -84,15 +84,14 @@ def close_turn(
     if chat_hooks and turn.chat_session_id:
         from .services import end_turns_ask, logger
 
-        # "Your chat is done" — arms the quiet-timer (or pushes now, if the chat
-        # asked for every completion); DONE/FAILED only, so a stop or a lost
-        # turn arms nothing. Never allowed to fail the close.
+        # "Your chat is done" (apps/push arms its quiet-timer). Never allowed to
+        # fail the close.
         try:
-            from apps.push import services as push_services
+            from .signals import session_turn_finished
 
-            push_services.on_session_turn_finished(turn)
+            session_turn_finished.send(sender=Turn, turn=turn)
         except Exception:  # noqa: BLE001
-            logger.exception("push: could not arm the finish push for turn %s", turn.pk)
+            logger.exception("session_turn_finished receiver failed for turn %s", turn.pk)
         # The box that held this turn's ACP ask open has let go of it (or is
         # gone, and nothing else would ever retract the dialog it left).
         end_turns_ask(turn)

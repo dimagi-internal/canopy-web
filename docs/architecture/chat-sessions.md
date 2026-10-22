@@ -250,6 +250,11 @@ an emdash task name alone is not an identity.
   the first candidate the session is on the Feed for
   (`apps/push/services.py::_question_audience` / `_finish_audience`). Don't add a
   second rule in the browser or in push.
+- Push hears about chat turns through the harness's signals (`apps/push/signals.py`):
+  `session_menu_changed` with `new_ask` ("is asking"), `session_turn_finished`
+  ("is done") and `session_turn_enqueued` (new work drops a pending "done"). The
+  harness's turn and report paths never import push
+  (`tests/test_push_listens_to_harness.py`).
 - Tasks waiting on you do not push (they are not on the Feed). Their per-agent count
   is still kept (`AgentWaitingSnapshot`, marked dirty from `apps/push/signals.py`)
   because the live Waiting on you badge reads it.
