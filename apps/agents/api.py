@@ -32,6 +32,14 @@ from apps.workspaces import services as wsvc
 
 from . import delegations, services
 from . import skill_history as history
+from .gates import (
+    agent_for_admin,
+    agent_for_read,
+    agent_for_work,
+    listed_agent_workspaces,
+    project_or_404,
+    visible_agent_workspaces,
+)
 from .schemas import (
     AgentLicenseOut,
     AgentLicenseRevokeIn,
@@ -136,84 +144,11 @@ logger = logging.getLogger(__name__)
 router = Router(auth=session_auth, tags=["agents"])
 
 
-def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
-    """The single definition of 'agent workspaces this caller can see'. A
-    workspace_id is visible if the caller is pinned to it, or — unpinned —
-    the caller is a member of it. _get_agent_or_404 builds from this, and
-    list_agents and the fleet items query from `_listed_agent_workspace_ids`,
-    which is this plus the read rule (a list never spans two tenant trees
-    unpinned) — so a row a list shows is always one the by-slug gate admits.
-    They used to hand-copy this
-    predicate three times, which is exactly the failure apps/harness/api.py's
-    _runner_visibility_q docstring describes (a runner the list showed but
-    every action 404'd on) — see that docstring for the full story.
-
-    Tenant-pinned (request.workspace_slug truthy): exactly that workspace —
-    no separate membership check needed; WorkspaceResolveMiddleware already
-    gated membership of the pinned workspace before setting workspace_slug.
-
-    Not pinned (flat /api/agents/... callers): any workspace the caller is a
-    member of.
-
-    Fails CLOSED on an unhomed agent (security review 2026-07-26, hole A):
-    this used to return the caller's workspace ids **plus {None}**, so an
-    agent with no workspace was visible to ANY authenticated user across the
-    whole agents surface — reads (tasks, projects, skills, turns,
-    including AgentTurnOut.share_token, a public transcript link) AND writes
-    (board commands, PUT /runners). Strictly broader than the read-only hole
-    `_agent_or_404` (apps/harness/api.py, F1) closed for the same
-    workspace-less-agent case. An unhomed agent must be unresolvable via this
-    API, not universally visible. Since agents/0013 made `Agent.workspace` NOT
-    NULL the case is unrepresentable rather than merely unpopulated, so this
-    reads as a plain membership check with nothing to special-case."""
-    return wsvc.request_member_slugs(request)
-
-
-def _listed_agent_workspace_ids(request: HttpRequest) -> set[str]:
-    """The agent workspaces a LIST spans (`list_agents`, the fleet task and
-    project lists): `_visible_agent_workspace_ids` under the read rule — a
-    caller whose workspaces sit in more than one tenant tree and who pins none
-    gets a 422 rather than every organisation's agents in one list
-    (`wsvc.read_scope`). By-slug gates keep `_visible_agent_workspace_ids`."""
-    return wsvc.request_workspace_slugs(request)
-
-
-def _get_agent_or_404(request: HttpRequest, slug: str):
-    """Resolve an agent, gated by workspace membership. A non-member gets the
-    same 404 as a missing agent (no existence leak). A domain user who has not
-    been let into the agent's workspace (an invite, or an approved access
-    request) is a non-member and gets exactly that 404 — nothing joins
-    automatically."""
-    agent = services.get_agent(slug)
-    if agent is None:
-        raise HttpError(404, f"agent '{slug}' not found")
-    if agent.workspace_id not in _visible_agent_workspace_ids(request):
-        raise HttpError(404, f"agent '{slug}' not found")  # wrong tenant / non-member
-    return agent
-
-
 def _can(request: HttpRequest, workspace, capability: str) -> bool:
     """May the caller exercise `capability` in `workspace`? The request-shaped
     door to `apps/workspaces/permissions.py`, the one table of what each role
     may do. This module names capabilities, never roles."""
     return perms.can(request.user, workspace, capability)
-
-
-def _agent_for_write(request: HttpRequest, slug: str):
-    """An agent the caller may RESHAPE — create, edit, schedule, route, publish.
-
-    The author/executor tier. Separate from `_get_agent_or_404` (membership,
-    the interaction tier) because a `viewer` may talk to an agent and read its
-    board without being able to change what the agent IS.
-
-    `_get_agent_or_404` runs FIRST, so a non-member still gets `404` and never
-    a `403` — no existence leak. Follows the ordering already established at
-    `delete_agent` (below): resolve-then-authorize, never the other way.
-    """
-    agent = _get_agent_or_404(request, slug)
-    if not _can(request, agent.workspace_id, perms.AGENT_WORK):
-        raise HttpError(403, "this action requires the editor role or above")
-    return agent
 
 
 def _refuse_runners_that_cannot_hold(agent, runners) -> None:
@@ -320,27 +255,6 @@ def _refuse_auto_unless_admin(request: HttpRequest, agent, what: str) -> None:
         )
 
 
-def _agent_for_admin(request: HttpRequest, slug: str):
-    """An agent whose SECRETS the caller may change: its owner or an admin.
-
-    Credentials and the vault pointer are the keys a runner resolves
-    everything else from, so writing them is equivalent to controlling the
-    agent end to end. Decided in the who-is-asking spec (D7): the agent's own
-    owner or any of its admins — an explicit, per-agent grant (`AgentAdmin`).
-    This used to mean "WORKSPACE owner" alone, because self-join hands out
-    `editor` and owner was the only role that meant something had been
-    granted. Workspace owners remain admins (`Agent.is_admin`), so nobody who
-    held this gate lost it; the agent's owner and explicit admins gained it.
-
-    `_get_agent_or_404` runs FIRST, same ordering as `_agent_for_write`: a
-    non-member gets `404`, never `403`.
-    """
-    agent = _get_agent_or_404(request, slug)
-    if not agent.is_admin(request.user):
-        raise HttpError(403, "this action requires the agent's owner or an admin")
-    return agent
-
-
 def _plugin_out(agent, refs: dict[int, dict]) -> AgentPluginOut | None:
     ref = plugin_services.plugin_ref(agent, refs)
     return AgentPluginOut(**ref) if ref else None
@@ -349,7 +263,7 @@ def _plugin_out(agent, refs: dict[int, dict]) -> AgentPluginOut | None:
 @router.get("/", response=Page[AgentOut], summary="List agents",)
 def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
     limit = clamp_limit(limit)
-    visible = _listed_agent_workspace_ids(request)
+    visible = listed_agent_workspaces(request)
     agents = [a for a in services.list_agents() if a.workspace_id in visible]
     refs = plugin_services.plugin_refs(request.user) if agents else {}
     items = [
@@ -394,16 +308,16 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
                 + wsvc.creation_refusal(request),
             )
 
-    # This is the reshaping tier (same as _agent_for_write), but there is no
-    # existing agent to resolve through _get_agent_or_404 on a create — so the
+    # This is the reshaping tier (same as agent_for_work), but there is no
+    # existing agent to resolve through agent_for_read on a create — so the
     # gate is against the TARGET workspace directly: an already-existing
     # agent's CURRENT home (this write reshapes that tenant's row, whatever
     # workspace the caller happens to default into), or `home` for a
     # brand-new agent — which is the same thing, `home` above.
     role = wsvc.member_role(request.user, home)
     if existing is not None and role is None:
-        # Resolve-then-authorize, the ordering `_agent_for_write` gets for free
-        # from `_get_agent_or_404`. It has to be spelled out here because this
+        # Resolve-then-authorize, the ordering `agent_for_work` gets for free
+        # from `agent_for_read`. It has to be spelled out here because this
         # route takes the slug in the BODY, so there may be no agent to resolve
         # at all.
         #
@@ -521,7 +435,7 @@ def move_agent(request: HttpRequest, slug: str, payload: AgentMoveIn, dry_run: b
 
     Who: the agent's owner or one of its admins, with the editor role or above
     in the destination."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return _move(request, agent, payload.workspace, dry_run=dry_run)
 
 
@@ -681,7 +595,7 @@ def _detail(request: HttpRequest, agent) -> AgentDetailOut:
 
 @router.get("/{slug}/", response=AgentDetailOut, summary="Agent detail (with counts)",)
 def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return _detail(request, agent)
 
 
@@ -693,7 +607,7 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
 def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn) -> AgentDetailOut:
     """The canopy user account this agent's own token signs in as. `user_id`
     null unlinks it."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
         raise HttpError(403, "only the agent's owner or an admin can change its canopy user")
     try:
@@ -714,7 +628,7 @@ def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanop
     existing account."""
     from apps.tokens.middleware import minting_refusal
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     refused = minting_refusal(request)
     if refused:
         raise HttpError(403, refused)
@@ -740,7 +654,7 @@ def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanop
     The owner or an admin."""
     from apps.tokens.middleware import minting_refusal
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     refused = minting_refusal(request)
     if refused:
         raise HttpError(403, refused)
@@ -761,7 +675,7 @@ def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanop
 @router.put("/{slug}/owner", response=AgentDetailOut,
             summary="Transfer the agent's ownership to a member of its workspace")
 def transfer_owner(request: HttpRequest, slug: str, payload: AgentOwnerIn) -> AgentDetailOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     if not _may_transfer_owner(request, agent):
         raise HttpError(403, "only a workspace owner or the agent's current owner can transfer it")
     if payload.user_id is None:
@@ -819,7 +733,7 @@ def _interface_out(agent) -> dict:
 @router.get("/{slug}/interface", response=AgentInterfaceOut,
             summary="What this agent offers callers — its declared interface")
 def get_interface(request: HttpRequest, slug: str):
-    return _interface_out(_get_agent_or_404(request, slug))
+    return _interface_out(agent_for_read(request, slug))
 
 
 # Owner-or-admin, not the editor tier the skill catalog uses: the interface is
@@ -833,7 +747,7 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
 
     from .interface import InterfaceError, parse
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     if (payload.source is None) == (payload.interface is None):
         raise HttpError(422, "send exactly one of `source` (YAML) or `interface` (a mapping)")
     doc, source = payload.interface, ""
@@ -859,7 +773,7 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,
                summary="Unpublish the declared interface: only the agent's admins and its workspace's editors can reach it")
 def unpublish_interface(request: HttpRequest, slug: str):
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     agent.interface = {}
     agent.interface_source = ""
     agent.interface_published_at = None
@@ -872,7 +786,7 @@ def unpublish_interface(request: HttpRequest, slug: str):
 @router.get("/{slug}/admins", response=list[AgentAdminOut],
             summary="Who holds this agent's keys: its owner and admins")
 def list_admins(request: HttpRequest, slug: str):
-    return _admin_rows(_get_agent_or_404(request, slug))
+    return _admin_rows(agent_for_read(request, slug))
 
 
 @router.get("/{slug}/access", response=AgentAccessOut,
@@ -885,7 +799,7 @@ def agent_access(request: HttpRequest, slug: str):
     the workspace. Readable by any member, like the admin list."""
     from . import access
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     iface = agent.interface or {}
     return {
         "members": access.roster(agent),
@@ -933,13 +847,13 @@ def list_agent_licenses(request: HttpRequest, slug: str):
     requested (the caller list did not allow it yet) or revoked — with the
     private_runners it ran on, its local turns and credential reads, and when it was
     last used. Readable by any member, like the admin list."""
-    return _license_rows(_get_agent_or_404(request, slug))
+    return _license_rows(agent_for_read(request, slug))
 
 
 def _license_target(request: HttpRequest, slug: str, user_id: int):
     from django.contrib.auth import get_user_model
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
         raise HttpError(403, f"only an admin of {agent.slug} may change who uses it locally")
     target = get_user_model().objects.filter(pk=user_id).first()
@@ -993,7 +907,7 @@ def approve_agent_license(request: HttpRequest, slug: str, user_id: int):
 # bar as transferring the agent: its owner or a workspace owner (by browser or
 # MCP alike). Resolve first so a non-member gets 404.
 def _admin_change_gate(request: HttpRequest, slug: str):
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     if not _may_manage_admins(request, agent):
         raise HttpError(403, "only the agent's owner or a workspace owner can change its admins")
     return agent
@@ -1039,12 +953,12 @@ def delete_agent(request: HttpRequest, slug: str):
     *rehearsing* the onboarding path impossible: you could not walk a new
     operator's steps end to end without leaving a fake agent behind forever.
 
-    Gated at the same reshaping tier as everything else `_agent_for_write`
+    Gated at the same reshaping tier as everything else `agent_for_work`
     covers (Phase 0 of the agent-instances-and-ACL design closed the old gap
     where deletion was the ONLY gated write on this surface — everything else,
     including the credential/vault writers, was membership-or-nothing): a
-    viewer cannot destroy a fleet member's board. `_agent_for_write` resolves
-    the agent via `_get_agent_or_404` first, so a non-member gets 404 (no
+    viewer cannot destroy a fleet member's board. `agent_for_work` resolves
+    the agent via `agent_for_read` first, so a non-member gets 404 (no
     existence leak) rather than 403.
 
     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
@@ -1055,7 +969,7 @@ def delete_agent(request: HttpRequest, slug: str):
     """
     from apps.canopy_sessions.services import close_agent_sessions
 
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     # A workspace project it stewards is the workspace's, not the agent's: the
     # cascade would delete it. Hand it on first.
     stewarded = services.stewarded_workspace_projects(agent)
@@ -1084,7 +998,7 @@ def set_runner_preference(request: HttpRequest, slug: str, payload: RunnerPrefer
     bad = [k for k in payload.runner_preference if k not in valid]
     if bad:
         raise HttpError(422, f"unknown runner kind(s): {', '.join(bad)}")
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     agent.runner_preference = list(payload.runner_preference)
     agent.save(update_fields=["runner_preference", "updated_at"])
     return _detail(request, agent)
@@ -1098,7 +1012,7 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
     A human decision made from the board; the agent-repo upsert (POST /) cannot
     touch this field. `manual` from any editor; `auto` from the agent's owner or
     an admin — it is the last rung of the routing ladder ("Everything else")."""
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     if payload.turn_mode == "auto" and agent.turn_mode != "auto":
         _refuse_auto_unless_admin(request, agent, "setting the agent's turn mode")
     agent.turn_mode = payload.turn_mode
@@ -1113,7 +1027,7 @@ def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> Ag
     the one field the setup checklist's first step asks for, without the create
     wizard. A github.com URL in any spelling; stored as `https://github.com/owner/repo`.
 
-    The agent's owner or an admin (`_agent_for_admin`): the repo is what a box
+    The agent's owner or an admin (`agent_for_admin`): the repo is what a box
     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
     cloud boxes that take its turns are asked to re-run their bootstrap, as a
     repo change through the upsert does."""
@@ -1122,7 +1036,7 @@ def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> Ag
     from . import delegations
     from .setup import request_setup
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     full = delegations.repo_full_name(payload.repo_url.strip())
     if not full:
         raise HttpError(422, "give a github.com repository, e.g. https://github.com/dimagi/muse")
@@ -1146,12 +1060,12 @@ def set_credential_source(request: HttpRequest, slug: str,
     (canopy#850). `1password`: through `op`, with the agent's vault key.
     `canopy-web`: the AgentCredential values, via GET /credentials/resolve.
 
-    The agent's owner or an admin only (`_agent_for_admin`), like the
+    The agent's owner or an admin only (`agent_for_admin`), like the
     credentials and the vault pointer themselves: choosing where an agent's
     secrets come from is part of controlling them. Absent from AgentIn, so the
     repo's self-publish upsert cannot move it. From a browser it needs a fresh
     passkey step-up, like every other change to where secrets live."""
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     if payload.credential_source == "canopy-web":
@@ -1179,7 +1093,7 @@ def set_device_binding(request: HttpRequest, slug: str, payload: DeviceBindingIn
     `{"error": "device_proof_required"}` unless the request carries a DPoP proof
     from an ACTIVE runner device key on a runner this agent routes to, or one
     owned by the agent's owner. Owner or admin only, like the credential source."""
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     agent.require_device_binding = payload.require_device_binding
     agent.save(update_fields=["require_device_binding", "updated_at"])
     return _detail(request, agent)
@@ -1196,7 +1110,7 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
     from apps.slack import commands as slack_commands
     from apps.slack.models import SlackInstallation
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     agent.slack_enabled = payload.slack_enabled
     agent.save(update_fields=["slack_enabled", "updated_at"])
     result = slack_commands.sync_quietly(SlackInstallation.objects.filter(links__workspace=agent.workspace).first())
@@ -1220,7 +1134,7 @@ def get_agent_runtime(request: HttpRequest, slug: str) -> AgentRuntimeOut:
     asks 'how do I run agent X?' and gets the repo pointer, the secret-reference
     names to resolve, the engine preference, and the tenant. Tenant-gated exactly
     like every other agent read."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return AgentRuntimeOut(
         slug=agent.slug,
         repo_url=agent.repo_url,
@@ -1235,7 +1149,7 @@ def get_agent_runtime(request: HttpRequest, slug: str) -> AgentRuntimeOut:
 @router.get("/{slug}/runners", response=list[AgentRunnerOut],
             summary="List the agent's ordered runner assignments")
 def list_agent_runners(request: HttpRequest, slug: str) -> list[AgentRunnerOut]:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return [
         AgentRunnerOut(
             runner_id=a.runner_id,
@@ -1262,7 +1176,7 @@ def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrde
     follow its workspace again; its source rules are unaffected either way."""
     from apps.harness.services import agents_with_own_order, default_order_source, inherited_orders
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     if agent.pk in agents_with_own_order([agent.pk]):
         # `workspace` still names the order it WOULD follow, so a screen can
         # offer "follow it instead". `runners` is the agent's own list, the same
@@ -1302,7 +1216,7 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     `runner_ids` (ordered ids, all implicitly enabled)."""
     from apps.harness.models import RunnerAssignment
 
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
 
     if (payload.runner_ids is None) == (payload.runners is None):
         raise HttpError(422, "provide exactly one of runner_ids or runners")
@@ -1353,7 +1267,7 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
     from apps.harness.actors import actor_of
     from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     # Queued depth per (source, actor) — what the UI's "N turns are parked" warning
     # renders next to a strict rule whose runner is offline. This cannot stay a
     # `values_list("origin").annotate(Count)` now that the key includes the actor:
@@ -1434,7 +1348,7 @@ def replace_agent_runner_rules(
     from apps.harness.actors import normalize_actor
     from apps.harness.models import RunnerAssignment
 
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
 
     # Normalize BEFORE validating or storing, so a rule pasted straight out of a
     # mail client ("Sarvesh Tewari <STewari@Dimagi.com>") matches a turn whose
@@ -1540,7 +1454,7 @@ def set_agent_runner_rule(
     administer. `strict`: only these runners may take the work. Returns every rule."""
     from apps.harness.models import RunnerAssignment
 
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     source, actor = _rule_key_or_422(source, actor)
     if not payload.runners:
         raise HttpError(422, "a rule needs at least one runner — DELETE removes a rule")
@@ -1581,7 +1495,7 @@ def delete_agent_runner_rule(request: HttpRequest, slug: str, source: str, actor
 
     from apps.harness import routing_audit
 
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     source, actor = _rule_key_or_422(source, actor)
     with transaction.atomic():
         before = routing_audit.agent_rows(agent, source=source, actor=actor)
@@ -1676,7 +1590,7 @@ def set_agent_actor_route(
     """
     from apps.harness.models import RunnerAssignment
 
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     actor = _actor_or_422(actor)
     current = _current_rules(agent)
 
@@ -1729,7 +1643,7 @@ def delete_agent_actor_route(request: HttpRequest, slug: str, actor: str):
 
     from apps.harness import routing_audit
 
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     actor = _actor_or_422(actor)
     with transaction.atomic():
         before = routing_audit.agent_rows(agent, actor=actor, rules_only=True)
@@ -1744,7 +1658,7 @@ def delete_agent_actor_route(request: HttpRequest, slug: str, actor: str):
 @router.get("/{slug}/syncs/", response=Page[AgentSyncOut], summary="List the agent's syncs",)
 def list_syncs(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentSyncOut]:
     limit = clamp_limit(limit)
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     items = [AgentSyncOut.model_validate(s) for s in services.list_syncs(agent, limit=limit)]
     return paginate(items, offset=0, limit=limit)
 
@@ -1752,7 +1666,7 @@ def list_syncs(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentS
 @router.post("/{slug}/syncs/", response={201: AgentSyncOut},
              summary="Post a Google-Doc sync (idempotent per period+source)",)
 def create_sync(request: HttpRequest, slug: str, payload: AgentSyncIn) -> Status:
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     sync = services.upsert_sync(agent, payload)
     return Status(201, AgentSyncOut.model_validate(sync))
 
@@ -1762,7 +1676,7 @@ def create_sync(request: HttpRequest, slug: str, payload: AgentSyncIn) -> Status
 def delete_sync(request: HttpRequest, slug: str, sync_id: int) -> Status:
     """POST upserts per (period, source), so re-posting only corrects a sync for the
     SAME window — a sync filed under the wrong period is otherwise unreachable."""
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     if not services.delete_sync(agent, sync_id):
         raise HttpError(404, f"sync {sync_id} not found for agent '{slug}'")
     return Status(204, None)
@@ -1772,7 +1686,7 @@ def delete_sync(request: HttpRequest, slug: str, sync_id: int) -> Status:
 @router.get("/{slug}/turns/", response=Page[AgentTurnOut], summary="List the agent's turns",)
 def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentTurnOut]:
     limit = clamp_limit(limit)
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     from apps.harness import turn_access
 
     # Everyone sees what the agent did; a turn's prompt and transcript link are
@@ -1786,7 +1700,7 @@ def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentT
 @router.post("/{slug}/turns/", response={201: AgentTurnOut},
              summary="Package a turn (idempotent per cli_session_id)",)
 def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status:
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     from apps.harness import initiator as who
 
     # A report-only row (no dispatch matched) is a turn someone ran by hand; the
@@ -1800,13 +1714,13 @@ def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status
 # ---- skill catalog ----
 @router.get("/{slug}/skills/", response=list[AgentSkillOut], summary="List the agent's skill catalog",)
 def list_skills(request: HttpRequest, slug: str) -> list[AgentSkillOut]:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return [AgentSkillOut.model_validate(s) for s in services.list_skills(agent)]
 
 
 @router.put("/{slug}/skills/", response=CountOut, summary="Replace the agent's skill catalog",)
 def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn) -> CountOut:
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     count = services.replace_skills(agent, payload.skills)
     return CountOut(count=count)
 
@@ -1818,7 +1732,7 @@ def replace_skills(request: HttpRequest, slug: str, payload: AgentSkillCatalogIn
 @router.get("/{slug}/skill-history/", response=SkillHistoryOut,
             summary="How the agent's skills changed, from its repository's history")
 def get_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     # Due = stale AND no attempt in the last hour: a FAILED attempt never moves
     # synced_at, so without the attempt debounce a repo_not_granted agent would
     # refresh the owner's token and clone on every page load. An owner who has
@@ -1837,7 +1751,7 @@ def get_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
 @router.post("/{slug}/skill-history/sync", response=SkillHistoryOut,
              summary="Re-read the agent's skill history from its repository now")
 def sync_skill_history(request: HttpRequest, slug: str) -> SkillHistoryOut:
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     history.sync(agent, force=True)
     return SkillHistoryOut(**history.history_payload(agent, request.user))
 
@@ -1871,7 +1785,7 @@ def skill_history(
     or commit is selected and the date being looked at. A selected commit's sha
     is `commit`; the page's `as_of` date is `until`.
     """
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     try:
         return history.skill_revisions(
             agent, skill=skill, group=group, since=since, until=until, limit=limit, commit=commit,
@@ -1892,7 +1806,7 @@ def skill_revision_diff(request: HttpRequest, slug: str, sha: str, skill: str) -
 
     from apps.tokens.github_app import GitHubAuthError, GitHubNotConfigured
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     try:
         return history.revision_diff(agent, sha, skill)
     except history.SyncError as e:
@@ -1906,17 +1820,10 @@ def skill_revision_diff(request: HttpRequest, slug: str, sha: str, skill: str) -
 # ---- projects (the work a `Projects/<name>` Drive folder holds) ----
 
 
-def _get_project_or_404(agent, ref: str):
-    project = services.get_project(agent, ref)
-    if project is None:
-        raise HttpError(404, f"project {ref} not found")
-    return project
-
-
 @router.get("/{slug}/projects/", response=list[AgentProjectOut],
             summary="List the agent's projects",)
 def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[AgentProjectOut]:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     projects = services.list_projects(agent, status=status)
     counts = services.project_task_counts(agent)
     for project in projects:
@@ -1927,7 +1834,7 @@ def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[Age
 
 @router.post("/{slug}/projects/", response={201: AgentProjectOut}, summary="Create a project",)
 def create_project(request: HttpRequest, slug: str, payload: AgentProjectIn) -> Status:
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     try:
         project = services.create_project(agent, payload)
     except services.UnknownPersonError as exc:
@@ -1974,8 +1881,8 @@ def _turn_brief(turn) -> TurnBriefOut:
 @router.get("/{slug}/projects/{ref}/", response=AgentProjectDetailOut,
             summary="Get one project: its fields and links, its tasks, its recent turns",)
 def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetailOut:
-    agent = _get_agent_or_404(request, slug)
-    return project_detail(request, _get_project_or_404(agent, ref))
+    agent = agent_for_read(request, slug)
+    return project_detail(request, project_or_404(agent, ref))
 
 
 def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
@@ -2014,15 +1921,15 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
         proposal=(proposals.card(project, request.user) if proposals.is_proposal(project) else None),
         proposed_tasks=[ProposedTaskOut(**proposals.task_card(t, request.user))
                         for t in proposals.proposed_tasks_of(project).filter(status="suggested")],
-        board_readable=project.agent.workspace_id in _visible_agent_workspace_ids(request),
+        board_readable=project.agent.workspace_id in visible_agent_workspaces(request),
     )
 
 
 @router.patch("/{slug}/projects/{ref}/", response=AgentProjectOut, summary="Update a project",)
 def patch_project(request: HttpRequest, slug: str, ref: str,
                   payload: AgentProjectPatch) -> AgentProjectOut:
-    agent = _agent_for_write(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = agent_for_work(request, slug)
+    project = project_or_404(agent, ref)
     data = payload.model_dump(exclude_unset=True)
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump()
@@ -2030,7 +1937,7 @@ def patch_project(request: HttpRequest, slug: str, ref: str,
     return AgentProjectOut.model_validate(apply_project_patch(request, project, data))
 
 
-def _require_workspace_editor(request: HttpRequest, workspace: str, steward) -> None:
+def require_workspace_editor(request: HttpRequest, workspace: str, steward) -> None:
     """Placing a project in a workspace other than its steward's makes it that
     workspace's, so the caller must be able to edit there too — writing the
     steward is not enough. Same 404 as a missing workspace for a non-member."""
@@ -2053,13 +1960,13 @@ def apply_project_patch(request: HttpRequest, project, data: dict):
     workspace = (data.pop("workspace", None) or "").strip()
     if workspace and handle is None:
         raise HttpError(422, "workspace is set with handle, when the project is promoted")
-    _require_workspace_editor(request, workspace, project.agent)
+    require_workspace_editor(request, workspace, project.agent)
     try:
         with transaction.atomic():
             if handle is not None:
                 project = services.promote_project(project, handle, workspace)
             if steward is not None:
-                project = services.set_steward(project, _agent_for_write(request, steward.strip()))
+                project = services.set_steward(project, agent_for_work(request, steward.strip()))
             project = services.patch_project(project, data)
     except services.UnknownPersonError as exc:
         raise HttpError(422, str(exc)) from exc
@@ -2078,10 +1985,6 @@ def _get_task_or_404(agent, ref: str):
     return task
 
 
-def _is_agent_itself(request: HttpRequest, agent) -> bool:
-    return agent.user_id is not None and agent.user_id == request.user.pk
-
-
 @router.get("/{slug}/tasks/", response=list[AgentTaskOut], summary="List the agent's tasks",)
 def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str = "",
                waiting: str = "", ask: str = "", batch: str = "",
@@ -2090,7 +1993,7 @@ def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str =
     (comma-separated), `waiting=me` (open asks nobody owns plus tasks parked on
     you), `ask=open|closed`, `batch` (a batch_key), `parent` (an ext_id for
     that task's direct subtasks, or `none` for top-level tasks only)."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     qs = services.filter_tasks(
         agent.tasks.select_related("agent", "project", "waiting_on_user", "parent")
         .prefetch_related("human_whys"),
@@ -2102,12 +2005,12 @@ def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str =
 @router.post("/{slug}/tasks/", response={201: list[AgentTaskOut]},
              summary="Create tasks (a list; an idempotency_key replays instead of duplicating)",)
 def create_tasks(request: HttpRequest, slug: str, payload: list[AgentTaskIn]) -> Status:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     # A task can carry `on_approve` — work that runs the moment a viewer approves
     # it — so WRITING one is the reshaping tier: an editor, or the agent itself
     # under its own login.
-    if not _is_agent_itself(request, agent):
-        agent = _agent_for_write(request, slug)
+    if not agent.is_own_login(request.user):
+        agent = agent_for_work(request, slug)
     try:
         tasks = services.create_tasks(agent, [p.model_dump(exclude_unset=True) for p in payload])
     except services.UnknownPersonError as exc:
@@ -2124,7 +2027,7 @@ def create_tasks(request: HttpRequest, slug: str, payload: list[AgentTaskIn]) ->
 @router.get("/{slug}/tasks/{ref}/", response=AgentTaskDetailOut,
             summary="Get one task with everything done to it",)
 def get_task(request: HttpRequest, slug: str, ref: str) -> AgentTaskDetailOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     task = _get_task_or_404(agent, ref)
     # Built from the plain task shape: `task.actions` is a manager, not a list.
     return AgentTaskDetailOut(
@@ -2136,7 +2039,7 @@ def get_task(request: HttpRequest, slug: str, ref: str) -> AgentTaskDetailOut:
 
 @router.patch("/{slug}/tasks/{ref}/", response=AgentTaskOut, summary="Update a task's fields",)
 def patch_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskPatch) -> AgentTaskOut:
-    agent = _agent_for_write(request, slug)
+    agent = agent_for_work(request, slug)
     task = _get_task_or_404(agent, ref)
     data = payload.model_dump(exclude_unset=True)
     try:
@@ -2191,28 +2094,28 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
     state the action applies to (an ask already closed, a finished task,
     nudging one that is not in progress); `turn_ids` names the turns the action
     started."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     task = _get_task_or_404(agent, ref)
     if payload.action in _EDITOR_ACTIONS:
         from . import ideas
 
         # The person whose idea it is may call it shipped, as its owner may (hal T82).
         if not (payload.action == "done" and ideas.is_ideas_person(task, request.user)):
-            _agent_for_write(request, slug)
+            agent_for_work(request, slug)
     try:
         task, row, turns = services.act(
             task, action=payload.action, comment=payload.comment,
             by=request.user.email or request.user.get_username(), by_user=request.user,
-            actor_workspace_ids=_visible_agent_workspace_ids(request),
+            actor_workspace_ids=visible_agent_workspaces(request),
             # Who may start a turn is the QuickTurn gate (`enqueue_turn` needs
             # write); it decides whether a reply wakes the agent. Never the agent
             # replying on its own card: its note would wake itself, and a turn
             # that replies again would wake it again.
             may_start_turns=(_can(request, agent.workspace_id, perms.AGENT_WORK)
-                             and not _is_agent_itself(request, agent)),
+                             and not agent.is_own_login(request.user)),
             # An ANSWER to an open question wakes the agent whoever writes it (it
             # is the response the agent asked for) — but never the agent itself.
-            by_agent_itself=_is_agent_itself(request, agent))
+            by_agent_itself=agent.is_own_login(request.user))
     except services.ClosedAskError as exc:
         raise HttpError(409, str(exc)) from exc
     except PermissionError as exc:
@@ -2222,7 +2125,7 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
         # An empty reply, or an `on_approve` spec that cannot run. `act` is
         # atomic: the ask is still open and the action can be retried.
         raise HttpError(422, str(exc)) from exc
-    if task.project_id is not None and not _is_agent_itself(request, agent):
+    if task.project_id is not None and not agent.is_own_login(request.user):
         _engaged_with_project_task(request, task, payload.action)
     return ActOut(task=AgentTaskOut.model_validate(task),
                   action=AgentTaskActionOut.model_validate(row),
@@ -2239,7 +2142,7 @@ def list_task_actions(request: HttpRequest, slug: str, status: str = "",
     """At most `limit` rows (default 200, cap 500). Unfiltered, PENDING rows come
     first (newest first), then the rest newest first — so a short page still
     carries the agent's whole queue before any history."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     limit = clamp_limit(limit)
     if status == "pending":
         rows = services.pending_actions(agent)  # oldest first: the order to carry them out
@@ -2260,9 +2163,9 @@ def mark_task_action_applied(request: HttpRequest, slug: str, action_id: int,
                              payload: ActionAppliedIn) -> AgentTaskActionOut:
     # Marking an action applied tells the agent it is done, so the agent never
     # carries it out — the agent's own login or the reshaping tier, not any viewer.
-    agent = _get_agent_or_404(request, slug)
-    if not _is_agent_itself(request, agent):
-        agent = _agent_for_write(request, slug)
+    agent = agent_for_read(request, slug)
+    if not agent.is_own_login(request.user):
+        agent = agent_for_work(request, slug)
     row = agent.task_actions.filter(id=action_id).select_related("agent", "task").first()
     if row is None:
         raise HttpError(404, f"action {action_id} not found")
@@ -2279,7 +2182,7 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
     The response is the MASKED status. From a browser session this needs a
     fresh passkey step-up (403 `step_up_required` otherwise); a token write —
     `canopy vault import` — does not, and is recorded like every settings change."""
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     # Step-up only for a person at a browser (canopy-web#1538): a stolen session
     # cookie is the threat it closes. A PAT write has no browser to ask and is
     # audited as a SettingChange like any other; requiring a passkey there would
@@ -2302,7 +2205,7 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
 def agent_credential_status(request: HttpRequest, slug: str):
     """The question this answers is 'what is stopping this agent from running',
     which today requires SSH-ing to a box and reading a keyring."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return services.agent_credential_status(agent)
 
 
@@ -2388,7 +2291,7 @@ def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialA
     A non-member gets 404, as everywhere else. `may_resolve` does not account
     for resolve's bearer-only rule, which is a property of the request rather
     than the caller."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     via, reason = _credential_access(request, agent)
     return AgentCredentialAccessOut(
         agent=agent.slug, credential_source=agent.credential_source,
@@ -2463,7 +2366,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     if not request.META.get("HTTP_AUTHORIZATION", "").startswith("Bearer "):
         raise HttpError(403, "resolve requires a bearer token; a browser session is never given values")
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     via, reason = _credential_access(request, agent)
     if via is None:
         raise HttpError(403, reason)
@@ -2694,7 +2597,7 @@ def _caller_runner(request: HttpRequest):
 @router.get("/{slug}/vault", response=AgentVaultOut,
             summary="This agent's 1Password vault (masked — never the key)")
 def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return services.agent_vault_status(agent)
 
 
@@ -2706,7 +2609,7 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
     A single fleet-wide token would be simpler to operate and would make
     canopy-web worth attacking for every agent's secrets at once; this bounds a
     compromise to the one agent whose key was taken (Jonathan, 2026-09-06)."""
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     return services.set_agent_vault(
         agent, vault=payload.vault, service_key=payload.service_key,
     )
@@ -2726,7 +2629,7 @@ def _zk_problem(exc) -> ProblemError:
 
 
 def _zk_admin(request: HttpRequest, slug: str, *, browser_only: bool = False):
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     if browser_only or stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     return agent
@@ -2746,7 +2649,7 @@ def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) ->
     hold no wrap at the current `kv` — each with the public key to wrap to.
     `wraps` are public data. `?values=true` adds the `zk1:` ciphertexts (what
     rotate and turn-off need), and records a read of each."""
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     out = _zk_state(agent, include_values=values)
     if values and out.values:
         services.record_credential_reads(agent, list(out.values), user=request.user, via="zk-state")
@@ -2838,7 +2741,7 @@ def _secret_request_problem(exc) -> ProblemError:
 def _secret_request(request: HttpRequest, slug: str, request_id: uuid.UUID):
     from .models import AgentSecretRequest
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     req = (AgentSecretRequest.objects.filter(pk=request_id, agent=agent)
            .select_related("agent__workspace", "session", "fulfilled_by").first())
     if req is None:
@@ -2864,7 +2767,7 @@ def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequest
     resolve the secret the usual way."""
     from . import secret_requests
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     try:
         req = secret_requests.create(agent, name=payload.name, reason=payload.reason, user=request.user)
     except secret_requests.RequestError as exc:
@@ -2885,7 +2788,7 @@ def get_agent_secret_request(request: HttpRequest, slug: str, request_id: uuid.U
     from . import secret_requests
 
     req = _secret_request(request, slug, request_id)
-    if not (secret_requests.may_read(req, request.user) or req.agent.user_id == request.user.pk):
+    if not (secret_requests.may_read(req, request.user) or req.agent.is_own_login(request.user)):
         raise HttpError(404, "no such secret request")
     return _secret_request_out(req)
 
@@ -2925,7 +2828,7 @@ def get_agent_zk_recipients(request: HttpRequest, slug: str,
     from . import secret_requests, services, zk_endorse
     from .models import AgentCredential
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
         req = _secret_request(request, slug, secret_request) if secret_request else None
         if req is None or not secret_requests.live(req) or not secret_requests.may_answer(req, request.user):
@@ -2979,7 +2882,7 @@ def list_sender_trust(request: HttpRequest, slug: str) -> list[SenderTrustOut]:
     are listed with `active: false` until removed)."""
     from .models import SenderTrust
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return [_sender_trust_out(r) for r in
             SenderTrust.objects.filter(agent=agent).select_related("created_by")]
 
@@ -3000,7 +2903,7 @@ def set_sender_trust(request: HttpRequest, slug: str, email: str,
 
     from .models import SenderTrust
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     address = (email or "").strip().lower()
     if "@" not in address:
         raise HttpError(422, f"not an email address: {email!r}")
@@ -3023,7 +2926,7 @@ def delete_sender_trust(request: HttpRequest, slug: str, email: str):
     """Their mail goes back to needing DMARC or own-domain DKIM. Idempotent."""
     from .models import SenderTrust
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     SenderTrust.objects.filter(agent=agent, email=(email or "").strip().lower()).delete()
     return Status(204, None)
 
@@ -3038,7 +2941,7 @@ def delete_sender_trust(request: HttpRequest, slug: str, email: str):
 def get_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     """Whose GitHub identity this agent's pull requests use, when that token
     expires, and whether it can open a pull request on the agent's repo."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return _github_out(request, agent)
 
 
@@ -3055,7 +2958,7 @@ def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) ->
     Checked before it is stored: GitHub must accept it, and it must be able to
     open a pull request on the agent's own repo. A token that fails is refused
     with the reason, never saved."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     try:
         delegations.set_github(agent, request.user, payload.token)
     except delegations.DelegationError as exc:
@@ -3066,7 +2969,7 @@ def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) ->
 @router.post("/{slug}/github/check", response=AgentGitHubOut,
              summary="Re-check this agent's GitHub token against GitHub")
 def check_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     delegations.check_github(agent)
     return _github_out(request, agent)
 
@@ -3076,7 +2979,7 @@ def check_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     """Removes the CALLER's own delegation — nobody can withdraw someone
     else's."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     delegations.clear_github(agent, request.user)
     return _github_out(request, agent)
 
@@ -3089,7 +2992,7 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 @router.get("/{slug}/salesforce", response=AgentSalesforceOut,
             summary="Whose Salesforce identity this agent borrows (masked — never the credential)")
 def get_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return AgentSalesforceOut(**delegations.salesforce_status(agent))
 
 
@@ -3099,7 +3002,7 @@ def set_agent_salesforce(request: HttpRequest, slug: str,
                          payload: AgentSalesforceIn) -> AgentSalesforceOut:
     """Checked before it is stored: the lender must hold a Salesforce credential
     and Salesforce must accept it. Refused with the reason otherwise."""
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     try:
         delegations.set_salesforce(agent, request.user, payload.lender)
     except delegations.DelegationError as exc:
@@ -3110,7 +3013,7 @@ def set_agent_salesforce(request: HttpRequest, slug: str,
 @router.post("/{slug}/salesforce/check", response=AgentSalesforceOut,
              summary="Re-check the Salesforce identity this agent borrows")
 def check_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     delegations.check_salesforce(agent)
     return AgentSalesforceOut(**delegations.salesforce_status(agent))
 
@@ -3118,7 +3021,7 @@ def check_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOu
 @router.delete("/{slug}/salesforce", response=AgentSalesforceOut,
                summary="Stop lending this agent a Salesforce identity")
 def delete_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     delegations.clear_salesforce(agent, request.user)
     return AgentSalesforceOut(**delegations.salesforce_status(agent))
 
@@ -3129,7 +3032,7 @@ def delete_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceO
 @router.delete("/{slug}/credentials/{name}", response=list[AgentCredentialStatusOut],
                summary="Remove one named secret")
 def delete_agent_credential(request: HttpRequest, slug: str, name: str):
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     services.delete_agent_credential(agent, name)
     return services.agent_credential_status(agent)
 
@@ -3139,7 +3042,7 @@ def delete_agent_credential(request: HttpRequest, slug: str, name: str):
 def agent_credential_reads(request: HttpRequest, slug: str, name: str, limit: int = 100):
     """The read log (canopy-web#1538), newest first. Never the value. The
     agent's owner or an admin — the same people who may set the value."""
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     return services.credential_reads(agent, name, limit=max(1, min(limit, 500)))
 
 
@@ -3154,7 +3057,7 @@ def agent_device_keys(request: HttpRequest, slug: str):
     from apps.harness.api_device_keys import agents_key_opens, key_out, zk_agents_waiting_on
     from apps.harness.runners import may_trust_device_keys
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     vault = [agent] if agent.zk_enabled and agent.credential_source == "canopy-web" else []
     out = []
     for k in device_keys.keys_for_agent(agent):
@@ -3177,7 +3080,7 @@ def agent_credential_alerts(request: HttpRequest, slug: str, limit: int = 50):
     per hour (`occurrences` counts the rest). The agent's owner or an admin."""
     from . import vault_alerts
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     return vault_alerts.alerts_for(agent, limit=max(1, min(limit, 200)))
 
 
@@ -3187,7 +3090,7 @@ def get_pat_rotation(request: HttpRequest, slug: str) -> PatRotationOut:
     """Never a token. The agent's owner or an admin."""
     from . import pat_rotation
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     return PatRotationOut(**pat_rotation.status(agent))
 
 
@@ -3205,7 +3108,7 @@ def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) ->
 
     from . import pat_rotation
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     before = (agent.pat_rotation_enabled, agent.pat_rotation_days)
     if payload.enabled:
         refusal = pat_rotation.enable_refusal(agent, request.user)
@@ -3232,7 +3135,7 @@ def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
     `step_up_required`); a token may call it. The owner or an admin."""
     from . import pat_rotation
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     try:
@@ -3256,7 +3159,7 @@ def reveal_agent_credential(request: HttpRequest, response: HttpResponse, slug: 
     # AND a person present at the browser (step-up) AND a durable record.
     from .models import ZeroKnowledgeValue
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     stepup.require_recent_step_up(request)
     try:
         value = services.reveal_agent_credential(agent, name, user=request.user)
@@ -3287,7 +3190,7 @@ def agent_readiness(request: HttpRequest, slug: str) -> list[BootstrapReportOut]
     the client its config DECLARES. Read `turn_ready` for "can this agent run a
     turn"; `mailbox_ok` only says some client works.
     """
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return [
         BootstrapReportOut(
             runner_name=r.runner_name, client_creds_ok=r.client_creds_ok,
@@ -3307,7 +3210,7 @@ def agent_setup(request: HttpRequest, slug: str) -> list[AgentSetupStepOut]:
     turn. Each step reads the same check the system runs for that thing."""
     from .setup import setup_steps
 
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     return [AgentSetupStepOut(**s) for s in setup_steps(agent, viewer_is_admin=agent.is_admin(request.user))]
 
 
@@ -3320,14 +3223,14 @@ def post_bootstrap_report(request: HttpRequest, slug: str,
     write is a readiness signal nobody can trust — and this one is meant to be
     trusted over the control plane's own record of what it stored.
     """
-    # Membership + `caller_runs_agent`, and deliberately NOT `_agent_for_write`
+    # Membership + `caller_runs_agent`, and deliberately NOT `agent_for_work`
     # on top: `caller_runs_agent` is strictly tighter than any role check, so a
     # role gate adds no security here — but it does add a way for readiness
     # reporting to start 403-ing, when a runner's pairing human happens to hold
     # `viewer`. A machine saying "I could not materialize this" is the last
     # signal to lose, and reporting what a box observed is not reshaping the
     # agent.
-    agent = _get_agent_or_404(request, slug)
+    agent = agent_for_read(request, slug)
     if not services.caller_runs_agent(request.user, agent):
         raise HttpError(403, "no live runner you pair is assigned to this agent")
     # A runner token speaks for ONE box: it reports only for an agent that box

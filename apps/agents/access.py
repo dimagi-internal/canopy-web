@@ -205,8 +205,7 @@ def may_pin_runner(user, agent, runner) -> bool:
     first."""
     if agent.is_admin(user):
         return True
-    if agent.user_id is not None and agent.user_id == getattr(user, "pk", None) \
-            and _routed_to(agent, runner):
+    if agent.is_own_login(user) and _routed_to(agent, runner):
         return True
     from apps.harness.services import can_administer_runner
 

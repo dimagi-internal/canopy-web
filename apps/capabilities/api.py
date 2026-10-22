@@ -34,7 +34,7 @@ from django.utils import timezone
 from ninja import Query, Router, Status
 from ninja.errors import HttpError
 
-from apps.agents import services as agent_services
+from apps.agents.gates import agent_for_read, agent_for_work
 from apps.api.auth import session_auth
 from apps.events import audit
 from apps.workspaces import permissions as perms
@@ -72,25 +72,11 @@ router = Router(auth=session_auth, tags=["capabilities"])
 
 # ---- who may call -------------------------------------------------------------
 
-def _is_agent_itself(request: HttpRequest, agent) -> bool:
-    return agent.user_id is not None and agent.user_id == getattr(request.user, "pk", None)
-
-
-def _agent(request: HttpRequest, slug: str):
-    """The agent, if the caller is it or a member of its workspace; else 404."""
-    agent = agent_services.get_agent(slug)
-    if agent is None or not (_is_agent_itself(request, agent)
-                             or agent.workspace_id in wsvc.request_member_slugs(request)):
-        raise HttpError(404, f"agent '{slug}' not found")
-    return agent
-
-
 def _agent_to_lease_for(request: HttpRequest, slug: str):
-    agent = _agent(request, slug)
-    if not (_is_agent_itself(request, agent) or perms.can(request.user, agent.workspace_id, perms.AGENT_WORK)):
-        raise HttpError(403, f"leasing {slug}'s capabilities needs the editor role or above, "
-                             "or the agent's own login")
-    return agent
+    """Leasing a machine spends money: `agent.work`, or the agent's own login."""
+    return agent_for_work(request, slug, allow_own_login=True,
+                          forbidden=f"leasing {slug}'s capabilities needs the editor role or above, "
+                                    "or the agent's own login")
 
 
 def _lease_visible(request: HttpRequest, lease_id: str) -> CapabilityLease:
@@ -105,7 +91,7 @@ def _lease_visible(request: HttpRequest, lease_id: str) -> CapabilityLease:
     if lease is None:
         raise HttpError(404, f"lease '{lease_id}' not found")
     try:
-        _agent(request, lease.agent.slug)
+        agent_for_read(request, allow_own_login=True, slug=lease.agent.slug)
     except HttpError:
         raise HttpError(404, f"lease '{lease_id}' not found") from None
     return lease
@@ -143,7 +129,7 @@ def _own_agent_ids(request: HttpRequest) -> list[int]:
 
 
 def _declared(request: HttpRequest, slug: str, name: str) -> AgentCapability:
-    agent = _agent(request, slug)
+    agent = agent_for_read(request, allow_own_login=True, slug=slug)
     cap = (AgentCapability.objects.filter(agent=agent, name=name)
            .select_related("agent", "agent__workspace").first())
     if cap is None:
@@ -211,7 +197,7 @@ def get_agent_capabilities(request: HttpRequest, slug: str) -> AgentCapabilities
     """What the agent declares (each capability's manifest and the stack Outputs
     resolved when it was published), whether its workspace grants each one, the
     limits an acquire gets now, and the leases holding or waiting for a machine."""
-    return _capabilities_out(_agent(request, slug))
+    return _capabilities_out(agent_for_read(request, allow_own_login=True, slug=slug))
 
 
 @agents_router.put("/{slug}/capabilities", response=AgentCapabilitiesOut,
@@ -225,8 +211,8 @@ def put_agent_capabilities(request: HttpRequest, slug: str, payload: AgentCapabi
     survive a change to its slots (one on a removed slot runs out; that slot is
     not handed out again). For the agent's owner and admins, or the agent's own
     login."""
-    agent = _agent(request, slug)
-    if not (_is_agent_itself(request, agent) or agent.is_admin(request.user)):
+    agent = agent_for_read(request, allow_own_login=True, slug=slug)
+    if not (agent.is_own_login(request.user) or agent.is_admin(request.user)):
         raise HttpError(403, f"publishing {slug}'s capabilities is for its owner or admins, "
                              "or the agent's own login")
     before = {c.name: c.manifest for c in AgentCapability.objects.filter(agent=agent, retired_at__isnull=True)}
@@ -249,7 +235,7 @@ def refresh_agent_capability(request: HttpRequest, slug: str, name: str) -> Agen
     the stack no longer meets the contract (the old Outputs are kept). For the
     agent's owner and admins, or the agent's own login."""
     cap = _declared(request, slug, name)
-    if not (_is_agent_itself(request, cap.agent) or cap.agent.is_admin(request.user)):
+    if not (cap.agent.is_own_login(request.user) or cap.agent.is_admin(request.user)):
         raise HttpError(403, f"re-reading {slug}'s capabilities is for its owner or admins, "
                              "or the agent's own login")
     try:
@@ -280,7 +266,7 @@ def terminate_capability_orphans(request: HttpRequest, slug: str, name: str) -> 
 # ---- pool slot data -----------------------------------------------------------
 
 def _slot_writer(request: HttpRequest, cap: AgentCapability) -> None:
-    if not (_is_agent_itself(request, cap.agent)
+    if not (cap.agent.is_own_login(request.user)
             or perms.can(request.user, cap.agent.workspace_id, perms.INTEGRATIONS)):
         raise HttpError(403, f"setting {cap.agent.slug}'s slot data is for a workspace admin, "
                              "or the agent's own login")
@@ -364,7 +350,7 @@ def set_capability_grant(request: HttpRequest, payload: CapabilityGrantIn) -> Ca
     """A workspace admin ALLOWS the agent to lease the capability in the agent's
     workspace, optionally lowering its limits (a grant may never raise them).
     Without a grant an acquire is refused with 403."""
-    agent = _agent(request, payload.agent)
+    agent = agent_for_read(request, allow_own_login=True, slug=payload.agent)
     if not perms.can(request.user, agent.workspace_id, perms.INTEGRATIONS):
         raise HttpError(403, "granting a capability is for a workspace admin")
     try:

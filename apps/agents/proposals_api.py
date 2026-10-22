@@ -28,13 +28,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 
 from . import engagement, proposals, services
-from .api import (
-    _agent_for_write,
-    _get_agent_or_404,
-    _get_project_or_404,
-    _is_agent_itself,
-    _visible_agent_workspace_ids,
-)
+from .gates import agent_for_read, agent_for_work, project_or_404, visible_agent_workspaces
 from .models import Agent, AgentTask
 from apps.harness.models import Turn
 from .schemas import (
@@ -52,7 +46,7 @@ router = Router(auth=session_auth, tags=["agents"])
 
 def _partners(request: HttpRequest, slugs: list[str]) -> list[Agent]:
     """The partner agents, each one the caller can see — else 422 naming them."""
-    visible = _visible_agent_workspace_ids(request)
+    visible = visible_agent_workspaces(request)
     found, missing = [], []
     for slug in dict.fromkeys(s.strip() for s in slugs if s.strip()):
         agent = services.get_agent(slug)
@@ -69,7 +63,7 @@ def resolve_task_ref(request: HttpRequest, ref: str) -> AgentTask:
     """`<agent>/<task ext_id>` ("ada/T41") → that task, one the caller can see — else 422."""
     agent_slug, _, ext_id = (ref or "").strip().partition("/")
     agent = services.get_agent(agent_slug.strip()) if agent_slug.strip() and ext_id.strip() else None
-    if agent is None or agent.workspace_id not in _visible_agent_workspace_ids(request):
+    if agent is None or agent.workspace_id not in visible_agent_workspaces(request):
         raise HttpError(422, f"no task {ref!r}: name it as <agent>/<task ext_id>, e.g. ada/T41")
     task = services.get_task(agent, ext_id.strip())
     if task is None:
@@ -87,9 +81,9 @@ def propose_project(request: HttpRequest, slug: str, payload: ProjectProposeIn) 
     with the same name was revised instead (its backings go stale, no second
     card). 409 when a project of that name was declined and no `new_evidence` is
     given. The agent itself, or an editor."""
-    agent = _get_agent_or_404(request, slug)
-    if not _is_agent_itself(request, agent):
-        agent = _agent_for_write(request, slug)
+    agent = agent_for_read(request, slug)
+    if not agent.is_own_login(request.user):
+        agent = agent_for_work(request, slug)
     partners = _partners(request, payload.partners)
     from_task = resolve_task_ref(request, payload.from_task) if payload.from_task.strip() else None
     try:
@@ -118,7 +112,7 @@ def list_project_backings(request: HttpRequest, slug: str, ref: str) -> list[dic
     revised since); `mine` marks the caller's own. Members."""
     from apps.contacts import services as contacts
 
-    project = _get_project_or_404(_get_agent_or_404(request, slug), ref)
+    project = project_or_404(agent_for_read(request, slug), ref)
     return proposals.backings_of(project, me=contacts.person_for(user=request.user))
 
 
@@ -139,7 +133,7 @@ def back_project(request: HttpRequest, slug: str, ref: str, payload: ProjectBack
     """Replaces your earlier stance. `line` (at most 280 characters) is required
     unless you simply back it. You become one of the project's participants. Any
     member; backing is a signal — it never starts the project."""
-    project = _get_project_or_404(_get_agent_or_404(request, slug), ref)
+    project = project_or_404(agent_for_read(request, slug), ref)
     person = _me(request)
     try:
         proposals.back(project, stance=payload.stance, line=payload.line, person=person,
@@ -155,7 +149,7 @@ def back_project(request: HttpRequest, slug: str, ref: str, payload: ProjectBack
 @router.delete("/{slug}/projects/{ref}/backings/me/", response={204: None},
                summary="Withdraw your backing of a project")
 def unback_project(request: HttpRequest, slug: str, ref: str) -> Status:
-    project = _get_project_or_404(_get_agent_or_404(request, slug), ref)
+    project = project_or_404(agent_for_read(request, slug), ref)
     proposals.unback(project, _me(request))
     return Status(204, None)
 
@@ -175,7 +169,7 @@ def _leads_huddle(request: HttpRequest, huddle_id: str, backer) -> bool:
 
 
 def _may_record_stance(request: HttpRequest, agent, who, huddle_id: str | None) -> None:
-    if not (_is_agent_itself(request, who) or _is_agent_itself(request, agent)
+    if not (who.is_own_login(request.user) or agent.is_own_login(request.user)
             or _leads_huddle(request, huddle_id or "", who)):
         raise HttpError(403, f"only {who.slug} itself, {agent.slug} (the project's agent), "
                              f"or the leader of the huddle it took part in records {who.slug}'s stance")
@@ -188,10 +182,10 @@ def back_project_as_agent(request: HttpRequest, slug: str, ref: str, backer: str
     """Called by `backer`'s own login, or by the project's agent's (a huddle's lead
     files its members' round-3 answers: co-sign → backs, amend →
     backs_with_changes, decline → passes). Replaces that agent's earlier stance."""
-    agent = _get_agent_or_404(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = agent_for_read(request, slug)
+    project = project_or_404(agent, ref)
     who = services.get_agent(backer)
-    if who is None or who.workspace_id not in _visible_agent_workspace_ids(request):
+    if who is None or who.workspace_id not in visible_agent_workspaces(request):
         raise HttpError(404, f"agent '{backer}' not found")
     _may_record_stance(request, agent, who, payload.huddle_id)
     try:
@@ -237,10 +231,10 @@ def propose_task(request: HttpRequest, slug: str, ref: str, payload: TaskPropose
     workspace owner or admin. The project's agent itself, or an editor."""
     from apps.huddles.models import CheckinRun
 
-    agent = _get_agent_or_404(request, slug)
-    if not _is_agent_itself(request, agent):
-        agent = _agent_for_write(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = agent_for_read(request, slug)
+    if not agent.is_own_login(request.user):
+        agent = agent_for_work(request, slug)
+    project = project_or_404(agent, ref)
     partners = _partners(request, payload.partners)
     run = None
     if payload.run is not None:
@@ -269,7 +263,7 @@ def list_task_backings(request: HttpRequest, slug: str, ref: str, task: str) -> 
     """Oldest first. `stale` marks a backing of an earlier version; `mine` the caller's own. Members."""
     from apps.contacts import services as contacts
 
-    row = _task_in(_get_project_or_404(_get_agent_or_404(request, slug), ref), task)
+    row = _task_in(project_or_404(agent_for_read(request, slug), ref), task)
     return proposals.backings_of(row, me=contacts.person_for(user=request.user))
 
 
@@ -279,7 +273,7 @@ def back_task(request: HttpRequest, slug: str, ref: str, task: str, payload: Pro
     """Replaces your earlier stance. `line` (at most 280 characters) is required
     unless you simply back it. You become one of the project's participants. Any
     member; backing is a signal — it never starts the task."""
-    project = _get_project_or_404(_get_agent_or_404(request, slug), ref)
+    project = project_or_404(agent_for_read(request, slug), ref)
     row = _task_in(project, task)
     person = _me(request)
     try:
@@ -296,7 +290,7 @@ def back_task(request: HttpRequest, slug: str, ref: str, task: str, payload: Pro
 @router.delete("/{slug}/projects/{ref}/tasks/{task}/backings/me/", response={204: None},
                summary="Withdraw your backing of a proposed task")
 def unback_task(request: HttpRequest, slug: str, ref: str, task: str) -> Status:
-    project = _get_project_or_404(_get_agent_or_404(request, slug), ref)
+    project = project_or_404(agent_for_read(request, slug), ref)
     proposals.unback(None, _me(request), task=_task_in(project, task))
     return Status(204, None)
 
@@ -308,11 +302,11 @@ def back_task_as_agent(request: HttpRequest, slug: str, ref: str, task: str, bac
     """Called by `backer`'s own login, or by the project's agent's (`canopy huddle
     file` records members' round-3 co-signs: co-sign → backs, amend →
     backs_with_changes, decline → passes). Replaces that agent's earlier stance."""
-    agent = _get_agent_or_404(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = agent_for_read(request, slug)
+    project = project_or_404(agent, ref)
     row = _task_in(project, task)
     who = services.get_agent(backer)
-    if who is None or who.workspace_id not in _visible_agent_workspace_ids(request):
+    if who is None or who.workspace_id not in visible_agent_workspaces(request):
         raise HttpError(404, f"agent '{backer}' not found")
     _may_record_stance(request, agent, who, payload.huddle_id)
     try:

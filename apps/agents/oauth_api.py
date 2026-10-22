@@ -34,9 +34,9 @@ def _agent_for_mint(request: HttpRequest, slug: str):
     an admin, the same tier as `PUT /{slug}/credentials`. The mint writes the
     `gog-token` credential, so membership alone let a viewer attach their own
     Google account as the agent's mailbox."""
-    from .api import _agent_for_admin
+    from .gates import agent_for_admin
 
-    return _agent_for_admin(request, slug)
+    return agent_for_admin(request, slug)
 
 
 @router.get("/{slug}/google/authorize", response=GoogleMintStartOut,

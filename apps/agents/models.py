@@ -224,6 +224,15 @@ class Agent(models.Model):
 
         return self.email.strip().lower() if mailbox.describe(self)["kind"] == "google" else ""
 
+    def is_own_login(self, user) -> bool:
+        """Is `user` this agent's OWN canopy login (`Agent.user`)?
+
+        The one spelling of the check. An agent with no login matches nobody —
+        `user_id is None` must never equal an anonymous caller's `pk` (also
+        None), which a bare `agent.user_id == user.pk` lets through."""
+        pk = getattr(user, "pk", None)
+        return self.user_id is not None and pk is not None and self.user_id == pk
+
     def is_admin(self, user) -> bool:
         """The agent's owner, a WORKSPACE owner, or an explicit admin who is
         still a member of the workspace.

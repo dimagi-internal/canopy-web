@@ -51,7 +51,7 @@ def _out(i: SlackChannelIngest) -> dict:
 
 
 def _is_agent_login(user, agent: Agent) -> bool:
-    return agent.user_id is not None and getattr(user, "pk", None) == agent.user_id
+    return agent.is_own_login(user)
 
 
 def _may_see(user, i: SlackChannelIngest) -> bool:

@@ -52,7 +52,7 @@ def may_edit_project(project: AgentProject, user) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
     return (project.owner_user_id == user.pk
-            or (agent.user_id is not None and agent.user_id == user.pk)
+            or agent.is_own_login(user)
             or agent.is_admin(user)
             or perms.can(user, agent.workspace_id, perms.AGENT_WORK))
 

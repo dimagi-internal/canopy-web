@@ -181,7 +181,7 @@ def relationship_for_user(user, agent) -> str:
     # login stays whatever its membership makes it, or everyone with the whole
     # of agent A could steer agent B through A (anyone at dimagi.com with full
     # ACE shipping code through Hal).
-    if not capped and agent.user_id is not None and agent.user_id == user.pk:
+    if not capped and agent.is_own_login(user):
         return SYSTEM
     is_admin = getattr(agent, "is_admin", None)
     if callable(is_admin) and is_admin(user):
