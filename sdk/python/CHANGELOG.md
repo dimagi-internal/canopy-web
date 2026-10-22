@@ -2,6 +2,28 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.12.0 — 2026-10-22
+
+`Canopy-Execution`: canopy vouches for each call an agent's turn makes to a host, and the
+host can verify it (spec `2026-10-22-phi-agents-on-zdr-runners` §6).
+
+- **Host:** `canopy_sdk.host.verify_execution(request, *, config, client_keys, replay_store)`
+  → `Execution` (agent, `agent_sha`, the PHI-safe `declaration`, `runner` with its flags in
+  force and who declared them, `runner_posture`, `requirements`, `turn`, `session`), or
+  `ExecutionRefused(code)`. Checks canopy's client-key signature and `typ`, `iss`, `aud` (your
+  MCP resource), a ≤ 60s life, a single-use `jti`, `cnf.jkt` against the DPoP key proved on the
+  request (`presented_dpop_jkt` by default) and `ath` against its access token.
+- `Execution.phi_clearance(agents=, require=("zdr",))` — `None` when real data may be released,
+  else the refusal: `agent_not_allowed`, `undeclared`, `sha_mismatch`, `runner_flags`,
+  `runner_posture`, `requirements`.
+- **Django:** `canopy_sdk.django.execution.verify_execution(request)`, wired to `CANOPY_HOST`,
+  the jti table and a cached key resolver.
+- **canopy's half:** `consumer.execution_statement(...)`; `contract.EXECUTION_HEADER`,
+  `EXECUTION_TYP`, `EXECUTION_MAX_LIFETIME`, `EXECUTION_REQUIRED_CLAIMS`.
+
+Needs a canopy-web whose gateway sends the header; until then `verify_execution` refuses
+with `no_statement`, so a host that requires it fails closed.
+
 ## 0.11.0 — 2026-10-22
 
 A page chooses its own agent and runner requirements; the panel passes more options through.

@@ -162,6 +162,15 @@ DPOP_NONCE_HEADER = "DPoP-Nonce"
 #: Informational header naming the acting agent. The host logs it; it is never
 #: trusted for authorization.
 ACTOR_HEADER = "Canopy-Actor"
+#: canopy's signed statement about the call in front of the host: which agent, at
+#: which commit, under which declaration, on which runner, in which conversation
+#: (spec 2026-10-22-phi-agents-on-zdr-runners §6). Unlike ``Canopy-Actor`` it IS
+#: verifiable: ``canopy_sdk.host.verify_execution``.
+EXECUTION_HEADER = "Canopy-Execution"
+EXECUTION_TYP = "canopy-execution+jwt"
+EXECUTION_MAX_LIFETIME = 60
+EXECUTION_REQUIRED_CLAIMS: tuple[str, ...] = (
+    "iss", "aud", "iat", "exp", "jti", "cnf", "agent", "runner", "requirements", "turn")
 
 #: Where a canopy deployment serves its Client ID Metadata Document (its
 #: ``client_id`` IS this URL) and its client-auth JWKS, relative to its base URL.

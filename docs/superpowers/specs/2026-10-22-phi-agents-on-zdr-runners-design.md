@@ -307,13 +307,17 @@ Each step ships on its own and fails closed until the next lands.
 2. **canopy-web: flags.** Machine callers and the runner's own token cannot declare a
    flag; passkey step-up; requirement inheritance (§3). Done (#1804).
 3. **canopy-web runner: ZDR mode** (§1), including the ACP settings fix and the posture
-   report; claim requires agreement (§2).
+   report; claim requires agreement (§2). Done (#1821).
 4. **Stand up the box.** Jonathan obtains the ZDR-org key; a dedicated cloud box in ZDR
    mode; Jonathan declares `zdr`.
-5. **canopy-web: storage rules** (§4).
+5. **canopy-web: storage rules** (§4). Done (#1847).
 6. **Declarations + the execution statement** (§5, §6), with the SDK's host half and a
    `dimagi-canopy` release; connect-labs verifies it and flips
-   `CANOPY_EXECUTION_STATEMENTS`.
+   `CANOPY_EXECUTION_STATEMENTS`. canopy-web half done: declarations, confinement for
+   everyone and the declared commit (#1849); `Canopy-Execution` and
+   `canopy_sdk.host.verify_execution` / `Execution.phi_clearance` (dimagi-canopy 0.12.0).
+   The statement is also bound to the access token (`ath`), and the runner reports
+   `pins` (it checks out `agent_sha`) before it is given a declared turn.
 7. **`labsdata` and `data:read`** (§7). Then connect-labs sets
    `CANOPY_RUNNER_REQUIREMENTS=zdr` and `CANOPY_PHI_AGENTS=labsdata`.
 8. **Red team, end to end:** a scripted run on a real opportunity that tries each exit —

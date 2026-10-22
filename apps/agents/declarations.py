@@ -30,6 +30,11 @@ import re
 from django.db import transaction
 from django.utils import timezone
 
+from apps.events import services as events
+
+from . import interface as iface_mod
+from .models import AgentDeclaration
+
 PHI = "phi"
 DATA_VALUES = frozenset({PHI})
 
@@ -80,8 +85,6 @@ def valid_sha(sha: str | None) -> bool:
 
 def current(agent, capability: str):
     """The declaration in force for one capability, or None."""
-    from .models import AgentDeclaration
-
     if not capability:
         return None
     return (AgentDeclaration.objects.filter(agent=agent, capability=capability,
@@ -113,11 +116,6 @@ def record(agent, *, sha: str | None, by) -> dict[str, list[str]]:
     unchanged: the publish is a person's act behind a passkey, and the commit
     it names is the one that will run.
     """
-    from apps.events import services as events
-
-    from . import interface as iface_mod
-    from .models import AgentDeclaration
-
     now = timezone.now()
     wanted = phi_capabilities(agent.interface)
     declared, withdrawn = [], []

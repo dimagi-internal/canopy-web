@@ -911,6 +911,17 @@ In three steps — every claim, lifetime, header and refusal is in
 3. **Use.** canopy's `site_tools` / `site_call` call your MCP with `Authorization: DPoP <token>`,
    a fresh proof and an informational `Canopy-Actor` header; run the tool as `sub`, within the
    token's scopes.
+4. **Real data? Verify `Canopy-Execution`.** On an agent's turn every request also carries
+   canopy's signed statement about the call: the agent, the commit it is running, its author's
+   PHI-safe declaration (`data: phi`, made by a person behind a passkey), the runner and its
+   flags in force (`zdr`, declared by a person and matched by the box's own report), and the
+   conversation's requirements. `canopy_sdk.django.execution.verify_execution(request)` checks
+   it (canopy's client key, your resource, 60s, single-use, bound to the DPoP key and token);
+   `execution.phi_clearance(agents={...})` says whether to release real data or keep the
+   agent on synthetic data, and why. Claims and refusal codes:
+   [SDK README § `Canopy-Execution`](../../sdk/python/README.md#canopy-execution--what-canopy-vouches-for-per-request).
+   canopy's gateway itself never calls you for a ZDR conversation whose capability has no
+   declaration covering the executing commit.
 
 **What canopy adds on its side.** In your site's Connected-site row
 (`/w/<workspace>/settings/connected-apps`), set your **sign-in issuer** and **MCP

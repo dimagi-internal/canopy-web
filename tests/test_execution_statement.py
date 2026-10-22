@@ -1,0 +1,187 @@
+"""`Canopy-Execution`: canopy vouches for each call its gateway makes to a host, and
+the host verifies it with the SDK (spec 2026-10-22-phi-agents-on-zdr-runners §6).
+
+Driven end to end: the MOUNTED canopy MCP server, a real caller token, the gateway,
+a real FastMCP host (`tests/fixtures/site_gateway.py`), and the SDK's `verify_execution` on
+the exact header the host received.
+"""
+from __future__ import annotations
+
+import pytest
+from canopy_sdk.host import ClientKeyResolver, ExecutionRefused, HostConfig, verify_execution
+from canopy_sdk.keys import generate_private_key
+from canopy_sdk.stores import MemoryJtiStore
+from django.utils import timezone
+from fastmcp.exceptions import ToolError
+
+from apps.agents import declarations
+from apps.agents.interface import parse
+from apps.harness.models import Runner, RunnerFlag, Turn
+from apps.host_grants import client_identity, host_gateway
+from tests.fixtures import site_gateway as sg
+from tests.fixtures.site_gateway import HOST_TOKEN, IFACE, RESOURCE
+from tests.fixtures.site_gateway import call as _call
+from tests.fixtures.site_gateway import grant as _grant
+from tests.fixtures.site_gateway import visitor as _visitor
+
+pytestmark = pytest.mark.django_db
+SHA = "d" * 40
+
+
+@pytest.fixture()
+def host(monkeypatch):
+    """A real FastMCP server standing in for the host."""
+    return sg.host_mcp(monkeypatch)
+
+
+@pytest.fixture()
+def w():
+    """canopy's side: an agent, the site, a visitor and their conversation."""
+    return sg.world()
+
+
+def _phi(w, *, sha=SHA, zdr=True):
+    """`connect` declared PHI-safe at `sha`; the turn on a ZDR box at `sha`."""
+    caps = dict(IFACE["capabilities"])
+    caps["connect"] = {**caps["connect"], "data": "phi"}
+    w["agent"].interface = parse({"capabilities": caps})
+    w["agent"].save(update_fields=["interface"])
+    declarations.record(w["agent"], sha=SHA, by=w["owner"])
+    box = Runner.objects.create(name="cloud-zdr-1", workspace=w["ws"], kind=Runner.CLOUD,
+                                status=Runner.ONLINE, owner=w["owner"],
+                                last_heartbeat_at=timezone.now(),
+                                capabilities={"data_mode": "zdr", "data_mode_hash": "abc123"})
+    RunnerFlag.objects.create(runner=box, flag="zdr", declared_by=w["owner"])
+    if zdr:
+        w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["zdr"]}
+        w["session"].save(update_fields=["metadata"])
+    Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=box, agent_sha=sha)
+    return box
+
+
+def _host_side():
+    """The host's verifier, configured as connect-labs would be."""
+    config = HostConfig(signing_key=generate_private_key("EdDSA"), resource=RESOURCE,
+                        canopy_client_id=client_identity.client_id())
+    docs = {client_identity.client_id(): client_identity.client_metadata(),
+            client_identity.jwks_uri(): client_identity.published_jwks()}
+    return config, ClientKeyResolver(fetch_json=docs.__getitem__), MemoryJtiStore()
+
+
+def _verify(headers, store=None, **kw):
+    config, keys, jtis = _host_side()
+    return verify_execution({k.title(): v for k, v in headers.items()}, config=config,
+                            client_keys=keys, replay_store=store or jtis,
+                            jkt=kw.pop("jkt", client_identity.dpop_jkt()), **kw)
+
+
+def _calls(w, host):
+    _grant(w)
+    with _visitor(w):
+        out = _call(host, "site_call", {"tool": "marketplace_orgs_get", "arguments": {}})
+    return out.structured_content
+
+
+def test_every_request_carries_a_statement_the_host_verifies(w, host):
+    box = _phi(w)
+    assert _calls(w, host)["is_error"] is False
+    seen = [h for h in host.seen if "canopy-execution" in h]
+    assert seen and len(seen) == len(host.seen)  # every request of the MCP session
+    ex = _verify(seen[-1])
+    assert (ex.agent, ex.agent_sha, ex.turn) == ("ace", SHA, str(w["turn"].pk))
+    assert ex.declaration["sha"] == SHA and ex.declaration["declared_by"] == "op@dimagi.com"
+    assert ex.runner["id"] == str(box.pk) and ex.runner_flags == {"zdr"}
+    assert ex.runner["flags"][0]["declared_by"] == "op@dimagi.com"
+    assert ex.runner_posture == {"data_mode": "zdr", "config_hash": "abc123"}
+    assert ex.requirements == ("zdr",) and ex.session == str(w["session"].pk)
+    assert ex.phi_clearance(agents={"ace"}) is None
+    # The statements are single-use, one per request.
+    jtis = {_verify(h).claims["jti"] for h in seen}
+    assert len(jtis) == len(seen)
+
+
+def test_a_statement_is_spent_once_and_bound_to_its_call(w, host):
+    _phi(w)
+    _calls(w, host)
+    h = host.seen[-1]
+    config, keys, jtis = _host_side()
+
+    def check(headers, **kw):
+        return verify_execution({k.title(): v for k, v in headers.items()}, config=config,
+                                client_keys=keys, replay_store=jtis, **kw)
+
+    check(h, jkt=client_identity.dpop_jkt())
+    with pytest.raises(ExecutionRefused) as replay:
+        check(h, jkt=client_identity.dpop_jkt())
+    assert replay.value.code == "replayed"
+    with pytest.raises(ExecutionRefused) as other_key:
+        check(host.seen[0], jkt="someone-elses-key")
+    assert other_key.value.code == "unbound"
+    with pytest.raises(ExecutionRefused) as other_token:
+        check({**host.seen[1], "authorization": "DPoP another-token"},
+              jkt=client_identity.dpop_jkt())
+    assert other_token.value.code == "unbound"
+    with pytest.raises(ExecutionRefused) as none:
+        check({"authorization": f"DPoP {HOST_TOKEN}"}, jkt=client_identity.dpop_jkt())
+    assert none.value.code == "no_statement"
+
+
+def test_a_host_that_trusts_another_canopy_refuses_it(w, host):
+    _phi(w)
+    _calls(w, host)
+    config = HostConfig(signing_key=generate_private_key("EdDSA"), resource=RESOURCE,
+                        canopy_client_id="https://evil.test/oauth/client.json")
+    docs = {"https://evil.test/oauth/client.json": {
+        **client_identity.client_metadata(), "client_id": "https://evil.test/oauth/client.json"},
+        client_identity.jwks_uri(): client_identity.published_jwks()}
+    with pytest.raises(ExecutionRefused) as exc:
+        verify_execution({k.title(): v for k, v in host.seen[-1].items()}, config=config,
+                         client_keys=ClientKeyResolver(fetch_json=docs.__getitem__),
+                         replay_store=MemoryJtiStore(), jkt=client_identity.dpop_jkt())
+    assert exc.value.code == "bad_issuer"
+
+
+def test_a_zdr_conversation_on_an_undeclared_commit_never_reaches_the_host(w, host):
+    _phi(w, sha="e" * 40)  # the box runs a commit nobody declared
+    with pytest.raises(ToolError, match="declared PHI-safe"):
+        _calls(w, host)
+    assert host.calls == [] and host.seen == []
+
+
+def test_a_withdrawn_declaration_closes_the_door(w, host):
+    _phi(w)
+    w["agent"].interface = parse(IFACE)
+    w["agent"].save(update_fields=["interface"])
+    declarations.record(w["agent"], sha=None, by=w["owner"])
+    with pytest.raises(ToolError, match="declared PHI-safe"):
+        _calls(w, host)
+    assert host.seen == []
+
+
+def test_outside_zdr_the_statement_says_there_is_no_declaration(w, host):
+    _calls(w, host)  # IFACE's `connect`: not phi; no requirements; no runner
+    ex = _verify(host.seen[-1])
+    assert ex.declaration is None and ex.requirements == () and ex.agent_sha == ""
+    assert ex.phi_clearance(agents={"ace"}) == "undeclared"
+
+
+def test_phi_clearance_refuses_each_missing_fact(w, host):
+    import dataclasses
+
+    _phi(w)
+    _calls(w, host)
+    ex = _verify(host.seen[-1])
+    ok = {"agents": {"ace"}}
+    assert ex.phi_clearance(agents={"echo"}) == "agent_not_allowed"
+    assert dataclasses.replace(ex, agent_sha="f" * 40).phi_clearance(**ok) == "sha_mismatch"
+    assert dataclasses.replace(ex, runner={**ex.runner, "flags": []}).phi_clearance(**ok) == "runner_flags"
+    assert dataclasses.replace(ex, runner_posture={"data_mode": ""}).phi_clearance(**ok) == "runner_posture"
+    assert dataclasses.replace(ex, requirements=()).phi_clearance(**ok) == "requirements"
+    assert dataclasses.replace(ex, declaration=None).phi_clearance(**ok) == "undeclared"
+
+
+def test_a_view_call_carries_no_statement(w):
+    """A person clicking in a View is not an agent's turn: canopy states nothing."""
+    grant = _grant(w)
+    ctx = host_gateway.context_for_grant(w["app"], grant, turn_id="", agent_slug="ace", ceiling=[])
+    assert ctx.execution is None

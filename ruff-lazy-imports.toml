@@ -35,7 +35,6 @@
 "apps/agents/credentials/zk.py" = ["PLC0415"]  # 2
 "apps/agents/credentials/zk_notify.py" = ["PLC0415"]  # 1
 "apps/agents/credentials/zk_seal.py" = ["PLC0415"]  # 1
-"apps/agents/declarations.py" = ["PLC0415"]  # 4
 "apps/agents/engagement.py" = ["PLC0415"]  # 1
 "apps/agents/fleet_api.py" = ["PLC0415"]  # 3
 "apps/agents/health.py" = ["PLC0415"]  # 1

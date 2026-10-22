@@ -10,6 +10,8 @@ what you need:
 * ``views.jwks`` — the host's public key(s), for canopy to verify with;
 * ``views.panel_token`` — the endpoint the widget mints through;
 * ``canopy_sdk.django.asgi.dpop_gate(app)`` — wrap the MCP ASGI app;
+* ``canopy_sdk.django.execution.verify_execution(request)`` — canopy's signed
+  ``Canopy-Execution`` statement on a tool call, before releasing real data;
 * ``{% load canopy_host %}{% canopy_panel resource=... %}`` — the panel.
 
 Nothing here assumes the host is not canopy itself; every URL and id comes from
