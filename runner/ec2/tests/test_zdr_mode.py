@@ -19,9 +19,12 @@ def zdr(load_cloud_runner, monkeypatch):
     monkeypatch.setenv("RUNNER_NAME", "cloud-zdr-1")
     monkeypatch.setenv("RUNNER_DATA_MODE", "zdr")
     monkeypatch.setenv("RUNNER_EXECUTOR", "acp")
+    monkeypatch.setenv("RUNNER_EGRESS", "locked")
     cr = load_cloud_runner()
     # A signed-in box login is present: ZDR mode must never use it.
     monkeypatch.setattr(cr, "box_login_ready", lambda *a, **k: True)
+    # The lock holds (its own checks: test_egress_lock.py).
+    monkeypatch.setattr(cr, "egress_probe", lambda **k: ("ok", "locked"))
     return cr
 
 
