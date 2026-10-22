@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useCopy } from "canopy-ui/lib";
 
 import {
   deleteSession,
@@ -12,7 +13,6 @@ import type { SessionListItem } from "../api/sessions";
 export function SessionsPage() {
   const [sessions, setSessions] = useState<SessionListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
 
   const load = useCallback(() => {
     listMySessions()
@@ -22,11 +22,7 @@ export function SessionsPage() {
 
   useEffect(load, [load]);
 
-  const copy = async (url: string, token: string) => {
-    await navigator.clipboard.writeText(url);
-    setCopied(token);
-    setTimeout(() => setCopied(null), 1500);
-  };
+  const { copied, copy } = useCopy();
 
   const onRotate = async (slug: string) => {
     await rotateSessionToken(slug);
@@ -105,7 +101,7 @@ export function SessionsPage() {
                     </a>
                     <button
                       className="text-muted-foreground hover:text-foreground"
-                      onClick={() => copy(shareUrl(s.share_token!, s.workspace)!, s.share_token!)}
+                      onClick={() => void copy(shareUrl(s.share_token!, s.workspace)!, s.share_token!)}
                     >
                       {copied === s.share_token ? "Copied!" : "Copy link"}
                     </button>

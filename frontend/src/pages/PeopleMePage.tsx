@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNo
 import { AlertTriangle, BookOpen, Check, ChevronDown, Download, Eye, Pencil, Trash2, X } from 'lucide-react'
 
 import { useParams } from 'react-router-dom'
+import { IconButton, Segmented } from 'canopy-ui/ui'
 
 import {
   MY_CATEGORIES,
@@ -439,12 +440,13 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
             </p>
           </div>
           <Segmented
+            label="Whose entries to show"
             value={source}
             onChange={setSource}
             options={[
-              ['all', 'Everything'],
-              ['you', 'You said'],
-              ['agents', 'Agents learned'],
+              { value: 'all', label: 'Everything' },
+              { value: 'you', label: 'You said' },
+              { value: 'agents', label: 'Agents learned' },
             ]}
           />
         </div>
@@ -714,32 +716,6 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
   )
 }
 
-function Segmented<T extends string>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T
-  onChange: (v: T) => void
-  options: [T, string][]
-}) {
-  return (
-    <div role="radiogroup" className="inline-flex rounded-lg border border-border p-0.5 text-xs">
-      {options.map(([v, label]) => (
-        <button
-          key={v}
-          role="radio"
-          aria-checked={value === v}
-          onClick={() => onChange(v)}
-          className={`rounded-md px-2.5 py-1 ${value === v ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 function Switch({ on, label, busy, disabled, onClick }: { on: boolean; label: string; busy: boolean; disabled: boolean; onClick: () => void }) {
   return (
     <button
@@ -754,33 +730,6 @@ function Switch({ on, label, busy, disabled, onClick }: { on: boolean; label: st
       <span
         className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-background shadow transition-transform ${on ? 'translate-x-5' : ''}`}
       />
-    </button>
-  )
-}
-
-function IconButton({
-  label,
-  onClick,
-  disabled,
-  danger,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  disabled?: boolean
-  danger?: boolean
-  children: ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`rounded p-1 text-muted-foreground disabled:opacity-50 ${danger ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:bg-muted hover:text-foreground'}`}
-    >
-      {children}
     </button>
   )
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { listTokens, mintToken, revokeToken, type PersonalToken } from '@/api/tokens'
 import { tokenStatus } from '@/api/tokenStatus'
 import { CopyBlock } from '@/components/CopyBlock'
+import { copyText } from 'canopy-ui/lib'
 import { Button } from 'canopy-ui/ui'
 import { Input } from 'canopy-ui/ui'
 import { relativeAge } from '@/lib/relativeAge'
@@ -81,12 +82,7 @@ export function TokensPanel() {
   }
 
   async function copyMinted() {
-    try {
-      await navigator.clipboard.writeText(minted)
-      setCopied(true)
-    } catch {
-      // ignore
-    }
+    if (await copyText(minted)) setCopied(true)
   }
 
   return (

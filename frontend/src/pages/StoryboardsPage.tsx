@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { CopyButton } from 'canopy-ui/ui'
 import { useScopedPath } from '@/lib/scopedLinks'
 import { listStoryboards, type StoryboardListItem } from '@/api/storyboards'
 
@@ -77,19 +78,7 @@ export default function StoryboardsPage() {
 }
 
 function StoryboardRow({ board }: { board: StoryboardListItem }) {
-  const [copied, setCopied] = useState(false)
   const scoped = useScopedPath()
-
-  async function copyLink() {
-    if (!board.share_url) return
-    try {
-      await navigator.clipboard.writeText(board.share_url)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch {
-      /* the field beside the button still shows the link */
-    }
-  }
 
   return (
     <li className="grid gap-3 rounded-lg border border-border bg-card p-4 sm:grid-cols-[1fr_auto]">
@@ -113,14 +102,14 @@ function StoryboardRow({ board }: { board: StoryboardListItem }) {
       </div>
       <div className="flex items-start gap-2 sm:justify-end">
         {board.share_url && (
-          <button
-            type="button"
-            onClick={copyLink}
-            className="rounded border border-border px-3 py-1.5 text-sm hover:bg-muted"
+          <CopyButton
+            text={board.share_url}
+            variant="outline"
+            className="px-3 py-1.5 text-sm"
             aria-label={`Copy the share link for ${board.title}`}
           >
-            {copied ? 'Copied' : 'Copy share link'}
-          </button>
+            Copy share link
+          </CopyButton>
         )}
       </div>
     </li>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type JSX } from 'react'
+import { copyText } from 'canopy-ui/lib'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'canopy-ui/ui'
 import { WorkbenchSubHeader } from 'canopy-ui'
@@ -166,10 +167,9 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   }
 
   async function copyInviteLink(inv: InviteOut) {
-    try {
-      await navigator.clipboard.writeText(inviteLink(inv.token))
+    if (await copyText(inviteLink(inv.token))) {
       setCopiedInviteId(inv.id)
-    } catch {
+    } else {
       // clipboard blocked — fall back to putting the link on screen to select by hand
       setReissued({ email: inv.email, link: inviteLink(inv.token), status: null })
     }
@@ -205,12 +205,8 @@ export function WorkspaceMembersPage(): JSX.Element | null {
 
   async function handleCopy() {
     if (!created) return
-    try {
-      await navigator.clipboard.writeText(created.link)
-      setCopied(true)
-    } catch {
-      // clipboard blocked (e.g. insecure context) — the link is still on screen to select by hand
-    }
+    // Clipboard blocked (e.g. insecure context): the link is still on screen to select by hand.
+    if (await copyText(created.link)) setCopied(true)
   }
 
   if (!slug) return null

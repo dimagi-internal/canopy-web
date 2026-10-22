@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { getSessionInfo, type SessionInfo, type SessionInfoTurn } from "@/api/chat";
 import { relativeAge } from "@/lib/relativeAge";
+import { CopyButton } from "canopy-ui/ui";
 
 /**
  * "Session info", opened from the chat's ⋯ menu and the /ide row menu:
@@ -54,7 +55,7 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
         >
           {raw ? "Formatted" : "Raw"}
         </button>
-        <CopyButton text={JSON.stringify(info, null, 2)} label="Copy all" />
+        <CopyButton text={JSON.stringify(info, null, 2)} variant="outline" resetMs={1200} title="Copy everything">Copy all</CopyButton>
       </div>
 
       {raw ? (
@@ -235,32 +236,9 @@ function Row({
         ) : (
           <span className="whitespace-pre-wrap break-all">{value}</span>
         )}
-        {copy && <CopyButton text={value} label="Copy" compact />}
+        {copy && <CopyButton text={value} variant="ghost" className="shrink-0" title="Copy value" resetMs={1200} />}
       </dd>
     </div>
-  );
-}
-
-function CopyButton({ text, label, compact }: { text: string; label: string; compact?: boolean }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      type="button"
-      title={`Copy ${label === "Copy" ? "value" : "everything"}`}
-      className={
-        compact
-          ? "shrink-0 rounded px-1 text-[10px] text-muted-foreground hover:bg-muted"
-          : "rounded border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
-      }
-      onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => {
-          setDone(true);
-          window.setTimeout(() => setDone(false), 1200);
-        });
-      }}
-    >
-      {done ? "Copied" : label}
-    </button>
   );
 }
 

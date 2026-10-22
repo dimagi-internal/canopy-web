@@ -74,11 +74,11 @@ const open = (c: HTMLElement, key: string) => {
 it('leads with the outcome, then the diagram: one plain line per message', async () => {
   const { container } = renderAt()
   expect(await screen.findByText('What was decided')).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Diagram' }).getAttribute('aria-pressed')).toBe('true')
+  expect(screen.getByRole('radio', { name: 'Diagram' }).getAttribute('aria-checked')).toBe('true')
   expect(row(container, 'ask-1').textContent).toContain('Ada · To everyone: What are you working on?')
   expect(row(container, 'reply-eva-1').textContent).toContain('Eva → Ada · Top priority: Connect funder pipeline')
   expect(screen.queryByText('Shipped the Gates trip roster')).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: 'Story' }))
+  fireEvent.click(screen.getByRole('radio', { name: 'Story' }))
   expect(container.querySelector('[data-sequence]')).toBeNull()
   expect(container.querySelector('[data-story]')).toBeTruthy()
 })

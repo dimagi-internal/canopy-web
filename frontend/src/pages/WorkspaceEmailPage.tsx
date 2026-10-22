@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type JSX } from 'react'
 import { useParams } from 'react-router-dom'
+import { CopyButton } from 'canopy-ui/ui'
 
 import { listAgents, type AgentOut } from '@/api/agents'
 import {
@@ -57,24 +58,6 @@ function goesTo(r: MailRouteOut): string {
   if (r.kind === 'agent') return r.agent_slug
   if (r.kind === 'forward') return r.forward_to_email
   return 'Dropped'
-}
-
-// A Copy button that says "Copied" for a moment once the clipboard has the text.
-function CopyButton({ text, label }: { text: string; label: string }): JSX.Element {
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const t = window.setTimeout(() => setCopied(false), 1500)
-    return () => window.clearTimeout(t)
-  }, [copied])
-  return (
-    <button type="button" className="text-primary hover:underline" aria-label={label}
-      onClick={() => {
-        navigator.clipboard?.writeText(text).then(() => setCopied(true), () => {})
-      }}>
-      {copied ? 'Copied' : 'Copy'}
-    </button>
-  )
 }
 
 function DomainSection({ workspace, domain, agents, members, onChange, onRemoved }: {
@@ -183,7 +166,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                 <td className="break-all py-1.5 pr-3 font-mono text-foreground-secondary">{r.name}</td>
                 <td className="py-1.5 pr-3">
                   <span className="break-all font-mono text-foreground">{r.value}</span>{' '}
-                  <CopyButton text={r.value} label={`Copy ${r.purpose} value`} />
+                  <CopyButton text={r.value} aria-label={`Copy ${r.purpose} value`} />
                 </td>
                 <td className="py-1.5 pr-3 text-foreground-secondary">{r.priority ?? ''}</td>
                 <td className="py-1.5">

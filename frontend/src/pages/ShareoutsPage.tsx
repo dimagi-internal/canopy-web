@@ -8,6 +8,8 @@ import {
   groupByPeriod,
   shareoutsApi,
 } from '@/api/shareouts'
+import { toneClasses } from 'canopy-ui/lib'
+import { CopyButton } from 'canopy-ui/ui'
 
 // Shareout windows are tz-aware UTC timestamps. A window built from calendar
 // dates is "day-aligned" (00:00:00 → 23:59:59 UTC) and renders as plain dates;
@@ -97,8 +99,8 @@ function LinkChips({ links }: { links: Shareout['links'] }) {
 }
 
 const PR_STATE_STYLE: Record<string, string> = {
-  MERGED: 'text-special bg-special/10 border-special/30',
-  OPEN: 'text-success bg-success/10 border-success/30',
+  MERGED: toneClasses('special'),
+  OPEN: toneClasses('success'),
   CLOSED: 'text-foreground-secondary bg-input/20 border-input/40',
 }
 
@@ -271,26 +273,17 @@ function PeriodRail({
 }
 
 function CopyLinkButton({ period }: { period: ShareoutPeriod }) {
-  const [copied, setCopied] = useState(false)
   const url = `${window.location.origin}/shareouts/${periodSlug(period)}`
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(url)
-    } catch {
-      // clipboard blocked (e.g. insecure context) — fall back to selecting nothing
-    }
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
-  }
   return (
-    <button
-      onClick={copy}
+    <CopyButton
+      text={url}
+      copiedLabel={<><span className="text-primary/70">🔗</span>Copied!</>}
       title={`Copy link to this shareout — ${url}`}
-      className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-medium text-foreground-secondary hover:text-primary border border-border hover:border-primary/40 bg-card px-2.5 py-1 rounded-md transition-colors"
+      className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-medium text-foreground-secondary hover:text-primary hover:no-underline border border-border hover:border-primary/40 bg-card px-2.5 py-1 rounded-md transition-colors"
     >
       <span className="text-primary/70">🔗</span>
-      {copied ? 'Copied!' : 'Copy link'}
-    </button>
+      Copy link
+    </CopyButton>
   )
 }
 

@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { Segmented, type SegmentedOption } from 'canopy-ui/ui'
 import type { Huddle, HuddleCell } from '@/api/huddles'
 import { AnswerPill } from './BlockView'
 import { HuddleSequence } from './HuddleSequence'
@@ -34,14 +35,14 @@ import {
 
 /** The three ways to read a huddle. "Full conversation" is two views (by
  * agent / by idea) under one button; `?view=` keeps whichever is open. */
-const VIEWS: { id: 'story' | 'full' | 'map'; label: string }[] = [
-  { id: 'story', label: 'Story' },
-  { id: 'full', label: 'Full conversation' },
-  { id: 'map', label: 'Diagram' },
+const VIEWS: SegmentedOption<'story' | 'full' | 'map'>[] = [
+  { value: 'story', label: 'Story' },
+  { value: 'full', label: 'Full conversation' },
+  { value: 'map', label: 'Diagram' },
 ]
-const FULL_VIEWS: { id: 'agent' | 'proposal'; label: string }[] = [
-  { id: 'agent', label: 'By agent' },
-  { id: 'proposal', label: 'By idea' },
+const FULL_VIEWS: SegmentedOption<'agent' | 'proposal'>[] = [
+  { value: 'agent', label: 'By agent' },
+  { value: 'proposal', label: 'By idea' },
 ]
 
 const LEADER_HUE = 'var(--foreground-secondary)'
@@ -581,29 +582,6 @@ function ByProposal({ huddle, hueOf }: { huddle: Huddle; hueOf: (m: string) => s
 
 // ── the switcher ─────────────────────────────────────────────────────────────
 
-function Segmented<T extends string>({ label, options, value, onPick, small = false }: {
-  label: string; options: { id: T; label: string }[]; value: T; onPick: (v: T) => void; small?: boolean
-}) {
-  return (
-    <div role="group" aria-label={label} className="inline-flex rounded-lg border border-border bg-card p-0.5">
-      {options.map((v) => (
-        <button
-          key={v.id}
-          type="button"
-          aria-pressed={value === v.id}
-          onClick={() => onPick(v.id)}
-          className={
-            'rounded-md font-medium transition-colors ' + (small ? 'px-2.5 py-1 text-[12px] ' : 'px-3 py-1.5 text-[13px] ') +
-            (value === v.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')
-          }
-        >
-          {v.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 export function HuddleConversation({ huddle }: { huddle: Huddle }) {
   const [params, setParams] = useSearchParams()
   const members = columns(huddle)
@@ -623,13 +601,14 @@ export function HuddleConversation({ huddle }: { huddle: Huddle }) {
     <div data-view={view}>
       <div className="mx-auto mb-6 flex max-w-[760px] flex-wrap items-center gap-3">
         <Segmented
+          size="md"
           label="How to read this huddle"
           options={VIEWS}
           value={top}
-          onPick={(v) => set('view', v === 'full' ? (view === 'proposal' ? 'proposal' : 'agent') : v)}
+          onChange={(v) => set('view', v === 'full' ? (view === 'proposal' ? 'proposal' : 'agent') : v)}
         />
         {top === 'full' && (
-          <Segmented small label="Read the conversation" options={FULL_VIEWS} value={view as 'agent' | 'proposal'} onPick={(v) => set('view', v)} />
+          <Segmented label="Read the conversation" options={FULL_VIEWS} value={view as 'agent' | 'proposal'} onChange={(v) => set('view', v)} />
         )}
       </div>
 

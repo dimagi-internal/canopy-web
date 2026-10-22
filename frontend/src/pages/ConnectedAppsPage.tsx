@@ -18,6 +18,7 @@ import {
 } from '@/api/connectedApps'
 import { WorkspaceApiError } from '@/api/workspaces'
 import { roleAllows } from '@/lib/workspaceRoles'
+import { toneClasses } from 'canopy-ui/lib'
 
 /**
  * Connect a site to canopy — the page that replaced the Django admin.
@@ -185,9 +186,9 @@ function HostGrantEditor({
 }
 
 const STATUS_STYLE: Record<ConnectionCheck['status'], string> = {
-  pass: 'bg-success/10 text-success border-success/30',
-  fail: 'bg-destructive/10 text-destructive border-destructive/30',
-  skip: 'bg-muted text-muted-foreground border-border',
+  pass: toneClasses('success'),
+  fail: toneClasses('destructive'),
+  skip: toneClasses('neutral'),
 }
 
 /** One row per check: status, what, why. Shared by the settings checks and the
