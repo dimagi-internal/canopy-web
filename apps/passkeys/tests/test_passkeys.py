@@ -59,7 +59,7 @@ def _step_up(client, device: SoftAuthenticator):
 
 def _expire_step_up(client):
     session = client.session
-    session[stepup.SESSION_KEY]["until"] = time.time() - 1
+    session[stepup.SESSION_KEY] = {**session[stepup.SESSION_KEY], "until": time.time() - 1}
     session.save()
 
 
@@ -168,6 +168,25 @@ def test_an_assertion_opens_a_five_minute_window(browser, jj):
     assert body["active"] is True and body["window_seconds"] == 300
     pk = Passkey.objects.get(user=jj)
     assert pk.last_used_at is not None and pk.sign_count == 1
+
+
+def test_a_request_in_flight_during_begin_does_not_lose_the_challenge(browser):
+    # A page poll loads the session before `begin` stashes its challenge and
+    # saves after it (SESSION_SAVE_EVERY_REQUEST): its stale copy must not land.
+    from importlib import import_module
+
+    from django.conf import settings
+
+    device = SoftAuthenticator()
+    _register(browser, device)
+    in_flight = import_module(settings.SESSION_ENGINE).SessionStore(browser.session.session_key)
+    list(in_flight.items())  # read now, as a request in flight did
+    begin = _post(browser, "/api/passkeys/step-up/begin")
+    assert begin.status_code == 200, begin.content
+    in_flight.save()
+
+    r = _post(browser, "/api/passkeys/step-up/finish", {"credential": device.get(begin.json()["options"])})
+    assert r.status_code == 200, r.content
 
 
 def test_someone_elses_passkey_is_not_a_step_up_for_me(browser, jj):
