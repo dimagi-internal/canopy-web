@@ -51,3 +51,19 @@ def post_vault_keeper_wraps(request: HttpRequest, runner_id: uuid.UUID, slug: st
     except zk.ZkError as exc:
         raise zk_problem(exc) from exc
     return VaultKeeperGrantOut(granted=n)
+
+
+@router.post("/runners/{runner_id}/vault-keeper/vaults/{vault_id}/wraps", response=VaultKeeperGrantOut,
+             summary="A keeper's copies of a workspace vault's key, for whoever was waiting")
+@gate("runner", setting=True)  # the box's runner token, or its owner
+def post_vault_keeper_workspace_wraps(request: HttpRequest, runner_id: uuid.UUID, vault_id: uuid.UUID,
+                                      payload: ZkWrapsIn) -> VaultKeeperGrantOut:
+    """As for an agent: refused unless this box holds the vault's current key, and
+    for any target that is not waiting."""
+
+    runner = runner_or_404(request, runner_id)
+    try:
+        n = vault_keeper.grant_workspace(runner, vault_id, kv=payload.kv, wraps=payload.wraps)
+    except zk.ZkError as exc:
+        raise zk_problem(exc) from exc
+    return VaultKeeperGrantOut(granted=n)

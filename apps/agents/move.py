@@ -64,7 +64,17 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
 from .agent_login import follow_agent
-from .models import Agent, AgentAdmin, AgentProject, AgentSkill, AgentTask, Vault, VaultLink, VaultMember
+from .models import (
+    Agent,
+    AgentAdmin,
+    AgentProject,
+    AgentSkill,
+    AgentTask,
+    Vault,
+    VaultAttachment,
+    VaultLink,
+    VaultMember,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +311,22 @@ def _vault(p: Plan, apply: bool) -> None:
     if outside:
         p.breaks("vault_members", f"{len(outside)} person(s) added to {p.agent.slug}'s vault by name are not "
                                   f"members of '{p.dest.slug}' and cannot reach it there: {', '.join(outside)}")
+
+
+@register
+def _vault_attachments(p: Plan, apply: bool) -> None:
+    """Workspace vaults attached to this agent serve it only inside their own tree: an
+    attachment whose vault's tree does not hold the destination is dropped."""
+
+    rows = list(VaultAttachment.objects.filter(agent=p.agent).select_related("vault"))
+    gone = [a for a in rows
+            if p.dest.slug not in {a.vault.workspace_id} | wsvc.descendant_slugs({a.vault.workspace_id})]
+    p.moves("agents.VaultAttachment", len(rows) - len(gone), "follows the agent")
+    if gone:
+        p.breaks("workspace_vaults", f"{len(gone)} workspace vault(s) stop serving {p.agent.slug}: "
+                                     + ", ".join(f"{a.vault.workspace_id}/{a.vault.name}" for a in gone))
+        if apply:
+            VaultAttachment.objects.filter(pk__in=[a.pk for a in gone]).delete()
 
 
 @register
