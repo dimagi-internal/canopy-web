@@ -132,10 +132,14 @@ def _resolve_agent(
     """Resolve an agent, gated by workspace membership. Request-free twin of
     apps/agents/gates.py::agent_for_read — the tenant-URL pin is a parameter.
 
-    REST passes request.workspace_slug (preserving today's behavior); the MCP
-    passes None (membership gating only, no tenant-URL concept). Resolution
-    failures raise ScheduleNotFound — 404-not-403 on the REST side, no existence
-    leak.
+    The scope is `gates.agent_for_read`'s: `wsvc.member_scope(user, pin)`.
+    REST passes request.workspace_slug, so a pinned request reaches an agent in
+    the pin or in a workspace below it that the caller is in — the same agents
+    the agent page under that pin resolves, so its Schedules tab never 404s on
+    an agent the page shows. The MCP passes None: every membership. Membership
+    is also checked directly, so a pin no middleware vetted still reaches
+    nothing the caller is not in. Resolution failures raise ScheduleNotFound —
+    404-not-403 on the REST side, no existence leak.
 
     Membership is checked UNCONDITIONALLY. This read `if agent.workspace_id and
     not is_member(...)`, which short-circuits to "allow" on a workspace-less
@@ -160,11 +164,11 @@ def _resolve_agent(
     non-member still gets ScheduleNotFound (404), and only a member who is
     genuinely under-privileged sees ScheduleForbidden (403)."""
     agent = Agent.objects.filter(slug=agent_slug).first()
-    if agent is None:
+    if agent is None or not agent.workspace_id:
         raise ScheduleNotFound(agent_slug)
-    if workspace_slug and agent.workspace_id != workspace_slug:
-        raise ScheduleNotFound(agent_slug)  # wrong tenant
-    if not agent.workspace_id or not wsvc.is_member(user, agent.workspace_id):
+    if agent.workspace_id not in wsvc.member_scope(user, workspace_slug):
+        raise ScheduleNotFound(agent_slug)  # wrong tenant / non-member
+    if not wsvc.is_member(user, agent.workspace_id):
         raise ScheduleNotFound(agent_slug)
     if require and not perms.can(user, agent.workspace_id, require):
         raise ScheduleForbidden(agent_slug, required=perms.MINIMUM_ROLE[require])
