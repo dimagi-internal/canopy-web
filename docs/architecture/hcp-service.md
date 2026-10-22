@@ -1,7 +1,8 @@
 # The HCP service
 
 canopy holds each person's **Human Context Protocol** instance (HCP v1, draft 4:
-`apps/contacts/hcp.py`, `hcp_api.py`). canopy's own agents reach it under grants
+`apps/contacts/hcp/` — `core`, `consent`, `zdr`, `entries`, `grants`,
+`relevance`, `conformance` — and `hcp_api.py`). canopy's own agents reach it under grants
 the person gives each agent in a session — see "canopy's own agents" below. The
 **HCP service** lets an application canopy does not operate ask a person, through
 OAuth 2.0, for access to parts of their instance. That makes the profile `oauth2`
@@ -560,7 +561,7 @@ search ranks your memory").
 | `HCP_PROJECT_BOOST` | 2.0 | What being from the turn's project is worth, in shared words; such entries come back even with nothing else in common. |
 | `HCP_EMBEDDINGS_MODEL` | `vertex/gemini-embedding-001` | Empty turns meaning off (words only). A different model needs the floor re-measured. |
 
-Fixed in code (`hcp.py`), because they are rules rather than dials: corrections
+Fixed in code (`hcp/relevance.py`), because they are rules rather than dials: corrections
 always come along and come first; at most `ROLE_FLOOR` (2) unmatched role entries
 ride along; at most 20 entries per search.
 

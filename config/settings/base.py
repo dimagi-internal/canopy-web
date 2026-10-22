@@ -312,7 +312,7 @@ AUTH_ALLOWED_EMAIL_DOMAIN = env("AUTH_ALLOWED_EMAIL_DOMAIN", default="dimagi.com
 # needed later; hcp-service.md lists what must be true operationally first.
 HCP_SERVICE_AUDIENCE = env("HCP_SERVICE_AUDIENCE", default="internal")
 
-# --- Who has memory at all, for now (apps/contacts/hcp.py `rollout_allows`) ---
+# --- Who has memory at all, for now (apps/contacts/hcp/consent.py `rollout_allows`) ---
 # Jonathan, 2026-10-11: memory is on "for only me right now", and he is the only one
 # who sees its UI. HCP_PEOPLE lists the canopy addresses it is on for; EMPTY MEANS
 # NOBODY (fail closed) — "*" means everyone, and is only for tests and local dev.
@@ -367,7 +367,7 @@ KB_EMBED_PER_MINUTE = env.int("KB_EMBED_PER_MINUTE", default=6000)
 # a bigger change (a KB's first publish: ~140k passages, ~$8) waits for
 # `manage.py kb_embed <ws>/<handle>`, run on purpose.
 KB_SYNC_MAX_EMBED = env.int("KB_SYNC_MAX_EMBED", default=5000)
-# How a search scores an entry (apps/contacts/hcp.py `score`): 1 per word shared
+# How a search scores an entry (apps/contacts/hcp/relevance.py `score`): 1 per word shared
 # with the question, HCP_PROJECT_BOOST when it is from the turn's project, and
 # HCP_SEMANTIC_WEIGHT x its closeness in meaning — counted only at or above
 # HCP_SEMANTIC_FLOOR. Try a value first with `manage.py hcp_explain`; tuning

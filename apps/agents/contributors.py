@@ -16,7 +16,7 @@ want — so an agent writes it and canopy only stores, validates and renders it.
 It lives on `ProjectParticipant.summary` (per project: what someone wants from
 Supply says nothing about anything else). Because it is something an agent
 LEARNED about a person, the person's own switches govern it, exactly as they
-govern facts (`apps/contacts/hcp.py`):
+govern facts (`apps/contacts/hcp/`):
 
 * an agent WRITES it only while the person lets agents learn about them
   (record) and this agent holds their grant for it;
