@@ -1153,3 +1153,47 @@ def test_a_new_agent_in_another_enrolled_workspace_seals_to_the_box(fleet):
     assert [k.pk for k in zk.eligible_device_keys(helper)] == [f.device.pk]
     assert ("device", f.device.ecdh_jkt) in {(kind, t) for kind, t, _ in zk_seal.recipients_for(helper)}
     assert "helper" in {a.slug for a in device_keys.agents_served(f.runner)}
+
+
+# ---- the keeper: a box that holds the vault key passes it on -----------------------------
+
+def _keeper_url(fleet, suffix=""):
+    return f"/api/harness/runners/{fleet.runner.pk}/vault-keeper{suffix}"
+
+
+def _editor_with_a_key(fleet, name="ed"):
+    user = get_user_model().objects.create_user(username=name, email=f"{name}@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet.ws, user=user, role=WorkspaceMembership.EDITOR)
+    priv, _ = _make_keyset(user, _add_passkey(user, f"{name}-cred").credential_id)
+    return user, priv
+
+
+def test_a_holder_box_is_told_who_waits_and_adds_their_copy(fleet):
+    assert _enable(fleet).status_code == 200
+    assert fleet.client.get(_keeper_url(fleet)).json() == {"agents": []}  # nobody waiting
+    user, priv = _editor_with_a_key(fleet)
+    body = fleet.client.get(_keeper_url(fleet)).json()
+    [work] = body["agents"]
+    assert work["agent"] == "eva" and work["kv"] == 1 and work["device_key"] == str(fleet.device.pk)
+    assert [(p["kind"], p["target"]) for p in work["pending"]] == [("member", str(user.pk))]
+    res = fleet.client.post(_keeper_url(fleet, "/eva/wraps"), data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=user, pub=priv.public_key())]}, content_type="application/json")
+    assert res.status_code == 200 and res.json() == {"granted": 1}, res.content
+    assert AgentVaultWrap.objects.filter(agent=fleet.agent, kind="member", user=user).exists()
+    assert fleet.client.get(_keeper_url(fleet)).json() == {"agents": []}
+
+
+def test_a_keeper_never_replaces_a_copy(fleet):
+    assert _enable(fleet).status_code == 200
+    res = fleet.client.post(_keeper_url(fleet, "/eva/wraps"), data={"kv": 1, "wraps": [member_wrap(fleet)]},
+                            content_type="application/json")
+    assert res.status_code == 409 and res.json()["error"] == "zk_not_pending"
+
+
+def test_a_box_with_no_copy_is_no_keeper(fleet):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    user, priv = _editor_with_a_key(fleet)
+    assert fleet.client.get(_keeper_url(fleet)).json() == {"agents": []}
+    res = fleet.client.post(_keeper_url(fleet, "/eva/wraps"), data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=user, pub=priv.public_key())]}, content_type="application/json")
+    assert res.status_code == 403 and res.json()["error"] == "zk_not_a_holder"

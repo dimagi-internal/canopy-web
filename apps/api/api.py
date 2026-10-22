@@ -229,6 +229,7 @@ from apps.agents.api_credentials import router as agent_credentials_router  # no
 from apps.agents.api_readiness import router as agent_readiness_router  # noqa: E402
 from apps.agents.api_routing import router as agent_routing_router  # noqa: E402
 from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
+from apps.agents.api_vault_keeper import router as vault_keeper_router  # noqa: E402
 from apps.agents.contributors_api import router as contributors_router  # noqa: E402
 from apps.agents.credentials.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.credentials.oauth_api import router as agent_google_router  # noqa: E402
@@ -377,6 +378,7 @@ api.add_router("/harness/runners", turn_agent_token_router)
 # Local use (canopy-web#1704): a person's private runner and the turns its sessions open.
 api.add_router("/harness/local-turns", local_turns_router)
 api.add_router("/private-runners", private_runners_router)
+api.add_router("/harness", vault_keeper_router)  # the keeper's calls, under the runner's own path
 api.add_router("/harness", harness_router)
 # What the fleet's debugger agent reads and closes (apps/harness/auto_debug.py).
 api.add_router("/harness/failure-investigations", investigations_router)

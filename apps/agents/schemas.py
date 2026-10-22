@@ -1927,6 +1927,25 @@ class VaultAgentLinkIn(StrictModel):
     role: str = "use"
 
 
+class VaultKeeperAgentOut(StrictModel):
+    agent: str
+    agent_id: str
+    kv: int
+    #: This box's device key holding the wrap, and the wrap itself.
+    device_key: str
+    wrap: dict[str, Any]
+    pending: list[ZkTargetOut]
+    endorsements: list[ZkEndorsementOut]
+
+
+class VaultKeeperOut(StrictModel):
+    agents: list[VaultKeeperAgentOut]
+
+
+class VaultKeeperGrantOut(StrictModel):
+    granted: int
+
+
 class ZkStateOut(StrictModel):
     agent: str
     #: The Agent primary key as a string — bound into every AAD and HKDF info.
