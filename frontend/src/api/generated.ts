@@ -3530,30 +3530,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/runner-preference": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        /**
-         * Set an agent's ordered runner-kind preference
-         * @description DEPRECATED: superseded by PUT /api/agents/{slug}/runners; removed next release.
-         *
-         *     Update just the ordered runner-kind preference (cloud/emdash/remote), no
-         *     clobber of the agent's other fields. Honored at claim time — see
-         *     harness.services.claim_next_turn.
-         */
-        readonly patch: operations["set_runner_preference"];
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/turn-mode": {
         readonly parameters: {
             readonly query?: never;
@@ -9878,48 +9854,6 @@ export interface paths {
          *     thread pointing at the result — the content stays in canopy.
          */
         readonly post: operations["finish_checkin_run"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/huddle-groups/runs/{run_id}": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Deprecated: GET /api/checkins/runs/{id}
-         * @description Kept for one release so an engine that still says `--group-run` reads its
-         *     run. Use `GET /api/checkins/runs/{id}`.
-         */
-        readonly get: operations["get_huddle_group_run"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/huddle-groups/runs/{run_id}/finished": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Deprecated: POST /api/checkins/runs/{id}/finished
-         * @description Kept for one release so an engine that still says `--group-run` finishes
-         *     its run. Use `POST /api/checkins/runs/{id}/finished`.
-         */
-        readonly post: operations["finish_huddle_group_run"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -18774,14 +18708,6 @@ export interface components {
              * @default
              */
             readonly note: string;
-        };
-        /**
-         * RunnerPreferenceIn
-         * @description Set an agent's ordered runner-kind preference (the runner-order UI).
-         */
-        readonly RunnerPreferenceIn: {
-            /** Runner Preference */
-            readonly runner_preference?: readonly string[];
         };
         /**
          * TurnModeIn
@@ -29121,139 +29047,6 @@ export interface components {
             /** Tasks Proposed */
             readonly tasks_proposed?: number | null;
         };
-        /**
-         * LegacyGroupRunOut
-         * @description `/api/huddle-groups/runs/{id}` — kept for one release so an engine that
-         *     has not moved to check-ins still reads and finishes its run.
-         */
-        readonly LegacyGroupRunOut: {
-            /** Id */
-            readonly id: number;
-            /** Checkin */
-            readonly checkin?: number | null;
-            /**
-             * Checkin Name
-             * @default
-             */
-            readonly checkin_name: string;
-            readonly project: components["schemas"]["CheckinProjectOut"];
-            /** Workspace */
-            readonly workspace: string;
-            /**
-             * Slot
-             * Format: date-time
-             */
-            readonly slot: string;
-            /**
-             * Manual
-             * @default false
-             */
-            readonly manual: boolean;
-            /** Status */
-            readonly status: string;
-            /**
-             * Note
-             * @default
-             */
-            readonly note: string;
-            readonly participants: components["schemas"]["CheckinParticipantsOut"];
-            /**
-             * Channel Id
-             * @default
-             */
-            readonly channel_id: string;
-            /**
-             * Channel Name
-             * @default
-             */
-            readonly channel_name: string;
-            /**
-             * Announce Ts
-             * @default
-             */
-            readonly announce_ts: string;
-            /**
-             * Slack Url
-             * @default
-             */
-            readonly slack_url: string;
-            /**
-             * Confirmed By Email
-             * @default
-             */
-            readonly confirmed_by_email: string;
-            /** Confirmed At */
-            readonly confirmed_at?: string | null;
-            /**
-             * Read Messages
-             * @default 0
-             */
-            readonly read_messages: number;
-            /**
-             * Read First Ts
-             * @default
-             */
-            readonly read_first_ts: string;
-            /**
-             * Read Last Ts
-             * @default
-             */
-            readonly read_last_ts: string;
-            /** Read Since */
-            readonly read_since?: string | null;
-            /**
-             * Material
-             * @default
-             */
-            readonly material: string;
-            /**
-             * Turn Id
-             * @default
-             */
-            readonly turn_id: string;
-            /**
-             * Huddle Id
-             * @default
-             */
-            readonly huddle_id: string;
-            /**
-             * Huddle Url
-             * @default
-             */
-            readonly huddle_url: string;
-            /**
-             * Result Url
-             * @default
-             */
-            readonly result_url: string;
-            /**
-             * Summary
-             * @default
-             */
-            readonly summary: string;
-            /**
-             * Tasks Proposed
-             * @default 0
-             */
-            readonly tasks_proposed: number;
-            /** Finished At */
-            readonly finished_at?: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /**
-             * Group
-             * @default
-             */
-            readonly group: string;
-            /**
-             * Group Name
-             * @default
-             */
-            readonly group_name: string;
-        };
         /** ThreadMessageOut */
         readonly ThreadMessageOut: {
             /** N */
@@ -36864,32 +36657,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentAdminOut"][];
-                };
-            };
-        };
-    };
-    readonly set_runner_preference: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["RunnerPreferenceIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentDetailOut"];
                 };
             };
         };
@@ -44723,54 +44490,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CheckinRunOut"];
-                };
-            };
-        };
-    };
-    readonly get_huddle_group_run: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly run_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["LegacyGroupRunOut"];
-                };
-            };
-        };
-    };
-    readonly finish_huddle_group_run: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly run_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["CheckinRunFinishIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["LegacyGroupRunOut"];
                 };
             };
         };

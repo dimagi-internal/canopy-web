@@ -165,8 +165,6 @@ EXCLUDED: dict[str, str] = {
     "app_view_read": _BROWSER,
     "app_view_context": _BROWSER,
     "app_view_message": _BROWSER,
-    # Deprecated.
-    "set_runner_preference": "deprecated; superseded by replace_agent_runners",
 }
 
 def excluded_reason(path: str, method: str, operation: dict) -> str | None:

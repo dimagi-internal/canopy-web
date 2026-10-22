@@ -379,19 +379,6 @@ def test_finished_posts_a_pointer_only_from_the_agents_login(checkin, slack, cha
     assert "first ever message" in got["material"] and got["read_messages"] == 6
 
 
-def test_the_old_work_group_run_routes_still_read_and_finish(checkin, slack, channel, hal_login, lead):
-    """Kept one release: an engine that still says `--group-run` finishes its run."""
-    run = _fire(checkin)
-    click(checkins.CONFIRM, str(run.pk), user=ALICE, message_ts=run.announce_ts)
-    _run(SlackChannelIngest.objects.get())
-    got = _link_client(hal_login).get(f"/api/huddle-groups/runs/{run.pk}").json()
-    assert got["id"] == run.pk and "first ever message" in got["material"] and got["group_name"] == "Weekly"
-    resp = _link_client(hal_login).post(f"/api/huddle-groups/runs/{run.pk}/finished",
-                                        {"huddle_id": "h9", "summary": "x"}, content_type="application/json")
-    assert resp.status_code == 200 and resp.json()["status"] == "done" and resp.json()["huddle_id"] == "h9"
-    assert _link_client(lead).get("/api/huddle-groups/").status_code in (404, 405)
-
-
 def test_revoking_the_read_deletes_the_runs_copy_too(checkin, slack, channel):
     run = _fire(checkin)
     click(checkins.CONFIRM, str(run.pk), user=ALICE, message_ts=run.announce_ts)

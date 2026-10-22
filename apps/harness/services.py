@@ -54,7 +54,7 @@ from .routing import (
     _repo_order_allows,  # noqa: F401
     agent_tenant_q,  # noqa: F401
     agents_following_runner,  # noqa: F401
-    agents_served_by,  # noqa: F401
+    agents_routed_to,  # noqa: F401
     agents_with_own_order,  # noqa: F401
     assignment_rows_for,  # noqa: F401
     blocking_turn,  # noqa: F401

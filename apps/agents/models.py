@@ -125,9 +125,9 @@ class Agent(models.Model):
     # Ordered runner-KIND preference, e.g. ["cloud", "emdash"]. As of the
     # directed-runner-routing cascade (spec 2026-07-24), agent-turn claim
     # eligibility is decided by RunnerAssignment rank instead — this field is no
-    # longer read by harness.services.claim_next_turn. Retained only for the
-    # deprecated PATCH /api/agents/{slug}/runner-preference/ endpoint and
-    # AgentIn during the deprecation window.
+    # longer read by harness.services.claim_next_turn. Retained for AgentIn and
+    # the one-time bridge in harness.routing that turns it into RunnerAssignment
+    # rows; dropped with its own migration once nothing reads it.
     runner_preference = models.JSONField(default=list, blank=True)
     # WHERE each declared secret's value comes from, mirrored from the agent
     # repo's runtime.yaml: {"<ref-name>": {"op": "op://..."} | {"value": "..."}}.

@@ -284,12 +284,6 @@ def agents_routed_to(runner: Runner):
     return Agent.objects.filter(id__in=held).select_related("owner").order_by("slug")
 
 
-def agents_served_by(runner: Runner):
-    """The agents this box runs — `agents_routed_to`, the name the readiness
-    checks and the fleet view already import."""
-    return agents_routed_to(runner)
-
-
 def default_order_source(agent) -> str | None:
     """The workspace whose default order this agent would follow: its own
     workspace or the nearest above it with an enabled order. None: none has one."""

@@ -214,7 +214,6 @@ from apps.storyboards.api import router as storyboards_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.huddles.api import router as huddles_router  # noqa: E402
 from apps.attention.api import router as attention_router  # noqa: E402
-from apps.huddles.checkins_api import legacy_router as huddle_groups_legacy_router  # noqa: E402
 from apps.huddles.checkins_api import project_router as checkins_project_router  # noqa: E402
 from apps.huddles.checkins_api import router as checkins_router  # noqa: E402
 from apps.threads.api import router as threads_router  # noqa: E402
@@ -334,7 +333,6 @@ api.add_router("/engagement", engagement_router)  # what people do with projects
 # Project check-ins across projects, and their runs (apps/huddles/checkins.py).
 api.add_router("/checkins", checkins_router)
 # The two work-group run routes an un-updated engine still calls — one release only.
-api.add_router("/huddle-groups", huddle_groups_legacy_router)
 api.add_router("/threads", threads_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
