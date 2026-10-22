@@ -443,7 +443,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
 
 #: Capabilities a box REPORTS on heartbeat and never declares at pairing.
-REPORTED_CAPABILITIES = ("profiles", "envelope", "midturn", "data_mode", "data_mode_hash")
+REPORTED_CAPABILITIES = ("profiles", "envelope", "midturn", "pins", "data_mode", "data_mode_hash")
 
 
 def declared_capabilities(caps: dict) -> dict:

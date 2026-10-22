@@ -121,6 +121,78 @@ def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str
            turn=None) -> Decision:
     """THE rule: what `who` (a canopy User, a Contact, or None) may make `agent` do.
 
+    The decision table (`_decide`), then the PHI rule over it (`_phi_rule`): a
+    capability declared `data: phi`, and any turn in a conversation that requires
+    ZDR runners, is confined for everyone — owner, admin and canopy included.
+    """
+    decision = _decide(agent, who, verified=verified, origin=origin, capability=capability,
+                       turn=turn)
+    return _phi_rule(agent, decision, capability=capability, turn=turn)
+
+
+#: Why a ZDR conversation with no PHI-safe door is refused.
+PHI_REFUSAL = ("this conversation holds a host's sensitive data, so it runs only in a "
+               "capability its author declared PHI-safe (`data: phi`), and {slug} has none "
+               "for it{you}")
+
+
+def _phi_door(agent, iface: dict, capability: str | None, turn) -> str | None:
+    """The `data: phi` capability this ask is in: the one it names, else the one
+    its conversation's site or page selects. Callers are NOT checked here."""
+    from fnmatch import fnmatchcase
+
+    from . import declarations
+
+    caps = iface.get("capabilities") or {}
+    if capability:
+        return capability if (caps.get(capability) or {}).get("data") == declarations.PHI else None
+    if turn is None:
+        return None
+    site = iface_mod._conversation_site(turn)
+    resource = iface_mod._declared_resource(turn)
+    for name, cap in caps.items():
+        if cap.get("data") != declarations.PHI:
+            continue
+        if site and site in (cap.get("sites") or []):
+            return name
+        if resource and any(fnmatchcase(resource, p) for p in cap.get("pages") or []):
+            return name
+    return None
+
+
+def _phi_rule(agent, d: Decision, *, capability: str | None, turn) -> Decision:
+    """Spec 2026-10-22-phi-agents-on-zdr-runners §5, "confined for everyone".
+
+    * in a phi door, whoever would have had the agent's FULL profile (owner,
+      admin, system, a `full:` rule, an editor, a session writer) runs that door's
+      confined profile instead — same role, same mode, same pin rights;
+    * a confined caller keeps the door the table gave them;
+    * a turn in a ZDR conversation that ends up anywhere but a phi door is
+      refused, never run full or in another capability.
+    """
+    from apps.harness import sensitivity
+
+    iface = getattr(agent, "interface", None) or {}
+    door = _phi_door(agent, iface, capability, turn)
+    zdr = turn is not None and sensitivity.is_sensitive(turn)
+    if door is None and not zdr:
+        return d
+    if door is not None and d.access == FULL:
+        return Decision(d.role, CONFINED, door, d.may_request_auto, d.may_pin_runner,
+                        d.manual_only, f"phi:{door}")
+    if d.access == NONE or not zdr:
+        return d
+    if door is not None and d.access == CONFINED and d.capability == door:
+        return d
+    you = "" if door is None else f" that is open to you ('{door}' does not list you)"
+    return Decision(d.role, NONE, None, False, False, False, "refused",
+                    PHI_REFUSAL.format(slug=agent.slug, you=you))
+
+
+def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,
+            turn=None) -> Decision:
+    """The decision table (docs/architecture/access.md), before the PHI rule.
+
     `verified` is about THIS message (a signed-in request always is). `origin`
     is the channel (for the record; the rule does not vary by it). `capability`
     is a capability the asker named (e.g. a storyboard's), else the free-form door.

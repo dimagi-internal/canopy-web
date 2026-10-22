@@ -81,7 +81,14 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
         admission.at_refusal(turn, access="none")
         return
     turn.capability = cap
-    turn.save(update_fields=["capability"])
+    # A capability declared PHI-safe runs its declared commit; stamped now so only
+    # a box that checks it out may claim the turn (`routing.profile_q`), and again
+    # at claim from the declaration then current (`claiming.issue_credentials`).
+    from apps.agents import declarations
+
+    decl = declarations.current(agent, cap) if declarations.is_phi(agent, cap) else None
+    turn.agent_sha = decl.sha if decl is not None else ""
+    turn.save(update_fields=["capability", "agent_sha"])
 
 
 class IdempotencyConflict(ProblemError):
@@ -431,7 +438,7 @@ def heartbeat(
     projects: list[str] | None = None, profiles: int = 0,
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
     envelope: int = 0, midturn: int = 0, agents_unprepared: list[str] | None = None,
-    data_mode: str = "", data_mode_hash: str = "",
+    data_mode: str = "", data_mode_hash: str = "", pins: int = 0,
 ) -> Runner:
     """A runner's liveness and what it reports, nothing else: the beat renews the
     leases of the turns it holds and answers with the stops it owes. Periodic
@@ -523,6 +530,12 @@ def heartbeat(
     # the same reply twice, so it must never be handed one.
     if int(runner.capabilities.get("midturn") or 0) != int(midturn or 0):
         runner.capabilities = {**runner.capabilities, "midturn": int(midturn or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
+    # Whether this runner's CODE checks out a declared turn's `agent_sha`
+    # (`routing.profile_q`). Same contract: an older runner would run main.
+    if int(runner.capabilities.get("pins") or 0) != int(pins or 0):
+        runner.capabilities = {**runner.capabilities, "pins": int(pins or 0)}
         if "capabilities" not in fields:
             fields.append("capabilities")
     # The box's data mode and its config hash (`runner_requirements.in_force`):

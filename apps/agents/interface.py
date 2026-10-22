@@ -197,7 +197,7 @@ def parse(doc) -> dict:
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
         bad = set(cap) - {"description", "callers", "entry", "tools", "bash", "read_paths",
-                          "write_paths", "input", "pages", "sites", "ceiling"}
+                          "write_paths", "input", "pages", "sites", "ceiling", "data"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         callers = _classes(cap.get("callers"), f"{name}.callers")
@@ -231,11 +231,27 @@ def parse(doc) -> dict:
             "pages": _pages(cap.get("pages"), name),
             **_sites(cap, name),
         }
+        if cap.get("data") is not None:
+            out[name]["data"] = _data(cap["data"], name, out[name])
     full = _classes(doc.get("full"), "full")
     return {"version": VERSION, "full": full, "capabilities": out, "callers_default": "none"}
 
 
 _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+
+
+def _data(value, name: str, cap: dict) -> str:
+    """`data:` — what a capability may serve. `phi` is an author's PHI-safe
+    declaration, refused when its profile shows it is not (spec 2026-10-22-phi-
+    agents-on-zdr-runners §5; `apps/agents/declarations.py`)."""
+    from . import declarations
+
+    if value not in declarations.DATA_VALUES:
+        raise InterfaceError(f"{name}.data must be one of {sorted(declarations.DATA_VALUES)}")
+    refusals = declarations.structural_refusals(name, cap)
+    if refusals:
+        raise InterfaceError("; ".join(refusals))
+    return value
 
 
 def _sites(cap: dict, name: str) -> dict:
@@ -563,6 +579,8 @@ def profile(agent, capability: str) -> dict | None:
     out = {"name": capability, **{k: cap.get(k) for k in
                                   ("description", "entry", "tools", "bash", "read_paths",
                                    "write_paths", "input")}}
+    if cap.get("data"):
+        out["data"] = cap["data"]
     if cap.get("sites"):
         # A site capability reaches its host ONLY through canopy's gateway, so
         # the gateway is part of the profile by construction — an owner cannot

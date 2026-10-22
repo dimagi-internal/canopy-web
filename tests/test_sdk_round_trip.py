@@ -287,8 +287,16 @@ def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host,
     from apps.harness.routing import PROFILES_VERSION
     from apps.harness.claim import claim_next_turn
 
+    from apps.agents import declarations
+
     settings.CHAT_STUB_EXECUTOR = False   # leave the turn queued for a real runner
     host.config = dataclasses.replace(host.config, runner_requirements=("zdr",))
+    # A ZDR conversation runs only in a capability declared PHI-safe (spec
+    # 2026-10-22-phi-agents-on-zdr-runners §5), at its declared commit.
+    site["agent"].interface = parse({"capabilities": {"connect": {
+        **IFACE["capabilities"]["connect"], "data": "phi"}}})
+    site["agent"].save(update_fields=["interface"])
+    declarations.record(site["agent"], sha="c" * 40, by=site["owner"])
     r = _arrive(host, scopes=())
     assert r.status_code == 200, r.content
     auth = {"HTTP_AUTHORIZATION": f"Bearer {r.json()['token']}"}
@@ -307,7 +315,8 @@ def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host,
         rn = Runner.objects.create(name=name, workspace=site["ws"], kind=Runner.CLOUD,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                    owner=site["owner"], host=name,
-                                   capabilities={"sessions": True, "profiles": PROFILES_VERSION, "envelope": 2})
+                                   capabilities={"sessions": True, "profiles": PROFILES_VERSION,
+                                                 "envelope": 2, "pins": 1})
         RunnerAssignment.objects.create(agent=site["agent"], runner=rn, rank=rank)
         return rn
 
@@ -319,6 +328,7 @@ def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host,
     assert claim_next_turn(laptop) is None, "a non-ZDR runner must not get the visitor's turn"
     claimed = claim_next_turn(cloud)
     assert claimed is not None and claimed.id == turn.id
+    assert (claimed.capability, claimed.agent_sha) == ("connect", "c" * 40)
 
 
 def _reports_zdr(runner):
