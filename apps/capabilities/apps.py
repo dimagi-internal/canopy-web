@@ -9,3 +9,7 @@ class CapabilitiesConfig(AppConfig):
     def ready(self) -> None:
         # Releases a turn-bound lease when its turn ends (signals.py).
         from . import signals  # noqa: F401
+        # The capability sweep, on the off-request clock (scheduler.py).
+        from . import scheduler
+
+        scheduler.register()

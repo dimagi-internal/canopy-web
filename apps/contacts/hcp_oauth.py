@@ -565,7 +565,7 @@ def attempt(d: HcpRevocationDelivery, *, now: dt.datetime | None = None, post=No
 
 
 def deliver_due(now: dt.datetime | None = None, limit: int = 20) -> int:
-    """Attempt every delivery that is due. Run from the runner heartbeat
+    """Attempt every delivery that is due. Run from the off-request clock
     (`maybe_deliver`), like the retention sweep."""
     now = now or timezone.now()
     due = list(HcpRevocationDelivery.objects.filter(
@@ -580,7 +580,7 @@ def deliver_due(now: dt.datetime | None = None, limit: int = 20) -> int:
 
 
 def maybe_deliver(now: dt.datetime | None = None) -> None:
-    """The heartbeat's door: at most once a minute across the fleet. Never raises."""
+    """The off-request clock's door: at most once a minute across the fleet. Never raises."""
     try:
         if not cache.add("hcp-revocation-deliveries", "1", timeout=60):
             return

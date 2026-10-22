@@ -433,7 +433,13 @@ def heartbeat(
     envelope: int = 0, midturn: int = 0, agents_unprepared: list[str] | None = None,
     data_mode: str = "", data_mode_hash: str = "",
 ) -> Runner:
-    """`profiles` is the profile-enforcement version the runner REPORTS it can
+    """A runner's liveness and what it reports, nothing else: the beat renews the
+    leases of the turns it holds and answers with the stops it owes. Periodic
+    work that used to ride the beat (scheduled unpauses, due pushes, purges,
+    notices) runs on the off-request clock, apps/common/ticks.py, so it does not
+    stop when no runner is beating.
+
+    `profiles` is the profile-enforcement version the runner REPORTS it can
     honour (see `profile_q`). Written on every beat, and 0 from a runner that
     does not send it — so a downgrade takes effect on the next beat, and nothing
     but the runner itself can claim the capability for it.
@@ -531,21 +537,6 @@ def heartbeat(
             if "capabilities" not in fields:
                 fields.append("capabilities")
     runner.save(update_fields=fields)
-    # Same clock: run every scheduled unpause that has come due, fleet-wide — so a
-    # parked box is woken by ANY runner's beat, its own included. If this beat's
-    # runner was one of them, the response must say so: the laptop mirrors it
-    # down, deleting its `~/.canopy/PAUSED` sentinel.
-    try:
-        if runner.pk in wake_due_runners(now):
-            runner.refresh_from_db(fields=_PAUSE_FIELDS)
-    except Exception:  # noqa: BLE001 — a wake must never cost a runner its heartbeat
-        logger.exception("pause: running scheduled unpauses failed")
-    # And the other half of "nothing will take this": a queued turn whose runners
-    # have all been down longer than an admission rule waits is rejected and its
-    # owner told, rather than left queued. Throttled inside; never raises.
-    from apps.admission import evaluate as admission
-
-    admission.sweep_unrunnable(now)
     # The update nudge: this is the one moment both shas are in hand — the
     # deploy moved the expectation, the beat just reported what's installed.
     # Ring the box's control channel so its updater checks NOW instead of
@@ -587,43 +578,6 @@ def heartbeat(
             status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
         ).exclude(rides_turn_id__in=overdue).update(
             lease_expires_at=now + dt.timedelta(seconds=DEFAULT_LEASE_SECONDS))
-    # The fleet's heartbeats are canopy's only clock (no celery, no beat), so the
-    # delayed "your chat has gone quiet" pushes are drained here. Best-effort: a
-    # push must never cost a runner its heartbeat.
-    try:
-        from apps.push import services as push_services
-
-        push_services.send_due_session_pushes(now)
-    except Exception:  # noqa: BLE001
-        logger.exception("push: draining due session pushes failed")
-    # Same clock: shared chat secrets past their 30 minutes are deleted here, so
-    # the ciphertext goes even if nobody reads the chat again.
-    try:
-        from apps.canopy_sessions import secrets as session_secrets
-
-        session_secrets.purge_expired(now)
-    except Exception:  # noqa: BLE001
-        logger.exception("secrets: purging expired session secrets failed")
-    # Same clock: tell vault-key holders that an approved device or a new admin
-    # is waiting for a zero-knowledge agent's key. At most once a minute, never raises.
-    from apps.agents import zk_notify
-
-    zk_notify.maybe_sweep(now)
-    # Same clock again: content past its retention rule. A no-op unless
-    # CANOPY_RETENTION_ENFORCE is on, at most hourly, and never raises.
-    from apps.retention import services as retention_services
-
-    retention_services.maybe_sweep(now)
-    # And the HCP service's revocation notifications still owed to a client's
-    # webhook (HCP 4.2.3: retried with backoff). At most once a minute; never raises.
-    from apps.contacts import hcp_oauth
-
-    hcp_oauth.maybe_deliver(now)
-    # And the admission sender notices no runner sent within a day, which end
-    # `failed` with the reason. At most once a minute; never raises.
-    from apps.admission import runner_notices
-
-    runner_notices.maybe_expire(now)
     return runner
 
 

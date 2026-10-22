@@ -1,8 +1,8 @@
 """The "your chat is done" pushes.
 
 Default: one push once a session has stayed quiet for the recipient's
-`session_idle_minutes` (default 5) after a turn ends — drained by the runner
-heartbeat, cancelled by a new turn. A session flagged `notify_every_completion`
+`session_idle_minutes` (default 5) after a turn ends — drained by the off-request
+clock, cancelled by a new turn. A session flagged `notify_every_completion`
 pushes immediately on every finished turn instead. Either way the tap lands on
 the chat."""
 from __future__ import annotations
@@ -19,7 +19,7 @@ from apps.canopy_sessions import services as chat
 from apps.canopy_sessions import send as session_send
 from apps.canopy_sessions.models import Message, Session
 from apps.harness import services as hsvc
-from apps.harness.models import Runner, Turn
+from apps.harness.models import Turn
 from apps.push import services as push
 from apps.push.models import NotificationPreference, PushSubscription
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -152,23 +152,21 @@ def test_a_cancelled_turn_never_pushes(session, user):
     assert _due(session) is None
 
 
-def test_the_runner_heartbeat_drains_due_pushes(session, user, workspace):
-    runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=user, workspace=workspace,
-        status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
-    )
+def test_the_off_request_clock_drains_due_pushes(session, user, workspace):
+    from apps.common import ticks
+
     _finish(session, user)
     Session.objects.filter(pk=session.pk).update(
         finish_push_due_at=timezone.now() - dt.timedelta(seconds=1)
     )
     with patch("apps.push.services._send_one") as send:
-        hsvc.heartbeat(runner, active_turn_ids=[])
+        ticks.jobs()["push.due_session_pushes"].fn()
     assert send.call_count == 1
     assert _due(session) is None
 
 
-def test_one_drain_is_bounded_so_a_slow_push_cannot_stall_a_heartbeat(workspace, user):
-    # The drain runs inside a runner's heartbeat and each send can hang for its
+def test_one_drain_is_bounded_so_a_slow_push_cannot_stall_the_tick(workspace, user):
+    # The drain runs on the off-request clock and each send can hang for its
     # 10s timeout, so a backlog is spread over beats rather than sent at once.
     overdue = timezone.now() - dt.timedelta(minutes=1)
     for i in range(push.FINISH_PUSH_BATCH + 3):

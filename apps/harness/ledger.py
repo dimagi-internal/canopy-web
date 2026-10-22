@@ -3,8 +3,7 @@ transcript (`TurnTranscript`), with the readers over both.
 
 `append_events` is the one writer of the ledger and fires
 `turn_events_appended`; `append_transcript` accumulates a turn's raw JSONL under a
-per-turn ceiling. Split out of `services.py`, which still re-exports every name
-here.
+per-turn ceiling. Split out of `services.py`; import these names from here.
 """
 from __future__ import annotations
 

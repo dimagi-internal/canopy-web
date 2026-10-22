@@ -457,11 +457,13 @@ def test_a_failed_send_is_retried_after_the_lease_and_given_up_on_after_a_day(fl
         claimed_at=timezone.now() - runner_notices.LEASE - dt.timedelta(seconds=1))
     assert [n["id"] for n in _lease(fleet["cloud"], {"hal": "hal@dimagi-ai.com"})] == [pending.pk]
 
-    # A day on, nobody managed it: it ends failed, saying why, on the heartbeat.
+    # A day on, nobody managed it: it ends failed, saying why, on the off-request clock.
     AdmissionNotice.objects.filter(pk=pending.pk).update(
         created_at=timezone.now() - runner_notices.EXPIRES - dt.timedelta(minutes=1))
     runner_notices._last_expiry = None
-    services.heartbeat(laptop, active_turn_ids=[])
+    from apps.common import ticks
+
+    ticks.jobs()["admission.expire_runner_notices"].fn()
     pending.refresh_from_db()
     assert pending.status == AdmissionNotice.FAILED
     assert "a runner tried and failed within 24 hours" in pending.detail

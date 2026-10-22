@@ -3,8 +3,7 @@
 Its declared flags (`RunnerFlag`, e.g. ZDR), its Claude login
 (`RunnerCredential`: set, read, swap primary and secondary), refresh requests,
 its admins (`RunnerAdmin`), and the browser-driven re-authentication
-(`RunnerMint`). Split out of `services.py`, which still re-exports every name
-here.
+(`RunnerMint`). Split out of `services.py`; import these names from here.
 """
 from __future__ import annotations
 

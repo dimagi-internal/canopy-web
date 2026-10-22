@@ -24,7 +24,7 @@ self-audit against the spec is `hcp-conformance.md`.
 | Consent screen | `templates/contacts/hcp_consent.html` (act 1), `hcp_keep.html` (act 2) |
 | Tokens | `HcpToken` (access 1 h; refresh rotates), `HcpAuthorizationCode` (10 min, single use) |
 | Bearer access | `apps/tokens/middleware.py` → `request.hcp_access`; `hcp_api._principal` |
-| Revocation notices | `HcpRevocationDelivery`; signed, retried from the runner heartbeat |
+| Revocation notices | `HcpRevocationDelivery`; signed, retried from the off-request clock |
 | Discovery | `/api/hcp/.well-known/hcp-configuration` (also `/.well-known/hcp-configuration`) |
 | RFC 8414 metadata | `/api/hcp/.well-known/oauth-authorization-server` and `/.well-known/oauth-authorization-server/api/hcp` |
 | MCP manifest (Appendix B) | `/api/hcp/.well-known/mcp-manifest` |
@@ -125,10 +125,10 @@ the revocation is committed even though the exchange itself is refused.
 **A client revoking its own token ends the grant (RFC 7009).** It has said it no
 longer wants access. The person sees `grant.revoked` with the client as actor.
 
-**Webhooks retry from the runner heartbeat.** canopy-web has no job queue, so
-the retention sweep already rides the heartbeat, and revocation notices do the same.
+**Webhooks retry from the off-request clock** (`apps/common/ticks.py`). canopy-web
+has no job queue; the retention sweep runs on the same clock.
 - **First attempt:** a short background thread fires right after commit.
-- **Retries:** from the heartbeat, at most once a minute across the fleet.
+- **Retries:** from the off-request clock, at most once a minute across the fleet.
 - **Backoff:** 1, 5, 15, 30 and 60 minutes between attempts, so 6 attempts spanning about 1.85 h before it is abandoned,
   which meets "at least 5 attempts over at least 1 hour".
 - **Signing:** the same payload every time, a fresh `HCP-Delivery-Id` each attempt,

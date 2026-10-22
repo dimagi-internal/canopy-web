@@ -18,8 +18,8 @@ reads the agent's mailbox already holds a client that can send from it:
 A notice no runner sends within `EXPIRES` ends `failed`, saying why — by then
 an automatic reply would arrive a day late, and "never silently failed" means
 the reason is on the row, not that the notice waits forever. Expiry runs on the
-fleet's heartbeat (`maybe_expire`), so it happens even when no runner reads the
-mailbox at all.
+off-request clock (`maybe_expire`, apps/common/ticks.py), so it happens even when
+no runner reads the mailbox at all.
 """
 from __future__ import annotations
 
@@ -140,12 +140,12 @@ _last_expiry: dt.datetime | None = None
 
 
 def maybe_expire(now) -> None:
-    """The heartbeat's call: at most once a minute, and never raises."""
+    """The off-request clock's call: at most once a minute, and never raises."""
     global _last_expiry
     if _last_expiry is not None and now - _last_expiry < dt.timedelta(minutes=1):
         return
     _last_expiry = now
     try:
         expire(now)
-    except Exception:  # noqa: BLE001 — a notice must never cost a runner its heartbeat
+    except Exception:  # noqa: BLE001 — a notice must never stop the other jobs
         logger.exception("admission: expiring pending sender notices failed")

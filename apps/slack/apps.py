@@ -17,3 +17,7 @@ class SlackConfig(AppConfig):
         from .agent_move import participant
 
         move.register(participant)
+        # Approved channel reads, on the off-request clock (ingest_scheduler.py).
+        from . import ingest_scheduler
+
+        ingest_scheduler.register()

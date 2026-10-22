@@ -44,3 +44,6 @@ SLACK_INGEST_TICK_S = 0
 # Likewise the canopy-pat rotation: tests call `pat_rotation.tick()` / `rotate()`.
 CANOPY_PAT_ROTATION_TICK_S = 0
 CANOPY_SCHEDULE_TICK_S = 0
+# And the one off-request clock (apps/common/ticks.py) they all run on: tests call
+# a job's function, or `ticks.tick()`, directly.
+TICK_BASE_S = 0

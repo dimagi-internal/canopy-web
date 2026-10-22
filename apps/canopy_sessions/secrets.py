@@ -43,7 +43,7 @@ NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 VALUE_MAX = 16_384
 #: A shared secret dies this long after it was shared (re-sharing the name
 #: restarts the clock). Enforced on every read, and the rows are deleted by
-#: `purge_expired` on the runner heartbeat, so the ciphertext does not outlive
+#: `purge_expired` on the off-request clock, so the ciphertext does not outlive
 #: its use either (Jonathan, 2026-09-25).
 TTL = dt.timedelta(minutes=30)
 
@@ -86,7 +86,7 @@ def set_secret(session: Session, name: str, value: str, *, user=None) -> Session
 
 
 def live_secrets(session: Session):
-    purge_expired()  # an expired secret is invisible even if no heartbeat swept it yet
+    purge_expired()  # an expired secret is invisible even if no tick swept it yet
     return session.secrets.select_related("created_by")
 
 

@@ -159,8 +159,7 @@ class Session(models.Model):
     #: When the "this chat has gone quiet" push is owed. Set when a turn ends,
     #: cleared by the next turn (the session was not done after all) and by the
     #: send itself. Drained by `apps.push.services.send_due_session_pushes` on the
-    #: runner heartbeat — there is no scheduler, and a timer in a web process
-    #: would die with the request.
+    #: off-request clock (apps/common/ticks.py), not by a timer per session.
     finish_push_due_at = models.DateTimeField(null=True, blank=True, db_index=True)
     #: Retention (apps/retention): no Message with a `turn_index` below this may
     #: be written. The rows are a cache of a transcript on the runner's disk, and

@@ -10,10 +10,9 @@ anchor (`schedule_turns.fire_after_of`), and calls the same
 both reach `sched:<id>:<slot>`, the slot-derived idempotency key, so the second
 fire of a slot collapses onto the first turn.
 
-The loop follows apps/agents/pat_rotation_scheduler.py: started in the ASGI
-lifespan (config/asgi.py), it calls `tick_if_due` every CANOPY_SCHEDULE_TICK_S
-(default 60 s) in a worker thread with its DB connection closed before and
-after. The cache key keeps N web tasks to about one tick per interval (and this
+It runs on the off-request clock (apps/common/ticks.py, registered from
+HarnessConfig.ready): `tick_if_due` every CANOPY_SCHEDULE_TICK_S (default 60 s).
+Its cache key keeps N web tasks to about one tick per interval (and this
 process ticks anyway if the cache is down — a duplicate tick is collapsed by
 the same key). CANOPY_SCHEDULE_TICK_S <= 0 turns it off.
 
@@ -26,13 +25,9 @@ the claim as before.
 """
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import datetime as dt
 import logging
-import random
 
-from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
@@ -99,39 +94,6 @@ def tick_if_due(interval: float) -> dict | None:
     return tick()
 
 
-def _tick(interval: float) -> None:
-    from django.db import close_old_connections
-
-    close_old_connections()
-    try:
-        tick_if_due(interval)
-    finally:
-        close_old_connections()
-
-
-async def run_forever(interval: float) -> None:
-    await asyncio.sleep(random.uniform(1, max(1.0, min(interval, 30.0))))  # noqa: S311
-    while True:
-        try:
-            await sync_to_async(_tick, thread_sensitive=False)(interval)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 — tick never raises; belt and braces
-            logger.exception("schedule clock tick failed")
-        await asyncio.sleep(interval)
-
-
-@contextlib.asynccontextmanager
-async def running():
-    """Run the loop for as long as the context is open. CANOPY_SCHEDULE_TICK_S <= 0 turns it off."""
-    interval = interval_s()
-    if interval <= 0:
-        yield
-        return
-    task = asyncio.create_task(run_forever(interval), name="canopy-schedule-clock")
-    try:
-        yield
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+def run() -> None:
+    """The registered job: `tick_if_due` at the configured interval."""
+    tick_if_due(interval_s())

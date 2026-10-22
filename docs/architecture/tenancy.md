@@ -286,8 +286,8 @@ Built and **off** unless `CANOPY_RETENTION_ENFORCE=true`.
   them.
 - Shared transcripts are deleted. Deployment-wide rules (no workspace — the only rules that
   govern shared transcripts) are Django-admin only.
-- `manage.py retention_sweep` dry-runs; `--apply` purges. With enforcement on, the heartbeat
-  sweeps at most hourly.
+- `manage.py retention_sweep` dry-runs; `--apply` purges. With enforcement on, the off-request
+  clock (`apps/common/ticks.py`) sweeps at most hourly.
 - Per-workspace rules: `/w/:ws/settings/retention`, `GET|POST|PUT|DELETE
   /api/workspaces/{slug}/retention…`. Any member reads; `retention.manage` (admin+) changes;
   every change goes to the event log; a preview counts what the rules would delete.

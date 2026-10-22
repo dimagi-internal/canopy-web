@@ -9,8 +9,7 @@ one-executing-turn-per-agent-or-session rule with its mid-turn riders.
 Predicates over rows: nothing here writes a turn. `claim.py` composes them into
 the claim, and every reader that asks "who would run this?" (the topology, the
 turn status, the stuck-turn warning) asks these same functions, so the claim and
-its explanations cannot disagree. Split out of `services.py`, which still
-re-exports every name here.
+its explanations cannot disagree. Split out of `services.py`; import these names from here.
 """
 from __future__ import annotations
 

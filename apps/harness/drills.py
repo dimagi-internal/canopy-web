@@ -3,8 +3,7 @@
 A drill is resolved by the drilled agent's own report callback (proving it can
 reach the control plane, not just run its checks locally) or by its turn failing
 outright. `enqueue_turn` stays in `services.py` and is imported where it is
-used, because `services.py` imports this module. Split out of `services.py`,
-which still re-exports every name here.
+used, because `services.py` imports this module. Split out of `services.py`; import these names from here.
 """
 from __future__ import annotations
 

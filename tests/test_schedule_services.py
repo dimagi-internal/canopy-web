@@ -145,10 +145,10 @@ def test_release_does_not_abort_a_freshly_claimed_long_queued_turn(schedule):
     assert turn.status == Turn.RUNNING
 
 
-def test_release_all_unwedges_on_the_claim_tick(schedule, agent):
-    """Fleet-wide release runs on claim, so a wedged agent is unblocked by the
-    very same claim — a weekly schedule's fire tick is 10,080m apart and could
-    never do this."""
+def test_release_all_unwedges_on_the_queue_sweep_tick(schedule, agent):
+    """Fleet-wide release runs on the off-request queue sweeps (every
+    HARNESS_QUEUE_SWEEP_TICK_S), so a wedged agent is unblocked before the next
+    claim — a weekly schedule's fire tick is 10,080m apart and could never do this."""
     wedged, _ = schedule_turns.fire_schedule(schedule, SLOT_A)
     Turn.objects.filter(pk=wedged.pk).update(
         status=Turn.RUNNING, claimed_at=timezone.now() - dt.timedelta(minutes=200)
@@ -164,6 +164,9 @@ def test_release_all_unwedges_on_the_claim_tick(schedule, agent):
     enrolled(runner)
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
 
+    from apps.harness import sweeps
+
+    sweeps.queue_sweeps()
     claimed = claim.claim_next_turn(runner)
 
     wedged.refresh_from_db()

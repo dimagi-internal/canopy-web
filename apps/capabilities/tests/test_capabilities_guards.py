@@ -64,19 +64,31 @@ def _ready(c, world, **acquire):
 def test_the_scheduler_sweeps_with_no_runner_at_all(ready_to_lease, world):
     lease = _acquire(ready_to_lease).json()
     CapabilityLease.objects.filter(pk=lease["lease_id"]).update(expires_at=timezone.now() - dt.timedelta(seconds=1))
-    scheduler._tick()  # what the ASGI lifespan's loop runs, every CAPABILITY_SWEEP_INTERVAL_S
+    scheduler.run()  # the registered off-request job, every CAPABILITY_SWEEP_INTERVAL_S
     assert _lease(lease["lease_id"]).status == "expired"
     assert lease["instance_id"] in world.terminated
 
 
-async def test_the_scheduler_loop_ticks_until_the_lifespan_closes(monkeypatch, settings):
+def test_the_sweep_is_a_registered_off_request_job(settings):
+    from apps.common import ticks
+
+    job = ticks.jobs()["capabilities.sweep"]
+    settings.CAPABILITY_SWEEP_INTERVAL_S = 30
+    assert job.interval() == 30 and job.dedupe is False  # sweep_tick holds its own cache lock
+    settings.CAPABILITY_SWEEP_INTERVAL_S = 0
+    assert job.interval() == 0  # 0 turns it off
+
+
+async def test_the_tick_loop_runs_until_the_lifespan_closes(monkeypatch, settings):
     import asyncio
 
+    from apps.common import ticks as clock
+
     ticks = []
-    monkeypatch.setattr(scheduler, "_tick", lambda: ticks.append(1))
-    monkeypatch.setattr(scheduler.random, "uniform", lambda a, b: 0)
-    settings.CAPABILITY_SWEEP_INTERVAL_S = 0.01
-    async with scheduler.running():
+    monkeypatch.setattr(clock, "_tick_off_request", lambda: ticks.append(1))
+    monkeypatch.setattr(clock.random, "uniform", lambda a, b: 0)
+    settings.TICK_BASE_S = 0.01
+    async with clock.running():
         for _ in range(100):
             if len(ticks) >= 2:
                 break
@@ -87,10 +99,12 @@ async def test_the_scheduler_loop_ticks_until_the_lifespan_closes(monkeypatch, s
     assert len(ticks) == n  # cancelled with the lifespan
 
 
-async def test_an_interval_of_zero_starts_no_loop(monkeypatch, settings):
-    monkeypatch.setattr(scheduler, "_tick", lambda: pytest.fail("no loop expected"))
-    settings.CAPABILITY_SWEEP_INTERVAL_S = 0
-    async with scheduler.running():
+async def test_a_base_interval_of_zero_starts_no_loop(monkeypatch, settings):
+    from apps.common import ticks as clock
+
+    monkeypatch.setattr(clock, "_tick_off_request", lambda: pytest.fail("no loop expected"))
+    settings.TICK_BASE_S = 0
+    async with clock.running():
         pass
 
 

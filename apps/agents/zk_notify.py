@@ -14,7 +14,7 @@ where granting is one passkey touch.
   same click (`approveAndGrant`), and that must not mail anyone.
 * Once per target (`ZkGrantNotice`, unique per agent/kind/target/kv); the row
   is closed when the target is wrapped or stops qualifying.
-* Swept on canopy's only clock, the runner heartbeat, at most once a minute.
+* Swept on the off-request clock (apps/common/ticks.py), at most once a minute.
 
 BEST-EFFORT: nothing here may cost a runner its heartbeat; every entry point
 swallows its own failures.

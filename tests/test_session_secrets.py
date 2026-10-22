@@ -211,10 +211,10 @@ def test_resharing_restarts_the_clock(world):
     assert _value(world).json()["value"] == "a-new-value-for-the-same-name"
 
 
-def test_the_runner_heartbeat_sweeps_expired_secrets(world):
-    from apps.harness import services as hsvc
+def test_the_off_request_clock_sweeps_expired_secrets(world):
+    from apps.common import ticks
 
     _share(world)
     _age(31)
-    hsvc.heartbeat(world["runner"], active_turn_ids=[])
+    ticks.jobs()["canopy_sessions.purge_expired_secrets"].fn()
     assert not SessionSecret.objects.exists()
