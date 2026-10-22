@@ -22,6 +22,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding
 from apps.harness import actors
 from apps.harness import runner_requirements as rr
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import MAX_DEPTH, Workspace
 
@@ -883,14 +884,28 @@ def runner_tenant_slugs(runner: Runner) -> set[str]:
     INTERSECT — enrollment never grants more than membership, and a demoted or
     departed owner's box stops serving at once, enrolled or not.
     """
-    if not runner.owner_id:
-        return set()
-    from apps.workspaces import permissions as perms
+    return runner_tenant_slugs_of([runner])[runner.pk]
 
-    covered = covered_slugs(runner)
-    if not covered:
-        return set()
-    return perms.slugs_with(runner.owner, perms.AGENT_WORK, within=covered)
+
+def runner_tenant_slugs_of(runners) -> dict:
+    """`runner_tenant_slugs` for many runners at once, {runner pk: slugs}: every
+    owner's roles in one read (`wsvc.member_roles_of`) and every enrollment's
+    subtree in one walk, so a fleet listing does not pay a membership walk and
+    a tree walk per box. Pass runners with `prefetch_related("enrollments")` to
+    read their enrollments without a query each."""
+    runners = list(runners)
+    out: dict = {r.pk: set() for r in runners}
+    owned = [r for r in runners if r.owner_id]
+    if not owned:
+        return out
+    enrolled = {r.pk: enrolled_slugs(r) for r in owned}
+    below = wsvc.descendant_map(set().union(*enrolled.values()))
+    roles = wsvc.member_roles_of({r.owner for r in owned})
+    for r in owned:
+        covered = set(enrolled[r.pk]).union(*(below[s] for s in enrolled[r.pk]))
+        mine = roles[r.owner_id]
+        out[r.pk] = {s for s in covered if perms.role_allows(mine.get(s), perms.AGENT_WORK)}
+    return out
 
 
 def covered_slugs(runner: Runner) -> set[str]:

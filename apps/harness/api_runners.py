@@ -949,6 +949,9 @@ def list_runners(request: HttpRequest):
     qs = (
         Runner.objects.exclude(status=Runner.RETIRED)
         .filter(runner_read_q(request))
+        # What every RunnerOut row reads (`owner_email`, `paused_by_email`,
+        # `private_runner_id`), joined here rather than fetched per row.
+        .select_related("owner", "paused_by", "private_runner")
         .prefetch_related("declared_flags", "enrollments")
         .order_by(models.F("last_heartbeat_at").desc(nulls_last=True))
     )
@@ -962,6 +965,7 @@ def list_runners(request: HttpRequest):
         qs = qs.filter(Q(agent_assignments__agent_id__in=offered) | Q(pk__in=following)).distinct()
     rows = list(qs[:50])
     open_by_runner = _open_sessions_by_runner([r.pk for r in rows])
+    administered = harness_runners.administered_runner_ids(request.user, rows)
     for r in rows:
         r.open_sessions = open_by_runner.get(r.pk, 0)
         # Resolved here rather than in the schema because it is a property of the
@@ -970,7 +974,7 @@ def list_runners(request: HttpRequest):
         # Administration is a WIDER tier than acting as the runner, so it gets
         # its own flag rather than overloading can_manage — the credentials block
         # and the drill panel are gated by different routes.
-        r.can_administer = harness_runners.can_administer_runner(request.user, r)
+        r.can_administer = r.pk in administered
     return _with_roots(request, rows)
 
 

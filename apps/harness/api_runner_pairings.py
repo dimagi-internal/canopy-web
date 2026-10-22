@@ -284,7 +284,7 @@ def _pairing_or_404(user_code: str) -> RunnerPairing:
 
 
 def _workspaces_for(user) -> list[RunnerPairingWorkspaceOut]:
-    slugs = [s for s in wsvc.user_workspace_slugs(user) if perms.can(user, s, perms.AGENT_WORK)]
+    slugs = perms.slugs_with(user, perms.AGENT_WORK)
     return [RunnerPairingWorkspaceOut(slug=w.slug, name=w.display_name or w.slug)
             for w in Workspace.objects.filter(slug__in=slugs).order_by("slug")]
 

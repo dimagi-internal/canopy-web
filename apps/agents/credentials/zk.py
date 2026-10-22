@@ -187,7 +187,7 @@ def device_waits(agent, key) -> bool:
 def eligible_members(agent) -> list:
     """Every current agent admin with a vault keyset, as UserVaultKeyset rows."""
 
-    return [k for k in UserVaultKeyset.objects.select_related("user") if agent.is_admin(k.user)]
+    return list(UserVaultKeyset.objects.select_related("user").filter(user_id__in=agent.admin_user_ids()))
 
 
 @dataclass

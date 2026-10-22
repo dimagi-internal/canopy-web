@@ -261,7 +261,7 @@ def move_narrative(request: HttpRequest, slug: str, payload: NarrativeMoveIn) ->
     # surely as delete_narrative does, and lands rows in the destination as
     # surely as an upload does — both are author-tier acts.
     mine = wsvc.user_workspace_slugs(request.user)
-    editable = {ws for ws in mine if perms.can(request.user, ws, perms.CONTENT_WRITE)}
+    editable = perms.slugs_with(request.user, perms.CONTENT_WRITE, within=mine)
 
     if payload.to_workspace not in editable:
         raise ProblemError(

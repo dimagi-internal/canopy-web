@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from ninja import Router, Status
 from ninja.errors import HttpError
 
+from apps.agents import access as agent_access
 from apps.agents.gates import agent_for_read
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
@@ -163,7 +164,8 @@ def _runners_serving_q(slugs) -> Q:
     candidates = (Runner.objects.exclude(status=Runner.RETIRED).filter(_FLEET_Q)
                   .filter(owner__isnull=False, workspace__isnull=False)
                   .select_related("owner").prefetch_related("enrollments"))
-    return Q(pk__in=[r.pk for r in candidates if routing.runner_tenant_slugs(r) & slugs])
+    tenants = routing.runner_tenant_slugs_of(candidates)
+    return Q(pk__in=[pk for pk, served in tenants.items() if served & slugs])
 
 
 def _runner_visibility_q(request: HttpRequest) -> Q:
@@ -584,7 +586,8 @@ def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: Dril
     # when they are that agent's admin (`runner_may_hold_agent`), so the claim
     # gate already holds for them, and this route's owner behaviour is unchanged.
     if runner.owner_id != request.user.id:
-        refused = [a.slug for a in agents if not a.is_admin(request.user)]
+        standings = agent_access.Standings([request.user], agents)
+        refused = [a.slug for a in agents if not standings.is_admin(request.user, a)]
         if refused and payload.agents is not None:
             raise HttpError(
                 403,

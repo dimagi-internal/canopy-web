@@ -33,7 +33,8 @@ def workspaces_left(user, slug: str) -> list[str]:
     from . import services
 
     candidates = [slug, *sorted(services.descendant_slugs({slug}))]
-    return [s for s in candidates if not services.is_member(user, s)]
+    still_in = services.member_roles(user)
+    return [s for s in candidates if s not in still_in]
 
 
 def sweep(user, slug: str, *, by=None) -> dict:

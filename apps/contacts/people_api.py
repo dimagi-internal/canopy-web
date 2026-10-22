@@ -22,6 +22,7 @@ from django.http import HttpRequest
 from django.utils.dateparse import parse_datetime
 from ninja import Router
 
+from apps.agents import access as agent_access
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
@@ -351,7 +352,9 @@ def people_coverage(request: HttpRequest, workspace: str | None = None, days: in
     agents = Agent.objects.filter(workspace=ws)
     if not wsvc.is_member(request.user, slug):
         # Not a member: only the agents they hold the keys to, if any.
-        mine = [a.pk for a in agents.select_related("workspace") if a.is_admin(request.user)]
+        rows = list(agents)
+        standings = agent_access.Standings([request.user], rows)
+        mine = [a.pk for a in rows if standings.is_admin(request.user, a)]
         if not mine:
             raise _not_found("Workspace not found")
         agents = agents.filter(pk__in=mine)

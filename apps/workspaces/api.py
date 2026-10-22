@@ -950,7 +950,7 @@ def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) ->
     from django.db import transaction
 
     from apps.harness.models import Runner, WorkspaceRunnerOrder
-    from apps.harness.routing import runner_tenant_slugs
+    from apps.harness.routing import runner_tenant_slugs_of
 
     m = _require(request.user, slug, perms.RUNNERS_ROUTE)
     ids = [row.runner_id for row in payload.runners]
@@ -961,7 +961,8 @@ def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) ->
     missing = [str(rid) for rid in ids if rid not in runners]
     if missing:
         raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
-    outside = sorted(r.name for r in runners.values() if slug not in runner_tenant_slugs(r))
+    tenants = runner_tenant_slugs_of(runners.values())
+    outside = sorted(r.name for r in runners.values() if slug not in tenants[r.pk])
     if outside:
         raise HttpError(422, f"runner(s) {', '.join(outside)} cannot serve '{slug}': "
                              "a runner must be enrolled in the workspace (POST "

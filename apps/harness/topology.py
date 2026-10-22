@@ -23,12 +23,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from django.db.models import prefetch_related_objects
+
 from apps.events.models import SessionUsage
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import Workspace
+from apps.workspaces.models import Workspace, ancestor_chains
 
 from .models import Runner, RunnerAssignment, WorkspaceRunnerOrder
-from .routing import inherited_orders, runner_tenant_slugs
+from .routing import inherited_orders, runner_tenant_slugs_of
 
 
 def code_current(runner) -> bool | None:
@@ -65,23 +67,23 @@ def problems(runner) -> list[dict]:
             for c in sorted(checks, key=lambda c: c["status"] != "fail")]
 
 
-def _usage(rows: list[dict], viewer) -> None:
+def _usage(rows: list[dict], boxes: dict, viewer) -> None:
     """Each box's usage report on its row: when it last sent one, how many of its
     local sessions canopy has no record of (a count — the list is its admins'
     alone), and whether the viewer administers it."""
     from django.db.models import Count
 
-    from .runners import can_administer_runner
+    from .runners import administered_runner_ids
 
-    boxes = {r.pk: r for r in Runner.objects.filter(pk__in=[row["id"] for row in rows]).select_related("owner")}
     missing = dict(SessionUsage.objects.filter(runner_id__in=list(boxes), workspace__isnull=True)
                    .order_by().values("runner_id").annotate(n=Count("claude_session", distinct=True))
                    .values_list("runner_id", "n"))
+    administered = administered_runner_ids(viewer, boxes.values()) if viewer is not None else set()
     for row in rows:
         box = boxes.get(row["id"])
         row["usage_reported_at"] = box.usage_reported_at if box else None
         row["missing_sessions"] = missing.get(row["id"], 0)
-        row["can_administer"] = bool(box) and viewer is not None and can_administer_runner(viewer, box)
+        row["can_administer"] = row["id"] in administered
 
 
 def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, viewer=None) -> dict:
@@ -127,7 +129,8 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
     # (`services.runner_tenant_slugs`). An assignment that fails this is the
     # quietest misconfiguration there is — the row looks fine on the agent's
     # Routing table and its turns simply never get claimed.
-    tenants = {pk: runner_tenant_slugs(r) for pk, r in runners.items()}
+    prefetch_related_objects(list(runners.values()), "enrollments")
+    tenants = runner_tenant_slugs_of(runners.values())
 
     routes_by_agent: dict[int, list[dict]] = {}
     serves: dict = {}
@@ -178,6 +181,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
     # query, rather than one per ancestor per workspace.
     ordered_anywhere = set(WorkspaceRunnerOrder.objects.filter(enabled=True)
                            .values_list("workspace_id", flat=True).distinct())
+    chains = ancestor_chains({ws.slug: ws.parent_id for ws, _ in tree})
     ordered = [{
         "slug": ws.slug,
         "display_name": ws.display_name,
@@ -186,7 +190,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
         "agents": agents_by_ws.get(ws.slug, []),
         "order": [{"runner_id": r.runner_id, "enabled": r.enabled} for r in own_orders.get(ws.slug, [])],
         "order_from": None if own_orders.get(ws.slug) else next(
-            (s for s in ws.ancestor_slugs() if s in ordered_anywhere), None),
+            (s for s in chains[ws.slug] if s in ordered_anywhere), None),
     } for ws, depth in tree]
 
     by_pk = {a.pk: {"slug": a.slug, "name": a.name, "workspace": a.workspace_id} for a in agents}
@@ -224,5 +228,5 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
     # key (the machine), and a runner on no known machine is a group of its own.
     runner_rows.sort(key=lambda row: (not row["in_tree"], (row["machine"] or row["name"]).lower(),
                                       row["name"].lower()))
-    _usage(runner_rows, viewer)
+    _usage(runner_rows, runners, viewer)
     return {"root": root.slug, "workspaces": ordered, "runners": runner_rows}

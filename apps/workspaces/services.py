@@ -30,6 +30,7 @@ from .models import (
     MAX_DEPTH,
     Workspace,
     WorkspaceMembership,
+    ancestor_chains,
 )
 
 DEFAULT_WORKSPACE_SLUG = "dimagi"
@@ -102,20 +103,41 @@ def _direct_slugs(user, role: str | None = None) -> set[str]:
 
 
 def descendant_slugs(slugs: set[str]) -> set[str]:
-    """Every workspace strictly BELOW any of `slugs` in the tree.
+    """Every workspace strictly BELOW any of `slugs` in the tree."""
+    below = descendant_map(slugs)
+    return set().union(*below.values()) - set(slugs) if below else set()
+
+
+def descendant_map(slugs) -> dict[str, set[str]]:
+    """{slug: every workspace strictly below it}, for each of `slugs` — one walk
+    down the tree for all of them, not one per slug.
 
     Breadth-first, one query per level, bounded by `MAX_DEPTH` and a seen-set
     so a corrupted cycle terminates."""
-    out: set[str] = set()
+    slugs = set(slugs)
+    children: dict[str, set[str]] = {}
+    seen = set(slugs)
     frontier = set(slugs)
     for _ in range(MAX_DEPTH):
         if not frontier:
             break
-        children = set(
-            Workspace.objects.filter(parent_id__in=frontier).values_list("slug", flat=True)
-        ) - out - set(slugs)
-        out |= children
-        frontier = children
+        nxt: set[str] = set()
+        for slug, parent in Workspace.objects.filter(parent_id__in=frontier).values_list("slug", "parent_id"):
+            children.setdefault(parent, set()).add(slug)
+            if slug not in seen:
+                nxt.add(slug)
+        seen |= nxt
+        frontier = nxt
+    out: dict[str, set[str]] = {}
+    for root in slugs:
+        below: set[str] = set()
+        stack = [root]
+        while stack:
+            for child in children.get(stack.pop(), ()):
+                if child != root and child not in below:
+                    below.add(child)
+                    stack.append(child)
+        out[root] = below
     return out
 
 
@@ -124,10 +146,16 @@ def subtree(root: Workspace, visible=lambda _slug: True) -> list[tuple[Workspace
     each with its depth below `root` (0 = root). A workspace whose parent is
     hidden hangs under its nearest visible ancestor, so a reader who holds a
     grandchild but not the child still sees it in place."""
-    slugs = {root.slug} | {s for s in descendant_slugs({root.slug}) if visible(s)}
+    below = descendant_slugs({root.slug})
+    slugs = {root.slug} | {s for s in below if visible(s)}
+    rows = list(Workspace.objects.filter(slug__in=below))
+    # Every ancestor that matters is in `rows` or is `root`: one read for the tree.
+    chains = ancestor_chains({ws.slug: ws.parent_id for ws in rows})
     by_parent: dict[str, list[Workspace]] = {}
-    for ws in Workspace.objects.filter(slug__in=slugs - {root.slug}):
-        parent = next((a for a in ws.ancestor_slugs() if a in slugs), root.slug)
+    for ws in rows:
+        if ws.slug not in slugs:
+            continue
+        parent = next((a for a in chains[ws.slug] if a in slugs), root.slug)
         by_parent.setdefault(parent, []).append(ws)
     out: list[tuple[Workspace, int]] = []
 
