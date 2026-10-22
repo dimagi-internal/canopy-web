@@ -43,6 +43,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions.invalidation import mark_dirty
 from apps.tokens import github_app
+from apps.workspaces import permissions as perms
 
 from .models import Agent, SkillHistoryCommit, SkillHistorySync, SkillRevision
 from .skill_history_parse import LOG_FORMAT, build_groups, parse_log
@@ -423,7 +424,6 @@ def history_payload(agent: Agent, viewer) -> dict:
     editor action. The role comes from the one authorizer
     (`apps/workspaces/permissions.py`), never a query of its own.
     """
-    from apps.workspaces import permissions as perms
 
     row = SkillHistorySync.objects.filter(agent=agent).first()
     commits = list(SkillHistoryCommit.objects.filter(agent=agent).order_by("committed_at", "id"))

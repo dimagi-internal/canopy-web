@@ -33,6 +33,7 @@ from apps.workspaces.models import Workspace
 from . import access
 from . import interface as iface_mod
 from .models import Agent, AgentAdmin
+from .tree import agents_in_tree
 
 #: Why an edge has the access it has. `editor`: full, but manual only.
 #: `no-interface`: a viewer, refused because the target published no interface.
@@ -99,7 +100,6 @@ def can_run(src: Agent, dst: Agent) -> bool:
 
 
 def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True) -> dict:
-    from .tree import agents_in_tree
 
     tree = wsvc.subtree(root, visible)
     ordered = agents_in_tree(tree, "user", "owner")

@@ -14,14 +14,18 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
+from apps.harness.api import visible_turns_qs
 from apps.harness.models import Turn
+from apps.tokens.views_mcp_oauth import issuer
 from apps.workspaces import services as wsvc
+from apps.workspaces.links import scoped_path
 from apps.workspaces.models import Workspace
 
-from . import services
+from . import kb_store, kb_vectors, services
 from .api import list_agents
 from .api_board import apply_project_patch, project_detail, require_workspace_editor
 from .gates import agent_for_work, listed_agent_workspaces, visible_agent_workspaces
+from .health import _counts
 from .models import Agent, AgentProject, AgentTask
 from .schemas import (
     AgentOut,
@@ -143,11 +147,6 @@ def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
     from django.db.models import Max
     from django.utils import timezone
 
-    from apps.harness.api import visible_turns_qs
-    from apps.workspaces.links import scoped_path
-
-    from .health import _counts
-
     visible = listed_agent_workspaces(request)
     agents = list(Agent.objects.filter(workspace_id__in=visible).select_related("owner").order_by("name"))
     counts = _counts(agents)
@@ -216,7 +215,6 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
     covers that workspace and the ones below it you belong to. Every row is one you
     can call: the readers a project's server admits (its workspace's members and
     its steward's) are exactly the ones a list spanning those workspaces reaches."""
-    from apps.tokens.views_mcp_oauth import issuer
 
     listed = listed_agent_workspaces(request)
     projects = [p for p in services.workspace_projects(listed, steward_workspaces=listed)
@@ -275,7 +273,6 @@ def patch_workspace_project(request: HttpRequest, workspace: str, handle: str,
 
 
 def _kb_call(fn):
-    from . import kb_store
 
     try:
         return fn()
@@ -290,7 +287,6 @@ def _kb_call(fn):
 def kb_upload_target(request: HttpRequest, workspace: str, handle: str) -> KbUploadOut:
     """Step one of publishing: PUT the gzipped kb.sqlite to `url` with `headers`,
     then `POST …/kb/publish`. The bytes never pass through canopy."""
-    from . import kb_store
 
     project = _workspace_project_or_404(request, workspace, handle)
     agent_for_work(request, project.agent.slug)
@@ -304,7 +300,6 @@ def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, paylo
     type); the answer has a PUT for each one the project's store lacks. Stored by
     sha256 and never deleted, so an unchanged file uploads once and a changed one is
     kept beside its earlier versions. The `original` tool hands readers these files."""
-    from . import kb_store
 
     project = _workspace_project_or_404(request, workspace, handle)
     agent_for_work(request, project.agent.slug)
@@ -317,14 +312,12 @@ def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, paylo
 def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPublishIn) -> AgentProjectOut:
     """The project answers its tools at `mcp_path` from this upload from now on
     (every serving instance re-fetches it by its sha256); the previous one is deleted."""
-    from . import kb_store
 
     project = _workspace_project_or_404(request, workspace, handle)
     agent_for_work(request, project.agent.slug)
     project = _kb_call(lambda: kb_store.publish(project, payload.key, payload.sha256))
     # Dormant: a no-op while KB_VECTORS is off (kb_vectors.py). When on, it brings
     # the vectors in step with the new file off the request.
-    from . import kb_vectors
 
     kb_vectors.sync_after_publish(project)
     return AgentProjectOut.model_validate(project)

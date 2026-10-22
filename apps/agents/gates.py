@@ -27,6 +27,7 @@ from ninja.errors import HttpError
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
+from . import services
 from .models import Agent
 
 
@@ -133,7 +134,6 @@ def listed_agent_workspaces(request: HttpRequest) -> set[str]:
 
 def project_or_404(agent: Agent, ref: str):
     """One of `agent`'s projects by ref, else 404. Gate the agent first."""
-    from . import services
 
     project = services.get_project(agent, ref)
     if project is None:

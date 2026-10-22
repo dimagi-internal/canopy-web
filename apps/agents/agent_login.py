@@ -21,6 +21,8 @@ from django.db import transaction
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
+from .services import link_canopy_user
+
 
 class AgentLoginRefused(Exception):
     def __init__(self, message: str, status: int):
@@ -30,7 +32,6 @@ class AgentLoginRefused(Exception):
 
 def create_agent_login(agent, actor, address: str):
     """The new user, linked to `agent`. Raises AgentLoginRefused with the HTTP status."""
-    from .services import link_canopy_user
 
     if not perms.can(actor, agent.workspace, perms.MEMBERS_MANAGE):
         raise AgentLoginRefused(

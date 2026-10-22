@@ -28,6 +28,10 @@ from html import escape
 from django.core.cache import cache
 from django.utils import timezone
 
+from apps.push.services import send_to_user
+from apps.workspaces import links as wslinks
+
+from .credentials import zk
 from .models import Agent, AgentVaultWrap, ZkGrantNotice
 
 logger = logging.getLogger(__name__)
@@ -49,7 +53,6 @@ def maybe_sweep(now=None) -> None:
 def sweep(now=None) -> int:
     """Record, notify and clear pending-grant notices. Returns how many were
     notified this pass."""
-    from .credentials import zk
 
     now = now or timezone.now()
     told = 0
@@ -91,7 +94,6 @@ def holders(agent) -> list:
 
 
 def _link(agent) -> str:
-    from apps.workspaces import links as wslinks
 
     return wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings#cred-zk")
 
@@ -129,7 +131,6 @@ def _notify(agent, notice) -> dict:
                     logger.exception("zk grant notice email failed: to=%s", person.email)
                     result["failed"].append(person.email)
             try:
-                from apps.push.services import send_to_user
 
                 result["pushed"] += send_to_user(person, f"Vault key wanted · {agent.slug}", detail[:180], rel)
             except Exception:  # noqa: BLE001

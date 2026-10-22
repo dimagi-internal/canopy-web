@@ -26,6 +26,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.contacts import services as contacts
 from apps.harness.models import Turn
 from apps.huddles.models import CheckinRun
 
@@ -111,14 +112,12 @@ def propose_project(request: HttpRequest, slug: str, payload: ProjectProposeIn) 
 def list_project_backings(request: HttpRequest, slug: str, ref: str) -> list[dict]:
     """Oldest first. `stale` marks a backing of an earlier version (the project was
     revised since); `mine` marks the caller's own. Members."""
-    from apps.contacts import services as contacts
 
     project = project_or_404(agent_for_read(request, slug), ref)
     return proposals.backings_of(project, me=contacts.person_for(user=request.user))
 
 
 def _me(request: HttpRequest):
-    from apps.contacts import services as contacts
 
     if Agent.objects.filter(user=request.user).exists():
         raise HttpError(422, "an agent backs a project as itself: PUT …/backings/agents/{agent}/")
@@ -261,7 +260,6 @@ def propose_task(request: HttpRequest, slug: str, ref: str, payload: TaskPropose
             summary="Where everyone stands on a proposed task")
 def list_task_backings(request: HttpRequest, slug: str, ref: str, task: str) -> list[dict]:
     """Oldest first. `stale` marks a backing of an earlier version; `mine` the caller's own. Members."""
-    from apps.contacts import services as contacts
 
     row = _task_in(project_or_404(agent_for_read(request, slug), ref), task)
     return proposals.backings_of(row, me=contacts.person_for(user=request.user))

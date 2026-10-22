@@ -14,6 +14,10 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.harness.api import visible_turns_qs
+from apps.huddles import services as huddles
+from apps.realtime.groups import turn_workspace_slug
+from apps.workspaces import services as wsvc
 
 from . import engagement
 from .gates import listed_agent_workspaces, visible_agent_workspaces
@@ -26,10 +30,6 @@ router = Router(auth=session_auth, tags=["engagement"])
 def _huddle_workspace(request: HttpRequest, huddle_id: str) -> str:
     """The workspace of a huddle the caller can see — the same lookup the huddle
     page makes (`apps/huddles/api.get_huddle`), so a guess confirms nothing."""
-    from apps.harness.api import visible_turns_qs
-    from apps.huddles import services as huddles
-    from apps.realtime.groups import turn_workspace_slug
-    from apps.workspaces import services as wsvc
 
     anchor = (huddles.anchors(visible_turns_qs(request, slugs=wsvc.member_scope(request.user)))
               .filter(origin_ref__huddle=huddle_id).order_by("-created_at").first())

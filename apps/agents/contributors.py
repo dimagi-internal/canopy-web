@@ -34,8 +34,11 @@ from dataclasses import dataclass
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from apps.contacts import hcp, people
 from apps.contacts.models import Person
 
+from . import ideas as idea_svc
+from . import participants
 from .models import AgentProject, ProjectParticipant
 
 logger = logging.getLogger(__name__)
@@ -63,20 +66,17 @@ class Reader:
 
 
 def reader_of(user) -> Reader:
-    from apps.contacts import people
 
     return Reader(user=user, agent=people.agent_of_login(user))
 
 
 def agent_may_use(person, agent) -> bool:
     """May `agent` read what agents learned about `person`? The switch AND the grant."""
-    from apps.contacts import hcp
 
     return hcp.may_use(person) and hcp.granted(person, agent)["use"]
 
 
 def agent_may_record(person, agent) -> bool:
-    from apps.contacts import hcp
 
     return hcp.may_record(person) and hcp.granted(person, agent)["record"]
 
@@ -90,7 +90,6 @@ def may_see_summary(person, reader: Reader) -> bool:
 
 def may_write_summary(person, reader: Reader) -> tuple[bool, str]:
     """(allowed, why not). An agent under the person's `record`, or the person themself."""
-    from apps.contacts import hcp
 
     if reader.is_agent:
         if not hcp.may_record(person):
@@ -134,9 +133,6 @@ def write_summary(project: AgentProject, person, payload: dict, *, by_agent=None
     points at nothing would show as theirs on no board, and a typo there is
     silent. Refuses when the request comes from a zero-data-retention session.
     """
-    from apps.contacts import hcp
-
-    from . import participants
 
     # A summary re-reads many sessions; it is not one turn's learning, so it is not
     # REQUIRED to name a turn (unlike a fact). But when the request does come from
@@ -187,7 +183,6 @@ def person_by_email(address: str):
     verified login (`people.by_email`), else the account whose login address it
     is. Callers still gate on `people.known_in` — an address confirms nothing
     about a workspace that does not deal with them."""
-    from apps.contacts import people
 
     address = (address or "").strip()
     if "@" not in address:
@@ -199,7 +194,6 @@ def person_by_email(address: str):
 def board(project: AgentProject, reader: Reader) -> dict:
     """The project's ideas (`ideas.of_project` — never its tasks) and its
     contributors, every tally a count over that one list."""
-    from . import ideas as idea_svc
 
     ideas = idea_svc.of_project(project)
     return {"agent": project.agent.slug, "project": project.ext_id, "name": project.name,
@@ -211,9 +205,6 @@ def board(project: AgentProject, reader: Reader) -> dict:
 def page(project: AgentProject, person, reader: Reader) -> dict:
     """One contributor's page on `project`: their summary, and their ideas —
     the same list the board counts, filtered to them."""
-    from apps.contacts import people
-
-    from . import ideas as idea_svc
 
     row = (ProjectParticipant.objects.filter(project=project, person=person)
            .select_related("summary_by_agent").first())

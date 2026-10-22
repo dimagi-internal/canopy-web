@@ -24,6 +24,7 @@ import logging
 
 from django.db import IntegrityError, transaction
 
+from apps.contacts import people
 from apps.contacts.models import PersonFact
 
 from .models import AgentProject, AgentTask, ProjectParticipant
@@ -68,7 +69,6 @@ def on_task(task) -> None:
     if not task.project_id or not task.raised_by_id:
         return
     try:
-        from apps.contacts import people
 
         person = people.initiator_person(task.raised_by)
         if person is not None:
@@ -79,7 +79,6 @@ def on_task(task) -> None:
 
 def of_project(project: AgentProject) -> list[dict]:
     """The project's participants as the API shows them, newest first."""
-    from apps.contacts import people
 
     rows = (ProjectParticipant.objects.filter(project=project)
             .select_related("person", "person__user").order_by("-created_at", "-pk"))

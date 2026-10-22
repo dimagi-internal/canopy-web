@@ -26,10 +26,16 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
+from apps.canopy_sessions import access
 from apps.canopy_sessions.models import Message
+from apps.harness import provenance
+from apps.workspaces import services as wsvc
 
+from .. import services
 from ..models import Agent, AgentCredential, AgentSecretRequest
+from . import zk
 from .zk import ZkError
+from .zk_seal import SEALED_PREFIX
 
 TTL = timedelta(hours=24)
 
@@ -47,7 +53,6 @@ def is_agent_login(user) -> bool:
 
 
 def _declared(agent, name: str) -> str:
-    from .. import services
 
     name = (name or "").strip()
     declared = services.declared_credential_names(agent)
@@ -64,7 +69,6 @@ def _session_of_caller(agent):
     headers name (`X-Canopy-Parent-Session`/`-Turn`) — but only one of THIS
     agent's own sessions: a header is the caller's claim, and the session's
     writers become eligible answerers."""
-    from apps.harness import provenance
 
     fields, _ = provenance.parent_fields()
     session = fields.get("parent_session")
@@ -104,7 +108,6 @@ def create(agent, *, name: str, reason: str, user):
 
 
 def may_read(req, user) -> bool:
-    from apps.canopy_sessions import access
 
     return req.agent.is_admin(user) or (req.session is not None and access.can_read(user, req.session))
 
@@ -112,8 +115,6 @@ def may_read(req, user) -> bool:
 def may_answer(req, user) -> bool:
     """Admin, or a writer of the request's session who is a member of the
     agent's workspace — never an agent's own login. Replacing is `may_replace`."""
-    from apps.canopy_sessions import access
-    from apps.workspaces import services as wsvc
 
     if is_agent_login(user):
         return False
@@ -125,8 +126,6 @@ def may_answer(req, user) -> bool:
 
 def fulfil(req, *, kv: int, value_zk: str, user) -> None:
     """Store a `zks1` value for the request's name, atomically with closing it."""
-    from . import zk
-    from .zk_seal import SEALED_PREFIX
 
     if not isinstance(value_zk, str) or not value_zk.startswith(SEALED_PREFIX):
         raise RequestError(422, "sealed_only",

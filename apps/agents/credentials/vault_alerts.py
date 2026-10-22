@@ -51,6 +51,11 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
+from apps.events import services as events
+from apps.push.services import send_to_user
+from apps.workspaces import links as wslinks
+
+from .. import services
 from ..models import Agent, AgentAdmin, AgentCredentialAlert
 
 logger = logging.getLogger(__name__)
@@ -84,7 +89,6 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
     try:
         if not _applies(agent):
             return raised
-        from .. import services
 
         user = request.user
         # A box's own credential refresh (the runner-update timer, bootstrap) runs
@@ -154,7 +158,6 @@ def unrouted_box_refused(agent, request, *, runner) -> None:
     keeps asking shows on the event's count, and its owner can see it there."""
     try:
         logger.info("resolve of %s refused: %s does not run it", agent.slug, runner.name)
-        from apps.events import services as events
 
         events.record([{
             "source": "agents.credentials",
@@ -228,7 +231,6 @@ def recipients(agent) -> list:
 
 
 def _link(agent) -> str:
-    from apps.workspaces import links as wslinks
 
     return wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings#credentials")
 
@@ -299,7 +301,6 @@ def _notify(agent, alert) -> dict:
                     logger.exception("vault alert email failed: to=%s", person.email)
                     result["failed"].append(person.email)
             try:
-                from apps.push.services import send_to_user
 
                 result["pushed"] += send_to_user(person, f"Vault alert · {agent.slug}",
                                                  alert.detail[:180], rel)
@@ -313,7 +314,6 @@ def _notify(agent, alert) -> dict:
 
 def _record_event(agent, alert) -> None:
     try:
-        from apps.events import services as events
 
         events.record([{
             "source": "agents.credentials",

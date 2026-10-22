@@ -23,8 +23,10 @@ and the key a runner reads it with.
 """
 from __future__ import annotations
 
+from apps.harness import device_keys
+
 from ..models import Agent, AgentCredential
-from . import vault_import
+from . import vault_import, zk
 
 STORED, LITERAL, LOCAL, ONEPASSWORD, MISSING = "stored", "literal", "local", "1password", "missing"
 
@@ -58,9 +60,6 @@ def machines_waiting(agent: Agent) -> list[str]:
     member's passkey touch lets them in."""
     if not agent.zk_enabled:
         return []
-    from apps.harness import device_keys
-
-    from . import zk
 
     waiting = {k.runner.name for k in zk.eligible_device_keys(agent) if zk.device_waits(agent, k)}
     waiting |= {k.runner.name for k in device_keys.keys_for_agent(agent) if k.ecdh_waiting}

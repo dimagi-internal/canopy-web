@@ -42,9 +42,13 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.common.token_hash import hash_token
+from apps.events import services as events
 from apps.tokens.models import PersonalToken
+from apps.workspaces import permissions as perms
 
+from .. import services
 from ..models import Agent, AgentCredential, AgentPatRotation
+from . import zk_seal
 
 logger = logging.getLogger(__name__)
 
@@ -72,12 +76,10 @@ def enable_refusal(agent, actor) -> RotationRefused | None:
     """Why `actor` may not opt `agent` in (or rotate it), or None. The same
     standing `mint_agent_canopy_token` asks for, decided at opt-in so a job that
     runs later without anyone present is never the first to find out."""
-    from apps.workspaces import permissions as perms
 
     # A zero-knowledge agent rotates too: the new token is sealed to its
     # devices and members (`zks1`, apps/agents/credentials/zk_seal.py), never stored readable.
     if agent.zk_enabled:
-        from . import zk_seal
 
         if not zk_seal.recipients_for(agent):
             return RotationRefused(f"{agent.slug} is zero-knowledge and nobody can read a new "
@@ -160,8 +162,6 @@ def rotate(agent, *, trigger: str = "scheduler", actor=None):
 
 def _rotate_locked(agent, *, now, trigger: str, actor):
     """The rotation itself, inside `rotate`'s transaction (agent row locked)."""
-
-    from .. import services
 
     old = _current_token(agent)
     raw, new = PersonalToken.create_for_user(
@@ -260,7 +260,6 @@ def status(agent, *, history: int = 10) -> dict:
 
 def _event(agent, row) -> None:
     try:
-        from apps.events import services as events
 
         events.record([{
             "source": "agents.credentials",

@@ -11,12 +11,13 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
+from apps.agents import participants
+
 
 class Command(BaseCommand):
     help = "Backfill AgentProject participants from facts and task raisers (idempotent)."
 
     def handle(self, *args, **opts):
-        from apps.agents import participants
 
         r = participants.backfill()
         self.stdout.write(f"facts seen: {r['facts_seen']}, tasks seen: {r['tasks_seen']}, "

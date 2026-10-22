@@ -23,9 +23,11 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.contacts import hcp, people
 from apps.contacts.models import Person, PersonAccess
 
 from . import contributors as svc
+from . import engagement
 from . import ideas as idea_svc
 from .gates import agent_for_read, project_or_404
 from .models import ProjectParticipant
@@ -44,7 +46,6 @@ router = Router(auth=session_auth, tags=["agents"])
 def _person(project, ref: str):
     """The person `ref` names (an id or an address), if the agent's workspace deals
     with them — else 404, so a guess confirms nothing across tenants."""
-    from apps.contacts import people
 
     ref = (ref or "").strip()
     person = (Person.objects.select_related("user").filter(pk=int(ref)).first() if ref.isdigit()
@@ -55,7 +56,6 @@ def _person(project, ref: str):
 
 
 def _log_read(person, project, request: HttpRequest, reader: svc.Reader) -> None:
-    from apps.contacts import people
 
     people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=project.agent.workspace_id,
                       reader_user=request.user, reader_agent=reader.agent)
@@ -93,7 +93,6 @@ def create_idea(request: HttpRequest, slug: str, ref: str, payload: IdeaIn) -> S
     except ValueError as exc:
         raise HttpError(422, str(exc)) from None
     told = idea_svc.notify(task, by_user=request.user)
-    from . import engagement
 
     engagement.record("idea_added", workspace=agent.workspace_id, surface=engagement.surface_of(request),
                       user=request.user, project=project, task=task)
@@ -152,7 +151,6 @@ def put_contributor_summary(request: HttpRequest, slug: str, ref: str, person: s
     allowed, why_not = svc.may_write_summary(who, reader)
     if not allowed:
         raise HttpError(403, why_not)
-    from apps.contacts import hcp
 
     try:
         svc.write_summary(project, who, payload.model_dump(), by_agent=reader.agent)

@@ -10,6 +10,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.tokens.github_app import GitHubAuthError, GitHubNotConfigured
 
 from . import services
 from . import skill_history as history
@@ -121,8 +122,6 @@ def skill_revision_diff(request: HttpRequest, slug: str, sha: str, skill: str) -
     commit message does not say enough about what actually changed.
     """
     import requests
-
-    from apps.tokens.github_app import GitHubAuthError, GitHubNotConfigured
 
     agent = agent_for_read(request, slug)
     try:

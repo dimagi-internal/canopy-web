@@ -48,16 +48,22 @@ from typing import Callable
 from django.db import IntegrityError, transaction
 
 from apps.admission.models import AdmissionRule
+from apps.agents.services import runner_may_hold_agent, stewarded_workspace_projects
+from apps.canopy_sessions import filing
 from apps.canopy_sessions.models import Message, Session
 from apps.capabilities.models import CapabilityGrant, CapabilityLease
 from apps.contacts.models import PersonFact, PersonGrant
+from apps.events import services as events
+from apps.harness import routing
 from apps.harness.models import AgentSchedule, RunnerAssignment, Turn
 from apps.issues.models import OriginIssue
 from apps.retention.models import RetentionRule
+from apps.slack.services import installation_for_workspace
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from .agent_login import follow_agent
 from .models import Agent, AgentAdmin, AgentProject, AgentSkill, AgentTask
 
 logger = logging.getLogger(__name__)
@@ -143,7 +149,6 @@ def check(agent, dest_slug: str, *, by) -> Workspace:
                         "workspace", status=403)
     if dest.slug == agent.workspace_id:
         raise MoveError(f"{agent.slug} is already in '{dest.slug}'", status=422)
-    from apps.agents.services import stewarded_workspace_projects
 
     stewarded = stewarded_workspace_projects(agent)
     if stewarded:
@@ -193,7 +198,6 @@ def move(agent, dest: Workspace, *, by) -> Plan:
 
 def _record(p: Plan) -> None:
     """One audit event in each workspace: who moved what, with the counts."""
-    from apps.events import services as events
 
     who = getattr(p.by, "email", "") or "someone"
     payload = {"agent": p.agent.slug, "source": p.source.slug, "destination": p.dest.slug, "by": who,
@@ -235,7 +239,6 @@ def _turns(p: Plan, apply: bool) -> None:
 
 @register
 def _sessions(p: Plan, apply: bool) -> None:
-    from apps.canopy_sessions import filing
 
     sessions = Session.objects.filter(agent=p.agent)
     moved, dropped = filing.rehome_agent_sessions(sessions, p.dest, apply=apply)
@@ -328,7 +331,6 @@ def _identity(p: Plan, apply: bool) -> None:
             # through the door that made it a member at home (`agent_login`),
             # and only when the mover could add a member there anyway.
             if apply:
-                from .agent_login import follow_agent
 
                 follow_agent(agent, p.by, dest)
             p.moves("workspaces.WorkspaceMembership", 1,
@@ -342,8 +344,6 @@ def _identity(p: Plan, apply: bool) -> None:
 @register
 def _runtime(p: Plan, apply: bool) -> None:
     """Runner routing, the shared vault and Slack — re-decided by the new tenant."""
-    from apps.agents.services import runner_may_hold_agent
-    from apps.harness import routing
 
     agent, dest = p.agent, p.dest
     after = copy.copy(agent)
@@ -368,7 +368,6 @@ def _runtime(p: Plan, apply: bool) -> None:
                  f"{_vault_name(src_vault)}; credentials inherited from it may differ")
 
     if agent.slack_enabled:
-        from apps.slack.services import installation_for_workspace
 
         before, now = installation_for_workspace(p.source.slug), installation_for_workspace(dest.slug)
         if (before and before.pk) != (now and now.pk):

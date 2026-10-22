@@ -34,6 +34,7 @@ import requests
 from django.utils import timezone
 
 from apps.common.encryption import decrypt_secret, encrypt_secret
+from apps.workspaces import services as wsvc
 
 from .definition import definition_key
 from .models import Agent, AgentCredential, AgentDelegation, RepoIdentity
@@ -249,7 +250,6 @@ def delegation_for(agent: Agent, service: str = AgentDelegation.GITHUB) -> Agent
     a token (Jonathan, 2026-10-21). The owner's own token always wins, and
     someone who stops being an admin stops lending at once. Salesforce stays
     owner-only: its lender must belong to the same person (`_in_force_salesforce`)."""
-    from apps.workspaces import services as wsvc
 
     if agent.owner_id is not None and wsvc.is_member(agent.owner, agent.workspace_id):
         row = AgentDelegation.objects.filter(
@@ -521,7 +521,6 @@ def _in_force_salesforce(agent: Agent) -> AgentDelegation | None:
     row = delegation_for(agent, AgentDelegation.SALESFORCE)
     if row is None or row.lender is None or row.lender.owner_id != row.user_id:
         return None
-    from apps.workspaces import services as wsvc
 
     if not wsvc.is_member(row.user, row.lender.workspace_id):
         return None   # left the lender's tenant: its identity stops lending, as GitHub's does

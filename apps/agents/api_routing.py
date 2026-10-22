@@ -9,7 +9,13 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.harness import routing_audit
+from apps.harness import runners as harness_runners
+from apps.harness.actors import actor_of, normalize_actor
+from apps.harness.api import runner_read_q
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
+from apps.harness.routing import agents_with_own_order, default_order_source, inherited_orders, unit_refusal
+from apps.harness.schemas import RoutableSource
 
 from . import services
 from .gates import (
@@ -70,8 +76,6 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
     A box the caller neither administers nor can otherwise see answers "unknown",
     never "forbidden": a guessed UUID must not learn that a runner exists.
     """
-    from apps.harness import runners as harness_runners
-    from apps.harness.api import runner_read_q
 
     ids = list(ids)
     already = set(already)
@@ -113,7 +117,6 @@ def _refuse_other_units(agent, runners) -> None:
     (`routing.unit_refusal`): an agent unit runs only its own agent, and an agent
     with a unit of its own runs on no other runner of that machine. The claim
     refuses them anyway; refusing the write says so while someone is looking."""
-    from apps.harness.routing import unit_refusal
 
     said = sorted({why for why in (unit_refusal(r, agent.slug) for r in runners) if why})
     if said:
@@ -149,7 +152,6 @@ def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrde
     its workspace, or of the nearest workspace above it that has one, which the
     agent follows live. Saving an empty list to `PUT /runners` makes an agent
     follow its workspace again; its source rules are unaffected either way."""
-    from apps.harness.routing import agents_with_own_order, default_order_source, inherited_orders
 
     agent = agent_for_read(request, slug)
     if agent.pk in agents_with_own_order([agent.pk]):
@@ -210,7 +212,6 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
         request, agent, ids,
         RunnerAssignment.objects.filter(agent=agent, source="").values_list("runner_id", flat=True),
     )
-    from apps.harness import routing_audit
 
     with transaction.atomic():
         before = routing_audit.agent_rows(agent, source="")
@@ -237,8 +238,6 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
     2026-07-27). One rule per source, max — the priority runner, and whether it is
     the only one allowed to take that source's work."""
     from collections import Counter
-
-    from apps.harness.actors import actor_of
 
     agent = agent_for_read(request, slug)
     # Queued depth per (source, actor) — what the UI's "N turns are parked" warning
@@ -317,7 +316,6 @@ def replace_agent_runner_rules(
     the other's rows (they share one table), and so the existing GET response
     shape stays what the frontend already consumes.
     """
-    from apps.harness.actors import normalize_actor
 
     agent = agent_for_work(request, slug)
 
@@ -367,8 +365,6 @@ def replace_agent_runner_rules(
             current.get((r.source, actor), {}).get("ids", ()),
         ))
 
-    from apps.harness import routing_audit
-
     with transaction.atomic():
         before = routing_audit.agent_rows(agent, rules_only=True)
         RunnerAssignment.objects.filter(agent=agent).exclude(source="").delete()
@@ -402,8 +398,6 @@ def replace_agent_runner_rules(
 def _rule_key_or_422(source: str, actor: str) -> tuple[str, str]:
     from typing import get_args
 
-    from apps.harness.schemas import RoutableSource
-
     if source not in get_args(RoutableSource):
         raise HttpError(422, f"not a routable source: {source!r}")
     if not actor:
@@ -435,8 +429,6 @@ def set_agent_runner_rule(
     _refuse_new_auto(request, agent, source, actor, payload.turn_mode, current)
     by_id = _runners_for_routing(request, agent, ids, current.get((source, actor), {}).get("ids", ()))
 
-    from apps.harness import routing_audit
-
     scope = f"{source} rule" + (f" for {actor}" if actor else "")
     with transaction.atomic():
         before = routing_audit.agent_rows(agent, source=source, actor=actor)
@@ -462,8 +454,6 @@ def delete_agent_runner_rule(request: HttpRequest, slug: str, source: str, actor
     """Remove the rule for `source` (and `actor`, when given). That work goes back
     to the next rule down and the agent's default order. Idempotent."""
 
-    from apps.harness import routing_audit
-
     agent = agent_for_work(request, slug)
     source, actor = _rule_key_or_422(source, actor)
     with transaction.atomic():
@@ -487,7 +477,6 @@ def delete_agent_runner_rule(request: HttpRequest, slug: str, source: str, actor
 # These routes touch one actor's rows only, and gate on the runners being NAMED.
 
 def _actor_or_422(actor: str) -> str:
-    from apps.harness.actors import normalize_actor
 
     normalized = normalize_actor(actor)
     if not normalized:
@@ -499,8 +488,6 @@ def _actor_sources() -> list[str]:
     """Every routable source whose turns carry a person. The scheduler is the
     one that doesn't (`apps/harness/actors.py`), so an actor rule on it is dead."""
     from typing import get_args
-
-    from apps.harness.schemas import RoutableSource
 
     return [s for s in get_args(RoutableSource) if s != Turn.ORIGIN_CANOPY_SCHEDULER]
 
@@ -579,8 +566,6 @@ def set_agent_actor_route(
         runners.update(_runners_for_routing(
             request, agent, ids, current.get((source, actor), {}).get("ids", ())))
 
-    from apps.harness import routing_audit
-
     with transaction.atomic():
         before = routing_audit.agent_rows(agent, actor=actor, rules_only=True)
         RunnerAssignment.objects.filter(agent=agent, actor=actor).exclude(source="").delete()
@@ -606,8 +591,6 @@ def delete_agent_actor_route(request: HttpRequest, slug: str, actor: str):
     """Stop routing this person's work specially: their turns go back to the
     agent's source rules and default runner order. Touches no one else's rules.
     Idempotent — removing a person with no route is a 204."""
-
-    from apps.harness import routing_audit
 
     agent = agent_for_work(request, slug)
     actor = _actor_or_422(actor)
