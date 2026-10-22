@@ -432,6 +432,12 @@ class HeartbeatIn(Schema):
     # turn (`Turn.rides_turn`, canopy-web#1153). Absent (older code) means 0:
     # it is never handed one, because it would bridge the same reply twice.
     midturn: int = 0
+    # The box's data mode (`RUNNER_DATA_MODE`; "zdr" = one zero-data-retention key, a
+    # locked profile on every turn). A person's `zdr` declaration counts only while
+    # this says "zdr" (`runner_requirements.in_force`). Absent (older code) = "".
+    data_mode: str = ""
+    # A hash of the config that mode produced, so a change on the box is visible.
+    data_mode_hash: str = ""
     # The repos this runner can actually drive, OBSERVED (emdash's own projects
     # table on a laptop; the configured list on a cloud box) rather than typed by
     # a human at pairing — which drifted silently and only ever toward "cannot

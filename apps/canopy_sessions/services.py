@@ -1703,7 +1703,7 @@ def _placeable_runner(session: Session, runner_id):
         return None
     # A box the conversation's host does not allow is no placement at all: a pin
     # to it would sit unclaimable forever (claim_next_turn refuses it above pins).
-    if not rr.satisfies(runner.flags, rr.requirements_of_session(session)):
+    if not rr.runner_satisfies(runner, rr.requirements_of_session(session)):
         return None
     # A chat WITH an agent runs as that agent on the box it lands on, so the box
     # must be one that may hold the agent (agents.services.runner_may_hold_agent:

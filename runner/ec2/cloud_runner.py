@@ -624,6 +624,10 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
     # Omitted while any credential might work, so the server default (ready)
     # stands; a box whose every credential was just proven not to answer says so.
     ready, ready_note = _credential_readiness()
+    zdr_ok, zdr_note = zdr_readiness()
+    if not zdr_ok:
+        ready, ready_note = False, zdr_note
+    body.update(zdr_posture())
     if not ready:
         body["ready"] = False
         body["ready_note"] = ready_note[:200]   # Runner.ready_note is 200 chars
@@ -1206,8 +1210,10 @@ def _claude_cmd(prompt: str, resume_session_id: str | None = None) -> list[str]:
     cmd = [
         CLAUDE_BIN, "-p", prompt,
         "--output-format", "stream-json", "--verbose",
-        "--dangerously-skip-permissions",
     ]
+    # ZDR mode (see ZDR_MODE): never bypass. dontAsk refuses an unlisted tool rather
+    # than asking a person who is not there, and the settings disable bypass anyway.
+    cmd += ["--permission-mode", "dontAsk"] if ZDR_MODE else ["--dangerously-skip-permissions"]
     if resume_session_id:
         cmd += ["--resume", resume_session_id]
     else:
@@ -1885,6 +1891,8 @@ def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int) -> dict:
         "RUNNER_SESSIONS": box.get("RUNNER_SESSIONS", "1"),
         "RUNNER_DIRECTED": box.get("RUNNER_DIRECTED", "0"),
         "RUNNER_EXECUTOR": box.get("RUNNER_EXECUTOR", "acp"),
+        # A box in ZDR mode runs every unit in it (one key, the locked profile).
+        "RUNNER_DATA_MODE": box.get("RUNNER_DATA_MODE", ""),
         "HOME": home, "USER": unit["user"], "LOGNAME": unit["user"],
         "PATH": f"{home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "WORK_DIR": f"{home}/work", "AGENT_ROOT": f"{home}/agents",
@@ -2274,7 +2282,8 @@ def install_broker(*, run=subprocess.run) -> bool:
 #: The stack parameters a box of units needs (never a secret), as the legacy
 #: runner.env names them — what an in-place move carries over into box.env.
 BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS", "RUNNER_DIRECTED",
-                "RUNNER_EXECUTOR", "RUNNER_WORKSPACE", "RUNNER_NAME", "AGENT_SLUGS", "RUNNER_UNITS")
+                "RUNNER_EXECUTOR", "RUNNER_WORKSPACE", "RUNNER_NAME", "AGENT_SLUGS", "RUNNER_UNITS",
+                "RUNNER_DATA_MODE")
 _IN_PLACE_FETCH_ENV = """#!/bin/sh
 # Replaced by `cloud_runner.py --install-units` when this box moved to isolation
 # units in place: the old script re-wrote /opt/canopy-runner/runner.env (a PAT, the
@@ -3092,6 +3101,145 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
 # Default OFF. `claude -p` is the proven path and stays the default until this
 # has run real turns on a real box; flip with RUNNER_EXECUTOR=acp.
 RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", "cli").strip().lower()
+
+# ── ZDR mode (docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md §1) ──
+# `RUNNER_DATA_MODE=zdr`: every model call this box makes goes to ONE credential,
+# the bundle's API-key slot, which holds a key from an Anthropic organisation with
+# zero data retention. Box logins and subscriptions are never used (a subscription
+# is never ZDR), and there is no fallback: a capped key waits. Every turn runs under
+# a locked permission profile (no shell, no file writes, no web, no subagents, only
+# canopy-web's MCP), with telemetry, error reporting and non-essential model calls
+# off; the turn's caller envelope, profile and, for a confined turn, its transcript
+# are deleted when it ends.
+#
+# canopy cannot see which key this box uses. The box REPORTS its mode on every
+# heartbeat (`data_mode`, plus a hash of the config it produced), and canopy-web
+# counts a person's `zdr` declaration only while that report says `zdr` — a box
+# declared ZDR but not running in ZDR mode takes no ZDR work.
+#
+# Any non-empty value other than `zdr` locks the box down just the same and reports
+# itself as what it is, which no flag accepts: a typo fails closed, never open.
+RUNNER_DATA_MODE = os.environ.get("RUNNER_DATA_MODE", "").strip().lower()
+ZDR_MODE = bool(RUNNER_DATA_MODE)
+#: The one credential a ZDR box uses (`_BUNDLE_SLOTS` label).
+ZDR_CREDENTIAL_LABEL = "api-key"
+#: What every ZDR turn's environment carries.
+ZDR_ENV = {
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+    "DISABLE_AUTOUPDATER": "1",
+}
+#: The only tools a ZDR turn may call (dontAsk: anything unlisted is refused, never
+#: asked). canopy-web's MCP is the only MCP server, and it reaches a host's data
+#: through canopy's gateway, as the visitor.
+ZDR_ALLOW = ("Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite",
+             "mcp__plugin_canopy_canopy-web__*")
+#: Denied outright, whatever a confined capability allows: each is a way for what a
+#: turn read to leave the box (a shell, a file, the web, a subagent, a later session).
+ZDR_DENY = ("Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Task",
+            "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger")
+if ZDR_MODE and RUNNER_EXECUTOR != "cli":
+    # The ACP adapter runs in bypassPermissions and takes no settings document, so
+    # it cannot carry the locked profile. ZDR turns run `claude -p`.
+    RUNNER_EXECUTOR = "cli"
+
+
+def _rule_tool(rule: str) -> str:
+    """`Bash(git log *)` -> `Bash`; `mcp__x__*` -> itself."""
+    return str(rule).split("(", 1)[0].strip()
+
+
+def zdr_settings(confined: dict | None = None) -> dict:
+    """The `--settings` document for a ZDR turn: the locked profile, narrowed further
+    by a confined turn's own rules when it has them (`native_permissions.cli_settings`).
+
+    Deny is the union. Allow is the confined turn's own list when it has one (its
+    capability decides), minus anything ZDR denies; otherwise `ZDR_ALLOW`. Either
+    way bypass and auto mode are disabled and unlisted tools are refused.
+    """
+    doc = dict(confined or {})
+    perms = dict(doc.get("permissions") or {})
+    allow = perms.get("allow") if confined else None
+    allow = list(ZDR_ALLOW) if allow is None else [a for a in allow if _rule_tool(a) not in ZDR_DENY]
+    perms.update({
+        "defaultMode": "dontAsk",
+        "disableAutoMode": "disable",
+        "disableBypassPermissionsMode": "disable",
+        "allow": allow,
+        "deny": sorted({*ZDR_DENY, *(perms.get("deny") or [])}),
+    })
+    doc["permissions"] = perms
+    doc["env"] = {**(doc.get("env") or {}), **ZDR_ENV}
+    return doc
+
+
+def zdr_posture() -> dict:
+    """What this box reports about its data mode on every heartbeat: the mode, and a
+    hash of what it produces (the settings document, the executor, the credential
+    labels in its cascade -- never a value), so a change shows as a change."""
+    if not ZDR_MODE:
+        return {"data_mode": ""}
+    material = json.dumps({
+        "mode": RUNNER_DATA_MODE,
+        "settings": zdr_settings(),
+        "executor": RUNNER_EXECUTOR,
+        "credentials": [c[0] for c in _CLAUDE_CREDS],
+    }, sort_keys=True)
+    return {"data_mode": RUNNER_DATA_MODE,
+            "data_mode_hash": hashlib.sha256(material.encode()).hexdigest()[:16]}
+
+
+def zdr_readiness() -> tuple[bool, str]:
+    """(ready, note) for ZDR mode: the mode is one canopy knows, and the one
+    credential is staged. A box that cannot run ZDR turns says so instead of
+    claiming them."""
+    if not ZDR_MODE:
+        return True, ""
+    if RUNNER_DATA_MODE != "zdr":
+        return False, f"RUNNER_DATA_MODE={RUNNER_DATA_MODE!r} is not a mode canopy knows (only 'zdr')"
+    if [c[0] for c in _CLAUDE_CREDS] != [ZDR_CREDENTIAL_LABEL]:
+        return False, ("ZDR mode runs only on the credential bundle's API-key slot "
+                       "(a zero-data-retention organisation's key), and none is staged")
+    return True, ""
+
+
+def _zdr_settings_file(turn: dict, confined_path: str | None) -> str:
+    """Write this ZDR turn's settings (merging a confined turn's own) and return the
+    path. Raises ConfineError: a ZDR turn without its profile is not run."""
+    confined = None
+    if confined_path:
+        try:
+            confined = json.loads(pathlib.Path(confined_path).read_text())
+        except (OSError, ValueError) as exc:
+            raise ConfineError(f"could not read the turn's permission layer: {exc}") from exc
+    path = PROFILE_ROOT / f"cloud-{turn['id']}.zdr-settings.json"
+    try:
+        _write_private(path, zdr_settings(confined))
+    except OSError as exc:
+        raise ConfineError(f"could not write the ZDR permission profile: {exc}") from exc
+    return str(path)
+
+
+def _zdr_forget_turn(turn_id: str, cwd: pathlib.Path | None, cli_session_id: str,
+                     confined: bool) -> None:
+    """After a ZDR turn: delete what it left on disk that can hold what it read --
+    the caller envelope, its profiles and, for a confined turn (never resumed), its
+    transcript. A conversation's own transcript stays only while the conversation
+    can resume it, and is swept with the session's work directory."""
+    if not ZDR_MODE:
+        return
+    paths = [CALLER_ROOT / f"{turn_id}.json"]
+    paths += [PROFILE_ROOT / f"cloud-{turn_id}{suffix}"
+              for suffix in (".json", ".settings.json", ".zdr-settings.json")]
+    if confined and cli_session_id and cwd is not None:
+        paths.append(CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{cli_session_id}.jsonl")
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            _log(f"warn: ZDR: could not delete {path}: {exc}")
 
 # No time limit on an ACP turn, like `claude -p`. A wall-clock deadline (5400s)
 # killed ACE's full `/ace:run bednet-check-2-visit` on cloud-ec2-2 while it was
@@ -5617,7 +5765,12 @@ def _login_keys(cred: dict | None) -> list[str]:
 def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
     """The ordered credential list: the box's own full logins first, in the
     order a person set (they are the only entries that see claude.ai
-    connectors), then the bundle's backup tokens."""
+    connectors), then the bundle's backup tokens.
+
+    In ZDR mode, only the bundle's API-key slot: no box login, no subscription."""
+    if ZDR_MODE:
+        key = dict((label, k) for label, _v, k in _BUNDLE_SLOTS)[ZDR_CREDENTIAL_LABEL]
+        return [(ZDR_CREDENTIAL_LABEL, "ANTHROPIC_API_KEY", cred[key])] if (cred or {}).get(key) else []
     out: list[tuple[str, str, str]] = [
         (_login_label(k), "CLAUDE_CONFIG_DIR", _login_config_env(k))
         for k in _login_keys(cred) if box_login_ready(key=k)]
@@ -5629,8 +5782,8 @@ def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
 
 def _adopt_box_login() -> bool:
     """Put a freshly signed-in DEFAULT login at the head of the live cascade
-    (an older canopy-web, which has no list to re-read it from)."""
-    if not box_login_ready():
+    (an older canopy-web, which has no list to re-read it from). Never in ZDR mode."""
+    if ZDR_MODE or not box_login_ready():
         return False
     if not any(c[0] == BOX_LOGIN_LABEL for c in _CLAUDE_CREDS):
         _CLAUDE_CREDS.insert(0, (BOX_LOGIN_LABEL, "CLAUDE_CONFIG_DIR", _login_config_env()))
@@ -8334,7 +8487,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         if confined:
             # No GitHub identity (canopy refuses one for a caller's turn anyway),
             # no chat key, no repo worktrees: only what says who and which turn.
-            per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV}
+            per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV,
+                        **(ZDR_ENV if ZDR_MODE else {})}
         else:
             # What this turn alone carries: its GitHub identity (first — the cwd's
             # own git pull needs it), its caller envelope and, for a chat, that
@@ -8348,7 +8502,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 return
             per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
                         **_chat_key_env(turn), **_lineage_env(turn), **scoped_env,
-                        **_agent_token_env(runner_id, turn), **ONE_SHOT_TURN_ENV}
+                        **_agent_token_env(runner_id, turn), **ONE_SHOT_TURN_ENV,
+                        **(ZDR_ENV if ZDR_MODE else {})}
         _clear_canopy_needs_auth()
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
@@ -8418,6 +8573,17 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _log(f"turn {turn_id[:8]} NOT run — cannot confine: {exc}")
                 return
 
+        if ZDR_MODE:
+            # Every ZDR turn runs under the locked profile, a confined one with its
+            # own rules folded in. Without it, the turn is not run.
+            try:
+                _TURN_ENV.settings = _zdr_settings_file(turn, _TURN_ENV.settings)
+            except ConfineError as exc:
+                _api("POST", f"/turns/{turn_id}/finish",
+                     {"status": "failed", "result_note": f"a ZDR turn was not run: {exc}"})
+                _log(f"turn {turn_id[:8]} NOT run — {exc}")
+                return
+
         if turn.get("_fork") and not resume_id and not confined and cwd is not None:
             try:
                 resume_id = _cut_fork(cwd, turn["_fork"], _turn_agent_slug(turn))
@@ -8465,6 +8631,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.settings = None
         _TURN_ENV.confined = None
         _TURN_ENV.chat_session = ""
+        _zdr_forget_turn(str(turn_id), cwd, cli_session_id, confined)
         if cli_session_id and cwd is not None:
             _record_session_cwd(cli_session_id, cwd)
         if cli_session_id:

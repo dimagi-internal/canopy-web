@@ -66,6 +66,7 @@ def _offline(runner):
 
 def _zdr(runner):
     RunnerFlag.objects.create(runner=runner, flag="zdr")
+    _reports_zdr(runner)
 
 
 def _sessions(*runners):
@@ -343,3 +344,13 @@ def test_a_chain_longer_than_the_cap_is_unclaimable_not_unrestricted(fleet):
         node = Turn.objects.create(agent=a, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, idempotency_key=f"t{i + 1}",
                                    routing=Turn.ANY, parent_turn=node)
     assert rr.UNSATISFIABLE in rr.requirements_of(node)
+
+
+def _reports_zdr(runner):
+    """The box reports ZDR mode on its heartbeat: without it a person's `zdr`
+    declaration is not in force (runner_requirements.in_force)."""
+    from apps.harness.models import Runner as _Runner
+
+    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
+    _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
+    return runner

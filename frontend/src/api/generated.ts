@@ -27129,6 +27129,16 @@ export interface components {
              * @default 0
              */
             readonly midturn: number;
+            /**
+             * Data Mode
+             * @default
+             */
+            readonly data_mode: string;
+            /**
+             * Data Mode Hash
+             * @default
+             */
+            readonly data_mode_hash: string;
             /** Projects */
             readonly projects?: readonly string[] | null;
             readonly health?: components["schemas"]["RunnerHealthIn"] | null;

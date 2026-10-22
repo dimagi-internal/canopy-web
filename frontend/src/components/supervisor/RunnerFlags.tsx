@@ -14,8 +14,20 @@ const WORDS: Record<string, { label: string; sentence: string }> = {
   zdr: {
     label: 'ZDR',
     sentence:
-      'This box uses only zero-data-retention keys for Claude. You are vouching for this; canopy cannot check it.',
+      'This box runs in ZDR mode: one zero-data-retention key for Claude and a locked profile on every turn. You are vouching for this; canopy cannot check the key.',
   },
+}
+
+// A flag that names a data mode counts only while the box itself reports that mode
+// on its heartbeat (apps/harness/runner_requirements.py `FLAG_NEEDS_DATA_MODE`):
+// a declared ZDR on a box that is not running in ZDR mode routes no ZDR work.
+const NEEDS_DATA_MODE: Record<string, string> = { zdr: 'zdr' }
+
+function notInForce(runner: RunnerOut, flag: string): boolean {
+  const mode = NEEDS_DATA_MODE[flag]
+  if (!mode || !runner.flags.includes(flag)) return false
+  const caps = (runner.capabilities ?? {}) as Record<string, unknown>
+  return caps.data_mode !== mode
 }
 
 function wordsFor(flag: string): { label: string; sentence: string } {
@@ -64,6 +76,11 @@ export function RunnerFlags({
             <span className="flex flex-col">
               <span className="font-medium text-foreground">{label}</span>
               <span className="text-muted-foreground">{sentence}</span>
+              {notInForce(runner, flag) && (
+                <span className="text-warning" data-testid={`runner-flag-not-in-force-${flag}`}>
+                  Not in force: this box is not reporting ZDR mode, so it takes no ZDR work.
+                </span>
+              )}
             </span>
           </label>
         )

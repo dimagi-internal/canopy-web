@@ -415,6 +415,7 @@ def _zdr_turn(w, *, flags=(), runner=True):
                                   status=Runner.ONLINE, owner=w["owner"], host="box")
         for f in flags:
             RunnerFlag.objects.create(runner=r, flag=f, declared_by=w["owner"])
+        _reports_zdr(r)
         Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=r)
 
 
@@ -451,6 +452,7 @@ def _runner(w, *, flags=()):
                               status=Runner.ONLINE, owner=w["owner"], host="box")
     for f in flags:
         RunnerFlag.objects.create(runner=r, flag=f, declared_by=w["owner"])
+    _reports_zdr(r)
     Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=r)
     return r
 
@@ -494,3 +496,13 @@ def test_a_malformed_requirement_at_the_gateway_is_refused(w, where):
     with pytest.raises(host_gateway.GatewayRefusal) as exc:
         host_gateway.resolve(str(w["turn"].pk))
     assert exc.value.code == "runner_requirements"
+
+
+def _reports_zdr(runner):
+    """The box reports ZDR mode on its heartbeat: without it a person's `zdr`
+    declaration is not in force (runner_requirements.in_force)."""
+    from apps.harness.models import Runner as _Runner
+
+    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
+    _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
+    return runner

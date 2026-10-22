@@ -149,7 +149,7 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     the same counterfactual for `runner_may_hold_agent`, and `ignore_serve` for a
     box's own report that it cannot run the agent (`routing.cannot_serve`)."""
     reqs = frozenset() if ignore_requirements else rr.requirements_of(t)
-    if not rr.satisfies(r.flags, reqs):
+    if not rr.runner_satisfies(r, reqs):
         return False  # above the pin and the binding, as in claim_next_turn
     if not ignore_hold and not _may_hold(r, t, holds):
         return False  # likewise above the pin and the binding
@@ -787,7 +787,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     orders = _orders_for(candidates)
     admins: dict = {}
     now = timezone.now()
-    my_flags = runner.flags
+    my_flags = rr.in_force(runner)
     from apps.agents.services import runner_may_hold_agent
 
     trusted: dict[int, bool] = {}

@@ -32,10 +32,25 @@ describe('RunnerFlags', () => {
     const updated = { ...runner, flags: ['zdr'] } as unknown as RunnerOut
     setRunnerFlags.mockResolvedValue(updated)
     render(<RunnerFlags runner={runner} onChange={onChange} />)
-    expect(screen.getByText(/You are vouching for this; canopy cannot check it/)).toBeTruthy()
+    expect(screen.getByText(/You are vouching for this; canopy cannot check the key/)).toBeTruthy()
     fireEvent.click(screen.getByRole('checkbox', { name: /ZDR/ }))
     await waitFor(() => expect(setRunnerFlags).toHaveBeenCalledWith('r1', ['zdr']))
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(updated))
+  })
+
+  it('says a declared zdr is not in force while the box does not report ZDR mode', () => {
+    render(<RunnerFlags runner={{ ...runner, flags: ['zdr'], capabilities: {} } as unknown as RunnerOut}
+                        onChange={onChange} />)
+    expect(screen.getByTestId('runner-flag-not-in-force-zdr')).toBeTruthy()
+  })
+
+  it('says nothing more once the box reports ZDR mode, or when zdr is not declared', () => {
+    render(<RunnerFlags runner={{ ...runner, flags: ['zdr'], capabilities: { data_mode: 'zdr' } } as unknown as RunnerOut}
+                        onChange={onChange} />)
+    expect(screen.queryByTestId('runner-flag-not-in-force-zdr')).toBeNull()
+    cleanup()
+    render(<RunnerFlags runner={runner} onChange={onChange} />)
+    expect(screen.queryByTestId('runner-flag-not-in-force-zdr')).toBeNull()
   })
 
   it('withdraws it', async () => {
