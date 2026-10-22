@@ -94,7 +94,7 @@ def test_packages_are_not_judged_before_bootstrap(cloud_runner, monkeypatch):
     assert "packages.transcripts" not in names
 
 
-@pytest.mark.parametrize("n,status", [(0, "fail"), (1, "warn"), (2, "ok")])
+@pytest.mark.parametrize("n,status", [(0, "fail"), (1, "ok"), (2, "ok")])
 def test_credential_depth(cloud_runner, monkeypatch, n, status):
     monkeypatch.setattr(cloud_runner, "_CLAUDE_CREDS", [("x", "V", "v")] * n)
     monkeypatch.setattr(cloud_runner, "_slow_checks", lambda: None)

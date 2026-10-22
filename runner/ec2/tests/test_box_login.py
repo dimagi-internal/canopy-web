@@ -212,15 +212,15 @@ def test_the_health_check_says_signed_in_when_the_box_login_is_first(cr, tmp_pat
     assert cr._HEALTH["claude.login"]["status"] == "ok"
 
 
-def test_the_health_check_warns_on_backup_tokens_alone(cr):
-    """Plenty of credentials and none that sees a connector is the exact state
-    an operator mistook for signed in — so it is a warning, not silence."""
+def test_tokens_alone_are_not_a_warning(cr):
+    """A box with no login of its own runs on what it has: no `claude.login`
+    check at all, and one left from an earlier list is cleared."""
+    cr._set_check("claude.login", "ok", "signed in on this box")
     cr._CLAUDE_CREDS.extend(cr._cascade_from(
         {"claude_token": "tok-1", "claude_token_secondary": "tok-2"}))
     cr._credential_check()
     assert cr._HEALTH["claude.credentials"]["status"] == "ok"
-    assert cr._HEALTH["claude.login"]["status"] == "warn"
-    assert "Sign in with Claude" in cr._HEALTH["claude.login"]["detail"]
+    assert "claude.login" not in cr._HEALTH
 
 
 # ── which account the box signed in as ─────────────────────────────────────

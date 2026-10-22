@@ -1152,14 +1152,6 @@ class RunnerCredential(models.Model):
     """
 
     runner = models.OneToOneField(Runner, on_delete=models.CASCADE, related_name="credential")
-    # The fixed slots the list replaced (migration 0097 copied them into it).
-    # Read by nothing; kept one release so code still running mid-deploy can
-    # write the row, then dropped.
-    claude_token_enc = models.TextField(blank=True, default="")
-    claude_token_secondary_enc = models.TextField(blank=True, default="")
-    claude_api_key_enc = models.TextField(blank=True, default="")
-    claude_token_label = models.CharField(max_length=200, blank=True, default="")
-    claude_token_secondary_label = models.CharField(max_length=200, blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"

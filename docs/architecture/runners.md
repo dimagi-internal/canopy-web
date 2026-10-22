@@ -657,7 +657,9 @@ that says to sign in, and serves the browser sign-in from there — it does not
 read "stale".
 
 The runner reports a `claude.login` health check (ok = signed in on the box as
-the first login's account, warn = backup tokens only). Tests:
+the first login's account; absent when the list has no login). Any mix of
+logins, tokens and API keys, one or several, is a healthy box: `claude.credentials`
+fails only when the list is empty, and nothing warns about how many there are. Tests:
 `runner/ec2/tests/test_box_login.py`, `tests/test_runner_logins.py`,
 `tests/test_runner_mint.py`, `tests/test_runner_credential.py`.
 
