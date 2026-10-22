@@ -294,6 +294,28 @@ def test_the_daily_cap(ada, ws, runner):
     assert FailureInvestigation.objects.filter(status=FailureInvestigation.HELD).count() == 1
 
 
+@override_settings(CANOPY_AUTO_DEBUG_MAX_PER_HOUR=2, CANOPY_AUTO_DEBUG_MAX_PER_DAY=10)
+def test_turns_another_workspace_keys_like_debug_turns_do_not_spend_the_cap(ada, ws, runner):
+    # Keys are unique per workspace and whoever posts a turn picks its key, so
+    # `auto-debug:` is a guessable prefix, not the mark of a debug turn. A member
+    # of an unrelated workspace posting turns under it must not exhaust the
+    # debugger's cap and so silence the fleet's failure handling.
+    other = a_workspace("elsewhere")
+    mallory = a_member(other)
+    bot = _agent(other, "mallory-bot")
+    for i in range(5):
+        services.enqueue_turn(
+            agent=bot, origin=Turn.ORIGIN_API, idempotency_key=f"{auto_debug.KEY_PREFIX}{i}:1",
+            prompt="hi", origin_ref={"auto_debug": i},
+            initiator=who.for_user(mallory, via="api", assurance=who.PAT),
+        )
+    assert auto_debug.cap_blocks(timezone.now()) == ""
+
+    _fail(_agent(ws, "ace"), runner, "boom")
+    inv = FailureInvestigation.objects.get()
+    assert inv.status == FailureInvestigation.OPEN and inv.debug_turn is not None
+
+
 @override_settings(CANOPY_AUTO_DEBUG_MAX_PER_HOUR=1)
 def test_a_held_investigation_retries_on_its_own_recurrence_once_the_cap_allows(ada, ws, runner):
     ace = _agent(ws, "ace")

@@ -30,9 +30,14 @@ def is_thread_message(origin_ref) -> bool:
     return isinstance(origin_ref, dict) and origin_ref.get("kind") == services.MESSAGE_KIND
 
 
-def check_message(origin_ref: dict, target_slug: str) -> AgentThread:
+def check_message(origin_ref: dict, target_slug: str, idempotency_key: str = "") -> AgentThread:
     """Refuse (raise ThreadRefused) unless this message may be sent now. Call inside
     a transaction: the thread row is locked until it commits."""
+    if (idempotency_key or "").startswith(services.CLOSEOUT_PREFIX):
+        # The budget skips close-out rows by this prefix, and a poster picks its
+        # key: a message keyed this way would never count against the budget.
+        raise ThreadRefused(
+            422, f"a thread message may not use a {services.CLOSEOUT_PREFIX!r} idempotency key")
     tid = str(origin_ref.get("thread") or "")
     thread = AgentThread.objects.select_for_update().filter(id=tid).first() if tid else None
     if thread is None:

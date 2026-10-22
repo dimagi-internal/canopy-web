@@ -208,3 +208,21 @@ describe('ChatSessionMenu — Memory', () => {
     expect(screen.queryByTestId('session-memory')).toBeNull()
   })
 })
+
+describe('ChatSessionMenu — Copy join link', () => {
+  it('copies the workspace chat address and says so', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    render(<ChatSessionMenu {...baseProps({ workspace: 'dimagi' })} />)
+    await openMenu()
+    fireEvent.click(screen.getByTestId('copy-join-link'))
+    await waitFor(() => expect(screen.getByText('Join link copied')).toBeTruthy())
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/dimagi/chat/s1`)
+  })
+
+  it('is hidden until the session knows its workspace', async () => {
+    render(<ChatSessionMenu {...baseProps()} />)
+    await openMenu()
+    expect(screen.queryByTestId('copy-join-link')).toBeNull()
+  })
+})

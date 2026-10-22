@@ -71,6 +71,10 @@ _PATTERNS: list[tuple[re.Pattern[str], Callable[[re.Match], str]]] = [
     ),
     # OpenAI / Anthropic-style keys.
     (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"), _whole("api-key")),
+    # canopy's own bearer tokens: personal (cpat_), delegated (cdt_), contact
+    # (ccon_), caller (cct_), runner (crt_), chat key (chk_), HCP (hcpat_/hcprt_).
+    (re.compile(r"\b(?:cpat|cdt|ccon|cct|crt|chk|hcpat|hcprt)_[A-Za-z0-9_-]{20,}"),
+     _whole("canopy-token")),
     # GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_).
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), _whole("github-token")),
     # GitHub fine-grained PAT.

@@ -9,8 +9,8 @@
 
 ## The problem
 
-connect-labs wants an agent on a workflow's page that a person can work with fully:
-read and change the workflow, its pipelines and the visit data under them. On a
+connect-labs wants an agent on a workflow's page that a person can ask about the
+workflow, its pipelines and the visit data under them (`labsdata`, §7). On a
 production opportunity that data carries PII and PHI. The person who owns the data (the
 host) needs to be able to say **"over real data, only an agent whose author vouches it
 handles PHI safely, executing only on boxes whose model calls retain nothing"** — and
@@ -140,6 +140,25 @@ requirements include `zdr` — read everywhere below, with one test per surface:
   status, never the result; `Message` rows are kept (they are the conversation), under a
   retention rule that is enforced for sensitive sessions whatever
   `CANOPY_RETENTION_ENFORCE` says (default 30 days).
+- **A tool result keeps no rows.** A `TOOL_RESULT` `Message` in a sensitive session is
+  stored as `{tool_use_id, is_error}` with empty `plaintext` — the result body never
+  reaches canopy-web's database, from the runner's transcript rows or from a live
+  `tool_end` event, and the live frame carries the same stripped row, so a reload and a
+  live view agree. The `TOOL_USE` row (the call and its arguments) is kept: it is the
+  question, and a View needs it. An MCP Apps View (`apps/tokens/mcp_apps_views.py`)
+  therefore gets `tool_result: null` in a sensitive session and fetches its data **as
+  the viewer**, through the host's app-only tool, from `tool_input` — the way connect-labs'
+  coaching View already works (a View built on path D already has to, since the runner
+  records text only). A host whose View needs its result says so by giving the View an
+  app-only read tool; canopy never stores rows to spare it the call. Receipts keep no
+  result excerpt (ids, tool, who, when, `is_error`).
+- **The agent still has the result.** The model reads a tool's answer inside the
+  turn, on the ZDR box, through the ZDR key: `site_call`'s answer goes from the gateway
+  (canopy-web, in memory, never written — MCP audit rows record the tool and the
+  argument summary, not the answer) straight back to the box's session. A later turn of
+  the same conversation resumes that Claude session on the box while the box keeps it;
+  once the box has deleted it (§1, "nothing kept"), the agent re-reads what it needs —
+  the conversation's `Message` rows tell it what was asked, not what came back.
 - **Refuse re-exposure.** Share links, Slack share and mirroring, export, MCP Apps
   receipts beyond ids, and the usage scan's title.
 - **Refuse re-processing.** Auto-debug files the failure with its id and error class
@@ -153,7 +172,7 @@ On the agent's published interface, per capability:
 
 ```yaml
 capabilities:
-  workflow:
+  data:
     sites: [connect-labs]
     data: phi            # new: this capability may serve a host's PHI
 ```
@@ -170,6 +189,37 @@ capabilities:
   the declared SHA until the author re-declares.
 - The declaration is what an author claims; whether a host accepts it is the host's
   allowlist (§6).
+
+### A `data: phi` capability is confined for everyone
+
+Today an owner's, an admin's and canopy's own turns run the agent's FULL profile
+(`access.decide` row 1), and a fleet turn runs with `--dangerously-skip-permissions`.
+That cannot stand next to PHI: a declaration is about a capability's tool set, and a
+full-profile turn is not in any capability.
+
+- **The rule.** A turn whose capability is `data: phi`, and **any** turn in a session
+  whose requirements include `zdr`, runs the declared capability's confined profile
+  whatever the caller's relationship — owner, admin and `system` included.
+  `access.decide` asks it before row 1: the capability is the one the turn names, else
+  the one its site or page selects (`_site_capability`/`_page_capability`); for an
+  owner, admin or `system` the caller-class check is skipped (they may use any phi
+  capability), for everyone else it holds as today. A `zdr` session in which no `phi`
+  capability resolves is refused (`none`, "this conversation needs a capability declared
+  PHI-safe"), never run full. `Decision.basis` is `phi:<capability>`; the role, the turn
+  mode and `may_request_auto` are unchanged — confinement is about what the turn can
+  reach, not who asked.
+- **How it is enforced.** It rides the confinement that already exists (access.md "How
+  confinement is enforced"): `Turn.capability` is stamped at enqueue, so the envelope says
+  `profile: confined`; only a runner reporting `profiles` may claim it; the runner runs it
+  in its own `cx-` session with the profile written first, the `profile_guard` hook and
+  the native deny rules; it gets a caller token, never the owner's PAT, and no agent
+  `.env`. On a ZDR-mode box the runner adds a second check of its own: it refuses (fails
+  the turn with `zdr_unconfined`) any turn whose envelope is not `profile: confined` with
+  a capability, so a canopy-web bug cannot hand it a full turn; and the locked harness of
+  §1 (no skip-permissions, `--strict-mcp-config`, allow-list settings) applies on top.
+- **Red team (step 8)**: the agent's owner, from canopy's own UI and from the CLI, opens a
+  conversation on a real opportunity and asks for Bash, a file write and the agent's own
+  PAT; each is refused and the envelope reads `profile: confined`.
 
 ## 6. canopy vouches for the call, the host verifies
 
@@ -203,17 +253,40 @@ Labs records the agent, SHA, runner and declarer on `AuditEvent` and `MCPAuditLo
 **The side door closes.** Every agent's own connect-labs credential is a
 no-uservisit-data PAT. Real data is reachable only as a visitor, through the gateway.
 
-## 7. The workflow agent
+## 7. `labsdata` — the data agent
 
-A new, minimal agent (not ACE: ACE has Drive, email and memory, which cannot honestly be
-declared PHI-safe), scaffolded with `canopy:create-agent`, whose only capability is
-`workflow` (`sites: [connect-labs]`, `data: phi`) and whose only tools are labs' site
-tools. Labs gives it a new scope, `workflow:full`, bound to the workflow on screen (its
-definition and its opportunities, carried in the ID-JAG as RFC 9396
-`authorization_details`, so a token minted on one workflow cannot read another): read
-and preview its pipelines and their rows, its definition and render code, its runs; and
-change them through preview → confirm, as `PREVIEWED_WRITE_SCOPES` already requires of
-every write scope.
+A new, minimal agent, slug **`labsdata`** — a utility, not a persona — scaffolded with
+`canopy:create-agent`. It recreates the Scout data-agent experience inside Connect Labs:
+a person looking at (or naming) a workflow asks data questions, and the agent reads the
+real production data down to row level and raw form JSON, plus the pipelines, semantic
+layer and workflow definition behind it, to confirm the workflow does what was intended.
+Not ACE: ACE's `connect` capability carries Write, Skill and Drive writes, and its
+owner/admin turns ran unconfined — neither can honestly be declared PHI-safe.
+
+```yaml
+capabilities:
+  data:
+    callers: [contact, member]  # a labs visitor is usually a contact; labs allowlists the agent
+    sites: [connect-labs]
+    data: phi
+    tools: [Read, Grep, Glob, Skill, ToolSearch,
+            "mcp__*canopy-web__current_page", "mcp__*canopy-web__who_is_asking"]
+```
+
+- **Read-only.** Its only tools are the gateway's site tools (added by `sites:`),
+  `current_page`, `who_is_asking` and read-only local tools. No Bash, Write, Edit, Drive,
+  email, memory, Slack or the web — the §5 structural check refuses a declaration that
+  holds any. Writes are out of scope for this agent; a person who wants to change a
+  workflow does it in labs, or with an agent that is not declared PHI-safe over synthetic
+  data.
+- **Scope.** Labs gives it a new page scope, `data:read`, bound to the opportunities and
+  the workflow on screen — carried in the ID-JAG as RFC 9396 `authorization_details`,
+  so a token minted on one workflow cannot read another's rows: SQL over its visits
+  (including `form_json`), and reads of its pipelines, semantic layer and workflow
+  definition. No write scope is granted, so `PREVIEWED_WRITE_SCOPES` never applies.
+- **Results.** Rows reach the person through labs' MCP Apps results View (table, chart,
+  CSV), which fetches them as the viewer through an app-only tool (§4: the stored tool
+  result keeps no rows).
 
 ## Rollout
 
@@ -231,12 +304,14 @@ Each step ships on its own and fails closed until the next lands.
 6. **Declarations + the execution statement** (§5, §6), with the SDK's host half and a
    `dimagi-canopy` release; connect-labs verifies it and flips
    `CANOPY_EXECUTION_STATEMENTS`.
-7. **The workflow agent and `workflow:full`** (§7). Then connect-labs sets
-   `CANOPY_RUNNER_REQUIREMENTS=zdr` and `CANOPY_PHI_AGENTS=<the agent>`.
+7. **`labsdata` and `data:read`** (§7). Then connect-labs sets
+   `CANOPY_RUNNER_REQUIREMENTS=zdr` and `CANOPY_PHI_AGENTS=labsdata`.
 8. **Red team, end to end:** a scripted run on a real opportunity that tries each exit —
    Bash, a file write, WebFetch, a subagent, a non-ZDR runner, a self-declared flag, a
-   fork, a share link, Slack, export, auto-debug, an undeclared SHA, the agent's own PAT —
-   and asserts each is refused.
+   fork, a share link, Slack, export, auto-debug, an undeclared SHA, the agent's own PAT,
+   the OWNER's own turn asking for Bash or a write (§5: confined for everyone), and a
+   stored `TOOL_RESULT` / `tool_end` / receipt holding a row (§4) — and asserts each is
+   refused or empty.
 
 ## Out of scope
 

@@ -45,8 +45,8 @@ from ninja.errors import HttpError
 
 from apps.common.token_hash import hash_token
 from .contact_api import contact_auth
-from .models import HcpFrameProof
-from .views_embed import FRAME_COOKIE
+from apps.tokens.models import HcpFrameProof
+from apps.tokens.views_embed import FRAME_COOKIE
 
 contact_hcp_router = Router(auth=contact_auth, tags=["contact"])
 

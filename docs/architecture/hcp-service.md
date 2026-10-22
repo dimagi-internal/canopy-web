@@ -290,7 +290,7 @@ by default is offered "record" by the next agent they talk to in a session.
 ## Contacts, from a site canopy trusts for email
 
 Contacts may build up HCP interactions when they opt in from a trusted system, such
-as labs, whose email identity canopy trusts. Code: `apps/tokens/contact_hcp_api.py` (`/api/contact/hcp/…`), the widget's
+as labs, whose email identity canopy trusts. Code: `apps/contacts/contact_hcp_api.py` (`/api/contact/hcp/…`), the widget's
 `frontend/src/embed/ContactMemory.tsx`; tests `tests/test_hcp_trusted_contacts.py`.
 
 **Who.** A contact (a widget visitor with no canopy account) on a connected site

@@ -19,7 +19,7 @@ stops the document lying about mechanics, not about judgement.
 from pathlib import Path
 
 import pytest
-from django.core.management import get_commands, load_command_class
+from django.core.management import get_commands
 from django.urls import resolve
 from django.urls.exceptions import Resolver404
 
@@ -47,23 +47,19 @@ def test_the_doc_exists_and_is_indexed_in_claude_md(doc):
     assert "embedding-a-canopy-agent.md" in claude
 
 
-@pytest.mark.parametrize(
-    "command,flags",
-    [
-        ("create_app_credential", ["--name"]),
-    ],
-)
-def test_documented_commands_exist_with_the_documented_flags(doc, command, flags):
-    """A renamed flag turns the setup section into instructions that fail."""
-    assert command in doc, f"{command} is no longer mentioned — update this test or the doc"
-    assert command in get_commands(), f"the doc names a command that does not exist: {command}"
+def test_every_command_the_doc_names_exists(doc):
+    """A renamed or retired command turns the setup section into instructions that fail."""
+    import re
 
-    parser = load_command_class("apps.tokens", command).create_parser("manage.py", command)
-    available = {
-        option for action in parser._actions for option in action.option_strings
-    }
-    missing = [f for f in flags if f not in available]
-    assert not missing, f"{command} no longer accepts {missing}, but the doc uses them"
+    for command in set(re.findall(r"manage\.py ([a-z_]+)", doc)):
+        assert command in get_commands(), f"the doc names a command that does not exist: {command}"
+
+
+def test_a_site_is_set_up_only_through_the_audited_routes():
+    """Registering a site and what it may do are settings (`route_gates.SETTINGS`):
+    the routes validate and audit them; a management command would do neither."""
+    retired = {"create_app_credential", "grant_app_frame_origin", "grant_app_agent"}
+    assert not retired & set(get_commands())
 
 
 @pytest.mark.parametrize(
@@ -483,7 +479,7 @@ def test_the_sdk_readme_states_the_real_contract_values():
 
 def test_the_documented_arrival_field_is_the_one_the_endpoint_reads(doc):
     """§8a tells a host to send `id_jag` beside `assertion`."""
-    from apps.tokens.contact_api import ContactTokenIn, ContactTokenOut
+    from apps.contacts.contact_api import ContactTokenIn, ContactTokenOut
 
     assert "`id_jag`" in doc
     assert "id_jag" in ContactTokenIn.model_fields

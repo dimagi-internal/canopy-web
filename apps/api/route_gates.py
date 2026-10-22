@@ -126,7 +126,7 @@ VOCABULARY: frozenset[str] = frozenset({
 })
 
 GATES: dict[str, tuple[str, ...]] = {
-    # --- apps/agents/api.py
+    # --- apps/agents/api.py and its api_*.py siblings (routing, skills, board, credentials, readiness)
     "list_agents": ("member",),
     "upsert_agent": ("agent.work", "agent-admin"),  # editor in target ws; a MOVE also needs agent admin
     "move_agent": ("agent-admin", "agent.work"),  # admin of the agent where it is + editor in the destination
@@ -550,7 +550,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "test_connected_app": ("integrations",),
     "tokens_connected_apps_disconnect_app": ("own",),
 
-    # --- apps/tokens/contact_api.py  (/api/contact/: ContactAuth; contact_session_q)
+    # --- apps/contacts/contact_api.py  (/api/contact/: ContactAuth; contact_session_q)
     "contact_token": ("host",),  # auth=None; site-signed assertion (+ optional ID-JAG)
     "contact_me": ("contact",),
     "contact_app_view_resource": ("contact",),
@@ -559,7 +559,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "contact_app_view_context": ("contact",),
     "contact_app_view_message": ("contact",),
     "contact_ws_ticket": ("contact",),  # a one-time socket ticket standing for the caller's own contact token
-    # --- apps/tokens/contact_hcp_api.py  (/api/contact/hcp/: a contact's own HCP, trusted sites only)
+    # --- apps/contacts/contact_hcp_api.py  (/api/contact/hcp/: a contact's own HCP, trusted sites only)
     # Every route but `proof` also spends a single-use frame proof — the contact's act in
     # canopy's own frame, which the site holding the token cannot produce.
     "contact_hcp_proof": ("contact",),  # canopy's frame cookie + Sec-Fetch-Site same-origin

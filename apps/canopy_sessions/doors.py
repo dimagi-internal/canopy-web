@@ -46,14 +46,17 @@ DOORS = {
 
 
 def send_from(
-    door: str, *, session, text: str, user, initiator, client_id: str | None = "",
-    runner_requirements=(), context: dict | None = None, **send_kwargs,
+    door: str, *, session, text: str, user, initiator, runner_requirements,
+    client_id: str | None = "", context: dict | None = None, **send_kwargs,
 ):
     """Send `text` into `session` through `door`; returns `(message, turn)`.
 
     `runner_requirements`: the floor a site's token carries (ZDR), unioned into
     the session BEFORE the send so the turn is routed under it — never lifting
-    one already set. `context`: request provenance to bind around the send for a
+    one already set. REQUIRED, with no default: every door that can be reached
+    through a site's token must pass the token's requirements, and a door that
+    cannot (Slack) says `()` out loud. A default once let the signed-in app-view
+    door send a ZDR site's member's turn with no floor at all. `context`: request provenance to bind around the send for a
     door with no HTTP request behind it (the socket; `apps/common/request_context`).
     Everything else (`placement`, `origin`, `origin_ref`, `parent`, ...) is
     `services.send_message`'s own."""

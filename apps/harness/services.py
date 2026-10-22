@@ -484,7 +484,7 @@ def enqueue_turn(
                 target = (agent.slug if agent is not None
                           else session.agent.slug if session is not None and session.agent_id
                           else "")
-                thread_guard.check_message(origin_ref, target)
+                thread_guard.check_message(origin_ref, target, idempotency_key)
             turn = Turn.objects.create(
                 **initiator.fields(),
                 **provenance.turn_fields(parent=parent, **(provenance_extra or {})),

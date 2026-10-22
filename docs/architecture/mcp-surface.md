@@ -233,7 +233,7 @@ still works for scripts and headless clients:
 {
   "canopy-web": {
     "url": "https://<canopy-web>/api/mcp/",
-    "headers": { "Authorization": "Bearer <your-PAT>" }
+    "headers": { "Authorization": "Bearer cpat_<your-token>" }
   }
 }
 ```

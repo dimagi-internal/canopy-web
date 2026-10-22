@@ -17,8 +17,13 @@ The kinds, tried in this order:
 * ``contact`` — a `ContactToken`; no canopy user, ever.
 * ``delegated`` — a site's `DelegatedToken` for an active user.
 
-Token formats are unchanged: only the two prefixed kinds are told apart by
-their prefix; the rest are found by lookup.
+Every kind is told apart by its prefix: `crt_`, `hcpat_`, and — for tokens
+minted since they were introduced — `cpat_`, `cdt_`, `ccon_` (the models'
+`PREFIX`). A prefixed token is looked up in its own table only, and refused
+when that kind is not one the door accepts. A token minted before the prefixes
+is 43 bare base64url characters (`LEGACY_LENGTH`): it is tried against each
+accepted kind in the order above, as before. Length is what tells a legacy
+token that happens to begin `cpat_` from a prefixed one.
 """
 from __future__ import annotations
 
@@ -79,6 +84,13 @@ def resolve_bearer(raw: str, *, accept=ALL_KINDS, client: str | None = None) -> 
 
     from .models import ContactToken, DelegatedToken, PersonalToken, note_used
 
+    typed = _prefixed_kind(raw)
+    if typed is not None:
+        # One kind, one lookup; any other kind's table cannot hold this hash.
+        if typed not in accept:
+            return None
+        accept = {typed}
+
     if PAT in accept:
         pat = PersonalToken.lookup(raw)
         if pat is not None:
@@ -98,4 +110,21 @@ def resolve_bearer(raw: str, *, accept=ALL_KINDS, client: str | None = None) -> 
             return Principal(DELEGATED, dtok, user=dtok.user,
                              auth_method=dtok.assurance or DELEGATED,
                              credential=credential(DELEGATED, dtok.pk, dtok.app.name))
+    return None
+
+
+#: `secrets.token_urlsafe(32)`: what every personal, delegated and contact token
+#: was before the prefixes, and the random part of one after.
+LEGACY_LENGTH = 43
+
+
+def _prefixed_kind(raw: str) -> str | None:
+    """The kind a prefixed token names, or None for a legacy (bare) token."""
+    if len(raw) <= LEGACY_LENGTH:
+        return None
+    from .models import ContactToken, DelegatedToken, PersonalToken
+
+    for kind, model in ((PAT, PersonalToken), (DELEGATED, DelegatedToken), (CONTACT, ContactToken)):
+        if raw.startswith(model.PREFIX):
+            return kind
     return None

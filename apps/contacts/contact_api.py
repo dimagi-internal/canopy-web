@@ -35,15 +35,19 @@ from ninja.security import HttpBearer
 
 from apps.harness import initiator as who
 
-from . import assertions
-from .audit import client_ip, record as audit
-from .models import ContactToken, EmbedAuditLog
-from .schemas import WsTicketOut
-from .rate_limit import (
+from apps.tokens import assertions
+from apps.tokens.audit import client_ip, record as audit
+from apps.tokens.models import ContactToken, EmbedAuditLog
+from apps.tokens.schemas import WsTicketOut
+from apps.tokens.rate_limit import (
     ContactTokenRateLimitError,
     check_contact_token_client,
     check_contact_token_issuer,
 )
+
+#: Published as `tokens_contact_<name>` before this module moved from apps/tokens;
+#: those operationIds are MCP tool names and `generated.ts` keys, so they stay.
+OPERATION_LABEL = "tokens_contact"
 
 log = logging.getLogger(__name__)
 
@@ -266,7 +270,7 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         # An existing canopy account arrives AS ITSELF: a delegated user token,
         # the same short-lived revocable row canopy's own widget mints. Never a
         # new account — resolve_arrival only finds, it does not create.
-        from .models import DelegatedToken
+        from apps.tokens.models import DelegatedToken
 
         raw, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl,
                                           assurance=DelegatedToken.ASSURANCE_HOST_SIGNED,
@@ -319,7 +323,7 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
     line with the code — never the token), because "the agent could not reach
     the site as me" otherwise has nowhere to be seen.
     """
-    from . import host_grants
+    from apps.tokens import host_grants
 
     if not (id_jag or "").strip():
         return False
@@ -344,7 +348,7 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
     host_grants.record_outcome(app, ok=True, subject=subject, scope=grant.scope)
     # MCP Apps: list the site's tools as this visitor in the background, so a
     # result from the agent's own login (path D) finds its View.
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     mcp_apps_views.refresh_index_soon(app, grant)
     return True
@@ -359,7 +363,7 @@ def contact_ws_ticket(request: HttpRequest) -> WsTicketOut:
     works once, within `expires_in` seconds. Fetch a fresh one for every
     connection, reconnects included.
     """
-    from . import ws_ticket
+    from apps.tokens import ws_ticket
 
     return WsTicketOut(ticket=ws_ticket.mint(ws_ticket.bearer(request)),
                        expires_in=ws_ticket.TICKET_TTL_SECONDS)
@@ -639,7 +643,7 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
     )
     # A contact only ever talks through a widget, which never shows tool calls
     # (except a tool result that carries an app View — `for_widget`).
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     mcp_apps_views.annotate(session, rows)
     rows = session_services.for_widget(rows)
@@ -819,13 +823,13 @@ from apps.canopy_sessions.app_views_api import (  # noqa: E402
 
 
 def _app_viewer(request):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     return mcp_apps_views.Viewer(contact=request.contact)
 
 
 def _app_run(fn, *args):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     try:
         return fn(*args)
@@ -836,7 +840,7 @@ def _app_run(fn, *args):
 @contact_router.get("/sessions/{session_id}/apps/{tool_call_id}/resource", response=dict,
                     summary="Load an app view, as you")
 def contact_app_view_resource(request: HttpRequest, session_id: str, tool_call_id: str):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     return _app_run(mcp_apps_views.resource, _session_or_404(request, session_id),
                     _app_viewer(request), tool_call_id)
@@ -846,7 +850,7 @@ def contact_app_view_resource(request: HttpRequest, session_id: str, tool_call_i
                      summary="An app view's tools/call, as you")
 def contact_app_view_call(request: HttpRequest, session_id: str, tool_call_id: str,
                           payload: AppCallIn):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     return _app_run(mcp_apps_views.call, _session_or_404(request, session_id),
                     _app_viewer(request), tool_call_id, payload.name, payload.arguments or {})
@@ -856,7 +860,7 @@ def contact_app_view_call(request: HttpRequest, session_id: str, tool_call_id: s
                      summary="An app view's resources/read, as you")
 def contact_app_view_read(request: HttpRequest, session_id: str, tool_call_id: str,
                           payload: AppReadIn):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     return _app_run(mcp_apps_views.read, _session_or_404(request, session_id),
                     _app_viewer(request), tool_call_id, payload.uri)
@@ -866,7 +870,7 @@ def contact_app_view_read(request: HttpRequest, session_id: str, tool_call_id: s
                     summary="An app view's ui/update-model-context")
 def contact_app_view_context(request: HttpRequest, session_id: str, tool_call_id: str,
                              payload: AppContextIn):
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     _app_run(mcp_apps_views.update_context, _session_or_404(request, session_id),
              _app_viewer(request), tool_call_id, payload.dict(exclude_none=True))
@@ -879,7 +883,7 @@ def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id
                              payload: AppMessageIn):
     from apps.canopy_sessions import doors
 
-    from . import mcp_apps_views
+    from apps.tokens import mcp_apps_views
 
     session = _session_or_404(request, session_id)
     text = payload.text

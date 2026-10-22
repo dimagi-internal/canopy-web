@@ -58,7 +58,16 @@ class CanopyNinjaAPI(NinjaAPI):
 
 
 def _app_label(module: str) -> str:
-    """``apps.canopy_sessions.contact_api`` → ``canopy_sessions_contact``."""
+    """``apps.canopy_sessions.contact_api`` → ``canopy_sessions_contact``.
+
+    A module that moved apps keeps the label it was published under by naming it
+    in ``OPERATION_LABEL`` — an operationId is an MCP tool name and a
+    ``generated.ts`` key, so moving code must not rename it."""
+    import sys
+
+    pinned = getattr(sys.modules.get(module), "OPERATION_LABEL", None)
+    if pinned:
+        return pinned
     parts = module.split(".")
     if parts[0] == "apps":
         parts = parts[1:]
@@ -202,6 +211,12 @@ from apps.session_sharing.api import router as sessions_router  # noqa: E402
 from apps.session_sharing.api import share_router as session_share_router  # noqa: E402
 from apps.agents.a2a_api import router as a2a_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
+from apps.agents.api import turns_router as agent_turns_router  # noqa: E402
+from apps.agents.api_board import router as agent_board_router  # noqa: E402
+from apps.agents.api_credentials import router as agent_credentials_router  # noqa: E402
+from apps.agents.api_readiness import router as agent_readiness_router  # noqa: E402
+from apps.agents.api_routing import router as agent_routing_router  # noqa: E402
+from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
 from apps.agents.contributors_api import router as contributors_router  # noqa: E402
 from apps.agents.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.oauth_api import router as agent_google_router  # noqa: E402
@@ -248,7 +263,7 @@ from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
 from apps.contacts.hcp_clients_api import router as hcp_clients_router  # noqa: E402
 from apps.contacts.people_api import router as people_router  # noqa: E402
 from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
-from apps.tokens.contact_api import contact_router, contact_token_router  # noqa: E402
+from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.tokens.embed_api import embed_router
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
@@ -270,7 +285,7 @@ api.add_router("/storyboards", storyboards_router)
 api.add_router("", beta_requests_router)
 api.add_router("/embed", embed_router)
 # The contact surface. `/api/contact/` is the ONLY prefix a contact token can
-# reach — see apps/tokens/contact_api.py and the allowlist in
+# reach — see apps/contacts/contact_api.py and the allowlist in
 # apps/common/middleware.py. `/api/auth/contact-token` mints one and is
 # unauthenticated because the signed assertion is the credential.
 api.add_router("/contact", contact_router)
@@ -286,6 +301,14 @@ api.add_router("/sessions", sessions_router)
 api.add_router("/agents", proposals_router)  # proposed projects + backings (layer 1, 2026-10-16)
 api.add_router("/agents", checkins_project_router)  # a project's check-ins + its timeline (2026-10-17)
 api.add_router("/agents", agents_router)
+# The rest of apps/agents' surface, split by subdomain. Mounted in the order the
+# routes were written in, which is the order of /api/openapi.json's paths.
+api.add_router("/agents", agent_routing_router)
+api.add_router("/agents", agent_turns_router)
+api.add_router("/agents", agent_skills_router)
+api.add_router("/agents", agent_board_router)
+api.add_router("/agents", agent_credentials_router)
+api.add_router("/agents", agent_readiness_router)
 # A2A Agent Card discovery — public in the login middleware; each route
 # self-enforces (apps/agents/a2a_api.py).
 api.add_router("/a2a", a2a_router)
