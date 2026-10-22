@@ -14,6 +14,7 @@ import { deleteConsequence } from './ideTree'
 export type IdeAction =
   | { kind: 'open-tab' }
   | { kind: 'copy-link' }
+  | { kind: 'copy-join-link' }
   | { kind: 'rename' }
   | { kind: 'info' }
   | { kind: 'open-desktop'; href: string }
@@ -55,6 +56,10 @@ function Item({
     </button>
   )
 }
+
+/** The /ide link is yours alone; teammates join a chat at its workspace address. */
+export const JOIN_LINK_HINT =
+  'The link a teammate opens to join this chat live. It lets in only the people this chat is given to (People… in the chat’s ⋯ menu).'
 
 const Sep = () => <div className="my-1 h-px bg-border" />
 
@@ -171,6 +176,13 @@ export function SessionContextMenu({
       </div>
       <Item onClick={() => onAction({ kind: 'open-tab' })}>Open in new tab</Item>
       <Item onClick={() => onAction({ kind: 'copy-link' })}>Copy link</Item>
+      <Item
+        onClick={() => onAction({ kind: 'copy-join-link' })}
+        title={JOIN_LINK_HINT}
+        testId="ide-menu-join-link"
+      >
+        Copy join link
+      </Item>
       <Item
         onClick={() => onAction({ kind: 'rename' })}
         title="Give this session a name of your own (or double-click its row)"
