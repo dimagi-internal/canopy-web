@@ -319,7 +319,7 @@ def approve_runner_pairing(request: HttpRequest, user_code: str, payload: Runner
     # into the fleet as you. 403 `step_up_required` → the SPA asks for the
     # passkey and retries; a token gets a plain 403 it cannot answer.
     stepup.require_recent_step_up(request)
-    # A runner is owned by a person (apps/harness/api.py::pair_runner).
+    # A runner is owned by a person (apps/harness/api_runners.py::pair_runner).
     if getattr(request.user, "agent_identity", None) is not None:
         raise HttpError(403, "a runner must be owned by a person; approve it as yourself")
     reconnect = _reconnect_for(pairing, request.user)

@@ -187,7 +187,7 @@ class RunnerOut(Schema):
     # list_runners stamps it on each row; a Ninja resolver only sees the row.
     #
     # Defaults True because every OTHER route returning a RunnerOut resolves its
-    # runner through `_runner_or_404`, which IS the act-on gate — reaching one of
+    # runner through `runner_or_404`, which IS the act-on gate — reaching one of
     # those responses at all proves the caller can manage it. Only the list can
     # legitimately contain a runner the caller may not act on, and only the list
     # sets this per row.

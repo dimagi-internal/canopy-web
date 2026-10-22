@@ -1,6 +1,6 @@
 """A chat-session turn must be tenant-gated like agent/project turns: a
 non-member of the session's workspace gets 404 from the turn read routes,
-never the transcript. Regression for the _turn_or_404 fall-through."""
+never the transcript. Regression for the turn_or_404 fall-through."""
 from __future__ import annotations
 
 import pytest

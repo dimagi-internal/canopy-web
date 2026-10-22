@@ -351,7 +351,7 @@ def test_the_fleet_list_reads_roots_in_constant_queries(box, monkeypatch):
     from django.db import connection
     from django.test.utils import CaptureQueriesContext
 
-    from apps.harness import api as harness_api
+    from apps.harness import api_runners as harness_api
 
     jj, dimagi = box["jj"], box["dimagi"]
     family = Workspace.objects.create(slug="marshellis", display_name="M", created_by=jj)

@@ -14,7 +14,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
-from apps.harness.api import visible_turns_qs
+from apps.harness.api_turns import visible_turns_qs
 from apps.harness.models import Turn
 from apps.oauth_server.views import issuer
 from apps.workspaces import services as wsvc

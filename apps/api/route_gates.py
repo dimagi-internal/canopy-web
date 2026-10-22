@@ -81,7 +81,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``superuser`` — ``User.is_superuser``: fleet-wide switches that span every tenant
   (the fleet hold).
 * ``fleet-holder`` — an address in ``CANOPY_FLEET_HOLDERS`` (Ada): may SET the fleet
-  hold, never release it (``apps/harness/api.py::_may_hold_fleet``).
+  hold, never release it (``apps/harness/api_runners.py::_may_hold_fleet``).
 * ``host`` — a connected-site / machine protocol endpoint (assertion,
   jwt-bearer, Pub/Sub push).
 * ``hcp-grant`` — the Human Context Protocol subject rule
@@ -275,7 +275,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "record_gate": ("agent.work",),
     "record_verdict": ("agent.work",),
     "fork_run": ("agent.work",),
-    # --- apps/harness/api.py: runner registry (the runner protocol speaks AS the owner)
+    # --- apps/harness/api_runners.py + api_session_sync.py: runner registry (the runner protocol speaks AS the owner)
     "pair_runner": ("member",),  # member of the explicit/default workspace; any role
     "set_runner_credential": ("runner-admin",),
     "swap_runner_logins": ("runner-admin",),
@@ -372,7 +372,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "claim_admission_notices": ("runner",),  # + runner_may_hold_agent per notice
     "report_admission_notice": ("runner",),  # only a notice this runner holds
     "post_session_backfill": ("runner",),  # session must be bound to this runner
-    # --- apps/harness/api.py: turns
+    # --- apps/harness/api_turns.py: turns
     "list_unclaimable_turns": ("member", "session-acl", "turn-content"),  # prompt blanked unless turn-content
     "enqueue_turn": ("agent.work",),  # agent and project turns alike
     "harness_list_turns": ("member", "session-acl", "turn-content"),  # session turns by chat ACL; redacted

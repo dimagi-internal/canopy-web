@@ -250,7 +250,7 @@ in** (`harness.routing.runner_tenant_slugs`). Both rules, and everything that as
 and [§ Which agents a box may hold](runners.md#which-agents-a-box-may-hold).
 
 **Only the box that claimed a turn reports on it** — start, finish, ledger events, transcript
-lines (`harness.api._reporting_turn_or_404`). An unclaimed turn takes the editor tier.
+lines (`harness.api.reporting_turn_or_404`). An unclaimed turn takes the editor tier.
 
 **A turn's CONTENT is a log** (`apps/harness/turn_access.py`). Every member sees that a turn
 ran, when and how it ended; its prompt, result, ledger, raw transcript, caller context and

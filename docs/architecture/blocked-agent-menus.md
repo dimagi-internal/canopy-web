@@ -68,7 +68,7 @@ A WS frame published while the control channel is down lands in a Channels group
 - `RunnerBinding.pending_answer` → `runner/canopy_runner/canopy_runner/streams.py::drain_menu_answers`
 - `RunnerBinding.close_requested` → `streams.drain_closes`; a close that fails (here or from the menu bar's "Close sessions") is reported back (`POST …/close-results` → `RunnerBinding.close_error`) and shown in Supervisor as "Close failed: <reason>" with a Retry. The drain skips a task the frame is closing right now or has closed and not yet reported (`close.settled_or_in_flight`), and `close.close_session` refuses a second concurrent close of one task — two deletes at once made the loser report a failure for a close that succeeded
 
-The WS frame is only the fast path; a dropped channel costs one tick, not the action. `pending_answer` carries an `id` the runner echoes back when it reports the outcome (`apps/harness/api.py` retires it only on a matching id), because applying an answer twice is a second keystroke into a session that has moved on. If the report fails, the answer stays set: pressing late is safe (see re-read below), pressing twice is not.
+The WS frame is only the fast path; a dropped channel costs one tick, not the action. `pending_answer` carries an `id` the runner echoes back when it reports the outcome (`apps/harness/api_session_sync.py` retires it only on a matching id), because applying an answer twice is a second keystroke into a session that has moved on. If the report fails, the answer stays set: pressing late is safe (see re-read below), pressing twice is not.
 
 ### At the tap, reconcile every copy to the authority
 

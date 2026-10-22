@@ -100,7 +100,7 @@ def test_a_cancelled_turn_is_not_claimable(cli, canopy, jj):
 
 
 def test_cannot_cancel_another_tenants_turn(client, canopy, jj):
-    """_turn_or_404 gates the cancel: a non-member gets 404, not a cancel."""
+    """turn_or_404 gates the cancel: a non-member gets 404, not a cancel."""
     turn = Turn.objects.create(
         project="canopy-web", workspace=canopy, origin=Turn.ORIGIN_API, idempotency_key="k1"
     )

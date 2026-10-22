@@ -468,7 +468,7 @@ def test_send_client_id_over_100_chars_is_truncated(client):
 # ---- ledger-path peer visibility (spec 2026-09-26 Deviations) ----
 #
 # A transcript-sourced session gets peer visibility of a user's own send for
-# free: `apps.harness.api.post_session_stream` fans out every "user" ledger row
+# free: `apps.harness.api_session_sync.post_session_stream` fans out every "user" ledger row
 # live, sender included. A ledger-sourced session (the dev stub used by every
 # test in this file, and any pre-unification session not yet reset) writes its
 # Message directly and used to publish nothing beyond `draft.committed` to the

@@ -138,7 +138,7 @@ def _may_invite_into(request: HttpRequest, workspace: str) -> str:
         raise HttpError(404, f"workspace '{slug}' not found")
     if not perms.can(request.user, slug, perms.AGENT_WORK):
         raise HttpError(403, "inviting a runner into a workspace needs permission to run work there")
-    # A runner is owned by a person (apps/harness/api.py::pair_runner): an
+    # A runner is owned by a person (apps/harness/api_runners.py::pair_runner): an
     # agent's login inviting a box would make a runner nobody can manage.
     if getattr(request.user, "agent_identity", None) is not None:
         raise HttpError(403, "a runner must be owned by a person; invite it with your own token")
