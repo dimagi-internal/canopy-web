@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 #: Dotted paths of source modules.
 SOURCES: list[str] = [
     "apps.harness.alerts_runner_credential",
+    "apps.harness.alerts_turn_failure",
 ]
 
 
