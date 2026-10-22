@@ -492,7 +492,7 @@ function FeedCard({
           disabled={busy !== null}
           // The repo's readable-placeholder pair (e2e/mobile-a11y.spec.ts gates
           // 3:1): muted alone reaches only ~2.1 on a dark input.
-          className="text-[13px] placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary"
+          className="text-[13px] placeholder:text-placeholder"
         />
         {err && <p className="text-[12px] text-destructive">{err}</p>}
         {closeFailed && !closing ? (

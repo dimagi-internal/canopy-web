@@ -11,9 +11,9 @@ const STATUS_LABEL: Record<NarrativeScenePair['status'], string> = {
 
 const STATUS_CLASS: Record<NarrativeScenePair['status'], string> = {
   unchanged: 'bg-muted text-muted-foreground',
-  changed: 'bg-amber-500/15 text-amber-500',
-  added: 'bg-emerald-500/15 text-emerald-500',
-  removed: 'bg-rose-500/15 text-rose-500',
+  changed: 'bg-warning/15 text-warning',
+  added: 'bg-success/15 text-success',
+  removed: 'bg-destructive/15 text-destructive',
 }
 
 function Cell({ text, muted }: { text: string | null; muted?: boolean }) {

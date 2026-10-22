@@ -232,8 +232,8 @@ function SearchDetail({ s, hybrid, canPreview }: { s: SearchRecord; hybrid: bool
             </button>
           )}
           {today && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
-              <p className="mb-2 text-xs text-amber-700 dark:text-amber-400">
+            <div className="rounded-lg border border-warning/40 bg-warning/5 p-3">
+              <p className="mb-2 text-xs text-warning">
                 Scored today, against what your memory holds now — not what happened then.
               </p>
               <ol className="space-y-3">

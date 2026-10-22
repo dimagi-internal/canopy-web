@@ -20,8 +20,9 @@ test.describe('mobile', () => {
   // default: 1.08.
   //
   // `--muted-foreground` alone only reached 2.15 in dark, because no single value clears
-  // 3:1 against BOTH a dark `--input` (0.374) and a light one (0.869). Dark now uses
-  // `--foreground-secondary` via the `dark:` variant: 5.68 dark, 3.21 light.
+  // 3:1 against BOTH a dark `--input` (0.374) and a light one (0.869). So placeholders use
+  // the `--placeholder` token (`placeholder:text-placeholder`), which is
+  // `--foreground-secondary` in dark and `--muted-foreground` in light: 5.68 dark, 3.21 light.
   const MIN_CONTRAST = 3.0
 
   test('no invisible placeholders', async ({ page }) => {

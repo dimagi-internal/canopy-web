@@ -110,7 +110,7 @@ export function SearchPreview() {
               <span className="tabular-nums text-foreground">{shown.toFixed(2)}</span>
               {previewing ? (
                 <>
-                  <span className="text-amber-600 dark:text-amber-400">
+                  <span className="text-warning">
                     Preview only — agents still use {live!.toFixed(2)} (HCP_SEMANTIC_FLOOR)
                   </span>
                   <button type="button" className="text-primary hover:underline" onClick={() => slide(live!)}>
@@ -132,7 +132,7 @@ export function SearchPreview() {
           {hybrid && (
             <p className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-2 w-5 rounded-sm bg-emerald-500" /> meaning counts
+                <span className="inline-block h-2 w-5 rounded-sm bg-success" /> meaning counts
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-2 w-5 rounded-sm bg-muted-foreground/40" /> under the cutoff
@@ -181,7 +181,7 @@ export function EntryScore({ e, cutoff, scored = true }: { e: SearchPreviewEntry
           <div className="mt-1.5 flex items-center gap-2">
             <div className="relative h-2 flex-1 rounded-full bg-muted" aria-hidden>
               <div
-                className={`h-2 rounded-full ${counts ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}
+                className={`h-2 rounded-full ${counts ? 'bg-success' : 'bg-muted-foreground/40'}`}
                 style={{ width: `${Math.max(0, Math.min(1, e.meaning)) * 100}%` }}
               />
               <div className="absolute -top-1 h-4 w-0.5 bg-foreground" style={{ left: `${cutoff * 100}%` }} />

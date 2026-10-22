@@ -126,7 +126,7 @@ export function FleetHoldCard({
         placeholder="Why? (e.g. tracing unexpected sessions)"
         maxLength={500}
         data-testid="fleet-hold-note"
-        className="rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary"
+        className="rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-placeholder"
       />
       {err && <p className="text-[12px] text-destructive" data-testid="fleet-hold-error">{err}</p>}
     </div>
