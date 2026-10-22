@@ -17,23 +17,9 @@ from apps.events.models import Event
 from apps.harness.models import Turn
 from apps.slack import window
 from apps.slack.models import SlackWorkspaceLink
-from tests.test_slack import (  # noqa: F401
-    ALICE,
-    BOB,
-    TEAM,
-    _link_client,
-    alice,
-    configured,
-    hal,
-    installation,
-    linked,
-    mention,
-    owner_client,
-    slack,
-    ws,
-)
+from tests.fixtures.slack import ALICE, BOB, _link_client, mention
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 
 NOW = time.time()
 
@@ -574,7 +560,7 @@ def test_a_bare_mention_in_a_thread_means_pick_this_up(channel, linked, hal):
 
 
 def test_the_thread_is_read_once_and_then_the_conversation_carries_on(channel, linked, hal):
-    from tests.test_slack import event
+    from tests.fixtures.slack import event
 
     mention("<@UBOT> hal take a look", ts=_ts(0.5), thread_ts=_ts(6))
     first = _turn()

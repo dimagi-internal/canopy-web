@@ -122,7 +122,7 @@ def test_ses_authentication_results_grade_the_sender(route):
 
 
 def test_mail_with_nul_bytes_is_stored_not_lost(route):
-    from tests.test_mail_parse import _NUL_MAIL
+    from tests.fixtures.mail_messages import _NUL_MAIL
 
     p = parse.parse(_NUL_MAIL)
     assert agent_mail.deliver(route, p, "incoming/nul") == "agent"

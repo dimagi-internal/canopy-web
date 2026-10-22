@@ -14,20 +14,9 @@ import pytest
 from apps.canopy_sessions.models import Session
 from apps.harness.models import Turn
 from apps.slack import services
-from tests.test_slack import (  # noqa: F401
-    BOT,
-    TEAM,
-    alice,
-    configured,
-    hal,
-    installation,
-    linked,
-    mention,
-    slack,
-    ws,
-)
+from tests.fixtures.slack import BOT, TEAM, mention
 
-pytestmark = pytest.mark.django_db
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")]
 
 THREAD = "1700000000.000100"
 
@@ -112,7 +101,7 @@ def test_an_unnamed_message_to_a_closed_conversation_says_it_went_nowhere(slack,
 
 
 def test_a_plain_reply_in_a_closed_thread_says_so_once_per_person(slack, linked, hal, ace):
-    from tests.test_slack import event
+    from tests.fixtures.slack import event
 
     _closed_thread(hal)
     for i in range(3):   # people keep talking in the thread after the agent is gone

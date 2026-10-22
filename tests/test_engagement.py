@@ -23,7 +23,7 @@ from apps.agents import engagement
 from apps.agents.models import AgentProject, EngagementEvent
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.test_people_brain import _agent, _client, _member
+from tests.fixtures.people_brain import _agent, _client, _member
 
 pytestmark = pytest.mark.django_db
 

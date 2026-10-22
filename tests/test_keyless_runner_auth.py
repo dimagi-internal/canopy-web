@@ -21,7 +21,7 @@ from django.utils import timezone
 from apps.harness import aws_iam_proof, device_keys
 from apps.harness.models import Runner, RunnerAccessToken, RunnerDeviceKey
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.test_canopy_vault_phase1b import ROLE, _proof, sts  # noqa: F401 — sts is a fixture
+from tests.fixtures.aws_proof import ROLE, _proof
 
 # The fake STS answers every instance-role proof (tests/test_canopy_vault_phase1b.py).
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts")]

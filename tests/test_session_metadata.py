@@ -17,7 +17,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions import services
 from apps.canopy_sessions.models import Session
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.test_contact_websocket import _contact_token, _world
+from tests.fixtures.contact_websocket import _contact_token, _world
 
 pytestmark = pytest.mark.django_db
 

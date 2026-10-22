@@ -19,12 +19,10 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.harness import device_keys, runner_auth
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey
-from tests.test_canopy_vault_phase1b import sts  # noqa: F401 — sts is a fixture
-from tests.test_runner_invitations import _fresh_cache, _pat_client  # noqa: F401
-from tests.test_runner_invitations import make_org
-from tests.test_runner_units_pairing import BOX, _approve, _invite, _pair_units
+from tests.fixtures.runner_invitations import make_org
+from tests.fixtures.runner_units import BOX, _approve, _invite, _pair_units
 
-pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts")]
+pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts", "fresh_cache")]
 
 
 @pytest.fixture

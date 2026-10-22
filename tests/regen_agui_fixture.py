@@ -9,7 +9,7 @@ copy would drift silently, which is the exact failure it exists to catch.
 
 import json
 
-from tests.test_agui_projection import FIXTURE, _build_fixture
+from tests.fixtures.agui import FIXTURE, _build_fixture
 
 if __name__ == "__main__":
     FIXTURE.write_text(json.dumps(_build_fixture(), indent=2) + "\n")

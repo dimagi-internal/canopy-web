@@ -16,7 +16,7 @@ from apps.realtime.channels_auth import RealtimeAuthMiddleware
 from apps.tokens import ws_ticket
 from apps.tokens.models import DelegatedToken
 
-from .test_contact_websocket import _contact_token, _world
+from tests.fixtures.contact_websocket import _contact_token, _world
 
 pytestmark = [pytest.mark.django_db(transaction=True)]
 

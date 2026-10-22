@@ -23,6 +23,20 @@ from __future__ import annotations
 
 import pytest
 
+# Fixtures more than one suite shares live in tests/fixtures/<area>.py and are
+# registered here, so no test module imports another one (a guard enforces it:
+# tests/test_no_test_module_imports.py). Plain helpers and constants there are
+# imported by name; fixtures resolve by name with no import. An autouse fixture
+# never moves here — a suite that wants one asks for it by name
+# (`pytest.mark.usefixtures`), so it cannot quietly apply to every test.
+pytest_plugins = [
+    "tests.fixtures.aws_proof",
+    "tests.fixtures.people_brain",
+    "tests.fixtures.self_host",
+    "tests.fixtures.slack",
+    "tests.fixtures.slack_channel_ingest",
+]
+
 
 @pytest.fixture
 def default_workspace(db):

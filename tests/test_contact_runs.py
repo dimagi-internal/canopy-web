@@ -18,7 +18,7 @@ from apps.harness.models import Turn
 from apps.agents.models import Agent
 from apps.agents.testing import admit_contacts
 from apps.harness import initiator as who
-from tests.test_contact_websocket import _contact_token, _world
+from tests.fixtures.contact_websocket import _contact_token, _world
 
 pytestmark = pytest.mark.django_db
 

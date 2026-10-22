@@ -25,7 +25,7 @@ from apps.agents.models import AgentProject, AgentTask
 from apps.contacts import services as contacts
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
-from tests.test_people_brain import _agent, _client, _member
+from tests.fixtures.people_brain import _agent, _client, _member
 
 pytestmark = pytest.mark.django_db
 

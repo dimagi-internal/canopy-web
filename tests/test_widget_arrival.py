@@ -21,7 +21,7 @@ from apps.contacts.models import Contact
 from apps.tokens import assertions
 from apps.tokens.models import DelegatedToken
 from apps.workspaces.models import WorkspaceMembership
-from tests.test_contact_websocket import _world
+from tests.fixtures.contact_websocket import _world
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership

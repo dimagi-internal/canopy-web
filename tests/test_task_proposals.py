@@ -31,10 +31,14 @@ from apps.agents.models import AgentProject, AgentTask, EngagementEvent, Project
 from apps.harness.models import Turn
 from apps.huddles.models import CheckinRun, ProjectCheckin
 from apps.workspaces.models import WorkspaceMembership
-from tests.test_people_brain import _client, _member
-from tests.test_project_proposals import world  # noqa: F401
+from tests.fixtures.people_brain import _client, _member
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture()
+def world(proposals_world):
+    return proposals_world
 
 AGENTS = "/api/w/connect/agents"
 HUDDLE = "https://canopy.test/w/connect/huddles/h1"
