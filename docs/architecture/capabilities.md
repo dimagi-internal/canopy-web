@@ -269,9 +269,9 @@ coalesced so a persistent failure is one row with a count), readable at
 1. Explicit release.
 2. The bound turn ending (`turn_events_appended` with a terminal status), or no lease call
    and no running exec for `idle_release_s`.
-3. **The sweep.** Off-request, on its own clock: every web process runs it from an asyncio
-   task in the ASGI lifespan (`apps/capabilities/scheduler.py`, every
-   `CAPABILITY_SWEEP_INTERVAL_S`, default 30 s). A cache key makes it at most once per 25 s
+3. **The sweep.** Off-request: every web process runs it as a job on the shared clock
+   (`apps/common/ticks.py`, registered by `apps/capabilities/scheduler.py`, every
+   `CAPABILITY_SWEEP_INTERVAL_S`, default 30 s; `runners.md` § Periodic work). A cache key makes it at most once per 25 s
    **across the fleet**; if the cache (Redis) fails, each process falls back to its own
    clock rather than skipping. A runner's claim (`apps/harness/claim.py`) triggers it too,
    above every early return, but only when no sweep has finished for 90 s — so a fleet hold

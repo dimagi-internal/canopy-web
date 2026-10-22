@@ -1,13 +1,14 @@
 """The claim: a runner asks for work and gets at most one turn.
 
-`claim_next_turn` is a single conditional UPDATE, so no row can be claimed twice,
-and expired leases are swept lazily on the same call (`sweep_expired_leases`).
+`claim_next_turn` is a single conditional UPDATE, so no row can be claimed twice.
+Expired leases are swept on the off-request clock (`sweep_expired_leases`, run by
+apps/harness/sweeps.py), not by the claim.
 Its two explanations live beside it because they must apply the same rules:
 `turn_reach` (will a live runner pick this up? — what the turn status and Slack
 say) and `unclaimable_queued_turns` (the web's stuck-turn warning).
 
 Not `claiming.py`, which builds the payload a claimed turn is SENT as. Split out
-of `services.py`, which still re-exports every name here.
+of `services.py`.
 """
 from __future__ import annotations
 
@@ -24,7 +25,6 @@ from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
 
 from .closing import close_turn
-from .drills import expire_stale_drills
 from .ledger import append_events
 from .models import (
     FleetHold,
@@ -61,7 +61,6 @@ from .routing import (
     runner_tenant_slugs,
     turn_unit_refusal,
 )
-from .schedule_turns import release_stale_occurrence_turns_all, skip_late_scheduled_turns
 from .turn_agent_tokens import revoke_stale
 
 DEFAULT_LEASE_SECONDS = 900
@@ -659,19 +658,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         return None
     # The FLEET-WIDE hold (FleetHold): nothing is claimed, ridden or pinned anywhere
     # while it is on, and queued turns wait — visible, with their trigger — for the
-    # release. ABOVE the sweeps on purpose: `skip_late_scheduled_turns` would close a
-    # held schedule slot as MISSED after 30 minutes, erasing it from the very queue the
-    # hold exists to show. On release the first claim runs the sweeps, so stale slots
-    # close then instead of firing as a burst. Above pin matching for the same reason
-    # the runner pause is: a pin must not punch through an operator's stop.
+    # release. Above pin matching for the same reason the runner pause is: a pin
+    # must not punch through an operator's stop. The queue's sweeps (expired leases,
+    # stale occurrences, late slots, stale drills) are not the claim's: they run on
+    # the off-request clock (apps/harness/sweeps.py), and not while the hold is on.
     if FleetHold.is_held():
         return None
-    sweep_expired_leases()
-    # Lazy sweeps, both BEFORE the busy_agents read: a turn released here frees
-    # its agent for the very claim we are about to make.
-    release_stale_occurrence_turns_all()
-    skip_late_scheduled_turns()
-    expire_stale_drills()
     projects = runner.project_names()
     session_capable = runner.session_capable()
     has_pins = Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner).exists()

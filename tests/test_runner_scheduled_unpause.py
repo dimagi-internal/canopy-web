@@ -73,22 +73,20 @@ def test_the_server_sweep_unpauses_it_at_the_reset():
     assert runner.live_status == Runner.ONLINE
 
 
-def test_any_runners_heartbeat_wakes_a_parked_box_and_its_own_beat_reports_it():
+def test_the_off_request_clock_wakes_a_parked_box_and_its_next_beat_reports_it():
+    from apps.common import ticks
+
     user, ws, c, runner = _ctx()
-    other = Runner.objects.create(name="cloud-1", kind=Runner.EMDASH, workspace=ws, owner=user,
-                                  status=Runner.ONLINE, last_heartbeat_at=timezone.now())
     Runner.objects.filter(pk=runner.pk).update(
         paused=True, paused_note="cap", unpause_at=timezone.now() - dt.timedelta(seconds=1))
 
-    services.heartbeat(other, active_turn_ids=[])
+    # No runner beating at all: the web process's own clock runs the unpause.
+    ticks.jobs()["harness.wake_due_runners"].fn()
     runner.refresh_from_db()
     assert runner.paused is False
 
-    # And when the beat is the parked box's own, the heartbeat RESPONSE says so —
-    # the laptop mirrors it down and deletes ~/.canopy/PAUSED.
-    Runner.objects.filter(pk=runner.pk).update(
-        paused=True, paused_note="cap", unpause_at=timezone.now() - dt.timedelta(seconds=1))
-    runner.refresh_from_db()
+    # The parked box's next heartbeat RESPONSE says so — the laptop mirrors it
+    # down and deletes ~/.canopy/PAUSED.
     out = services.heartbeat(runner, active_turn_ids=[])
     assert out.paused is False
 

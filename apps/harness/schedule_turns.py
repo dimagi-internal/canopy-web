@@ -12,7 +12,7 @@ occurrence.
 own `run_schedule_now(user, ...)` resolves and authorizes, then calls the one
 here). `enqueue_turn` and `finish_turn` stay in `services.py` and are imported
 inside the functions that need them, because `services.py` imports this module.
-Split out of `services.py`, which still re-exports every name here.
+Split out of `services.py`; import these names from here.
 """
 from __future__ import annotations
 

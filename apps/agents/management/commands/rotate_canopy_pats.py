@@ -1,6 +1,6 @@
 """Run one canopy-pat rotation tick by hand (Canopy Vault Phase 1b, canopy-web#1549).
 
-The web process does this on its own clock (apps/agents/pat_rotation_scheduler.py);
+The web process does this on its off-request clock (apps/common/ticks.py);
 this is for an operator: rotate every agent that is due, revoke every old token
 whose 24 h overlap has ended, and print the counts. `--dry-run` lists what is due.
 """

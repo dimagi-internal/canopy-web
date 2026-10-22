@@ -714,9 +714,15 @@ CAPABILITY_SWEEP_INTERVAL_S = env.int("CAPABILITY_SWEEP_INTERVAL_S", default=30)
 # CANOPY_IDENTITY_BASE_URL (canopy.dimagi.com in production), else "canopy-web".
 CAPABILITY_BROKER_ID = env("CAPABILITY_BROKER_ID", default="")
 
+# The off-request clock (apps/common/ticks.py): how often the ASGI process wakes to
+# run every registered job that has come due. <= 0 turns every job off.
+TICK_BASE_S = env.float("TICK_BASE_S", default=5)
+# The harness's queue sweeps and scheduled unpauses (apps/harness/sweeps.py).
+HARNESS_QUEUE_SWEEP_TICK_S = env.int("HARNESS_QUEUE_SWEEP_TICK_S", default=15)
+
 # --- Canopy Vault Phase 1b (canopy-web#1549) ---
 # Seconds between the canopy-pat rotation's off-request ticks
-# (apps/agents/credentials/pat_rotation_scheduler.py, ASGI lifespan; deduplicated fleet-wide). 0 = off.
+# (apps/common/ticks.py, ASGI lifespan; deduplicated fleet-wide). 0 = off.
 CANOPY_PAT_ROTATION_TICK_S = env.int("CANOPY_PAT_ROTATION_TICK_S", default=900)
 # How often canopy-web evaluates every schedule's cron and fires the due slots
 # (apps/harness/schedule_clock.py). <= 0 turns the server clock off.
@@ -726,7 +732,7 @@ CANOPY_SCHEDULE_TICK_S = env.int("CANOPY_SCHEDULE_TICK_S", default=60)
 CANOPY_VAULT_READ_BURST_LIMIT = env.int("CANOPY_VAULT_READ_BURST_LIMIT", default=50)
 
 # --- Content retention (apps/retention) ---
-# OFF. When true, the runner heartbeat purges chat, turn and shared-transcript
+# OFF. When true, the off-request clock purges chat, turn and shared-transcript
 # content past its RetentionRule's keep_days, at most hourly. Off means nothing
 # is purged automatically; `manage.py retention_sweep` still dry-runs, and
 # `--apply` still purges on purpose. No rules also means nothing is purged.

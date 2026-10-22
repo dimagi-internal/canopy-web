@@ -28,8 +28,8 @@ lets the job mint for it.
 Every rotation, success or failure, is an `AgentPatRotation` row and an
 `agent.credentials.pat_rotated` event.
 
-The clock is `pat_rotation_scheduler.py` (an asyncio loop in the ASGI lifespan,
-like the capability sweep); `manage.py rotate_canopy_pats` runs one tick by hand.
+The clock is a job on the off-request clock (apps/common/ticks.py, registered
+from AgentsConfig.ready); `manage.py rotate_canopy_pats` runs one tick by hand.
 """
 from __future__ import annotations
 

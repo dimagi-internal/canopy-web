@@ -26,7 +26,7 @@ no agent and is never evaluated.
   in scope — at enqueue, and again by `recheck` when the answer can change on
   its own: a runner paused open-ended (`recheck_stranded`, from
   `harness.services.pause`) and the passing of an offline rule's wait
-  (`sweep_unrunnable`, on the heartbeat clock that also wakes paused runners).
+  (`sweep_unrunnable`, on the off-request clock, apps/common/ticks.py).
   A claim never matches one: a runner claiming it is the answer.
 
 * **Refusals** (`at_refusal`, canopy-web#1416): canopy refuses two kinds of turn
@@ -192,8 +192,8 @@ def recheck_stranded(runner) -> int:
     return rejected
 
 
-#: How often `sweep_unrunnable` actually looks, per process. It rides every
-#: runner heartbeat; the waits it enforces are measured in hours.
+#: How often `sweep_unrunnable` actually looks, per process. It runs on the
+#: off-request clock; the waits it enforces are measured in hours.
 SWEEP_EVERY = dt.timedelta(minutes=5)
 _last_sweep: dt.datetime | None = None
 
@@ -201,7 +201,7 @@ _last_sweep: dt.datetime | None = None
 def sweep_unrunnable(now: dt.datetime) -> int:
     """Re-check queued turns old enough for an enabled `reach: offline` rule's
     wait. Returns how many were rejected. Throttled to `SWEEP_EVERY`; never
-    raises — it runs on a runner's heartbeat."""
+    raises — it runs on the off-request clock beside other jobs."""
     global _last_sweep
     if _last_sweep is not None and now - _last_sweep < SWEEP_EVERY:
         return 0

@@ -1,7 +1,7 @@
 """The purge: find content past its rule's `keep_days` and drop it.
 
 `sweep(apply=False)` is a dry run that only counts. `sweep(apply=True)`
-deletes. `maybe_sweep()` is the heartbeat's door, and does nothing unless
+deletes. `maybe_sweep()` is the off-request clock's door, and does nothing unless
 `CANOPY_RETENTION_ENFORCE` is on. What each kind drops, and what it keeps, is
 in the spec (docs/superpowers/specs/2026-10-05-content-retention-design.md);
 the short version:
@@ -37,11 +37,11 @@ from .policy import Policy, Subject, chat_principal, chat_source, turn_principal
 
 logger = logging.getLogger(__name__)
 
-#: Most work one run does, so one heartbeat never carries a long purge. A
+#: Most work one run does, so one tick never carries a long purge. A
 #: backlog drains over successive runs; `retention_sweep --apply --no-limit`
 #: clears it in one go.
 BATCH_LIMITS = {"turns": 5000, "chats": 100, "shared": 500}
-#: How often the heartbeat may start a sweep.
+#: How often the off-request clock may start a sweep.
 SWEEP_INTERVAL = dt.timedelta(hours=1)
 _LOCK_KEY = "retention:sweep"
 
@@ -133,11 +133,11 @@ def _run(tally: Tally, *, apply: bool, now, limits, workspace: str | None = None
 
 
 def maybe_sweep(now: dt.datetime | None = None) -> RetentionSweep | None:
-    """The heartbeat's door. At most one run per `SWEEP_INTERVAL` across the
+    """The off-request clock's door. At most one run per `SWEEP_INTERVAL` across the
     fleet (the cache is Redis in labs). With `CANOPY_RETENTION_ENFORCE` off it
     still purges SENSITIVE conversations past `CANOPY_SENSITIVE_KEEP_DAYS` — that
     rule is not the workspace's to switch off. Never raises: a purge must not
-    cost a runner its heartbeat."""
+    stop the other jobs."""
     enforce = bool(getattr(settings, "CANOPY_RETENTION_ENFORCE", False))
     if not cache.add(_LOCK_KEY, "1", timeout=int(SWEEP_INTERVAL.total_seconds())):
         return None

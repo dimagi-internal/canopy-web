@@ -89,25 +89,16 @@ class _McpWithoutSlash:
 
 import contextlib  # noqa: E402
 
-from apps.agents.credentials import pat_rotation_scheduler as _pat_rotation_scheduler  # noqa: E402
-from apps.capabilities import scheduler as _capability_scheduler  # noqa: E402
-from apps.harness import schedule_clock as _schedule_clock  # noqa: E402
-from apps.slack import ingest_scheduler as _slack_ingest_scheduler  # noqa: E402
+from apps.common import ticks as _ticks  # noqa: E402
 
 
 @contextlib.asynccontextmanager
 async def _lifespan(app):
-    """The MCP session manager, the cloud-capability sweep's own clock
-    (apps/capabilities/scheduler.py), the Slack channel-ingest reader's
-    (apps/slack/ingest_scheduler.py), the canopy-pat rotation's
-    (apps/agents/pat_rotation_scheduler.py) and the schedule clock's
-    (apps/harness/schedule_clock.py), for the life of the process."""
+    """The MCP session manager and the off-request clock (apps/common/ticks.py:
+    every app's registered periodic jobs), for the life of the process."""
     async with _mcp_app.lifespan(app), _project_mcp_app.lifespan(app):
-        async with _capability_scheduler.running():
-            async with _slack_ingest_scheduler.running():
-                async with _pat_rotation_scheduler.running():
-                    async with _schedule_clock.running():
-                        yield
+        async with _ticks.running():
+            yield
 
 
 application = Starlette(
@@ -123,7 +114,7 @@ application = Starlette(
         # Django + realtime WS handle everything else (mounted last as catch-all).
         Mount("/", app=_django_with_ws),
     ],
-    # Run the MCP session-manager lifespan (and the capability sweep) for the whole process.
+    # Run the MCP session-manager lifespan (and the off-request clock) for the whole process.
     lifespan=_lifespan,
 )
 

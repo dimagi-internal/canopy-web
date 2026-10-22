@@ -352,19 +352,18 @@ def notify_session_question(session, menu: dict) -> int:
 # back-to-back turns would buzz once each) but one push once the session has
 # stayed quiet for the recipient's `session_idle_minutes` (default 5). A turn
 # ending stamps `Session.finish_push_due_at`; the next turn clears it; the
-# runner heartbeat drains whatever falls due. A session flagged
+# off-request clock (apps/common/ticks.py) drains whatever falls due. A session flagged
 # `notify_every_completion` skips the wait and pushes on every finished turn.
 #
 # CANCELLED and MISSED never push: a cancel is the human saying stop, and they
 # already know.
 
 FINISH_BODY_MAX = 140
-# How many due pushes one heartbeat may send. Deliberately small: the drain runs
-# INSIDE a runner's heartbeat request and every send is a network call with a
-# 10s timeout (`_send_one`), so this number times that timeout is how long a
-# sick push service can stall a heartbeat. Draining a backlog over several beats
-# costs seconds on a notification that already waited minutes; a stalled
-# heartbeat costs the runner its lease.
+# How many due pushes one tick may send. Deliberately small: the drain runs on the
+# off-request clock beside every other periodic job, and every send is a network
+# call with a 10s timeout (`_send_one`), so this number times that timeout is how
+# long a sick push service can hold up the tick. Draining a backlog over several
+# ticks costs seconds on a notification that already waited minutes.
 FINISH_PUSH_BATCH = 5
 _PUSHABLE = (Turn.DONE, Turn.FAILED)
 _OPEN = (Turn.QUEUED, Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
@@ -447,9 +446,9 @@ def cancel_session_finish_push(session_id) -> None:
 def send_due_session_pushes(now=None) -> int:
     """Send every "gone quiet" push that has fallen due. Returns pushes sent.
 
-    Every runner heartbeats, so several can drain at once: each row is claimed by
-    a conditional UPDATE on the exact due time it was read with, and only the
-    runner whose update lands sends.
+    Several web processes can drain at once: each row is claimed by a conditional
+    UPDATE on the exact due time it was read with, and only the one whose update
+    lands sends.
     """
     now = now or timezone.now()
     due = list(

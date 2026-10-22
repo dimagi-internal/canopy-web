@@ -485,7 +485,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   when such a rule is in scope; again for the queued turns a runner could take
   the moment it is paused open-ended (`harness.services.pause` →
   `evaluate.recheck_stranded`); and by `evaluate.sweep_unrunnable` on the
-  heartbeat clock (every 5 minutes at most) for the offline wait. A claim
+  off-request clock (every 5 minutes at most) for the offline wait. A claim
   never matches one. A reach rule cannot be an `allow` or name a runner kind or
   mode. The rejection's `result_note` and the owner's notice (a `Runners:`
   line) name each runner's situation (`claim.runner_situation`): who paused it

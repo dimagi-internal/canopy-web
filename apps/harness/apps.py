@@ -13,3 +13,11 @@ class HarnessConfig(AppConfig):
         # feature. `tests/test_item_invalidation` asserts against the connected
         # receiver, not the function, so this line cannot go silently.
         from . import signals  # noqa: F401
+        # The harness's periodic jobs, on the off-request clock (apps/common/ticks.py):
+        # the queue sweeps and scheduled unpauses (sweeps.py), and the schedule clock.
+        from apps.common import ticks
+
+        from . import schedule_clock, sweeps
+
+        sweeps.register()
+        ticks.register("harness.schedule_clock", schedule_clock.run, schedule_clock.interval_s, dedupe=False)

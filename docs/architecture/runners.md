@@ -270,8 +270,8 @@ In order, each a hard stop:
    admission rules (`access.md` → reach rules). `turn_reach` reports a turn whose
    every taker is paused as `parked` (with `held_until` when one resumes on its
    own), not `offline`.
-2. Lazy sweeps: expired leases, `schedule_turns.release_stale_occurrence_turns_all`,
-   `skip_late_scheduled_turns` (see Scheduled turns).
+2. No sweeps: expired leases, stale occurrences, late slots and stale drills are
+   closed on the off-request clock (below), not by the claim.
 3. Candidate filter: pinned here, or (`runner_target_q` ∧ routing kind); a cloud
    runner never takes `local_only`. A **directed-only** box
    (`capabilities.directed`, `Runner.directed_only`) targets only the sessions
@@ -301,6 +301,35 @@ In order, each a hard stop:
 `claim.turn_reach` and `unclaimable_queued_turns` explain a stuck turn from the
 same predicates; `blocking_turn` is the "queued behind" twin of the busy
 exclusion (`tests/test_turn_status.py`).
+
+## Periodic work: the off-request clock (`apps/common/ticks.py`)
+
+A runner's heartbeat is liveness only (its report, lease renewal for the turns it
+holds, the stops it owes, the update nudge), and a claim does no global sweep.
+Everything periodic is a job registered with `ticks.register(name, fn, every_s)`
+from its own app's `AppConfig.ready`, and run by ONE asyncio loop in every web
+process's ASGI lifespan (`config/asgi.py` → `ticks.running()`, waking every
+`TICK_BASE_S`, 5 s). Each due job takes a fleet-wide cache key for its interval,
+so N web tasks run it about once; with the cache down a process runs it on its
+own clock. A failing job is logged and the rest still run. So the jobs run with
+no runner online and through a fleet hold. `manage.py run_ticks [--list]` runs
+one pass by hand.
+
+| Job | App | Every |
+|---|---|---|
+| `harness.queue_sweeps`: expired leases (and `revoke_stale` turn tokens), stale occurrence turns, late slots, stale drills — **skipped while `FleetHold` is on**, so a held slot is not closed as MISSED | harness (`sweeps.py`) | `HARNESS_QUEUE_SWEEP_TICK_S` (15 s) |
+| `harness.wake_due_runners`: scheduled unpauses (the box reads it on its next beat) | harness | 15 s |
+| `harness.schedule_clock` | harness | `CANOPY_SCHEDULE_TICK_S` (60 s) |
+| `capabilities.sweep` | capabilities | `CAPABILITY_SWEEP_INTERVAL_S` (30 s) |
+| `slack.channel_ingest` (+ check-in expiry) | slack | `SLACK_INGEST_TICK_S` (15 s) |
+| `agents.pat_rotation` (+ stale-proposal expiry), `agents.zk_notify` | agents | `CANOPY_PAT_ROTATION_TICK_S` (900 s), 60 s |
+| `push.due_session_pushes` | push | 15 s |
+| `canopy_sessions.purge_expired_secrets` | canopy_sessions | 60 s |
+| `retention.sweep` (hourly inside, off unless enforced) | retention | 60 s |
+| `contacts.hcp_oauth_deliver` | contacts | 60 s |
+| `admission.sweep_unrunnable`, `admission.expire_runner_notices` | admission | 60 s |
+
+Tests set `TICK_BASE_S = 0` and call a job's function directly.
 
 ## An agent's runner list (`RunnerAssignment`)
 
@@ -431,8 +460,8 @@ runs manual — a forged `From:` may pick a box, never drive an unreviewed agent
 
 The scheduler is a producer of turns, not an execution engine (no celery/beat).
 `AgentSchedule` (`apps/harness/models.py`) holds the cron server-side, and
-**canopy-web fires it itself**: `apps/harness/schedule_clock.py`, an asyncio loop in
-the web process's ASGI lifespan (like `pat_rotation_scheduler`), evaluates every
+**canopy-web fires it itself**: `apps/harness/schedule_clock.py`, a job on the
+off-request clock (`apps/common/ticks.py`, in the web process's ASGI lifespan), evaluates every
 enabled schedule each `CANOPY_SCHEDULE_TICK_S` (60 s; a cache key keeps N web tasks
 to about one tick) and calls `schedule_turns.fire_schedule` for each due slot. So a
 workspace whose agents run only on cloud boxes, or whose laptop is shut, still fires
@@ -459,8 +488,8 @@ turn. Firing only queues a turn — which box runs it is decided on the claim.
 - **Grace release:** an EXECUTING occurrence held past `grace_minutes` (anchored on
   `claimed_at` — held time, not owed time) is finished MISSED, because an abandoned
   session holds `one_executing_turn_per_agent` forever (its heartbeat keeps renewing
-  the lease). Runs lazily on the CLAIM tick, not the fire tick (a weekly fire tick
-  could never honour a short grace).
+  the lease). Runs on the off-request queue sweeps (every 15 s), not the fire tick
+  (a weekly fire tick could never honour a short grace).
 - **Late slots:** a queued slot turn not started within `LATE_SLOT_WINDOW_MINUTES`
   (30) of its slot is skipped as MISSED with no nag; `always_run` and one-offs are
   exempt, manual runs untouched.
@@ -535,7 +564,7 @@ back to the stored PAT; phase 2 removes the PAT).
 - Revoked when the turn stops executing on that runner: `finish_turn` (every exit,
   requeues included), every terminal transition (`harness.closing.close_turn`: the
   lease sweep, a stop, an admission refusal, a moved turn), and `revoke_stale` on
-  every sweep tick.
+  every queue-sweep tick.
 - Cloud runner: `CANOPY_WEB_PAT` in the turn env + `~/.canopy/agent-token/turn/<tid>.token`
   for the MCP headers helper. Laptop: the canopy CLI asks on demand with the box's
   runner token and the session's turn id.
