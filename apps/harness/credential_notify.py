@@ -7,13 +7,21 @@ usage cap (`claude_usage_exhausted`), and the step onto the metered API key
 event log reads `runner.credential` rows — so a box could sit dead for a day
 with its alert filed where no one looks.
 
-So each of the three, posted with the box's own runner token, also mails and
-Web-Pushes the runner's approvers (`device_key_notify.approvers`: its owner
-and explicit runner admins), deep-linking to that runner on /supervisor where
-its credentials are. Once per (runner, alert) per UTC day: the events API
-calls this only for an item that is news today (`events.services.record`'s
+So each, posted with the box's own runner token, also mails and Web-Pushes the
+runner's approvers (`device_key_notify.approvers`: its owner and explicit
+runner admins; `claude_auth_required` with the exception below), deep-linking
+to that runner on /supervisor where its credentials are. Once per (runner, alert) per UTC day: the events API calls
+this only for an item that is news today (`events.services.record`'s
 `first_today`). BEST-EFFORT, like `device_key_notify`: a failed notice never
 fails the recording.
+
+`claude_auth_required` is mailed only where the `runner_credential` alert
+(`alerts_runner_credential`) cannot cover it: a runner that source does not
+reconcile (private — no workspace — or retired), or one whose health reports no
+signed-out `claude.probe.*` check — a laptop, which posts no probe checks, or a
+box whose probe was inconclusive. Where such a check exists the alert's own
+blocking notice reaches the same people once, names the token by its label and
+clears when the probe passes, so it is not also mailed.
 """
 from __future__ import annotations
 
@@ -21,6 +29,8 @@ import logging
 from html import escape
 
 from django.conf import settings
+
+from .alerts_runner_credential import runner_path, signed_out_checks, watches
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +43,18 @@ CREDENTIAL_KINDS = {
 }
 
 
+def alert_covers(runner) -> bool:
+    """Does the `runner_credential` alert already cover this box's sign-out —
+    is it a runner that source reconciles (`watches`: in a workspace, not
+    retired) AND does its health report a signed-out `claude.probe.*` check?
+    A box the source skips keeps its mail."""
+    return watches(runner) and bool(signed_out_checks(runner))
+
+
 def runner_url(runner) -> str:
-    """The runner's detail on /supervisor, where its credentials are set."""
+    """`runner_path` on this deployment's public base URL."""
     base = (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").rstrip("/")
-    return f"{base}/supervisor?tab=runners&runner={runner.pk}"
+    return f"{base}{runner_path(runner)}"
 
 
 def notify(runner, item: dict) -> dict:
@@ -49,6 +67,8 @@ def notify(runner, item: dict) -> dict:
     kind = str((item or {}).get("kind") or "")
     if kind not in CREDENTIAL_KINDS:
         return result
+    if kind == "claude_auth_required" and alert_covers(runner):
+        return result  # the runner_credential alert covers it
     try:
         link = runner_url(runner)
         subject = "Canopy · " + CREDENTIAL_KINDS[kind].format(name=runner.name)
@@ -58,8 +78,7 @@ def notify(runner, item: dict) -> dict:
         html = (f"<p>{escape(detail)}</p>"
                 f"<p><a href=\"{escape(link)}\">Open {escape(runner.name)}'s credentials</a></p>"
                 f"<p style=\"color:#78716c;font-size:13px\">{escape(foot)}</p>")
-        rel = link.split("://", 1)[-1]
-        rel = rel[rel.find("/"):] if "/" in rel else "/"
+        rel = runner_path(runner)
         for person in approvers(runner):
             if person.email:
                 message = EmailMultiAlternatives(subject=subject, body=text, to=[person.email])

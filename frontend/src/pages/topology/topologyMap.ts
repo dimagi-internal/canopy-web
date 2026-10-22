@@ -44,8 +44,6 @@ export interface MapWorkspace {
   children: MapWorkspace[]
   agentCount: number
   runnerCount: number
-  /** Agents in this workspace whose turns cannot run now (unrouted or no live runner). */
-  problemCount: number
   /** Its own default runner order (enabled runner ids, rank order); empty = none. */
   order: string[]
 }
@@ -132,7 +130,6 @@ export function buildFleetMap(runnerTopo: RunnerTopologyOut, agentTopo: AgentTop
       children,
       agentCount: own.length + children.reduce((n, c) => n + c.agentCount, 0),
       runnerCount: lanes.reduce((n, l) => n + l.runners.length, 0) + children.reduce((n, c) => n + c.runnerCount, 0),
-      problemCount: own.filter((a) => a.health !== 'ok').length + children.reduce((n, c) => n + c.problemCount, 0),
       order: (ws.order ?? []).filter((o) => o.enabled).map((o) => o.runner_id),
     }
   }

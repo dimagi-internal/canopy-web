@@ -7,6 +7,7 @@ import { grantAgentAdmin, revokeAgentAdmin, type TurnMode } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { useAuth } from '@/auth/AuthProvider'
 import { AgentRouting } from '@/components/agents/AgentRouting'
+import { AlertList } from '@/components/alerts/AlertList'
 import { RunnerDownloads } from '@/components/runners/RunnerDownloads'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
 import {
@@ -220,6 +221,7 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
           onSelect={select}
         />
         <SidePanel
+          workspace={slug}
           map={map}
           fleet={fleet}
           selection={selection}
@@ -483,11 +485,6 @@ function WorkspaceBox({
               ? 'no agents or runners'
               : `${ws.agentCount} agent${ws.agentCount === 1 ? '' : 's'} · ${ws.runnerCount} runner${ws.runnerCount === 1 ? '' : 's'}`}
           </span>
-          {ws.problemCount > 0 && (
-            <span className="rounded border border-destructive/30 bg-destructive/10 px-1.5 text-[11px] text-destructive">
-              {ws.problemCount} can&rsquo;t run
-            </span>
-          )}
         </button>
       </h3>
       {!isCollapsed && (
@@ -756,11 +753,6 @@ function AgentCard({
         {rules ? ` + ${rules} rule${rules === 1 ? '' : 's'}` : ''}
         {agent.follows ? ` · ${agent.follows.workspace} default` : ''}
       </span>
-      {(agent.follows?.missing_repo ?? []).length > 0 && (
-        <span className="text-[11px] text-warning">
-          {(agent.follows?.missing_repo ?? []).map((id) => shortRunner(map.runners.get(id)?.name ?? '?')).join(', ')} lacks its repo
-        </span>
-      )}
       {agent.interfacePublished && <span className="text-[11px] text-info">interface published</span>}
       {health && <span className={clsx('text-[11px]', health.className)}>{health.text}</span>}
       {sole && <span className="text-[11px] font-semibold text-destructive">stops if it goes dark</span>}
@@ -771,6 +763,7 @@ function AgentCard({
 // ---- the side panel ----------------------------------------------------------
 
 function SidePanel({
+  workspace,
   map,
   fleet,
   selection,
@@ -782,6 +775,8 @@ function SidePanel({
   onGrant,
   onRevoke,
 }: {
+  /** The workspace this map is for — its alerts show when nothing is selected. */
+  workspace: string
   map: FleetMap
   fleet: Map<string, RunnerOut>
   selection: Selection
@@ -836,7 +831,7 @@ function SidePanel({
       ) : selection?.kind === 'add' ? (
         <AddRunnerPanel workspace={selection.workspace} owner={selection.owner} map={map} />
       ) : (
-        <Summary map={map} onSelect={onSelect} />
+        <Summary workspace={workspace} map={map} onSelect={onSelect} />
       )}
       {error && <p className="text-[12px] text-destructive">{error}</p>}
     </aside>
@@ -1109,24 +1104,20 @@ function findWorkspace(ws: MapWorkspace | null, slug: string): MapWorkspace | nu
   return null
 }
 
-function Summary({ map, onSelect }: { map: FleetMap; onSelect: (s: Selection) => void }): JSX.Element {
-  const agents = [...map.agents.values()]
-  const stuck = agents.filter((a) => a.health !== 'ok')
+function Summary({ workspace, map, onSelect }: {
+  workspace: string
+  map: FleetMap
+  onSelect: (s: Selection) => void
+}): JSX.Element {
   const confined = [...map.edges.values()].filter((e) => e.access === 'confined')
   const idle = [...map.runners.values()].filter((r) => r.agent_count === 0)
   return (
     <>
       <h3 className="m-0 text-[15px] font-semibold text-foreground">What needs attention</h3>
-      <section className="flex flex-col gap-1">
-        <PanelHeading>Agents whose turns can&rsquo;t run</PanelHeading>
-        {stuck.length === 0 && <span className="text-success">None.</span>}
-        {stuck.map((a) => (
-          <button key={a.slug} type="button" onClick={() => onSelect({ kind: 'agent', slug: a.slug })} className="flex justify-between gap-2 text-left hover:underline">
-            <span>{a.name}</span>
-            <span className="text-[12px] text-destructive">{HEALTH[a.health]?.text}</span>
-          </button>
-        ))}
-      </section>
+      {/* Problems someone can fix (an agent with no runner it can use, a dead
+          credential, stuck turns…) are alerts, read like every screen reads
+          them; the two lists below are plain facts about the wiring. */}
+      <AlertList scope={`workspace:${workspace}`} title="Alerts here" />
       <section className="flex flex-col gap-1">
         <PanelHeading>Agents held to some capabilities by another</PanelHeading>
         {confined.length === 0 && <span className="text-success">None.</span>}

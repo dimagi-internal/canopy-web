@@ -5,7 +5,9 @@ cloud-ec2-fork, 2026-10-18: the box posted `claude_auth_required` to the flat
 workspace to file it in and it 422'd. Recorded or not, nothing but the admin
 event log reads `runner.credential` rows, so nobody would have been told.
 Now an alert posted with a runner token files in the runner's workspace, and
-the three credential alerts mail and push the runner's approvers once a day.
+the credential alerts mail and push the runner's approvers once a day —
+`claude_auth_required` only where the runner's signed-out probe check has not
+already raised the `runner_credential` alert.
 """
 from __future__ import annotations
 
@@ -51,10 +53,10 @@ def box(monkeypatch):
     return {"user": jj, "runner": runner, "ws_b": ws_b, "token": raw, "pushed": pushed}
 
 
-def _alert(kind="claude_auth_required", key="auth-required:cloud-ec2-fork"):
+def _alert(kind="claude_usage_exhausted", key="usage-exhausted:cloud-ec2-fork"):
     return {"items": [{
         "source": "runner.credential", "kind": kind, "level": "error", "key": key,
-        "summary": "The Claude credential (subscription-1) on cloud-ec2-fork is no longer signed in.",
+        "summary": "Every Claude credential on cloud-ec2-fork is at its usage cap.",
     }]}
 
 
@@ -89,7 +91,7 @@ def test_the_owners_pat_still_needs_a_workspace(box):
     assert res.status_code == 422
 
 
-def test_auth_required_event_mails_the_approvers(box):
+def test_a_credential_event_mails_the_approvers(box):
     _post(box, _alert())
     assert len(mail.outbox) == 2
     assert sorted(m.to[0] for m in mail.outbox) == ["ad@dimagi.com", "jj@dimagi.com"]
@@ -113,10 +115,37 @@ def test_the_next_day_mails_again(box):
     assert len(mail.outbox) == 4
 
 
-@pytest.mark.parametrize("kind", ["claude_usage_exhausted", "claude_api_key_fallback"])
-def test_the_other_credential_alerts_mail_too(box, kind):
-    _post(box, _alert(kind=kind, key=f"{kind}:cloud-ec2-fork"))
+def test_the_api_key_fallback_mails_too(box):
+    _post(box, _alert(kind="claude_api_key_fallback", key="claude_api_key_fallback:cloud-ec2-fork"))
     assert len(mail.outbox) == 2
+
+
+def test_auth_required_mails_a_runner_with_no_probe_checks(box):
+    """A laptop posts no `claude.probe.*` checks: the alert cannot cover it, so
+    the mail still does."""
+    _post(box, _alert(kind="claude_auth_required", key="auth-required:cloud-ec2-fork"))
+    assert sorted(m.to[0] for m in mail.outbox) == ["ad@dimagi.com", "jj@dimagi.com"]
+
+
+def test_auth_required_mails_when_the_probe_was_inconclusive(box):
+    box["runner"].health = {"checks": [{"name": "claude.probe.subscription-1", "status": "warn",
+                                        "detail": "could not check: no answer within 60s"}]}
+    box["runner"].save(update_fields=["health"])
+    _post(box, _alert(kind="claude_auth_required", key="auth-required:cloud-ec2-fork"))
+    assert len(mail.outbox) == 2
+
+
+def test_auth_required_is_not_mailed_where_the_alert_covers_it(box):
+    """A signed-out probe check is the `runner_credential` alert; its own
+    blocking notice replaces this mail (tests/test_alerts_runner_credential.py)."""
+    box["runner"].health = {"checks": [{"name": "claude.probe.subscription-1", "status": "fail",
+                                        "detail": "not signed in — someone has to sign it in again"}]}
+    box["runner"].save(update_fields=["health"])
+    res = _post(box, _alert(kind="claude_auth_required", key="auth-required:cloud-ec2-fork"))
+    assert res.status_code == 200
+    assert Event.objects.get().kind == "claude_auth_required"
+    assert mail.outbox == []
+    assert box["pushed"] == []
 
 
 def test_other_kinds_do_not_mail(box):
@@ -137,3 +166,39 @@ def test_a_failed_notice_never_fails_the_recording(box, monkeypatch):
     res = _post(box, _alert())
     assert res.status_code == 200
     assert Event.objects.count() == 1
+
+
+_SIGNED_OUT = {"checks": [{"name": "claude.probe.subscription-1", "status": "fail",
+                           "detail": "not signed in — someone has to sign it in again"}]}
+_AUTH_REQUIRED = {"source": "runner.credential", "kind": "claude_auth_required", "level": "error",
+                  "key": "auth-required:cloud-ec2-fork", "summary": "cloud-ec2-fork needs a Claude sign-in."}
+
+
+@pytest.mark.parametrize("skipped", ["retired", "private"])
+def test_auth_required_still_mails_a_runner_the_alert_source_skips(box, skipped):
+    """`alert_covers` uses the source's own runner filter (in a workspace, not
+    retired): a signed-out box the `runner_credential` reconcile skips raises no
+    alert, so it must keep its mail."""
+    from apps.harness import alerts_runner_credential, credential_notify
+
+    runner = box["runner"]
+    runner.health = _SIGNED_OUT
+    if skipped == "retired":
+        runner.status = Runner.RETIRED
+    else:
+        runner.workspace = None
+    runner.save()
+    assert alerts_runner_credential.reconcile(timezone.now()) == []
+    assert credential_notify.alert_covers(runner) is False
+    result = credential_notify.notify(runner, _AUTH_REQUIRED)
+    assert sorted(result["emailed"]) == ["ad@dimagi.com", "jj@dimagi.com"]
+
+
+def test_alert_covers_a_signed_out_runner_the_source_reconciles(box):
+    from apps.harness import alerts_runner_credential, credential_notify
+
+    box["runner"].health = _SIGNED_OUT
+    box["runner"].save(update_fields=["health"])
+    assert len(alerts_runner_credential.reconcile(timezone.now())) == 1
+    assert credential_notify.alert_covers(box["runner"]) is True
+    assert credential_notify.notify(box["runner"], _AUTH_REQUIRED)["emailed"] == []

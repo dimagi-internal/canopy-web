@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { actOnTask, type ProjectOut } from '@/api/agents'
 import { hide, loadAttention, unhide, type Attention, type AttentionRow, type AttentionState } from '@/api/attention'
 import { apiV2 } from '@/api/client.v2'
+import { AlertList } from '@/components/alerts/AlertList'
 import { useAuth } from '@/auth/AuthProvider'
 import { usePolled } from '@/hooks/usePolled'
 import { relativeAge } from '@/lib/relativeAge'
@@ -25,6 +26,11 @@ import { useWorkspace } from '@/workspace/WorkspaceProvider'
 // button to hide all of it. Hiding is not deciding: the task stays open, the
 // chat stays as it is, nobody is told; it comes back by itself when something
 // new happens on it.
+//
+// Alerts sit above all of it, in their own section and under their own rules
+// (docs/architecture/alerts.md): system problems you can fix, with no quiet
+// fold and no personal hide — the × there is a shared dismiss, and dismissed
+// ones fold below with who and when, and Undo.
 
 /** How many sessions show before "Show more" — the list is meant to be read in
  *  one look, not worked through. Rows are one line each, like /ide's tree. */
@@ -148,6 +154,8 @@ export function HomePage(): JSX.Element {
                   }. Newest first.`}
           </p>
         </div>
+
+        {workspaces.length > 0 && <AlertList title="Alerts" hideEmpty showCounts showDismissed className="mb-6" />}
 
         {multi && (
           <div className="mb-3 flex flex-wrap gap-1.5 text-[12px]" role="group" aria-label="Workspace">

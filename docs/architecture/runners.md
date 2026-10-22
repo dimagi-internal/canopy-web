@@ -738,9 +738,16 @@ or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
 its runner token; with no workspace pinned they file in `Runner.workspace`, and
 each also mails and Web-Pushes the runner's approvers (owner + runner admins)
 once per (runner, alert) per UTC day, linking to the runner on `/supervisor`
-(`apps/harness/credential_notify.py`). Tests:
+(`apps/harness/credential_notify.py`). The exception: a signed-out credential on
+a box whose health reports a signed-out `claude.probe.<slot>` check is the
+`runner_credential` alert instead (`apps/harness/alerts_runner_credential.py`) —
+titled with the token's name or the login's account (never the slot), notified
+once to the owner and runner admins, resolved when the probe passes — and its
+`claude_auth_required` is not also mailed. A laptop (no probe checks) or an
+inconclusive probe is still mailed. Tests:
 `runner/ec2/tests/test_credential_probe.py`, `runner/ec2/tests/test_auth_required.py`,
-`tests/test_credential_notify.py`, `tests/test_realtime_runner_consumer.py`.
+`tests/test_credential_notify.py`, `tests/test_alerts_runner_credential.py`,
+`tests/test_realtime_runner_consumer.py`.
 
 ## How a runner signs in (keyless)
 

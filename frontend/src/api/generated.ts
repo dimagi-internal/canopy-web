@@ -10449,6 +10449,99 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/alerts/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Alerts that need you
+         * @description Open alerts you are offered an action on, in the workspaces you are in,
+         *     most severe first (`blocking`, `action`, `setup`), then most recently raised
+         *     (`first_seen_at`), then id — a stable order, since every reconciled alert
+         *     shares the tick's `last_seen_at`. `scope` keeps
+         *     those whose `scopes` include it. `status=dismissed` lists what was dismissed
+         *     in the last 7 days that you could dismiss (so you can `undismiss` it). A
+         *     `workspace:<slug>` scope also keeps alerts in any workspace below that one;
+         *     other scopes match exactly.
+         */
+        readonly get: operations["list_alerts"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/alerts/{id}/act": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Do one of an alert's actions
+         * @description Runs `action` if it is still offered to you. A link action is followed in
+         *     the browser; calling this for one only records that you followed it. 404 if you cannot see the alert; 409
+         *     `action-not-offered` if the action is not (or no longer) yours to run; 409
+         *     `action-failed` (with the reason) if its handler refused — nothing was
+         *     changed.
+         */
+        readonly post: operations["act_on_alert"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/alerts/{id}/undismiss": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Put a dismissed alert back
+         * @description Re-opens a dismissed alert. 404 if you cannot see it; 409
+         *     `action-not-offered` unless you are offered `dismiss` on it.
+         */
+        readonly post: operations["undismiss_alert"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/alerts/{id}/history": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An alert's audit trail
+         * @description Every change to the alert, oldest first (also once resolved): raised, changed, acted,
+         *     notified, dismissed, undismissed, resolved, reopened.
+         */
+        readonly get: operations["alert_history"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/engagement/view": {
         readonly parameters: {
             readonly query?: never;
@@ -30310,6 +30403,110 @@ export interface components {
             /** Days */
             readonly days?: number | null;
         };
+        /** AlertActionOut */
+        readonly AlertActionOut: {
+            /** Id */
+            readonly id: string;
+            /** Label */
+            readonly label: string;
+            /** Closes */
+            readonly closes: boolean;
+            /**
+             * Href
+             * @default
+             */
+            readonly href: string;
+        };
+        /** AlertOut */
+        readonly AlertOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            readonly severity: "blocking" | "action" | "setup";
+            /** Title */
+            readonly title: string;
+            /**
+             * Body
+             * @default
+             */
+            readonly body: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Organisation */
+            readonly organisation: string;
+            /** Scopes */
+            readonly scopes: readonly string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "open" | "resolved" | "dismissed";
+            /**
+             * First Seen At
+             * Format: date-time
+             */
+            readonly first_seen_at: string;
+            /**
+             * Last Seen At
+             * Format: date-time
+             */
+            readonly last_seen_at: string;
+            /** Occurrences */
+            readonly occurrences: number;
+            /**
+             * Closed By Email
+             * @default
+             */
+            readonly closed_by_email: string;
+            /** Closed At */
+            readonly closed_at?: string | null;
+            /** Actions */
+            readonly actions: readonly components["schemas"]["AlertActionOut"][];
+            /**
+             * Last Notify
+             * @default
+             */
+            readonly last_notify: string;
+        };
+        /** AlertActIn */
+        readonly AlertActIn: {
+            /** Action */
+            readonly action: string;
+        };
+        /** AlertEventOut */
+        readonly AlertEventOut: {
+            /**
+             * At
+             * Format: date-time
+             */
+            readonly at: string;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Actor Email
+             * @default
+             */
+            readonly actor_email: string;
+            /**
+             * Action Id
+             * @default
+             */
+            readonly action_id: string;
+            /** Payload */
+            readonly payload: {
+                readonly [key: string]: unknown;
+            };
+        };
         /** EngagementViewOut */
         readonly EngagementViewOut: {
             /** Recorded */
@@ -47063,6 +47260,99 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HideOut"];
+                };
+            };
+        };
+    };
+    readonly list_alerts: {
+        readonly parameters: {
+            readonly query?: {
+                readonly scope?: string | null;
+                readonly status?: "open" | "dismissed";
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AlertOut"][];
+                };
+            };
+        };
+    };
+    readonly act_on_alert: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AlertActIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AlertOut"];
+                };
+            };
+        };
+    };
+    readonly undismiss_alert: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AlertOut"];
+                };
+            };
+        };
+    };
+    readonly alert_history: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AlertEventOut"][];
                 };
             };
         };

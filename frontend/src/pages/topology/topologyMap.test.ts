@@ -47,10 +47,9 @@ describe('buildFleetMap', () => {
     expect(connect.lanes[1].runners.map((r) => r.id)).toEqual(['st'])
   })
 
-  it('rolls counts and problems up the tree', () => {
+  it('rolls counts up the tree', () => {
     expect(map.root?.agentCount).toBe(2)
     expect(map.root?.runnerCount).toBe(2)
-    expect(map.root?.problemCount).toBe(1) // jarvis is unrouted
     expect(map.agents.get('ada')?.health).toBe('ok')
   })
 

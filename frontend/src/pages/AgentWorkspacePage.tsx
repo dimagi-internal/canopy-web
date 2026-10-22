@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, Outlet, useParams } from 'react-router-dom'
 import { getAgent, listTasks, type AgentDetailOut } from '@/api/agents'
 import { AgentLeftNav } from '@/components/agents/AgentLeftNav'
+import { AlertList } from '@/components/alerts/AlertList'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { WorkbenchShell, WorkbenchMain } from 'canopy-ui'
@@ -108,6 +109,9 @@ export function AgentWorkspacePage() {
     <WorkbenchShell>
       <AgentLeftNav agent={agent} waiting={waiting} />
       <WorkbenchMain>
+        {/* Alerts about this agent (no runner it can use, stuck turns…), above
+            every section; nothing at all when there are none. */}
+        <AlertList scope={`agent:${agent.slug}`} hideEmpty className="max-w-4xl px-6 pt-4" />
         <Outlet context={{ agent, canEdit, waiting, refreshWaiting } satisfies AgentOutletContext} />
       </WorkbenchMain>
     </WorkbenchShell>

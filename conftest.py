@@ -90,6 +90,21 @@ def _no_live_dns(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_stale_unclaimable_memo():
+    """`alerts_unclaimable.stuck_by_agent` memoises its fleet-wide diagnosis per
+    process for 30 s; a memo from the last test (whose rows were rolled back)
+    must not answer this one."""
+    try:
+        from apps.harness import alerts_unclaimable
+    except Exception:  # a suite with no Django (runner/*) has nothing to clear
+        yield
+        return
+    alerts_unclaimable.forget()
+    yield
+    alerts_unclaimable.forget()
+
+
+@pytest.fixture(autouse=True)
 def _no_live_plugin_json(monkeypatch):
     """No test reaches GitHub for a plugin.json name (apps/plugins/services.py):
     the agents API names each agent's plugin, so every agent list would. Here

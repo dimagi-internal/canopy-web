@@ -45,6 +45,14 @@ vi.mock('@/components/agents/RunnerAssignments', () => ({
   RunnerAssignments: () => <div data-testid="assignments-stub" />,
 }))
 
+// What the alert list shows is AlertList.test.tsx's subject; here only which
+// scope this view asks it for.
+vi.mock('@/components/alerts/AlertList', () => ({
+  AlertList: ({ scope, hideEmpty }: { scope?: string; hideEmpty?: boolean }) => (
+    <div data-testid="alert-list-stub" data-scope={scope} data-hide-empty={String(!!hideEmpty)} />
+  ),
+}))
+
 const { RunnerDetail } = await import('./RunnerDetail')
 
 function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
@@ -84,6 +92,13 @@ afterEach(() => {
 })
 
 describe('RunnerDetail', () => {
+  it('shows the alerts scoped to this runner, and nothing when there are none', () => {
+    render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} />)
+    const stub = screen.getByTestId('alert-list-stub')
+    expect(stub.getAttribute('data-scope')).toBe('runner:r1')
+    expect(stub.getAttribute('data-hide-empty')).toBe('true')
+  })
+
   it('offers the drill control on a runner the caller paired', () => {
     render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} />)
     expect(screen.getByTestId('runner-drills')).toBeTruthy()

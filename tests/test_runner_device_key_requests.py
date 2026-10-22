@@ -18,6 +18,7 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
+from apps.attention import alerts
 from apps.harness import device_keys
 from apps.harness.models import Runner, RunnerDeviceKey
 from apps.tokens.models import PersonalToken
@@ -68,11 +69,16 @@ def test_a_stranded_box_gets_a_pending_key_and_its_owner_the_link(box, django_ca
     key = RunnerDeviceKey.objects.get(pk=body["id"])
     assert key.status == RunnerDeviceKey.PENDING and key.runner == box["runner"]
     assert body["approve_url"].endswith(f"device_key={key.pk}#device-keys")
-    assert len(mail.outbox) == 1 and mail.outbox[0].to == ["jj@dimagi.com"]
+    # The runner lives in a workspace, so the `device_key_pending` alert (not a
+    # direct mail) tells its owner; `body["approve_url"]` is what the box prints.
+    assert mail.outbox == []
+    alerts.tick(timezone.now())
+    assert [m.to for m in mail.outbox] == [["jj@dimagi.com"]]
     assert "haldimagi-mbp-cdp" in mail.outbox[0].subject
     # Asking again changes nothing and emails nobody.
     with django_capture_on_commit_callbacks(execute=True):
         assert _ask(box).status_code == 200
+    alerts.tick(timezone.now())
     assert len(mail.outbox) == 1
 
 
