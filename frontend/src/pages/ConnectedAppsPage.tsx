@@ -357,7 +357,7 @@ function Tick({ on }: { on: boolean }): JSX.Element {
 /**
  * What the site asks of canopy's agents (its signed `site.json`, read beside its
  * `jwks.json`) and, per agent this workspace allows there, whether it meets it.
- * The fit is computed from the same offer the site reads (`/api/sites/offer`),
+ * The fit is computed from the same site agents API the site reads (`/api/sites/agents`),
  * so the two never disagree; every "no" names where in canopy to fix it.
  */
 export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
@@ -399,9 +399,9 @@ export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
       </table>
       <p className="text-xs text-muted-foreground">
         Real data needs: {asks || 'nothing named'}.
-        {needs.uses_version && needs.uses_version !== needs.offer_version && (
+        {needs.uses_version && needs.uses_version !== needs.site_agents_version && (
           <span className="ml-1 text-warning">
-            The site chose its agents against an older offer; it picks up the current one on its
+            The site chose its agents against an older site agents version; it picks up the current one on its
             next refresh.
           </span>
         )}

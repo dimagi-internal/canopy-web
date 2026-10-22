@@ -1,7 +1,7 @@
-"""The site offer (`GET /api/sites/offer`) and what the Connected sites page reads
+"""The site agents API (`GET /api/sites/agents`) and what the Connected sites page reads
 back from the site (`…/connected-apps/{id}/needs`).
 
-The offer is driven over HTTP with a request signed the way a site's SDK signs
+The API is driven over HTTP with a request signed the way a site's SDK signs
 it, and its answer is verified with the SDK's own verifier against canopy's
 published client keys — so a pass means a real site would believe it.
 """
@@ -11,7 +11,7 @@ import time
 
 import jwt
 import pytest
-from canopy_sdk import offer as wire
+from canopy_sdk import site_agents as wire
 from canopy_sdk import site as site_doc
 from canopy_sdk.host import ClientKeyResolver
 from canopy_sdk.keys import generate_private_key, public_jwk, public_pem
@@ -86,12 +86,12 @@ def _runner(w, *agents, zdr=False, online=True, name="jo-mbp"):
 
 
 def _url():
-    return wire.offer_url(client_identity.public_base())
+    return wire.endpoint_url(client_identity.public_base())
 
 
 def _ask(w, *, key=None, token=None, **kw):
     token = token or wire.request_assertion(SITE, key or w["key"], _url(), **kw)
-    return Client().get("/api/sites/offer", HTTP_AUTHORIZATION=f"Bearer {token}")
+    return Client().get("/api/sites/agents", HTTP_AUTHORIZATION=f"Bearer {token}")
 
 
 def _canopy_keys():
@@ -100,11 +100,11 @@ def _canopy_keys():
     return ClientKeyResolver(fetch_json=docs.__getitem__, cache=MemoryCache())
 
 
-def _offer(w, **kw) -> wire.Offer:
+def _agents(w, **kw) -> wire.SiteAgents:
     response = _ask(w, **kw)
     assert response.status_code == 200, response.content
     assert response["Content-Type"] == "application/jose"
-    return wire.verify_offer(response.content.decode(), client_id=client_identity.client_id(),
+    return wire.verify_site_agents(response.content.decode(), client_id=client_identity.client_id(),
                              site_name=SITE, client_keys=_canopy_keys())
 
 
@@ -129,7 +129,7 @@ def test_a_disconnected_site_is_unknown(w):
 
 
 def test_no_bearer_is_refused():
-    assert Client().get("/api/sites/offer").status_code == 401
+    assert Client().get("/api/sites/agents").status_code == 401
 
 
 def test_a_request_is_single_use(w):
@@ -140,12 +140,12 @@ def test_a_request_is_single_use(w):
 
 
 def test_a_request_for_another_canopy_is_refused(w):
-    token = wire.request_assertion(SITE, w["key"], "https://other-canopy.example/api/sites/offer")
+    token = wire.request_assertion(SITE, w["key"], "https://other-canopy.example/api/sites/agents")
     response = _ask(w, token=token)
     assert response.status_code == 401 and "wrong_audience" in response.json()["detail"]
 
 
-def test_a_visitor_assertion_cannot_buy_the_offer(w):
+def test_a_visitor_assertion_cannot_buy_the_list(w):
     now = int(time.time())
     token = jwt.encode({"iss": SITE, "sub": "u-1", "aud": _url(), "iat": now, "exp": now + 60,
                         "jti": "x"}, w["key"], algorithm="EdDSA",
@@ -159,67 +159,67 @@ def test_two_tenants_sharing_a_name_are_told_apart_by_the_signed_agent(w):
     other = Workspace.objects.create(slug="other", display_name="Other", created_by=other_owner)
     AppCredential.create_credential(name=SITE, created_by=other_owner, workspace=other)
     assert _ask(w).status_code == 409
-    assert _offer(w, agent="labsdata").tenant == "connect"
+    assert _agents(w, agent="labsdata").tenant == "connect"
 
 
 # --- what it says -----------------------------------------------------------------
 
 
 def test_it_lists_only_the_agents_allowed_on_the_site(w):
-    offer = _offer(w)
-    assert offer.slugs == ("ace", "bare", "labsdata")       # not "unlisted"
-    assert offer.site_name == SITE and offer.tenant == "connect"
-    bare = offer.agent("bare")
+    got = _agents(w)
+    assert got.slugs == ("ace", "bare", "labsdata")       # not "unlisted"
+    assert got.site_name == SITE and got.tenant == "connect"
+    bare = got.agent("bare")
     assert not bare.ready and not bare.capabilities
     assert any("no capability naming connect-labs" in p for p in bare.problems)
 
 
-def test_an_agent_of_another_workspace_is_never_offered(w):
+def test_an_agent_of_another_workspace_is_never_listed(w):
     stranger = get_user_model().objects.create_user("s", "s@dimagi.com", "pw")
     other = Workspace.objects.create(slug="other", display_name="Other", created_by=stranger)
     foreign = Agent.objects.create(slug="foreign", name="Foreign", workspace=other,
                                    interface=parse(PLAIN_IFACE))
     AppCredentialAgent.objects.create(app=w["app"], agent=foreign)
-    assert "foreign" not in _offer(w).slugs
+    assert "foreign" not in _agents(w).slugs
 
 
 def test_phi_safe_reflects_the_interface_setting(w):
-    offer = _offer(w)
-    data = offer.agent("labsdata").capability("data")
+    got = _agents(w)
+    data = got.agent("labsdata").capability("data")
     assert data.phi_safe and data.phi_set_by == "Jo Owner" and data.phi_set_at
     assert data.callers == ("contact", "member")
-    assert not offer.agent("ace").phi_safe
-    assert offer.agent("ace").capability("connect").phi_set_by == ""
+    assert not got.agent("ace").phi_safe
+    assert got.agent("ace").capability("connect").phi_set_by == ""
 
 
 def test_runners_and_readiness_reflect_the_fleet(w):
-    offer = _offer(w)
-    data = offer.agent("labsdata")
+    got = _agents(w)
+    data = got.agent("labsdata")
     assert not data.ready and data.flags_available == () and not data.ready_with_flag("zdr")
     assert any("no runner takes" in p and "#running" in p for p in data.problems)
 
     _runner(w, w["labsdata"], w["ace"])
-    offer = _offer(w)
-    data = offer.agent("labsdata")
+    got = _agents(w)
+    data = got.agent("labsdata")
     assert data.ready and not data.ready_with_flag("zdr")
     assert any(p.startswith("no ready runner with zdr") for p in data.problems)
-    assert offer.agent("ace").ready and offer.agent("ace").problems == ()
+    assert got.agent("ace").ready and got.agent("ace").problems == ()
 
     _runner(w, w["labsdata"], zdr=True, name="zdr-box")
-    data = _offer(w).agent("labsdata")
+    data = _agents(w).agent("labsdata")
     assert data.flags_available == ("zdr",) and data.ready_with_flag("zdr") and data.problems == ()
 
 
 def test_a_declared_flag_the_box_contradicts_is_not_available(w):
     runner = _runner(w, w["labsdata"], zdr=True)
     Runner.objects.filter(pk=runner.pk).update(capabilities={"data_mode": "standard"})
-    data = _offer(w).agent("labsdata")
+    data = _agents(w).agent("labsdata")
     assert data.flags_available == () and not data.ready_with_flag("zdr")
 
 
 def test_an_offline_runner_is_listed_but_not_ready(w):
     _runner(w, w["labsdata"], zdr=True, online=False)
-    data = _offer(w).agent("labsdata")
+    data = _agents(w).agent("labsdata")
     assert data.flags_available == ("zdr",) and not data.ready_with_flag("zdr") and not data.ready
     assert any("is ready now" in p for p in data.problems)
 
@@ -227,25 +227,25 @@ def test_an_offline_runner_is_listed_but_not_ready(w):
 def test_runner_flags_are_every_known_flag_with_its_meaning(w):
     from canopy_sdk import contract
 
-    flags = _offer(w).runner_flags
+    flags = _agents(w).runner_flags
     assert {f.flag for f in flags} == set(contract.RUNNER_FLAGS)
     assert all(f.meaning for f in flags)
 
 
 def test_version_changes_exactly_when_the_content_does(w):
-    first, second = _offer(w), _offer(w)
+    first, second = _agents(w), _agents(w)
     assert first.version == second.version and first.issued_at <= second.issued_at
     _runner(w, w["ace"])
-    third = _offer(w)
+    third = _agents(w)
     assert third.version != first.version
     AppCredentialAgent.objects.filter(app=w["app"], agent=w["bare"]).delete()
-    assert _offer(w).version != third.version
+    assert _agents(w).version != third.version
 
 
-def test_the_offer_is_signed_by_the_execution_key(w):
+def test_the_response_is_signed_by_the_execution_key(w):
     response = _ask(w)
     header = jwt.get_unverified_header(response.content.decode())
-    assert header["typ"] == wire.OFFER_TYP
+    assert header["typ"] == wire.RESPONSE_TYP
     assert header["kid"] == client_identity.published_jwks()["keys"][0]["kid"]
 
 
@@ -302,7 +302,7 @@ def test_the_page_shows_the_sites_needs_and_who_meets_them(w, monkeypatch):
     assert any("not PHI-safe" in why for why in rows["ace"]["why_not"])
     assert not rows["bare"]["offered"] and not rows["bare"]["ready"]
     assert body["not_allowed"] == ["ghost"]
-    assert body["uses_version"] == "v-old" and body["offer_version"] != "v-old"
+    assert body["uses_version"] == "v-old" and body["site_agents_version"] != "v-old"
     _needs(w)
     assert len(calls) == 1, "a good copy is cached"
 

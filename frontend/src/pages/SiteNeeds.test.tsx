@@ -17,7 +17,7 @@ const NEEDS: SiteNeeds = {
   pages: [{ key: 'labs:workflow:run:data', title: 'A workflow run, read-only', scopes: ['workflow:read', 'data:read'] }],
   requires: { phi_safe: true, runner_flag: 'zdr' },
   uses_version: 'old',
-  offer_version: 'new',
+  site_agents_version: 'new',
   agents: [
     { slug: 'labsdata', name: 'labsdata', offered: true, real_data: true, ready: true, meets_real_data: true, why_not: [] },
     {
@@ -35,7 +35,7 @@ describe('SiteNeedsTable', () => {
     expect(screen.getByText('workflow:read data:read')).toBeTruthy()
     expect(screen.getByText(/PHI-safe and a ready zdr runner/)).toBeTruthy()
     expect(screen.getByText(/not PHI-safe in canopy/)).toBeTruthy()
-    expect(screen.getByText(/older offer/)).toBeTruthy()
+    expect(screen.getByText(/older site agents version/)).toBeTruthy()
     expect(screen.getByText(/names ghost/)).toBeTruthy()
   })
 

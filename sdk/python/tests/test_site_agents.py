@@ -1,4 +1,4 @@
-"""The site offer (``canopy_sdk.offer``) and the site's needs (``canopy_sdk.site``):
+"""The site agents API (``canopy_sdk.site_agents``) and the site's needs (``canopy_sdk.site``):
 both halves round-trip, and every refusal fails closed."""
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 import jwt
 import pytest
 
-from canopy_sdk import offer as offer_mod
+from canopy_sdk import site_agents as wire
 from canopy_sdk import site as site_mod
 from canopy_sdk.fetch import FetchError
 from canopy_sdk.keys import generate_private_key, public_pem
@@ -15,7 +15,7 @@ from canopy_sdk.keys import generate_private_key, public_pem
 from .helpers import CANOPY, CLIENT_ID, World
 
 SITE = "connect-labs"
-URL = offer_mod.offer_url(CANOPY)
+URL = wire.endpoint_url(CANOPY)
 
 CONTENT = {
     "site": {"name": SITE, "tenant": "connect"},
@@ -47,7 +47,7 @@ def _served(world, token):
     def get(url, *, headers, accept):
         seen.update(url=url, headers=headers, accept=accept)
         bearer = headers["Authorization"].removeprefix("Bearer ")
-        offer_mod.verify_request(bearer, [world.host_key.public_key()], audiences=[URL])
+        wire.verify_request(bearer, [world.host_key.public_key()], audiences=[URL])
         return token(bearer) if callable(token) else token
 
     return get, seen
@@ -57,9 +57,9 @@ def _served(world, token):
 
 
 def test_request_round_trips_and_spends_its_jti(world):
-    token = offer_mod.request_assertion(SITE, world.host_key, URL, agent="labsdata")
+    token = wire.request_assertion(SITE, world.host_key, URL, agent="labsdata")
     spent = []
-    claims = offer_mod.verify_request(token, [public_pem(world.host_key)], audiences=[URL],
+    claims = wire.verify_request(token, [public_pem(world.host_key)], audiences=[URL],
                                       spend_jti=spent.append)
     assert claims["iss"] == claims["sub"] == SITE
     assert claims["exp"] - claims["iat"] == 60
@@ -68,7 +68,7 @@ def test_request_round_trips_and_spends_its_jti(world):
 
 
 @pytest.mark.parametrize("mutate,code", [
-    (lambda c: c.update(aud="https://elsewhere.example/api/sites/offer"), "wrong_audience"),
+    (lambda c: c.update(aud="https://elsewhere.example/api/sites/agents"), "wrong_audience"),
     (lambda c: c.update(exp=c["iat"] + 600), "too_long"),
     (lambda c: c.update(iat=int(time.time()) - 400, exp=int(time.time()) - 340), "expired"),
     (lambda c: c.update(sub="someone-else"), "bad_subject"),
@@ -79,34 +79,34 @@ def test_request_refusals(world, mutate, code):
     claims = {"iss": SITE, "sub": SITE, "aud": URL, "iat": now, "exp": now + 60, "jti": "j"}
     mutate(claims)
     token = jwt.encode(claims, world.host_key, algorithm="EdDSA",
-                       headers={"typ": offer_mod.REQUEST_TYP})
-    with pytest.raises(offer_mod.OfferError) as exc:
-        offer_mod.verify_request(token, [world.host_key.public_key()], audiences=[URL])
+                       headers={"typ": wire.REQUEST_TYP})
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.verify_request(token, [world.host_key.public_key()], audiences=[URL])
     assert exc.value.code == code
 
 
 def test_request_signed_by_another_key_is_refused(world):
-    token = offer_mod.request_assertion(SITE, generate_private_key("EdDSA"), URL)
-    with pytest.raises(offer_mod.OfferError) as exc:
-        offer_mod.verify_request(token, [world.host_key.public_key()], audiences=[URL])
+    token = wire.request_assertion(SITE, generate_private_key("EdDSA"), URL)
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.verify_request(token, [world.host_key.public_key()], audiences=[URL])
     assert exc.value.code == "bad_signature"
 
 
-def test_a_visitor_assertion_is_not_an_offer_request(world):
+def test_a_visitor_assertion_is_not_a_site_agents_request(world):
     from canopy_sdk.host import sign_visitor_assertion
 
     token = sign_visitor_assertion(world.config, "42")
-    with pytest.raises(offer_mod.OfferError) as exc:
-        offer_mod.verify_request(token, [world.host_key.public_key()], audiences=[URL])
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.verify_request(token, [world.host_key.public_key()], audiences=[URL])
     assert exc.value.code == "bad_typ"
 
 
-# --- the offer -------------------------------------------------------------------
+# --- the response ----------------------------------------------------------------
 
 
-def test_offer_round_trips(world):
-    token = offer_mod.sign_offer(world.client.client_key, CLIENT_ID, SITE, CONTENT)
-    got = offer_mod.verify_offer(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
+def test_response_round_trips(world):
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, CONTENT)
+    got = wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
     assert got.site_name == SITE and got.tenant == "connect"
     assert got.slugs == ("labsdata", "ace")
     data = got.agent("labsdata")
@@ -117,48 +117,48 @@ def test_offer_round_trips(world):
     assert not ace.ready and not ace.phi_safe and ace.problems
     assert got.flag("zdr").meaning == "zero data retention"
     assert got.agent("nobody") is None
-    assert got.version == offer_mod.content_version(CONTENT)
+    assert got.version == wire.content_version(CONTENT)
     assert not got.stale
 
 
 def test_version_changes_iff_content_changes():
-    v = offer_mod.content_version(CONTENT)
+    v = wire.content_version(CONTENT)
     reordered = {"agents": CONTENT["agents"], "runner_flags": CONTENT["runner_flags"],
                  "site": dict(reversed(list(CONTENT["site"].items())))}
-    assert offer_mod.content_version(reordered) == v
-    assert offer_mod.content_version({**CONTENT, "iat": 1, "exp": 2, "v": 1}) == v
+    assert wire.content_version(reordered) == v
+    assert wire.content_version({**CONTENT, "iat": 1, "exp": 2, "v": 1}) == v
     changed = {**CONTENT, "agents": [{**CONTENT["agents"][0], "ready": False}, CONTENT["agents"][1]]}
-    assert offer_mod.content_version(changed) != v
+    assert wire.content_version(changed) != v
 
 
-def test_offer_signed_by_another_key_is_refused(world):
-    token = offer_mod.sign_offer(generate_private_key("EdDSA"), CLIENT_ID, SITE, CONTENT)
-    with pytest.raises(offer_mod.OfferError) as exc:
-        offer_mod.verify_offer(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
+def test_response_signed_by_another_key_is_refused(world):
+    token = wire.sign_site_agents(generate_private_key("EdDSA"), CLIENT_ID, SITE, CONTENT)
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
     assert exc.value.code == "unknown_key"
 
 
-def test_offer_for_another_site_is_refused(world):
-    token = offer_mod.sign_offer(world.client.client_key, CLIENT_ID, "another-site", CONTENT)
-    with pytest.raises(offer_mod.OfferError) as exc:
-        offer_mod.verify_offer(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
+def test_response_for_another_site_is_refused(world):
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, "another-site", CONTENT)
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
     assert exc.value.code == "bad_audience"
 
 
-def test_expired_offer_is_refused(world):
-    token = offer_mod.sign_offer(world.client.client_key, CLIENT_ID, SITE, CONTENT,
+def test_expired_response_is_refused(world):
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, CONTENT,
                                  now=time.time() - 2000)
-    with pytest.raises(offer_mod.OfferError) as exc:
-        offer_mod.verify_offer(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
     assert exc.value.code == "expired"
 
 
 def _resign(world, mutate):
-    token = offer_mod.sign_offer(world.client.client_key, CLIENT_ID, SITE, CONTENT)
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, CONTENT)
     claims = jwt.decode(token, options={"verify_signature": False})
     mutate(claims)
     return jwt.encode(claims, world.client.client_key, algorithm="EdDSA",
-                      headers={"kid": world.client_jwk["kid"], "typ": offer_mod.OFFER_TYP})
+                      headers={"kid": world.client_jwk["kid"], "typ": wire.RESPONSE_TYP})
 
 
 @pytest.mark.parametrize("mutate,code", [
@@ -167,45 +167,45 @@ def _resign(world, mutate):
     (lambda c: c.update(iss="https://other.example/oauth/client.json"), "bad_issuer"),
     (lambda c: c.update(exp=c["iat"] + 86400), "too_long"),
 ])
-def test_offer_refusals(world, mutate, code):
-    with pytest.raises(offer_mod.OfferError) as exc:
-        offer_mod.verify_offer(_resign(world, mutate), client_id=CLIENT_ID, site_name=SITE,
+def test_response_refusals(world, mutate, code):
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.verify_site_agents(_resign(world, mutate), client_id=CLIENT_ID, site_name=SITE,
                                client_keys=world.resolver)
     assert exc.value.code == code
 
 
-def test_execution_statement_is_not_an_offer(world):
+def test_execution_statement_is_not_a_site_agents_response(world):
     from canopy_sdk import consumer
 
     token = consumer.execution_statement(world.client.client_key, CLIENT_ID, SITE, {"agents": []},
                                          jkt="x")
-    with pytest.raises(offer_mod.OfferError) as exc:
-        offer_mod.verify_offer(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
     assert exc.value.code == "bad_typ"
 
 
-def test_fetch_offer_asks_signed_and_verifies(world):
-    token = offer_mod.sign_offer(world.client.client_key, CLIENT_ID, SITE, CONTENT)
+def test_fetch_site_agents_asks_signed_and_verifies(world):
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, CONTENT)
     get, seen = _served(world, token)
-    got = offer_mod.fetch_offer(CANOPY, SITE, world.host_key, world.resolver, get=get)
+    got = wire.fetch_site_agents(CANOPY, SITE, world.host_key, world.resolver, get=get)
     assert got.agent("labsdata").ready
     assert seen["url"] == URL and seen["accept"] == "application/jose"
 
 
-def test_fetch_offer_fails_closed_when_unreachable(world):
+def test_fetch_site_agents_fails_closed_when_unreachable(world):
     def get(url, **kw):
         raise FetchError(f"{url} answered 401: unknown_issuer")
 
-    with pytest.raises(offer_mod.OfferError) as exc:
-        offer_mod.fetch_offer(CANOPY, SITE, world.host_key, world.resolver, get=get)
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.fetch_site_agents(CANOPY, SITE, world.host_key, world.resolver, get=get)
     assert exc.value.code == "unreachable" and "unknown_issuer" in exc.value.message
 
 
-def test_fetch_offer_refuses_a_forged_answer(world):
-    forged = offer_mod.sign_offer(generate_private_key("EdDSA"), CLIENT_ID, SITE, CONTENT)
+def test_fetch_site_agents_refuses_a_forged_answer(world):
+    forged = wire.sign_site_agents(generate_private_key("EdDSA"), CLIENT_ID, SITE, CONTENT)
     get, _ = _served(world, forged)
-    with pytest.raises(offer_mod.OfferError):
-        offer_mod.fetch_offer(CANOPY, SITE, world.host_key, world.resolver, get=get)
+    with pytest.raises(wire.SiteAgentsError):
+        wire.fetch_site_agents(CANOPY, SITE, world.host_key, world.resolver, get=get)
 
 
 # --- site.json -------------------------------------------------------------------

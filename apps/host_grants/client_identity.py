@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import threading
 
-from canopy_sdk import consumer, contract, keys, offer
+from canopy_sdk import consumer, contract, keys, site_agents
 from django.conf import settings
 
 # The wire values and the signing itself are the SDK's (`canopy_sdk.contract`,
@@ -209,10 +209,10 @@ def execution_statement(audience: str, facts: dict, *, access_token: str | None 
                                         jkt=dpop_jkt(), access_token=access_token)
 
 
-def sign_offer(site_name: str, content: dict) -> str:
-    """The site offer (`site_offer.py`): signed by the same client key, so a site
+def sign_site_agents(site_name: str, content: dict) -> str:
+    """The site agents API (`site_agents.py`): signed by the same client key, so a site
     believes it exactly as it believes `Canopy-Execution`."""
-    return offer.sign_offer(_client_key(), client_id(), site_name, content)
+    return site_agents.sign_site_agents(_client_key(), client_id(), site_name, content)
 
 
 def credentials() -> consumer.ClientCredentials:

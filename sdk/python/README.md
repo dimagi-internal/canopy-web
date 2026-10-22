@@ -44,11 +44,11 @@ library, address-pinned.
 | `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
 | `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`phi_clearance`), `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
 | `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
-| `canopy_sdk.offer` | both sides | the site offer: `fetch_offer` → `Offer` (`agent(slug)`, `OfferedAgent`, `OfferedCapability`, `RunnerFlag`), `OfferError`, `request_assertion`, `verify_offer`; canopy's `verify_request`, `sign_offer`, `content_version` |
+| `canopy_sdk.site_agents` | both sides | the site agents API: `fetch_site_agents` → `SiteAgents` (`agent(slug)`, `SiteAgent`, `AgentCapability`, `RunnerFlag`), `SiteAgentsError`, `request_assertion`, `verify_site_agents`; canopy's `verify_request`, `sign_site_agents`, `content_version` |
 | `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds`, `site_document_url` |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `get_text` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
-| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `execution.verify_execution(request)`, `offer.current()`, `canopy/site.json`, `{% canopy_panel %}` |
+| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `execution.verify_execution(request)`, `site_agents.current()`, `canopy/site.json`, `{% canopy_panel %}` |
 | `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `EphemeralInstance`, `run_command`, `send_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
 
@@ -428,31 +428,31 @@ addopts = "-p canopy_sdk.conformance.pytest_plugin"
 Not `pytest_plugins = [...]` in a conftest: pytest accepts that only in the
 rootdir's top-level `conftest.py` and refuses it anywhere else.
 
-## The site offer and the site's needs
+## The site agents API and the site's needs
 
-canopy tells your site, signed, which agents it may offer and on what terms —
+canopy tells your site, signed, which agents it may show and on what terms —
 so your settings are CHOSEN from canopy's answer instead of typed. No new
 secret: you ask with your own signing key (`CANOPY_HOST["SIGNING_KEY"]`, the
 one at your `jwks.json`), canopy answers with its client key (the one that
 signs `Canopy-Execution`, found through `CLIENT_ID`).
 
 ```python
-from canopy_sdk.django import offer
+from canopy_sdk.django import site_agents
 
-current = offer.current()          # cached 5 min; stale up to 24 h; then None
+current = site_agents.current()    # cached 5 min; stale up to 24 h; then None
 if current is None:
-    ...                             # offer nothing (fail closed)
+    ...                             # show no agent (fail closed)
 agent = current.agent("labsdata") if current else None
 if agent and agent.ready and agent.phi_safe and agent.ready_with_flag("zdr"):
-    ...                             # may be offered over real data
+    ...                             # may be shown over real data
 reasons = agent.problems if agent else ()   # plain sentences, each naming where to fix it in canopy
 flags = current.runner_flags        # every flag canopy knows, with its meaning — not a constant
 current.version                     # record it with each settings save
 ```
 
-Outside Django: `canopy_sdk.offer.fetch_offer(canopy_url, site_name, signing_key,
-ClientKeyResolver(), client_id=...)` → `Offer`, or `OfferError(code)`. It GETs
-`{canopy}/api/sites/offer` through `canopy_sdk.fetch` (pinned, bounded, no
+Outside Django: `canopy_sdk.site_agents.fetch_site_agents(canopy_url, site_name, signing_key,
+ClientKeyResolver(), client_id=...)` → `SiteAgents`, or `SiteAgentsError(code)`. It GETs
+`{canopy}/api/sites/agents` through `canopy_sdk.fetch` (pinned, bounded, no
 redirects) and checks the signature, `typ`, `iss`, `aud` (your site name),
 `exp`, `v` and that `version` is the digest of the content.
 
@@ -466,7 +466,7 @@ Connected sites page reads it and shows, per agent, whether it meets your
 def site_needs():
     return {"real_data": {"requires": {"phi_safe": True, "runner_flag": "zdr"}},
             "uses": {"agents": ["ace", "labsdata"], "real_data_agents": ["labsdata"],
-                     "version": current_offer_version()},
+                     "version": current_site_agents_version()},
             "titles": {"labs:workflow:run": "A workflow run"}}
 
 CANOPY_HOST = {..., "SITE_NEEDS": "myapp.canopy.site_needs"}

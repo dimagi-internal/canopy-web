@@ -15,7 +15,7 @@ METADATA_KEY = "runner_requirements"
 UNSATISFIABLE = "__malformed__"
 _LABELS = {"zdr": "ZDR"}
 #: What each flag means, as canopy states it to a connected site (the site
-#: offer's `runner_flags`). One entry per `RUNNER_FLAGS` member (a test holds it).
+#: agents API's `runner_flags`). One entry per `RUNNER_FLAGS` member (a test holds it).
 MEANINGS = {
     "zdr": ("zero data retention: the runner's owner declared that its Claude traffic uses a "
             "zero-data-retention key, and the box reports running in that mode"),

@@ -121,26 +121,26 @@ def _over(key: str, limit: int, window: int) -> bool:
     return count > limit
 
 
-# --- the site offer ---------------------------------------------------------
+# --- the site agents API ----------------------------------------------------
 #
-# `GET /api/sites/offer` is unauthenticated in the same way: the signed request
+# `GET /api/sites/agents` is unauthenticated in the same way: the signed request
 # IS the credential. A site asks every few minutes, so both budgets are far above
-# real use; they bound the signature checks (and offer builds) a flood can cause.
+# real use; they bound the signature checks (and response builds) a flood can cause.
 
 
-class OfferRateLimitError(Exception):
-    """Raised when offer requests exceed a budget."""
+class SiteAgentsRateLimitError(Exception):
+    """Raised when site agents API requests exceed a budget."""
 
 
-def check_offer_client(client_ip) -> None:
-    limit = int(getattr(settings, "SITE_OFFER_CLIENT_LIMIT", 120))
-    window = int(getattr(settings, "SITE_OFFER_WINDOW_SECONDS", 60))
-    if _over(f"tokens:offer:ip:{client_ip or 'unknown'}", limit, window):
-        raise OfferRateLimitError(f"too many offer requests ({limit} per {window}s)")
+def check_site_agents_client(client_ip) -> None:
+    limit = int(getattr(settings, "SITE_AGENTS_CLIENT_LIMIT", 120))
+    window = int(getattr(settings, "SITE_AGENTS_WINDOW_SECONDS", 60))
+    if _over(f"tokens:site-agents:ip:{client_ip or 'unknown'}", limit, window):
+        raise SiteAgentsRateLimitError(f"too many site agents requests ({limit} per {window}s)")
 
 
-def check_offer_issuer(name: str) -> None:
-    limit = int(getattr(settings, "SITE_OFFER_ISSUER_LIMIT", 60))
-    window = int(getattr(settings, "SITE_OFFER_WINDOW_SECONDS", 60))
-    if _over(f"tokens:offer:iss:{name}", limit, window):
-        raise OfferRateLimitError(f"too many offer requests for this site ({limit} per {window}s)")
+def check_site_agents_issuer(name: str) -> None:
+    limit = int(getattr(settings, "SITE_AGENTS_ISSUER_LIMIT", 60))
+    window = int(getattr(settings, "SITE_AGENTS_WINDOW_SECONDS", 60))
+    if _over(f"tokens:site-agents:iss:{name}", limit, window):
+        raise SiteAgentsRateLimitError(f"too many site agents requests for this site ({limit} per {window}s)")

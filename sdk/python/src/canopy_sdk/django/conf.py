@@ -40,7 +40,7 @@
         # canopy/site.json (canopy_sdk.site): a callable (or dotted path)
         # returning {"real_data": {"requires": {"phi_safe": True,
         # "runner_flag": "zdr"}}, "uses": {"agents": [...], "real_data_agents":
-        # [...], "version": "<offer version>"}, "titles": {page_key: title}}.
+        # [...], "version": "<site agents version>"}, "titles": {page_key: title}}.
         # The pages and their scopes are PAGE_SCOPES; PAGE_TITLES names them.
         "SITE_NEEDS": None,
         "PAGE_TITLES": {},

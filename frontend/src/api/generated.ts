@@ -7483,7 +7483,7 @@ export interface paths {
          * What a connected site asks of agents, and who meets it
          * @description The site's signed `site.json` — its pages and the scopes each grants, what
          *     an agent must be to read real data there, and which agents it offers — beside
-         *     canopy's own offer for the site: per allowed agent, whether it meets the
+         *     canopy's own site agents response for the site: per allowed agent, whether it meets the
          *     site's `real_data.requires` and, if not, why. Fetched like the site's keys
          *     (https only, bounded, cached) and fail-closed: an unreadable document is
          *     `available: false` with its reason.
@@ -7497,7 +7497,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/sites/offer": {
+    readonly "/api/sites/agents": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -7505,8 +7505,8 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * A connected site's signed offer
-         * @description Which agents this site may offer, and on what terms — signed by canopy.
+         * The agents a connected site may show, signed
+         * @description Which agents this site may show, and on what terms — signed by canopy.
          *
          *     The site authenticates with `Authorization: Bearer <JWT>` signed by its own
          *     key (the one at its `jwks_url`): `iss` = its Connected-site name, `aud` =
@@ -7515,9 +7515,9 @@ export interface paths {
          *     `application/jose`: a compact JWS signed with canopy's client key (its `kid`
          *     in `/oauth/client.json`), payload `v`, `iss`, `aud`, `iat`, `exp`,
          *     `version`, `site`, `runner_flags`, `agents`. Verify it with
-         *     `canopy_sdk.offer.fetch_offer`.
+         *     `canopy_sdk.site_agents.fetch_site_agents`.
          */
-        readonly get: operations["get_site_offer"];
+        readonly get: operations["get_site_agents"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -27015,8 +27015,8 @@ export interface components {
             readonly requires: components["schemas"]["RealDataRequiresOut"];
             /** Uses Version */
             readonly uses_version: string;
-            /** Offer Version */
-            readonly offer_version: string;
+            /** Site Agents Version */
+            readonly site_agents_version: string;
             /** Agents */
             readonly agents: readonly components["schemas"]["AgentFitOut"][];
             /** Not Allowed */
@@ -44039,7 +44039,7 @@ export interface operations {
             };
         };
     };
-    readonly get_site_offer: {
+    readonly get_site_agents: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

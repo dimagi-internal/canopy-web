@@ -1,6 +1,6 @@
 """What a connected site asks of canopy's agents (its signed `site.json`), and
 whether each agent canopy allows there meets it (spec connect-labs
-`2026-10-22-canopy-site-offer-design` §2).
+`2026-10-22-canopy-site-agents-api-design` §2).
 
 The site publishes `site.json` beside its `jwks.json` (the SDK's host route), so
 canopy needs no new field to find it: `canopy_sdk.site.site_document_url`. It
@@ -13,8 +13,8 @@ is shown marked stale for up to `STALE_SECONDS`.
 It is verified with the site's registered keys (`assertions.keys_for_app`, the
 same that verify its visitor assertions), and `iss` must be the site's name.
 
-`fit` compares it with canopy's own offer for the site (`site_offer.
-offer_content`), so the Connected sites page and the offer the site reads can
+`fit` compares it with canopy's own site agents response for the site (`site_agents.
+site_agents_content`), so the Connected sites page and the response the site reads can
 never disagree about an agent.
 """
 from __future__ import annotations
@@ -107,7 +107,7 @@ def fit(document: wire.SiteNeeds, content: dict) -> tuple[list[dict], list[str]]
             why.append(f"not PHI-safe in canopy: no capability of {agent['name']} for this site "
                        "says `data: phi`")
         if flag and not agent["runners"]["ready_with"].get(flag):
-            # The offer's own sentence when it has one: it names where to fix it.
+            # The site agents API's own sentence when it has one: it names where to fix it.
             why.append(next((p for p in agent["problems"]
                              if p.startswith(f"no ready runner with {flag}")),
                             f"no ready runner with {flag}"))

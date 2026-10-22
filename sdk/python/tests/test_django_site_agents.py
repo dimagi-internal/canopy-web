@@ -1,4 +1,4 @@
-"""The Django host's half of the site offer: ``offer.current()`` (cached, stale
+"""The Django host's half of the site agents API: ``site_agents.current()`` (cached, stale
 for a day, then None) and ``canopy/site.json``."""
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ import pytest
 from django.core.cache import cache
 from django.test import Client, override_settings
 
-from canopy_sdk import offer as offer_mod
+from canopy_sdk import site_agents as wire
 from canopy_sdk import site as site_mod
-from canopy_sdk.django import offer
+from canopy_sdk.django import site_agents
 from canopy_sdk.fetch import FetchError
 from canopy_sdk.keys import private_pem
 
 from .helpers import CANOPY, CLIENT_ID, World
-from .test_offer import CONTENT
+from .test_site_agents import CONTENT
 
 pytestmark = pytest.mark.django_db
 
@@ -42,8 +42,8 @@ def host(world):
 
 
 class Canopy:
-    """Stands in for canopy's offer endpoint: verifies the signed request, then
-    answers with a fresh signed offer, or fails."""
+    """Stands in for canopy's site agents endpoint: verifies the signed request, then
+    answers with a fresh signed response, or fails."""
 
     def __init__(self, world):
         self.world = world
@@ -56,62 +56,62 @@ class Canopy:
         if self.down:
             raise FetchError(f"{url} could not be fetched (ConnectionRefusedError)")
         bearer = headers["Authorization"].removeprefix("Bearer ")
-        claims = offer_mod.verify_request(bearer, [self.world.host_key.public_key()],
-                                          audiences=[offer_mod.offer_url(CANOPY)])
+        claims = wire.verify_request(bearer, [self.world.host_key.public_key()],
+                                          audiences=[wire.endpoint_url(CANOPY)])
         assert claims["canopy_agent"] == "labsdata"
-        return offer_mod.sign_offer(self.world.client.client_key, CLIENT_ID, "connect-labs", self.content)
+        return wire.sign_site_agents(self.world.client.client_key, CLIENT_ID, "connect-labs", self.content)
 
 
 def test_current_fetches_once_then_serves_the_cache(host):
     canopy = Canopy(host)
-    first = offer.current(now=T0, get=canopy)
-    again = offer.current(now=T0 + 100, get=canopy)
+    first = site_agents.current(now=T0, get=canopy)
+    again = site_agents.current(now=T0 + 100, get=canopy)
     assert canopy.calls == 1
     assert first.agent("labsdata").ready and not first.stale
     assert again.version == first.version and again.age == pytest.approx(100)
 
 
-def test_a_failed_refresh_serves_the_last_good_offer_marked_stale(host):
+def test_a_failed_refresh_serves_the_last_good_response_marked_stale(host):
     canopy = Canopy(host)
-    good = offer.current(now=T0, get=canopy)
-    cache.delete(offer._keys(offer.conf.get_host_config())[0])   # the fresh copy expires
+    good = site_agents.current(now=T0, get=canopy)
+    cache.delete(site_agents._keys(site_agents.conf.get_host_config())[0])   # the fresh copy expires
     canopy.down = True
-    stale = offer.current(now=T0 + 3600, get=canopy)
+    stale = site_agents.current(now=T0 + 3600, get=canopy)
     assert stale.stale and stale.version == good.version
     assert stale.age == pytest.approx(3600)
     # Not retried within RETRY_SECONDS: an outage is not a request per page view.
-    offer.current(now=T0 + 3610, get=canopy)
+    site_agents.current(now=T0 + 3610, get=canopy)
     assert canopy.calls == 2
 
 
-def test_after_a_day_of_failures_it_offers_nothing(host):
+def test_after_a_day_of_failures_it_shows_nothing(host):
     canopy = Canopy(host)
-    offer.current(now=T0, get=canopy)
-    fresh, _, failed = offer._keys(offer.conf.get_host_config())
+    site_agents.current(now=T0, get=canopy)
+    fresh, _, failed = site_agents._keys(site_agents.conf.get_host_config())
     cache.delete(fresh)
     canopy.down = True
-    assert offer.current(now=T0 + offer.STALE_SECONDS + 1, get=canopy) is None
+    assert site_agents.current(now=T0 + site_agents.STALE_SECONDS + 1, get=canopy) is None
 
 
-def test_no_offer_ever_fetched_is_none(host):
+def test_nothing_ever_fetched_is_none(host):
     canopy = Canopy(host)
     canopy.down = True
-    assert offer.current(now=T0, get=canopy) is None
+    assert site_agents.current(now=T0, get=canopy) is None
 
 
-def test_a_forged_offer_is_never_cached(host):
+def test_a_forged_response_is_never_cached(host):
     from canopy_sdk.keys import generate_private_key
 
     def forged(url, **kw):
-        return offer_mod.sign_offer(generate_private_key("EdDSA"), CLIENT_ID, "connect-labs", CONTENT)
+        return wire.sign_site_agents(generate_private_key("EdDSA"), CLIENT_ID, "connect-labs", CONTENT)
 
-    assert offer.current(now=T0, get=forged) is None
+    assert site_agents.current(now=T0, get=forged) is None
 
 
-def test_unconfigured_host_offers_nothing():
+def test_unconfigured_host_shows_nothing():
     cache.clear()
     with override_settings(CANOPY_HOST={}):
-        assert offer.current(get=lambda *a, **k: pytest.fail("must not fetch")) is None
+        assert site_agents.current(get=lambda *a, **k: pytest.fail("must not fetch")) is None
 
 
 def test_site_json_is_signed_and_carries_the_needs(world):

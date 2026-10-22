@@ -1,5 +1,5 @@
 """The site's needs: what a connected site asks of canopy's agents, signed
-(spec ``2026-10-22-canopy-site-offer-design`` §2) — the other half of the offer.
+(spec ``2026-10-22-canopy-site-agents-api-design`` §2) — the other half of the site agents API.
 
 The site publishes ``site.json`` beside its ``jwks.json`` (the Django host
 serves it at ``canopy/site.json``): its pages and the scopes each grants, what
@@ -15,7 +15,7 @@ It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
                 "scopes": ["workflow:read", "workflow:act", "data:read"]}],
      "real_data": {"requires": {"phi_safe": true, "runner_flag": "zdr"}},
      "uses": {"agents": ["ace", "labsdata"], "real_data_agents": ["labsdata"],
-              "version": "<offer version chosen against>"}}
+              "version": "<site agents version chosen against>"}}
 
 Both halves are here: ``site_document`` / ``sign_site_document`` the site's,
 ``verify_site_document`` canopy's.
@@ -146,7 +146,7 @@ class SiteNeeds:
     real_data_requires: Mapping = field(default_factory=dict)
     uses_agents: tuple[str, ...] = ()
     uses_real_data_agents: tuple[str, ...] = ()
-    #: The offer version the site chose its settings against.
+    #: The site agents version the site chose its settings against.
     uses_version: str = ""
     claims: dict = field(repr=False, default_factory=dict)
 

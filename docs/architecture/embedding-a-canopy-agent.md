@@ -727,17 +727,17 @@ A token without `canopy_agent` behaves exactly as before: any agent the site
 offers. Hosts not on the SDK add the claim to their own assertion — see
 `sdk/python/README.md` § Host grant contract v1.
 
-## 5d. Choosing your agents from canopy's offer
+## 5d. Choosing your agents from canopy's site agents API
 
 Don't type canopy's facts into your settings. Ask for them (`dimagi-canopy` ≥ 0.14):
 
 ```python
-from canopy_sdk.django import offer
+from canopy_sdk.django import site_agents
 
-current = offer.current()     # None = offer nothing
+current = site_agents.current()     # None = show no agent
 ```
 
-`GET /api/sites/offer`, signed with your own key, answers with a JWS signed by
+`GET /api/sites/agents`, signed with your own key, answers with a JWS signed by
 canopy's client key (the `Canopy-Execution` key): exactly the agents this
 workspace allows on your site, each with its capabilities for your site
 (`phi_safe` and who set it), which runner flags its runners carry and whether one
@@ -751,7 +751,7 @@ Tell canopy what you need back by setting `CANOPY_HOST["SITE_NEEDS"]`: the SDK
 serves it, signed, at `canopy/site.json` beside `canopy/jwks.json`, and canopy's
 **Connected sites** page shows your pages and scopes and, per agent, whether it
 meets your `real_data.requires` and why not. Details: `sdk/python/README.md` §
-The site offer and the site's needs.
+The site agents API and the site's needs.
 
 ---
 
