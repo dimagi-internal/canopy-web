@@ -166,7 +166,26 @@ def test_label_for_each_kind_of_slot(fleet):
     RunnerLogin.objects.create(runner=runner, key=RunnerLogin.DEFAULT, kind=RunnerLogin.LOGIN,
                                account="jj@dimagi.com", position=6)
     assert src.label_for(runner, "box-login") == "jj@dimagi.com"
+    RunnerLogin.objects.create(runner=runner, key="ee55ff66", kind=RunnerLogin.LOGIN, position=7)
+    assert src.label_for(runner, "box-login:ee55ff66") == "an unnamed login"
+    assert src.label_for(runner, "api-key") == "API key"
+    key = add_runner_credential(runner, kind=RunnerLogin.API_KEY, value="sk-ant-api", name="metered")
+    assert src.label_for(runner, "api-key") == "metered"
+    assert src.label_for(runner, f"api-key:{key.key}") == "metered"
+    bare_tok = add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="sk-3")
+    bare_key = add_runner_credential(runner, kind=RunnerLogin.API_KEY, value="sk-ant-api-2")
+    assert src.label_for(runner, f"token:{bare_tok.key}") == "an unnamed token"
+    assert src.label_for(runner, f"api-key:{bare_key.key}") == "an unnamed API key"
     assert src.label_for(runner, "mystery") == "mystery"
+
+
+def test_a_box_login_is_titled_a_login(fleet):
+    runner = fleet["runner"]
+    RunnerLogin.objects.create(runner=runner, key="ab12cd34", kind=RunnerLogin.LOGIN,
+                               account="ace@dimagi-ai.com", position=5)
+    _set_checks(runner, _check("box-login:ab12cd34"))
+    (r,) = src.reconcile(timezone.now())
+    assert r.title == 'The "ace@dimagi-ai.com" login on cloud-ec2-2 is signed out'
 
 
 def test_an_unnamed_first_token_is_the_primary_token(fleet):
@@ -218,7 +237,8 @@ ROLE = "arn:aws:iam::123456789012:role/canopy-cloud-runner-ec2-2-RunnerRole"
 
 
 def test_auth_required_event_no_longer_mails(fleet, monkeypatch):
-    """The alert's own blocking notice replaces the once-a-day mail."""
+    """The runner reports a signed-out probe check, so the alert covers it: its
+    own blocking notice replaces the once-a-day mail."""
     monkeypatch.setattr(push_services, "send_to_user", lambda *a, **k: 1)
     key = RunnerDeviceKey.objects.create(
         runner=fleet["runner"], kind=RunnerDeviceKey.AWS_IAM, role_arn=ROLE,

@@ -735,14 +735,16 @@ or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
 
 **The alerts reach a person.** The box posts `claude_auth_required`,
 `claude_usage_exhausted` and `claude_api_key_fallback` to `POST /api/events/` with
-its runner token; with no workspace pinned they file in `Runner.workspace`. The
-last two also mail and Web-Push the runner's approvers (owner + runner admins)
+its runner token; with no workspace pinned they file in `Runner.workspace`, and
+each also mails and Web-Pushes the runner's approvers (owner + runner admins)
 once per (runner, alert) per UTC day, linking to the runner on `/supervisor`
-(`apps/harness/credential_notify.py`). A signed-out credential is the
-`runner_credential` alert instead (`apps/harness/alerts_runner_credential.py`):
-raised from a failing `claude.probe.<slot>` check, titled with the token's name or
-login's account (never the slot), notified once to the owner and runner admins,
-and resolved when the probe passes. Tests:
+(`apps/harness/credential_notify.py`). The exception: a signed-out credential on
+a box whose health reports a signed-out `claude.probe.<slot>` check is the
+`runner_credential` alert instead (`apps/harness/alerts_runner_credential.py`) —
+titled with the token's name or the login's account (never the slot), notified
+once to the owner and runner admins, resolved when the probe passes — and its
+`claude_auth_required` is not also mailed. A laptop (no probe checks) or an
+inconclusive probe is still mailed. Tests:
 `runner/ec2/tests/test_credential_probe.py`, `runner/ec2/tests/test_auth_required.py`,
 `tests/test_credential_notify.py`, `tests/test_alerts_runner_credential.py`,
 `tests/test_realtime_runner_consumer.py`.
@@ -792,7 +794,7 @@ message with the CLI's "Not logged in". The hook listener now reads the transcri
 tail on `Stop`/`Notification` (`canopy_transcript.signed_out`, the API-error record
 only — never agent text): on that record the box writes the marker with
 `canopy_transcript.SIGNED_OUT_NOTE`, raises `claude_auth_required` once
-(`hooks.report_signed_out`; recorded, no longer mailed — see below), and skips its claim; on
+(`hooks.report_signed_out`, mailed by `credential_notify`), and skips its claim; on
 the next real reply from any session on the box it clears it (`note_signed_in`). The
 server reads the note as `Runner.signed_out`: `claim_next_turn` refuses the box
 (above the pin), `turn_reach` returns `signed_out` for a turn only signed-out boxes

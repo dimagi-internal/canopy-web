@@ -5,8 +5,9 @@ cloud-ec2-fork, 2026-10-18: the box posted `claude_auth_required` to the flat
 workspace to file it in and it 422'd. Recorded or not, nothing but the admin
 event log reads `runner.credential` rows, so nobody would have been told.
 Now an alert posted with a runner token files in the runner's workspace, and
-the usage-cap and API-key-fallback alerts mail and push the runner's approvers
-once a day (a signed-out credential is the `runner_credential` alert instead).
+the credential alerts mail and push the runner's approvers once a day —
+`claude_auth_required` only where the runner's signed-out probe check has not
+already raised the `runner_credential` alert.
 """
 from __future__ import annotations
 
@@ -119,9 +120,27 @@ def test_the_api_key_fallback_mails_too(box):
     assert len(mail.outbox) == 2
 
 
-def test_auth_required_is_recorded_but_not_mailed(box):
-    """A signed-out credential is the `runner_credential` alert now; its own
+def test_auth_required_mails_a_runner_with_no_probe_checks(box):
+    """A laptop posts no `claude.probe.*` checks: the alert cannot cover it, so
+    the mail still does."""
+    _post(box, _alert(kind="claude_auth_required", key="auth-required:cloud-ec2-fork"))
+    assert sorted(m.to[0] for m in mail.outbox) == ["ad@dimagi.com", "jj@dimagi.com"]
+
+
+def test_auth_required_mails_when_the_probe_was_inconclusive(box):
+    box["runner"].health = {"checks": [{"name": "claude.probe.subscription-1", "status": "warn",
+                                        "detail": "could not check: no answer within 60s"}]}
+    box["runner"].save(update_fields=["health"])
+    _post(box, _alert(kind="claude_auth_required", key="auth-required:cloud-ec2-fork"))
+    assert len(mail.outbox) == 2
+
+
+def test_auth_required_is_not_mailed_where_the_alert_covers_it(box):
+    """A signed-out probe check is the `runner_credential` alert; its own
     blocking notice replaces this mail (tests/test_alerts_runner_credential.py)."""
+    box["runner"].health = {"checks": [{"name": "claude.probe.subscription-1", "status": "fail",
+                                        "detail": "not signed in — someone has to sign it in again"}]}
+    box["runner"].save(update_fields=["health"])
     res = _post(box, _alert(kind="claude_auth_required", key="auth-required:cloud-ec2-fork"))
     assert res.status_code == 200
     assert Event.objects.get().kind == "claude_auth_required"

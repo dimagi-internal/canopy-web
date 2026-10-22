@@ -72,7 +72,8 @@ def label_for(runner, slot: str) -> str:
     Slots are the box's cascade labels: `subscription-1`/`subscription-2` (the
     first two tokens on the list, from an older bundle), `token:<key>` /
     `api-key:<key>` (a list entry), `box-login[:<key>]` (a login held on the
-    box). The tokens are found the way the status view finds them
+    box), `api-key` (an older bundle's API key). A known kind with no name gets
+    a friendly default, never the slot string. The tokens are found the way the status view finds them
     (`runners._first_values`); a login by its key, named by its account.
     """
     if slot in ("subscription-1", "subscription-2"):
@@ -80,15 +81,29 @@ def label_for(runner, slot: str) -> str:
         entry = _first_values(runner)["claude_token" if first else "claude_token_secondary"]
         name = (entry.name if entry is not None else "").strip()
         return name or ("primary token" if first else "secondary token")
-    if slot == _BOX_LOGIN or slot.startswith(_BOX_LOGIN + ":"):
+    if is_login(slot):
         key = slot.partition(":")[2] or RunnerLogin.DEFAULT
         login = RunnerLogin.objects.filter(runner=runner, kind=RunnerLogin.LOGIN, key=key).first()
-        return (login.account if login is not None else "").strip() or slot
-    for prefix, kind in (("token:", RunnerLogin.TOKEN), ("api-key:", RunnerLogin.API_KEY)):
+        return (login.account if login is not None else "").strip() or "an unnamed login"
+    if slot == "api-key":  # an older bundle's one API key: the first on the list
+        entry = _first_values(runner)["claude_api_key"]
+        return (entry.name if entry is not None else "").strip() or "API key"
+    for prefix, kind, unnamed in (("token:", RunnerLogin.TOKEN, "an unnamed token"),
+                                  ("api-key:", RunnerLogin.API_KEY, "an unnamed API key")):
         if slot.startswith(prefix):
             entry = RunnerLogin.objects.filter(runner=runner, kind=kind, key=slot[len(prefix):]).first()
-            return (entry.name if entry is not None else "").strip() or slot
+            return (entry.name if entry is not None else "").strip() or unnamed
     return slot
+
+
+def is_login(slot: str) -> bool:
+    return slot == _BOX_LOGIN or slot.startswith(_BOX_LOGIN + ":")
+
+
+def title_for(runner, slot: str) -> str:
+    """`The "<label>" login|token on <runner> is signed out` — never the slot."""
+    noun = "login" if is_login(slot) else "token"
+    return f'The "{label_for(runner, slot)}" {noun} on {runner.name} is signed out'
 
 
 def _routed_slugs(runner) -> list[str]:
@@ -112,7 +127,7 @@ def reconcile(now) -> list[Raise]:
             out.append(Raise(
                 subject_key=f"runner:{runner.pk}:cred:{slot}",
                 workspace=runner.workspace_id,
-                title=f'The "{label_for(runner, slot)}" token on {runner.name} is signed out',
+                title=title_for(runner, slot),
                 url=runner_path(runner),
                 scopes=scopes,
                 body=detail,
