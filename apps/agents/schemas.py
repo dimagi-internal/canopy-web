@@ -104,8 +104,9 @@ class AgentScaffoldIn(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     mandate: str = Field(min_length=1, max_length=500)
     mailbox: str = Field(default="", max_length=254)
-    # The agent's Google account, when it differs from `mailbox`. Not stamped into the
-    # repo: it is the instance's, set by the `upsert_agent` that follows.
+    # The agent's Google account, when it differs from `mailbox`. Stamped into the repo's
+    # config/agent.json `google_account` (as `canopy create-agent --google-account` does) and
+    # set on the instance by the `upsert_agent` that follows.
     google_account: str = Field(default="", max_length=254)
     stakeholders: str = Field(default="", max_length=300)
     # `owner/name`, or its github.com URL. The person creates it, empty; canopy only pushes.
