@@ -803,13 +803,28 @@ export async function getAgentInterface(slug: string): Promise<AgentInterfaceOut
 }
 
 // Save the interface as YAML (kept verbatim, comments and all). Owner/admin only;
-// a 422 carries the parser's reason, which the editor shows as-is.
-export async function saveAgentInterface(slug: string, source: string): Promise<AgentInterfaceOut> {
+// a 422 carries the parser's reason, which the editor shows as-is. YAML with a
+// `data: phi` capability is a PHI-safe declaration: it needs `declareSha`, the
+// agent repo commit it covers, and a passkey step-up (the API client prompts).
+export async function saveAgentInterface(
+  slug: string,
+  source: string,
+  declareSha?: string,
+): Promise<AgentInterfaceOut> {
   const res = await apiV2.PUT('/api/agents/{slug}/interface', {
     params: { path: { slug } },
-    body: { source },
+    body: declareSha ? { source, declare_sha: declareSha } : { source },
   })
   return unwrap(res, 'saveAgentInterface') as unknown as AgentInterfaceOut
+}
+
+export type AgentRepoHeadOut = Schemas['AgentRepoHeadOut']
+
+// The agent repo's current commit, offered as the one a declaration covers;
+// `sha` is "" (with `detail`) when canopy cannot read it.
+export async function getAgentRepoHead(slug: string): Promise<AgentRepoHeadOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/interface/repo-head', { params: { path: { slug } } })
+  return unwrap(res, 'getAgentRepoHead') as unknown as AgentRepoHeadOut
 }
 
 export async function unpublishAgentInterface(slug: string): Promise<AgentInterfaceOut> {
