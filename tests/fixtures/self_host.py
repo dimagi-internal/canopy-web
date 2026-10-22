@@ -18,7 +18,7 @@ from apps.agents.interface import parse
 from apps.agents.models import Agent, AgentTask
 from apps.mcp import delegation
 from apps.mcp.server import mcp
-from apps.tokens import host_gateway, self_host
+from apps.host_grants import host_gateway, self_host
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 

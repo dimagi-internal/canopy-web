@@ -105,7 +105,7 @@ application = Starlette(
     middleware=[Middleware(_McpWithoutSlash)],
     routes=[
         # The DPoP gate: a host-grant token (canopy-web as a host of its own
-        # MCP, apps/tokens/self_host.py) arrives as `Authorization: DPoP`; the
+        # MCP, apps/host_grants/self_host.py) arrives as `Authorization: DPoP`; the
         # gate verifies the proof and hands FastMCP a plain bearer. Every other
         # request passes through untouched.
         # A project's own server, ahead of the main one so its prefix wins.

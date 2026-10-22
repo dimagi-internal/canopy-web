@@ -78,7 +78,7 @@ def audience() -> str:
     explicit = (getattr(settings, "EMBED_ASSERTION_AUDIENCE", "") or "").strip()
     # The identity base, not the visited address: a site signs for the audience
     # it was configured with, and that does not move when canopy's address does.
-    from .client_identity import public_base
+    from apps.host_grants.client_identity import public_base
 
     return explicit or public_base()
 

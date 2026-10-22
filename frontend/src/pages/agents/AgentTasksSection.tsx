@@ -120,7 +120,7 @@ export function AgentTasksSection(): JSX.Element {
   const actions = fresh?.actions ?? []
 
   // `list_fleet_tasks`, not the per-agent `list_tasks`: this page's grant
-  // (`agent.tasks` → `tasks:read`, apps/tokens/self_host.py) reaches only that
+  // (`agent.tasks` → `tasks:read`, apps/host_grants/self_host.py) reaches only that
   // tool, and its `agent` filter narrows it to exactly these rows.
   usePageState(
     () =>

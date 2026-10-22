@@ -1036,7 +1036,7 @@ any host uses (`frontend/src/widget/CanopyWidget.tsx`: `mode` at init,
 §8a applies to canopy too: on canopy's own pages the agent can call **canopy's
 own MCP (`/api/mcp/`) as the visitor**, through the same host grant contract a
 connected site implements — not a shortcut around it. canopy-web plays the host
-with the SDK's own pieces (`apps/tokens/self_host.py`: `HostConfig`,
+with the SDK's own pieces (`apps/host_grants/self_host.py`: `HostConfig`,
 `GrantHandler`, `ResourceVerifier`, `DPoPGate`, the `canopy_sdk.django` stores):
 
 | Page (route) | Page key | Scope | Tools the grant unlocks |

@@ -108,8 +108,8 @@ def validate_url(url: str) -> str:
 def _fetch(url: str) -> list[dict]:
     # canopy-web's OWN host key (the `canopy-web` site's JWKS) is answered by
     # the same function that serves it publicly, rather than a round trip out
-    # through the load balancer and back (apps/tokens/self_host.py).
-    from . import self_host
+    # through the load balancer and back (apps/host_grants/self_host.py).
+    from apps.host_grants import self_host
 
     own = self_host.loopback_get(url)
     if own is not None:

@@ -450,7 +450,7 @@ runs manual — a forged `From:` may pick a box, never drive an unreviewed agent
   verify a flag — it records who vouched. Nothing a runner reports can set one.
 - `apps/harness/runner_requirements.py` is the one reader. The claim, placement,
   the unclaimable report, turn status (`requires`) and the `site_call` gateway
-  (`apps/tokens/host_gateway.py`) all refuse a runner missing a flag — above pins,
+  (`apps/host_grants/host_gateway.py`) all refuse a runner missing a flag — above pins,
   and with no fallback: a requirement is a floor applied to the composed list after
   strict truncation, so a turn nothing can serve says so and waits. Guarded end to
   end by `tests/test_sdk_round_trip.py` and `tests/test_runner_requirements*.py`.

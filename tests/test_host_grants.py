@@ -29,7 +29,8 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.common.encryption import decrypt_secret
 from apps.events.models import Event
-from apps.tokens import assertions, client_identity, host_grants, outbound
+from apps.host_grants import client_identity, host_grants, outbound
+from apps.tokens import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -350,7 +351,7 @@ def test_outbound_never_follows_a_redirect():
     resp = mock.Mock(status_code=302, headers={"Location": "https://10.0.0.5/"})
     with mock.patch("apps.tokens.jwks.socket.getaddrinfo",
                     return_value=[(2, 1, 6, "", ("93.184.216.34", 443))]), \
-            mock.patch("apps.tokens.outbound.requests.post", return_value=resp) as post:
+            mock.patch("apps.host_grants.outbound.requests.post", return_value=resp) as post:
         with pytest.raises(outbound.OutboundError, match="redirected"):
             outbound.post_form("https://host.test/o/token/", {}, headers={})
     assert post.call_args.kwargs["allow_redirects"] is False

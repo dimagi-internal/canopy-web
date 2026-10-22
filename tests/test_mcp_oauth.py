@@ -119,7 +119,7 @@ def test_the_authorization_server_offers_a_browser_login():
 
 def test_the_host_grant_is_still_advertised_beside_it(settings):
     """canopy's own jwt-bearer grant (embedded pages) shares the issuer."""
-    from apps.tokens import self_host
+    from apps.host_grants import self_host
 
     if not self_host.configured():
         pytest.skip("host keys are not configured in this settings module")

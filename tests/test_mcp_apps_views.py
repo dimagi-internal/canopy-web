@@ -28,7 +28,7 @@ from apps.harness import caller_context
 from apps.harness.models import Turn
 from apps.mcp.models import MCPAuditLog
 from apps.mcp_apps_host import mcp_apps, mcp_apps_views
-from apps.tokens import client_identity, host_gateway
+from apps.host_grants import client_identity, host_gateway
 from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken, HostGrant, PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.mcp_apps_host import VIEW_HTML, VIEW_URI, FakeLabs

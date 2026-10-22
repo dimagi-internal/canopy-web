@@ -50,7 +50,8 @@ from apps.harness import caller_tokens
 from apps.harness.models import Turn
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.server import mcp
-from apps.tokens import assertions, client_identity, host_gateway, outbound
+from apps.host_grants import client_identity, host_gateway, outbound
+from apps.tokens import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 

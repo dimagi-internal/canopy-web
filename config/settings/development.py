@@ -6,7 +6,7 @@ from .base import *  # noqa: F401, F403
 DEBUG = True
 
 # No real OAuth client keys here: generate throwaway ones per process
-# (apps/tokens/client_identity.py). A deployment never does this.
+# (apps/host_grants/client_identity.py). A deployment never does this.
 CANOPY_OAUTH_EPHEMERAL_KEYS = True
 
 # The Vite dev server (port 3000) proxies /api here, so browser POSTs carry an

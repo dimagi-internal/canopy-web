@@ -1,6 +1,6 @@
 """canopy-web as a HOST of its own MCP, end to end, in process.
 
-`apps/tokens/self_host.py`: agents on canopy's own pages call canopy's own
+`apps/host_grants/self_host.py`: agents on canopy's own pages call canopy's own
 `/api/mcp/` AS THE VISITOR, through the same host grant contract a connected
 site implements. Every step runs the real code on both sides:
 
@@ -40,7 +40,7 @@ from apps.harness.models import Turn
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
-from apps.tokens import client_identity, host_gateway, self_host
+from apps.host_grants import client_identity, host_gateway, self_host
 from apps.tokens.models import HostGrant
 from tests.fixtures.self_host import BASE, _ctx, _in_lifespan, _mint
 

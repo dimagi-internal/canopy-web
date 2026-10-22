@@ -90,6 +90,7 @@ INSTALLED_APPS = [
     "apps.github_connect",
     "apps.oauth_server",
     "apps.mcp_apps_host",
+    "apps.host_grants",
     "apps.reviews",
     "apps.runs",
     "apps.shareouts",
@@ -122,7 +123,7 @@ INSTALLED_APPS = [
     "apps.passkeys",
     # The canopy SDK's Django half (app label `canopy_host`): the single-use jti
     # table and the delegated-token table canopy-web uses as a HOST of its own
-    # MCP (apps/tokens/self_host.py). Its own tables, never `tokens`' —
+    # MCP (apps/host_grants/self_host.py). Its own tables, never `tokens`' —
     # `DelegatedToken` there is the embed widget's, a different credential.
     "canopy_sdk.django",
 ]
@@ -611,7 +612,7 @@ VAULT_KMS_REGION = env("VAULT_KMS_REGION", default=env("AWS_REGION", default="us
 #   * the DPoP key sender-constrains the access tokens a host issues to canopy
 #     (RFC 9449). It is never published — a host learns it from each proof.
 # Neither can assert a USER: the host that signed the visitor in issues the
-# grant, canopy only redeems it (apps/tokens/client_identity.py).
+# grant, canopy only redeems it (apps/host_grants/client_identity.py).
 # "PLACEHOLDER" (the CFN birth value) reads as unset. Unset in a deployment
 # means canopy is simply not a client of anyone; with DEBUG (dev, tests) an
 # ephemeral key is generated per process instead.
@@ -621,7 +622,7 @@ CANOPY_OAUTH_DPOP_KEY = env("CANOPY_OAUTH_DPOP_KEY", default="").replace("\\n", 
 # in the JWKS until every host's cache (<= 1h) has moved on.
 CANOPY_OAUTH_CLIENT_RETIRED_PUBLIC_KEYS = env("CANOPY_OAUTH_CLIENT_RETIRED_PUBLIC_KEYS", default="")
 CANOPY_OAUTH_EPHEMERAL_KEYS = env.bool("CANOPY_OAUTH_EPHEMERAL_KEYS", default=DEBUG)
-# canopy-web as a HOST of its own MCP (apps/tokens/self_host.py): agents on
+# canopy-web as a HOST of its own MCP (apps/host_grants/self_host.py): agents on
 # canopy's own pages call canopy's own /api/mcp/ AS THE VISITOR, through the same
 # host grant contract a connected site implements. This key signs the ID-JAGs
 # canopy issues for its own pages; its public half is served at
@@ -631,7 +632,7 @@ CANOPY_OAUTH_EPHEMERAL_KEYS = env.bool("CANOPY_OAUTH_EPHEMERAL_KEYS", default=DE
 # CANOPY_OAUTH_EPHEMERAL_KEYS (dev, tests) one is generated per process.
 CANOPY_HOST_SIGNING_KEY = env("CANOPY_HOST_SIGNING_KEY", default="").replace("\\n", "\n")
 # The dedicated user canopy's LIVE PROBE acts as at canopy's own MCP (the probe
-# of the `canopy-web` Connected site; apps/tokens/live_probe.py). Non-secret. Empty
+# of the `canopy-web` Connected site; apps/host_grants/live_probe.py). Non-secret. Empty
 # = the probe endpoint 404s. The user is created by tokens/0026_probe_user: a
 # non-admin with no password, no email and no membership, so the probe's
 # `list_fleet_tasks` runs as a real account and reads nothing.

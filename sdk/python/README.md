@@ -236,7 +236,7 @@ Provide a `JtiStore` and `TokenStore` shared across workers that **fail closed**
 issuer, resource, client id and every URL are configuration. canopy-web mounts
 `HostConfig`, `GrantHandler`, `ResourceVerifier`, `DPoPGate` and the
 `canopy_sdk.django` stores in-process so agents on canopy's own pages call its
-OWN MCP (`/api/mcp/`) as the visitor — see canopy-web `apps/tokens/self_host.py`
+OWN MCP (`/api/mcp/`) as the visitor — see canopy-web `apps/host_grants/self_host.py`
 and `docs/architecture/embedding-a-canopy-agent.md`.
 
 ## On-demand capabilities

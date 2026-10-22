@@ -65,7 +65,7 @@ label `canopy_host`), `.conformance`.
   `site_call`, so the two halves cannot drift.
 - `.host` assumes nothing about host ≠ canopy (issuer, resource and client id
   are configuration); canopy-web mounts it to host its own MCP
-  (`apps/tokens/self_host.py`, `apps/mcp/delegation.py`).
+  (`apps/host_grants/self_host.py`, `apps/mcp/delegation.py`).
 - **The import name `canopy_sdk` is fixed; the distribution name may change**
   (`canopy-sdk` on PyPI is an unrelated project). A rename must only ever touch
   a host's requirements line.
@@ -183,7 +183,7 @@ needs an ID-JAG signed by the **host's** key. The live probe walks the rest.
   low-privilege principal and one read-only scope, for canopy's client only
   (`private_key_jwt` + DPoP; any other principal, tool or scope is refused;
   marked `canopy_probe: true`).
-- `apps/tokens/live_probe.py` runs the chain through the real code —
+- `apps/host_grants/live_probe.py` runs the chain through the real code —
   `host_grants.redeem`, then `host_gateway.context_for_grant` +
   `host_gateway.probe_call` (the client `site_call` uses) — and asserts: the
   probe tool succeeds; an out-of-scope tool is refused **by the host** (canopy's

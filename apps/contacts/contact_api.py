@@ -323,7 +323,7 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
     line with the code — never the token), because "the agent could not reach
     the site as me" otherwise has nowhere to be seen.
     """
-    from apps.tokens import host_grants
+    from apps.host_grants import host_grants
 
     if not (id_jag or "").strip():
         return False

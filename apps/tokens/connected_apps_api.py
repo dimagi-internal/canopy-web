@@ -144,7 +144,7 @@ def _iso(value) -> str | None:
 
 
 def _probe_out(app: AppCredential) -> LiveProbeOut:
-    from . import live_probe
+    from apps.host_grants import live_probe
 
     return LiveProbeOut(at=_iso(app.last_probe_at), ok=app.last_probe_ok,
                         step=app.last_probe_step or "",
@@ -153,7 +153,7 @@ def _probe_out(app: AppCredential) -> LiveProbeOut:
 
 
 def _traffic_out(app: AppCredential) -> TrafficHealthOut:
-    from . import live_probe
+    from apps.host_grants import live_probe
 
     health = live_probe.traffic_health(app)
     return TrafficHealthOut(last_redeemed_at=_iso(health.last_redeemed_at),
@@ -342,7 +342,8 @@ def test_connected_app(request: HttpRequest, slug: str, app_id: int) -> Connecti
     # cannot redeem a real grant (that needs an ID-JAG signed by the host's
     # key); the live probe can, because the HOST signs one for its own probe
     # principal. See apps/tokens/connection_test.py and live_probe.py.
-    from . import connection_test, live_probe
+    from apps.host_grants import live_probe
+    from . import connection_test
 
     app = _app_or_404(request, slug, app_id)
     rows = connection_test.run(app)

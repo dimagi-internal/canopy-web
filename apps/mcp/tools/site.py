@@ -3,7 +3,7 @@
 Host grant contract v1, §3 (`docs/architecture/host-grant-contract.md`). An agent
 answering a visitor on a connected site does not call that site's MCP server
 directly; it calls these, and canopy-web attaches the visitor's host-issued,
-DPoP-bound token server-side (`apps/tokens/host_gateway.py`). So:
+DPoP-bound token server-side (`apps/host_grants/host_gateway.py`). So:
 
 * no runner ever holds a visitor's token or canopy's DPoP key;
 * the owner's per-site ceiling is enforced HERE, server-side, not only by the
@@ -35,7 +35,7 @@ def _current_turn_id() -> str:
 
 
 async def _context(tool: str):
-    from apps.tokens import host_gateway
+    from apps.host_grants import host_gateway
 
     turn_id = _current_turn_id()
     try:
@@ -60,7 +60,7 @@ async def site_tools() -> dict:
     Refused when the visitor has left the page (their access is short-lived and
     never renewed without them): tell them you need them back on the page.
     """
-    from apps.tokens import host_gateway
+    from apps.host_grants import host_gateway
 
     ctx = await _context("site_tools")
     try:
@@ -84,7 +84,7 @@ async def site_call(tool: str, arguments: dict | None = None) -> dict:
     `is_error` true means the site refused or failed, which usually means the
     visitor is not allowed that at the site — say so rather than retrying.
     """
-    from apps.tokens import host_gateway
+    from apps.host_grants import host_gateway
 
     ctx = await _context("site_call")
     # `app=<pk>` names the Connected site unambiguously (a site NAME is unique

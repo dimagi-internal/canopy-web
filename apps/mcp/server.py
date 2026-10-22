@@ -39,7 +39,7 @@ def _verifier() -> CanopyPATVerifier:
     `WWW-Authenticate: Bearer resource_metadata="…"` — how an MCP client finds
     where to sign in (RFC 9728 §5.1; `apps/oauth_server/mcp_oauth.py`). Without a
     public base URL (dev) the challenge is a bare `Bearer`, as before."""
-    from apps.tokens.client_identity import public_base
+    from apps.host_grants.client_identity import public_base
 
     base = public_base()
     return CanopyPATVerifier(resource_base_url=f"{base}/api/mcp" if base else None)

@@ -110,7 +110,7 @@ def check_id_jag(app, id_jag: str, *, subject: str) -> dict:
     registered (its pasted PEMs + published JWKS) is ours, resolved only once
     the header says this is an ID-JAG at all.
     """
-    from . import assertions
+    from apps.tokens import assertions
 
     def keys():
         try:
@@ -165,7 +165,7 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
     """
     from apps.common.encryption import encrypt_secret
 
-    from .models import HostGrant
+    from apps.tokens.models import HostGrant
 
     if not app.issues_host_grants():
         raise HostGrantError("not_configured",
@@ -216,7 +216,7 @@ def grant_for(app, *, agent, contact=None, user=None):
     `labsdata`, is not ACE's to spend however recently it was redeemed."""
     from django.db.models import Q
 
-    from .models import HostGrant
+    from apps.tokens.models import HostGrant
 
     if contact is not None:
         rows = HostGrant.objects.filter(app=app, contact=contact)

@@ -2,7 +2,7 @@
  * Which canopy page the widget is on, as the key canopy's server looks up when
  * it decides whether the agent may act as you there.
  *
- * canopy-web is a host of its own MCP (`apps/tokens/self_host.py`): on a
+ * canopy-web is a host of its own MCP (`apps/host_grants/self_host.py`): on a
  * registered page, the widget's token mint also gets canopy a short grant to
  * call canopy's own tools AS you — read-only, except /ide's close review, whose
  * one write is a button you press in the panel. The server owns the registry —

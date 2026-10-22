@@ -15,7 +15,7 @@ from apps.common.encryption import decrypt_secret
 from apps.mcp.server import mcp
 from apps.mcp.tools.close_review import VIEW_URI
 from apps.mcp_apps_host import mcp_apps
-from apps.tokens import host_gateway
+from apps.host_grants import host_gateway
 from apps.tokens.models import HostGrant
 from tests.fixtures.self_host import _ctx, _in_lifespan, _mint
 

@@ -134,7 +134,7 @@ def resolve(turn_id: str) -> SiteContext:
     """The site, grant and effective tools for this turn — or a refusal."""
     from apps.harness.models import Turn
 
-    from .models import AppCredential
+    from apps.tokens.models import AppCredential
 
     turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__agent",
                                         "initiator_contact", "initiator_user",
@@ -401,7 +401,7 @@ async def _model_may_call(ctx: SiteContext, name: str, client) -> bool:
     from asgiref.sync import sync_to_async
 
     from apps.mcp_apps_host import mcp_apps
-    from .models import AppCredential
+    from apps.tokens.models import AppCredential
 
     app = (await sync_to_async(AppCredential.objects.filter(pk=ctx.app_id).first,
                                thread_sensitive=True)()) if ctx.app_id else None
