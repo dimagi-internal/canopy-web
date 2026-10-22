@@ -403,6 +403,9 @@ PAT_DEFAULT_TTL_DAYS = env.int("PAT_DEFAULT_TTL_DAYS", default=180)
 # so an installed PWA would log you out every fortnight no matter how often you
 # opened it. Costs one session write per request; fine at this scale.
 SESSION_SAVE_EVERY_REQUEST = True
+# ...and a request that changed nothing writes only that expiry, never its stale
+# copy of the session over a key another request just set (apps/common/sessions.py).
+SESSION_ENGINE = "apps.common.sessions"
 
 # --- Walkthrough sharing (apps/walkthroughs) ---
 # When False, all /api/walkthroughs/ endpoints 404 (rollout flag).
