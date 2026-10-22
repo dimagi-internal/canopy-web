@@ -109,7 +109,7 @@ def may_delete_summary(row: ProjectParticipant, user) -> bool:
     if agent.is_admin(user):
         return True
     writer = row.summary_by_agent
-    return writer is not None and writer.user_id is not None and writer.user_id == getattr(user, "pk", None)
+    return writer is not None and writer.is_own_login(user)
 
 
 # --- the summary itself ----------------------------------------------------------

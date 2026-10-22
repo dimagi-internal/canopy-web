@@ -77,49 +77,17 @@ class ForkIn(StrictModel):
 
 
 # ---- helpers ----
-def _get_agent_or_404(request, slug: str):
-    """Resolve an agent, gated by workspace membership (non-member → 404, no
-    existence leak). Mirrors apps/agents' + apps/harness's gate (deliberately
-    duplicated, not imported — api modules must not depend on each other) so
-    runs are scoped via their agent.
-
-    Fails CLOSED on an unhomed agent (agent.workspace_id IS NULL): the old
-    `if agent.workspace_id and not wsvc.is_member(...)` short-circuited to
-    "allow" whenever workspace_id was falsy, handing ANY authenticated user
-    full read/write on a workspace-less agent's runs across every route in
-    this file (list/create runs, get run, list steps, gate, verdict, fork).
-    Flagged but left out of scope by the #421 security-review fix that closed
-    the same pattern in apps/agents/api.py and apps/harness/api.py — this is
-    that fourth site. Latent today (no unhomed agents in production), but a
-    fail-open tenancy gate is a bug regardless of whether anything currently
-    exploits it: an unhomed agent is simply unresolvable via this API until
-    it's backfilled a workspace, not universally visible."""
-    from apps.agents import services
-    from apps.workspaces import services as wsvc
-
-    agent = services.get_agent(slug)
-    if agent is None:
-        raise HttpError(404, f"agent '{slug}' not found")
-    ws = getattr(request, "workspace_slug", None)
-    if ws and agent.workspace_id != ws:
-        raise HttpError(404, f"agent '{slug}' not found")  # wrong tenant
-    if not agent.workspace_id or not wsvc.is_member(request.user, agent.workspace_id):
-        raise HttpError(404, f"agent '{slug}' not found")
-    return agent
-
-
 def _store_for(request, slug: str, *, write: bool = False) -> tuple[object, RunStore]:
     """`write=True` is the reshaping tier (`AGENT_WORK`), or the agent itself
     under its own login: creating a run, recording a gate decision or a verdict,
     forking. They were membership-only, so a viewer could approve a run's gate."""
-    agent = _get_agent_or_404(request, slug)
-    if write and not (agent.user_id is not None and agent.user_id == request.user.pk):
-        from ninja.errors import HttpError
+    from apps.agents.gates import agent_for_read, agent_for_work
 
-        from apps.workspaces import permissions as perms
-
-        if not perms.can(request.user, agent.workspace_id, perms.AGENT_WORK):
-            raise HttpError(403, "changing an agent's runs requires the editor role or above")
+    if write:
+        agent = agent_for_work(request, slug, allow_own_login=True,
+                               forbidden="changing an agent's runs requires the editor role or above")
+    else:
+        agent = agent_for_read(request, slug, allow_own_login=True)
     return agent, resolver.get_run_store(agent)
 
 

@@ -121,11 +121,19 @@ class RunDocDetailOut(RunDocOut):
 
 
 def _visible_agents(request):
-    """Agents a BY-ID read may reach: pinned, or every membership (never refused)."""
+    """Agents a BY-ID read may reach: pinned, or every membership (never refused) —
+    plus, unpinned, the agent whose own login the caller is (the same door
+    `apps.agents.gates.agent_for_read(allow_own_login=True)` opens for writes)."""
+    from django.db.models import Q
+
     from apps.agents.models import Agent
     from apps.workspaces import services as wsvc
 
-    return Agent.objects.filter(workspace_id__in=wsvc.request_member_slugs(request))
+    q = Q(workspace_id__in=wsvc.request_member_slugs(request))
+    pk = getattr(getattr(request, "user", None), "pk", None)
+    if pk is not None and not getattr(request, "workspace_slug", None):
+        q |= Q(user_id=pk)
+    return Agent.objects.filter(q)
 
 
 def _listed_agents(request):
@@ -140,16 +148,10 @@ def _listed_agents(request):
 def _agent_for_write(request, slug: str):
     """404 for an agent the caller cannot see; 403 below the AGENT_WORK tier
     (or the agent itself under its own login) — same gate as the run lifecycle."""
-    from apps.workspaces import permissions as perms
+    from apps.agents.gates import agent_for_work
 
-    agent = _visible_agents(request).filter(slug=slug).first()
-    if agent is None:
-        raise HttpError(404, f"agent '{slug}' not found")
-    if not (agent.user_id is not None and agent.user_id == request.user.pk) and not perms.can(
-        request.user, agent.workspace_id, perms.AGENT_WORK
-    ):
-        raise HttpError(403, "writing an agent's runs requires the editor role or above")
-    return agent
+    return agent_for_work(request, slug, allow_own_login=True,
+                          forbidden="writing an agent's runs requires the editor role or above")
 
 
 def _doc_or_404(request, ext_id: str) -> AgentRun:

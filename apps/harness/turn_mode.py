@@ -160,7 +160,7 @@ def _accountable_cap(turn, agent) -> Resolved | None:
     itself), it runs manual. No accountable person (a schedule whose creator is
     unknown) keeps the SYSTEM posture, as before."""
     user = turn.initiator_user
-    if user is None or (agent.user_id is not None and agent.user_id == user.pk):
+    if user is None or agent.is_own_login(user):
         return None
     if agent.is_admin(user):
         return None

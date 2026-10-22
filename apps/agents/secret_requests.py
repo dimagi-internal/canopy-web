@@ -85,7 +85,7 @@ def create(agent, *, name: str, reason: str, user):
     """Open (or return the open) request for `name` from this chat."""
     from .models import AgentSecretRequest
 
-    if not (agent.is_admin(user) or agent.user_id == getattr(user, "pk", None)):
+    if not (agent.is_admin(user) or agent.is_own_login(user)):
         raise RequestError(403, "forbidden", f"only {agent.slug} itself or its admins may ask for its secrets")
     if not agent.zk_enabled:
         raise RequestError(409, "zk_not_enabled",

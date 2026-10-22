@@ -464,9 +464,9 @@ def _mailbox_out(request: HttpRequest, agent) -> dict:
 @router.get("/agents/{slug}/mailbox", response=AgentMailboxOut,
             summary="Where an agent's address lives: canopy-hosted, Google, or none")
 def get_agent_mailbox(request: HttpRequest, slug: str) -> dict:
-    from apps.agents.api import _get_agent_or_404
+    from apps.agents.gates import agent_for_read
 
-    return _mailbox_out(request, _get_agent_or_404(request, slug))
+    return _mailbox_out(request, agent_for_read(request, slug))
 
 
 @router.put("/agents/{slug}/mailbox", response=AgentMailboxOut,
@@ -475,9 +475,9 @@ def set_agent_mailbox(request: HttpRequest, slug: str, payload: AgentMailboxIn) 
     """Set the agent's address (owner or agent admin). An address on one of the workspace's
     hosted domains gets its mailbox route in the same step when the caller may change the
     workspace's routes; one that already goes elsewhere is never taken over."""
-    from apps.agents.api import _agent_for_admin
+    from apps.agents.gates import agent_for_admin
 
-    agent = _agent_for_admin(request, slug)
+    agent = agent_for_admin(request, slug)
     address = (payload.address or "").strip().lower()
     if address and ("@" not in address or address.startswith("@") or address.endswith("@")):
         raise HttpError(422, "that is not an email address")

@@ -64,7 +64,7 @@ def can_read_turn_content(user, turn, _memo: dict | None = None) -> bool:
         key = ("agent", turn.agent_id)
         if key not in memo:
             agent = turn.agent
-            memo[key] = (agent.user_id is not None and agent.user_id == user.pk) or agent.is_admin(user)
+            memo[key] = agent.is_own_login(user) or agent.is_admin(user)
         return memo[key]
     return False
 

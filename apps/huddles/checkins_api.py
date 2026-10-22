@@ -99,9 +99,9 @@ def _qs():
 
 
 def _project(request: HttpRequest, slug: str, ref: str) -> AgentProject:
-    from apps.agents.api import _get_agent_or_404, _get_project_or_404
+    from apps.agents.gates import agent_for_read, project_or_404
 
-    return _get_project_or_404(_get_agent_or_404(request, slug), ref)
+    return project_or_404(agent_for_read(request, slug), ref)
 
 
 def _checkin_or_404(project: AgentProject, name: str) -> ProjectCheckin:

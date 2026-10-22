@@ -224,17 +224,23 @@ an invite. See `docs/architecture/access.md` § "System accounts".
 Every surface is gated now, through the table above; this section is about the shapes that
 recur and the routes that deliberately sit off the ladder.
 
-**The agents surface** (`apps/agents/api.py`):
+**Every agent-by-slug route** (agents, harness, agent runs, capabilities, threads, mail, check-ins) asks
+`apps/agents/gates.py` — never a local copy; `tests/test_agent_gates_not_copied.py` fails on an
+import of a private `apps.agents.api` helper from another module:
 
-- `_get_agent_or_404` — membership. Interaction and reads. A non-member gets 404, never 403,
+- `agent_for_read` — membership (`wsvc.request_member_slugs`: pinned, the pin and the caller's
+  workspaces below it). Interaction and reads. Interaction and reads. A non-member gets 404, never 403,
   so the API never confirms an agent exists to someone who cannot see it.
-- `_agent_for_write` — `AGENT_WORK` (editor and above). Reshaping: upsert, runner assignment,
+- `agent_for_work` — `AGENT_WORK` (editor and above). Reshaping: upsert, runner assignment,
   runner rules, turn mode, syncs, turns, skills, project create/patch, task create/patch. Setting
   `auto` — on a routing rule, an actor route or the agent's switch — additionally needs
   `Agent.is_admin` (`_refuse_auto_unless_admin`).
-- `_agent_for_admin` — `Agent.is_admin`: the agent's owner, a workspace owner, or an explicit
+- `agent_for_admin` — `Agent.is_admin`: the agent's owner, a workspace owner, or an explicit
   `AgentAdmin`, each a CURRENT member. Credentials, the vault pointer, the interface, the
   Google mailbox mint, moving the agent to another workspace.
+- `allow_own_login=True` (agent runs, run documents, capabilities) admits the agent's own login
+  (`Agent.is_own_login`) whatever its membership or role — `Agent.user` is one-to-one with the
+  agent, so it reaches only that agent's own rows. Nowhere else.
 
 **A box holds an agent only if its owner is one of the agent's admins**
 (`agents.services.runner_may_hold_agent`) — don't let a runner-assignment row be the trust

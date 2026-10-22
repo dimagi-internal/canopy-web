@@ -116,7 +116,7 @@ def _apply_timing(fields: dict, *, current: AgentSchedule | None = None) -> dict
 
 # The role floor for every schedule WRITE. A schedule is prompt text the runner
 # later executes as the agent, holding the agent's credentials — the same
-# reshaping tier as apps/agents/api.py::_agent_for_write, which is where the
+# reshaping tier as apps/agents/gates.py::agent_for_work, which is where the
 # rest of that surface's writes already sit. Reads (list, preview) stay at bare
 # membership: seeing when your team's agent runs is interaction, not authorship.
 WRITE_CAPABILITY = perms.AGENT_WORK
@@ -130,7 +130,7 @@ def _resolve_agent(
     require: str | None = None,
 ) -> Agent:
     """Resolve an agent, gated by workspace membership. Request-free twin of
-    apps/harness/api.py::_agent_or_404 — the tenant-URL pin is a parameter.
+    apps/agents/gates.py::agent_for_read — the tenant-URL pin is a parameter.
 
     REST passes request.workspace_slug (preserving today's behavior); the MCP
     passes None (membership gating only, no tenant-URL concept). Resolution
@@ -148,7 +148,7 @@ def _resolve_agent(
     handlers on purpose. A schedule is arbitrary prompt text that the runner
     later executes AS the agent, with the agent's resolved credentials — and
     `run-now` means "immediately". So schedule CRUD is the same reshaping tier
-    as `apps/agents/api.py::_agent_for_write`, not the interaction tier: bare
+    as `apps/agents/gates.py::agent_for_work`, not the interaction tier: bare
     membership let a `viewer` write a prompt of their choosing and fire it. It
     is enforced in the shared resolver because the MCP tools
     (`create_schedule`, `update_schedule`, `delete_schedule`,
@@ -156,7 +156,7 @@ def _resolve_agent(
     handler at all — a gate in the handlers would be a gate with the MCP
     surface walking around it.
 
-    Ordering is resolve-then-authorize, matching `_agent_for_write`: a
+    Ordering is resolve-then-authorize, matching `agent_for_work`: a
     non-member still gets ScheduleNotFound (404), and only a member who is
     genuinely under-privileged sees ScheduleForbidden (403)."""
     agent = Agent.objects.filter(slug=agent_slug).first()

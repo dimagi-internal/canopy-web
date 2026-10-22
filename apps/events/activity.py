@@ -54,7 +54,7 @@ def _actor_kind(actor, agent=None) -> str:
 
     if actor is None:
         return Activity.SYSTEM
-    if agent is not None and agent.user_id == actor.pk:
+    if agent is not None and agent.is_own_login(actor):
         return Activity.AGENT
     try:
         if actor.agent_identity is not None:

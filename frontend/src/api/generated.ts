@@ -3282,12 +3282,12 @@ export interface paths {
          *     *rehearsing* the onboarding path impossible: you could not walk a new
          *     operator's steps end to end without leaving a fake agent behind forever.
          *
-         *     Gated at the same reshaping tier as everything else `_agent_for_write`
+         *     Gated at the same reshaping tier as everything else `agent_for_work`
          *     covers (Phase 0 of the agent-instances-and-ACL design closed the old gap
          *     where deletion was the ONLY gated write on this surface — everything else,
          *     including the credential/vault writers, was membership-or-nothing): a
-         *     viewer cannot destroy a fleet member's board. `_agent_for_write` resolves
-         *     the agent via `_get_agent_or_404` first, so a non-member gets 404 (no
+         *     viewer cannot destroy a fleet member's board. `agent_for_work` resolves
+         *     the agent via `agent_for_read` first, so a non-member gets 404 (no
          *     existence leak) rather than 403.
          *
          *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
@@ -3597,7 +3597,7 @@ export interface paths {
          *     the one field the setup checklist's first step asks for, without the create
          *     wizard. A github.com URL in any spelling; stored as `https://github.com/owner/repo`.
          *
-         *     The agent's owner or an admin (`_agent_for_admin`): the repo is what a box
+         *     The agent's owner or an admin (`agent_for_admin`): the repo is what a box
          *     runs as this agent, the same bar the upsert holds `DEFINITION_FIELDS` to. The
          *     cloud boxes that take its turns are asked to re-run their bootstrap, as a
          *     repo change through the upsert does.
@@ -3624,7 +3624,7 @@ export interface paths {
          *     (canopy#850). `1password`: through `op`, with the agent's vault key.
          *     `canopy-web`: the AgentCredential values, via GET /credentials/resolve.
          *
-         *     The agent's owner or an admin only (`_agent_for_admin`), like the
+         *     The agent's owner or an admin only (`agent_for_admin`), like the
          *     credentials and the vault pointer themselves: choosing where an agent's
          *     secrets come from is part of controlling them. Absent from AgentIn, so the
          *     repo's self-publish upsert cannot move it. From a browser it needs a fresh

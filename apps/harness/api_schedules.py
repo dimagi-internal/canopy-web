@@ -73,16 +73,9 @@ def _duplicate_name(name: str) -> ProblemError:
 
 def _visible_workspace_ids(request: HttpRequest) -> set[str]:
     """The workspaces whose agents this caller may see — pinned to one (tenant
-    URL) or spanning every membership (flat/personal). Built from wsvc
-    primitives, NOT by importing agents.api._visible_agent_workspace_ids: a
-    harness api module must not depend on the agents api module (the same rule
-    that duplicated _agent_or_404).
-
-    The unpinned branch used to union in `{None}` ("legacy unhomed agents"),
-    which week_schedules turned into an allow-on-NULL leg — the same
-    anti-pattern `_visible_agent_workspace_ids` was fixed for in PR #421.
-    `Agent.workspace` is NOT NULL as of agents/0013, so the set is now purely
-    membership and there is no NULL to admit."""
+    URL) or spanning every membership (flat/personal) — the same set
+    `apps.agents.gates.listed_agent_workspaces` returns. Purely membership:
+    `Agent.workspace` is NOT NULL, so there is no NULL to admit."""
     # The week view is a LIST: the read rule, so a caller whose workspaces sit
     # in more than one tenant tree must pin one (422 otherwise).
     return wsvc.request_workspace_slugs(request)

@@ -497,4 +497,4 @@ def can_handle(user, workspace_slug: str) -> bool:
         return False
     if wsvc.member_role(user, workspace_slug) is None:
         return False
-    return (debugger.user_id is not None and debugger.user_id == user.pk) or debugger.is_admin(user)
+    return debugger.is_own_login(user) or debugger.is_admin(user)

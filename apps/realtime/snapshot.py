@@ -1,7 +1,7 @@
 """The /supervisor connect snapshot — current runner status + per-agent waiting
 counts for a user, built request-free (a socket has no HttpRequest and is not
 tenant-pinned, so it uses the same 'unpinned' visibility branch the REST
-_visible_agent_workspace_ids / _runner_visibility_q use)."""
+apps.agents.gates.visible_agent_workspaces / _runner_visibility_q use)."""
 from __future__ import annotations
 
 from django.db.models import Q

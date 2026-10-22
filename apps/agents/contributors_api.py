@@ -26,7 +26,7 @@ from apps.api.auth import session_auth
 
 from . import contributors as svc
 from . import ideas as idea_svc
-from .api import _get_agent_or_404, _get_project_or_404, _is_agent_itself
+from .gates import agent_for_read, project_or_404
 from .models import ProjectParticipant
 from .schemas import (
     ContributorPageOut,
@@ -71,8 +71,8 @@ def project_team(request: HttpRequest, slug: str, ref: str) -> dict:
     `kind: "decision"`); every idea with its status and whose it is; and the
     people, each tallied over the same ideas. No task cards, numbers, rationale
     or notes. `may_edit` says the caller may use the work board."""
-    agent = _get_agent_or_404(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = agent_for_read(request, slug)
+    project = project_or_404(agent, ref)
     return idea_svc.team(project, request.user)
 
 
@@ -84,9 +84,9 @@ def create_idea(request: HttpRequest, slug: str, ref: str, payload: IdeaIn) -> S
     the agent (one turn) and the project's owner, and `notified` says who was
     told. To record someone ELSE's words, create a task with `kind: "idea"` and
     `human_why` (`POST /tasks/`, the editor/agent tier)."""
-    agent = _get_agent_or_404(request, slug)
-    project = _get_project_or_404(agent, ref)
-    if _is_agent_itself(request, agent):
+    agent = agent_for_read(request, slug)
+    project = project_or_404(agent, ref)
+    if agent.is_own_login(request.user):
         raise HttpError(422, "an agent has no ideas of its own: record a person's words as a task "
                              "with kind=idea and human_why")
     try:
@@ -113,8 +113,8 @@ def project_ideas(request: HttpRequest, slug: str, ref: str) -> dict:
 
     An agent sees contributor-page content (goals, quotes) only for people who
     let agents use what they learned."""
-    agent = _get_agent_or_404(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = agent_for_read(request, slug)
+    project = project_or_404(agent, ref)
     return svc.board(project, svc.reader_of(request.user))
 
 
@@ -125,8 +125,8 @@ def contributor_page(request: HttpRequest, slug: str, ref: str, person: str) -> 
     and their ideas on this project as shipped / started / proposed (the
     project's ideas whose person they are), plus wants not yet recorded as ideas. Read it before building on — or against —
     their idea. `person` is an id or an email address."""
-    agent = _get_agent_or_404(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = agent_for_read(request, slug)
+    project = project_or_404(agent, ref)
     who = _person(project, person)
     reader = svc.reader_of(request.user)
     # Anyone the workspace deals with has a page, if only an empty one: it says
@@ -146,8 +146,8 @@ def put_contributor_summary(request: HttpRequest, slug: str, ref: str, person: s
     covers yet. Allowed for an agent while the person lets agents learn about
     them and has granted it, or for the person themself — anyone else is 403.
     Makes them a participant (source `summary`) if they were not one."""
-    agent = _get_agent_or_404(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = agent_for_read(request, slug)
+    project = project_or_404(agent, ref)
     who = _person(project, person)
     reader = svc.reader_of(request.user)
     allowed, why_not = svc.may_write_summary(who, reader)
@@ -169,8 +169,8 @@ def put_contributor_summary(request: HttpRequest, slug: str, ref: str, person: s
 def delete_contributor_summary(request: HttpRequest, slug: str, ref: str, person: str):
     """The person themself, the agent's admins, or the agent that wrote it.
     Leaves them a participant; their ideas stay on the board."""
-    agent = _get_agent_or_404(request, slug)
-    project = _get_project_or_404(agent, ref)
+    agent = agent_for_read(request, slug)
+    project = project_or_404(agent, ref)
     who = _person(project, person)
     row = (ProjectParticipant.objects.select_related("person", "project__agent", "summary_by_agent")
            .filter(project=project, person=who).first())

@@ -15,6 +15,7 @@ from ninja import Router, Status
 from canopy_sdk import contract
 from ninja.errors import HttpError
 
+from apps.agents.gates import agent_for_read, agent_for_work
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
@@ -160,58 +161,6 @@ ALLOWED_EVENT_KINDS = {
 # Keeping this cap well below it means an oversized batch always surfaces as
 # our clean 422, not an occasional 500 depending on JSON escaping overhead.
 TRANSCRIPT_APPEND_MAX_BYTES = 1 * 1024 * 1024
-
-
-def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
-    """Resolve an agent, gated by workspace membership. A non-member gets the
-    same 404 as a missing agent (no existence leak). A domain user who has not
-    been let into the agent's workspace (an invite, or an approved access
-    request) is a non-member and gets exactly that 404 — nothing joins
-    automatically.
-
-    Harness-local twin of agents.api._get_agent_or_404 — deliberately duplicated
-    rather than imported: api modules must not depend on each other, and the
-    harness is framework-tier.
-
-    Fails CLOSED on a workspace-less agent (security review 2026-07-26, F1):
-    `agent.workspace_id` falsy must not short-circuit to "ungated" — that would
-    hand ANY authenticated user (not just a workspace member) full read/write on
-    a null-workspace agent's turns, including this app's own raw transcripts.
-    Latent today (production has zero agents with workspace_id IS NULL), but a
-    fail-open tenancy gate is a bug regardless of whether anything currently
-    exploits it. A pre-migration agent with no workspace is simply not
-    resolvable via this API until it's backfilled a workspace — it does not
-    fall back to "visible to everyone."
-    """
-    agent = Agent.objects.filter(slug=slug).first()
-    if agent is None:
-        raise HttpError(404, f"agent '{slug}' not found")
-    ws = getattr(request, "workspace_slug", None)
-    if ws and agent.workspace_id != ws:
-        raise HttpError(404, f"agent '{slug}' not found")  # wrong tenant
-    if not agent.workspace_id or not wsvc.is_member(request.user, agent.workspace_id):
-        raise HttpError(404, f"agent '{slug}' not found")
-    return agent
-
-
-def _agent_for_write_or_404(request: HttpRequest, slug: str) -> Agent:
-    """An agent whose EXECUTION the caller may drive. Editor or owner.
-
-    Harness-local twin of `apps.agents.api._agent_for_write`, duplicated for
-    the same reason `_agent_or_404` is: api modules must not depend on each
-    other, and the harness is framework-tier. Both read the role through the
-    one shared reader (`wsvc.member_role`), so the duplication is of the CALL,
-    not of what "editor" means.
-
-    Enqueuing a turn is the executing half of the author tier — it is arbitrary
-    prompt text run as the agent, holding the agent's resolved credentials, and
-    bare membership let a `viewer` do it. Resolve-then-authorize: a non-member
-    gets `_agent_or_404`'s 404 and never a 403.
-    """
-    agent = _agent_or_404(request, slug)
-    if not perms.can(request.user, agent.workspace_id, perms.AGENT_WORK):
-        raise HttpError(403, "running a turn for this agent requires the editor or owner role")
-    return agent
 
 
 def _runner_owned_q(request: HttpRequest) -> Q:
@@ -518,7 +467,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 
     Every rejection here raises the SAME uniform `HttpError(404, "turn not
     found")` — including the agent-turn branch, which delegates to
-    `_agent_or_404` (security review 2026-07-26, F4): that helper's own 404
+    `agent_for_read` (security review 2026-07-26, F4): that helper's own 404
     names the agent (`"agent 'ada' not found"`), and the shared error handler
     copies an HttpError's message into both `title` and `detail`. Left
     un-caught, a caller holding a stale/guessed turn UUID would learn not just
@@ -535,7 +484,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
         raise HttpError(404, "turn not found")
     if turn.agent_id:
         try:
-            _agent_or_404(request, turn.agent.slug)  # raises on wrong tenant
+            agent_for_read(request, turn.agent.slug)  # raises on wrong tenant
         except HttpError:
             raise HttpError(404, "turn not found") from None
         return turn
@@ -557,7 +506,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
             raise HttpError(404, "turn not found")
         return turn
 
-    # Project turn: gate on its own workspace, mirroring _agent_or_404's checks.
+    # Project turn: gate on its own workspace, mirroring agent_for_read's checks.
     if ws and turn.workspace_id != ws:
         raise HttpError(404, "turn not found")  # wrong tenant
     # Fails CLOSED on a workspace-less project turn (security review
@@ -1750,7 +1699,7 @@ def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
 
 
 def _project_workspace_or_404(request: HttpRequest, ws_slug: str):
-    """Tenant-gate a project session's workspace, mirroring _agent_or_404 for the
+    """Tenant-gate a project session's workspace, mirroring agent_for_read for the
     agent case. A project link has no agent to derive tenancy from, so without
     this any runner could read another user's rolling `summary` by guessing
     thread_key.
@@ -1781,7 +1730,7 @@ def resolve_session(request: HttpRequest, runner_id: uuid.UUID, payload: Resolve
             None, payload.thread_key, runner, project=payload.project, workspace=ws,
             turn_id=payload.turn_id,
         )
-    agent = _agent_or_404(request, payload.agent_slug)
+    agent = agent_for_read(request, payload.agent_slug)
     return services.resolve_session(agent, payload.thread_key, runner, turn_id=payload.turn_id)
 
 
@@ -1829,7 +1778,7 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
         return services.resolve_session(
             None, payload.thread_key, runner, project=payload.project, workspace=ws
         )
-    agent = _agent_or_404(request, payload.agent_slug)
+    agent = agent_for_read(request, payload.agent_slug)
     title = payload.title
     if turn is not None:
         # The server names the session from the turn when it knows it: the email's
@@ -2344,7 +2293,8 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         # session turns are deliberately NOT gated the same way — a session turn
         # is what a chat send produces, and talking to an agent is exactly what
         # the interaction tier is for.
-        agent = _agent_for_write_or_404(request, payload.agent_slug)
+        agent = agent_for_work(request, payload.agent_slug,
+                                   forbidden="running a turn for this agent requires the editor or owner role")
     else:
         # A project turn carries its own tenant.
         ws_slug = getattr(request, "workspace_slug", None)
@@ -2352,7 +2302,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
             # current_workspace gates membership on an explicit slug, so a
             # non-member's enqueue cannot land in someone else's workspace. 404
             # rather than 403: the harness must not leak which tenants exist
-            # (same rule as _agent_or_404).
+            # (same rule as agent_for_read).
             try:
                 workspace = wsvc.current_workspace(request.user, ws_slug)
             except ValueError:
@@ -2573,7 +2523,7 @@ def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
     # `Q(agent__workspace_id__in=slugs) | Q(agent__workspace_id__isnull=True)`,
     # with two independent problems. (1) The isnull leg left an unhomed
     # agent's turns (TurnOut: prompt, origin_ref, session_id) visible to ANY
-    # authenticated caller — more permissive than `_agent_or_404`'s fail-closed
+    # authenticated caller — more permissive than `agent_for_read`'s fail-closed
     # gate, recreating the exact list-vs-gate drift `_runner_visibility_q`'s
     # docstring warns about (a turn the list shows, then 404s on every
     # action). (2) `agent__workspace_id` traverses a nullable FK: for a
@@ -2627,8 +2577,8 @@ def list_turns(
         # first, which already 404s.)
         #
         # 404 rather than 403, and the same 404 for a typo, so the endpoint cannot
-        # be used to enumerate which tenants' agents exist (see _agent_or_404).
-        target = _agent_or_404(request, agent)
+        # be used to enumerate which tenants' agents exist (see agent_for_read).
+        target = agent_for_read(request, agent)
         if qs is None:
             qs = visible_turns_qs(
                 request, slugs=wsvc.tree_scope(request.user, target.workspace_id))
@@ -2856,7 +2806,7 @@ def cancel_turn(request: HttpRequest, turn_id: uuid.UUID):
     """
     turn = _turn_or_404(request, turn_id)
     if turn.agent_id:
-        _agent_or_404(request, turn.agent.slug)  # a non-member gets a 404, never a 403
+        agent_for_read(request, turn.agent.slug)  # a non-member gets a 404, never a 403
     if refusal := _cancel_refusal(request.user, turn):
         raise HttpError(403, refusal)
     if turn.status in Turn.TERMINAL:
