@@ -319,10 +319,17 @@ def act(alert: Alert, user, action_id: str) -> Alert:
     that raises leaves nothing behind — perform and its log share one
     transaction. A link action (`href`) is followed in the browser: here it is
     only logged (`acted`) — no perform, no resolve, whatever `closes` says.
+
+    What is offered is asked BEFORE the row lock is taken — a source's
+    `actions()` may be slow (`unclaimable_turns` diagnoses the fleet's queue) —
+    and under the lock only the status is re-checked: an alert closed in
+    between offers nothing. A handler's own safety checks run in `perform`.
     """
+    offered = visible_actions(Alert.objects.get(pk=alert.pk), user)
     with transaction.atomic():
         row = _locked(alert)
-        action = next((a for a in visible_actions(row, user) if a.id == action_id), None)
+        action = (next((a for a in offered if a.id == action_id), None)
+                  if row.status == Alert.OPEN else None)
         if action is None:
             raise ActionNotOffered(f"{action_id!r} is not offered on alert {row.pk}")
         _log(row, AlertEvent.ACTED, actor=user, action_id=action_id)
