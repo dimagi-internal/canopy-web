@@ -11,7 +11,7 @@ import { relativeAge } from '@/lib/relativeAge'
 // WHO USES THIS AGENT LOCALLY (canopy-web#1704).
 //
 // A license is a person running the agent in their own Claude Code, on their own
-// private runner, with canopy keeping the record. The caller list decides who MAY
+// computer, with canopy keeping the record. The caller list decides who MAY
 // (the People and Callers settings); this table is who DOES — since when, from
 // which machines, how often, and how many credential reads went out under it.
 // Admins revoke per person here without editing the rule; approve re-asks the
@@ -79,9 +79,8 @@ export function AgentLicenses({ agentSlug, canEdit }: { agentSlug: string; canEd
       )}
       {rows.length === 0 ? (
         <p className="m-0 text-[12px] text-muted-foreground">
-          Nobody uses it locally yet. A person registers their machine with{' '}
-          <code>canopy private-runner register</code> and opens Claude Code with{' '}
-          <code>CANOPY_AGENT={agentSlug}</code>; their first session asks for a license.
+          Nobody uses it locally yet. A person runs <code>canopy agent use {agentSlug}</code> once on
+          their computer; their first session asks for a license.
         </p>
       ) : (
         <table className="w-full text-[12px]">
@@ -90,7 +89,7 @@ export function AgentLicenses({ agentSlug, canEdit }: { agentSlug: string; canEd
               <th className="py-1 pr-3 font-medium">Person</th>
               <th className="py-1 pr-3 font-medium">License</th>
               <th className="py-1 pr-3 font-medium">Why</th>
-              <th className="py-1 pr-3 font-medium">Private runners</th>
+              <th className="py-1 pr-3 font-medium">Computers</th>
               <th className="py-1 pr-3 font-medium">Last used</th>
               <th className="py-1 pr-3 text-right font-medium">Turns</th>
               <th className="py-1 pr-3 text-right font-medium">Reads</th>

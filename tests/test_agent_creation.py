@@ -540,3 +540,23 @@ def test_an_agent_that_is_not_zero_knowledge_keeps_google_before_its_vault(edito
     agent = _agent(ws, editor, credential_source=Agent.CANOPY_WEB)
     keys = [s["key"] for s in setup_steps(agent)]
     assert keys.index("mailbox") < keys.index("vault")
+
+
+def test_the_runner_step_is_only_for_running_on_its_own(editor, ws):
+    """Two ways an agent runs: used in your own Claude Code it needs no runner, so the
+    runner step says so and is marked `only_to_run_on_its_own`. Its `status` is
+    unchanged (still `todo` with no runner) — canopy's agent_doctor counts statuses."""
+    agent = _agent(ws, editor)
+    steps = _client(editor).get("/api/agents/scout/setup").json()
+    runner = next(s for s in steps if s["key"] == "runner")
+    assert runner["status"] == "todo"
+    assert runner["only_to_run_on_its_own"] is True
+    assert "canopy agent use scout" in runner["detail"]
+    assert not any(s["only_to_run_on_its_own"] for s in steps if s["key"] != "runner")
+
+    box = enrolled(Runner.objects.create(name="olive-cloud", kind=Runner.CLOUD, owner=editor,
+                                         status=Runner.ONLINE, last_heartbeat_at=timezone.now()), ws)
+    RunnerAssignment.objects.create(agent=agent, runner=box, rank=0)
+    AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud")
+    done = next(s for s in setup_steps(agent) if s["key"] == "runner")
+    assert done["status"] == "done" and "canopy agent use" not in done["detail"]

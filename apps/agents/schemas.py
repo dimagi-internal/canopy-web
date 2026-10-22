@@ -171,6 +171,9 @@ class AgentSetupStepOut(StrictModel):
     # Further choices beside `href`, each a link with its own label — the runner
     # step's "Pair your laptop" / "Stand up a cloud box" for someone who could pair one.
     links: list[SetupLinkOut] = []
+    # Needed only for the agent to run on its own (a runner), not to use it in your
+    # own Claude Code: an agent used that way alone is complete without this step.
+    only_to_run_on_its_own: bool = False
 
 
 class RunnerPreferenceIn(StrictModel):

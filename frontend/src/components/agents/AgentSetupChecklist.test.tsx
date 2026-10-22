@@ -49,6 +49,21 @@ describe('AgentSetupChecklist', () => {
     expect(screen.getByText('in Claude Code')).toBeTruthy()
   })
 
+  it('counts a runner as needed only to run on its own: used in Claude Code, the agent is complete', async () => {
+    setupMock.mockResolvedValue([
+      step('repo', 'done'),
+      step('runner', 'todo', { only_to_run_on_its_own: true }),
+    ])
+    mount()
+    expect(await screen.findByText(/done\./)).toBeTruthy()
+    expect(screen.getByText(/A runner is needed only to let it run on its own/)).toBeTruthy()
+    cleanup()
+    // Settings hides a done checklist — this one too.
+    mount(true)
+    await Promise.resolve()
+    expect(screen.queryByTestId('agent-setup-checklist')).toBeNull()
+  })
+
   it('labels a terminal step and hands over its command', async () => {
     setupMock.mockResolvedValue([
       step('vault', 'todo', { where: 'terminal', command: 'canopy agent vault --slug scout --workspace scouts' }),
