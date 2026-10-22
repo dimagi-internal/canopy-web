@@ -320,7 +320,10 @@ export function MenuPrompt({ menu, busy = false, error, onAnswer, now = Date.now
           onClick={() => onAnswer(null)}
           className="rounded px-2 py-1 text-[13px] text-muted-foreground hover:text-foreground disabled:opacity-50"
         >
-          Cancel (Esc)
+          {/* Not "Cancel (Esc)": nothing binds the Escape KEY here, and the hint
+              read as a shortcut that then did nothing. The button sends Escape to
+              the agent's terminal; that is the runner's business, not a key. */}
+          Cancel
         </button>
       </div>
       {menu.answer_note || error ? (
