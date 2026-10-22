@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from apps.attention import types as att
 from apps.attention.types import AttentionRow
-from apps.workspaces.services import scoped_path
+from apps.workspaces.links import scoped_path
 
 from . import feed, services
 from .api import _filtered_sessions, _out

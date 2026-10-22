@@ -228,9 +228,9 @@ def recipients(agent) -> list:
 
 
 def _link(agent) -> str:
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
-    return wsvc.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings#credentials")
+    return wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings#credentials")
 
 
 #: What each kind watches for and what the owner should do, in plain words. The

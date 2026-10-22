@@ -37,7 +37,7 @@ def health(request: HttpRequest) -> HealthOut:
 
 @common_router.get("/me/", response=MeOut, summary="Current user")
 def me(request: HttpRequest) -> MeOut:
-    from apps.workspaces.services import can_create_workspace
+    from apps.workspaces.login_gate import can_create_workspace
 
     user = request.user
     avatar_url = ""

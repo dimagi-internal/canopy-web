@@ -317,7 +317,7 @@ def destination(review: ReviewRequest, *, token_ok: bool) -> str | None:
     app-relative. Carries the board's share token ONLY when the caller proved
     the review's own token (``token_ok``). None for a review with no narrative
     (a findings review keeps its own page)."""
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
     board, _ = board_for(review)
     if board is None:
@@ -326,4 +326,4 @@ def destination(review: ReviewRequest, *, token_ok: bool) -> str | None:
     path = f"/storyboard/{board.slug}"
     if token_ok:
         path += f"?t={board.ensure_share_token()}"
-    return wsvc.scoped_path(board.workspace_id, path) + f"#entry-{narrative_of(review)}"
+    return wslinks.scoped_path(board.workspace_id, path) + f"#entry-{narrative_of(review)}"

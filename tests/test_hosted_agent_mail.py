@@ -12,7 +12,8 @@ from apps.agents.models import Agent
 from apps.agents.setup import _mailbox
 from apps.mail import domains
 from apps.mail.models import MailDomain, MailRoute
-from apps.workspaces import services as wsvc
+from apps.workspaces import access_requests
+from apps.workspaces import login_gate
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -96,14 +97,14 @@ def test_agent_mailbox_api_sets_and_routes_an_address(w):
 
 
 def test_a_verified_domain_can_let_its_google_accounts_sign_in(w):
-    assert not wsvc.email_admitted_outside_domain("mom@marshellis.com")
+    assert not login_gate.email_admitted_outside_domain("mom@marshellis.com")
     r = _c(w.owner).patch(f"/api/mail/domains/marshellis/{w.d.pk}", {"sign_in": True},
                           content_type="application/json")
     assert r.status_code == 200, r.content
     assert r.json()["sign_in"] is True
-    assert wsvc.email_admitted_outside_domain("mom@marshellis.com")
-    assert not wsvc.email_admitted_outside_domain("mom@elsewhere.com")
-    assert [ws.slug for ws, _, _ in wsvc.requestable_workspaces(
+    assert login_gate.email_admitted_outside_domain("mom@marshellis.com")
+    assert not login_gate.email_admitted_outside_domain("mom@elsewhere.com")
+    assert [ws.slug for ws, _, _ in access_requests.requestable_workspaces(
         User.objects.create_user("mom", "mom@marshellis.com", "pw"))] == ["marshellis"]
 
 
@@ -120,4 +121,4 @@ def test_only_an_owner_and_only_a_verified_domain(w):
 
 def test_a_request_list_domain_without_a_verified_mail_domain_is_not_a_login_grant(w):
     Workspace.objects.filter(slug="marshellis").update(access_request_domains=["gmail.com"])
-    assert not wsvc.email_admitted_outside_domain("anyone@gmail.com")
+    assert not login_gate.email_admitted_outside_domain("anyone@gmail.com")

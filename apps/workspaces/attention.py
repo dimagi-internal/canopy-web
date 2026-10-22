@@ -6,7 +6,7 @@ from apps.attention.types import ASKING, AttentionRow
 
 from . import permissions as perms
 from .models import WorkspaceAccessRequest
-from .services import scoped_path
+from .links import scoped_path
 
 
 def items(request, *, slugs: set[str]) -> list[AttentionRow]:

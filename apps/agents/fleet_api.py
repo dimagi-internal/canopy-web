@@ -143,7 +143,7 @@ def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
     from django.utils import timezone
 
     from apps.harness.api import visible_turns_qs
-    from apps.workspaces.services import scoped_path
+    from apps.workspaces.links import scoped_path
 
     from .health import _counts
 

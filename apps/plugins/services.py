@@ -40,6 +40,7 @@ from django.core.cache import cache
 from apps.agents.delegations import agent_repo
 from apps.agents.models import Agent
 from apps.workspaces import services as wsvc
+from apps.workspaces import links as wslinks
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def catalog_url() -> str:
-    return wsvc.public_url(CATALOG_PATH)
+    return wslinks.public_url(CATALOG_PATH)
 
 
 def member_agents(user) -> list[Agent]:
@@ -206,7 +207,7 @@ def catalog(user) -> dict:
     with no memberships."""
     return {
         "name": MARKETPLACE_NAME,
-        "owner": {"name": "canopy", "url": wsvc.public_url("/")},
+        "owner": {"name": "canopy", "url": wslinks.public_url("/")},
         "description": ("The canopy agents in your workspaces, as Claude Code plugins. "
                         "Installing one needs your own read access to its GitHub repo."),
         "plugins": [entry(p) for p in plugins_for(user)],

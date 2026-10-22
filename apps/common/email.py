@@ -49,7 +49,7 @@ class SesEmailBackend(BaseEmailBackend):
             if settings.CANOPY_SES_CONFIGURATION_SET:
                 kwargs["ConfigurationSetName"] = settings.CANOPY_SES_CONFIGURATION_SET
             # Raises on failure: the caller decides what a failed send means
-            # (services.email_invite logs it and reports "failed").
+            # (notifications.email_invite logs it and reports "failed").
             self._ses().send_email(**kwargs)
             sent += 1
         return sent

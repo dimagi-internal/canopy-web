@@ -30,8 +30,7 @@ from apps.retention.schemas import (
 )
 from apps.workspaces import permissions as perms
 
-from . import services
-from . import system_accounts
+from . import access_requests, invites, login_gate, notifications, services, system_accounts, vault
 from .models import (
     SystemAccount,
     SystemSender,
@@ -191,8 +190,8 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
     # existing membership, not the domain allowlist) must not be able to
     # bootstrap their own workspace and mint invites of their own — that
     # would make invite-admission transitively delegable to an attacker. See
-    # `services.can_create_workspace` + the F1 security finding.
-    if not services.can_create_workspace(request.user):
+    # `login_gate.can_create_workspace` + the F1 security finding.
+    if not login_gate.can_create_workspace(request.user):
         raise HttpError(403, "not eligible to create a workspace")
     if Workspace.objects.filter(slug=payload.slug).exists():
         raise HttpError(409, f"workspace '{payload.slug}' already exists")
@@ -215,7 +214,7 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
     if not ws.parent_id:
         # A root created by someone an org counts as its own: tell that org's
         # owners (best-effort, never fails the create).
-        services.notify_root_created(ws, request.user)
+        notifications.notify_root_created(ws, request.user)
     return Status(201, _out(ws, WorkspaceMembership.OWNER))
 
 
@@ -307,7 +306,7 @@ _ACCESS_ERROR = {
 }
 
 
-def _access_error(exc: "services.AccessRequestError", slug: str) -> HttpError:
+def _access_error(exc: "access_requests.AccessRequestError", slug: str) -> HttpError:
     status, message = _ACCESS_ERROR[exc.code]
     return HttpError(status, message or f"workspace '{slug}' not found")
 
@@ -349,10 +348,11 @@ def list_requestable_workspaces(request: HttpRequest) -> list[RequestableWorkspa
     `access_request_domains` include the caller's login-email domain and that
     they are not already in, each with their own open request if any. Joins
     nothing — see `services.requestable_workspaces`."""
+    # It lives in `access_requests.requestable_workspaces`.
     return [
         RequestableWorkspaceOut(slug=ws.slug, display_name=ws.display_name, domain=domain,
                                 pending_request_id=pending.pk if pending else None)
-        for ws, domain, pending in services.requestable_workspaces(request.user)
+        for ws, domain, pending in access_requests.requestable_workspaces(request.user)
     ]
 
 
@@ -367,8 +367,8 @@ def request_workspace_access(request: HttpRequest, slug: str, payload: AccessReq
     does not exist and one whose domains do not include yours are the SAME
     404, so this cannot probe tenants; 409 if you are already a member."""
     try:
-        req, created = services.request_access(request.user, slug, payload.note)
-    except services.AccessRequestError as exc:
+        req, created = access_requests.request_access(request.user, slug, payload.note)
+    except access_requests.AccessRequestError as exc:
         raise _access_error(exc, slug) from None
     return Status(201 if created else 200, _access_request_out(req, admin_view=False))
 
@@ -404,8 +404,8 @@ def approve_access_request(request: HttpRequest, slug: str, request_id: int,
     _require_may_manage(m, None, payload.role)
     req = _access_request_or_404(m, request_id)
     try:
-        req = services.approve_access_request(request=req, by=request.user, role=payload.role)
-    except services.AccessRequestError as exc:
+        req = access_requests.approve_access_request(request=req, by=request.user, role=payload.role)
+    except access_requests.AccessRequestError as exc:
         raise _access_error(exc, slug) from None
     return _access_request_out(req, admin_view=True)
 
@@ -419,8 +419,8 @@ def deny_access_request(request: HttpRequest, slug: str, request_id: int,
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     req = _access_request_or_404(m, request_id)
     try:
-        req = services.deny_access_request(request=req, by=request.user, reason=payload.reason)
-    except services.AccessRequestError as exc:
+        req = access_requests.deny_access_request(request=req, by=request.user, reason=payload.reason)
+    except access_requests.AccessRequestError as exc:
         raise _access_error(exc, slug) from None
     return _access_request_out(req, admin_view=True)
 
@@ -661,10 +661,10 @@ def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> S
     invite and emails its link again (at most once a minute)."""
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     _require_may_manage(m, None, payload.role)
-    inv = services.create_invite(
+    inv = invites.create_invite(
         workspace=m.workspace, email=payload.email, role=payload.role, invited_by=request.user,
     )
-    return Status(201, _invite_out(inv, services.email_invite(invite=inv)))
+    return Status(201, _invite_out(inv, notifications.email_invite(invite=inv)))
 
 
 @router.get("/{slug}/invites/", response=list[InviteOut], summary="List invites (member-only)",)
@@ -695,7 +695,7 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
     except WorkspaceInvite.DoesNotExist:
         raise HttpError(404, "invite not found")
     _require_may_manage(m, None, inv.role)
-    services.revoke_invite(invite=inv)
+    invites.revoke_invite(invite=inv)
     return Status(204, None)
 
 
@@ -719,13 +719,13 @@ def reissue_invite(request: HttpRequest, slug: str, invite_id: int) -> InviteOut
     # kill the link the person already has without sending them the new one.
     # A finished invite falls through to the service's 410 instead.
     outstanding = inv.accepted_at is None and inv.revoked_at is None
-    if outstanding and services.recently_emailed(inv):
+    if outstanding and notifications.recently_emailed(inv):
         raise HttpError(429, "this invite was just emailed — wait a minute before sending another")
     try:
-        inv = services.reissue_invite(invite=inv)
-    except services.InviteError as exc:
+        inv = invites.reissue_invite(invite=inv)
+    except invites.InviteError as exc:
         raise HttpError(_INVITE_ERROR_STATUS[exc.code], f"invite {exc.code.replace('_', ' ')}")
-    return _invite_out(inv, services.email_invite(invite=inv))
+    return _invite_out(inv, notifications.email_invite(invite=inv))
 
 
 @router.get("/invites/{token}/preview", response=InvitePreviewOut, auth=None,
@@ -735,8 +735,8 @@ def preview_invite(request: HttpRequest, token: str) -> InvitePreviewOut:
         inv = WorkspaceInvite.objects.select_related("workspace").get(token=token)
     except WorkspaceInvite.DoesNotExist:
         raise HttpError(404, "invite not found")
-    status = services.invite_status(inv)
-    hint = services.mask_email(inv.email)
+    status = invites.invite_status(inv)
+    hint = invites.mask_email(inv.email)
     if status != "pending":
         # Minimal disclosure: a dead token (expired/revoked/accepted) reveals
         # only that it's dead, never which workspace it pointed at.
@@ -754,8 +754,8 @@ def preview_invite(request: HttpRequest, token: str) -> InvitePreviewOut:
              summary="Accept an invite by token")
 def accept_invite(request: HttpRequest, token: str) -> WorkspaceOut:
     try:
-        ws, role = services.accept_invite(token=token, user=request.user)
-    except services.InviteError as exc:
+        ws, role = invites.accept_invite(token=token, user=request.user)
+    except invites.InviteError as exc:
         status = _INVITE_ERROR_STATUS[exc.code]
         raise HttpError(status, exc.code)
     return _out(ws, role)
@@ -771,7 +771,7 @@ def get_shared_vault(request: HttpRequest, slug: str) -> SharedVaultOut:
     tenant rather than over its credential configuration.
     """
     m = _require(request.user, slug, perms.OWN)
-    return services.shared_vault_status(m.workspace)
+    return vault.shared_vault_status(m.workspace)
 
 
 @router.put("/{slug}/shared-vault", response=SharedVaultOut,
@@ -786,7 +786,7 @@ def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) ->
     stated where whoever sets it will read it.
     """
     m = _require(request.user, slug, perms.OWN)
-    return services.set_shared_vault(
+    return vault.set_shared_vault(
         m.workspace, vault=payload.vault, service_key=payload.service_key,
     )
 

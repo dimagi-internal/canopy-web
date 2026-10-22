@@ -10,7 +10,7 @@ import datetime as dt
 
 from django.db.models import Prefetch
 
-from apps.workspaces.services import scoped_path_or_none
+from apps.workspaces.links import scoped_path_or_none
 
 from .models import Session, ShareToken
 

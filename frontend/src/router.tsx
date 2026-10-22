@@ -310,7 +310,7 @@ export const routeTable: RouteObject[] = [
           { index: true, element: <Navigate to="members" replace /> },
           { path: 'members', element: <WorkspaceMembersPage /> },
           // People asking to be invited. `:requestId` is the page the admins'
-          // notification email links to (services.access_request_link).
+          // notification email links to (apps/workspaces/links.py::access_request_link).
           { path: 'access-requests', element: <WorkspaceAccessRequestsPage /> },
           { path: 'access-requests/:requestId', element: <AccessRequestPage /> },
           { path: 'slack', element: <SlackSettingsPage /> },

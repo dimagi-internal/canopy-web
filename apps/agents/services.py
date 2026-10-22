@@ -499,7 +499,7 @@ def stamp_share_urls(turns) -> list:
     """Stamp `share_url` on each turn: its transcript's page, under the
     workspace the transcript was shared from. One query for the whole page.
     Run AFTER redaction, so a hidden turn's blanked token yields no link."""
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import links as wslinks
 
     tokens = {t.share_token for t in turns if t.share_token}
     homes = dict(
@@ -508,7 +508,7 @@ def stamp_share_urls(turns) -> list:
     ) if tokens else {}
     for t in turns:
         ws = homes.get(t.share_token) if t.share_token else None
-        t.share_url = wsvc.scoped_url_or_none(ws, f"/share/{t.share_token}") if ws else None
+        t.share_url = wslinks.scoped_url_or_none(ws, f"/share/{t.share_token}") if ws else None
     return turns
 
 

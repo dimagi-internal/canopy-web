@@ -19,7 +19,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.workspaces.models import Workspace
-from apps.workspaces.services import (
+from apps.workspaces.invites import (
     accept_invite,
     create_invite,
     invite_status,

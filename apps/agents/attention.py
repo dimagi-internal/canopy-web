@@ -5,7 +5,7 @@ and Home name the same tasks. Actions go to the existing task route,
 from __future__ import annotations
 
 from apps.attention.types import ASKING, YOUR_MOVE, AttentionRow
-from apps.workspaces.services import scoped_path
+from apps.workspaces.links import scoped_path
 
 from . import services
 from .models import AgentTask

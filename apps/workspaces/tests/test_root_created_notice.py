@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import Client
 
-from apps.workspaces import services
+from apps.workspaces import notifications
 from apps.workspaces.models import Workspace, WorkspaceMembership as M
 
 pytestmark = pytest.mark.django_db
@@ -79,6 +79,6 @@ def test_the_org_owner_is_not_told_about_their_own_root(org):
 
 
 def test_a_mail_failure_does_not_fail_the_create(org, monkeypatch):
-    monkeypatch.setattr(services, "_send", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("smtp")))
+    monkeypatch.setattr(notifications, "_send", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("smtp")))
     assert _create(_user("teammate@dimagi.com"), "strategy").status_code == 201
     assert Workspace.objects.filter(slug="strategy").exists()

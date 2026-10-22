@@ -18,7 +18,7 @@ from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import Client
 
-from apps.workspaces import services
+from apps.workspaces import access_requests
 from apps.workspaces.models import Workspace, WorkspaceAccessRequest, WorkspaceMembership as M
 from tests._source import iter_app_sources
 
@@ -316,7 +316,7 @@ def test_a_request_is_only_reachable_through_its_own_workspace(org):
 def test_existing_members_are_unchanged_by_approval_semantics(org):
     """Approval is upgrade-only, like an invite: it never demotes."""
     req = WorkspaceAccessRequest.objects.create(workspace=org["ws"], user=org["admin"])
-    services.approve_access_request(request=req, by=org["owner"], role="viewer")
+    access_requests.approve_access_request(request=req, by=org["owner"], role="viewer")
     assert M.objects.get(workspace=org["ws"], user=org["admin"]).role == M.ADMIN
 
 

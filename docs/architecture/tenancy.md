@@ -62,7 +62,7 @@ key outside that file — that pair is the signature of an access decision.
   CLI without `CANOPY_WEB_WORKSPACE`) is refused on purpose.
 - Resolving is not permission: each create still checks `CONTENT_WRITE` on what came back,
   including a defaulted target.
-- Absolute links are built with `wsvc.scoped_url(workspace, path)` on
+- Absolute links are built with `links.scoped_url(workspace, path)` on
   `CANOPY_PUBLIC_BASE_URL`, never `request.build_absolute_uri` — an in-process MCP call has no
   real Host and would mint `https://localhost/…`. Every URL the API returns is under
   `/w/<workspace>/`; a row with no workspace has no address.
