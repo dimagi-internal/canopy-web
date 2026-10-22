@@ -28,7 +28,9 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-IFACE = {"capabilities": {"connect": {"callers": ["contact"],
+# `data: phi`: a ZDR box holds only an agent with a phi capability (dedicated box).
+IFACE = {"capabilities": {"connect": {"callers": ["contact"], "sites": ["connect-labs"],
+                                      "data": "phi",
                                       "tools": ["mcp__*canopy-web__who_is_asking"]}}}
 
 
