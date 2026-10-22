@@ -181,6 +181,7 @@ Asked in this order; the first row that matches decides.
   (`canopy_sessions.services.may_place_project_chat`). Unplaced, it runs on a box
   its workspace's runner order shares or one its sender administers
   (`runners.md` → "Project chats"), never on a teammate's box by default.
+  It acts as the person who asked (see "Projects run as the person who asked").
 
 ## System accounts
 
@@ -606,6 +607,19 @@ tool; and beside every delivered prompt — the runner leaves
   `canopy-web-mcp-headers.js` sends it and never falls back to a PAT once it has
   one; a write failure refuses the turn. A scoped token does not serve a
   confined turn's conversation, and a confined token does not serve a full turn's.
+* **Projects run as the person who asked.** Agents and projects are both first
+  class, and both act FOR the person who asked; they differ only in WHO the
+  session is. An agent's turn acts as the agent, bounded by the asker (the rule
+  above). A project turn or project chat (a repo, no agent) has no agent to act
+  as, so it acts as its asker: a verified, active human initiator gets the same
+  scoped caller token (`caller_tokens._project_asker`), so its session reads
+  canopy with exactly that person's access — nothing more, and never the box's.
+  The token follows the conversation's current asker and voids when a later turn
+  has none verified. A project turn with no person behind it (a schedule, a
+  drill) gets no token and no canopy identity. GitHub is the one thing a project
+  borrows from an agent: its repo's `RepoIdentity` agent, for project dispatches
+  and project chats alike (`delegations.turn_agent`; `runners.md` → "The GitHub
+  identity a turn gets"). The cloud runner deletes the token when the turn ends.
 * **Known limit.** On a laptop every session is the same OS user and emdash
   spawns it, so the runner cannot strip its environment; on any box, credential
   FILES (agent `.env`s, gog's keyring, ace's Drive key) stay readable to an
