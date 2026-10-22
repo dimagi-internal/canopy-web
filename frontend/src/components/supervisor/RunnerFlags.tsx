@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { setRunnerFlags, type RunnerOut } from '@/api/harness'
+import { SettingRow, Switch } from '@/components/supervisor/SettingRow'
 
-// What this box's owner declares about it. Headed by WHO is speaking, not
+// What this box's owner declares about it. Labelled with WHO is speaking, not
 // "Guarantees": canopy cannot check a declaration, so it guarantees nothing.
 //
 // The list of declarable flags comes from the server (`known_flags`); this file
@@ -9,7 +10,7 @@ import { setRunnerFlags, type RunnerOut } from '@/api/harness'
 // still renders (with a generic sentence) instead of vanishing.
 //
 // canopy cannot inspect a box's Claude keys, so every flag is a promise, and the
-// sentence saying so sits beside the checkbox rather than in a help page.
+// sentence saying so sits beside the switch rather than in a help page.
 const WORDS: Record<string, { label: string; sentence: string }> = {
   zdr: {
     label: 'ZDR',
@@ -58,34 +59,30 @@ export function RunnerFlags({
       .finally(() => { if (alive.current) setBusy(false) })
   }
 
+  // One row per flag in the Settings list, labelled with who is speaking: canopy
+  // cannot check a declaration, so the row says it is the owner's word.
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" data-testid="runner-flags">
-      <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Declared by the owner</span>
+    <>
       {runner.known_flags.map((flag) => {
         const { label, sentence } = wordsFor(flag)
+        const on = runner.flags.includes(flag)
         return (
-          <label key={flag} className="flex items-start gap-2 text-[12px]">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={runner.flags.includes(flag)}
-              disabled={busy}
-              onChange={() => toggle(flag)}
-              aria-label={label}
-            />
-            <span className="flex flex-col">
-              <span className="font-medium text-foreground">{label}</span>
-              <span className="text-muted-foreground">{sentence}</span>
-              {notInForce(runner, flag) && (
-                <span className="text-warning" data-testid={`runner-flag-not-in-force-${flag}`}>
-                  Not in force: this box is not reporting ZDR mode, so it takes no ZDR work.
-                </span>
-              )}
-            </span>
-          </label>
+          <SettingRow
+            key={flag}
+            label={`${label} \u2014 declared by the owner`}
+            help={sentence}
+            testId={`runner-flag-${flag}`}
+            control={<Switch checked={on} onChange={() => toggle(flag)} disabled={busy} label={label} testId={`runner-flag-toggle-${flag}`} />}
+          >
+            {notInForce(runner, flag) && (
+              <p className="text-[12px] text-warning" data-testid={`runner-flag-not-in-force-${flag}`}>
+                Not in force: this box is not reporting ZDR mode, so it takes no ZDR work.
+              </p>
+            )}
+          </SettingRow>
         )
       })}
       {error && <p className="text-[12px] text-destructive">{error}</p>}
-    </div>
+    </>
   )
 }

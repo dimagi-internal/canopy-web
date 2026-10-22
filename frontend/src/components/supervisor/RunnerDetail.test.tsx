@@ -32,6 +32,9 @@ vi.mock('@/api/harness', () => ({
   enrollRunnerWorkspace: vi.fn(),
   unenrollRunnerWorkspace: vi.fn(),
 }))
+vi.mock('@/api/workspaces', () => ({
+  listMembers: vi.fn().mockResolvedValue([]),
+}))
 vi.mock('@/api/drills', () => ({
   startDrill: vi.fn(),
   listDrills: vi.fn().mockResolvedValue([]),
@@ -161,9 +164,10 @@ describe('RunnerDetail — pause', () => {
 
     render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} onChanged={onChanged} />)
 
+    fireEvent.click(screen.getByTestId('runner-pause-toggle'))
     fireEvent.change(screen.getByTestId('runner-pause-note'), { target: { value: 'token limit' } })
     await act(async () => {
-      fireEvent.click(screen.getByTestId('runner-pause-toggle'))
+      fireEvent.click(screen.getByTestId('runner-pause-confirm'))
     })
 
     expect(pauseRunner).toHaveBeenCalledWith('r1', 'token limit')
@@ -212,8 +216,9 @@ describe('RunnerDetail — pause', () => {
     pauseRunner.mockRejectedValue(new Error('pauseRunner failed: 404'))
 
     render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} />)
+    fireEvent.click(screen.getByTestId('runner-pause-toggle'))
     await act(async () => {
-      fireEvent.click(screen.getByTestId('runner-pause-toggle'))
+      fireEvent.click(screen.getByTestId('runner-pause-confirm'))
     })
 
     expect(screen.getByTestId('runner-pause-error').textContent).toContain('404')

@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
 import { setRunnerEngine, type RunnerEngine as Engine, type RunnerOut } from '@/api/harness'
+import { Choice, SettingRow } from '@/components/supervisor/SettingRow'
 
 // The session runtime switch (canopy-web#1188): whether this laptop runner opens
 // NEW sessions in emdash, in the Claude desktop app's Code tab, or runs them
@@ -25,7 +26,7 @@ export function RunnerEngine({
   const [err, setErr] = useState<string | null>(null)
 
   const choose = (engine: Engine) => {
-    if (engine === current || saving) return
+    if (saving) return
     setSaving(engine)
     setErr(null)
     setRunnerEngine(runner.id, engine)
@@ -35,34 +36,13 @@ export function RunnerEngine({
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" data-testid="runner-engine">
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Session runtime</span>
-        <div className="ml-auto flex gap-1" role="radiogroup" aria-label="Session runtime">
-          {(Object.keys(LABEL) as Engine[]).map((engine) => (
-            <button
-              key={engine}
-              type="button"
-              role="radio"
-              aria-checked={engine === current}
-              disabled={saving !== null}
-              onClick={() => choose(engine)}
-              data-testid={`runner-engine-${engine}`}
-              className={`rounded-md px-2.5 py-1 text-[12px] font-medium disabled:opacity-50 ${
-                engine === current
-                  ? 'bg-primary text-primary-foreground'
-                  : 'border border-border text-foreground hover:bg-muted'
-              }`}
-            >
-              {saving === engine ? '…' : LABEL[engine]}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="text-[12px] text-muted-foreground">
-        Where new sessions open. Takes effect within seconds; running sessions stay where they are.
-      </p>
+    <SettingRow
+      label="Session runtime"
+      testId="runner-engine"
+      help="Where new sessions open. Takes effect within seconds; running sessions stay where they are."
+      control={<Choice value={current} options={LABEL} onChange={choose} saving={saving} label="Session runtime" testIdPrefix="runner-engine" />}
+    >
       {err && <p className="text-[12px] text-destructive" data-testid="runner-engine-error">{err}</p>}
-    </div>
+    </SettingRow>
   )
 }

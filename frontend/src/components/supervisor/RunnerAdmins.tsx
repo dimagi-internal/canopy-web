@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
-import { AddPersonForm, PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
+import { PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import type { RoleOption } from '@/components/people/roles'
 import {
   grantRunnerAdmin,
@@ -7,6 +7,7 @@ import {
   revokeRunnerAdmin,
   type RunnerAdmin,
 } from '@/api/harness'
+import { listMembers, type MemberOut } from '@/api/workspaces'
 
 // A box has one grantable role; the owner is shown, never granted.
 const ADMIN_OPTIONS: RoleOption[] = [{ value: 'admin', label: 'Admin' }]
@@ -31,10 +32,13 @@ const OWNER_OPTIONS: RoleOption[] = [{ value: 'owner', label: 'Owner' }]
 //     people surface.
 export function RunnerAdmins({
   runnerId,
+  workspace,
   canManage,
   ownerEmail,
 }: {
   runnerId: string
+  /** The workspace this box belongs to: who may be granted is its members. */
+  workspace?: string | null
   /** Is the viewer the owner — the only tier that may grant. */
   canManage: boolean
   ownerEmail?: string | null
@@ -52,14 +56,36 @@ export function RunnerAdmins({
 
   useEffect(load, [load])
 
+  // Who may be granted: a person in this box's workspace (its own members and the
+  // owners above it — the server's rule, `wsvc.is_member`), picked from a list
+  // rather than typed, so a grant can't miss on a typo or name a stranger.
+  const [members, setMembers] = useState<MemberOut[] | null>(null)
+  useEffect(() => {
+    if (!canManage || !workspace) return
+    listMembers(workspace)
+      .then((rows) => { if (alive.current) setMembers(rows) })
+      .catch(() => { if (alive.current) setMembers([]) })
+  }, [canManage, workspace])
+  const [pick, setPick] = useState('')
+  const [granting, setGranting] = useState(false)
+  const [grantErr, setGrantErr] = useState<string | null>(null)
+
   // Both reject with the server's own words, which the shared table / add row
   // show inline: "no account with email …" and "not a member of the workspace
   // this runner belongs to" are the two real failures, and both are fixable by
   // the person reading them. Paraphrasing would lose that.
-  const grant = async (email: string) => {
-    await grantRunnerAdmin(runnerId, email)
-    if (alive.current) load()
+  const grant = (email: string) => {
+    setGranting(true)
+    setGrantErr(null)
+    grantRunnerAdmin(runnerId, email)
+      .then(() => { if (alive.current) { setPick(''); load() } })
+      .catch((e: unknown) => { if (alive.current) setGrantErr(e instanceof Error ? e.message : 'could not grant') })
+      .finally(() => { if (alive.current) setGranting(false) })
   }
+  const taken = new Set([ownerEmail?.toLowerCase(), ...(admins ?? []).map((a) => a.email.toLowerCase())])
+  const candidates = (members ?? [])
+    .filter((m) => !m.system && !taken.has(m.email.toLowerCase()))
+    .sort((a, b) => a.email.localeCompare(b.email))
 
   const revoke = async (admin: RunnerAdmin) => {
     await revokeRunnerAdmin(runnerId, admin.user_id)
@@ -115,14 +141,35 @@ export function RunnerAdmins({
       )}
 
       {canManage && (
-        <AddPersonForm
-          options={ADMIN_OPTIONS}
-          onAdd={(email) => grant(email)}
-          placeholder="colleague@dimagi.com"
-          busyLabel="Saving…"
-          submitTestId="runner-admins-grant"
-          errorTestId="runner-admins-error"
-        />
+        <div className="flex flex-col gap-1">
+          <div className="flex gap-2">
+            <select
+              value={pick}
+              onChange={(e) => setPick(e.target.value)}
+              disabled={granting || members === null}
+              aria-label="Person to make an administrator"
+              data-testid="runner-admins-pick"
+              className="min-w-0 flex-1 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
+            >
+              <option value="">
+                {members === null ? 'Loading people…' : candidates.length ? 'Choose someone in this workspace…' : 'Everyone in this workspace already administers it'}
+              </option>
+              {candidates.map((m) => (
+                <option key={m.user_id} value={m.email}>{m.email}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => pick && grant(pick)}
+              disabled={!pick || granting}
+              data-testid="runner-admins-grant"
+              className="rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
+            >
+              {granting ? 'Saving…' : 'Add'}
+            </button>
+          </div>
+          {grantErr && <p className="text-[12px] text-destructive" data-testid="runner-admins-error">{grantErr}</p>}
+        </div>
       )}
 
       <p className="text-[11px] text-foreground-subtle">

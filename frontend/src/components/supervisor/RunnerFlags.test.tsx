@@ -24,7 +24,7 @@ afterEach(() => {
 describe('RunnerFlags', () => {
   it('heads the panel with who is speaking, not a guarantee canopy cannot make', () => {
     render(<RunnerFlags runner={runner} onChange={onChange} />)
-    expect(screen.getByText('Declared by the owner')).toBeTruthy()
+    expect(screen.getByText(/declared by the owner/)).toBeTruthy()
     expect(screen.queryByText(/Guarantees/i)).toBeNull()
   })
 
@@ -33,7 +33,7 @@ describe('RunnerFlags', () => {
     setRunnerFlags.mockResolvedValue(updated)
     render(<RunnerFlags runner={runner} onChange={onChange} />)
     expect(screen.getByText(/You are vouching for this; canopy cannot check the key/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('checkbox', { name: /ZDR/ }))
+    fireEvent.click(screen.getByRole('switch', { name: /ZDR/ }))
     await waitFor(() => expect(setRunnerFlags).toHaveBeenCalledWith('r1', ['zdr']))
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(updated))
   })
@@ -56,25 +56,25 @@ describe('RunnerFlags', () => {
   it('withdraws it', async () => {
     setRunnerFlags.mockResolvedValue({ ...runner, flags: [] })
     render(<RunnerFlags runner={{ ...runner, flags: ['zdr'] } as unknown as RunnerOut} onChange={onChange} />)
-    fireEvent.click(screen.getByRole('checkbox', { name: /ZDR/ }))
+    fireEvent.click(screen.getByRole('switch', { name: /ZDR/ }))
     await waitFor(() => expect(setRunnerFlags).toHaveBeenCalledWith('r1', []))
   })
 
   it('shows the server error', async () => {
     setRunnerFlags.mockRejectedValue(new Error('unknown flag'))
     render(<RunnerFlags runner={runner} onChange={onChange} />)
-    fireEvent.click(screen.getByRole('checkbox', { name: /ZDR/ }))
+    fireEvent.click(screen.getByRole('switch', { name: /ZDR/ }))
     expect(await screen.findByText(/unknown flag/)).toBeTruthy()
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('draws one checkbox per known flag from the server, not a local list', () => {
+  it('draws one switch per known flag from the server, not a local list', () => {
     render(
       <RunnerFlags
         runner={{ ...runner, known_flags: ['zdr', 'eu'] } as unknown as RunnerOut}
         onChange={onChange}
       />,
     )
-    expect(screen.getAllByRole('checkbox')).toHaveLength(2)
+    expect(screen.getAllByRole('switch')).toHaveLength(2)
   })
 })
