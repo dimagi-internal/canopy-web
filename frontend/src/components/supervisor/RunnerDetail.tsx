@@ -11,13 +11,9 @@ import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
 import { RunnerPrivate } from '@/components/supervisor/RunnerPrivate'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
-<<<<<<< HEAD
 import { RunnerPause } from '@/components/supervisor/RunnerPause'
 import { RunnerSessions } from '@/components/supervisor/RunnerSessions'
-=======
 import { AlertList } from '@/components/alerts/AlertList'
-import { isDirectedOnly } from '@/components/chat/runnerEligibility'
->>>>>>> 81b6c43f (feat(alerts): AlertList on Home, Topology, agent and runner pages)
 
 // A runner's full state — the click-through from the Runners tab's runner list.
 // Leads with the signals that actually matter: is it AVAILABLE to fire a turn
